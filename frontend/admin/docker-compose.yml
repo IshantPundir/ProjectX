@@ -1,0 +1,32 @@
+services:
+  # Local development — hot reload, source-mounted
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: deps
+    command: npm run dev -- -p 3001
+    ports:
+      - "3001:3001"
+    volumes:
+      - .:/app
+      - /app/node_modules
+    env_file:
+      - .env.local
+    profiles:
+      - dev
+
+  # Production-like build — standalone output, minimal image
+  admin:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    ports:
+      - "3001:3001"
+    env_file:
+      - .env.production
+    restart: unless-stopped
+    profiles:
+      - prod
