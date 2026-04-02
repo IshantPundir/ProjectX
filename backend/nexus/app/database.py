@@ -1,6 +1,7 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+import sqlalchemy
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -30,10 +31,8 @@ async def get_tenant_session(tenant_id: str) -> AsyncGenerator[AsyncSession]:
     async with async_session_factory() as session:
         async with session.begin():
             await session.execute(
-                # SET LOCAL scopes to this transaction only
-                __import__("sqlalchemy").text(
-                    f"SET LOCAL app.current_tenant = '{tenant_id}'"
-                )
+                sqlalchemy.text("SET LOCAL app.current_tenant = :tid"),
+                {"tid": tenant_id}
             )
             yield session
 
