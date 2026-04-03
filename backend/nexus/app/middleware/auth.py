@@ -20,6 +20,11 @@ _CANDIDATE_PREFIXES: tuple[str, ...] = (
     "/api/candidate-session/",
 )
 
+# Path prefixes that skip auth entirely (public endpoints)
+_PUBLIC_PREFIXES: tuple[str, ...] = (
+    "/api/auth/verify-invite",  # Public — invite token verification
+)
+
 
 class AuthMiddleware(BaseHTTPMiddleware):
     """Provider-agnostic JWT verification and RBAC enforcement.
@@ -36,7 +41,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if path in _PUBLIC_PATHS or request.method == "OPTIONS":
             return await call_next(request)
 
-        # Candidate paths use a different token flow — handled in the session module
+        # Skip auth for public path prefixes
+        if path.startswith(_PUBLIC_PREFIXES):
+            return await call_next(request)
+
+        # Candidate paths use a different token flow
         if path.startswith(_CANDIDATE_PREFIXES):
             return await call_next(request)
 
@@ -56,7 +65,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request.state.token_payload = payload
         request.state.user_id = payload.sub
         request.state.tenant_id = payload.tenant_id
-        request.state.role = payload.role
+        request.state.app_role = payload.app_role
+        request.state.is_projectx_admin = payload.is_projectx_admin
 
         return await call_next(request)
 
@@ -64,8 +74,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
 def require_roles(*allowed_roles: str):
     """FastAPI dependency that enforces RBAC on a route.
 
+    Reads app_role from the JWT — NOT the Postgres 'role' claim (which is always 'authenticated').
+
     Usage:
-        @router.get("/jobs", dependencies=[Depends(require_roles("Recruiter", "Company Admin"))])
+        @router.get("/jobs", dependencies=[require_roles("Recruiter", "Company Admin")])
     """
     from fastapi import Depends, HTTPException, Request as FastAPIRequest
 
@@ -73,8 +85,8 @@ def require_roles(*allowed_roles: str):
         payload: TokenPayload | None = getattr(request.state, "token_payload", None)
         if payload is None:
             raise HTTPException(status_code=401, detail="Not authenticated")
-        if payload.role not in allowed_roles:
-            logger.warning("rbac.denied", role=payload.role, allowed=allowed_roles, path=request.url.path)
+        if payload.app_role not in allowed_roles:
+            logger.warning("rbac.denied", app_role=payload.app_role, allowed=allowed_roles, path=request.url.path)
             raise HTTPException(status_code=403, detail="Insufficient permissions")
         return payload
 
