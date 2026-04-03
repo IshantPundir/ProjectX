@@ -42,3 +42,18 @@ async def get_session() -> AsyncGenerator[AsyncSession]:
     async with async_session_factory() as session:
         async with session.begin():
             yield session
+
+
+@asynccontextmanager
+async def get_bypass_session() -> AsyncGenerator[AsyncSession, None]:
+    """Yield a session with RLS bypass enabled.
+
+    Used ONLY for: admin routes, complete-invite, and onboarding completion.
+    Never use on endpoints reachable by regular client users.
+    """
+    async with async_session_factory() as session:
+        async with session.begin():
+            await session.execute(
+                sqlalchemy.text("SET LOCAL app.bypass_rls = 'true'")
+            )
+            yield session
