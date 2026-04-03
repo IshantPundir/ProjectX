@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import DeclarativeBase
+from starlette.requests import Request
 
 from app.config import settings
 
@@ -55,5 +56,35 @@ async def get_bypass_session() -> AsyncGenerator[AsyncSession, None]:
         async with session.begin():
             await session.execute(
                 sqlalchemy.text("SET LOCAL app.bypass_rls = 'true'")
+            )
+            yield session
+
+
+async def get_bypass_db() -> AsyncGenerator[AsyncSession, None]:
+    """FastAPI dependency — yields a session with RLS bypass.
+
+    Use with: Depends(get_bypass_db)
+    Only for: admin routes, complete-invite, onboarding completion.
+    """
+    async with async_session_factory() as session:
+        async with session.begin():
+            await session.execute(
+                sqlalchemy.text("SET LOCAL app.bypass_rls = 'true'")
+            )
+            yield session
+
+
+async def get_tenant_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
+    """FastAPI dependency — yields a session with RLS tenant context.
+
+    Use with: Depends(get_tenant_db)
+    For: all tenant-scoped routes.
+    """
+    tenant_id = request.state.tenant_id
+    async with async_session_factory() as session:
+        async with session.begin():
+            await session.execute(
+                sqlalchemy.text("SET LOCAL app.current_tenant = :tid"),
+                {"tid": tenant_id},
             )
             yield session
