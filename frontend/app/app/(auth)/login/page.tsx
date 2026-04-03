@@ -29,12 +29,19 @@ export default function LoginPage() {
         return;
       }
 
+      // Get the session (may need a fresh fetch if signIn just completed)
+      let token = data.session?.access_token;
+      if (!token) {
+        const { data: sessionData } = await supabase.auth.getSession();
+        token = sessionData.session?.access_token;
+      }
+
       // Check JWT claims — reject users without tenant_id/app_role
-      // (e.g., admin-only accounts that don't belong on the client app)
-      const token = data.session?.access_token;
       if (token) {
         try {
-          const payload = JSON.parse(atob(token.split(".")[1]));
+          // JWT uses URL-safe base64 — replace before decoding
+          const base64 = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+          const payload = JSON.parse(atob(base64));
           if (!payload.tenant_id || !payload.app_role) {
             await supabase.auth.signOut();
             setError("This account does not have access to the client dashboard. Please use your invite link to set up your account.");
