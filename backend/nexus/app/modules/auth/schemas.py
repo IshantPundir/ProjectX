@@ -33,3 +33,31 @@ class CandidateTokenPayload(BaseModel):
     tenant_id: str = ""
     exp: int = 0
     iat: int = 0
+
+
+class VerifyInviteResponse(BaseModel):
+    email: str
+    role: str
+    company_name: str
+
+
+class CompleteInviteRequest(BaseModel):
+    raw_token: str
+
+
+class CompleteInviteResponse(BaseModel):
+    redirect_to: str  # "/onboarding" or "/"
+    user_id: str
+    tenant_id: str
+    role: str
+
+
+class MeResponse(BaseModel):
+    user_id: str
+    auth_user_id: str
+    email: str
+    full_name: str | None
+    role: str
+    tenant_id: str
+    company_name: str
+    onboarding_complete: bool
