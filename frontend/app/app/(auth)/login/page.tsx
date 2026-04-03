@@ -16,20 +16,42 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
 
-    const supabase = createClient();
-    const { error: authError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    try {
+      const supabase = createClient();
+      const { data, error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
-    if (authError) {
-      setError(authError.message);
+      if (authError) {
+        setError(authError.message);
+        setLoading(false);
+        return;
+      }
+
+      // Check JWT claims — reject users without tenant_id/app_role
+      // (e.g., admin-only accounts that don't belong on the client app)
+      const token = data.session?.access_token;
+      if (token) {
+        try {
+          const payload = JSON.parse(atob(token.split(".")[1]));
+          if (!payload.tenant_id || !payload.app_role) {
+            await supabase.auth.signOut();
+            setError("This account does not have access to the client dashboard. Please use your invite link to set up your account.");
+            setLoading(false);
+            return;
+          }
+        } catch {
+          // Token parse failed — let the proxy handle it
+        }
+      }
+
+      router.push("/");
+      router.refresh();
+    } catch {
+      setError("An unexpected error occurred");
       setLoading(false);
-      return;
     }
-
-    router.push("/");
-    router.refresh();
   }
 
   return (
