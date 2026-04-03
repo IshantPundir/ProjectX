@@ -47,12 +47,18 @@ export default async function DashboardLayout({
     <div className="flex flex-1">
       <aside className="w-56 border-r border-zinc-200 bg-white p-4">
         <h2 className="text-sm font-bold text-zinc-900 mb-6">ProjectX</h2>
-        <nav>
+        <nav className="flex-1 space-y-1">
           <a
             href="/"
             className="block text-sm text-zinc-700 hover:text-zinc-900 py-1.5"
           >
             Dashboard
+          </a>
+          <a
+            href="/settings/team"
+            className="block text-sm text-zinc-700 hover:text-zinc-900 py-1.5"
+          >
+            Team
           </a>
         </nav>
       </aside>
