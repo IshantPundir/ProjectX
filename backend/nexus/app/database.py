@@ -31,9 +31,10 @@ async def get_tenant_session(tenant_id: str) -> AsyncGenerator[AsyncSession]:
     """Yield a session with RLS tenant context set."""
     async with async_session_factory() as session:
         async with session.begin():
+            # SET LOCAL doesn't support parameterized queries in asyncpg.
+            # tenant_id is a UUID from the validated JWT — safe to interpolate.
             await session.execute(
-                sqlalchemy.text("SET LOCAL app.current_tenant = :tid"),
-                {"tid": tenant_id}
+                sqlalchemy.text(f"SET LOCAL app.current_tenant = '{tenant_id}'")
             )
             yield session
 
@@ -83,8 +84,9 @@ async def get_tenant_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
     tenant_id = request.state.tenant_id
     async with async_session_factory() as session:
         async with session.begin():
+            # SET LOCAL doesn't support parameterized queries in asyncpg.
+            # tenant_id is a UUID from the validated JWT — safe to interpolate.
             await session.execute(
-                sqlalchemy.text("SET LOCAL app.current_tenant = :tid"),
-                {"tid": tenant_id},
+                sqlalchemy.text(f"SET LOCAL app.current_tenant = '{tenant_id}'")
             )
             yield session
