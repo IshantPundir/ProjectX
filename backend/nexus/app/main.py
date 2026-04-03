@@ -69,6 +69,7 @@ def create_app() -> FastAPI:
     from app.modules.notifications.router import router as notifications_router
     from app.modules.auth.router import router as auth_router
     from app.modules.admin.router import router as admin_router
+    from app.modules.settings.router import router as settings_router
 
     application.include_router(auth_router)
     application.include_router(ats_router)
@@ -81,6 +82,7 @@ def create_app() -> FastAPI:
     application.include_router(notifications_router)
     application.include_router(candidate_router)
     application.include_router(admin_router)
+    application.include_router(settings_router)
 
     # --- Health check ---
     @application.get("/health", tags=["infra"])
