@@ -18,10 +18,8 @@ export default function LoginPage() {
 
     try {
       const supabase = createClient();
-      const { data, error: authError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+      const { data, error: authError } =
+        await supabase.auth.signInWithPassword({ email, password });
 
       if (authError) {
         setError(authError.message);
@@ -29,28 +27,30 @@ export default function LoginPage() {
         return;
       }
 
-      // Get the session (may need a fresh fetch if signIn just completed)
-      let token = data.session?.access_token;
+      // Read access token — signInWithPassword returns the session directly
+      const token = data.session?.access_token;
       if (!token) {
-        const { data: sessionData } = await supabase.auth.getSession();
-        token = sessionData.session?.access_token;
+        setError("Sign-in succeeded but no session was returned. Please try again.");
+        setLoading(false);
+        return;
       }
 
-      // Check JWT claims — reject users without tenant_id/app_role
-      if (token) {
-        try {
-          // JWT uses URL-safe base64 — replace before decoding
-          const base64 = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
-          const payload = JSON.parse(atob(base64));
-          if (!payload.tenant_id || !payload.app_role) {
-            await supabase.auth.signOut();
-            setError("This account does not have access to the client dashboard. Please use your invite link to set up your account.");
-            setLoading(false);
-            return;
-          }
-        } catch {
-          // Token parse failed — let the proxy handle it
-        }
+      // Decode JWT claims to check tenant_id/app_role
+      // Reject admin-only accounts that don't belong on the client dashboard
+      const base64 = token
+        .split(".")[1]
+        .replace(/-/g, "+")
+        .replace(/_/g, "/");
+      const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+      const payload = JSON.parse(atob(padded));
+
+      if (!payload.tenant_id || !payload.app_role) {
+        await supabase.auth.signOut();
+        setError(
+          "This account does not have access to the client dashboard. Please use your invite link to set up your account.",
+        );
+        setLoading(false);
+        return;
       }
 
       router.push("/");
