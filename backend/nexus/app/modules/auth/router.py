@@ -171,3 +171,31 @@ async def get_current_user(
         company_name=company.name,
         onboarding_complete=company.onboarding_complete,
     )
+
+
+@router.post("/onboarding/complete")
+async def complete_onboarding(
+    request: Request,
+    db: AsyncSession = Depends(get_bypass_db),
+) -> dict[str, str]:
+    """Mark the company's onboarding as complete.
+
+    Only Company Admins can do this. Sets companies.onboarding_complete = true.
+    Phase 4 will replace this with a full onboarding wizard.
+    """
+    token_payload = request.state.token_payload
+    if token_payload.app_role != "Company Admin":
+        raise HTTPException(status_code=403, detail="Only Company Admin can complete onboarding")
+
+    result = await db.execute(
+        select(User).where(User.auth_user_id == token_payload.sub, User.is_active == True)
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    result = await db.execute(select(Company).where(Company.id == user.tenant_id))
+    company = result.scalar_one()
+    company.onboarding_complete = True
+
+    return {"status": "completed"}
