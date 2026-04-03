@@ -1,0 +1,29 @@
+from pydantic import BaseModel
+
+
+class TeamInviteRequest(BaseModel):
+    email: str
+    role: str  # "Recruiter", "Hiring Manager", "Interviewer", "Observer"
+
+
+class TeamInviteResponse(BaseModel):
+    invite_id: str
+    email: str
+    role: str
+    invite_url: str  # Only present in dry-run mode; empty in production
+
+
+class TeamMember(BaseModel):
+    id: str
+    email: str
+    full_name: str | None
+    role: str
+    is_active: bool
+    source: str  # "user" or "invite"
+    status: str  # "active", "inactive" for users; "pending" for invites
+    created_at: str
+
+
+class ResendInviteResponse(BaseModel):
+    new_invite_id: str
+    invite_url: str  # Only present in dry-run mode
