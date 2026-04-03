@@ -30,18 +30,25 @@ export async function proxy(request: NextRequest) {
 
   const path = request.nextUrl.pathname;
 
-  // Public paths
-  if (PUBLIC_PATHS.has(path)) {
-    await supabase.auth.getUser();
-    return supabaseResponse;
-  }
-
-  // Validate session
+  // Validate session on every request (also refreshes token if needed)
   const {
     data: { user },
     error,
   } = await supabase.auth.getUser();
 
+  // Public paths — redirect to dashboard if already logged in
+  if (PUBLIC_PATHS.has(path)) {
+    if (user && !error) {
+      const isAdmin = user.app_metadata?.is_projectx_admin;
+      if (isAdmin) {
+        return NextResponse.redirect(new URL("/dashboard", request.url));
+      }
+      return NextResponse.redirect(new URL("/pending-approval", request.url));
+    }
+    return supabaseResponse;
+  }
+
+  // Not authenticated → login
   if (error || !user) {
     return NextResponse.redirect(new URL("/login", request.url));
   }

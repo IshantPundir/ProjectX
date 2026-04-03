@@ -17,6 +17,10 @@ export default function LoginPage() {
     setLoading(true);
 
     const supabase = createClient();
+
+    // Sign out any existing session first (e.g., admin account that doesn't belong here)
+    await supabase.auth.signOut();
+
     const { error: authError } = await supabase.auth.signInWithPassword({
       email,
       password,
