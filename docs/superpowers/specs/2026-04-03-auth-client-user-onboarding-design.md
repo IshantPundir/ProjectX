@@ -45,10 +45,10 @@ The Auth Hook injects three custom claims: `tenant_id`, `app_role`, `is_projectx
 
 ### Frontend Auth: Middleware-First with `@supabase/ssr`
 
-- `createServerClient` in middleware refreshes session cookies and validates via `getUser()`
-- Custom JWT claims (`tenant_id`, `app_role`, `is_projectx_admin`) read by decoding the access token with `jwt-decode` — `getUser()` does not return custom claims
+- `createServerClient` in middleware with `supabase.auth.getClaims()` — validates JWT signature locally using cached JWKS public key (ES256), returns all standard + custom claims, auto-refreshes session if token is near expiry. No server roundtrip on every request.
 - `createBrowserClient` singleton for interactive auth (`signUp`, `signInWithPassword`)
-- Middleware stays fast: checks JWT claims only, no `onboarding_complete` check
+- Middleware stays fast: `getClaims()` is local crypto verification, checks custom claims (`tenant_id`, `app_role`, `is_projectx_admin`), no `onboarding_complete` check
+- **Caveat:** `getClaims()` does not call the Auth server, so it won't detect if a user was deleted/banned within the current token lifetime (~1 hour). Acceptable for MVP. Add `getUser()` on sensitive operations if stricter revocation is needed later.
 
 ### Invite Verification via Backend Endpoint
 
@@ -111,7 +111,7 @@ Every tenant-scoped table has:
 
 | Change | File | What |
 |---|---|---|
-| Config fields | `config.py` | `supabase_url`, `supabase_anon_key`, `supabase_jwks_url`, `notifications_dry_run` |
+| Config fields | `config.py` | `supabase_jwks_url`, `notifications_dry_run` |
 | TokenPayload | `auth/schemas.py` | `sub`, `tenant_id`, `app_role`, `email`, `is_projectx_admin`, `exp` |
 | JWKS verification | `auth/service.py` | `PyJWKClient` + ES256, module-level singleton |
 | Middleware update | `middleware/auth.py` | Read `app_role` (not `role`), attach `is_projectx_admin` to `request.state` |
@@ -123,7 +123,7 @@ Every tenant-scoped table has:
 | Method | Endpoint | Auth | Purpose |
 |---|---|---|---|
 | `GET` | `/api/auth/verify-invite?token=<raw>` | Public | Hash token → return `{ email, role, company_name }` or 401 |
-| `POST` | `/api/auth/complete-invite` | Bearer JWT | Atomic claim (UPDATE-WHERE-RETURNING) + INSERT users → `{ redirect_to }` |
+| `POST` | `/api/auth/complete-invite` | Bearer JWT | Single transaction: UPDATE invite → 'accepted' + INSERT users → `{ redirect_to }`. Both writes MUST be inside the same `session.begin()` block — if INSERT fails, invite status reverts to 'pending'. |
 | `GET` | `/api/auth/me` | Bearer JWT | User profile + company info (incl. `onboarding_complete`) |
 | `POST` | `/api/admin/provision-client` | `require_projectx_admin` | Create company + invite + send email |
 | `GET` | `/api/admin/clients` | `require_projectx_admin` | List companies + invite statuses |
@@ -219,12 +219,14 @@ frontend/app/
 
 ```
 1. Create Supabase server client (cookie handlers)
-2. supabase.auth.getUser() — validate session, refresh token
-3. Decode access token with jwtDecode() for custom claims
-4. Route checks:
+2. supabase.auth.getClaims() — validate JWT signature locally (ES256 JWKS),
+   returns all claims including custom (tenant_id, app_role, is_projectx_admin),
+   auto-refreshes session if near expiry
+3. Route checks:
    /invite, /login        → public, pass through
    /(dashboard)/*         → require tenant_id + app_role → else /login
-   /onboarding            → require tenant_id → else /login
+   /onboarding            → require tenant_id + app_role === 'Company Admin' → else /(dashboard)
+                             no valid claims → /login
 ```
 
 Middleware does NOT check `onboarding_complete` — that lives in `(dashboard)/layout.tsx`.
@@ -294,14 +296,14 @@ frontend/admin/
 
 ```
 1. Create Supabase server client (cookie handlers)
-2. supabase.auth.getUser() — validate session
-3. Decode access token with jwtDecode() for is_projectx_admin
-4. Route checks:
+2. supabase.auth.getClaims() — validate JWT signature locally (ES256 JWKS),
+   returns all claims including is_projectx_admin
+3. Route checks:
    /login, /signup         → public, pass through
-   /pending-approval       → require user (any), pass through
+   /pending-approval       → require valid claims (any), pass through
    /(admin)/*              → require is_projectx_admin = true
-                              no user → /login
-                              user but !is_projectx_admin → /pending-approval
+                              no valid claims → /login
+                              valid claims but !is_projectx_admin → /pending-approval
 ```
 
 ### Pages
@@ -334,7 +336,7 @@ To add:
 ### Frontend (both `frontend/app/` and `frontend/admin/`)
 
 ```bash
-npm install @supabase/supabase-js @supabase/ssr jwt-decode
+npm install @supabase/supabase-js @supabase/ssr
 ```
 
 Phase 3+ will add: React Hook Form, Zod, shadcn/ui components.
@@ -346,12 +348,11 @@ Phase 3+ will add: React Hook Form, Zod, shadcn/ui components.
 ### `backend/nexus/.env`
 
 ```
-SUPABASE_URL=http://127.0.0.1:54321
-SUPABASE_ANON_KEY=sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH
-SUPABASE_SERVICE_ROLE_KEY=sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz
 SUPABASE_JWKS_URL=http://127.0.0.1:54321/auth/v1/.well-known/jwks.json
 NOTIFICATIONS_DRY_RUN=true
 ```
+
+FastAPI connects to Postgres via asyncpg directly — it never touches PostgREST or the Supabase REST API. `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` are frontend-only credentials and do NOT belong in the backend config.
 
 ### `frontend/app/.env.local` and `frontend/admin/.env.local`
 
@@ -381,7 +382,7 @@ NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
 - Supabase migration: auth hook function + grants
 - `config.toml`: uncomment + configure `[auth.hook.custom_access_token]`
 - `config.toml`: add `http://127.0.0.1:3001` to `additional_redirect_urls`
-- `config.py`: add `supabase_url`, `supabase_anon_key`, `supabase_jwks_url`, `notifications_dry_run`
+- `config.py`: add `supabase_jwks_url`, `notifications_dry_run`
 - `auth/schemas.py`: updated `TokenPayload`
 - `auth/service.py`: JWKS/ES256 via `PyJWKClient`, `require_projectx_admin()`
 - `middleware/auth.py`: read `app_role`, attach `is_projectx_admin`
@@ -406,12 +407,12 @@ NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
 
 **Frontend — Admin Panel:**
 - `lib/supabase/` (client.ts, server.ts), `lib/api/client.ts`
-- `middleware.ts` (`is_projectx_admin` check + `jwt-decode`)
+- `middleware.ts` (`getClaims()` → `is_projectx_admin` check)
 - Pages: `/login`, `/signup`, `/pending-approval`, `/dashboard`, `/dashboard/provision`
 
 **Frontend — Client Dashboard:**
 - `lib/supabase/` (client.ts, server.ts), `lib/api/client.ts`
-- `middleware.ts` (`tenant_id` + `app_role` check + `jwt-decode`)
+- `middleware.ts` (`getClaims()` → `tenant_id` + `app_role` check)
 - Pages: `/login`, `/invite` (3 states), `/onboarding` (placeholder)
 - `(dashboard)/layout.tsx` with `GET /api/auth/me` + `React.cache()`
 
@@ -424,6 +425,7 @@ NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
 - Redirected to `/onboarding` placeholder
 - Second click on same invite URL → "Invite Invalid or Expired"
 - Return via `/login` → `signInWithPassword` → dashboard
+- Simulate INSERT failure after UPDATE in `complete-invite` — verify invite status reverts to 'pending' and no orphaned user row exists
 
 ### Phase 3 — Pipeline B (Team Invites)
 
@@ -472,7 +474,9 @@ NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
 - Email match enforced: invite email must equal OAuth/signup email
 - `SET LOCAL` (not `SET`) for RLS context — scoped to transaction only
 - `get_bypass_session()` only on admin routes, `complete-invite`, and onboarding completion
-- `getUser()` for session validation, `jwtDecode()` for custom claims — never `getSession()` alone for security
+- `getClaims()` for session validation and custom claim reading in middleware — validates JWT signature locally via JWKS, never `getSession()` alone for security
+- `complete-invite` UPDATE + INSERT must be in a single transaction — if INSERT fails, invite reverts to 'pending'
+- `/onboarding` route requires `app_role === 'Company Admin'` — other roles redirect to `/(dashboard)`
 - `app_role` for RBAC — never `role` (which is always `"authenticated"`)
 - No `SECURITY DEFINER` on auth hook — use explicit grants
 - `is_projectx_admin` set manually in Supabase dashboard, not via any API
