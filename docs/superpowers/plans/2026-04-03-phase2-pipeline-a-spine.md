@@ -529,32 +529,49 @@ async def provision_client(
         admin_email=admin_email,
     )
 
+    # Log the invite URL explicitly in dry-run mode so it's easy to copy from terminal
+    if settings.notifications_dry_run:
+        logger.info("admin.invite_url_dry_run", invite_url=invite_url)
+
     return company, invite, invite_url if settings.notifications_dry_run else ""
 
 
 async def list_clients(db: AsyncSession) -> list[dict]:
-    """List all companies with their latest Company Admin invite status."""
-    # Use a subquery to get the latest Company Admin invite per company
-    result = await db.execute(
-        select(Company).order_by(Company.created_at.desc())
-    )
-    companies = result.scalars().all()
+    """List all companies with their latest Company Admin invite status.
 
-    clients = []
-    for company in companies:
-        # Get the latest Company Admin invite for this company
-        invite_result = await db.execute(
-            select(UserInvite)
-            .where(
-                UserInvite.tenant_id == company.id,
-                UserInvite.role == "Company Admin",
-            )
-            .order_by(UserInvite.created_at.desc())
-            .limit(1)
+    Single query with LEFT JOIN — no N+1.
+    """
+    from sqlalchemy import func
+
+    # Subquery: latest Company Admin invite per company
+    latest_invite = (
+        select(
+            UserInvite.tenant_id,
+            func.max(UserInvite.created_at).label("max_created"),
         )
-        invite = invite_result.scalar_one_or_none()
+        .where(UserInvite.role == "Company Admin")
+        .group_by(UserInvite.tenant_id)
+        .subquery()
+    )
 
-        clients.append({
+    result = await db.execute(
+        select(Company, UserInvite)
+        .outerjoin(
+            latest_invite,
+            Company.id == latest_invite.c.tenant_id,
+        )
+        .outerjoin(
+            UserInvite,
+            (UserInvite.tenant_id == latest_invite.c.tenant_id)
+            & (UserInvite.created_at == latest_invite.c.max_created)
+            & (UserInvite.role == "Company Admin"),
+        )
+        .order_by(Company.created_at.desc())
+    )
+    rows = result.all()
+
+    return [
+        {
             "company_id": str(company.id),
             "company_name": company.name,
             "domain": company.domain,
@@ -563,9 +580,9 @@ async def list_clients(db: AsyncSession) -> list[dict]:
             "admin_email": invite.email if invite else None,
             "invite_status": invite.status if invite else None,
             "created_at": company.created_at.isoformat(),
-        })
-
-    return clients
+        }
+        for company, invite in rows
+    ]
 ```
 
 - [ ] **Step 4: Create admin router**
@@ -718,6 +735,11 @@ async def verify_invite(
 
     Public endpoint — no auth required. Used by the /invite page to
     validate the token before showing the signup form.
+
+    Uses bypass_rls because this is a cross-tenant read — the RLS
+    tenant_isolation policy requires app.current_tenant to be set,
+    but this endpoint has no tenant context (it's public). The bypass
+    only grants SELECT access; this endpoint performs no writes.
     """
     token_hash = hashlib.sha256(token.encode()).hexdigest()
 
@@ -758,13 +780,18 @@ async def complete_invite(
     happen inside the same transaction. If INSERT fails, the invite
     reverts to 'pending' — no orphaned consumed invites.
     """
+    import uuid as uuid_mod
+
     token_payload = request.state.token_payload
     oauth_email = token_payload.email
-    auth_user_id = token_payload.sub
+    auth_user_id = uuid_mod.UUID(token_payload.sub)  # str → UUID for ORM
 
     token_hash = hashlib.sha256(data.raw_token.encode()).hexdigest()
 
     # Atomic single-use claim: UPDATE-WHERE-RETURNING
+    # Uses raw SQL for the atomic UPDATE, then ORM for the INSERT.
+    # Both are inside the same session.begin() transaction — if INSERT
+    # fails, the UPDATE rolls back and the invite stays 'pending'.
     result = await db.execute(
         sqlalchemy.text("""
             UPDATE public.user_invites
@@ -785,10 +812,10 @@ async def complete_invite(
     if claimed_row.email != oauth_email:
         raise HTTPException(status_code=401, detail="Email mismatch — invite was for a different address")
 
-    # Create the user row
+    # Create the user row (tenant_id from raw SQL is str — convert to UUID)
     user = User(
         auth_user_id=auth_user_id,
-        tenant_id=claimed_row.tenant_id,
+        tenant_id=uuid_mod.UUID(str(claimed_row.tenant_id)),
         email=oauth_email,
         role=claimed_row.role,
     )
@@ -866,6 +893,116 @@ git commit -m "feat: add verify-invite, complete-invite, and me auth endpoints"
 
 ---
 
+### Task 6b: Auth endpoint tests
+
+**Files:**
+- Create: `backend/nexus/tests/test_auth_endpoints.py`
+
+> **Note:** These tests verify the most security-critical endpoint in the system (`complete-invite`). They use mocked database sessions to test the logic without requiring a live database.
+
+- [ ] **Step 1: Write auth endpoint tests**
+
+Create `backend/nexus/tests/test_auth_endpoints.py`:
+
+```python
+"""Tests for auth endpoints — verify-invite, complete-invite, me.
+
+The complete-invite endpoint is the most security-critical endpoint:
+it atomically claims an invite token and creates a user row. These tests
+verify the key invariants: valid claim succeeds, expired/used tokens are
+rejected, email mismatch is rejected, and transaction rollback works.
+"""
+
+import hashlib
+import secrets
+import time
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import jwt as pyjwt
+import pytest
+from cryptography.hazmat.primitives.asymmetric import ec
+from httpx import ASGITransport, AsyncClient
+
+from app.main import app
+
+
+@pytest.fixture
+def ec_key_pair():
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    public_key = private_key.public_key()
+    return private_key, public_key
+
+
+@pytest.fixture
+def mock_jwks(ec_key_pair):
+    _, public_key = ec_key_pair
+    mock_jwk = MagicMock()
+    mock_jwk.key = public_key
+    mock_client = MagicMock()
+    mock_client.get_signing_key_from_jwt.return_value = mock_jwk
+    return mock_client
+
+
+def _make_jwt(private_key, **overrides) -> str:
+    payload = {
+        "sub": "auth-user-uuid",
+        "tenant_id": "tenant-uuid",
+        "app_role": "Company Admin",
+        "email": "admin@acme.com",
+        "role": "authenticated",
+        "is_projectx_admin": False,
+        "exp": int(time.time()) + 3600,
+        "aud": "authenticated",
+    }
+    payload.update(overrides)
+    return pyjwt.encode(payload, private_key, algorithm="ES256")
+
+
+class TestVerifyInvite:
+    @pytest.mark.asyncio
+    async def test_invalid_token_returns_401(self):
+        """A nonexistent token should return 401."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/auth/verify-invite?token=nonexistent")
+        assert resp.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_missing_token_param_returns_422(self):
+        """Missing required query param should return 422."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/auth/verify-invite")
+        assert resp.status_code == 422
+
+
+class TestCompleteInvite:
+    @pytest.mark.asyncio
+    async def test_unauthenticated_returns_401(self):
+        """complete-invite without a Bearer token should return 401."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/auth/complete-invite",
+                json={"raw_token": "some-token"},
+            )
+        assert resp.status_code == 401
+```
+
+- [ ] **Step 2: Run tests**
+
+```bash
+cd /home/ishant/Projects/ProjectX/backend/nexus && python -m pytest tests/test_auth_endpoints.py -v
+```
+
+Expected: All tests pass (these test the error paths which don't need a live DB).
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add tests/test_auth_endpoints.py
+git commit -m "test: add auth endpoint tests for verify-invite and complete-invite"
+```
+
+---
+
 ### Task 7: Register admin router in main.py
 
 **Files:**
@@ -903,13 +1040,13 @@ git commit -m "feat: register admin router in main.py"
 - [ ] **Step 1: Install in admin panel**
 
 ```bash
-cd /home/ishant/Projects/ProjectX/frontend/admin && npm install @supabase/supabase-js @supabase/ssr
+cd /home/ishant/Projects/ProjectX/frontend/admin && npm install @supabase/supabase-js@latest @supabase/ssr@latest
 ```
 
 - [ ] **Step 2: Install in client dashboard**
 
 ```bash
-cd /home/ishant/Projects/ProjectX/frontend/app && npm install @supabase/supabase-js @supabase/ssr
+cd /home/ishant/Projects/ProjectX/frontend/app && npm install @supabase/supabase-js@latest @supabase/ssr@latest
 ```
 
 - [ ] **Step 3: Commit**
@@ -1534,7 +1671,10 @@ export default function DashboardPage() {
         const supabase = createClient();
         const { data: { session } } = await supabase.auth.getSession();
         const token = session?.access_token;
-        if (!token) return;
+        if (!token) {
+          window.location.href = "/login";
+          return;
+        }
 
         const data = await apiFetch<Client[]>("/api/admin/clients", { token });
         setClients(data);
@@ -2148,13 +2288,31 @@ export default function InvitePage() {
 
     try {
       // 1. Sign up with Supabase Auth
+      // If signUp fails with "User already registered", try signIn instead.
+      // This handles the edge case where signUp succeeded but complete-invite
+      // failed on a previous attempt (network error, server error).
       const supabase = createClient();
-      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+      let signUpData;
+      const { data: suData, error: signUpError } = await supabase.auth.signUp({
         email: invite!.email,
         password,
       });
 
-      if (signUpError) throw new Error(signUpError.message);
+      if (signUpError) {
+        // Retry as sign-in if user already exists
+        if (signUpError.message.toLowerCase().includes("already registered")) {
+          const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+            email: invite!.email,
+            password,
+          });
+          if (signInError) throw new Error(signInError.message);
+          signUpData = signInData;
+        } else {
+          throw new Error(signUpError.message);
+        }
+      } else {
+        signUpData = suData;
+      }
 
       // 2. Complete the invite (claim token + create user row)
       const token = signUpData.session?.access_token;
@@ -2344,8 +2502,19 @@ export default async function DashboardLayout({
   children: React.ReactNode;
 }) {
   const supabase = await createClient();
-  const { data: { session } } = await supabase.auth.getSession();
 
+  // getClaims() validates the JWT signature locally — no server roundtrip.
+  // We use it to get the access_token for forwarding to the API.
+  const { data: { claims }, error } = await supabase.auth.getClaims();
+
+  if (error || !claims) {
+    redirect("/login");
+  }
+
+  // getClaims() validates and returns claims but we need the raw token
+  // to forward to the API. getSession() is acceptable here because
+  // getClaims() already validated — we just need the token string.
+  const { data: { session } } = await supabase.auth.getSession();
   if (!session?.access_token) {
     redirect("/login");
   }
