@@ -10,22 +10,20 @@ class Settings(BaseSettings):
     environment: str = "development"  # development | staging | production
 
     # Database (asyncpg)
-    database_url: str = "postgresql+asyncpg://projectx:projectx@localhost:5432/projectx"
+    database_url: str = "postgresql+asyncpg://postgres:postgres@127.0.0.1:54322/postgres"
 
     # Redis
     redis_url: str = "redis://localhost:6379/0"
 
-    # Auth — provider-agnostic JWT verification
-    jwt_secret: str = "change-me-in-production"
-    jwt_algorithm: str = "HS256"
-    jwt_issuer: str = ""
+    # Auth — ES256 JWKS verification (no shared secret)
+    supabase_jwks_url: str = ""  # e.g. http://127.0.0.1:54321/auth/v1/.well-known/jwks.json
 
     # Candidate JWT (separate signing key — treat as DB credential)
     candidate_jwt_secret: str = "change-me-candidate-secret"
+    candidate_jwt_algorithm: str = "HS256"
 
-    # Supabase Auth (used only as JWT issuer for dashboard users at MVP)
-    supabase_url: str = ""
-    supabase_jwt_secret: str = ""
+    # Notifications
+    notifications_dry_run: bool = True  # True = log emails to stdout, False = send via Resend
 
     # LiveKit
     livekit_url: str = ""
@@ -57,7 +55,7 @@ class Settings(BaseSettings):
     langfuse_secret_key: str = ""
 
     # CORS
-    cors_origins: list[str] = ["http://localhost:3000"]
+    cors_origins: list[str] = ["http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:3000", "http://127.0.0.1:3001"]
 
 
 settings = Settings()
