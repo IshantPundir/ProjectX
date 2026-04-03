@@ -331,8 +331,10 @@ Create `scripts/supabase_hook.sql` — identical SQL but with a header comment:
 -- DO NOT run this against local Supabase — it runs automatically via migrations.
 -- ============================================================================
 
--- Copy the complete SQL from backend/supabase/migrations/20260403000001_auth_hook.sql
--- (CREATE OR REPLACE FUNCTION ... through REVOKE statement) here verbatim.
+-- Include the FULL contents of backend/supabase/migrations/20260403000001_auth_hook.sql
+-- below this line — the complete CREATE OR REPLACE FUNCTION through the REVOKE statement.
+-- The implementing agent must copy the entire SQL body from the migration file into this
+-- file so it is self-contained. Do NOT leave this as a reference — paste the actual SQL.
 ```
 
 - [ ] **Step 3: Commit**
@@ -360,7 +362,7 @@ additional_redirect_urls = ["https://127.0.0.1:3000"]
 Replace with:
 
 ```toml
-additional_redirect_urls = ["https://127.0.0.1:3000", "http://127.0.0.1:3000/auth/callback", "http://127.0.0.1:3001/auth/callback"]
+additional_redirect_urls = ["http://127.0.0.1:3000", "http://127.0.0.1:3000/auth/callback", "http://127.0.0.1:3001/auth/callback"]
 ```
 
 - [ ] **Step 2: Uncomment and configure the auth hook**
@@ -381,7 +383,17 @@ enabled = true
 uri = "pg-functions://postgres/public/projectx_custom_access_token_hook"
 ```
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 3: Verify email confirmations are disabled**
+
+Confirm `backend/supabase/config.toml` line 209 has:
+
+```toml
+enable_confirmations = false
+```
+
+This is critical — without it, `supabase.auth.signUp()` sends a confirmation email and the user has no active session until they click it, breaking the entire invite flow. It was set during Phase 0 but verify it hasn't been reverted.
+
+- [ ] **Step 4: Commit**
 
 ```bash
 git add backend/supabase/config.toml
@@ -424,7 +436,7 @@ INSERT INTO public.companies (name) VALUES ('TestCo') RETURNING id;
 "
 ```
 
-Then test the XOR constraint (should fail — both `invited_by` and `projectx_admin_id` are NULL):
+Then test the XOR constraint (should fail — neither `invited_by` nor `projectx_admin_id` is set):
 
 ```bash
 docker exec -i $(docker ps -q -f name=supabase_db) psql -U postgres -c "
@@ -509,7 +521,13 @@ NOTIFICATIONS_DRY_RUN=true
 CORS_ORIGINS=["http://localhost:3000","http://localhost:3001","http://127.0.0.1:3000","http://127.0.0.1:3001"]
 ```
 
-Remove the old `JWT_SECRET`, `JWT_ALGORITHM`, `SUPABASE_URL`, `SUPABASE_JWT_SECRET` lines.
+Explicitly remove these stale fields from both `.env` and `.env.example`:
+- `JWT_SECRET`
+- `JWT_ALGORITHM`
+- `SUPABASE_URL`
+- `SUPABASE_JWT_SECRET`
+
+Leaving stale fields causes confusion when someone reads the file later.
 
 - [ ] **Step 3: Update .env.example to match .env**
 
@@ -547,7 +565,18 @@ class TokenPayload(BaseModel):
     role: str = "authenticated"      # Postgres role — always "authenticated", NOT for RBAC
     is_projectx_admin: bool = False  # True only for ProjectX internal team
     exp: int = 0
+
+
+class CandidateTokenPayload(BaseModel):
+    """Decoded JWT for single-use candidate session tokens (HS256)."""
+    sub: str = ""
+    session_id: str = ""
+    tenant_id: str = ""
+    exp: int = 0
+    iat: int = 0
 ```
+
+> **Note:** Both `TokenPayload` and `CandidateTokenPayload` must be in this file — `service.py` imports both.
 
 - [ ] **Step 2: Commit**
 
@@ -789,7 +818,11 @@ def verify_candidate_token(token: str) -> CandidateTokenPayload | None:
 
 
 def require_projectx_admin():
-    """FastAPI dependency — rejects requests without is_projectx_admin claim."""
+    """FastAPI dependency factory — rejects requests without is_projectx_admin claim.
+
+    Usage: dependencies=[require_projectx_admin()]  ← called, returns Depends()
+    Same pattern as require_roles(). Do NOT wrap in Depends() at the call site.
+    """
     from fastapi import Depends, HTTPException, Request
 
     async def _check(request: Request) -> TokenPayload:
@@ -874,11 +907,11 @@ Expected: FAIL — `get_bypass_session` does not exist yet.
 
 - [ ] **Step 3: Add get_bypass_session to database.py**
 
-Add after the existing `get_session()` function (after line 44) in `backend/nexus/app/database.py`:
+Add after the existing `get_session()` function (after line 44) in `backend/nexus/app/database.py`. The required imports (`asynccontextmanager`, `AsyncGenerator`, `sqlalchemy`) are already present at the top of the file.
 
 ```python
 @asynccontextmanager
-async def get_bypass_session() -> AsyncGenerator[AsyncSession]:
+async def get_bypass_session() -> AsyncGenerator[AsyncSession, None]:
     """Yield a session with RLS bypass enabled.
 
     Used ONLY for: admin routes, complete-invite, and onboarding completion.
@@ -916,15 +949,10 @@ git commit -m "feat: add get_bypass_session for admin/onboarding RLS bypass"
 
 - [ ] **Step 1: Add auth endpoints to public paths**
 
-In `backend/nexus/app/middleware/auth.py`, update `_PUBLIC_PATHS` (line 12) and add a new prefix set:
+In `backend/nexus/app/middleware/auth.py`, keep the existing `_PUBLIC_PATHS` and `_CANDIDATE_PREFIXES` (already defined at lines 12-21), and add a new prefix set after them:
 
 ```python
-_PUBLIC_PATHS: set[str] = {
-    "/health",
-    "/docs",
-    "/openapi.json",
-}
-
+# Add this after _CANDIDATE_PREFIXES (line 21)
 _PUBLIC_PREFIXES: tuple[str, ...] = (
     "/api/auth/verify-invite",  # Public — invite token verification
 )
@@ -1016,9 +1044,27 @@ git commit -m "feat: update middleware for app_role, is_projectx_admin, public a
 
 No changes needed in `main.py` — it already reads from `settings.cors_origins`.
 
-- [ ] **Step 2: Write frontend env files**
+- [ ] **Step 2: Write frontend env example files**
 
-Write `frontend/app/.env.local`:
+`.env.local` files are gitignored by Next.js by default. Create `.env.local.example` files (which ARE committed) to document the required env vars:
+
+Write `frontend/app/.env.local.example`:
+
+```
+NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<from supabase status>
+NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
+```
+
+Write `frontend/admin/.env.local.example`:
+
+```
+NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<from supabase status>
+NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
+```
+
+Then write the actual `.env.local` files (not committed) with the real anon key:
 
 ```
 NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
@@ -1026,19 +1072,11 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH
 NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
 ```
 
-Write `frontend/admin/.env.local`:
-
-```
-NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
-NEXT_PUBLIC_SUPABASE_ANON_KEY=sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH
-NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
-```
-
-- [ ] **Step 3: Commit**
+- [ ] **Step 3: Commit (example files only — .env.local is gitignored)**
 
 ```bash
-git add frontend/app/.env.local frontend/admin/.env.local
-git commit -m "feat: add frontend env files for local Supabase"
+git add frontend/app/.env.local.example frontend/admin/.env.local.example
+git commit -m "feat: add frontend env example files for local Supabase"
 ```
 
 ---
@@ -1075,8 +1113,13 @@ curl -s -X POST http://127.0.0.1:54321/auth/v1/signup \
 Expected: Response contains `access_token`. Decode the JWT to verify it contains `tenant_id`, `app_role`, and `is_projectx_admin` claims (all empty/false for a user with no invite):
 
 ```bash
-# Decode the JWT payload (base64, no verification — just to inspect claims)
-echo "<access_token>" | cut -d. -f2 | base64 -d 2>/dev/null | python3 -m json.tool
+# Decode the JWT payload (URL-safe base64 with padding fix — just to inspect claims)
+python3 -c "
+import base64, json, sys
+payload = sys.argv[1].split('.')[1]
+padding = 4 - len(payload) % 4
+print(json.dumps(json.loads(base64.urlsafe_b64decode(payload + '=' * padding)), indent=2))
+" "<access_token>"
 ```
 
 Expected: JWT payload includes `"tenant_id": ""`, `"app_role": ""`, `"is_projectx_admin": false`.
