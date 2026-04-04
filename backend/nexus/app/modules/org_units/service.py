@@ -52,7 +52,14 @@ async def create_org_unit(
     name: str,
     unit_type: str,
     parent_unit_id: uuid_mod.UUID | None = None,
+    creator_user_id: uuid_mod.UUID,
 ) -> OrganizationalUnit:
+    """Create an org unit and auto-assign admins.
+
+    1. The creator is always assigned as an admin of the new unit.
+    2. If this is a nested unit, all admins from the parent unit are
+       also assigned to the new unit (inherited admin access).
+    """
     if unit_type not in ALLOWED_UNIT_TYPES:
         raise ValueError(f"Invalid unit_type: {unit_type}")
 
@@ -64,7 +71,51 @@ async def create_org_unit(
     )
     db.add(unit)
     await db.flush()
-    logger.info("org_unit.created", unit_id=str(unit.id), name=name)
+
+    # Auto-assign the creator
+    creator_assignment = UserOrgAssignment(
+        user_id=creator_user_id,
+        org_unit_id=unit.id,
+        assigned_by=creator_user_id,
+    )
+    db.add(creator_assignment)
+
+    # If nested, inherit parent's admins (skip creator to avoid duplicate)
+    if parent_unit_id is not None:
+        parent_members = await db.execute(
+            select(UserOrgAssignment).where(UserOrgAssignment.org_unit_id == parent_unit_id)
+        )
+        for parent_assignment in parent_members.scalars().all():
+            if parent_assignment.user_id != creator_user_id:
+                child_assignment = UserOrgAssignment(
+                    user_id=parent_assignment.user_id,
+                    org_unit_id=unit.id,
+                    assigned_by=creator_user_id,
+                )
+                db.add(child_assignment)
+
+        # Also include users whose primary org_unit_id is the parent
+        primary_members = await db.execute(
+            select(User).where(
+                User.org_unit_id == parent_unit_id,
+                User.is_active == True,
+                User.id != creator_user_id,
+            )
+        )
+        existing_assigned = {a.user_id for a in (await db.execute(
+            select(UserOrgAssignment).where(UserOrgAssignment.org_unit_id == unit.id)
+        )).scalars().all()}
+
+        for user in primary_members.scalars().all():
+            if user.id not in existing_assigned:
+                db.add(UserOrgAssignment(
+                    user_id=user.id,
+                    org_unit_id=unit.id,
+                    assigned_by=creator_user_id,
+                ))
+
+    await db.flush()
+    logger.info("org_unit.created", unit_id=str(unit.id), name=name, creator=str(creator_user_id))
     return unit
 
 

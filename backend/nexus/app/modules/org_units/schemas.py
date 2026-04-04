@@ -13,6 +13,7 @@ class OrgUnitResponse(BaseModel):
     parent_unit_id: str | None
     name: str
     unit_type: str
+    member_count: int
     created_at: str
 
 
@@ -29,7 +30,7 @@ class OrgUnitMember(BaseModel):
     user_id: str
     email: str
     full_name: str | None
-    role: str
+    role: str | None
     is_admin: bool
-    assignment_type: str  # "primary" (from users.org_unit_id) or "assigned" (from junction)
+    assignment_type: str  # "primary" or "assigned"
     assigned_at: str

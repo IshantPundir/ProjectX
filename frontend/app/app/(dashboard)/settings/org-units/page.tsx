@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { apiFetch } from "@/lib/api/client";
 
@@ -10,6 +10,7 @@ interface OrgUnit {
   parent_unit_id: string | null;
   name: string;
   unit_type: string;
+  member_count: number;
   created_at: string;
 }
 
@@ -17,17 +18,18 @@ interface OrgUnitMember {
   user_id: string;
   email: string;
   full_name: string | null;
-  role: string;
+  role: string | null;
   is_admin: boolean;
   assignment_type: "primary" | "assigned";
   assigned_at: string;
 }
 
-interface TeamUser {
+interface TenantUser {
   id: string;
   email: string;
   full_name: string | null;
-  role: string;
+  role: string | null;
+  is_admin: boolean;
 }
 
 const UNIT_TYPES = [
@@ -49,9 +51,7 @@ const typeLabel: Record<string, string> = {
 function buildTree(units: OrgUnit[]): { unit: OrgUnit; depth: number }[] {
   const childrenMap = new Map<string | null, OrgUnit[]>();
   for (const u of units) {
-    const key = u.parent_unit_id;
-    if (!childrenMap.has(key)) childrenMap.set(key, []);
-    childrenMap.get(key)!.push(u);
+    childrenMap.set(u.parent_unit_id, [...(childrenMap.get(u.parent_unit_id) || []), u]);
   }
   const result: { unit: OrgUnit; depth: number }[] = [];
   function walk(parentId: string | null, depth: number) {
@@ -70,23 +70,23 @@ export default function OrgUnitsPage() {
   const [error, setError] = useState("");
 
   // Create form
-  const [showForm, setShowForm] = useState(false);
-  const [name, setName] = useState("");
-  const [unitType, setUnitType] = useState("department");
-  const [parentId, setParentId] = useState("");
+  const [showCreate, setShowCreate] = useState(false);
+  const [createName, setCreateName] = useState("");
+  const [createType, setCreateType] = useState("department");
+  const [createParent, setCreateParent] = useState("");
   const [creating, setCreating] = useState(false);
 
   // Edit
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editId, setEditId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [editType, setEditType] = useState("");
 
-  // Members panel
-  const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
+  // Selected unit panel
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [members, setMembers] = useState<OrgUnitMember[]>([]);
-  const [allUsers, setAllUsers] = useState<TeamUser[]>([]);
-  const [assignUserId, setAssignUserId] = useState("");
+  const [allUsers, setAllUsers] = useState<TenantUser[]>([]);
   const [membersLoading, setMembersLoading] = useState(false);
+  const [userSearch, setUserSearch] = useState("");
 
   async function getToken() {
     const supabase = createClient();
@@ -102,10 +102,9 @@ export default function OrgUnitsPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      const data = await apiFetch<OrgUnit[]>("/api/org-units", { token });
-      setUnits(data);
+      setUnits(await apiFetch<OrgUnit[]>("/api/org-units", { token }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load org units");
+      setError(err instanceof Error ? err.message : "Failed to load");
     } finally {
       setLoading(false);
     }
@@ -116,12 +115,13 @@ export default function OrgUnitsPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      const [memberData, userData] = await Promise.all([
+      const [m, u] = await Promise.all([
         apiFetch<OrgUnitMember[]>(`/api/org-units/${unitId}/members`, { token }),
-        apiFetch<TeamUser[]>("/api/settings/team/members", { token }),
+        apiFetch<TenantUser[]>("/api/settings/team/members", { token }),
       ]);
-      setMembers(memberData);
-      setAllUsers(userData.filter((u: TeamUser) => u.source === "user") as TeamUser[]);
+      setMembers(m);
+      // Filter to users only (not invites)
+      setAllUsers((u as (TenantUser & { source?: string })[]).filter((x) => (x as { source?: string }).source === "user"));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load members");
     } finally {
@@ -130,10 +130,7 @@ export default function OrgUnitsPage() {
   }
 
   useEffect(() => { loadUnits(); }, []);
-
-  useEffect(() => {
-    if (selectedUnitId) loadMembers(selectedUnitId);
-  }, [selectedUnitId]);
+  useEffect(() => { if (selectedId) loadMembers(selectedId); }, [selectedId]);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -142,15 +139,21 @@ export default function OrgUnitsPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      await apiFetch("/api/org-units", {
+      const newUnit = await apiFetch<OrgUnit>("/api/org-units", {
         method: "POST", token,
-        body: JSON.stringify({ name, unit_type: unitType, parent_unit_id: parentId || null }),
+        body: JSON.stringify({ name: createName, unit_type: createType, parent_unit_id: createParent || null }),
       });
-      setName(""); setUnitType("department"); setParentId(""); setShowForm(false);
+      setCreateName("");
+      setCreateType("department");
+      setCreateParent("");
+      setShowCreate(false);
       await loadUnits();
+      setSelectedId(newUnit.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create");
-    } finally { setCreating(false); }
+    } finally {
+      setCreating(false);
+    }
   }
 
   async function handleEdit(unitId: string) {
@@ -162,63 +165,72 @@ export default function OrgUnitsPage() {
         method: "PUT", token,
         body: JSON.stringify({ name: editName, unit_type: editType }),
       });
-      setEditingId(null);
+      setEditId(null);
       await loadUnits();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update");
     }
   }
 
-  async function handleAssign() {
-    if (!selectedUnitId || !assignUserId) return;
+  async function handleAssign(userId: string) {
+    if (!selectedId) return;
     setError("");
     try {
       const token = await getToken();
       if (!token) return;
-      await apiFetch(`/api/org-units/${selectedUnitId}/members`, {
+      await apiFetch(`/api/org-units/${selectedId}/members`, {
         method: "POST", token,
-        body: JSON.stringify({ user_id: assignUserId }),
+        body: JSON.stringify({ user_id: userId }),
       });
-      setAssignUserId("");
-      await loadMembers(selectedUnitId);
+      setUserSearch("");
+      await loadMembers(selectedId);
+      await loadUnits();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to assign");
     }
   }
 
   async function handleUnassign(userId: string) {
-    if (!selectedUnitId) return;
+    if (!selectedId) return;
     setError("");
     try {
       const token = await getToken();
       if (!token) return;
-      await apiFetch(`/api/org-units/${selectedUnitId}/members/${userId}`, {
+      await apiFetch(`/api/org-units/${selectedId}/members/${userId}`, {
         method: "DELETE", token,
       });
-      await loadMembers(selectedUnitId);
+      await loadMembers(selectedId);
+      await loadUnits();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to remove");
     }
   }
 
   const tree = buildTree(units);
-  const selectedUnit = units.find((u) => u.id === selectedUnitId);
+  const selectedUnit = units.find((u) => u.id === selectedId);
 
-  // Users available to assign (not already in this unit)
-  const memberUserIds = new Set(members.map((m) => m.user_id));
-  const assignableUsers = allUsers.filter((u) => !memberUserIds.has(u.id));
+  // Searchable user list — exclude users already in this unit
+  const memberIds = new Set(members.map((m) => m.user_id));
+  const filteredUsers = useMemo(() => {
+    const available = allUsers.filter((u) => !memberIds.has(u.id));
+    if (!userSearch.trim()) return available.slice(0, 8);
+    const q = userSearch.toLowerCase();
+    return available.filter(
+      (u) => u.email.toLowerCase().includes(q) || (u.full_name || "").toLowerCase().includes(q),
+    );
+  }, [allUsers, memberIds, userSearch]);
 
   return (
-    <div className="flex gap-6">
-      {/* Left: org units tree */}
-      <div className="flex-1">
-        <div className="flex items-center justify-between mb-6">
-          <h1 className="text-lg font-semibold text-zinc-900">Organizational Units</h1>
+    <div className="flex gap-6 min-h-[600px]">
+      {/* Left panel: unit tree */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center justify-between mb-4">
+          <h1 className="text-lg font-semibold text-zinc-900">Org Units</h1>
           <button
-            onClick={() => setShowForm(!showForm)}
-            className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700"
+            onClick={() => setShowCreate(!showCreate)}
+            className="bg-green-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-green-700"
           >
-            {showForm ? "Cancel" : "+ Create Unit"}
+            {showCreate ? "Cancel" : "+ New Unit"}
           </button>
         </div>
 
@@ -226,158 +238,177 @@ export default function OrgUnitsPage() {
           <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3 mb-4">{error}</p>
         )}
 
-        {showForm && (
-          <form onSubmit={handleCreate} className="bg-white border border-zinc-200 rounded-lg p-5 mb-6">
-            <h2 className="text-sm font-medium text-zinc-900 mb-3">New Unit</h2>
-            <div className="flex gap-3 items-end flex-wrap">
-              <div className="flex-1 min-w-[160px]">
+        {showCreate && (
+          <form onSubmit={handleCreate} className="bg-white border border-zinc-200 rounded-lg p-4 mb-4 space-y-3">
+            <h2 className="text-sm font-medium text-zinc-900">Create Organizational Unit</h2>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
                 <label className="block text-xs font-medium text-zinc-600 mb-1">Name</label>
-                <input type="text" required value={name} onChange={(e) => setName(e.target.value)}
-                  className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-600" />
+                <input type="text" required value={createName} onChange={(e) => setCreateName(e.target.value)}
+                  className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-600"
+                  placeholder="e.g., Engineering" />
               </div>
-              <div className="w-40">
+              <div>
                 <label className="block text-xs font-medium text-zinc-600 mb-1">Type</label>
-                <select value={unitType} onChange={(e) => setUnitType(e.target.value)}
+                <select value={createType} onChange={(e) => setCreateType(e.target.value)}
                   className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-green-600">
                   {UNIT_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
                 </select>
               </div>
-              {units.length > 0 && (
-                <div className="w-44">
-                  <label className="block text-xs font-medium text-zinc-600 mb-1">Parent</label>
-                  <select value={parentId} onChange={(e) => setParentId(e.target.value)}
-                    className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-green-600">
-                    <option value="">None</option>
-                    {units.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-                  </select>
-                </div>
-              )}
-              <button type="submit" disabled={creating}
-                className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50">
-                {creating ? "..." : "Create"}
-              </button>
             </div>
+            {units.length > 0 && (
+              <div>
+                <label className="block text-xs font-medium text-zinc-600 mb-1">Parent Unit (optional — makes this a sub-unit)</label>
+                <select value={createParent} onChange={(e) => setCreateParent(e.target.value)}
+                  className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-green-600">
+                  <option value="">None (top-level)</option>
+                  {tree.map(({ unit: u, depth }) => (
+                    <option key={u.id} value={u.id}>{"  ".repeat(depth)}{u.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <p className="text-xs text-zinc-400">You will be auto-assigned as an admin. For sub-units, parent admins are inherited.</p>
+            <button type="submit" disabled={creating}
+              className="w-full bg-green-600 text-white rounded-lg py-2 text-sm font-medium hover:bg-green-700 disabled:opacity-50">
+              {creating ? "Creating..." : "Create Unit"}
+            </button>
           </form>
         )}
 
         {loading ? (
           <p className="text-sm text-zinc-500">Loading...</p>
         ) : units.length === 0 ? (
-          <p className="text-sm text-zinc-500">No organizational units yet.</p>
+          <div className="text-center py-16">
+            <p className="text-zinc-400 text-sm mb-2">No organizational units yet</p>
+            <button onClick={() => setShowCreate(true)}
+              className="text-sm text-green-600 hover:underline">Create your first unit</button>
+          </div>
         ) : (
-          <div className="bg-white border border-zinc-200 rounded-lg overflow-hidden">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-zinc-50 border-b border-zinc-200">
-                  <th className="text-left px-4 py-2.5 font-medium text-zinc-500">Name</th>
-                  <th className="text-left px-4 py-2.5 font-medium text-zinc-500">Type</th>
-                  <th className="text-left px-4 py-2.5 font-medium text-zinc-500">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {tree.map(({ unit: u, depth }) => (
-                  <tr key={u.id} className={`border-b border-zinc-100 last:border-0 ${selectedUnitId === u.id ? "bg-green-50" : ""}`}>
-                    <td className="px-4 py-2.5 font-medium text-zinc-900">
-                      {editingId === u.id ? (
+          <div className="space-y-1">
+            {tree.map(({ unit: u, depth }) => {
+              const isSelected = selectedId === u.id;
+              const isEditing = editId === u.id;
+
+              return (
+                <div
+                  key={u.id}
+                  style={{ paddingLeft: `${depth * 20 + 12}px` }}
+                  className={`flex items-center justify-between py-2.5 pr-3 rounded-lg cursor-pointer transition-colors ${
+                    isSelected ? "bg-green-50 border border-green-200" : "hover:bg-zinc-50 border border-transparent"
+                  }`}
+                  onClick={() => !isEditing && setSelectedId(isSelected ? null : u.id)}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    {depth > 0 && <span className="text-zinc-300 text-xs">└</span>}
+                    {isEditing ? (
+                      <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
                         <input value={editName} onChange={(e) => setEditName(e.target.value)}
-                          className="border border-zinc-300 rounded px-2 py-1 text-sm w-40" />
-                      ) : (
-                        <span style={{ paddingLeft: `${depth * 24}px` }} className="flex items-center gap-1.5">
-                          {depth > 0 && <span className="text-zinc-300">└</span>}
-                          {u.name}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-2.5">
-                      {editingId === u.id ? (
+                          className="border border-zinc-300 rounded px-2 py-1 text-sm w-32" />
                         <select value={editType} onChange={(e) => setEditType(e.target.value)}
                           className="border border-zinc-300 rounded px-2 py-1 text-xs bg-white">
                           {UNIT_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
                         </select>
-                      ) : (
-                        <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full text-xs">
+                        <button onClick={() => handleEdit(u.id)} className="text-xs text-green-600 hover:underline">Save</button>
+                        <button onClick={() => setEditId(null)} className="text-xs text-zinc-400 hover:underline">Cancel</button>
+                      </div>
+                    ) : (
+                      <>
+                        <span className="text-sm font-medium text-zinc-900 truncate">{u.name}</span>
+                        <span className="bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0">
                           {typeLabel[u.unit_type] || u.unit_type}
                         </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-2.5 space-x-2">
-                      {editingId === u.id ? (
-                        <>
-                          <button onClick={() => handleEdit(u.id)} className="text-xs text-green-600 hover:underline">Save</button>
-                          <button onClick={() => setEditingId(null)} className="text-xs text-zinc-500 hover:underline">Cancel</button>
-                        </>
-                      ) : (
-                        <>
-                          <button onClick={() => { setEditingId(u.id); setEditName(u.name); setEditType(u.unit_type); }}
-                            className="text-xs text-blue-600 hover:underline">Edit</button>
-                          <button onClick={() => setSelectedUnitId(selectedUnitId === u.id ? null : u.id)}
-                            className="text-xs text-green-600 hover:underline">
-                            {selectedUnitId === u.id ? "Hide" : "Members"}
-                          </button>
-                        </>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                      </>
+                    )}
+                  </div>
+                  {!isEditing && (
+                    <div className="flex items-center gap-3 shrink-0">
+                      <span className="text-xs text-zinc-400">{u.member_count} members</span>
+                      <button onClick={(e) => { e.stopPropagation(); setEditId(u.id); setEditName(u.name); setEditType(u.unit_type); }}
+                        className="text-xs text-zinc-400 hover:text-zinc-600">Edit</button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
 
-      {/* Right: members panel */}
+      {/* Right panel: unit members */}
       {selectedUnit && (
-        <div className="w-80 shrink-0">
-          <h2 className="text-sm font-semibold text-zinc-900 mb-3">
-            {selectedUnit.name} — Members
-          </h2>
+        <div className="w-96 shrink-0 bg-white border border-zinc-200 rounded-lg p-5 self-start">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-sm font-semibold text-zinc-900">{selectedUnit.name}</h2>
+              <p className="text-xs text-zinc-400 mt-0.5">
+                {typeLabel[selectedUnit.unit_type]} · {members.length} members
+              </p>
+            </div>
+            <button onClick={() => setSelectedId(null)} className="text-xs text-zinc-400 hover:text-zinc-600">Close</button>
+          </div>
 
+          {/* Search + assign users */}
+          <div className="mb-4">
+            <label className="block text-xs font-medium text-zinc-600 mb-1">Add member</label>
+            <input
+              type="text"
+              value={userSearch}
+              onChange={(e) => setUserSearch(e.target.value)}
+              className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-600"
+              placeholder="Search by email or name..."
+            />
+            {(userSearch || filteredUsers.length > 0) && filteredUsers.length > 0 && (
+              <div className="mt-1 border border-zinc-200 rounded-lg bg-white max-h-40 overflow-y-auto shadow-sm">
+                {filteredUsers.map((u) => (
+                  <button
+                    key={u.id}
+                    onClick={() => handleAssign(u.id)}
+                    className="w-full text-left px-3 py-2 hover:bg-zinc-50 border-b border-zinc-100 last:border-0"
+                  >
+                    <p className="text-sm text-zinc-900">{u.email}</p>
+                    {u.full_name && <p className="text-xs text-zinc-500">{u.full_name}</p>}
+                  </button>
+                ))}
+              </div>
+            )}
+            {userSearch && filteredUsers.length === 0 && (
+              <p className="text-xs text-zinc-400 mt-1 px-1">No matching users available</p>
+            )}
+          </div>
+
+          {/* Member list */}
           {membersLoading ? (
-            <p className="text-xs text-zinc-500">Loading...</p>
+            <p className="text-xs text-zinc-400">Loading...</p>
+          ) : members.length === 0 ? (
+            <p className="text-xs text-zinc-400">No members yet</p>
           ) : (
-            <>
-              {members.length === 0 ? (
-                <p className="text-xs text-zinc-500 mb-4">No members yet.</p>
-              ) : (
-                <div className="bg-white border border-zinc-200 rounded-lg overflow-hidden mb-4">
-                  {members.map((m) => (
-                    <div key={m.user_id} className="flex items-center justify-between px-3 py-2 border-b border-zinc-100 last:border-0">
-                      <div>
-                        <p className="text-sm text-zinc-900">{m.email}</p>
-                        <p className="text-xs text-zinc-500">
-                          {m.role}
-                          {m.is_admin && <span className="ml-1 text-blue-600">Admin</span>}
-                          {" · "}
-                          <span className={m.assignment_type === "primary" ? "text-green-600" : "text-amber-600"}>
-                            {m.assignment_type}
-                          </span>
-                        </p>
-                      </div>
-                      {m.assignment_type === "assigned" && (
-                        <button onClick={() => handleUnassign(m.user_id)}
-                          className="text-xs text-red-600 hover:underline">Remove</button>
+            <div className="space-y-1">
+              {members.map((m) => (
+                <div key={m.user_id} className="flex items-center justify-between py-2 px-2 rounded hover:bg-zinc-50">
+                  <div className="min-w-0">
+                    <p className="text-sm text-zinc-900 truncate">{m.email}</p>
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                        m.assignment_type === "primary" ? "bg-green-50 text-green-700" : "bg-zinc-100 text-zinc-500"
+                      }`}>
+                        {m.assignment_type}
+                      </span>
+                      {m.is_admin && (
+                        <span className="text-[10px] bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded font-medium">Admin</span>
+                      )}
+                      {m.role && (
+                        <span className="text-[10px] text-zinc-400">{m.role}</span>
                       )}
                     </div>
-                  ))}
+                  </div>
+                  {m.assignment_type === "assigned" && (
+                    <button onClick={() => handleUnassign(m.user_id)}
+                      className="text-xs text-red-500 hover:underline shrink-0 ml-2">Remove</button>
+                  )}
                 </div>
-              )}
-
-              {assignableUsers.length > 0 && (
-                <div className="flex gap-2">
-                  <select value={assignUserId} onChange={(e) => setAssignUserId(e.target.value)}
-                    className="flex-1 border border-zinc-300 rounded-lg px-2 py-1.5 text-xs bg-white">
-                    <option value="">Assign user...</option>
-                    {assignableUsers.map((u) => (
-                      <option key={u.id} value={u.id}>{u.email}</option>
-                    ))}
-                  </select>
-                  <button onClick={handleAssign} disabled={!assignUserId}
-                    className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700 disabled:opacity-50">
-                    Add
-                  </button>
-                </div>
-              )}
-            </>
+              ))}
+            </div>
           )}
         </div>
       )}
