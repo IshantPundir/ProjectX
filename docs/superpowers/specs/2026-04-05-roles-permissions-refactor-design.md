@@ -103,6 +103,8 @@ All existing migrations are squashed into a single clean initial migration.
 
 **RLS:** `tenant_id IS NULL OR tenant_id = current_setting('app.current_tenant', true)::UUID`. Service bypass.
 
+**Indexes:** `is_system`, `tenant_id`.
+
 **Pre-seeded system roles** (tenant_id = NULL, is_system = TRUE):
 
 | Name | Permissions |
@@ -307,14 +309,14 @@ Simplified:
 
 No role assignment during invite completion.
 
-**`POST /api/auth/onboarding/complete`** — Now validates that at least one org unit exists before allowing completion. Returns 400 if no org units exist for the tenant. This prevents a state where `onboarding_complete = true` but `has_org_units = false`.
+**`POST /api/auth/onboarding/complete`** — Requires super admin (`clients.super_admin_id = user.id`, enforced in endpoint handler — not just implied by dashboard flow). Validates that at least one org unit exists before allowing completion. Returns 403 if caller is not super admin. Returns 400 if no org units exist for the tenant. This prevents a state where `onboarding_complete = true` but `has_org_units = false`.
 
 ### 4.2 Org Units Module (`/api/org-units/`)
 
 | Endpoint | Method | Authorization | Notes |
 |---|---|---|---|
 | `/api/org-units` | POST | Super admin only | Create org unit |
-| `/api/org-units` | GET | Authenticated | Super admin: all units. Others: units they're assigned to |
+| `/api/org-units` | GET | Authenticated | Super admin: all units. Others: units they're assigned to. Users with no assignments receive an empty list (not 403). |
 | `/api/org-units/{id}` | PUT | Super admin OR Admin in unit | Update unit name/type |
 | `/api/org-units/{id}/members` | GET | Super admin OR Admin in unit | List members with roles |
 | `/api/org-units/{id}/members` | POST | Super admin OR Admin in unit | Assign one role: `{ user_id, role_id }` |
@@ -518,6 +520,7 @@ All permissions (used by the system roles, available for future custom roles):
 | Assign role in org unit | Super admin OR Admin in that unit |
 | Remove role from org unit | Super admin OR Admin in that unit |
 | Remove user from org unit | Super admin OR Admin in that unit |
+| Complete onboarding | Super admin only (explicit check, not just flow-implied) |
 | Unit-scoped resource operations | Super admin OR user with required permission in that unit |
 | View own profile | Any authenticated user |
 | View team list | Any authenticated user |
