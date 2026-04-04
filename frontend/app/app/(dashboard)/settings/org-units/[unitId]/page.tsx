@@ -604,7 +604,7 @@ export default function OrgUnitDetailPage() {
                     <IconPencil />
                     Edit
                   </button>
-                  {me?.is_super_admin && (
+                  {canManage && (
                     <button
                       onClick={() => setShowAddSubUnit(!showAddSubUnit)}
                       className="inline-flex items-center gap-1.5 text-sm text-green-600 hover:text-green-700 border border-green-200 rounded-lg px-3 py-1.5 cursor-pointer transition-colors duration-150"
@@ -722,7 +722,7 @@ export default function OrgUnitDetailPage() {
         )}
 
         {/* ─── Add Sub-unit form ─── */}
-        {showAddSubUnit && me?.is_super_admin && (
+        {showAddSubUnit && canManage && (
           <form onSubmit={handleCreateSubUnit} className="bg-white border border-green-200 rounded-xl p-5 mb-6 space-y-4">
             <h2 className="text-sm font-semibold text-zinc-900">
               Create Sub-unit under {unit.name}

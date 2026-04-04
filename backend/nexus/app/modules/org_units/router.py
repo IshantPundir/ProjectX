@@ -61,13 +61,27 @@ async def _load_email_map(db: AsyncSession, *user_ids: uuid_mod.UUID | None) -> 
     return {row[0]: row[1] for row in result.all()}
 
 
-@router.post("", response_model=OrgUnitResponse, dependencies=[require_super_admin()])
+@router.post("", response_model=OrgUnitResponse)
 async def create_unit(
     data: CreateOrgUnitRequest,
     ctx: UserContext = Depends(get_current_user_roles),
     db: AsyncSession = Depends(get_tenant_db),
 ) -> OrgUnitResponse:
+    """Create an org unit.
+
+    Top-level units (no parent): super admin only.
+    Sub-units (has parent): super admin OR Admin in the parent unit.
+    """
     parent_id = uuid_mod.UUID(data.parent_unit_id) if data.parent_unit_id else None
+
+    if parent_id is not None:
+        # Sub-unit: super admin or Admin in parent
+        _require_unit_admin(ctx, parent_id)
+    else:
+        # Top-level: super admin only
+        if not ctx.is_super_admin:
+            raise HTTPException(status_code=403, detail="Only a super admin can create top-level units")
+
     try:
         unit = await create_org_unit(
             db, ctx.user.tenant_id, data.name, data.unit_type, parent_id,
