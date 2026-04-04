@@ -7,7 +7,6 @@ import { apiFetch } from "@/lib/api/client";
 
 interface InviteDetails {
   email: string;
-  role: string;
   client_name: string;
 }
 
@@ -146,7 +145,6 @@ function InviteContent() {
         <p className="font-semibold text-green-800">
           {invite!.client_name}
         </p>
-        <p className="text-sm text-green-700 mt-0.5">as {invite!.role}</p>
       </div>
 
       <form
