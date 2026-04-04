@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_tenant_db
-from app.models import OrganizationalUnit
+from app.models import OrganizationalUnit, User
 from app.modules.auth.context import UserContext, get_current_user_roles, require_super_admin
 from app.modules.org_units.schemas import (
     AssignRoleRequest,
@@ -29,12 +29,36 @@ router = APIRouter(prefix="/api/org-units", tags=["org-units"])
 
 
 def _require_unit_admin(ctx: UserContext, org_unit_id: uuid_mod.UUID) -> None:
-    """Check super admin OR Admin role in the specific unit."""
     if ctx.is_super_admin:
         return
     if ctx.has_role_in_unit(org_unit_id, "Admin"):
         return
     raise HTTPException(status_code=403, detail="Requires super admin or Admin role in this unit")
+
+
+def _build_response(unit: OrganizationalUnit, member_count: int, email_map: dict) -> OrgUnitResponse:
+    return OrgUnitResponse(
+        id=str(unit.id),
+        client_id=str(unit.client_id),
+        parent_unit_id=str(unit.parent_unit_id) if unit.parent_unit_id else None,
+        name=unit.name,
+        unit_type=unit.unit_type,
+        member_count=member_count,
+        created_at=unit.created_at.isoformat(),
+        created_by=str(unit.created_by) if unit.created_by else None,
+        created_by_email=email_map.get(unit.created_by) if unit.created_by else None,
+        deletable_by=str(unit.deletable_by) if unit.deletable_by else None,
+        deletable_by_email=email_map.get(unit.deletable_by) if unit.deletable_by else None,
+        admin_delete_disabled=unit.admin_delete_disabled,
+    )
+
+
+async def _load_email_map(db: AsyncSession, *user_ids: uuid_mod.UUID | None) -> dict:
+    ids = [uid for uid in user_ids if uid is not None]
+    if not ids:
+        return {}
+    result = await db.execute(select(User.id, User.email).where(User.id.in_(ids)))
+    return {row[0]: row[1] for row in result.all()}
 
 
 @router.post("", response_model=OrgUnitResponse, dependencies=[require_super_admin()])
@@ -43,22 +67,17 @@ async def create_unit(
     ctx: UserContext = Depends(get_current_user_roles),
     db: AsyncSession = Depends(get_tenant_db),
 ) -> OrgUnitResponse:
-    """Create an org unit. Super admin only."""
     parent_id = uuid_mod.UUID(data.parent_unit_id) if data.parent_unit_id else None
     try:
-        unit = await create_org_unit(db, ctx.user.tenant_id, data.name, data.unit_type, parent_id)
+        unit = await create_org_unit(
+            db, ctx.user.tenant_id, data.name, data.unit_type, parent_id,
+            created_by=ctx.user.id,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    return OrgUnitResponse(
-        id=str(unit.id),
-        client_id=str(unit.client_id),
-        parent_unit_id=str(unit.parent_unit_id) if unit.parent_unit_id else None,
-        name=unit.name,
-        unit_type=unit.unit_type,
-        member_count=0,
-        created_at=unit.created_at.isoformat(),
-    )
+    email_map = await _load_email_map(db, unit.created_by, unit.deletable_by)
+    return _build_response(unit, 0, email_map)
 
 
 @router.get("", response_model=list[OrgUnitResponse])
@@ -66,7 +85,6 @@ async def list_units(
     ctx: UserContext = Depends(get_current_user_roles),
     db: AsyncSession = Depends(get_tenant_db),
 ) -> list[OrgUnitResponse]:
-    """List org units. Super admin: all. Others: assigned units only."""
     units = await list_org_units(db, ctx.user.tenant_id, ctx.user.id, ctx.is_super_admin)
     return [OrgUnitResponse(**u) for u in units]
 
@@ -78,39 +96,51 @@ async def update_unit(
     ctx: UserContext = Depends(get_current_user_roles),
     db: AsyncSession = Depends(get_tenant_db),
 ) -> OrgUnitResponse:
-    """Update an org unit. Super admin or Admin in unit."""
     uid = uuid_mod.UUID(unit_id)
     _require_unit_admin(ctx, uid)
+
+    raw_body = data.model_dump(exclude_unset=True)
+    if ("deletable_by" in raw_body or "admin_delete_disabled" in raw_body) and not ctx.is_super_admin:
+        raise HTTPException(status_code=403, detail="Only a super admin can change delete settings")
 
     result = await db.execute(select(OrganizationalUnit).where(OrganizationalUnit.id == uid))
     unit = result.scalar_one_or_none()
     if not unit:
         raise HTTPException(status_code=404, detail="Org unit not found")
 
+    set_deletable_by = "deletable_by" in raw_body
+
     try:
-        unit = await update_org_unit(db, unit, data.name, data.unit_type)
+        unit = await update_org_unit(
+            db, unit, data.name, data.unit_type,
+            deletable_by=data.deletable_by,
+            set_deletable_by=set_deletable_by,
+            admin_delete_disabled=data.admin_delete_disabled,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    return OrgUnitResponse(
-        id=str(unit.id),
-        client_id=str(unit.client_id),
-        parent_unit_id=str(unit.parent_unit_id) if unit.parent_unit_id else None,
-        name=unit.name,
-        unit_type=unit.unit_type,
-        member_count=0,
-        created_at=unit.created_at.isoformat(),
-    )
+    email_map = await _load_email_map(db, unit.created_by, unit.deletable_by)
+    return _build_response(unit, 0, email_map)
 
 
-@router.delete("/{unit_id}", dependencies=[require_super_admin()])
+@router.delete("/{unit_id}")
 async def delete_unit(
     unit_id: str,
+    ctx: UserContext = Depends(get_current_user_roles),
     db: AsyncSession = Depends(get_tenant_db),
 ) -> dict[str, str]:
-    """Delete an org unit. Super admin only. Fails if unit has children or members."""
+    uid = uuid_mod.UUID(unit_id)
     try:
-        await delete_org_unit(db, uuid_mod.UUID(unit_id))
+        await delete_org_unit(
+            db,
+            org_unit_id=uid,
+            caller_user_id=ctx.user.id,
+            is_super_admin=ctx.is_super_admin,
+            caller_has_admin_role=ctx.has_role_in_unit(uid, "Admin"),
+        )
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -123,10 +153,8 @@ async def get_members(
     ctx: UserContext = Depends(get_current_user_roles),
     db: AsyncSession = Depends(get_tenant_db),
 ) -> list[OrgUnitMember]:
-    """List members of an org unit. Super admin or Admin in unit."""
     uid = uuid_mod.UUID(unit_id)
     _require_unit_admin(ctx, uid)
-
     members = await list_unit_members(db, uid)
     return [OrgUnitMember(**m) for m in members]
 
@@ -138,14 +166,11 @@ async def assign_member_role(
     ctx: UserContext = Depends(get_current_user_roles),
     db: AsyncSession = Depends(get_tenant_db),
 ) -> dict[str, str]:
-    """Assign a role to a user in an org unit. Super admin or Admin in unit."""
     uid = uuid_mod.UUID(unit_id)
     _require_unit_admin(ctx, uid)
-
     try:
         await assign_role(
-            db,
-            org_unit_id=uid,
+            db, org_unit_id=uid,
             user_id=uuid_mod.UUID(data.user_id),
             role_id=uuid_mod.UUID(data.role_id),
             tenant_id=ctx.user.tenant_id,
@@ -153,7 +178,6 @@ async def assign_member_role(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-
     return {"status": "assigned"}
 
 
@@ -164,15 +188,12 @@ async def remove_member(
     ctx: UserContext = Depends(get_current_user_roles),
     db: AsyncSession = Depends(get_tenant_db),
 ) -> dict[str, str]:
-    """Remove all roles for a user in an org unit. Super admin or Admin in unit."""
     uid = uuid_mod.UUID(unit_id)
     _require_unit_admin(ctx, uid)
-
     try:
         count = await remove_user_from_unit(db, uid, uuid_mod.UUID(user_id))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-
     return {"status": "removed", "count": str(count)}
 
 
@@ -184,13 +205,10 @@ async def remove_member_role(
     ctx: UserContext = Depends(get_current_user_roles),
     db: AsyncSession = Depends(get_tenant_db),
 ) -> dict[str, str]:
-    """Remove a specific role from a user in an org unit. Super admin or Admin in unit."""
     uid = uuid_mod.UUID(unit_id)
     _require_unit_admin(ctx, uid)
-
     try:
         await remove_role_from_user(db, uid, uuid_mod.UUID(user_id), uuid_mod.UUID(role_id))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-
     return {"status": "removed"}
