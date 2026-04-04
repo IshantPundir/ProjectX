@@ -14,23 +14,43 @@ interface OrgUnit {
   created_at: string;
 }
 
+interface MemberRole {
+  role_id: string;
+  role_name: string;
+  assigned_at: string;
+}
+
 interface OrgUnitMember {
   user_id: string;
   email: string;
   full_name: string | null;
-  role: string | null;        // role within THIS unit
-  is_admin: boolean;          // admin of THIS unit
+  roles: MemberRole[];
+}
+
+interface AvailableRole {
+  id: string;
+  name: string;
+  description: string | null;
   permissions: string[];
-  assignment_type: string;
-  assigned_at: string;
+  is_system: boolean;
 }
 
 interface TenantUser {
   id: string;
   email: string;
   full_name: string | null;
-  role: string | null;
-  is_admin: boolean;
+}
+
+interface MeAssignment {
+  org_unit_id: string;
+  org_unit_name: string;
+  role_name: string;
+  permissions: string[];
+}
+
+interface MeData {
+  is_super_admin: boolean;
+  assignments: MeAssignment[];
 }
 
 const UNIT_TYPES = [
@@ -69,6 +89,7 @@ export default function OrgUnitsPage() {
   const [units, setUnits] = useState<OrgUnit[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [me, setMe] = useState<MeData | null>(null);
 
   // Create form
   const [showCreate, setShowCreate] = useState(false);
@@ -86,8 +107,14 @@ export default function OrgUnitsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [members, setMembers] = useState<OrgUnitMember[]>([]);
   const [allUsers, setAllUsers] = useState<TenantUser[]>([]);
+  const [availableRoles, setAvailableRoles] = useState<AvailableRole[]>([]);
   const [membersLoading, setMembersLoading] = useState(false);
   const [userSearch, setUserSearch] = useState("");
+
+  // Add member dialog state
+  const [addUserId, setAddUserId] = useState("");
+  const [addRoleId, setAddRoleId] = useState("");
+  const [addingMember, setAddingMember] = useState(false);
 
   async function getToken() {
     const supabase = createClient();
@@ -103,7 +130,12 @@ export default function OrgUnitsPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      setUnits(await apiFetch<OrgUnit[]>("/api/org-units", { token }));
+      const [unitsData, meData] = await Promise.all([
+        apiFetch<OrgUnit[]>("/api/org-units", { token }),
+        apiFetch<MeData>("/api/auth/me", { token }),
+      ]);
+      setUnits(unitsData);
+      setMe(meData);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load");
     } finally {
@@ -116,13 +148,16 @@ export default function OrgUnitsPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      const [m, u] = await Promise.all([
+      const [m, u, r] = await Promise.all([
         apiFetch<OrgUnitMember[]>(`/api/org-units/${unitId}/members`, { token }),
-        apiFetch<TenantUser[]>("/api/settings/team/members", { token }),
+        apiFetch<(TenantUser & { source?: string })[]>("/api/settings/team/members", { token }),
+        apiFetch<AvailableRole[]>("/api/roles", { token }),
       ]);
       setMembers(m);
-      // Filter to users only (not invites)
-      setAllUsers((u as (TenantUser & { source?: string })[]).filter((x) => (x as { source?: string }).source === "user"));
+      setAllUsers(u.filter((x) => x.source === "user"));
+      setAvailableRoles(r);
+      // Default role selection to first available role
+      if (r.length > 0 && !addRoleId) setAddRoleId(r[0].id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load members");
     } finally {
@@ -132,6 +167,16 @@ export default function OrgUnitsPage() {
 
   useEffect(() => { loadUnits(); }, []);
   useEffect(() => { if (selectedId) loadMembers(selectedId); }, [selectedId]);
+
+  // Determine if current user can manage members in the selected unit
+  function canManageUnit(unitId: string | null): boolean {
+    if (!me) return false;
+    if (me.is_super_admin) return true;
+    if (!unitId) return false;
+    return me.assignments.some(
+      (a) => a.org_unit_id === unitId && a.role_name === "Admin",
+    );
+  }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -173,25 +218,30 @@ export default function OrgUnitsPage() {
     }
   }
 
-  async function handleAssign(userId: string) {
+  async function handleAddMember(userId: string, roleId: string) {
     if (!selectedId) return;
     setError("");
+    setAddingMember(true);
     try {
       const token = await getToken();
       if (!token) return;
       await apiFetch(`/api/org-units/${selectedId}/members`, {
         method: "POST", token,
-        body: JSON.stringify({ user_id: userId }),
+        body: JSON.stringify({ user_id: userId, role_id: roleId }),
       });
       setUserSearch("");
+      setAddUserId("");
+      // Keep addRoleId set for convenience
       await loadMembers(selectedId);
       await loadUnits();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to assign");
+    } finally {
+      setAddingMember(false);
     }
   }
 
-  async function handleUnassign(userId: string) {
+  async function handleRemoveMember(userId: string) {
     if (!selectedId) return;
     setError("");
     try {
@@ -207,8 +257,24 @@ export default function OrgUnitsPage() {
     }
   }
 
+  async function handleRemoveRole(userId: string, roleId: string) {
+    if (!selectedId) return;
+    setError("");
+    try {
+      const token = await getToken();
+      if (!token) return;
+      await apiFetch(`/api/org-units/${selectedId}/members/${userId}/roles/${roleId}`, {
+        method: "DELETE", token,
+      });
+      await loadMembers(selectedId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to remove role");
+    }
+  }
+
   const tree = buildTree(units);
   const selectedUnit = units.find((u) => u.id === selectedId);
+  const canManage = canManageUnit(selectedId);
 
   // Searchable user list — exclude users already in this unit
   const memberIds = new Set(members.map((m) => m.user_id));
@@ -227,19 +293,21 @@ export default function OrgUnitsPage() {
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between mb-4">
           <h1 className="text-lg font-semibold text-zinc-900">Org Units</h1>
-          <button
-            onClick={() => setShowCreate(!showCreate)}
-            className="bg-green-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-green-700"
-          >
-            {showCreate ? "Cancel" : "+ New Unit"}
-          </button>
+          {me?.is_super_admin && (
+            <button
+              onClick={() => setShowCreate(!showCreate)}
+              className="bg-green-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-green-700"
+            >
+              {showCreate ? "Cancel" : "+ New Unit"}
+            </button>
+          )}
         </div>
 
         {error && (
           <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3 mb-4">{error}</p>
         )}
 
-        {showCreate && (
+        {showCreate && me?.is_super_admin && (
           <form onSubmit={handleCreate} className="bg-white border border-zinc-200 rounded-lg p-4 mb-4 space-y-3">
             <h2 className="text-sm font-medium text-zinc-900">Create Organizational Unit</h2>
             <div className="grid grid-cols-2 gap-3">
@@ -282,8 +350,10 @@ export default function OrgUnitsPage() {
         ) : units.length === 0 ? (
           <div className="text-center py-16">
             <p className="text-zinc-400 text-sm mb-2">No organizational units yet</p>
-            <button onClick={() => setShowCreate(true)}
-              className="text-sm text-green-600 hover:underline">Create your first unit</button>
+            {me?.is_super_admin && (
+              <button onClick={() => setShowCreate(true)}
+                className="text-sm text-green-600 hover:underline">Create your first unit</button>
+            )}
           </div>
         ) : (
           <div className="space-y-1">
@@ -325,8 +395,10 @@ export default function OrgUnitsPage() {
                   {!isEditing && (
                     <div className="flex items-center gap-3 shrink-0">
                       <span className="text-xs text-zinc-400">{u.member_count} members</span>
-                      <button onClick={(e) => { e.stopPropagation(); setEditId(u.id); setEditName(u.name); setEditType(u.unit_type); }}
-                        className="text-xs text-zinc-400 hover:text-zinc-600">Edit</button>
+                      {me?.is_super_admin && (
+                        <button onClick={(e) => { e.stopPropagation(); setEditId(u.id); setEditName(u.name); setEditType(u.unit_type); }}
+                          className="text-xs text-zinc-400 hover:text-zinc-600">Edit</button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -349,34 +421,59 @@ export default function OrgUnitsPage() {
             <button onClick={() => setSelectedId(null)} className="text-xs text-zinc-400 hover:text-zinc-600">Close</button>
           </div>
 
-          {/* Search + assign users */}
-          <div className="mb-4">
-            <label className="block text-xs font-medium text-zinc-600 mb-1">Add member</label>
-            <input
-              type="text"
-              value={userSearch}
-              onChange={(e) => setUserSearch(e.target.value)}
-              className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-600"
-              placeholder="Search by email or name..."
-            />
-            {(userSearch || filteredUsers.length > 0) && filteredUsers.length > 0 && (
-              <div className="mt-1 border border-zinc-200 rounded-lg bg-white max-h-40 overflow-y-auto shadow-sm">
-                {filteredUsers.map((u) => (
-                  <button
-                    key={u.id}
-                    onClick={() => handleAssign(u.id)}
-                    className="w-full text-left px-3 py-2 hover:bg-zinc-50 border-b border-zinc-100 last:border-0"
+          {/* Add member dialog — visible to super admin or unit admins */}
+          {canManage && (
+            <div className="mb-4 border border-zinc-100 rounded-lg p-3 bg-zinc-50">
+              <p className="text-xs font-medium text-zinc-600 mb-2">Add member</p>
+              <div className="space-y-2">
+                <div>
+                  <input
+                    type="text"
+                    value={userSearch}
+                    onChange={(e) => setUserSearch(e.target.value)}
+                    className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-600 bg-white"
+                    placeholder="Search by email or name..."
+                  />
+                  {filteredUsers.length > 0 && (
+                    <div className="mt-1 border border-zinc-200 rounded-lg bg-white max-h-36 overflow-y-auto shadow-sm">
+                      {filteredUsers.map((u) => (
+                        <button
+                          key={u.id}
+                          onClick={() => { setAddUserId(u.id); setUserSearch(u.email); }}
+                          className={`w-full text-left px-3 py-2 hover:bg-zinc-50 border-b border-zinc-100 last:border-0 ${addUserId === u.id ? "bg-green-50" : ""}`}
+                        >
+                          <p className="text-sm text-zinc-900">{u.email}</p>
+                          {u.full_name && <p className="text-xs text-zinc-500">{u.full_name}</p>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {userSearch && filteredUsers.length === 0 && !addUserId && (
+                    <p className="text-xs text-zinc-400 mt-1 px-1">No matching users available</p>
+                  )}
+                </div>
+                <div>
+                  <select
+                    value={addRoleId}
+                    onChange={(e) => setAddRoleId(e.target.value)}
+                    className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-600"
                   >
-                    <p className="text-sm text-zinc-900">{u.email}</p>
-                    {u.full_name && <p className="text-xs text-zinc-500">{u.full_name}</p>}
-                  </button>
-                ))}
+                    <option value="">Select a role...</option>
+                    {availableRoles.map((r) => (
+                      <option key={r.id} value={r.id}>{r.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  onClick={() => { if (addUserId && addRoleId) handleAddMember(addUserId, addRoleId); }}
+                  disabled={!addUserId || !addRoleId || addingMember}
+                  className="w-full bg-green-600 text-white rounded-lg py-1.5 text-xs font-medium hover:bg-green-700 disabled:opacity-40"
+                >
+                  {addingMember ? "Adding..." : "Add to Unit"}
+                </button>
               </div>
-            )}
-            {userSearch && filteredUsers.length === 0 && (
-              <p className="text-xs text-zinc-400 mt-1 px-1">No matching users available</p>
-            )}
-          </div>
+            </div>
+          )}
 
           {/* Member list */}
           {membersLoading ? (
@@ -389,34 +486,41 @@ export default function OrgUnitsPage() {
                 <div key={m.user_id} className="border border-zinc-100 rounded-lg p-3 hover:bg-zinc-50">
                   <div className="flex items-center justify-between mb-2">
                     <p className="text-sm text-zinc-900 truncate">{m.email}</p>
-                    <button onClick={() => handleUnassign(m.user_id)}
-                      className="text-xs text-red-500 hover:underline shrink-0">Remove</button>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <select
-                      value={m.role || ""}
-                      onChange={async (e) => {
-                        const token = await getToken();
-                        if (!token) return;
-                        await apiFetch(`/api/org-units/${selectedId}/members/${m.user_id}`, {
-                          method: "PUT", token,
-                          body: JSON.stringify({ role: e.target.value || null }),
-                        });
-                        await loadMembers(selectedId!);
-                      }}
-                      className="border border-zinc-200 rounded px-2 py-1 text-xs bg-white"
-                    >
-                      <option value="">No role</option>
-                      <option value="Admin">Admin</option>
-                      <option value="Recruiter">Recruiter</option>
-                      <option value="Hiring Manager">Hiring Manager</option>
-                      <option value="Interviewer">Interviewer</option>
-                      <option value="Observer">Observer</option>
-                    </select>
-                    {m.is_admin && (
-                      <span className="text-[10px] bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded font-medium">Unit Admin</span>
+                    {canManage && (
+                      <button
+                        onClick={() => handleRemoveMember(m.user_id)}
+                        className="text-xs text-red-500 hover:underline shrink-0 ml-2"
+                      >
+                        Remove from unit
+                      </button>
                     )}
                   </div>
+                  {m.full_name && (
+                    <p className="text-xs text-zinc-500 mb-1.5">{m.full_name}</p>
+                  )}
+                  {m.roles.length === 0 ? (
+                    <p className="text-xs text-zinc-400 italic">No roles assigned</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-1.5">
+                      {m.roles.map((r) => (
+                        <span
+                          key={r.role_id}
+                          className="inline-flex items-center gap-1 bg-zinc-100 text-zinc-700 px-2 py-0.5 rounded text-xs"
+                        >
+                          {r.role_name}
+                          {canManage && (
+                            <button
+                              onClick={() => handleRemoveRole(m.user_id, r.role_id)}
+                              className="text-zinc-400 hover:text-red-500 leading-none"
+                              aria-label={`Remove ${r.role_name} role`}
+                            >
+                              &times;
+                            </button>
+                          )}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
