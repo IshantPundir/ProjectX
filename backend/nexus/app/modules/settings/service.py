@@ -74,17 +74,57 @@ async def create_team_invite(
     return invite, raw_token, company.name
 
 
+async def _get_visible_org_unit_ids(
+    db: AsyncSession,
+    tenant_id: uuid_mod.UUID,
+    caller_org_unit_id: uuid_mod.UUID,
+) -> set[uuid_mod.UUID]:
+    """Return the caller's org unit ID + all descendant IDs."""
+    from app.models import OrganizationalUnit
+
+    result = await db.execute(
+        select(OrganizationalUnit).where(OrganizationalUnit.client_id == tenant_id)
+    )
+    all_units = list(result.scalars().all())
+
+    children_map: dict[uuid_mod.UUID | None, list] = {}
+    for u in all_units:
+        children_map.setdefault(u.parent_unit_id, []).append(u)
+
+    ids: set[uuid_mod.UUID] = {caller_org_unit_id}
+    queue = [caller_org_unit_id]
+    while queue:
+        parent_id = queue.pop()
+        for child in children_map.get(parent_id, []):
+            ids.add(child.id)
+            queue.append(child.id)
+
+    return ids
+
+
 async def list_team_members(
     db: AsyncSession,
     tenant_id: uuid_mod.UUID,
+    caller_org_unit_id: uuid_mod.UUID | None = None,
 ) -> list[dict]:
-    """List active users + pending invites for this tenant."""
+    """List active users + pending invites.
+
+    Super Admin (org_unit_id=NULL): sees all members in tenant.
+    Admin (org_unit_id=<uuid>): sees only members in own org unit + descendants.
+    """
     members: list[dict] = []
 
-    # Active users (RLS scoped by get_tenant_db)
-    result = await db.execute(
-        select(User).where(User.tenant_id == tenant_id).order_by(User.created_at.asc())
-    )
+    # Determine which org_unit_ids this caller can see
+    visible_org_ids: set[uuid_mod.UUID] | None = None
+    if caller_org_unit_id is not None:
+        visible_org_ids = await _get_visible_org_unit_ids(db, tenant_id, caller_org_unit_id)
+
+    # Active users
+    query = select(User).where(User.tenant_id == tenant_id).order_by(User.created_at.asc())
+    if visible_org_ids is not None:
+        query = query.where(User.org_unit_id.in_(visible_org_ids))
+    result = await db.execute(query)
+
     for user in result.scalars().all():
         members.append({
             "id": str(user.id),
@@ -99,13 +139,16 @@ async def list_team_members(
             "created_at": user.created_at.isoformat(),
         })
 
-    # Pending invites only (not expired/revoked/superseded — those have no actions)
-    result = await db.execute(
-        select(UserInvite).where(
-            UserInvite.tenant_id == tenant_id,
-            UserInvite.status == "pending",
-        ).order_by(UserInvite.created_at.desc())
+    # Pending invites
+    invite_query = (
+        select(UserInvite)
+        .where(UserInvite.tenant_id == tenant_id, UserInvite.status == "pending")
+        .order_by(UserInvite.created_at.desc())
     )
+    if visible_org_ids is not None:
+        invite_query = invite_query.where(UserInvite.org_unit_id.in_(visible_org_ids))
+    result = await db.execute(invite_query)
+
     for invite in result.scalars().all():
         members.append({
             "id": str(invite.id),

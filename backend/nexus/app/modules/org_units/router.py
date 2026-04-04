@@ -60,8 +60,10 @@ async def list_units(
     request: Request,
     db: AsyncSession = Depends(get_tenant_db),
 ) -> list[OrgUnitResponse]:
-    tenant_id = uuid_mod.UUID(request.state.token_payload.tenant_id)
-    units = await list_org_units(db, tenant_id)
+    token_payload = request.state.token_payload
+    tenant_id = uuid_mod.UUID(token_payload.tenant_id)
+    caller_org = uuid_mod.UUID(token_payload.org_unit_id) if token_payload.org_unit_id else None
+    units = await list_org_units(db, tenant_id, caller_org_unit_id=caller_org)
     return [
         OrgUnitResponse(
             id=str(u.id),

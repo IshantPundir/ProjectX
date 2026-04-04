@@ -116,9 +116,11 @@ async def list_members_endpoint(
     request: Request,
     db: AsyncSession = Depends(get_tenant_db),
 ) -> list[TeamMember]:
-    """List all team members and pending invites."""
-    tenant_id = uuid_mod.UUID(request.state.token_payload.tenant_id)
-    members = await list_team_members(db, tenant_id)
+    """List team members. Super Admin sees all; Admin sees own org unit + descendants."""
+    token_payload = request.state.token_payload
+    tenant_id = uuid_mod.UUID(token_payload.tenant_id)
+    caller_org = uuid_mod.UUID(token_payload.org_unit_id) if token_payload.org_unit_id else None
+    members = await list_team_members(db, tenant_id, caller_org_unit_id=caller_org)
     return [TeamMember(**m) for m in members]
 
 
