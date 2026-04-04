@@ -1,31 +1,19 @@
-from enum import StrEnum
+"""Auth schemas — JWT payload, invite/me responses."""
 
 from pydantic import BaseModel
-
-
-class Role(StrEnum):
-    ADMIN = "Admin"
-    COMPANY_ADMIN = "Company Admin"
-    RECRUITER = "Recruiter"
-    HIRING_MANAGER = "Hiring Manager"
-    INTERVIEWER = "Interviewer"
-    OBSERVER = "Observer"
 
 
 class TokenPayload(BaseModel):
     """Decoded JWT payload from Supabase Auth (ES256 via JWKS).
 
-    Custom claims (app_role, tenant_id, is_projectx_admin) are injected
-    by the projectx_custom_access_token_hook Postgres function.
+    Thin JWT: only sub, tenant_id, is_projectx_admin.
+    Role/permission data is loaded per-request from DB.
     """
     sub: str                         # Supabase Auth user UUID
     tenant_id: str = ""              # company UUID (empty for admins and pre-onboarding)
-    app_role: str = ""               # RBAC role: Company Admin, Recruiter, etc.
     email: str = ""
     role: str = "authenticated"      # Postgres role — always "authenticated", NOT for RBAC
     is_projectx_admin: bool = False  # True only for ProjectX internal team
-    is_admin: bool = False
-    org_unit_id: str | None = None
     exp: int = 0
 
 
@@ -40,7 +28,6 @@ class CandidateTokenPayload(BaseModel):
 
 class VerifyInviteResponse(BaseModel):
     email: str
-    role: str | None
     client_name: str
 
 
@@ -52,19 +39,22 @@ class CompleteInviteResponse(BaseModel):
     redirect_to: str  # "/onboarding" or "/"
     user_id: str
     tenant_id: str
-    role: str | None
+
+
+class RoleAssignmentResponse(BaseModel):
+    org_unit_id: str
+    org_unit_name: str
+    role_name: str
+    permissions: list[str]
 
 
 class MeResponse(BaseModel):
     user_id: str
-    auth_user_id: str
     email: str
     full_name: str | None
-    role: str | None              # NULL = no role assigned yet
-    is_admin: bool
-    permissions: list[str]
-    org_unit_id: str | None
     tenant_id: str
     client_name: str
+    is_super_admin: bool
     onboarding_complete: bool
-    has_org_units: bool           # TRUE if tenant has ≥1 org unit created
+    has_org_units: bool
+    assignments: list[RoleAssignmentResponse]
