@@ -10,7 +10,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import OrganizationalUnit
+from app.models import OrganizationalUnit, User, UserOrgAssignment
 
 logger = structlog.get_logger()
 
@@ -123,3 +123,114 @@ async def update_org_unit(
             raise ValueError(f"Invalid unit_type: {unit_type}")
         unit.unit_type = unit_type
     return unit
+
+
+async def list_org_unit_members(
+    db: AsyncSession,
+    org_unit_id: uuid_mod.UUID,
+    client_id: uuid_mod.UUID,
+) -> list[dict]:
+    """List all users assigned to an org unit (primary + junction assignments)."""
+    await get_org_unit(db, org_unit_id, client_id)
+
+    members: list[dict] = []
+    seen_user_ids: set[uuid_mod.UUID] = set()
+
+    # Users with this as their primary org unit
+    result = await db.execute(
+        select(User).where(User.org_unit_id == org_unit_id, User.is_active == True)
+    )
+    for user in result.scalars().all():
+        seen_user_ids.add(user.id)
+        members.append({
+            "user_id": str(user.id),
+            "email": user.email,
+            "full_name": user.full_name,
+            "role": user.role,
+            "is_admin": user.is_admin,
+            "assignment_type": "primary",
+            "assigned_at": user.created_at.isoformat(),
+        })
+
+    # Additional assignments via junction table
+    result = await db.execute(
+        select(UserOrgAssignment, User)
+        .join(User, UserOrgAssignment.user_id == User.id)
+        .where(UserOrgAssignment.org_unit_id == org_unit_id, User.is_active == True)
+    )
+    for assignment, user in result.all():
+        if user.id not in seen_user_ids:
+            members.append({
+                "user_id": str(user.id),
+                "email": user.email,
+                "full_name": user.full_name,
+                "role": user.role,
+                "is_admin": user.is_admin,
+                "assignment_type": "assigned",
+                "assigned_at": assignment.created_at.isoformat(),
+            })
+
+    return members
+
+
+async def assign_user_to_org_unit(
+    db: AsyncSession,
+    org_unit_id: uuid_mod.UUID,
+    user_id: uuid_mod.UUID,
+    assigned_by: uuid_mod.UUID,
+    client_id: uuid_mod.UUID,
+) -> UserOrgAssignment:
+    """Assign an existing user to an org unit."""
+    await get_org_unit(db, org_unit_id, client_id)
+
+    result = await db.execute(
+        select(User).where(User.id == user_id, User.is_active == True)
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        raise ValueError("User not found or inactive")
+
+    if user.org_unit_id == org_unit_id:
+        raise ValueError("User is already the primary member of this org unit")
+
+    existing = await db.execute(
+        select(UserOrgAssignment).where(
+            UserOrgAssignment.user_id == user_id,
+            UserOrgAssignment.org_unit_id == org_unit_id,
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise ValueError("User is already assigned to this org unit")
+
+    assignment = UserOrgAssignment(
+        user_id=user_id,
+        org_unit_id=org_unit_id,
+        assigned_by=assigned_by,
+    )
+    db.add(assignment)
+    await db.flush()
+    logger.info("org_unit.user_assigned", org_unit_id=str(org_unit_id), user_id=str(user_id))
+    return assignment
+
+
+async def unassign_user_from_org_unit(
+    db: AsyncSession,
+    org_unit_id: uuid_mod.UUID,
+    user_id: uuid_mod.UUID,
+    client_id: uuid_mod.UUID,
+) -> None:
+    """Remove a user's additional assignment (not their primary org unit)."""
+    await get_org_unit(db, org_unit_id, client_id)
+
+    result = await db.execute(
+        select(UserOrgAssignment).where(
+            UserOrgAssignment.user_id == user_id,
+            UserOrgAssignment.org_unit_id == org_unit_id,
+        )
+    )
+    assignment = result.scalar_one_or_none()
+    if not assignment:
+        raise ValueError("Assignment not found")
+
+    await db.delete(assignment)
+    logger.info("org_unit.user_unassigned", org_unit_id=str(org_unit_id), user_id=str(user_id))
