@@ -44,7 +44,9 @@ export default function LoginPage() {
       const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
       const payload = JSON.parse(atob(padded));
 
-      if (!payload.tenant_id || !payload.app_role) {
+      // Only check tenant_id — app_role can be empty (unassigned user)
+      // This rejects admin-only accounts (no tenant) but allows unassigned users
+      if (!payload.tenant_id) {
         await supabase.auth.signOut();
         setError(
           "This account does not have access to the client dashboard. Please use your invite link to set up your account.",

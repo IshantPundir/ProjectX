@@ -50,7 +50,7 @@ export async function proxy(request: NextRequest) {
         try {
           const base64 = session.access_token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
           const payload = JSON.parse(atob(base64));
-          if (payload.tenant_id && payload.app_role) {
+          if (payload.tenant_id) {
             return NextResponse.redirect(new URL("/", request.url));
           }
         } catch {
@@ -66,15 +66,14 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  // Check that user has tenant_id + app_role (rejects admin-only accounts)
+  // Check that user has tenant_id (rejects admin-only accounts with no tenant)
   const { data: { session } } = await supabase.auth.getSession();
   if (session?.access_token) {
     try {
       const base64 = session.access_token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
-          const payload = JSON.parse(atob(base64));
-      if (!payload.tenant_id || !payload.app_role) {
+      const payload = JSON.parse(atob(base64));
+      if (!payload.tenant_id) {
         // User is authenticated but not a client user (e.g., admin-only account)
-        // Sign them out of this app and redirect to login
         await supabase.auth.signOut();
         return NextResponse.redirect(new URL("/login", request.url));
       }
