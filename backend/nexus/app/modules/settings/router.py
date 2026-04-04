@@ -110,7 +110,7 @@ async def invite_endpoint(
 @router.get(
     "/members",
     response_model=list[TeamMember],
-    dependencies=[require_roles("Company Admin")],
+    dependencies=[require_roles("Company Admin", "Admin")],
 )
 async def list_members_endpoint(
     request: Request,
