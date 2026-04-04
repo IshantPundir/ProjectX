@@ -9,8 +9,7 @@ const getMe = cache(async (token: string, apiUrl: string) => {
   });
   if (!res.ok) return null;
   return res.json() as Promise<{
-    role: string;
-    is_admin: boolean;
+    is_super_admin: boolean;
     onboarding_complete: boolean;
     has_org_units: boolean;
   }>;
@@ -41,7 +40,7 @@ export default async function DashboardLayout({
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
   const me = await getMe(session.access_token, apiUrl);
 
-  if (me && me.role === "Company Admin" && !me.onboarding_complete) {
+  if (me && me.is_super_admin && !me.onboarding_complete) {
     redirect("/onboarding");
   }
 
