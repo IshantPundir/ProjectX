@@ -114,6 +114,20 @@ async def list_org_units(
         )
         counts = {row[0]: row[1] for row in count_result.all()}
 
+    user_ids_to_load: set[uuid_mod.UUID] = set()
+    for u in units:
+        if u.created_by:
+            user_ids_to_load.add(u.created_by)
+        if u.deletable_by:
+            user_ids_to_load.add(u.deletable_by)
+
+    email_map: dict[uuid_mod.UUID, str] = {}
+    if user_ids_to_load:
+        email_result = await db.execute(
+            select(User.id, User.email).where(User.id.in_(user_ids_to_load))
+        )
+        email_map = {row[0]: row[1] for row in email_result.all()}
+
     return [
         {
             "id": str(u.id),
@@ -123,6 +137,11 @@ async def list_org_units(
             "unit_type": u.unit_type,
             "member_count": counts.get(u.id, 0),
             "created_at": u.created_at.isoformat(),
+            "created_by": str(u.created_by) if u.created_by else None,
+            "created_by_email": email_map.get(u.created_by) if u.created_by else None,
+            "deletable_by": str(u.deletable_by) if u.deletable_by else None,
+            "deletable_by_email": email_map.get(u.deletable_by) if u.deletable_by else None,
+            "admin_delete_disabled": u.admin_delete_disabled,
         }
         for u in units
     ]
@@ -133,6 +152,9 @@ async def update_org_unit(
     unit: OrganizationalUnit,
     name: str | None,
     unit_type: str | None,
+    deletable_by: str | None = None,
+    set_deletable_by: bool = False,
+    admin_delete_disabled: bool | None = None,
 ) -> OrganizationalUnit:
     if unit_type is not None and unit_type not in VALID_UNIT_TYPES:
         raise ValueError(f"Invalid unit_type. Must be one of: {sorted(VALID_UNIT_TYPES)}")
@@ -140,6 +162,27 @@ async def update_org_unit(
         unit.name = name
     if unit_type is not None:
         unit.unit_type = unit_type
+    if admin_delete_disabled is not None:
+        unit.admin_delete_disabled = admin_delete_disabled
+    if set_deletable_by:
+        if deletable_by is not None:
+            admin_role_result = await db.execute(
+                select(Role).where(Role.name == "Admin", Role.is_system == True)
+            )
+            admin_role = admin_role_result.scalar_one_or_none()
+            if admin_role:
+                assignment = await db.execute(
+                    select(UserRoleAssignment).where(
+                        UserRoleAssignment.user_id == uuid_mod.UUID(deletable_by),
+                        UserRoleAssignment.org_unit_id == unit.id,
+                        UserRoleAssignment.role_id == admin_role.id,
+                    )
+                )
+                if assignment.scalar_one_or_none() is None:
+                    raise ValueError("User must be an admin of this unit to be assigned as deletable_by")
+            unit.deletable_by = uuid_mod.UUID(deletable_by)
+        else:
+            unit.deletable_by = None
     return unit
 
 
