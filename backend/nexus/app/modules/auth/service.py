@@ -42,12 +42,9 @@ def verify_access_token(token: str) -> TokenPayload | None:
         return TokenPayload(
             sub=payload["sub"],
             tenant_id=payload.get("tenant_id", ""),
-            app_role=payload.get("app_role", ""),
             email=payload.get("email", ""),
             role=payload.get("role", "authenticated"),
             is_projectx_admin=payload.get("is_projectx_admin", False),
-            is_admin=payload.get("is_admin", False),
-            org_unit_id=payload.get("org_unit_id"),
             exp=payload.get("exp", 0),
         )
     except jwt.ExpiredSignatureError:
