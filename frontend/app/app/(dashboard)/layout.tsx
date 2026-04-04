@@ -45,11 +45,6 @@ export default async function DashboardLayout({
     redirect("/onboarding");
   }
 
-  // Super Admin must create at least one org unit before doing anything else
-  if (me && me.is_admin && !me.has_org_units) {
-    redirect("/settings/org-units/new");
-  }
-
   return (
     <div className="flex flex-1">
       <aside className="w-56 border-r border-zinc-200 bg-white p-4">

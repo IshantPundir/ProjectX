@@ -2,11 +2,7 @@ from pydantic import BaseModel
 
 
 class TeamInviteRequest(BaseModel):
-    email: str
-    role: str  # "Admin", "Recruiter", "Hiring Manager", "Interviewer", "Observer"
-    is_admin: bool = False
-    permissions: list[str] = []
-    org_unit_id: str | None = None
+    email: str  # Email only — role/permissions/org assigned later
 
 
 class TeamInviteResponse(BaseModel):

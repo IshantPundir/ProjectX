@@ -24,54 +24,32 @@ async def create_team_invite(
     db: AsyncSession,
     tenant_id: uuid_mod.UUID,
     email: str,
-    role: str,
     invited_by: uuid_mod.UUID,
-    inviting_user_permissions: list[str],
-    is_admin: bool = False,
-    permissions: list[str] | None = None,
-    org_unit_id: uuid_mod.UUID | None = None,
 ) -> tuple[UserInvite, str, str]:
-    """Create an invite for a team member. Returns (invite, raw_token, client_name).
+    """Create a simple invite — email only.
 
-    Does NOT send email — caller is responsible for email dispatch
-    after the transaction commits.
+    Role, permissions, org_unit, and is_admin are all left as defaults.
+    The user can be assigned roles and org units later via the org units page.
     """
-    # Permission checks
-    if is_admin:
-        require_permission(inviting_user_permissions, "users.invite_admins")
-    else:
-        require_permission(inviting_user_permissions, "users.invite_users")
-
-    target_permissions = permissions or []
-    validate_permissions(target_permissions, inviting_user_permissions)
-
-    allowed_roles = {"Admin", "Recruiter", "Hiring Manager", "Interviewer", "Observer"}
-    if role not in allowed_roles:
-        raise ValueError(f"Invalid role: {role}. Must be one of: {allowed_roles}")
-
     raw_token = secrets.token_urlsafe(32)
     token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
 
     invite = UserInvite(
         tenant_id=tenant_id,
         email=email,
-        role=role,
+        role="Observer",  # default role — can be changed later via org unit assignment
         token_hash=token_hash,
         invited_by=invited_by,
-        is_admin=is_admin,
-        permissions=target_permissions,
-        org_unit_id=org_unit_id,
     )
     db.add(invite)
     await db.flush()
 
-    # Get company name for the email (RLS scopes this to the tenant)
     result = await db.execute(select(Client).where(Client.id == tenant_id))
-    company = result.scalar_one()
+    client = result.scalar_one()
 
-    logger.info("settings.team_member_invited", tenant_id=str(tenant_id), email=email, role=role)
+    logger.info("settings.team_member_invited", tenant_id=str(tenant_id), email=email)
 
-    return invite, raw_token, company.name
+    return invite, raw_token, client.name
 
 
 async def _get_visible_org_unit_ids(
