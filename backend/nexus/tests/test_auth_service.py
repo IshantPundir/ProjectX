@@ -34,7 +34,6 @@ def _make_token(private_key, **overrides) -> str:
     payload = {
         "sub": "test-user-uuid",
         "tenant_id": "test-tenant-uuid",
-        "app_role": "Company Admin",
         "email": "admin@acme.com",
         "role": "authenticated",
         "is_projectx_admin": False,
@@ -59,7 +58,6 @@ class TestVerifyAccessToken:
         assert isinstance(result, TokenPayload)
         assert result.sub == "test-user-uuid"
         assert result.tenant_id == "test-tenant-uuid"
-        assert result.app_role == "Company Admin"
         assert result.email == "admin@acme.com"
         assert result.is_projectx_admin is False
 
@@ -86,7 +84,7 @@ class TestVerifyAccessToken:
 
     def test_projectx_admin_token(self, ec_key_pair, mock_jwks_client):
         private_key, _ = ec_key_pair
-        token = _make_token(private_key, tenant_id="", app_role="", is_projectx_admin=True)
+        token = _make_token(private_key, tenant_id="", is_projectx_admin=True)
 
         with patch("app.modules.auth.service._get_jwks_client", return_value=mock_jwks_client):
             from app.modules.auth.service import verify_access_token
@@ -95,12 +93,11 @@ class TestVerifyAccessToken:
         assert result is not None
         assert result.is_projectx_admin is True
         assert result.tenant_id == ""
-        assert result.app_role == ""
 
     def test_empty_custom_claims_returns_defaults(self, ec_key_pair, mock_jwks_client):
         """Token without custom claims (new user, no invite) should return defaults."""
         private_key, _ = ec_key_pair
-        token = _make_token(private_key, tenant_id="", app_role="", is_projectx_admin=False)
+        token = _make_token(private_key, tenant_id="", is_projectx_admin=False)
 
         with patch("app.modules.auth.service._get_jwks_client", return_value=mock_jwks_client):
             from app.modules.auth.service import verify_access_token
@@ -108,4 +105,4 @@ class TestVerifyAccessToken:
 
         assert result is not None
         assert result.tenant_id == ""
-        assert result.app_role == ""
+        assert result.is_projectx_admin is False
