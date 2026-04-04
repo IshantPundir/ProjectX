@@ -175,7 +175,12 @@ async def deactivate_team_user(
     user_id: uuid_mod.UUID,
     caller_auth_user_id: str,
 ) -> None:
-    """Deactivate an accepted user. Guards against self-deactivation by caller identity."""
+    """Deactivate an accepted user and delete their Supabase Auth account.
+
+    Deleting the auth.users row allows the user to signUp() fresh if
+    re-invited later (new password, clean slate). Without this, signUp()
+    fails with "User already registered" and the user is stuck.
+    """
     result = await db.execute(
         select(User).where(
             User.id == user_id,
@@ -192,4 +197,33 @@ async def deactivate_team_user(
         raise ValueError("Cannot deactivate your own account")
 
     user.is_active = False
+
+    # Delete the Supabase Auth account so the user can signUp() fresh if re-invited
+    await _delete_auth_user(str(user.auth_user_id))
+
     logger.info("settings.user_deactivated", user_id=str(user_id), email=user.email)
+
+
+async def _delete_auth_user(auth_user_id: str) -> None:
+    """Delete a user from Supabase Auth via the Admin API."""
+    import httpx
+
+    from app.config import settings
+
+    if not settings.supabase_url or not settings.supabase_service_role_key:
+        logger.warning("settings.auth_delete_skipped", reason="supabase_url or service_role_key not configured")
+        return
+
+    url = f"{settings.supabase_url}/auth/v1/admin/users/{auth_user_id}"
+    async with httpx.AsyncClient() as client:
+        resp = await client.delete(
+            url,
+            headers={
+                "apikey": settings.supabase_service_role_key,
+                "Authorization": f"Bearer {settings.supabase_service_role_key}",
+            },
+        )
+    if resp.status_code not in (200, 204):
+        logger.error("settings.auth_delete_failed", auth_user_id=auth_user_id, status=resp.status_code)
+    else:
+        logger.info("settings.auth_user_deleted", auth_user_id=auth_user_id)

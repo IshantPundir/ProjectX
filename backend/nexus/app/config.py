@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     # Auth — ES256 JWKS verification (no shared secret)
     supabase_jwks_url: str = ""  # e.g. http://127.0.0.1:54321/auth/v1/.well-known/jwks.json
 
+    # Supabase Admin API — used ONLY for auth user lifecycle (delete on deactivate).
+    # NOT for data access — all data goes through asyncpg directly.
+    supabase_url: str = ""
+    supabase_service_role_key: str = ""
+
     # Candidate JWT (separate signing key — treat as DB credential)
     candidate_jwt_secret: str = "change-me-candidate-secret"
     candidate_jwt_algorithm: str = "HS256"

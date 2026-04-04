@@ -13,6 +13,9 @@ services:
       - REDIS_URL=redis://redis:6379/0
       # JWKS endpoint on the host's Supabase
       - SUPABASE_JWKS_URL=http://host.docker.internal:54321/auth/v1/.well-known/jwks.json
+      # Supabase Admin API for auth user lifecycle (delete on deactivate)
+      - SUPABASE_URL=http://host.docker.internal:54321
+      - SUPABASE_SERVICE_ROLE_KEY=sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
