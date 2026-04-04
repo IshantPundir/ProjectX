@@ -73,6 +73,12 @@ export default async function DashboardLayout({
           >
             Org Units
           </a>
+          <a
+            href="/profile"
+            className="block text-sm text-zinc-700 hover:text-zinc-900 py-1.5"
+          >
+            Profile
+          </a>
         </nav>
       </aside>
       <main className="flex-1 p-6">{children}</main>
