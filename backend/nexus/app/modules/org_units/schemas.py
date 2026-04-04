@@ -10,6 +10,8 @@ class CreateOrgUnitRequest(BaseModel):
 class UpdateOrgUnitRequest(BaseModel):
     name: str | None = None
     unit_type: str | None = None
+    deletable_by: str | None = None
+    admin_delete_disabled: bool | None = None
 
 
 class OrgUnitResponse(BaseModel):
@@ -20,6 +22,11 @@ class OrgUnitResponse(BaseModel):
     unit_type: str
     member_count: int
     created_at: str
+    created_by: str | None
+    created_by_email: str | None
+    deletable_by: str | None
+    deletable_by_email: str | None
+    admin_delete_disabled: bool
 
 
 class AssignRoleRequest(BaseModel):
