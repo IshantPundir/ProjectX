@@ -167,6 +167,16 @@ async def get_current_user(
 
     user, client = row
 
+    # Check if tenant has any org units created
+    from sqlalchemy import func
+    from app.models import OrganizationalUnit
+    org_count_result = await db.execute(
+        select(func.count()).select_from(OrganizationalUnit).where(
+            OrganizationalUnit.client_id == user.tenant_id
+        )
+    )
+    has_org_units = (org_count_result.scalar() or 0) > 0
+
     return MeResponse(
         user_id=str(user.id),
         auth_user_id=str(user.auth_user_id),
@@ -179,6 +189,7 @@ async def get_current_user(
         tenant_id=str(user.tenant_id),
         client_name=client.name,
         onboarding_complete=client.onboarding_complete,
+        has_org_units=has_org_units,
     )
 
 

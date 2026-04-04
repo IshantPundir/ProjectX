@@ -10,7 +10,9 @@ const getMe = cache(async (token: string, apiUrl: string) => {
   if (!res.ok) return null;
   return res.json() as Promise<{
     role: string;
+    is_admin: boolean;
     onboarding_complete: boolean;
+    has_org_units: boolean;
   }>;
 });
 
@@ -43,6 +45,11 @@ export default async function DashboardLayout({
     redirect("/onboarding");
   }
 
+  // Super Admin must create at least one org unit before doing anything else
+  if (me && me.is_admin && !me.has_org_units) {
+    redirect("/settings/org-units/new");
+  }
+
   return (
     <div className="flex flex-1">
       <aside className="w-56 border-r border-zinc-200 bg-white p-4">
@@ -59,6 +66,12 @@ export default async function DashboardLayout({
             className="block text-sm text-zinc-700 hover:text-zinc-900 py-1.5"
           >
             Team
+          </a>
+          <a
+            href="/settings/org-units"
+            className="block text-sm text-zinc-700 hover:text-zinc-900 py-1.5"
+          >
+            Org Units
           </a>
         </nav>
       </aside>

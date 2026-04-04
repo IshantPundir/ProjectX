@@ -67,3 +67,4 @@ class MeResponse(BaseModel):
     tenant_id: str
     client_name: str
     onboarding_complete: bool
+    has_org_units: bool           # TRUE if tenant has ≥1 org unit created
