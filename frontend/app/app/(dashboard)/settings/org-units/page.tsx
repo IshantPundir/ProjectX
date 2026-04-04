@@ -20,6 +20,8 @@ interface OrgUnit {
   deletable_by: string | null;
   deletable_by_email: string | null;
   admin_delete_disabled: boolean;
+  is_accessible: boolean;
+  admin_emails: string[];
 }
 
 interface MeData {
@@ -316,40 +318,60 @@ export default function OrgUnitsPage() {
         </div>
       ) : (
         <div className="bg-white border border-zinc-200 rounded-xl divide-y divide-zinc-100">
-          {tree.map(({ unit: u, depth }) => (
-            <button
-              key={u.id}
-              type="button"
-              onClick={() => router.push(`/settings/org-units/${u.id}`)}
-              className="w-full flex items-center justify-between py-3.5 pr-4 hover:bg-zinc-50 cursor-pointer transition-colors duration-100 text-left group first:rounded-t-xl last:rounded-b-xl"
-              style={{ paddingLeft: `${depth * 24 + 16}px` }}
-            >
-              <div className="flex items-center gap-2.5 min-w-0">
-                {depth > 0 && (
-                  <IconChevron className="w-2.5 h-2.5 text-zinc-300 shrink-0" />
-                )}
-                <span className="text-sm font-medium text-zinc-900 truncate">{u.name}</span>
-                <span className="bg-zinc-100 text-zinc-500 px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0">
-                  {TYPE_LABELS[u.unit_type] || u.unit_type}
-                </span>
+          {tree.map(({ unit: u, depth }) =>
+            u.is_accessible ? (
+              <button
+                key={u.id}
+                type="button"
+                onClick={() => router.push(`/settings/org-units/${u.id}`)}
+                className="w-full flex items-center justify-between py-3.5 pr-4 hover:bg-zinc-50 cursor-pointer transition-colors duration-100 text-left group first:rounded-t-xl last:rounded-b-xl"
+                style={{ paddingLeft: `${depth * 24 + 16}px` }}
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  {depth > 0 && (
+                    <IconChevron className="w-2.5 h-2.5 text-zinc-300 shrink-0" />
+                  )}
+                  <span className="text-sm font-medium text-zinc-900 truncate">{u.name}</span>
+                  <span className="bg-zinc-100 text-zinc-500 px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0">
+                    {TYPE_LABELS[u.unit_type] || u.unit_type}
+                  </span>
+                </div>
+                <div className="flex items-center gap-4 shrink-0">
+                  <span className="inline-flex items-center gap-1 text-xs text-zinc-400">
+                    <IconUsers className="w-3 h-3" />
+                    {u.member_count}
+                  </span>
+                  <svg
+                    className="w-4 h-4 text-zinc-300 group-hover:text-zinc-500 transition-colors duration-100"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    strokeWidth={2}
+                    stroke="currentColor"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                  </svg>
+                </div>
+              </button>
+            ) : (
+              /* Greyed-out ancestor unit — not clickable */
+              <div
+                key={u.id}
+                className="w-full flex items-center justify-between py-3.5 pr-4 first:rounded-t-xl last:rounded-b-xl opacity-40"
+                style={{ paddingLeft: `${depth * 24 + 16}px` }}
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  {depth > 0 && (
+                    <IconChevron className="w-2.5 h-2.5 text-zinc-300 shrink-0" />
+                  )}
+                  <span className="text-sm font-medium text-zinc-400 truncate">{u.name}</span>
+                  <span className="bg-zinc-100 text-zinc-400 px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0">
+                    {TYPE_LABELS[u.unit_type] || u.unit_type}
+                  </span>
+                </div>
+                <span className="text-xs text-zinc-300">No access</span>
               </div>
-              <div className="flex items-center gap-4 shrink-0">
-                <span className="inline-flex items-center gap-1 text-xs text-zinc-400">
-                  <IconUsers className="w-3 h-3" />
-                  {u.member_count}
-                </span>
-                <svg
-                  className="w-4 h-4 text-zinc-300 group-hover:text-zinc-500 transition-colors duration-100"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  strokeWidth={2}
-                  stroke="currentColor"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-                </svg>
-              </div>
-            </button>
-          ))}
+            ),
+          )}
         </div>
       )}
     </div>

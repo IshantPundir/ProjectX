@@ -27,6 +27,8 @@ class OrgUnitResponse(BaseModel):
     deletable_by: str | None
     deletable_by_email: str | None
     admin_delete_disabled: bool
+    is_accessible: bool = True        # False for ancestor-only units in non-super-admin views
+    admin_emails: list[str] = []      # Admin emails for inaccessible units (for "ask for access" message)
 
 
 class AssignRoleRequest(BaseModel):

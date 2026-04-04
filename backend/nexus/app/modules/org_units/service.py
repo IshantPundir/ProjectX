@@ -81,26 +81,50 @@ async def list_org_units(
     user_id: uuid_mod.UUID,
     is_super_admin: bool,
 ) -> list[dict]:
-    """List org units. Super admin sees all; others see assigned units only."""
+    """List org units.
+
+    Super admin sees all. Others see units they're assigned to PLUS
+    ancestor units up the chain (for tree rendering). Ancestor-only
+    units are flagged with is_accessible=False.
+    """
     if is_super_admin:
-        query = select(OrganizationalUnit).where(
-            OrganizationalUnit.client_id == client_id
+        result = await db.execute(
+            select(OrganizationalUnit)
+            .where(OrganizationalUnit.client_id == client_id)
+            .order_by(OrganizationalUnit.created_at.asc())
         )
+        units = result.scalars().all()
+        accessible_ids = {u.id for u in units}
     else:
-        assigned_unit_ids = (
+        # 1. Get units the user is directly assigned to
+        assignment_result = await db.execute(
             select(UserRoleAssignment.org_unit_id)
             .where(UserRoleAssignment.user_id == user_id)
             .distinct()
-            .scalar_subquery()
         )
-        query = select(OrganizationalUnit).where(
-            OrganizationalUnit.client_id == client_id,
-            OrganizationalUnit.id.in_(assigned_unit_ids),
+        accessible_ids: set[uuid_mod.UUID] = {row[0] for row in assignment_result.all()}
+
+        # 2. Load ALL tenant units to walk up ancestor chains
+        all_result = await db.execute(
+            select(OrganizationalUnit)
+            .where(OrganizationalUnit.client_id == client_id)
+            .order_by(OrganizationalUnit.created_at.asc())
         )
+        all_units = all_result.scalars().all()
+        unit_map = {u.id: u for u in all_units}
 
-    result = await db.execute(query.order_by(OrganizationalUnit.created_at.asc()))
-    units = result.scalars().all()
+        # 3. Walk up from each assigned unit to collect ancestors
+        needed_ids = set(accessible_ids)
+        for uid in list(accessible_ids):
+            current = unit_map.get(uid)
+            while current and current.parent_unit_id:
+                needed_ids.add(current.parent_unit_id)
+                current = unit_map.get(current.parent_unit_id)
 
+        # 4. Filter to only needed units (assigned + ancestors)
+        units = [u for u in all_units if u.id in needed_ids]
+
+    # Batch member counts
     unit_ids = [u.id for u in units]
     counts: dict[uuid_mod.UUID, int] = {}
     if unit_ids:
@@ -114,6 +138,7 @@ async def list_org_units(
         )
         counts = {row[0]: row[1] for row in count_result.all()}
 
+    # Batch emails for created_by / deletable_by
     user_ids_to_load: set[uuid_mod.UUID] = set()
     for u in units:
         if u.created_by:
@@ -127,6 +152,26 @@ async def list_org_units(
             select(User.id, User.email).where(User.id.in_(user_ids_to_load))
         )
         email_map = {row[0]: row[1] for row in email_result.all()}
+
+    # For inaccessible units, load admin emails so frontend can show "ask for access"
+    inaccessible_ids = [u.id for u in units if u.id not in accessible_ids]
+    admin_emails_by_unit: dict[uuid_mod.UUID, list[str]] = {}
+    if inaccessible_ids:
+        admin_role_result = await db.execute(
+            select(Role).where(Role.name == "Admin", Role.is_system == True)
+        )
+        admin_role = admin_role_result.scalar_one_or_none()
+        if admin_role:
+            admin_assign_result = await db.execute(
+                select(UserRoleAssignment.org_unit_id, User.email)
+                .join(User, UserRoleAssignment.user_id == User.id)
+                .where(
+                    UserRoleAssignment.org_unit_id.in_(inaccessible_ids),
+                    UserRoleAssignment.role_id == admin_role.id,
+                )
+            )
+            for org_id, email in admin_assign_result.all():
+                admin_emails_by_unit.setdefault(org_id, []).append(email)
 
     return [
         {
@@ -142,6 +187,8 @@ async def list_org_units(
             "deletable_by": str(u.deletable_by) if u.deletable_by else None,
             "deletable_by_email": email_map.get(u.deletable_by) if u.deletable_by else None,
             "admin_delete_disabled": u.admin_delete_disabled,
+            "is_accessible": u.id in accessible_ids,
+            "admin_emails": admin_emails_by_unit.get(u.id, []),
         }
         for u in units
     ]

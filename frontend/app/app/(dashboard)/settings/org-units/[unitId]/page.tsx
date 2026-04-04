@@ -20,6 +20,8 @@ interface OrgUnit {
   deletable_by: string | null;
   deletable_by_email: string | null;
   admin_delete_disabled: boolean;
+  is_accessible: boolean;
+  admin_emails: string[];
 }
 
 interface MemberRole {
@@ -433,6 +435,45 @@ export default function OrgUnitDetailPage() {
         >
           Back to Org Units
         </button>
+      </div>
+    );
+  }
+
+  if (!unit.is_accessible) {
+    return (
+      <div className="max-w-4xl">
+        <button
+          onClick={() => router.push("/settings/org-units")}
+          className="inline-flex items-center gap-1.5 text-sm text-zinc-500 hover:text-zinc-700 mb-6 cursor-pointer transition-colors duration-100"
+        >
+          <IconArrowLeft className="w-3.5 h-3.5" />
+          All Units
+        </button>
+
+        <div className="bg-white border border-zinc-200 rounded-xl p-8 text-center">
+          <div className="w-12 h-12 rounded-full bg-zinc-100 flex items-center justify-center mx-auto mb-4">
+            <svg className="w-6 h-6 text-zinc-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+            </svg>
+          </div>
+          <h2 className="text-lg font-semibold text-zinc-900 mb-2">
+            You don&apos;t have access to {unit.name}
+          </h2>
+          <p className="text-sm text-zinc-500 max-w-md mx-auto leading-relaxed">
+            You are not assigned any role in this unit.
+            {unit.admin_emails.length > 0 ? (
+              <>
+                {" "}Ask{" "}
+                <span className="font-medium text-zinc-700">
+                  {unit.admin_emails.join(" or ")}
+                </span>{" "}
+                to grant you access.
+              </>
+            ) : (
+              " Contact your super admin to get access."
+            )}
+          </p>
+        </div>
       </div>
     );
   }
