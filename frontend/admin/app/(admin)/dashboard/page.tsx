@@ -6,8 +6,8 @@ import { createClient } from "@/lib/supabase/client";
 import { apiFetch } from "@/lib/api/client";
 
 interface Client {
-  company_id: string;
-  company_name: string;
+  client_id: string;
+  client_name: string;
   domain: string | null;
   plan: string;
   onboarding_complete: boolean;
@@ -101,11 +101,11 @@ export default function DashboardPage() {
             <tbody>
               {clients.map((c) => (
                 <tr
-                  key={c.company_id}
+                  key={c.client_id}
                   className="border-b border-zinc-100 last:border-0"
                 >
                   <td className="px-4 py-2.5 font-medium text-zinc-900">
-                    {c.company_name}
+                    {c.client_name}
                   </td>
                   <td className="px-4 py-2.5 text-zinc-600">
                     {c.admin_email || "\u2014"}

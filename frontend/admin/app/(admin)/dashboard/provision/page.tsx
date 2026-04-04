@@ -31,13 +31,13 @@ export default function ProvisionPage() {
       if (!token) throw new Error("Not authenticated");
 
       const result = await apiFetch<{
-        company_id: string;
+        client_id: string;
         invite_url: string;
       }>("/api/admin/provision-client", {
         method: "POST",
         token,
         body: JSON.stringify({
-          company_name: companyName,
+          client_name: companyName,
           admin_email: adminEmail,
           domain,
           industry,
