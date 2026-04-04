@@ -65,12 +65,16 @@ CREATE TABLE public.organizational_units (
     name            TEXT NOT NULL,
     unit_type       TEXT NOT NULL
                         CHECK (unit_type IN ('client_account', 'department', 'team', 'branch', 'region')),
+    created_by      UUID REFERENCES public.users(id),
+    deletable_by    UUID REFERENCES public.users(id),
+    admin_delete_disabled BOOLEAN NOT NULL DEFAULT FALSE,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX org_units_client_id_idx ON public.organizational_units (client_id);
 CREATE INDEX org_units_parent_unit_id_idx ON public.organizational_units (parent_unit_id);
+CREATE INDEX org_units_created_by_idx ON public.organizational_units (created_by);
 
 ALTER TABLE public.organizational_units ENABLE ROW LEVEL SECURITY;
 
