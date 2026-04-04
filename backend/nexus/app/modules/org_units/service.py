@@ -230,6 +230,7 @@ async def remove_user_from_unit(
     for a in assignments:
         await db.delete(a)
 
+    await _nullify_deletable_by_if_needed(db, org_unit_id, user_id)
     logger.info("org_units.user_removed", user_id=str(user_id), org_unit_id=str(org_unit_id), count=len(assignments))
     return len(assignments)
 
@@ -237,9 +238,33 @@ async def remove_user_from_unit(
 async def delete_org_unit(
     db: AsyncSession,
     org_unit_id: uuid_mod.UUID,
+    caller_user_id: uuid_mod.UUID,
+    is_super_admin: bool,
+    caller_has_admin_role: bool,
 ) -> None:
-    """Delete an org unit. Fails if it has children or members."""
-    # Check for child units
+    """Delete an org unit with authorization checks."""
+    result = await db.execute(
+        select(OrganizationalUnit).where(OrganizationalUnit.id == org_unit_id)
+    )
+    unit = result.scalar_one_or_none()
+    if not unit:
+        raise ValueError("Org unit not found")
+
+    if not is_super_admin:
+        if unit.admin_delete_disabled:
+            raise PermissionError("Only a super admin can delete this unit")
+
+        if unit.deletable_by is None:
+            raise PermissionError("No admin is authorized to delete this unit. Contact your super admin.")
+
+        if not caller_has_admin_role or caller_user_id != unit.deletable_by:
+            deletable_user_result = await db.execute(
+                select(User).where(User.id == unit.deletable_by)
+            )
+            deletable_user = deletable_user_result.scalar_one_or_none()
+            deletable_email = deletable_user.email if deletable_user else "unknown"
+            raise PermissionError(f"Only the super admin or {deletable_email} can delete this unit")
+
     child_result = await db.execute(
         select(func.count()).select_from(OrganizationalUnit).where(
             OrganizationalUnit.parent_unit_id == org_unit_id
@@ -248,7 +273,6 @@ async def delete_org_unit(
     if (child_result.scalar() or 0) > 0:
         raise ValueError("Cannot delete a unit that has sub-units. Remove sub-units first.")
 
-    # Check for members
     member_result = await db.execute(
         select(func.count()).select_from(UserRoleAssignment).where(
             UserRoleAssignment.org_unit_id == org_unit_id
@@ -257,15 +281,40 @@ async def delete_org_unit(
     if (member_result.scalar() or 0) > 0:
         raise ValueError("Cannot delete a unit that has members. Remove all members first.")
 
-    result = await db.execute(
-        select(OrganizationalUnit).where(OrganizationalUnit.id == org_unit_id)
-    )
-    unit = result.scalar_one_or_none()
-    if not unit:
-        raise ValueError("Org unit not found")
-
     await db.delete(unit)
     logger.info("org_units.deleted", unit_id=str(org_unit_id), name=unit.name)
+
+
+async def _nullify_deletable_by_if_needed(
+    db: AsyncSession,
+    org_unit_id: uuid_mod.UUID,
+    user_id: uuid_mod.UUID,
+) -> None:
+    """If user is deletable_by for this unit and no longer Admin, set deletable_by to NULL."""
+    unit_result = await db.execute(
+        select(OrganizationalUnit).where(OrganizationalUnit.id == org_unit_id)
+    )
+    unit = unit_result.scalar_one_or_none()
+    if not unit or unit.deletable_by != user_id:
+        return
+
+    admin_role_result = await db.execute(
+        select(Role).where(Role.name == "Admin", Role.is_system == True)
+    )
+    admin_role = admin_role_result.scalar_one_or_none()
+    if not admin_role:
+        return
+
+    remaining = await db.execute(
+        select(UserRoleAssignment).where(
+            UserRoleAssignment.user_id == user_id,
+            UserRoleAssignment.org_unit_id == org_unit_id,
+            UserRoleAssignment.role_id == admin_role.id,
+        )
+    )
+    if remaining.scalar_one_or_none() is None:
+        unit.deletable_by = None
+        logger.info("org_units.deletable_by_nullified", unit_id=str(org_unit_id), user_id=str(user_id))
 
 
 async def remove_role_from_user(
@@ -287,4 +336,5 @@ async def remove_role_from_user(
         raise ValueError("Assignment not found")
 
     await db.delete(assignment)
+    await _nullify_deletable_by_if_needed(db, org_unit_id, user_id)
     logger.info("org_units.role_removed", user_id=str(user_id), org_unit_id=str(org_unit_id), role_id=str(role_id))
