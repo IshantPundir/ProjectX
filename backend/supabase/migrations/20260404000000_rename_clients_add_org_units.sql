@@ -67,6 +67,14 @@ UPDATE public.users
       permissions = '["candidates.advance","candidates.evaluate","candidates.view","interviews.conduct","interviews.schedule","jobs.create","jobs.manage","org_units.create","org_units.manage","reports.export","reports.view","settings.client","settings.integrations","users.deactivate","users.invite_admins","users.invite_users"]'::jsonb
   WHERE role = 'Company Admin';
 
+-- Update role CHECK on user_invites to include 'Admin'
+ALTER TABLE public.user_invites DROP CONSTRAINT user_invites_role_check;
+ALTER TABLE public.user_invites ADD CONSTRAINT user_invites_role_check
+  CHECK (role IN (
+    'Company Admin', 'Admin', 'Recruiter',
+    'Hiring Manager', 'Interviewer', 'Observer'
+  ));
+
 -- Step 4: Add permission columns to public.user_invites
 ALTER TABLE public.user_invites
   ADD COLUMN is_admin      BOOLEAN NOT NULL DEFAULT FALSE,
