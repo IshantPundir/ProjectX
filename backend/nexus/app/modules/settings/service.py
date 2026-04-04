@@ -13,7 +13,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Company, User, UserInvite
+from app.models import Client, User, UserInvite
 
 logger = structlog.get_logger()
 
@@ -49,7 +49,7 @@ async def create_team_invite(
     await db.flush()
 
     # Get company name for the email (RLS scopes this to the tenant)
-    result = await db.execute(select(Company).where(Company.id == tenant_id))
+    result = await db.execute(select(Client).where(Client.id == tenant_id))
     company = result.scalar_one()
 
     logger.info("settings.team_member_invited", tenant_id=str(tenant_id), email=email, role=role)
@@ -140,7 +140,7 @@ async def resend_team_invite(
     existing.superseded_by = new_invite.id
 
     # Get company name (RLS scoped via get_tenant_db)
-    company_result = await db.execute(select(Company).where(Company.id == tenant_id))
+    company_result = await db.execute(select(Client).where(Client.id == tenant_id))
     company = company_result.scalar_one()
 
     logger.info("settings.invite_resent", invite_id=str(new_invite.id), email=new_invite.email)

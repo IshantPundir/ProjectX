@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_bypass_db
-from app.models import Company, User, UserInvite
+from app.models import Client, User, UserInvite
 from app.modules.auth.schemas import (
     CompleteInviteRequest,
     CompleteInviteResponse,
@@ -41,8 +41,8 @@ async def verify_invite(
     token_hash = hashlib.sha256(token.encode()).hexdigest()
 
     result = await db.execute(
-        select(UserInvite, Company)
-        .join(Company, UserInvite.tenant_id == Company.id)
+        select(UserInvite, Client)
+        .join(Client, UserInvite.tenant_id == Client.id)
         .where(
             UserInvite.token_hash == token_hash,
             UserInvite.status == "pending",
@@ -54,11 +54,11 @@ async def verify_invite(
     if not row:
         raise HTTPException(status_code=401, detail="Invalid or expired invite")
 
-    invite, company = row
+    invite, client = row
     return VerifyInviteResponse(
         email=invite.email,
         role=invite.role,
-        company_name=company.name,
+        company_name=client.name,
     )
 
 
@@ -152,8 +152,8 @@ async def get_current_user(
     auth_user_id = token_payload.sub
 
     result = await db.execute(
-        select(User, Company)
-        .join(Company, User.tenant_id == Company.id)
+        select(User, Client)
+        .join(Client, User.tenant_id == Client.id)
         .where(User.auth_user_id == auth_user_id, User.is_active == True)
     )
     row = result.first()
@@ -161,7 +161,7 @@ async def get_current_user(
     if not row:
         raise HTTPException(status_code=404, detail="User not found")
 
-    user, company = row
+    user, client = row
 
     return MeResponse(
         user_id=str(user.id),
@@ -170,8 +170,8 @@ async def get_current_user(
         full_name=user.full_name,
         role=user.role,
         tenant_id=str(user.tenant_id),
-        company_name=company.name,
-        onboarding_complete=company.onboarding_complete,
+        company_name=client.name,
+        onboarding_complete=client.onboarding_complete,
     )
 
 
@@ -196,8 +196,8 @@ async def complete_onboarding(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    result = await db.execute(select(Company).where(Company.id == user.tenant_id))
-    company = result.scalar_one()
-    company.onboarding_complete = True
+    result = await db.execute(select(Client).where(Client.id == user.tenant_id))
+    client = result.scalar_one()
+    client.onboarding_complete = True
 
     return {"status": "completed"}

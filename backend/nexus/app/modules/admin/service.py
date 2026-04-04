@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models import Company, User, UserInvite
+from app.models import Client, User, UserInvite
 from app.modules.notifications.service import render_template, send_email
 
 logger = structlog.get_logger()
@@ -23,14 +23,14 @@ async def provision_client(
     industry: str = "",
     plan: str = "trial",
     admin_identity: str,  # email of the ProjectX admin performing this action
-) -> tuple[Company, UserInvite, str]:
+) -> tuple[Client, UserInvite, str]:
     """Create a company + invite for the Company Admin.
 
     Returns (company, invite, raw_token_or_url). The raw_token is passed to the
     email sender and then discarded — never stored.
     """
     # Create company
-    company = Company(name=company_name, domain=domain or None, industry=industry or None, plan=plan)
+    company = Client(name=company_name, domain=domain or None, industry=industry or None, plan=plan)
     db.add(company)
     await db.flush()  # get company.id
 
@@ -97,10 +97,10 @@ async def list_clients(db: AsyncSession) -> list[dict]:
     )
 
     result = await db.execute(
-        select(Company, UserInvite)
+        select(Client, UserInvite)
         .outerjoin(
             latest_invite,
-            Company.id == latest_invite.c.tenant_id,
+            Client.id == latest_invite.c.tenant_id,
         )
         .outerjoin(
             UserInvite,
@@ -108,7 +108,7 @@ async def list_clients(db: AsyncSession) -> list[dict]:
             & (UserInvite.created_at == latest_invite.c.max_created)
             & (UserInvite.role == "Company Admin"),
         )
-        .order_by(Company.created_at.desc())
+        .order_by(Client.created_at.desc())
     )
     rows = result.all()
 
