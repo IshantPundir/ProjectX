@@ -15,6 +15,11 @@ interface OrgUnit {
   unit_type: string;
   member_count: number;
   created_at: string;
+  created_by: string | null;
+  created_by_email: string | null;
+  deletable_by: string | null;
+  deletable_by_email: string | null;
+  admin_delete_disabled: boolean;
 }
 
 interface MemberRole {
@@ -51,6 +56,7 @@ interface TeamMember {
 }
 
 interface MeData {
+  user_id: string;
   is_super_admin: boolean;
   assignments: {
     org_unit_id: string;
@@ -257,6 +263,15 @@ export default function OrgUnitDetailPage() {
     if (me.is_super_admin) return true;
     return me.assignments.some((a) => a.org_unit_id === unitId && a.role_name === "Admin");
   }, [me, unitId]);
+
+  const canDelete = useMemo(() => {
+    if (!me || !unit) return false;
+    if (me.is_super_admin) return true;
+    if (unit.admin_delete_disabled) return false;
+    if (!unit.deletable_by) return false;
+    const isAdmin = me.assignments.some((a) => a.org_unit_id === unitId && a.role_name === "Admin");
+    return isAdmin && me.user_id === unit.deletable_by;
+  }, [me, unit, unitId]);
 
   const memberUserIds = useMemo(() => new Set(members.map((m) => m.user_id)), [members]);
 
@@ -573,6 +588,11 @@ export default function OrgUnitDetailPage() {
                   <span className="text-xs text-zinc-400">
                     Created {new Date(unit.created_at).toLocaleDateString()}
                   </span>
+                  {unit.created_by_email && (
+                    <span className="text-xs text-zinc-400">
+                      by {unit.created_by_email}
+                    </span>
+                  )}
                 </div>
               </div>
               {canManage && (
@@ -593,7 +613,7 @@ export default function OrgUnitDetailPage() {
                       Sub-unit
                     </button>
                   )}
-                  {me?.is_super_admin && (
+                  {canDelete && (
                     <button
                       onClick={() =>
                         setConfirmAction({
@@ -615,6 +635,91 @@ export default function OrgUnitDetailPage() {
             </div>
           )}
         </div>
+
+        {/* ─── Deletion Settings (super admin only) ─── */}
+        {me?.is_super_admin && unit && (
+          <div className="bg-white border border-zinc-200 rounded-xl p-6 mb-6">
+            <h2 className="text-sm font-semibold text-zinc-900 mb-4">Deletion Settings</h2>
+            <div className="space-y-4">
+              {/* Lock toggle */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-zinc-700">Lock deletion</p>
+                  <p className="text-xs text-zinc-400">When enabled, only a super admin can delete this unit</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const token = await getToken();
+                    if (!token) return;
+                    try {
+                      await apiFetch(`/api/org-units/${unitId}`, {
+                        method: "PUT",
+                        token,
+                        body: JSON.stringify({ admin_delete_disabled: !unit.admin_delete_disabled }),
+                      });
+                      await loadAll();
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : "Failed to update");
+                    }
+                  }}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 cursor-pointer ${
+                    unit.admin_delete_disabled ? "bg-green-600" : "bg-zinc-200"
+                  }`}
+                  role="switch"
+                  aria-checked={unit.admin_delete_disabled}
+                  aria-label="Lock deletion"
+                >
+                  <span
+                    className={`inline-block h-4 w-4 rounded-full bg-white transition-transform duration-200 ${
+                      unit.admin_delete_disabled ? "translate-x-6" : "translate-x-1"
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* Reassign deletable_by */}
+              {!unit.admin_delete_disabled && (
+                <div>
+                  <label htmlFor="deletable-by" className="block text-sm text-zinc-700 mb-1">
+                    Admin authorized to delete
+                  </label>
+                  <p className="text-xs text-zinc-400 mb-2">
+                    Only this admin (and super admins) can delete this unit
+                  </p>
+                  <select
+                    id="deletable-by"
+                    value={unit.deletable_by || ""}
+                    onChange={async (e) => {
+                      const token = await getToken();
+                      if (!token) return;
+                      try {
+                        await apiFetch(`/api/org-units/${unitId}`, {
+                          method: "PUT",
+                          token,
+                          body: JSON.stringify({ deletable_by: e.target.value || null }),
+                        });
+                        await loadAll();
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : "Failed to update");
+                      }
+                    }}
+                    className="w-full max-w-xs border border-zinc-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-600 cursor-pointer"
+                  >
+                    <option value="">None (only super admin)</option>
+                    {members
+                      .filter((m) => m.roles.some((r) => r.role_name === "Admin"))
+                      .map((m) => (
+                        <option key={m.user_id} value={m.user_id}>
+                          {m.full_name || m.email}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* ─── Add Sub-unit form ─── */}
         {showAddSubUnit && me?.is_super_admin && (
