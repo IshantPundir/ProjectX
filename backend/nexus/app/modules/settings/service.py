@@ -119,8 +119,8 @@ async def list_team_members(
     if caller_org_unit_id is not None:
         visible_org_ids = await _get_visible_org_unit_ids(db, tenant_id, caller_org_unit_id)
 
-    # Active users
-    query = select(User).where(User.tenant_id == tenant_id).order_by(User.created_at.asc())
+    # Active users only — deactivated users are hidden from the list
+    query = select(User).where(User.tenant_id == tenant_id, User.is_active == True).order_by(User.created_at.asc())
     if visible_org_ids is not None:
         query = query.where(User.org_unit_id.in_(visible_org_ids))
     result = await db.execute(query)
