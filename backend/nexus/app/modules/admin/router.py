@@ -26,9 +26,9 @@ async def provision_client_endpoint(
     """Provision a new enterprise client and send invite to their Company Admin."""
     admin_email = request.state.token_payload.email
 
-    company, invite, invite_url = await provision_client(
+    client, invite, invite_url = await provision_client(
         db=db,
-        company_name=data.company_name,
+        client_name=data.client_name,
         admin_email=data.admin_email,
         domain=data.domain,
         industry=data.industry,
@@ -37,7 +37,7 @@ async def provision_client_endpoint(
     )
 
     return ProvisionClientResponse(
-        company_id=str(company.id),
+        client_id=str(client.id),
         invite_id=str(invite.id),
         admin_email=data.admin_email,
         invite_url=invite_url,

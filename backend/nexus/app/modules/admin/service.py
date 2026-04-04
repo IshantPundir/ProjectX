@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models import Client, User, UserInvite
+from app.modules.auth.permissions import SUPER_ADMIN_PERMISSIONS
 from app.modules.notifications.service import render_template, send_email
 
 logger = structlog.get_logger()
@@ -17,22 +18,22 @@ logger = structlog.get_logger()
 async def provision_client(
     *,
     db: AsyncSession,
-    company_name: str,
+    client_name: str,
     admin_email: str,
     domain: str = "",
     industry: str = "",
     plan: str = "trial",
     admin_identity: str,  # email of the ProjectX admin performing this action
 ) -> tuple[Client, UserInvite, str]:
-    """Create a company + invite for the Company Admin.
+    """Create a client + invite for the Company Admin.
 
-    Returns (company, invite, raw_token_or_url). The raw_token is passed to the
+    Returns (client, invite, raw_token_or_url). The raw_token is passed to the
     email sender and then discarded — never stored.
     """
-    # Create company
-    company = Client(name=company_name, domain=domain or None, industry=industry or None, plan=plan)
-    db.add(company)
-    await db.flush()  # get company.id
+    # Create client
+    client = Client(name=client_name, domain=domain or None, industry=industry or None, plan=plan)
+    db.add(client)
+    await db.flush()  # get client.id
 
     # Generate invite token
     raw_token = secrets.token_urlsafe(32)
@@ -40,11 +41,14 @@ async def provision_client(
 
     # Create invite
     invite = UserInvite(
-        tenant_id=company.id,
+        tenant_id=client.id,
         email=admin_email,
         role="Company Admin",
         token_hash=token_hash,
         projectx_admin_id=admin_identity,
+        is_admin=True,
+        permissions=SUPER_ADMIN_PERMISSIONS,
+        org_unit_id=None,
     )
     db.add(invite)
     await db.flush()  # get invite.id
@@ -55,19 +59,19 @@ async def provision_client(
 
     html = render_template(
         "company_admin_invite.html",
-        company_name=company_name,
+        company_name=client_name,
         invite_url=invite_url,
         expires_hours=72,
     )
     await send_email(
         to=admin_email,
-        subject=f"You've been invited to set up {company_name} on ProjectX",
+        subject=f"You've been invited to set up {client_name} on ProjectX",
         html=html,
     )
 
     logger.info(
         "admin.client_provisioned",
-        company_id=str(company.id),
+        client_id=str(client.id),
         admin_email=admin_email,
     )
 
@@ -75,7 +79,7 @@ async def provision_client(
     if settings.notifications_dry_run:
         logger.info("admin.invite_url_dry_run", invite_url=invite_url)
 
-    return company, invite, invite_url if settings.notifications_dry_run else ""
+    return client, invite, invite_url if settings.notifications_dry_run else ""
 
 
 async def list_clients(db: AsyncSession) -> list[dict]:
@@ -114,8 +118,8 @@ async def list_clients(db: AsyncSession) -> list[dict]:
 
     return [
         {
-            "company_id": str(company.id),
-            "company_name": company.name,
+            "client_id": str(company.id),
+            "client_name": company.name,
             "domain": company.domain,
             "plan": company.plan,
             "onboarding_complete": company.onboarding_complete,
