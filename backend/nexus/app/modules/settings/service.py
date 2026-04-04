@@ -2,7 +2,6 @@
 
 Email dispatch is handled by the router via BackgroundTasks,
 ensuring emails are sent AFTER the transaction commits.
-If email fails, the invite persists and can be resent.
 """
 
 import hashlib
@@ -13,8 +12,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Client, User, UserInvite
-from app.modules.auth.permissions import require_permission, validate_permissions
+from app.models import Client, OrganizationalUnit, Role, User, UserInvite, UserRoleAssignment
 
 logger = structlog.get_logger()
 
@@ -26,18 +24,13 @@ async def create_team_invite(
     email: str,
     invited_by: uuid_mod.UUID,
 ) -> tuple[UserInvite, str, str]:
-    """Create a simple invite — email only.
-
-    Role, permissions, org_unit, and is_admin are all left as defaults.
-    The user can be assigned roles and org units later via the org units page.
-    """
+    """Create a simple invite — email only. No role info."""
     raw_token = secrets.token_urlsafe(32)
     token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
 
     invite = UserInvite(
         tenant_id=tenant_id,
         email=email,
-        role=None,  # no role — assigned later when placed into an org unit
         token_hash=token_hash,
         invited_by=invited_by,
     )
@@ -52,92 +45,69 @@ async def create_team_invite(
     return invite, raw_token, client.name
 
 
-async def _get_visible_org_unit_ids(
-    db: AsyncSession,
-    tenant_id: uuid_mod.UUID,
-    caller_org_unit_id: uuid_mod.UUID,
-) -> set[uuid_mod.UUID]:
-    """Return the caller's org unit ID + all descendant IDs."""
-    from app.models import OrganizationalUnit
-
-    result = await db.execute(
-        select(OrganizationalUnit).where(OrganizationalUnit.client_id == tenant_id)
-    )
-    all_units = list(result.scalars().all())
-
-    children_map: dict[uuid_mod.UUID | None, list] = {}
-    for u in all_units:
-        children_map.setdefault(u.parent_unit_id, []).append(u)
-
-    ids: set[uuid_mod.UUID] = {caller_org_unit_id}
-    queue = [caller_org_unit_id]
-    while queue:
-        parent_id = queue.pop()
-        for child in children_map.get(parent_id, []):
-            ids.add(child.id)
-            queue.append(child.id)
-
-    return ids
-
-
 async def list_team_members(
     db: AsyncSession,
     tenant_id: uuid_mod.UUID,
-    caller_org_unit_id: uuid_mod.UUID | None = None,
+    super_admin_id: uuid_mod.UUID | None,
 ) -> list[dict]:
-    """List active users + pending invites.
-
-    Super Admin (org_unit_id=NULL): sees all members in tenant.
-    Admin (org_unit_id=<uuid>): sees only members in own org unit + descendants.
-    """
+    """List active users + pending invites with role assignments."""
     members: list[dict] = []
 
-    # Determine which org_unit_ids this caller can see
-    visible_org_ids: set[uuid_mod.UUID] | None = None
-    if caller_org_unit_id is not None:
-        visible_org_ids = await _get_visible_org_unit_ids(db, tenant_id, caller_org_unit_id)
+    # Active users
+    result = await db.execute(
+        select(User).where(
+            User.tenant_id == tenant_id, User.is_active == True
+        ).order_by(User.created_at.asc())
+    )
+    users = result.scalars().all()
 
-    # Active users only — deactivated users are hidden from the list
-    query = select(User).where(User.tenant_id == tenant_id, User.is_active == True).order_by(User.created_at.asc())
-    if visible_org_ids is not None:
-        query = query.where(User.org_unit_id.in_(visible_org_ids))
-    result = await db.execute(query)
+    # Batch-load all assignments for these users
+    user_ids = [u.id for u in users]
+    assignments_by_user: dict[uuid_mod.UUID, list[dict]] = {uid: [] for uid in user_ids}
 
-    for user in result.scalars().all():
+    if user_ids:
+        assignment_result = await db.execute(
+            select(UserRoleAssignment, Role, OrganizationalUnit)
+            .join(Role, UserRoleAssignment.role_id == Role.id)
+            .join(OrganizationalUnit, UserRoleAssignment.org_unit_id == OrganizationalUnit.id)
+            .where(UserRoleAssignment.user_id.in_(user_ids))
+        )
+        for ura, role, ou in assignment_result.all():
+            assignments_by_user[ura.user_id].append({
+                "org_unit_id": str(ura.org_unit_id),
+                "org_unit_name": ou.name,
+                "role_name": role.name,
+            })
+
+    for user in users:
         members.append({
             "id": str(user.id),
             "email": user.email,
             "full_name": user.full_name,
-            "role": user.role,
             "is_active": user.is_active,
-            "is_admin": user.is_admin,
-            "permissions": user.permissions or [],
+            "is_super_admin": super_admin_id is not None and user.id == super_admin_id,
             "source": "user",
-            "status": "active" if user.is_active else "inactive",
+            "status": "active",
+            "assignments": assignments_by_user.get(user.id, []),
             "created_at": user.created_at.isoformat(),
         })
 
     # Pending invites
-    invite_query = (
+    invite_result = await db.execute(
         select(UserInvite)
         .where(UserInvite.tenant_id == tenant_id, UserInvite.status == "pending")
         .order_by(UserInvite.created_at.desc())
     )
-    if visible_org_ids is not None:
-        invite_query = invite_query.where(UserInvite.org_unit_id.in_(visible_org_ids))
-    result = await db.execute(invite_query)
-
-    for invite in result.scalars().all():
+    for invite in invite_result.scalars().all():
         members.append({
             "id": str(invite.id),
             "email": invite.email,
             "full_name": None,
-            "role": invite.role,
             "is_active": False,
-            "is_admin": invite.is_admin,
-            "permissions": invite.permissions or [],
+            "is_super_admin": False,
             "source": "invite",
             "status": "pending",
+            "assignments": [],
             "created_at": invite.created_at.isoformat(),
         })
 
@@ -149,10 +119,7 @@ async def resend_team_invite(
     tenant_id: uuid_mod.UUID,
     invite_id: uuid_mod.UUID,
 ) -> tuple[UserInvite, str, str]:
-    """Supersede an existing invite and create a new one. Returns (new_invite, raw_token, company_name).
-
-    Does NOT send email — caller handles dispatch after commit.
-    """
+    """Supersede an existing invite and create a new one."""
     result = await db.execute(
         select(UserInvite).where(
             UserInvite.id == invite_id,
@@ -170,7 +137,6 @@ async def resend_team_invite(
     new_invite = UserInvite(
         tenant_id=existing.tenant_id,
         email=existing.email,
-        role=existing.role,
         invited_by=existing.invited_by,
         projectx_admin_id=existing.projectx_admin_id,
         token_hash=new_hash,
@@ -181,7 +147,6 @@ async def resend_team_invite(
     existing.status = "superseded"
     existing.superseded_by = new_invite.id
 
-    # Get company name (RLS scoped via get_tenant_db)
     company_result = await db.execute(select(Client).where(Client.id == tenant_id))
     company = company_result.scalar_one()
 
@@ -217,12 +182,7 @@ async def deactivate_team_user(
     user_id: uuid_mod.UUID,
     caller_auth_user_id: str,
 ) -> None:
-    """Deactivate an accepted user and delete their Supabase Auth account.
-
-    Deleting the auth.users row allows the user to signUp() fresh if
-    re-invited later (new password, clean slate). Without this, signUp()
-    fails with "User already registered" and the user is stuck.
-    """
+    """Deactivate a user and delete their Supabase Auth account."""
     result = await db.execute(
         select(User).where(
             User.id == user_id,
@@ -234,13 +194,12 @@ async def deactivate_team_user(
     if not user:
         raise ValueError("User not found or already inactive")
 
-    # Guard: prevent the caller from deactivating themselves
     if str(user.auth_user_id) == caller_auth_user_id:
         raise ValueError("Cannot deactivate your own account")
 
     user.is_active = False
 
-    # Mark the accepted invite(s) as revoked — keeps user_invites in sync with user status
+    # Mark accepted invites as revoked
     invite_result = await db.execute(
         select(UserInvite).where(
             UserInvite.tenant_id == tenant_id,
@@ -251,7 +210,6 @@ async def deactivate_team_user(
     for invite in invite_result.scalars().all():
         invite.status = "revoked"
 
-    # Delete the Supabase Auth account so the user can signUp() fresh if re-invited
     await _delete_auth_user(str(user.auth_user_id))
 
     logger.info("settings.user_deactivated", user_id=str(user_id), email=user.email)
