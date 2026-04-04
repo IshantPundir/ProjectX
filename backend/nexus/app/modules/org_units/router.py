@@ -12,6 +12,7 @@ from app.modules.org_units.schemas import (
     CreateOrgUnitRequest,
     OrgUnitMember,
     OrgUnitResponse,
+    UpdateMemberRequest,
     UpdateOrgUnitRequest,
 )
 from app.modules.org_units.service import (
@@ -20,6 +21,7 @@ from app.modules.org_units.service import (
     list_org_unit_members,
     list_org_units,
     unassign_user_from_org_unit,
+    update_member_assignment,
     update_org_unit,
 )
 
@@ -212,11 +214,42 @@ async def assign_member(
             user_id=uuid_mod.UUID(data.user_id),
             assigned_by=caller.id,
             client_id=tenant_id,
+            role=data.role,
+            is_admin=data.is_admin,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
     return {"status": "assigned"}
+
+
+@router.put(
+    "/{unit_id}/members/{user_id}",
+    dependencies=[require_roles("Company Admin", "Admin")],
+)
+async def update_member(
+    unit_id: str,
+    user_id: str,
+    data: UpdateMemberRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_tenant_db),
+) -> dict[str, str]:
+    """Update a member's role/permissions within an org unit."""
+    tenant_id = uuid_mod.UUID(request.state.token_payload.tenant_id)
+    try:
+        await update_member_assignment(
+            db=db,
+            org_unit_id=uuid_mod.UUID(unit_id),
+            user_id=uuid_mod.UUID(user_id),
+            client_id=tenant_id,
+            role=data.role,
+            is_admin=data.is_admin,
+            permissions=data.permissions,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {"status": "updated"}
 
 
 @router.delete(

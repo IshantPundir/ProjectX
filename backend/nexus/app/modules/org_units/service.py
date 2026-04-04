@@ -72,18 +72,23 @@ async def create_org_unit(
     db.add(unit)
     await db.flush()
 
-    # Auto-assign the creator
+    # Auto-assign the creator as admin of this unit
     creator_assignment = UserOrgAssignment(
         user_id=creator_user_id,
         org_unit_id=unit.id,
         assigned_by=creator_user_id,
+        role="Admin",
+        is_admin=True,
     )
     db.add(creator_assignment)
 
-    # If nested, inherit parent's admins (skip creator to avoid duplicate)
+    # If nested, inherit parent's admin assignments (skip creator to avoid duplicate)
     if parent_unit_id is not None:
         parent_members = await db.execute(
-            select(UserOrgAssignment).where(UserOrgAssignment.org_unit_id == parent_unit_id)
+            select(UserOrgAssignment).where(
+                UserOrgAssignment.org_unit_id == parent_unit_id,
+                UserOrgAssignment.is_admin == True,  # only inherit admins
+            )
         )
         for parent_assignment in parent_members.scalars().all():
             if parent_assignment.user_id != creator_user_id:
@@ -91,28 +96,11 @@ async def create_org_unit(
                     user_id=parent_assignment.user_id,
                     org_unit_id=unit.id,
                     assigned_by=creator_user_id,
+                    role=parent_assignment.role,       # inherit role
+                    is_admin=True,                      # inherit admin status
+                    permissions=parent_assignment.permissions or [],
                 )
                 db.add(child_assignment)
-
-        # Also include users whose primary org_unit_id is the parent
-        primary_members = await db.execute(
-            select(User).where(
-                User.org_unit_id == parent_unit_id,
-                User.is_active == True,
-                User.id != creator_user_id,
-            )
-        )
-        existing_assigned = {a.user_id for a in (await db.execute(
-            select(UserOrgAssignment).where(UserOrgAssignment.org_unit_id == unit.id)
-        )).scalars().all()}
-
-        for user in primary_members.scalars().all():
-            if user.id not in existing_assigned:
-                db.add(UserOrgAssignment(
-                    user_id=user.id,
-                    org_unit_id=unit.id,
-                    assigned_by=creator_user_id,
-                ))
 
     await db.flush()
     logger.info("org_unit.created", unit_id=str(unit.id), name=name, creator=str(creator_user_id))
@@ -181,45 +169,33 @@ async def list_org_unit_members(
     org_unit_id: uuid_mod.UUID,
     client_id: uuid_mod.UUID,
 ) -> list[dict]:
-    """List all users assigned to an org unit (primary + junction assignments)."""
+    """List all users assigned to an org unit.
+
+    Role, permissions, and is_admin come from the ASSIGNMENT, not the user.
+    A user can have different roles in different units.
+    """
     await get_org_unit(db, org_unit_id, client_id)
 
     members: list[dict] = []
-    seen_user_ids: set[uuid_mod.UUID] = set()
 
-    # Users with this as their primary org unit
-    result = await db.execute(
-        select(User).where(User.org_unit_id == org_unit_id, User.is_active == True)
-    )
-    for user in result.scalars().all():
-        seen_user_ids.add(user.id)
-        members.append({
-            "user_id": str(user.id),
-            "email": user.email,
-            "full_name": user.full_name,
-            "role": user.role,
-            "is_admin": user.is_admin,
-            "assignment_type": "primary",
-            "assigned_at": user.created_at.isoformat(),
-        })
-
-    # Additional assignments via junction table
+    # All assignments come from the junction table — role is per-assignment
     result = await db.execute(
         select(UserOrgAssignment, User)
         .join(User, UserOrgAssignment.user_id == User.id)
         .where(UserOrgAssignment.org_unit_id == org_unit_id, User.is_active == True)
+        .order_by(UserOrgAssignment.created_at.asc())
     )
     for assignment, user in result.all():
-        if user.id not in seen_user_ids:
-            members.append({
-                "user_id": str(user.id),
-                "email": user.email,
-                "full_name": user.full_name,
-                "role": user.role,
-                "is_admin": user.is_admin,
-                "assignment_type": "assigned",
-                "assigned_at": assignment.created_at.isoformat(),
-            })
+        members.append({
+            "user_id": str(user.id),
+            "email": user.email,
+            "full_name": user.full_name,
+            "role": assignment.role,            # from the assignment, not user
+            "is_admin": assignment.is_admin,    # admin of THIS unit
+            "permissions": assignment.permissions or [],
+            "assignment_type": "assigned",
+            "assigned_at": assignment.created_at.isoformat(),
+        })
 
     return members
 
@@ -230,8 +206,10 @@ async def assign_user_to_org_unit(
     user_id: uuid_mod.UUID,
     assigned_by: uuid_mod.UUID,
     client_id: uuid_mod.UUID,
+    role: str | None = None,
+    is_admin: bool = False,
 ) -> UserOrgAssignment:
-    """Assign an existing user to an org unit."""
+    """Assign an existing user to an org unit with a per-unit role."""
     await get_org_unit(db, org_unit_id, client_id)
 
     result = await db.execute(
@@ -240,9 +218,6 @@ async def assign_user_to_org_unit(
     user = result.scalar_one_or_none()
     if not user:
         raise ValueError("User not found or inactive")
-
-    if user.org_unit_id == org_unit_id:
-        raise ValueError("User is already the primary member of this org unit")
 
     existing = await db.execute(
         select(UserOrgAssignment).where(
@@ -257,10 +232,45 @@ async def assign_user_to_org_unit(
         user_id=user_id,
         org_unit_id=org_unit_id,
         assigned_by=assigned_by,
+        role=role,
+        is_admin=is_admin,
     )
     db.add(assignment)
     await db.flush()
-    logger.info("org_unit.user_assigned", org_unit_id=str(org_unit_id), user_id=str(user_id))
+    logger.info("org_unit.user_assigned", org_unit_id=str(org_unit_id), user_id=str(user_id), role=role)
+    return assignment
+
+
+async def update_member_assignment(
+    db: AsyncSession,
+    org_unit_id: uuid_mod.UUID,
+    user_id: uuid_mod.UUID,
+    client_id: uuid_mod.UUID,
+    role: str | None = None,
+    is_admin: bool | None = None,
+    permissions: list[str] | None = None,
+) -> UserOrgAssignment:
+    """Update a member's role/permissions within an org unit."""
+    await get_org_unit(db, org_unit_id, client_id)
+
+    result = await db.execute(
+        select(UserOrgAssignment).where(
+            UserOrgAssignment.user_id == user_id,
+            UserOrgAssignment.org_unit_id == org_unit_id,
+        )
+    )
+    assignment = result.scalar_one_or_none()
+    if not assignment:
+        raise ValueError("Assignment not found")
+
+    if role is not None:
+        assignment.role = role
+    if is_admin is not None:
+        assignment.is_admin = is_admin
+    if permissions is not None:
+        assignment.permissions = permissions
+
+    logger.info("org_unit.member_updated", org_unit_id=str(org_unit_id), user_id=str(user_id))
     return assignment
 
 

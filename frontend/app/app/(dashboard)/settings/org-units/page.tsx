@@ -18,9 +18,10 @@ interface OrgUnitMember {
   user_id: string;
   email: string;
   full_name: string | null;
-  role: string | null;
-  is_admin: boolean;
-  assignment_type: "primary" | "assigned";
+  role: string | null;        // role within THIS unit
+  is_admin: boolean;          // admin of THIS unit
+  permissions: string[];
+  assignment_type: string;
   assigned_at: string;
 }
 
@@ -383,29 +384,39 @@ export default function OrgUnitsPage() {
           ) : members.length === 0 ? (
             <p className="text-xs text-zinc-400">No members yet</p>
           ) : (
-            <div className="space-y-1">
+            <div className="space-y-2">
               {members.map((m) => (
-                <div key={m.user_id} className="flex items-center justify-between py-2 px-2 rounded hover:bg-zinc-50">
-                  <div className="min-w-0">
+                <div key={m.user_id} className="border border-zinc-100 rounded-lg p-3 hover:bg-zinc-50">
+                  <div className="flex items-center justify-between mb-2">
                     <p className="text-sm text-zinc-900 truncate">{m.email}</p>
-                    <div className="flex items-center gap-1.5 mt-0.5">
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
-                        m.assignment_type === "primary" ? "bg-green-50 text-green-700" : "bg-zinc-100 text-zinc-500"
-                      }`}>
-                        {m.assignment_type}
-                      </span>
-                      {m.is_admin && (
-                        <span className="text-[10px] bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded font-medium">Admin</span>
-                      )}
-                      {m.role && (
-                        <span className="text-[10px] text-zinc-400">{m.role}</span>
-                      )}
-                    </div>
-                  </div>
-                  {m.assignment_type === "assigned" && (
                     <button onClick={() => handleUnassign(m.user_id)}
-                      className="text-xs text-red-500 hover:underline shrink-0 ml-2">Remove</button>
-                  )}
+                      className="text-xs text-red-500 hover:underline shrink-0">Remove</button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={m.role || ""}
+                      onChange={async (e) => {
+                        const token = await getToken();
+                        if (!token) return;
+                        await apiFetch(`/api/org-units/${selectedId}/members/${m.user_id}`, {
+                          method: "PUT", token,
+                          body: JSON.stringify({ role: e.target.value || null }),
+                        });
+                        await loadMembers(selectedId!);
+                      }}
+                      className="border border-zinc-200 rounded px-2 py-1 text-xs bg-white"
+                    >
+                      <option value="">No role</option>
+                      <option value="Admin">Admin</option>
+                      <option value="Recruiter">Recruiter</option>
+                      <option value="Hiring Manager">Hiring Manager</option>
+                      <option value="Interviewer">Interviewer</option>
+                      <option value="Observer">Observer</option>
+                    </select>
+                    {m.is_admin && (
+                      <span className="text-[10px] bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded font-medium">Unit Admin</span>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
