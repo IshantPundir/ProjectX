@@ -3,7 +3,10 @@ from pydantic import BaseModel
 
 class TeamInviteRequest(BaseModel):
     email: str
-    role: str  # "Recruiter", "Hiring Manager", "Interviewer", "Observer"
+    role: str  # "Admin", "Recruiter", "Hiring Manager", "Interviewer", "Observer"
+    is_admin: bool = False
+    permissions: list[str] = []
+    org_unit_id: str | None = None
 
 
 class TeamInviteResponse(BaseModel):
@@ -19,6 +22,8 @@ class TeamMember(BaseModel):
     full_name: str | None
     role: str
     is_active: bool
+    is_admin: bool
+    permissions: list[str]
     source: str  # "user" or "invite"
     status: str  # "active", "inactive" for users; "pending" for invites
     created_at: str

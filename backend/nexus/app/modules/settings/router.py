@@ -55,7 +55,7 @@ async def _send_team_invite_email(email: str, role: str, company_name: str, raw_
 @router.post(
     "/invite",
     response_model=TeamInviteResponse,
-    dependencies=[require_roles("Company Admin")],
+    dependencies=[require_roles("Company Admin", "Admin")],
 )
 async def invite_endpoint(
     data: TeamInviteRequest,
@@ -67,7 +67,7 @@ async def invite_endpoint(
     token_payload = request.state.token_payload
     tenant_id = uuid_mod.UUID(token_payload.tenant_id)
 
-    # Get the Company Admin's users.id for the invited_by FK.
+    # Get the inviting user's record for invited_by FK and permission checks.
     # We can't use token_payload.sub directly — that's auth_user_id, not users.id.
     result = await db.execute(
         select(User).where(User.auth_user_id == token_payload.sub)
@@ -75,14 +75,20 @@ async def invite_endpoint(
     admin_user = result.scalar_one_or_none()
     if not admin_user:
         raise HTTPException(status_code=404, detail="Admin user not found")
+    if not admin_user.is_admin:
+        raise HTTPException(status_code=403, detail="Only admin nodes can invite users")
 
     try:
-        invite, raw_token, company_name = await create_team_invite(
+        invite, raw_token, client_name = await create_team_invite(
             db=db,
             tenant_id=tenant_id,
             email=data.email,
             role=data.role,
             invited_by=admin_user.id,
+            inviting_user_permissions=admin_user.permissions or [],
+            is_admin=data.is_admin,
+            permissions=data.permissions,
+            org_unit_id=uuid_mod.UUID(data.org_unit_id) if data.org_unit_id else None,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -91,7 +97,7 @@ async def invite_endpoint(
     # If email fails, invite persists and can be resent.
     base_url = "http://localhost:3000" if settings.debug else "https://app.projectx.com"
     invite_url = f"{base_url}/invite?token={raw_token}"
-    background_tasks.add_task(_send_team_invite_email, data.email, data.role, company_name, raw_token)
+    background_tasks.add_task(_send_team_invite_email, data.email, data.role, client_name, raw_token)
 
     return TeamInviteResponse(
         invite_id=str(invite.id),

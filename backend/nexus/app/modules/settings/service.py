@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Client, User, UserInvite
+from app.modules.auth.permissions import require_permission, validate_permissions
 
 logger = structlog.get_logger()
 
@@ -25,13 +26,26 @@ async def create_team_invite(
     email: str,
     role: str,
     invited_by: uuid_mod.UUID,
+    inviting_user_permissions: list[str],
+    is_admin: bool = False,
+    permissions: list[str] | None = None,
+    org_unit_id: uuid_mod.UUID | None = None,
 ) -> tuple[UserInvite, str, str]:
-    """Create an invite for a team member. Returns (invite, raw_token, company_name).
+    """Create an invite for a team member. Returns (invite, raw_token, client_name).
 
     Does NOT send email — caller is responsible for email dispatch
     after the transaction commits.
     """
-    allowed_roles = {"Recruiter", "Hiring Manager", "Interviewer", "Observer"}
+    # Permission checks
+    if is_admin:
+        require_permission(inviting_user_permissions, "users.invite_admins")
+    else:
+        require_permission(inviting_user_permissions, "users.invite_users")
+
+    target_permissions = permissions or []
+    validate_permissions(target_permissions, inviting_user_permissions)
+
+    allowed_roles = {"Admin", "Recruiter", "Hiring Manager", "Interviewer", "Observer"}
     if role not in allowed_roles:
         raise ValueError(f"Invalid role: {role}. Must be one of: {allowed_roles}")
 
@@ -44,6 +58,9 @@ async def create_team_invite(
         role=role,
         token_hash=token_hash,
         invited_by=invited_by,
+        is_admin=is_admin,
+        permissions=target_permissions,
+        org_unit_id=org_unit_id,
     )
     db.add(invite)
     await db.flush()
@@ -75,6 +92,8 @@ async def list_team_members(
             "full_name": user.full_name,
             "role": user.role,
             "is_active": user.is_active,
+            "is_admin": user.is_admin,
+            "permissions": user.permissions or [],
             "source": "user",
             "status": "active" if user.is_active else "inactive",
             "created_at": user.created_at.isoformat(),
@@ -94,6 +113,8 @@ async def list_team_members(
             "full_name": None,
             "role": invite.role,
             "is_active": False,
+            "is_admin": invite.is_admin,
+            "permissions": invite.permissions or [],
             "source": "invite",
             "status": "pending",
             "created_at": invite.created_at.isoformat(),
