@@ -107,7 +107,9 @@ async def complete_invite(
     if claimed_row.email != oauth_email:
         raise HTTPException(status_code=401, detail="Email mismatch — invite was for a different address")
 
-    # Create the user row (tenant_id from raw SQL is str — convert to UUID)
+    # Always create a new user row — never reactivate an old one.
+    # The same email may belong to a different person (employee turnover).
+    # Old deactivated rows stay for audit trail.
     user = User(
         auth_user_id=auth_user_id,
         tenant_id=uuid_mod.UUID(str(claimed_row.tenant_id)),

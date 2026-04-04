@@ -198,6 +198,17 @@ async def deactivate_team_user(
 
     user.is_active = False
 
+    # Mark the accepted invite(s) as revoked — keeps user_invites in sync with user status
+    invite_result = await db.execute(
+        select(UserInvite).where(
+            UserInvite.tenant_id == tenant_id,
+            UserInvite.email == user.email,
+            UserInvite.status == "accepted",
+        )
+    )
+    for invite in invite_result.scalars().all():
+        invite.status = "revoked"
+
     # Delete the Supabase Auth account so the user can signUp() fresh if re-invited
     await _delete_auth_user(str(user.auth_user_id))
 
