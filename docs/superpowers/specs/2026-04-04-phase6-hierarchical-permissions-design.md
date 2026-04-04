@@ -107,9 +107,14 @@ Super Admin gets all 16. Every downstream node gets a subset of their parent's.
 Grants block includes all previous grants plus:
 ```sql
 GRANT SELECT ON public.organizational_units TO supabase_auth_admin;
+
+CREATE POLICY "auth_hook_read" ON public.organizational_units
+  FOR SELECT
+  TO supabase_auth_admin
+  USING (true);
 ```
 
-Also adds `auth_hook_read` RLS policy on `organizational_units` for `supabase_auth_admin` (defensive — prevents Phase 1-style silent RLS blocking).
+Both are required — the `GRANT` gives table-level access, the `CREATE POLICY` allows rows through RLS (defensive — prevents Phase 1-style silent RLS blocking).
 
 ---
 
