@@ -21,12 +21,41 @@ const UNIT_TYPES = [
   { value: "region", label: "Region" },
 ];
 
+const typeLabel: Record<string, string> = {
+  client_account: "Client Account",
+  department: "Department",
+  team: "Team",
+  branch: "Branch",
+  region: "Region",
+};
+
+function buildTree(units: OrgUnit[]): { unit: OrgUnit; depth: number }[] {
+  const childrenMap = new Map<string | null, OrgUnit[]>();
+  for (const u of units) {
+    const key = u.parent_unit_id;
+    if (!childrenMap.has(key)) childrenMap.set(key, []);
+    childrenMap.get(key)!.push(u);
+  }
+
+  const result: { unit: OrgUnit; depth: number }[] = [];
+
+  function walk(parentId: string | null, depth: number) {
+    const children = childrenMap.get(parentId) || [];
+    for (const child of children) {
+      result.push({ unit: child, depth });
+      walk(child.id, depth + 1);
+    }
+  }
+
+  walk(null, 0);
+  return result;
+}
+
 export default function OrgUnitsPage() {
   const [units, setUnits] = useState<OrgUnit[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // Create form
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState("");
   const [unitType, setUnitType] = useState("department");
@@ -87,13 +116,7 @@ export default function OrgUnitsPage() {
     }
   }
 
-  const typeLabel: Record<string, string> = {
-    client_account: "Client Account",
-    department: "Department",
-    team: "Team",
-    branch: "Branch",
-    region: "Region",
-  };
+  const tree = buildTree(units);
 
   return (
     <>
@@ -175,26 +198,28 @@ export default function OrgUnitsPage() {
               <tr className="bg-zinc-50 border-b border-zinc-200">
                 <th className="text-left px-4 py-2.5 font-medium text-zinc-500">Name</th>
                 <th className="text-left px-4 py-2.5 font-medium text-zinc-500">Type</th>
-                <th className="text-left px-4 py-2.5 font-medium text-zinc-500">Parent</th>
                 <th className="text-left px-4 py-2.5 font-medium text-zinc-500">Created</th>
               </tr>
             </thead>
             <tbody>
-              {units.map((u) => {
-                const parent = units.find((p) => p.id === u.parent_unit_id);
-                return (
-                  <tr key={u.id} className="border-b border-zinc-100 last:border-0">
-                    <td className="px-4 py-2.5 font-medium text-zinc-900">{u.name}</td>
-                    <td className="px-4 py-2.5">
-                      <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full text-xs">
-                        {typeLabel[u.unit_type] || u.unit_type}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2.5 text-zinc-600">{parent?.name || "—"}</td>
-                    <td className="px-4 py-2.5 text-zinc-400">{new Date(u.created_at).toLocaleDateString()}</td>
-                  </tr>
-                );
-              })}
+              {tree.map(({ unit: u, depth }) => (
+                <tr key={u.id} className="border-b border-zinc-100 last:border-0">
+                  <td className="px-4 py-2.5 font-medium text-zinc-900">
+                    <span style={{ paddingLeft: `${depth * 24}px` }} className="flex items-center gap-1.5">
+                      {depth > 0 && (
+                        <span className="text-zinc-300">└</span>
+                      )}
+                      {u.name}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full text-xs">
+                      {typeLabel[u.unit_type] || u.unit_type}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5 text-zinc-400">{new Date(u.created_at).toLocaleDateString()}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
