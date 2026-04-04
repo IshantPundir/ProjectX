@@ -8,7 +8,7 @@ class TeamInviteRequest(BaseModel):
 class TeamInviteResponse(BaseModel):
     invite_id: str
     email: str
-    role: str
+    role: str | None
     invite_url: str  # Only present in dry-run mode; empty in production
 
 
@@ -16,7 +16,7 @@ class TeamMember(BaseModel):
     id: str
     email: str
     full_name: str | None
-    role: str
+    role: str | None
     is_active: bool
     is_admin: bool
     permissions: list[str]

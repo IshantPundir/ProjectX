@@ -40,7 +40,7 @@ class CandidateTokenPayload(BaseModel):
 
 class VerifyInviteResponse(BaseModel):
     email: str
-    role: str
+    role: str | None
     client_name: str
 
 
@@ -52,7 +52,7 @@ class CompleteInviteResponse(BaseModel):
     redirect_to: str  # "/onboarding" or "/"
     user_id: str
     tenant_id: str
-    role: str
+    role: str | None
 
 
 class MeResponse(BaseModel):
