@@ -46,7 +46,10 @@ BEGIN
 
   IF FOUND THEN
     claims := jsonb_set(claims, '{tenant_id}', to_jsonb(user_row.tenant_id::TEXT));
-    claims := jsonb_set(claims, '{app_role}',  to_jsonb(user_row.role));
+    claims := jsonb_set(claims, '{app_role}',
+      CASE WHEN user_row.role IS NOT NULL
+           THEN to_jsonb(user_row.role)
+           ELSE '""'::jsonb END);
     claims := jsonb_set(claims, '{is_admin}',  to_jsonb(user_row.is_admin));
     claims := jsonb_set(claims, '{org_unit_id}',
       CASE WHEN user_row.org_unit_id IS NOT NULL
@@ -78,7 +81,10 @@ BEGIN
 
   IF FOUND THEN
     claims := jsonb_set(claims, '{tenant_id}', to_jsonb(invite_row.tenant_id::TEXT));
-    claims := jsonb_set(claims, '{app_role}',  to_jsonb(invite_row.role));
+    claims := jsonb_set(claims, '{app_role}',
+      CASE WHEN invite_row.role IS NOT NULL
+           THEN to_jsonb(invite_row.role)
+           ELSE '""'::jsonb END);
     claims := jsonb_set(claims, '{is_admin}',  to_jsonb(invite_row.is_admin));
     claims := jsonb_set(claims, '{org_unit_id}',
       CASE WHEN invite_row.org_unit_id IS NOT NULL

@@ -95,7 +95,7 @@ async def invite_endpoint(
     return TeamInviteResponse(
         invite_id=str(invite.id),
         email=data.email,
-        role="Observer",
+        role="Unassigned",
         invite_url=invite_url if settings.notifications_dry_run else "",
     )
 

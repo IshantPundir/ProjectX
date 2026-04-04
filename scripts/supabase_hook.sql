@@ -1,27 +1,7 @@
--- ============================================================================
--- ProjectX Custom Access Token Hook v2 — PRODUCTION DEPLOYMENT
--- ============================================================================
--- This file is a copy of backend/supabase/migrations/20260404000001_auth_hook_v2.sql
--- for manual execution against hosted Supabase Postgres.
---
--- HOW TO DEPLOY:
---   1. Connect to hosted Supabase Postgres (Database → Connection string → psql)
---   2. Run this entire file: \i scripts/supabase_hook.sql
---   3. Register the hook in Supabase Dashboard:
---      Authentication → Hooks → Custom Access Token Hook
---      → select public.projectx_custom_access_token_hook
---
--- DO NOT run this against local Supabase — it runs automatically via migrations.
--- ============================================================================
-
+-- ============================================================
 -- Phase 6: Auth Hook v2 — now injects is_admin + org_unit_id
 -- Replaces the v1 hook. Same structure, 2 new claims.
---
--- CRITICAL CONSTRAINTS:
---   - 2-second hard timeout — must complete quickly
---   - READ-ONLY — never INSERT/UPDATE in this function
---   - Must preserve all required JWT claims in output
---   - EXCEPTION handler returns safe defaults — never blocks login
+-- ============================================================
 
 CREATE OR REPLACE FUNCTION public.projectx_custom_access_token_hook(event JSONB)
 RETURNS JSONB
@@ -66,7 +46,10 @@ BEGIN
 
   IF FOUND THEN
     claims := jsonb_set(claims, '{tenant_id}', to_jsonb(user_row.tenant_id::TEXT));
-    claims := jsonb_set(claims, '{app_role}',  to_jsonb(user_row.role));
+    claims := jsonb_set(claims, '{app_role}',
+      CASE WHEN user_row.role IS NOT NULL
+           THEN to_jsonb(user_row.role)
+           ELSE '""'::jsonb END);
     claims := jsonb_set(claims, '{is_admin}',  to_jsonb(user_row.is_admin));
     claims := jsonb_set(claims, '{org_unit_id}',
       CASE WHEN user_row.org_unit_id IS NOT NULL
@@ -98,7 +81,10 @@ BEGIN
 
   IF FOUND THEN
     claims := jsonb_set(claims, '{tenant_id}', to_jsonb(invite_row.tenant_id::TEXT));
-    claims := jsonb_set(claims, '{app_role}',  to_jsonb(invite_row.role));
+    claims := jsonb_set(claims, '{app_role}',
+      CASE WHEN invite_row.role IS NOT NULL
+           THEN to_jsonb(invite_row.role)
+           ELSE '""'::jsonb END);
     claims := jsonb_set(claims, '{is_admin}',  to_jsonb(invite_row.is_admin));
     claims := jsonb_set(claims, '{org_unit_id}',
       CASE WHEN invite_row.org_unit_id IS NOT NULL

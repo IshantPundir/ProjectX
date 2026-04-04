@@ -51,7 +51,7 @@ class User(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False)
     email: Mapped[str] = mapped_column(Text, nullable=False)
     full_name: Mapped[str | None] = mapped_column(Text)
-    role: Mapped[str] = mapped_column(String, nullable=False)
+    role: Mapped[str | None] = mapped_column(String, nullable=True)  # NULL = no role assigned yet
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     is_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     permissions: Mapped[list] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
@@ -71,7 +71,7 @@ class UserInvite(Base):
     invited_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
     projectx_admin_id: Mapped[str | None] = mapped_column(Text)
     email: Mapped[str] = mapped_column(Text, nullable=False)
-    role: Mapped[str] = mapped_column(String, nullable=False)
+    role: Mapped[str | None] = mapped_column(String, nullable=True)  # NULL = no role assigned yet
     token_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     status: Mapped[str] = mapped_column(String, nullable=False, server_default="pending")
     superseded_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("user_invites.id"))

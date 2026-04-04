@@ -60,7 +60,7 @@ class MeResponse(BaseModel):
     auth_user_id: str
     email: str
     full_name: str | None
-    role: str
+    role: str | None              # NULL = no role assigned yet
     is_admin: bool
     permissions: list[str]
     org_unit_id: str | None

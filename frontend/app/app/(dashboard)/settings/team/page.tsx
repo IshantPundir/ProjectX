@@ -201,7 +201,7 @@ export default function TeamPage() {
                       <td className="px-4 py-2.5 text-zinc-900">{m.email}</td>
                       <td className="px-4 py-2.5 text-zinc-600">{m.full_name || "—"}</td>
                       <td className="px-4 py-2.5 text-zinc-600">
-                        {m.role}
+                        {m.role || <span className="text-zinc-400 italic">Unassigned</span>}
                         {m.is_admin && (
                           <span className="ml-1.5 bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-xs">Admin</span>
                         )}

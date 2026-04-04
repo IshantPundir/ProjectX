@@ -37,7 +37,7 @@ async def create_team_invite(
     invite = UserInvite(
         tenant_id=tenant_id,
         email=email,
-        role="Observer",  # default role — can be changed later via org unit assignment
+        role=None,  # no role — assigned later when placed into an org unit
         token_hash=token_hash,
         invited_by=invited_by,
     )
