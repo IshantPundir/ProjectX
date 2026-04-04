@@ -58,7 +58,7 @@ async def verify_invite(
     return VerifyInviteResponse(
         email=invite.email,
         role=invite.role,
-        company_name=client.name,
+        client_name=client.name,
     )
 
 
@@ -94,7 +94,7 @@ async def complete_invite(
              WHERE token_hash  = :token_hash
                AND status      = 'pending'
                AND expires_at  > NOW()
-            RETURNING id, tenant_id, email, role
+            RETURNING id, tenant_id, email, role, is_admin, permissions, org_unit_id, invited_by
         """),
         {"token_hash": token_hash},
     )
@@ -115,6 +115,10 @@ async def complete_invite(
         tenant_id=uuid_mod.UUID(str(claimed_row.tenant_id)),
         email=oauth_email,
         role=claimed_row.role,
+        is_admin=claimed_row.is_admin,
+        permissions=claimed_row.permissions or [],
+        org_unit_id=claimed_row.org_unit_id,
+        parent_user_id=claimed_row.invited_by,
     )
     db.add(user)
     await db.flush()
@@ -169,8 +173,11 @@ async def get_current_user(
         email=user.email,
         full_name=user.full_name,
         role=user.role,
+        is_admin=user.is_admin,
+        permissions=user.permissions or [],
+        org_unit_id=str(user.org_unit_id) if user.org_unit_id else None,
         tenant_id=str(user.tenant_id),
-        company_name=client.name,
+        client_name=client.name,
         onboarding_complete=client.onboarding_complete,
     )
 

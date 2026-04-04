@@ -67,6 +67,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request.state.tenant_id = payload.tenant_id
         request.state.app_role = payload.app_role
         request.state.is_projectx_admin = payload.is_projectx_admin
+        request.state.is_admin = payload.is_admin
+        request.state.org_unit_id = payload.org_unit_id
 
         return await call_next(request)
 

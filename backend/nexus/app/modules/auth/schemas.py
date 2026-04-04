@@ -4,6 +4,7 @@ from pydantic import BaseModel
 
 
 class Role(StrEnum):
+    ADMIN = "Admin"
     COMPANY_ADMIN = "Company Admin"
     RECRUITER = "Recruiter"
     HIRING_MANAGER = "Hiring Manager"
@@ -23,6 +24,8 @@ class TokenPayload(BaseModel):
     email: str = ""
     role: str = "authenticated"      # Postgres role — always "authenticated", NOT for RBAC
     is_projectx_admin: bool = False  # True only for ProjectX internal team
+    is_admin: bool = False
+    org_unit_id: str | None = None
     exp: int = 0
 
 
@@ -38,7 +41,7 @@ class CandidateTokenPayload(BaseModel):
 class VerifyInviteResponse(BaseModel):
     email: str
     role: str
-    company_name: str
+    client_name: str
 
 
 class CompleteInviteRequest(BaseModel):
@@ -58,6 +61,9 @@ class MeResponse(BaseModel):
     email: str
     full_name: str | None
     role: str
+    is_admin: bool
+    permissions: list[str]
+    org_unit_id: str | None
     tenant_id: str
-    company_name: str
+    client_name: str
     onboarding_complete: bool
