@@ -195,6 +195,40 @@ async def remove_user_from_unit(
     return len(assignments)
 
 
+async def delete_org_unit(
+    db: AsyncSession,
+    org_unit_id: uuid_mod.UUID,
+) -> None:
+    """Delete an org unit. Fails if it has children or members."""
+    # Check for child units
+    child_result = await db.execute(
+        select(func.count()).select_from(OrganizationalUnit).where(
+            OrganizationalUnit.parent_unit_id == org_unit_id
+        )
+    )
+    if (child_result.scalar() or 0) > 0:
+        raise ValueError("Cannot delete a unit that has sub-units. Remove sub-units first.")
+
+    # Check for members
+    member_result = await db.execute(
+        select(func.count()).select_from(UserRoleAssignment).where(
+            UserRoleAssignment.org_unit_id == org_unit_id
+        )
+    )
+    if (member_result.scalar() or 0) > 0:
+        raise ValueError("Cannot delete a unit that has members. Remove all members first.")
+
+    result = await db.execute(
+        select(OrganizationalUnit).where(OrganizationalUnit.id == org_unit_id)
+    )
+    unit = result.scalar_one_or_none()
+    if not unit:
+        raise ValueError("Org unit not found")
+
+    await db.delete(unit)
+    logger.info("org_units.deleted", unit_id=str(org_unit_id), name=unit.name)
+
+
 async def remove_role_from_user(
     db: AsyncSession,
     org_unit_id: uuid_mod.UUID,

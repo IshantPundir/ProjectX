@@ -165,6 +165,15 @@ export default function OrgUnitDetailPage() {
   const [editType, setEditType] = useState("");
   const [saving, setSaving] = useState(false);
 
+  // Add sub-unit
+  const [showAddSubUnit, setShowAddSubUnit] = useState(false);
+  const [subUnitName, setSubUnitName] = useState("");
+  const [subUnitType, setSubUnitType] = useState("team");
+  const [creatingSubUnit, setCreatingSubUnit] = useState(false);
+
+  // Delete unit
+  const [deleting, setDeleting] = useState(false);
+
   // Add member
   const [showAddMember, setShowAddMember] = useState(false);
   const [userSearch, setUserSearch] = useState("");
@@ -280,6 +289,57 @@ export default function OrgUnitDetailPage() {
       setError(err instanceof Error ? err.message : "Failed to update");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleCreateSubUnit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!subUnitName.trim()) return;
+    setError("");
+    setCreatingSubUnit(true);
+    try {
+      const token = await getToken();
+      if (!token) return;
+      const newUnit = await apiFetch<OrgUnit>("/api/org-units", {
+        method: "POST",
+        token,
+        body: JSON.stringify({
+          name: subUnitName.trim(),
+          unit_type: subUnitType,
+          parent_unit_id: unitId,
+        }),
+      });
+      setSubUnitName("");
+      setSubUnitType("team");
+      setShowAddSubUnit(false);
+      router.push(`/settings/org-units/${newUnit.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create sub-unit");
+    } finally {
+      setCreatingSubUnit(false);
+    }
+  }
+
+  async function handleDeleteUnit() {
+    setError("");
+    setDeleting(true);
+    try {
+      const token = await getToken();
+      if (!token) return;
+      await apiFetch(`/api/org-units/${unitId}`, {
+        method: "DELETE",
+        token,
+      });
+      // Navigate to parent unit if nested, or back to list
+      const parentId = unit?.parent_unit_id;
+      if (parentId) {
+        router.push(`/settings/org-units/${parentId}`);
+      } else {
+        router.push("/settings/org-units");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete unit");
+      setDeleting(false);
     }
   }
 
@@ -516,17 +576,98 @@ export default function OrgUnitDetailPage() {
                 </div>
               </div>
               {canManage && (
-                <button
-                  onClick={() => { setEditName(unit.name); setEditType(unit.unit_type); setEditing(true); }}
-                  className="inline-flex items-center gap-1.5 text-sm text-zinc-500 hover:text-zinc-700 border border-zinc-200 rounded-lg px-3 py-1.5 cursor-pointer transition-colors duration-150"
-                >
-                  <IconPencil />
-                  Edit
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => { setEditName(unit.name); setEditType(unit.unit_type); setEditing(true); }}
+                    className="inline-flex items-center gap-1.5 text-sm text-zinc-500 hover:text-zinc-700 border border-zinc-200 rounded-lg px-3 py-1.5 cursor-pointer transition-colors duration-150"
+                  >
+                    <IconPencil />
+                    Edit
+                  </button>
+                  {me?.is_super_admin && (
+                    <button
+                      onClick={() => setShowAddSubUnit(!showAddSubUnit)}
+                      className="inline-flex items-center gap-1.5 text-sm text-green-600 hover:text-green-700 border border-green-200 rounded-lg px-3 py-1.5 cursor-pointer transition-colors duration-150"
+                    >
+                      <IconPlus className="w-3.5 h-3.5" />
+                      Sub-unit
+                    </button>
+                  )}
+                  {me?.is_super_admin && (
+                    <button
+                      onClick={() =>
+                        setConfirmAction({
+                          message: `Permanently delete "${unit.name}"? This cannot be undone. The unit must have no sub-units or members.`,
+                          onConfirm: handleDeleteUnit,
+                        })
+                      }
+                      disabled={deleting}
+                      className="inline-flex items-center gap-1.5 text-sm text-red-500 hover:text-red-600 border border-red-200 rounded-lg px-3 py-1.5 cursor-pointer transition-colors duration-150 disabled:opacity-50"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                      </svg>
+                      {deleting ? "Deleting..." : "Delete"}
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           )}
         </div>
+
+        {/* ─── Add Sub-unit form ─── */}
+        {showAddSubUnit && me?.is_super_admin && (
+          <form onSubmit={handleCreateSubUnit} className="bg-white border border-green-200 rounded-xl p-5 mb-6 space-y-4">
+            <h2 className="text-sm font-semibold text-zinc-900">
+              Create Sub-unit under {unit.name}
+            </h2>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label htmlFor="subunit-name" className="block text-xs font-medium text-zinc-600 mb-1">Name</label>
+                <input
+                  id="subunit-name"
+                  type="text"
+                  required
+                  value={subUnitName}
+                  onChange={(e) => setSubUnitName(e.target.value)}
+                  className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-600 focus:border-transparent"
+                  placeholder="e.g., Frontend Team"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label htmlFor="subunit-type" className="block text-xs font-medium text-zinc-600 mb-1">Type</label>
+                <select
+                  id="subunit-type"
+                  value={subUnitType}
+                  onChange={(e) => setSubUnitType(e.target.value)}
+                  className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-600 cursor-pointer"
+                >
+                  {UNIT_TYPES.map((t) => (
+                    <option key={t.value} value={t.value}>{t.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => { setShowAddSubUnit(false); setSubUnitName(""); }}
+                className="text-sm text-zinc-500 hover:text-zinc-700 px-3 py-1.5 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={creatingSubUnit || !subUnitName.trim()}
+                className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50 cursor-pointer transition-colors duration-150"
+              >
+                {creatingSubUnit ? "Creating..." : "Create Sub-unit"}
+              </button>
+            </div>
+          </form>
+        )}
 
         {/* ─── Sub-units ─── */}
         {childUnits.length > 0 && (

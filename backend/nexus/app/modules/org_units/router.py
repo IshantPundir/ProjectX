@@ -17,6 +17,7 @@ from app.modules.org_units.schemas import (
 from app.modules.org_units.service import (
     assign_role,
     create_org_unit,
+    delete_org_unit,
     list_org_units,
     list_unit_members,
     remove_role_from_user,
@@ -100,6 +101,20 @@ async def update_unit(
         member_count=0,
         created_at=unit.created_at.isoformat(),
     )
+
+
+@router.delete("/{unit_id}", dependencies=[require_super_admin()])
+async def delete_unit(
+    unit_id: str,
+    db: AsyncSession = Depends(get_tenant_db),
+) -> dict[str, str]:
+    """Delete an org unit. Super admin only. Fails if unit has children or members."""
+    try:
+        await delete_org_unit(db, uuid_mod.UUID(unit_id))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {"status": "deleted"}
 
 
 @router.get("/{unit_id}/members", response_model=list[OrgUnitMember])
