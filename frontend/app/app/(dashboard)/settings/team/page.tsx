@@ -4,22 +4,26 @@ import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { apiFetch } from "@/lib/api/client";
 
+interface TeamMemberAssignment {
+  org_unit_id: string;
+  org_unit_name: string;
+  role_name: string;
+}
+
 interface TeamMember {
   id: string;
   email: string;
   full_name: string | null;
-  role: string;
   is_active: boolean;
-  is_admin: boolean;
-  permissions: string[];
+  is_super_admin: boolean;
+  assignments: TeamMemberAssignment[];
   source: "user" | "invite";
   status: string;
   created_at: string;
 }
 
 interface MeData {
-  role: string;
-  is_admin: boolean;
+  is_super_admin: boolean;
 }
 
 export default function TeamPage() {
@@ -121,7 +125,7 @@ export default function TeamPage() {
     }
   }
 
-  const isSuperAdmin = me?.role === "Company Admin";
+  const isSuperAdmin = me?.is_super_admin ?? false;
   const users = members.filter((m) => m.source === "user");
   const invites = members.filter((m) => m.source === "invite");
 
@@ -201,9 +205,24 @@ export default function TeamPage() {
                       <td className="px-4 py-2.5 text-zinc-900">{m.email}</td>
                       <td className="px-4 py-2.5 text-zinc-600">{m.full_name || "—"}</td>
                       <td className="px-4 py-2.5 text-zinc-600">
-                        {m.role || <span className="text-zinc-400 italic">Unassigned</span>}
-                        {m.is_admin && (
-                          <span className="ml-1.5 bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-xs">Admin</span>
+                        {m.is_super_admin ? (
+                          <span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-xs font-medium">
+                            Super Admin
+                          </span>
+                        ) : m.assignments.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {m.assignments.map((a) => (
+                              <span
+                                key={`${a.org_unit_id}-${a.role_name}`}
+                                className="bg-zinc-100 text-zinc-600 px-1.5 py-0.5 rounded text-xs"
+                                title={a.org_unit_name}
+                              >
+                                {a.role_name}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-zinc-400 italic">Unassigned</span>
                         )}
                       </td>
                       <td className="px-4 py-2.5">
@@ -213,7 +232,7 @@ export default function TeamPage() {
                       </td>
                       {isSuperAdmin && (
                         <td className="px-4 py-2.5">
-                          {m.role !== "Company Admin" && m.is_active && (
+                          {!m.is_super_admin && m.is_active && (
                             <button onClick={() => handleDeactivate(m.id)} className="text-xs text-red-600 hover:underline">
                               Deactivate
                             </button>
