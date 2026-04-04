@@ -19,6 +19,7 @@ async def create_org_unit(
     name: str,
     unit_type: str,
     parent_unit_id: uuid_mod.UUID | None = None,
+    created_by: uuid_mod.UUID | None = None,
 ) -> OrganizationalUnit:
     if unit_type not in VALID_UNIT_TYPES:
         raise ValueError(f"Invalid unit_type. Must be one of: {sorted(VALID_UNIT_TYPES)}")
@@ -28,11 +29,49 @@ async def create_org_unit(
         name=name,
         unit_type=unit_type,
         parent_unit_id=parent_unit_id,
+        created_by=created_by,
+        deletable_by=created_by,
     )
     db.add(unit)
     await db.flush()
 
-    logger.info("org_units.created", unit_id=str(unit.id), name=name)
+    # Admin inheritance: copy Admin role assignments from parent
+    if parent_unit_id is not None:
+        admin_role_result = await db.execute(
+            select(Role).where(Role.name == "Admin", Role.is_system == True)
+        )
+        admin_role = admin_role_result.scalar_one_or_none()
+
+        if admin_role:
+            parent_admins_result = await db.execute(
+                select(UserRoleAssignment).where(
+                    UserRoleAssignment.org_unit_id == parent_unit_id,
+                    UserRoleAssignment.role_id == admin_role.id,
+                )
+            )
+            for parent_assignment in parent_admins_result.scalars().all():
+                existing = await db.execute(
+                    select(UserRoleAssignment).where(
+                        UserRoleAssignment.user_id == parent_assignment.user_id,
+                        UserRoleAssignment.org_unit_id == unit.id,
+                        UserRoleAssignment.role_id == admin_role.id,
+                    )
+                )
+                if existing.scalar_one_or_none() is not None:
+                    continue
+
+                child_assignment = UserRoleAssignment(
+                    user_id=parent_assignment.user_id,
+                    org_unit_id=unit.id,
+                    role_id=admin_role.id,
+                    tenant_id=client_id,
+                    assigned_by=created_by,
+                )
+                db.add(child_assignment)
+
+            await db.flush()
+
+    logger.info("org_units.created", unit_id=str(unit.id), name=name, parent_unit_id=str(parent_unit_id) if parent_unit_id else None)
     return unit
 
 
