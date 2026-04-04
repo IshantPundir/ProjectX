@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models import Client, User, UserInvite
-from app.modules.auth.permissions import SUPER_ADMIN_PERMISSIONS
 from app.modules.notifications.service import render_template, send_email
 
 logger = structlog.get_logger()
@@ -43,12 +42,8 @@ async def provision_client(
     invite = UserInvite(
         tenant_id=client.id,
         email=admin_email,
-        role="Company Admin",
         token_hash=token_hash,
         projectx_admin_id=admin_identity,
-        is_admin=True,
-        permissions=SUPER_ADMIN_PERMISSIONS,
-        org_unit_id=None,
     )
     db.add(invite)
     await db.flush()  # get invite.id
@@ -83,19 +78,15 @@ async def provision_client(
 
 
 async def list_clients(db: AsyncSession) -> list[dict]:
-    """List all companies with their latest Company Admin invite status.
-
-    Single query with LEFT JOIN — no N+1.
-    """
+    """List all companies with their latest invite status."""
     from sqlalchemy import func
 
-    # Subquery: latest Company Admin invite per company
     latest_invite = (
         select(
             UserInvite.tenant_id,
             func.max(UserInvite.created_at).label("max_created"),
         )
-        .where(UserInvite.role == "Company Admin")
+        .where(UserInvite.projectx_admin_id.isnot(None))
         .group_by(UserInvite.tenant_id)
         .subquery()
     )
@@ -110,7 +101,7 @@ async def list_clients(db: AsyncSession) -> list[dict]:
             UserInvite,
             (UserInvite.tenant_id == latest_invite.c.tenant_id)
             & (UserInvite.created_at == latest_invite.c.max_created)
-            & (UserInvite.role == "Company Admin"),
+            & (UserInvite.projectx_admin_id.isnot(None)),
         )
         .order_by(Client.created_at.desc())
     )
