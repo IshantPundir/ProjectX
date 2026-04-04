@@ -15,6 +15,11 @@ interface OrgUnit {
   unit_type: string;
   member_count: number;
   created_at: string;
+  created_by: string | null;
+  created_by_email: string | null;
+  deletable_by: string | null;
+  deletable_by_email: string | null;
+  admin_delete_disabled: boolean;
 }
 
 interface MeData {
