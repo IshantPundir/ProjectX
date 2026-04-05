@@ -184,6 +184,27 @@ Tracks every invite sent. Token hashes only — raw tokens are never stored.
 **CHECK constraint `invite_origin_xor`:** Exactly one of `invited_by` or `projectx_admin_id` must be non-null. Enforces that every invite has a clear origin.
 **Auth hook bypass:** `supabase_auth_admin` has unrestricted SELECT (needed for invite lookup during first login).
 
+### Table: `audit_log`
+
+Append-only audit trail for all tenant-scoped mutations. Never update or delete rows.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | UUID PK | `gen_random_uuid()` |
+| `tenant_id` | UUID FK -> clients NOT NULL | |
+| `actor_id` | UUID FK -> users | Nullable — NULL for system-initiated or ProjectX admin actions |
+| `actor_email` | TEXT | Human-readable actor identifier |
+| `action` | TEXT NOT NULL | Dot-notation: `resource.verb` (e.g., `user.invited`) |
+| `resource` | TEXT NOT NULL | Entity type (e.g., `user_invite`, `org_unit`, `client`) |
+| `resource_id` | UUID | ID of the affected entity |
+| `payload` | JSONB | Action-specific context (before/after, relevant IDs) |
+| `ip_address` | TEXT | Client IP from request, nullable |
+| `created_at` | TIMESTAMPTZ | |
+
+**RLS:** SELECT where `tenant_id = current_setting('app.current_tenant')::UUID` + service bypass (all operations).
+
+**Canonical action strings:** `user.invited`, `user.invite_resent`, `user.invite_revoked`, `user.invite_claimed`, `user.deactivated`, `org_unit.created`, `org_unit.updated`, `org_unit.deleted`, `org_unit.member_added`, `org_unit.member_removed`, `org_unit.role_removed`, `client.provisioned`, `client.onboarding_completed`
+
 ### System Roles (Seeded at Migration)
 
 | Role | Permissions |
@@ -452,9 +473,11 @@ The flow is identical to the Company Admin invite (Step 3 above), with one diffe
 | **Deactivate user** | `POST /api/settings/team/deactivate/{user_id}` | Sets `user.is_active = false`, revokes their accepted invites, deletes Supabase auth account via Admin API |
 
 **Deactivation cascade:**
-1. `user.is_active = false`
+1. `user.is_active = false` (immediate — blocks all authenticated endpoints)
 2. All `user_invites` for that email → `status = 'revoked'`
-3. HTTP DELETE to `{SUPABASE_URL}/auth/v1/admin/users/{auth_user_id}` with service role key
+3. All `organizational_units` where `deletable_by = user.id` → `deletable_by = NULL`
+4. Audit log entry recorded (action: `user.deactivated`)
+5. HTTP DELETE to Supabase Admin API scheduled as a **background task** (best-effort cleanup, not a security boundary)
 
 Self-deactivation is blocked.
 
@@ -772,6 +795,7 @@ Both frontend apps have identical deps: `next@16.2.2`, `react@19`, `react-dom@19
 | Middleware ordering in Nexus | `TenantMiddleware` reads `request.state.tenant_id` before `AuthMiddleware` sets it — structlog tenant context is always `None` on inbound | Low (logging only, RLS unaffected) |
 | Alembic not used for schema | All DDL is in Supabase migration. Alembic's `versions/` is empty. Future schema changes need a documented convention. | Medium |
 | `settings/org-units/new/page.tsx` outside `(dashboard)` group | Legacy route with no auth guard — predecessor to onboarding wizard, should be removed | Low |
+| `complete_invite` inline in router | Business logic (invite claiming, user creation) lives in `auth/router.py` instead of a service function. Audit call is a pragmatic exception. | Low (flagged with TODO) |
 
 ### Missing Libraries
 
