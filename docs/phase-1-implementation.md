@@ -475,9 +475,10 @@ The flow is identical to the Company Admin invite (Step 3 above), with one diffe
 **Deactivation cascade:**
 1. `user.is_active = false` (immediate — blocks all authenticated endpoints)
 2. All `user_invites` for that email → `status = 'revoked'`
-3. All `organizational_units` where `deletable_by = user.id` → `deletable_by = NULL`
-4. Audit log entry recorded (action: `user.deactivated`)
-5. HTTP DELETE to Supabase Admin API scheduled as a **background task** (best-effort cleanup, not a security boundary)
+3. All `user_role_assignments` for the user in this tenant → deleted (removes from every org unit)
+4. All `organizational_units` where `deletable_by = user.id` → `deletable_by = NULL`
+5. Audit log entry recorded (action: `user.deactivated`)
+6. HTTP DELETE to Supabase Admin API scheduled as a **background task** (best-effort cleanup, not a security boundary)
 
 Self-deactivation is blocked.
 
