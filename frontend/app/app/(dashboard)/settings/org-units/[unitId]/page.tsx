@@ -525,19 +525,24 @@ export default function OrgUnitDetailPage() {
               <div className="flex items-center gap-1 flex-wrap">
                 {ancestry.map((ancestor, i) => {
                   const isLast = i === ancestry.length - 1;
+                  const isClickable = !isLast && ancestor.is_accessible;
                   return (
                     <span key={ancestor.id} className="flex items-center gap-1">
                       {isLast ? (
                         <span className="text-sm font-semibold text-zinc-900">
                           {ancestor.name}
                         </span>
-                      ) : (
+                      ) : isClickable ? (
                         <button
                           onClick={() => router.push(`/settings/org-units/${ancestor.id}`)}
                           className="text-sm text-green-600 hover:text-green-700 hover:underline cursor-pointer"
                         >
                           {ancestor.name}
                         </button>
+                      ) : (
+                        <span className="text-sm text-zinc-400">
+                          {ancestor.name}
+                        </span>
                       )}
                       {!isLast && (
                         <IconChevronRight className="w-3 h-3 text-zinc-300 shrink-0" />

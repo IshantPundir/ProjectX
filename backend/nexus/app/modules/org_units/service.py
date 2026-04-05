@@ -96,13 +96,24 @@ async def list_org_units(
         units = result.scalars().all()
         accessible_ids = {u.id for u in units}
     else:
-        # 1. Get units the user is directly assigned to
-        assignment_result = await db.execute(
-            select(UserRoleAssignment.org_unit_id)
-            .where(UserRoleAssignment.user_id == user_id)
-            .distinct()
+        # 1. Get units where user has Admin role
+        admin_role_q = await db.execute(
+            select(Role).where(Role.name == "Admin", Role.is_system == True)
         )
-        accessible_ids: set[uuid_mod.UUID] = {row[0] for row in assignment_result.all()}
+        admin_role = admin_role_q.scalar_one_or_none()
+
+        if admin_role:
+            assignment_result = await db.execute(
+                select(UserRoleAssignment.org_unit_id)
+                .where(
+                    UserRoleAssignment.user_id == user_id,
+                    UserRoleAssignment.role_id == admin_role.id,
+                )
+                .distinct()
+            )
+            accessible_ids: set[uuid_mod.UUID] = {row[0] for row in assignment_result.all()}
+        else:
+            accessible_ids: set[uuid_mod.UUID] = set()
 
         # 2. Load ALL tenant units to walk up ancestor chains
         all_result = await db.execute(
