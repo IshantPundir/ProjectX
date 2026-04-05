@@ -12,11 +12,20 @@
 - **Language:** Python 3.12
 - **Framework:** FastAPI (async throughout)
 - **DB driver:** asyncpg (direct PostgreSQL connection — NOT PostgREST)
-- **ORM:** SQLAlchemy async + Alembic migrations
-- **Task queue:** Dramatiq + Redis
+- **ORM:** SQLAlchemy async (asyncpg driver)
+- **Schema management:** Supabase migrations (initial schema); Alembic configured for future incremental changes
+- **Task queue:** Dramatiq + Redis (not yet used — Phase 1 uses `BackgroundTasks` for email only)
 - **Containerisation:** Docker + Docker Compose
 - **Hosting MVP:** Railway
 - **Hosting Enterprise:** AWS ECS Fargate (same Docker image, different target)
+
+---
+
+## Current State (Phase 1)
+
+Phase 1 implements: auth, multi-tenancy, client provisioning, team invites, org units, roles & permissions, and the notification abstraction (email only). All interview-related modules (ATS, JD, question bank, scheduler, session, analysis, reporting) are registered as routers but contain no business logic yet.
+
+See `docs/phase-1-implementation.md` for detailed developer documentation of the current implementation.
 
 ---
 
@@ -25,28 +34,55 @@
 ```
 backend/nexus/
 ├── app/
-│   ├── main.py                  ← FastAPI app factory, middleware registration
+│   ├── main.py                  ← FastAPI app factory, middleware + router registration
 │   ├── config.py                ← Settings via pydantic-settings (env vars only)
-│   ├── database.py              ← asyncpg connection pool, SQLAlchemy engine
+│   ├── database.py              ← SQLAlchemy async engine, 3 session types (tenant/bypass/raw)
+│   ├── models.py                ← All ORM models (6 tables: clients, users, org units, roles, assignments, invites)
 │   ├── middleware/
-│   │   ├── tenant.py            ← Sets app.current_tenant before every query
-│   │   └── auth.py              ← JWT verification, RBAC enforcement
+│   │   ├── auth.py              ← JWT extraction via JWKS, attaches token_payload to request.state
+│   │   └── tenant.py            ← Binds tenant_id to structlog context
 │   └── modules/
-│       ├── ats/                 ← Per-ATS adapters, polling, outbound sync
-│       ├── jd/                  ← JD parsing, project brief, interview config
-│       ├── question_bank/       ← AI generation pipeline, versioning, admin editing
-│       ├── scheduler/           ← Session provisioning, invite dispatch, OTP
-│       ├── session/             ← LiveKit orchestration, session state machine
-│       ├── analysis/            ← Real-time scoring, probe decision logic
-│       ├── reporting/           ← Report compilation, score aggregation
-│       ├── notifications/       ← Provider-agnostic email/SMS dispatch
-│       └── auth/                ← Supabase JWT verification, RBAC middleware
-├── migrations/                  ← Alembic migration files
+│       ├── auth/                ← JWT verification, UserContext, RBAC guards, /me endpoint, invite claiming
+│       │   ├── service.py       ← verify_access_token(), verify_candidate_token(), require_projectx_admin()
+│       │   ├── context.py       ← UserContext dataclass, get_current_user_roles(), require_super_admin()
+│       │   ├── schemas.py       ← TokenPayload, MeResponse, CandidateTokenPayload
+│       │   ├── permissions.py   ← 16 canonical permission constants (frozenset)
+│       │   └── router.py        ← /api/auth/* (verify-invite, complete-invite, me, onboarding/complete)
+│       ├── admin/               ← ProjectX internal ops: provision-client, list clients
+│       │   ├── service.py       ← provision_client() — creates tenant + sends Company Admin invite
+│       │   ├── schemas.py
+│       │   └── router.py        ← /api/admin/* (requires is_projectx_admin)
+│       ├── settings/            ← Team management: invite, resend, revoke, deactivate
+│       │   ├── service.py       ← create_team_invite(), _delete_auth_user() via Supabase Admin API
+│       │   ├── schemas.py
+│       │   └── router.py        ← /api/settings/team/* (requires super_admin for writes)
+│       ├── org_units/           ← Org unit CRUD, member/role assignment
+│       │   ├── service.py       ← create/list/update/delete org units, assign/remove roles
+│       │   ├── schemas.py
+│       │   └── router.py        ← /api/org-units/*
+│       ├── roles/               ← Role listing (system + tenant custom)
+│       │   ├── schemas.py
+│       │   └── router.py        ← /api/roles
+│       ├── notifications/       ← Provider-agnostic email dispatch (Resend or dry-run)
+│       │   ├── service.py       ← send_email(), DryRunProvider, ResendProvider, render_template()
+│       │   ├── schemas.py
+│       │   ├── router.py
+│       │   └── templates/       ← HTML email templates (company_admin_invite, team_invite)
+│       ├── ats/                 ← [Stub] Per-ATS adapters, polling, outbound sync
+│       ├── jd/                  ← [Stub] JD parsing, project brief, interview config
+│       ├── question_bank/       ← [Stub] AI generation pipeline, versioning, admin editing
+│       ├── scheduler/           ← [Stub] Session provisioning, invite dispatch, OTP
+│       ├── session/             ← [Stub] LiveKit orchestration, session state machine
+│       ├── analysis/            ← [Stub] Real-time scoring, probe decision logic
+│       └── reporting/           ← [Stub] Report compilation, score aggregation
+├── migrations/                  ← Alembic (configured, versions/ empty — initial schema is in Supabase migration)
 │   └── versions/
 ├── tests/
+│   └── conftest.py              ← AsyncClient fixture
 ├── Dockerfile
-├── docker-compose.yml
+├── docker-compose.yml           ← nexus + redis services
 ├── pyproject.toml
+├── .env.example                 ← All required env vars documented
 └── CLAUDE.md                    ← you are here
 ```
 
@@ -57,7 +93,9 @@ backend/nexus/
 ### Database Access
 - **ALL data access goes through FastAPI.** Never expose or use PostgREST/Supabase auto-generated REST endpoints.
 - Use `asyncpg` driver directly via SQLAlchemy async. No sync ORM calls anywhere.
-- Every query runs inside a transaction that has first called `SET LOCAL app.current_tenant = '<uuid>'`.
+- Every tenant-scoped query uses `get_tenant_db(request)` dependency which runs `SET LOCAL app.current_tenant = '<uuid>'`.
+- Admin/internal operations use `get_bypass_db()` which runs `SET LOCAL app.bypass_rls = 'true'`.
+- All three session types are defined in `app/database.py`.
 
 ### RLS Pattern — Always Applied
 Every tenant-scoped table MUST have this RLS policy:
@@ -76,19 +114,26 @@ CREATE POLICY "service_role_bypass" ON <table_name>
 Add a migration lint check to catch tables missing RLS policies before they reach production.
 
 ### Auth Abstraction — Load-Bearing Constraint
-JWT verification must go through a **provider-agnostic interface** in `app/modules/auth/`. Business logic must never call the Supabase Python SDK directly. This is what makes a future Cognito swap a config change, not a rewrite.
+JWT verification goes through a **provider-agnostic interface** in `app/modules/auth/`. Business logic never calls the Supabase Python SDK directly. This is what makes a future Cognito swap a config change, not a rewrite.
 
 ```python
 # CORRECT — provider-agnostic interface
-from app.modules.auth import verify_token, get_current_tenant
+from app.modules.auth.service import verify_access_token
+from app.modules.auth.context import get_current_user_roles, UserContext
 
 # WRONG — hard couples to Supabase
 from supabase import Client
 ```
 
+The only direct Supabase HTTP call is in `settings/service.py::_delete_auth_user()` for user deactivation (hitting the Admin API with the service role key). This is isolated and would be the single swap point.
+
 ### RBAC Enforcement
-- Role is checked in FastAPI middleware **before any processing begins**.
-- Roles: `Company Admin`, `Recruiter`, `Hiring Manager`, `Interviewer`, `Observer`
+- Auth middleware extracts JWT and attaches `token_payload` to `request.state` before any route handler runs.
+- Roles: `Admin`, `Recruiter`, `Hiring Manager`, `Interviewer`, `Observer` (system roles, seeded at migration)
+- Super Admin is determined by `client.super_admin_id == user.id`, not a role assignment
+- `UserContext` (loaded via `get_current_user_roles` dependency) provides `has_role_in_unit()`, `has_permission_in_unit()`, `all_permissions()` methods
+- Authorization guards: `require_projectx_admin()` (JWT claim), `require_super_admin()` (DB check)
+- Permissions are NOT in the JWT — they are loaded from the DB per-request via role assignments
 - Candidates are **not Supabase Auth users**. They access sessions via signed single-use JWTs generated and verified entirely by the backend.
 
 ### Candidate JWT Rules
@@ -107,7 +152,20 @@ from supabase import Client
 
 ## Module Responsibilities
 
+### Phase 1 — Implemented
+
 | Module | What It Owns |
+|---|---|
+| `auth` | JWKS-based JWT verification (provider-agnostic), `UserContext` RBAC, `require_projectx_admin()` / `require_super_admin()` guards, `/me` endpoint, invite claiming, onboarding completion |
+| `admin` | ProjectX internal operations: `provision_client()` creates tenant + sends Company Admin invite. `list_clients()` for admin dashboard. Requires `is_projectx_admin` JWT claim. |
+| `settings` | Team management: send invite, resend (supersedes old), revoke, deactivate user (including Supabase auth account deletion via Admin API) |
+| `org_units` | Org unit CRUD (hierarchical tree), member/role assignment, visibility filtering (super admin sees all, others see assigned + ancestors) |
+| `roles` | Role listing endpoint — returns system roles (visible to all) + tenant custom roles |
+| `notifications` | Provider-agnostic email dispatch. `DryRunProvider` (logs to stdout) and `ResendProvider`. HTML template rendering for invite emails. |
+
+### Future Phases — Stubbed
+
+| Module | What It Will Own |
 |---|---|
 | `ats` | Per-ATS adapter interface, Ceipal polling cron, Greenhouse/Workday webhooks, outbound sync after session completion |
 | `jd` | JD parsing and enrichment (AI), project brief upload, interview configuration, session settings |
@@ -116,8 +174,6 @@ from supabase import Client
 | `session` | LiveKit room creation/teardown, session state machine, Redis state management, copilot pipeline |
 | `analysis` | Real-time answer scoring, probe selection logic, signal detection (depth, specificity, evidence quality) |
 | `reporting` | Post-session report compilation, per-question scorecards, transcript assembly, score aggregation, PDF generation |
-| `notifications` | Provider-agnostic email (Resend→SES) and SMS (Twilio→SNS) dispatch interface |
-| `auth` | JWT verification (provider-agnostic), RBAC middleware, tenant context injection |
 
 ---
 
@@ -214,12 +270,18 @@ import resend
 
 ---
 
-## Database Migrations (Alembic)
+## Database Migrations
 
+### Current State
+The initial schema (6 tables, all RLS policies, system role seeds, and the auth hook) lives in `backend/supabase/migrations/20260405000000_initial_schema.sql`. This is the single source of truth for the current schema. Alembic is configured (`migrations/env.py`) but `versions/` is empty.
+
+### Going Forward
+- Future schema changes should use Alembic migrations in `migrations/versions/`.
 - Every new table must include `tenant_id UUID NOT NULL` and have the RLS policy applied.
 - Alembic runs as a pre-deployment step.
 - A rollback script is required before any migration merges.
 - Migration lint: fail the CI pipeline if any table is missing RLS policies.
+- If adding new auth-hook-dependent tables, update both the Supabase migration (for grants) and Alembic (for the table DDL).
 
 ---
 
