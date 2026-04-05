@@ -7,6 +7,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import OrganizationalUnit, Role, User, UserRoleAssignment
+from app.modules.audit import actions as audit_actions
+from app.modules.audit.service import log_event
 
 logger = structlog.get_logger()
 
@@ -20,6 +22,8 @@ async def create_org_unit(
     unit_type: str,
     parent_unit_id: uuid_mod.UUID | None = None,
     created_by: uuid_mod.UUID | None = None,
+    actor_email: str | None = None,
+    ip_address: str | None = None,
 ) -> OrganizationalUnit:
     if unit_type not in VALID_UNIT_TYPES:
         raise ValueError(f"Invalid unit_type. Must be one of: {sorted(VALID_UNIT_TYPES)}")
@@ -77,6 +81,23 @@ async def create_org_unit(
         name=name,
         parent_unit_id=str(parent_unit_id) if parent_unit_id else None,
     )
+
+    await log_event(
+        db,
+        tenant_id=client_id,
+        actor_id=created_by,
+        actor_email=actor_email,
+        action=audit_actions.ORG_UNIT_CREATED,
+        resource="org_unit",
+        resource_id=unit.id,
+        payload={
+            "name": name,
+            "unit_type": unit_type,
+            "parent_unit_id": str(parent_unit_id) if parent_unit_id else None,
+        },
+        ip_address=ip_address,
+    )
+
     return unit
 
 
@@ -218,7 +239,17 @@ async def update_org_unit(
     deletable_by: str | None = None,
     set_deletable_by: bool = False,
     admin_delete_disabled: bool | None = None,
+    actor_id: uuid_mod.UUID | None = None,
+    actor_email: str | None = None,
+    ip_address: str | None = None,
 ) -> OrganizationalUnit:
+    before = {
+        "name": unit.name,
+        "unit_type": unit.unit_type,
+        "deletable_by": str(unit.deletable_by) if unit.deletable_by else None,
+        "admin_delete_disabled": unit.admin_delete_disabled,
+    }
+
     if unit_type is not None and unit_type not in VALID_UNIT_TYPES:
         raise ValueError(f"Invalid unit_type. Must be one of: {sorted(VALID_UNIT_TYPES)}")
     if name is not None:
@@ -248,6 +279,27 @@ async def update_org_unit(
             unit.deletable_by = uuid_mod.UUID(deletable_by)
         else:
             unit.deletable_by = None
+
+    after = {
+        "name": unit.name,
+        "unit_type": unit.unit_type,
+        "deletable_by": str(unit.deletable_by) if unit.deletable_by else None,
+        "admin_delete_disabled": unit.admin_delete_disabled,
+    }
+    changed = {k: {"from": before[k], "to": after[k]} for k in before if before[k] != after[k]}
+    if changed:
+        await log_event(
+            db,
+            tenant_id=unit.client_id,
+            actor_id=actor_id,
+            actor_email=actor_email,
+            action=audit_actions.ORG_UNIT_UPDATED,
+            resource="org_unit",
+            resource_id=unit.id,
+            payload={"changed": changed},
+            ip_address=ip_address,
+        )
+
     return unit
 
 
@@ -291,6 +343,8 @@ async def assign_role(
     role_id: uuid_mod.UUID,
     tenant_id: uuid_mod.UUID,
     assigned_by: uuid_mod.UUID,
+    actor_email: str | None = None,
+    ip_address: str | None = None,
 ) -> UserRoleAssignment:
     """Assign a role to a user in an org unit."""
     user_result = await db.execute(select(User).where(User.id == user_id, User.is_active == True))
@@ -321,6 +375,19 @@ async def assign_role(
         org_unit_id=str(org_unit_id),
         role_id=str(role_id),
     )
+
+    await log_event(
+        db,
+        tenant_id=tenant_id,
+        actor_id=assigned_by,
+        actor_email=actor_email,
+        action=audit_actions.ORG_UNIT_MEMBER_ADDED,
+        resource="org_unit",
+        resource_id=org_unit_id,
+        payload={"user_id": str(user_id), "role_id": str(role_id)},
+        ip_address=ip_address,
+    )
+
     return assignment
 
 
@@ -328,6 +395,9 @@ async def remove_user_from_unit(
     db: AsyncSession,
     org_unit_id: uuid_mod.UUID,
     user_id: uuid_mod.UUID,
+    actor_id: uuid_mod.UUID | None = None,
+    actor_email: str | None = None,
+    ip_address: str | None = None,
 ) -> int:
     """Remove ALL role assignments for a user in an org unit."""
     result = await db.execute(
@@ -350,6 +420,19 @@ async def remove_user_from_unit(
         org_unit_id=str(org_unit_id),
         count=len(assignments),
     )
+
+    await log_event(
+        db,
+        tenant_id=assignments[0].tenant_id,
+        actor_id=actor_id,
+        actor_email=actor_email,
+        action=audit_actions.ORG_UNIT_MEMBER_REMOVED,
+        resource="org_unit",
+        resource_id=org_unit_id,
+        payload={"user_id": str(user_id), "roles_removed": len(assignments)},
+        ip_address=ip_address,
+    )
+
     return len(assignments)
 
 
@@ -359,6 +442,8 @@ async def delete_org_unit(
     caller_user_id: uuid_mod.UUID,
     is_super_admin: bool,
     caller_has_admin_role: bool,
+    actor_email: str | None = None,
+    ip_address: str | None = None,
 ) -> None:
     """Delete an org unit with authorization checks."""
     result = await db.execute(
@@ -400,6 +485,18 @@ async def delete_org_unit(
     )
     if (member_result.scalar() or 0) > 0:
         raise ValueError("Cannot delete a unit that has members. Remove all members first.")
+
+    await log_event(
+        db,
+        tenant_id=unit.client_id,
+        actor_id=caller_user_id,
+        actor_email=actor_email,
+        action=audit_actions.ORG_UNIT_DELETED,
+        resource="org_unit",
+        resource_id=org_unit_id,
+        payload={"name": unit.name},
+        ip_address=ip_address,
+    )
 
     await db.delete(unit)
     logger.info("org_units.deleted", unit_id=str(org_unit_id), name=unit.name)
@@ -444,6 +541,9 @@ async def remove_role_from_user(
     org_unit_id: uuid_mod.UUID,
     user_id: uuid_mod.UUID,
     role_id: uuid_mod.UUID,
+    actor_id: uuid_mod.UUID | None = None,
+    actor_email: str | None = None,
+    ip_address: str | None = None,
 ) -> None:
     """Remove a specific role assignment."""
     result = await db.execute(
@@ -464,6 +564,18 @@ async def remove_role_from_user(
         user_id=str(user_id),
         org_unit_id=str(org_unit_id),
         role_id=str(role_id),
+    )
+
+    await log_event(
+        db,
+        tenant_id=assignment.tenant_id,
+        actor_id=actor_id,
+        actor_email=actor_email,
+        action=audit_actions.ORG_UNIT_ROLE_REMOVED,
+        resource="org_unit",
+        resource_id=org_unit_id,
+        payload={"user_id": str(user_id), "role_id": str(role_id)},
+        ip_address=ip_address,
     )
 
 

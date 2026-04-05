@@ -34,6 +34,7 @@ async def provision_client_endpoint(
         industry=data.industry,
         plan=data.plan,
         admin_identity=admin_email,
+        ip_address=request.client.host if request.client else None,
     )
 
     return ProvisionClientResponse(

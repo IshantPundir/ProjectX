@@ -2,6 +2,7 @@
 
 import hashlib
 import secrets
+import uuid as uuid_mod
 
 import structlog
 from sqlalchemy import select
@@ -9,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models import Client, User, UserInvite
+from app.modules.audit import actions as audit_actions
+from app.modules.audit.service import log_event
 from app.modules.notifications.service import render_template, send_email
 
 logger = structlog.get_logger()
@@ -23,6 +26,8 @@ async def provision_client(
     industry: str = "",
     plan: str = "trial",
     admin_identity: str,  # email of the ProjectX admin performing this action
+    actor_id: uuid_mod.UUID | None = None,
+    ip_address: str | None = None,
 ) -> tuple[Client, UserInvite, str]:
     """Create a client + invite for the Company Admin.
 
@@ -68,6 +73,18 @@ async def provision_client(
         "admin.client_provisioned",
         client_id=str(client.id),
         admin_email=admin_email,
+    )
+
+    await log_event(
+        db,
+        tenant_id=client.id,
+        actor_id=actor_id,
+        actor_email=admin_identity,
+        action=audit_actions.CLIENT_PROVISIONED,
+        resource="client",
+        resource_id=client.id,
+        payload={"client_name": client_name, "admin_email": admin_email, "plan": plan},
+        ip_address=ip_address,
     )
 
     # Log the invite URL explicitly in dry-run mode so it's easy to copy from terminal

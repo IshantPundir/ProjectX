@@ -1,6 +1,6 @@
 import uuid as uuid_mod
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,7 +36,9 @@ def _require_unit_admin(ctx: UserContext, org_unit_id: uuid_mod.UUID) -> None:
     raise HTTPException(status_code=403, detail="Requires super admin or Admin role in this unit")
 
 
-def _build_response(unit: OrganizationalUnit, member_count: int, email_map: dict) -> OrgUnitResponse:
+def _build_response(
+    unit: OrganizationalUnit, member_count: int, email_map: dict
+) -> OrgUnitResponse:
     return OrgUnitResponse(
         id=str(unit.id),
         client_id=str(unit.client_id),
@@ -64,6 +66,7 @@ async def _load_email_map(db: AsyncSession, *user_ids: uuid_mod.UUID | None) -> 
 @router.post("", response_model=OrgUnitResponse)
 async def create_unit(
     data: CreateOrgUnitRequest,
+    request: Request,
     ctx: UserContext = Depends(get_current_user_roles),
     db: AsyncSession = Depends(get_tenant_db),
 ) -> OrgUnitResponse:
@@ -80,12 +83,20 @@ async def create_unit(
     else:
         # Top-level: super admin only
         if not ctx.is_super_admin:
-            raise HTTPException(status_code=403, detail="Only a super admin can create top-level units")
+            raise HTTPException(
+                status_code=403, detail="Only a super admin can create top-level units"
+            )
 
     try:
         unit = await create_org_unit(
-            db, ctx.user.tenant_id, data.name, data.unit_type, parent_id,
+            db,
+            ctx.user.tenant_id,
+            data.name,
+            data.unit_type,
+            parent_id,
             created_by=ctx.user.id,
+            actor_email=ctx.user.email,
+            ip_address=request.client.host if request.client else None,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -107,6 +118,7 @@ async def list_units(
 async def update_unit(
     unit_id: str,
     data: UpdateOrgUnitRequest,
+    request: Request,
     ctx: UserContext = Depends(get_current_user_roles),
     db: AsyncSession = Depends(get_tenant_db),
 ) -> OrgUnitResponse:
@@ -114,7 +126,9 @@ async def update_unit(
     _require_unit_admin(ctx, uid)
 
     raw_body = data.model_dump(exclude_unset=True)
-    if ("deletable_by" in raw_body or "admin_delete_disabled" in raw_body) and not ctx.is_super_admin:
+    if (
+        "deletable_by" in raw_body or "admin_delete_disabled" in raw_body
+    ) and not ctx.is_super_admin:
         raise HTTPException(status_code=403, detail="Only a super admin can change delete settings")
 
     result = await db.execute(select(OrganizationalUnit).where(OrganizationalUnit.id == uid))
@@ -126,10 +140,16 @@ async def update_unit(
 
     try:
         unit = await update_org_unit(
-            db, unit, data.name, data.unit_type,
+            db,
+            unit,
+            data.name,
+            data.unit_type,
             deletable_by=data.deletable_by,
             set_deletable_by=set_deletable_by,
             admin_delete_disabled=data.admin_delete_disabled,
+            actor_id=ctx.user.id,
+            actor_email=ctx.user.email,
+            ip_address=request.client.host if request.client else None,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -141,6 +161,7 @@ async def update_unit(
 @router.delete("/{unit_id}")
 async def delete_unit(
     unit_id: str,
+    request: Request,
     ctx: UserContext = Depends(get_current_user_roles),
     db: AsyncSession = Depends(get_tenant_db),
 ) -> dict[str, str]:
@@ -152,6 +173,8 @@ async def delete_unit(
             caller_user_id=ctx.user.id,
             is_super_admin=ctx.is_super_admin,
             caller_has_admin_role=ctx.has_role_in_unit(uid, "Admin"),
+            actor_email=ctx.user.email,
+            ip_address=request.client.host if request.client else None,
         )
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -177,6 +200,7 @@ async def get_members(
 async def assign_member_role(
     unit_id: str,
     data: AssignRoleRequest,
+    request: Request,
     ctx: UserContext = Depends(get_current_user_roles),
     db: AsyncSession = Depends(get_tenant_db),
 ) -> dict[str, str]:
@@ -184,11 +208,14 @@ async def assign_member_role(
     _require_unit_admin(ctx, uid)
     try:
         await assign_role(
-            db, org_unit_id=uid,
+            db,
+            org_unit_id=uid,
             user_id=uuid_mod.UUID(data.user_id),
             role_id=uuid_mod.UUID(data.role_id),
             tenant_id=ctx.user.tenant_id,
             assigned_by=ctx.user.id,
+            actor_email=ctx.user.email,
+            ip_address=request.client.host if request.client else None,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -199,13 +226,21 @@ async def assign_member_role(
 async def remove_member(
     unit_id: str,
     user_id: str,
+    request: Request,
     ctx: UserContext = Depends(get_current_user_roles),
     db: AsyncSession = Depends(get_tenant_db),
 ) -> dict[str, str]:
     uid = uuid_mod.UUID(unit_id)
     _require_unit_admin(ctx, uid)
     try:
-        count = await remove_user_from_unit(db, uid, uuid_mod.UUID(user_id))
+        count = await remove_user_from_unit(
+            db,
+            uid,
+            uuid_mod.UUID(user_id),
+            actor_id=ctx.user.id,
+            actor_email=ctx.user.email,
+            ip_address=request.client.host if request.client else None,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"status": "removed", "count": str(count)}
@@ -216,13 +251,22 @@ async def remove_member_role(
     unit_id: str,
     user_id: str,
     role_id: str,
+    request: Request,
     ctx: UserContext = Depends(get_current_user_roles),
     db: AsyncSession = Depends(get_tenant_db),
 ) -> dict[str, str]:
     uid = uuid_mod.UUID(unit_id)
     _require_unit_admin(ctx, uid)
     try:
-        await remove_role_from_user(db, uid, uuid_mod.UUID(user_id), uuid_mod.UUID(role_id))
+        await remove_role_from_user(
+            db,
+            uid,
+            uuid_mod.UUID(user_id),
+            uuid_mod.UUID(role_id),
+            actor_id=ctx.user.id,
+            actor_email=ctx.user.email,
+            ip_address=request.client.host if request.client else None,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"status": "removed"}

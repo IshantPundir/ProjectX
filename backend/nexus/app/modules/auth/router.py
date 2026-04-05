@@ -11,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_bypass_db
 from app.models import Client, OrganizationalUnit, Role, User, UserInvite, UserRoleAssignment
+from app.modules.audit import actions as audit_actions
+from app.modules.audit.service import log_event
 from app.modules.auth.context import UserContext, get_current_user_roles
 from app.modules.auth.schemas import (
     CompleteInviteRequest,
@@ -86,7 +88,9 @@ async def complete_invite(
         raise HTTPException(status_code=401, detail="Invalid or expired invite")
 
     if claimed_row.email != oauth_email:
-        raise HTTPException(status_code=401, detail="Email mismatch — invite was for a different address")
+        raise HTTPException(
+            status_code=401, detail="Email mismatch — invite was for a different address"
+        )
 
     # Create user (identity only)
     user = User(
@@ -116,6 +120,19 @@ async def complete_invite(
         is_super_admin=is_super_admin,
     )
 
+    # TODO: refactor complete_invite logic into auth/service.py so audit call moves to service layer
+    await log_event(
+        db,
+        tenant_id=uuid_mod.UUID(str(claimed_row.tenant_id)),
+        actor_id=user.id,
+        actor_email=oauth_email,
+        action=audit_actions.USER_INVITE_CLAIMED,
+        resource="user",
+        resource_id=user.id,
+        payload={"email": oauth_email, "is_super_admin": is_super_admin},
+        ip_address=request.client.host if request.client else None,
+    )
+
     return CompleteInviteResponse(
         redirect_to=redirect_to,
         user_id=str(user.id),
@@ -138,9 +155,9 @@ async def get_current_user(
 
     # Check if tenant has any org units (separate query — not per-row)
     org_exists_result = await db.execute(
-        select(func.count()).select_from(OrganizationalUnit).where(
-            OrganizationalUnit.client_id == user.tenant_id
-        )
+        select(func.count())
+        .select_from(OrganizationalUnit)
+        .where(OrganizationalUnit.client_id == user.tenant_id)
     )
     has_org_units = (org_exists_result.scalar() or 0) > 0
 
@@ -167,6 +184,7 @@ async def get_current_user(
 
 @router.post("/onboarding/complete")
 async def complete_onboarding(
+    request: Request,
     ctx: UserContext = Depends(get_current_user_roles),
     db: AsyncSession = Depends(get_bypass_db),
 ) -> dict[str, str]:
@@ -179,15 +197,30 @@ async def complete_onboarding(
 
     # Check at least one org unit exists
     org_count = await db.execute(
-        select(func.count()).select_from(OrganizationalUnit).where(
-            OrganizationalUnit.client_id == ctx.user.tenant_id
-        )
+        select(func.count())
+        .select_from(OrganizationalUnit)
+        .where(OrganizationalUnit.client_id == ctx.user.tenant_id)
     )
     if (org_count.scalar() or 0) == 0:
-        raise HTTPException(status_code=400, detail="Create at least one organizational unit before completing onboarding")
+        raise HTTPException(
+            status_code=400,
+            detail="Create at least one organizational unit before completing onboarding",
+        )
 
     result = await db.execute(select(Client).where(Client.id == ctx.user.tenant_id))
     client = result.scalar_one()
     client.onboarding_complete = True
+
+    await log_event(
+        db,
+        tenant_id=ctx.user.tenant_id,
+        actor_id=ctx.user.id,
+        actor_email=ctx.user.email,
+        action=audit_actions.CLIENT_ONBOARDING_COMPLETED,
+        resource="client",
+        resource_id=ctx.user.tenant_id,
+        payload={},
+        ip_address=request.client.host if request.client else None,
+    )
 
     return {"status": "completed"}
