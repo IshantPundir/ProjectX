@@ -126,9 +126,6 @@ export default function ProfilePage() {
     byUnit[a.org_unit_id].roles.push(a.role_name);
   }
 
-  // Collect unique permissions across all assignments
-  const allPermissions = [...new Set(me.assignments.flatMap((a) => a.permissions))].sort();
-
   // Initials for avatar
   const initials = me.full_name
     ? me.full_name
@@ -270,26 +267,6 @@ export default function ProfilePage() {
           <p className="text-xs text-zinc-400">
             Contact your administrator to get assigned to an organizational unit.
           </p>
-        </div>
-      )}
-
-      {/* ─── Permissions summary ─── */}
-      {allPermissions.length > 0 && (
-        <div className="bg-white border border-zinc-200 rounded-xl p-6 mb-6">
-          <h2 className="text-sm font-semibold text-zinc-900 mb-3">
-            Permissions
-            <span className="text-zinc-400 font-normal ml-1.5">({allPermissions.length})</span>
-          </h2>
-          <div className="flex flex-wrap gap-1.5">
-            {allPermissions.map((p) => (
-              <span
-                key={p}
-                className="bg-zinc-50 text-zinc-600 border border-zinc-100 px-2 py-0.5 rounded text-xs"
-              >
-                {p}
-              </span>
-            ))}
-          </div>
         </div>
       )}
 
