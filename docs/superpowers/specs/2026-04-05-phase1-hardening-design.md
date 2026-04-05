@@ -298,13 +298,17 @@ Every Phase 1 mutation gets a `log_event` call. Actor info handling:
 | `deactivate_team_user` | `user.deactivated` | `user` | user.id | `{"deactivated_email": user.email, "auth_user_id": auth_user_id}` |
 | `complete_invite` (router) | `user.invite_claimed` | `user` | new_user.id | `{"email": user.email, "is_super_admin": bool}` |
 | `create_org_unit` | `org_unit.created` | `org_unit` | unit.id | `{"name": name, "unit_type": unit_type, "parent_unit_id": str(...) or None}` |
-| `update_org_unit` | `org_unit.updated` | `org_unit` | unit.id | `{"name": name, "unit_type": unit_type}` (changed fields) |
+| `update_org_unit` | `org_unit.updated` | `org_unit` | unit.id | `{"changed": {"field": {"from": old, "to": new}}}` — diff of only mutated fields (see note below) |
 | `delete_org_unit` | `org_unit.deleted` | `org_unit` | unit.id | `{"name": unit.name}` |
 | `assign_role` | `org_unit.member_added` | `org_unit` | org_unit_id | `{"user_id": str(user_id), "role_id": str(role_id)}` |
 | `remove_user_from_unit` | `org_unit.member_removed` | `org_unit` | org_unit_id | `{"user_id": str(user_id), "roles_removed": count}` |
 | `remove_role_from_user` | `org_unit.role_removed` | `org_unit` | org_unit_id | `{"user_id": str(user_id), "role_id": str(role_id)}` |
 | `provision_client` | `client.provisioned` | `client` | client.id | `{"client_name": name, "admin_email": email, "plan": plan}` |
 | `complete_onboarding` (router) | `client.onboarding_completed` | `client` | client.id | `{}` |
+
+**`update_org_unit` payload format:** The audit payload must be a diff of only the fields that were actually mutated. Structure: `{"changed": {"field_name": {"from": old_value, "to": new_value}}}`. Only include fields where the value changed. Do not include unchanged fields. Capture before-values before applying the update, after-values after.
+
+**`complete_invite` audit call placement:** The `USER_INVITE_CLAIMED` audit call lives in `auth/router.py` (the `complete_invite` handler), not in a service function. This is a pragmatic exception — `complete_invite` has no backing service function; its logic is inline SQL in the router. All other audit calls are in service functions. Add a `# TODO: refactor complete_invite logic into auth/service.py so audit call moves to service layer` comment at the call site. Do not refactor now — out of scope.
 
 ### Part F — Tests
 
