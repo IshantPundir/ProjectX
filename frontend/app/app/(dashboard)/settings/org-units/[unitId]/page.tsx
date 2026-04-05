@@ -275,16 +275,23 @@ export default function OrgUnitDetailPage() {
     return isAdmin && me.user_id === unit.deletable_by;
   }, [me, unit, unitId]);
 
-  const memberUserIds = useMemo(() => new Set(members.map((m) => m.user_id)), [members]);
-
+  // Don't exclude existing members — same user can have multiple roles
   const filteredUsers = useMemo(() => {
-    const eligible = tenantUsers.filter((u) => !memberUserIds.has(u.id));
-    if (!userSearch.trim()) return eligible.slice(0, 6);
+    if (!userSearch.trim()) return [];  // Only show dropdown when user is typing
     const q = userSearch.toLowerCase();
-    return eligible.filter(
+    return tenantUsers.filter(
       (u) => u.email.toLowerCase().includes(q) || (u.full_name || "").toLowerCase().includes(q),
     );
-  }, [tenantUsers, memberUserIds, userSearch]);
+  }, [tenantUsers, userSearch]);
+
+  // For a selected user, filter out roles they already have in this unit
+  const availableRolesForUser = useMemo(() => {
+    if (!addUserId) return availableRoles;
+    const existingMember = members.find((m) => m.user_id === addUserId);
+    if (!existingMember) return availableRoles;
+    const existingRoleIds = new Set(existingMember.roles.map((r) => r.role_id));
+    return availableRoles.filter((r) => !existingRoleIds.has(r.id));
+  }, [addUserId, members, availableRoles]);
 
   /* ─── Actions ─── */
 
@@ -894,7 +901,7 @@ export default function OrgUnitDetailPage() {
                     <div className="flex items-center justify-between border border-green-200 bg-green-50 rounded-lg px-3 py-2">
                       <span className="text-sm text-zinc-900 truncate">{addUserEmail}</span>
                       <button
-                        onClick={() => { setAddUserId(""); setAddUserEmail(""); setUserSearch(""); }}
+                        onClick={() => { setAddUserId(""); setAddUserEmail(""); setUserSearch(""); setAddRoleId(""); }}
                         className="text-zinc-400 hover:text-zinc-600 cursor-pointer shrink-0 ml-2"
                         aria-label="Clear selection"
                       >
@@ -917,7 +924,7 @@ export default function OrgUnitDetailPage() {
                             <button
                               key={u.id}
                               type="button"
-                              onClick={() => { setAddUserId(u.id); setAddUserEmail(u.email); setUserSearch(""); }}
+                              onClick={() => { setAddUserId(u.id); setAddUserEmail(u.email); setUserSearch(""); setAddRoleId(""); }}
                               className="w-full text-left px-3 py-2.5 hover:bg-zinc-50 border-b border-zinc-50 last:border-0 cursor-pointer transition-colors duration-100"
                             >
                               <p className="text-sm text-zinc-900">{u.email}</p>
@@ -933,20 +940,26 @@ export default function OrgUnitDetailPage() {
                   )}
                 </div>
 
-                {/* Role picker */}
+                {/* Role picker — filters out roles the selected user already has */}
                 <div>
                   <label htmlFor="add-role" className="block text-xs font-medium text-zinc-600 mb-1">Role</label>
-                  <select
-                    id="add-role"
-                    value={addRoleId}
-                    onChange={(e) => setAddRoleId(e.target.value)}
-                    className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-600 cursor-pointer"
-                  >
-                    <option value="">Select a role...</option>
-                    {availableRoles.map((r) => (
-                      <option key={r.id} value={r.id}>{r.name}</option>
-                    ))}
-                  </select>
+                  {addUserId && availableRolesForUser.length === 0 ? (
+                    <p className="text-xs text-zinc-400 border border-zinc-200 rounded-lg px-3 py-2.5">
+                      This user already has all available roles in this unit.
+                    </p>
+                  ) : (
+                    <select
+                      id="add-role"
+                      value={addRoleId}
+                      onChange={(e) => setAddRoleId(e.target.value)}
+                      className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-600 cursor-pointer"
+                    >
+                      <option value="">Select a role...</option>
+                      {availableRolesForUser.map((r) => (
+                        <option key={r.id} value={r.id}>{r.name}</option>
+                      ))}
+                    </select>
+                  )}
                 </div>
               </div>
 
