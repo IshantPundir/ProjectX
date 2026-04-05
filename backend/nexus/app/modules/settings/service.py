@@ -271,6 +271,23 @@ async def deactivate_team_user(
     for invite in invite_result.scalars().all():
         invite.status = "revoked"
 
+    # Remove all role assignments
+    role_result = await db.execute(
+        select(UserRoleAssignment).where(
+            UserRoleAssignment.user_id == user_id,
+            UserRoleAssignment.tenant_id == tenant_id,
+        )
+    )
+    removed_assignments = role_result.scalars().all()
+    for assignment in removed_assignments:
+        await db.delete(assignment)
+    if removed_assignments:
+        logger.info(
+            "settings.role_assignments_removed_on_deactivation",
+            user_id=str(user_id),
+            count=len(removed_assignments),
+        )
+
     # Nullify deletable_by references
     units_updated = await nullify_deletable_by_for_user(db, tenant_id, user_id)
     if units_updated > 0:

@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import OrganizationalUnit, User
+from app.models import OrganizationalUnit, Role, User, UserRoleAssignment
 from tests.conftest import create_test_client, create_test_org_unit, create_test_user
 
 
@@ -119,3 +119,47 @@ async def test_deactivate_self_raises(db: AsyncSession):
 
     with pytest.raises(ValueError, match="Cannot deactivate your own account"):
         await deactivate_team_user(db, client.id, user.id, str(user.auth_user_id))
+
+
+@pytest.mark.asyncio
+async def test_deactivate_team_user_removes_role_assignments(db: AsyncSession):
+    """Deactivating a user removes all their role assignments across all org units."""
+    from app.modules.settings.service import deactivate_team_user
+
+    client = await create_test_client(db)
+    caller = await create_test_user(db, client.id, email="admin@test.com")
+    target = await create_test_user(db, client.id, email="target@test.com")
+
+    unit1 = await create_test_org_unit(db, client.id, name="Engineering")
+    unit2 = await create_test_org_unit(db, client.id, name="Marketing")
+
+    # Create a role to assign
+    role = Role(name="TestRole", is_system=False, tenant_id=client.id)
+    db.add(role)
+    await db.flush()
+
+    # Assign target to both units
+    for unit in [unit1, unit2]:
+        assignment = UserRoleAssignment(
+            user_id=target.id,
+            org_unit_id=unit.id,
+            role_id=role.id,
+            tenant_id=client.id,
+            assigned_by=caller.id,
+        )
+        db.add(assignment)
+    await db.flush()
+
+    # Verify assignments exist
+    result = await db.execute(
+        select(UserRoleAssignment).where(UserRoleAssignment.user_id == target.id)
+    )
+    assert len(result.scalars().all()) == 2
+
+    await deactivate_team_user(db, client.id, target.id, str(caller.auth_user_id))
+
+    # All assignments should be gone
+    result = await db.execute(
+        select(UserRoleAssignment).where(UserRoleAssignment.user_id == target.id)
+    )
+    assert len(result.scalars().all()) == 0
