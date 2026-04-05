@@ -181,8 +181,10 @@ async def deactivate_team_user(
     tenant_id: uuid_mod.UUID,
     user_id: uuid_mod.UUID,
     caller_auth_user_id: str,
-) -> None:
-    """Deactivate a user and delete their Supabase Auth account."""
+) -> str:
+    """Deactivate a user. Returns auth_user_id for background Supabase cleanup."""
+    from app.modules.org_units.service import nullify_deletable_by_for_user
+
     result = await db.execute(
         select(User).where(
             User.id == user_id,
@@ -210,9 +212,18 @@ async def deactivate_team_user(
     for invite in invite_result.scalars().all():
         invite.status = "revoked"
 
-    await _delete_auth_user(str(user.auth_user_id))
+    # Nullify deletable_by references
+    units_updated = await nullify_deletable_by_for_user(db, tenant_id, user_id)
+    if units_updated > 0:
+        logger.info(
+            "settings.deletable_by_nullified_on_deactivation",
+            user_id=str(user_id),
+            units_updated=units_updated,
+        )
 
     logger.info("settings.user_deactivated", user_id=str(user_id), email=user.email)
+
+    return str(user.auth_user_id)
 
 
 async def _delete_auth_user(auth_user_id: str) -> None:

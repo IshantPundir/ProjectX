@@ -1,14 +1,13 @@
 import uuid as uuid_mod
 
+import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import structlog
-
 from app.config import settings
 from app.database import get_tenant_db
-from app.models import Client, User
+from app.models import Client
 from app.modules.auth.context import UserContext, get_current_user_roles, require_super_admin
 from app.modules.notifications.service import render_template, send_email
 from app.modules.settings.schemas import (
@@ -18,6 +17,7 @@ from app.modules.settings.schemas import (
     TeamMember,
 )
 from app.modules.settings.service import (
+    _delete_auth_user,
     create_team_invite,
     deactivate_team_user,
     list_team_members,
@@ -151,21 +151,40 @@ async def revoke_endpoint(
     return {"status": "revoked"}
 
 
+async def _background_delete_auth_user(auth_user_id: str) -> None:
+    """Background task wrapper — logs errors, never re-raises."""
+    try:
+        await _delete_auth_user(auth_user_id)
+    except Exception as exc:
+        logger.error(
+            "settings.supabase_deletion_failed",
+            auth_user_id=auth_user_id,
+            error=str(exc),
+        )
+
+
 @router.post(
     "/deactivate/{user_id}",
     dependencies=[require_super_admin()],
 )
 async def deactivate_endpoint(
     user_id: str,
+    background_tasks: BackgroundTasks,
     ctx: UserContext = Depends(get_current_user_roles),
     db: AsyncSession = Depends(get_tenant_db),
 ) -> dict[str, str]:
-    """Deactivate a user. Super admin only."""
+    """Deactivate a user. Super admin only.
+
+    DB deactivation happens in-transaction. Supabase auth account
+    deletion is scheduled as a background task after commit.
+    """
     try:
-        await deactivate_team_user(
+        auth_user_id = await deactivate_team_user(
             db, ctx.user.tenant_id, uuid_mod.UUID(user_id), str(ctx.user.auth_user_id),
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    background_tasks.add_task(_background_delete_auth_user, auth_user_id)
 
     return {"status": "deactivated"}
