@@ -5,6 +5,45 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { apiFetch } from "@/lib/api/client";
 
+function EyeIcon() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+function EyeOffIcon() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+      <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+      <line x1="1" y1="1" x2="23" y2="23" />
+    </svg>
+  );
+}
+
 interface InviteDetails {
   email: string;
   client_name: string;
@@ -22,6 +61,8 @@ function InviteContent() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   useEffect(() => {
     if (!rawToken) {
@@ -116,7 +157,21 @@ function InviteContent() {
     return (
       <div className="text-center py-20">
         <div className="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center mx-auto mb-4">
-          <span className="text-red-500 text-xl">&#x2715;</span>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="22"
+            height="22"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="text-red-500"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
         </div>
         <h2 className="text-lg font-semibold text-zinc-900 mb-2">
           Invite Invalid or Expired
@@ -133,6 +188,21 @@ function InviteContent() {
   return (
     <>
       <div className="text-center mb-6">
+        <div className="w-12 h-12 rounded-full bg-green-600 flex items-center justify-center mx-auto mb-4">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="22"
+            height="22"
+            viewBox="0 0 24 24"
+            fill="white"
+            stroke="white"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <polygon points="5 3 19 12 5 21 5 3" />
+          </svg>
+        </div>
         <h1 className="text-xl font-bold text-zinc-900">
           Set Up Your Account
         </h1>
@@ -171,33 +241,56 @@ function InviteContent() {
           <label className="block text-xs font-medium text-zinc-600 mb-1.5">
             Set Password
           </label>
-          <input
-            type="password"
-            required
-            minLength={8}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="w-full border border-zinc-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-600"
-            placeholder="Minimum 8 characters"
-          />
+          <div className="relative">
+            <input
+              type={showPassword ? "text" : "password"}
+              required
+              minLength={8}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="new-password"
+              className="w-full border border-zinc-300 rounded-lg px-3 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-green-600"
+              placeholder="Enter a password"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              className="absolute inset-y-0 right-0 flex items-center px-3 text-zinc-400 hover:text-zinc-600"
+              aria-label={showPassword ? "Hide password" : "Show password"}
+            >
+              {showPassword ? <EyeOffIcon /> : <EyeIcon />}
+            </button>
+          </div>
+          <p className="text-xs text-zinc-400 mt-1">Minimum 8 characters</p>
         </div>
         <div>
           <label className="block text-xs font-medium text-zinc-600 mb-1.5">
             Confirm Password
           </label>
-          <input
-            type="password"
-            required
-            minLength={8}
-            value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-            className="w-full border border-zinc-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-600"
-          />
+          <div className="relative">
+            <input
+              type={showConfirmPassword ? "text" : "password"}
+              required
+              minLength={8}
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              autoComplete="new-password"
+              className="w-full border border-zinc-300 rounded-lg px-3 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-green-600"
+            />
+            <button
+              type="button"
+              onClick={() => setShowConfirmPassword((v) => !v)}
+              className="absolute inset-y-0 right-0 flex items-center px-3 text-zinc-400 hover:text-zinc-600"
+              aria-label={showConfirmPassword ? "Hide password" : "Show password"}
+            >
+              {showConfirmPassword ? <EyeOffIcon /> : <EyeIcon />}
+            </button>
+          </div>
         </div>
         <button
           type="submit"
           disabled={state === "submitting"}
-          className="w-full bg-green-600 text-white rounded-lg py-2.5 text-sm font-medium hover:bg-green-700 disabled:opacity-50"
+          className="w-full bg-green-600 text-white rounded-lg py-2.5 text-sm font-medium hover:bg-green-700 disabled:opacity-50 transition-colors duration-150"
         >
           {state === "submitting"
             ? "Creating account..."
