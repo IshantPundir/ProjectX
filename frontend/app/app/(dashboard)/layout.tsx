@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { cache } from "react";
+import SidebarNav from "./SidebarNav";
 
 const getMe = cache(async (token: string, apiUrl: string) => {
   const res = await fetch(`${apiUrl}/api/auth/me`, {
@@ -46,34 +47,9 @@ export default async function DashboardLayout({
 
   return (
     <div className="flex flex-1">
-      <aside className="w-56 border-r border-zinc-200 bg-white p-4">
+      <aside className="w-56 border-r border-zinc-200 bg-white p-4 flex flex-col">
         <h2 className="text-sm font-bold text-zinc-900 mb-6">ProjectX</h2>
-        <nav className="flex-1 space-y-1">
-          <a
-            href="/"
-            className="block text-sm text-zinc-700 hover:text-zinc-900 py-1.5"
-          >
-            Dashboard
-          </a>
-          <a
-            href="/settings/team"
-            className="block text-sm text-zinc-700 hover:text-zinc-900 py-1.5"
-          >
-            Team
-          </a>
-          <a
-            href="/settings/org-units"
-            className="block text-sm text-zinc-700 hover:text-zinc-900 py-1.5"
-          >
-            Org Units
-          </a>
-          <a
-            href="/profile"
-            className="block text-sm text-zinc-700 hover:text-zinc-900 py-1.5"
-          >
-            Profile
-          </a>
-        </nav>
+        <SidebarNav userEmail={user.email ?? ""} />
       </aside>
       <main className="flex-1 p-6">{children}</main>
     </div>
