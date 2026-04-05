@@ -71,7 +71,12 @@ async def create_org_unit(
 
             await db.flush()
 
-    logger.info("org_units.created", unit_id=str(unit.id), name=name, parent_unit_id=str(parent_unit_id) if parent_unit_id else None)
+    logger.info(
+        "org_units.created",
+        unit_id=str(unit.id),
+        name=name,
+        parent_unit_id=str(parent_unit_id) if parent_unit_id else None,
+    )
     return unit
 
 
@@ -237,7 +242,9 @@ async def update_org_unit(
                     )
                 )
                 if assignment.scalar_one_or_none() is None:
-                    raise ValueError("User must be an admin of this unit to be assigned as deletable_by")
+                    raise ValueError(
+                        "User must be an admin of this unit to be assigned as deletable_by"
+                    )
             unit.deletable_by = uuid_mod.UUID(deletable_by)
         else:
             unit.deletable_by = None
@@ -266,11 +273,13 @@ async def list_unit_members(
                 "full_name": user.full_name,
                 "roles": [],
             }
-        members_map[user.id]["roles"].append({
-            "role_id": str(role.id),
-            "role_name": role.name,
-            "assigned_at": ura.created_at.isoformat(),
-        })
+        members_map[user.id]["roles"].append(
+            {
+                "role_id": str(role.id),
+                "role_name": role.name,
+                "assigned_at": ura.created_at.isoformat(),
+            }
+        )
 
     return list(members_map.values())
 
@@ -284,9 +293,7 @@ async def assign_role(
     assigned_by: uuid_mod.UUID,
 ) -> UserRoleAssignment:
     """Assign a role to a user in an org unit."""
-    user_result = await db.execute(
-        select(User).where(User.id == user_id, User.is_active == True)
-    )
+    user_result = await db.execute(select(User).where(User.id == user_id, User.is_active == True))
     if not user_result.scalar_one_or_none():
         raise ValueError("User not found or inactive")
 
@@ -308,7 +315,12 @@ async def assign_role(
     except Exception:
         raise ValueError("User already has this role in this unit")
 
-    logger.info("org_units.role_assigned", user_id=str(user_id), org_unit_id=str(org_unit_id), role_id=str(role_id))
+    logger.info(
+        "org_units.role_assigned",
+        user_id=str(user_id),
+        org_unit_id=str(org_unit_id),
+        role_id=str(role_id),
+    )
     return assignment
 
 
@@ -332,7 +344,12 @@ async def remove_user_from_unit(
         await db.delete(a)
 
     await _nullify_deletable_by_if_needed(db, org_unit_id, user_id)
-    logger.info("org_units.user_removed", user_id=str(user_id), org_unit_id=str(org_unit_id), count=len(assignments))
+    logger.info(
+        "org_units.user_removed",
+        user_id=str(user_id),
+        org_unit_id=str(org_unit_id),
+        count=len(assignments),
+    )
     return len(assignments)
 
 
@@ -356,7 +373,9 @@ async def delete_org_unit(
             raise PermissionError("Only a super admin can delete this unit")
 
         if unit.deletable_by is None:
-            raise PermissionError("No admin is authorized to delete this unit. Contact your super admin.")
+            raise PermissionError(
+                "No admin is authorized to delete this unit. Contact your super admin."
+            )
 
         if not caller_has_admin_role or caller_user_id != unit.deletable_by:
             deletable_user_result = await db.execute(
@@ -367,17 +386,17 @@ async def delete_org_unit(
             raise PermissionError(f"Only the super admin or {deletable_email} can delete this unit")
 
     child_result = await db.execute(
-        select(func.count()).select_from(OrganizationalUnit).where(
-            OrganizationalUnit.parent_unit_id == org_unit_id
-        )
+        select(func.count())
+        .select_from(OrganizationalUnit)
+        .where(OrganizationalUnit.parent_unit_id == org_unit_id)
     )
     if (child_result.scalar() or 0) > 0:
         raise ValueError("Cannot delete a unit that has sub-units. Remove sub-units first.")
 
     member_result = await db.execute(
-        select(func.count()).select_from(UserRoleAssignment).where(
-            UserRoleAssignment.org_unit_id == org_unit_id
-        )
+        select(func.count())
+        .select_from(UserRoleAssignment)
+        .where(UserRoleAssignment.org_unit_id == org_unit_id)
     )
     if (member_result.scalar() or 0) > 0:
         raise ValueError("Cannot delete a unit that has members. Remove all members first.")
@@ -415,7 +434,9 @@ async def _nullify_deletable_by_if_needed(
     )
     if remaining.scalar_one_or_none() is None:
         unit.deletable_by = None
-        logger.info("org_units.deletable_by_nullified", unit_id=str(org_unit_id), user_id=str(user_id))
+        logger.info(
+            "org_units.deletable_by_nullified", unit_id=str(org_unit_id), user_id=str(user_id)
+        )
 
 
 async def remove_role_from_user(
@@ -438,4 +459,31 @@ async def remove_role_from_user(
 
     await db.delete(assignment)
     await _nullify_deletable_by_if_needed(db, org_unit_id, user_id)
-    logger.info("org_units.role_removed", user_id=str(user_id), org_unit_id=str(org_unit_id), role_id=str(role_id))
+    logger.info(
+        "org_units.role_removed",
+        user_id=str(user_id),
+        org_unit_id=str(org_unit_id),
+        role_id=str(role_id),
+    )
+
+
+async def nullify_deletable_by_for_user(
+    db: AsyncSession,
+    tenant_id: uuid_mod.UUID,
+    user_id: uuid_mod.UUID,
+) -> int:
+    """Set deletable_by = NULL on all org units in this tenant where deletable_by == user_id.
+
+    Used when a user is deactivated. Returns the count of units updated.
+    """
+    from sqlalchemy import update
+
+    result = await db.execute(
+        update(OrganizationalUnit)
+        .where(
+            OrganizationalUnit.client_id == tenant_id,
+            OrganizationalUnit.deletable_by == user_id,
+        )
+        .values(deletable_by=None)
+    )
+    return result.rowcount
