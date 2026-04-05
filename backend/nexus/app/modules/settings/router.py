@@ -72,6 +72,8 @@ async def invite_endpoint(
             tenant_id=tenant_id,
             email=data.email,
             invited_by=ctx.user.id,
+            actor_email=ctx.user.email,
+            ip_address=request.client.host if request.client else None,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -111,6 +113,7 @@ async def list_members_endpoint(
 )
 async def resend_endpoint(
     invite_id: str,
+    request: Request,
     background_tasks: BackgroundTasks,
     ctx: UserContext = Depends(get_current_user_roles),
     db: AsyncSession = Depends(get_tenant_db),
@@ -118,7 +121,12 @@ async def resend_endpoint(
     """Resend an invite. Super admin only."""
     try:
         new_invite, raw_token, company_name = await resend_team_invite(
-            db, ctx.user.tenant_id, uuid_mod.UUID(invite_id),
+            db,
+            ctx.user.tenant_id,
+            uuid_mod.UUID(invite_id),
+            actor_id=ctx.user.id,
+            actor_email=ctx.user.email,
+            ip_address=request.client.host if request.client else None,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -139,12 +147,20 @@ async def resend_endpoint(
 )
 async def revoke_endpoint(
     invite_id: str,
+    request: Request,
     ctx: UserContext = Depends(get_current_user_roles),
     db: AsyncSession = Depends(get_tenant_db),
 ) -> dict[str, str]:
     """Revoke a pending invite. Super admin only."""
     try:
-        await revoke_team_invite(db, ctx.user.tenant_id, uuid_mod.UUID(invite_id))
+        await revoke_team_invite(
+            db,
+            ctx.user.tenant_id,
+            uuid_mod.UUID(invite_id),
+            actor_id=ctx.user.id,
+            actor_email=ctx.user.email,
+            ip_address=request.client.host if request.client else None,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -169,6 +185,7 @@ async def _background_delete_auth_user(auth_user_id: str) -> None:
 )
 async def deactivate_endpoint(
     user_id: str,
+    request: Request,
     background_tasks: BackgroundTasks,
     ctx: UserContext = Depends(get_current_user_roles),
     db: AsyncSession = Depends(get_tenant_db),
@@ -180,7 +197,13 @@ async def deactivate_endpoint(
     """
     try:
         auth_user_id = await deactivate_team_user(
-            db, ctx.user.tenant_id, uuid_mod.UUID(user_id), str(ctx.user.auth_user_id),
+            db,
+            ctx.user.tenant_id,
+            uuid_mod.UUID(user_id),
+            str(ctx.user.auth_user_id),
+            actor_id=ctx.user.id,
+            actor_email=ctx.user.email,
+            ip_address=request.client.host if request.client else None,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
