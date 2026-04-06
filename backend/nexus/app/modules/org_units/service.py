@@ -39,7 +39,7 @@ async def create_org_unit(
         existing_root = await db.execute(
             select(OrganizationalUnit).where(
                 OrganizationalUnit.client_id == client_id,
-                OrganizationalUnit.parent_unit_id == None,
+                OrganizationalUnit.parent_unit_id.is_(None),
             )
         )
         if existing_root.scalar_one_or_none():
@@ -288,16 +288,24 @@ async def update_org_unit(
     actor_id: uuid_mod.UUID | None = None,
     actor_email: str | None = None,
     ip_address: str | None = None,
+    company_profile: dict | None = None,
+    set_company_profile: bool = False,
 ) -> OrganizationalUnit:
     before = {
         "name": unit.name,
         "unit_type": unit.unit_type,
         "deletable_by": str(unit.deletable_by) if unit.deletable_by else None,
         "admin_delete_disabled": unit.admin_delete_disabled,
+        "company_profile": str(unit.company_profile) if unit.company_profile else None,
     }
 
     if unit_type is not None and unit_type not in VALID_UNIT_TYPES:
         raise ValueError(f"Invalid unit_type. Must be one of: {sorted(VALID_UNIT_TYPES)}")
+
+    # Prevent changing unit_type of a root company unit
+    if unit_type is not None and unit.unit_type == "company" and unit_type != "company":
+        raise ValueError("The unit type of the root company unit cannot be changed.")
+
     if name is not None:
         unit.name = name
     if unit_type is not None:
@@ -326,11 +334,20 @@ async def update_org_unit(
         else:
             unit.deletable_by = None
 
+    # Update company_profile if explicitly requested
+    if set_company_profile:
+        if unit.unit_type in ("company", "client_account") and not company_profile:
+            raise ValueError(
+                f"A company_profile is required for units of type '{unit.unit_type}'."
+            )
+        unit.company_profile = company_profile
+
     after = {
         "name": unit.name,
         "unit_type": unit.unit_type,
         "deletable_by": str(unit.deletable_by) if unit.deletable_by else None,
         "admin_delete_disabled": unit.admin_delete_disabled,
+        "company_profile": str(unit.company_profile) if unit.company_profile else None,
     }
     changed = {k: {"from": before[k], "to": after[k]} for k in before if before[k] != after[k]}
     if changed:
@@ -498,6 +515,9 @@ async def delete_org_unit(
     unit = result.scalar_one_or_none()
     if not unit:
         raise ValueError("Org unit not found")
+
+    if unit.is_root:
+        raise ValueError("The root company unit cannot be deleted.")
 
     if not is_super_admin:
         if unit.admin_delete_disabled:
