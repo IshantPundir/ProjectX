@@ -41,6 +41,7 @@ class CompleteInviteResponse(BaseModel):
     redirect_to: str  # "/onboarding" or "/"
     user_id: str
     tenant_id: str
+    root_unit_id: str
 
 
 class RoleAssignmentResponse(BaseModel):

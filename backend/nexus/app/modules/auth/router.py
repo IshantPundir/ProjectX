@@ -103,6 +103,7 @@ async def complete_invite(
 
     # If invited by projectx admin → this is the super admin
     is_super_admin = claimed_row.projectx_admin_id is not None
+    root_unit_id = ""
     if is_super_admin:
         await db.execute(
             sqlalchemy.text(
@@ -110,6 +111,30 @@ async def complete_invite(
             ),
             {"user_id": str(user.id), "tenant_id": str(claimed_row.tenant_id)},
         )
+
+        # Auto-create root company unit with placeholder profile
+        from app.modules.org_units.service import create_org_unit as _create_root_unit
+
+        root_unit = await _create_root_unit(
+            db=db,
+            client_id=uuid_mod.UUID(str(claimed_row.tenant_id)),
+            name="Company",
+            unit_type="company",
+            parent_unit_id=None,
+            created_by=user.id,
+            actor_email=oauth_email,
+            workspace_mode="enterprise",
+            company_profile={
+                "display_name": "",
+                "industry": "",
+                "company_size": "",
+                "culture_summary": "",
+                "hiring_bar": "",
+                "brand_voice": "professional",
+                "what_good_looks_like": "",
+            },
+        )
+        root_unit_id = str(root_unit.id)
 
     redirect_to = "/onboarding" if is_super_admin else "/"
 
@@ -137,6 +162,7 @@ async def complete_invite(
         redirect_to=redirect_to,
         user_id=str(user.id),
         tenant_id=str(claimed_row.tenant_id),
+        root_unit_id=root_unit_id,
     )
 
 
