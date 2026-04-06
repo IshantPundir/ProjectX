@@ -18,7 +18,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             structlog.contextvars.merge_contextvars,
             structlog.processors.add_log_level,
             structlog.processors.TimeStamper(fmt="iso"),
-            structlog.dev.ConsoleRenderer() if settings.debug else structlog.processors.JSONRenderer(),
+            structlog.dev.ConsoleRenderer()
+            if settings.debug
+            else structlog.processors.JSONRenderer(),
         ],
         wrapper_class=structlog.make_filtering_bound_logger(10 if settings.debug else 20),
     )
@@ -69,7 +71,7 @@ def create_app() -> FastAPI:
     from app.modules.notifications.router import router as notifications_router
     from app.modules.auth.router import router as auth_router
     from app.modules.admin.router import router as admin_router
-    from app.modules.settings.router import router as settings_router
+    from app.modules.settings.router import router as settings_router, workspace_router
     from app.modules.org_units.router import router as org_units_router
     from app.modules.roles.router import router as roles_router
 
@@ -85,6 +87,7 @@ def create_app() -> FastAPI:
     application.include_router(candidate_router)
     application.include_router(admin_router)
     application.include_router(settings_router)
+    application.include_router(workspace_router)
     application.include_router(org_units_router)
     application.include_router(roles_router)
 

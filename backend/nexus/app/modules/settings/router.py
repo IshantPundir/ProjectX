@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_tenant_db
 from app.models import Client
+from app.modules.audit import actions as audit_actions
+from app.modules.audit.service import log_event
 from app.modules.auth.context import UserContext, get_current_user_roles, require_super_admin
 from app.modules.notifications.service import render_template, send_email
 from app.modules.settings.schemas import (
@@ -15,6 +17,7 @@ from app.modules.settings.schemas import (
     TeamInviteRequest,
     TeamInviteResponse,
     TeamMember,
+    WorkspaceModeRequest,
 )
 from app.modules.settings.service import (
     _delete_auth_user,
@@ -211,3 +214,45 @@ async def deactivate_endpoint(
     background_tasks.add_task(_background_delete_auth_user, auth_user_id)
 
     return {"status": "deactivated"}
+
+
+# --- Workspace settings ---
+
+workspace_router = APIRouter(prefix="/api/settings", tags=["settings"])
+
+
+@workspace_router.patch(
+    "/workspace",
+    dependencies=[require_super_admin()],
+)
+async def update_workspace_mode(
+    data: WorkspaceModeRequest,
+    request: Request,
+    ctx: UserContext = Depends(get_current_user_roles),
+    db: AsyncSession = Depends(get_tenant_db),
+) -> dict[str, str]:
+    """Set workspace mode (enterprise or agency). Super admin only."""
+    if data.workspace_mode not in ("enterprise", "agency"):
+        raise HTTPException(
+            status_code=400, detail="workspace_mode must be 'enterprise' or 'agency'"
+        )
+
+    result = await db.execute(select(Client).where(Client.id == ctx.user.tenant_id))
+    client = result.scalar_one()
+
+    old_mode = client.workspace_mode
+    client.workspace_mode = data.workspace_mode
+
+    await log_event(
+        db,
+        tenant_id=ctx.user.tenant_id,
+        actor_id=ctx.user.id,
+        actor_email=ctx.user.email,
+        action=audit_actions.CLIENT_WORKSPACE_MODE_CHANGED,
+        resource="client",
+        resource_id=ctx.user.tenant_id,
+        payload={"from": old_mode, "to": data.workspace_mode},
+        ip_address=request.client.host if request.client else None,
+    )
+
+    return {"status": "ok", "workspace_mode": data.workspace_mode}

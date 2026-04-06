@@ -9,16 +9,18 @@ class TokenPayload(BaseModel):
     Thin JWT: only sub, tenant_id, is_projectx_admin.
     Role/permission data is loaded per-request from DB.
     """
-    sub: str                         # Supabase Auth user UUID
-    tenant_id: str = ""              # company UUID (empty for admins and pre-onboarding)
+
+    sub: str  # Supabase Auth user UUID
+    tenant_id: str = ""  # company UUID (empty for admins and pre-onboarding)
     email: str = ""
-    role: str = "authenticated"      # Postgres role — always "authenticated", NOT for RBAC
+    role: str = "authenticated"  # Postgres role — always "authenticated", NOT for RBAC
     is_projectx_admin: bool = False  # True only for ProjectX internal team
     exp: int = 0
 
 
 class CandidateTokenPayload(BaseModel):
     """Decoded JWT for single-use candidate session tokens (HS256)."""
+
     sub: str = ""
     session_id: str = ""
     tenant_id: str = ""
@@ -57,4 +59,5 @@ class MeResponse(BaseModel):
     is_super_admin: bool
     onboarding_complete: bool
     has_org_units: bool
+    workspace_mode: str
     assignments: list[RoleAssignmentResponse]

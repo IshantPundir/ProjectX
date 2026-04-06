@@ -22,3 +22,4 @@ ORG_UNIT_ROLE_REMOVED = "org_unit.role_removed"
 # Client actions
 CLIENT_PROVISIONED = "client.provisioned"
 CLIENT_ONBOARDING_COMPLETED = "client.onboarding_completed"
+CLIENT_WORKSPACE_MODE_CHANGED = "client.workspace_mode_changed"

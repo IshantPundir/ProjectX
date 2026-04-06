@@ -170,6 +170,7 @@ async def get_current_user(
         is_super_admin=ctx.is_super_admin,
         onboarding_complete=client.onboarding_complete,
         has_org_units=has_org_units,
+        workspace_mode=ctx.workspace_mode,
         assignments=[
             RoleAssignmentResponse(
                 org_unit_id=str(a.org_unit_id),

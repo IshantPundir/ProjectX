@@ -32,12 +32,12 @@ class RoleAssignment:
 class UserContext:
     user: User
     is_super_admin: bool
+    workspace_mode: str = "enterprise"
     assignments: list[RoleAssignment] = field(default_factory=list)
 
     def has_role_in_unit(self, org_unit_id: uuid_mod.UUID, role_name: str) -> bool:
         return any(
-            a.org_unit_id == org_unit_id and a.role_name == role_name
-            for a in self.assignments
+            a.org_unit_id == org_unit_id and a.role_name == role_name for a in self.assignments
         )
 
     def has_permission_in_unit(self, org_unit_id: uuid_mod.UUID, permission: str) -> bool:
@@ -107,13 +107,20 @@ async def get_current_user_roles(
         for ura, role, ou in assignments_result.all()
     ]
 
-    return UserContext(user=user, is_super_admin=is_super_admin, assignments=assignments)
+    return UserContext(
+        user=user,
+        is_super_admin=is_super_admin,
+        workspace_mode=client.workspace_mode,
+        assignments=assignments,
+    )
 
 
 def require_super_admin():
     """FastAPI dependency factory — rejects non-super-admins."""
+
     async def _check(ctx: UserContext = Depends(get_current_user_roles)) -> UserContext:
         if not ctx.is_super_admin:
             raise HTTPException(status_code=403, detail="Super admin required")
         return ctx
+
     return Depends(_check)
