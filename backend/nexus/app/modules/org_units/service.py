@@ -12,7 +12,7 @@ from app.modules.audit.service import log_event
 
 logger = structlog.get_logger()
 
-VALID_UNIT_TYPES = {"client_account", "department", "team", "branch", "region"}
+VALID_UNIT_TYPES = {"company", "division", "client_account", "region", "team"}
 
 
 async def create_org_unit(
@@ -24,9 +24,53 @@ async def create_org_unit(
     created_by: uuid_mod.UUID | None = None,
     actor_email: str | None = None,
     ip_address: str | None = None,
+    workspace_mode: str = "enterprise",
+    company_profile: dict | None = None,
 ) -> OrganizationalUnit:
     if unit_type not in VALID_UNIT_TYPES:
         raise ValueError(f"Invalid unit_type. Must be one of: {sorted(VALID_UNIT_TYPES)}")
+
+    # Rule 1: company must be root (no parent)
+    if unit_type == "company" and parent_unit_id is not None:
+        raise ValueError("A company root unit cannot have a parent unit.")
+
+    # Rule 2: only one company unit per tenant
+    if unit_type == "company":
+        existing_root = await db.execute(
+            select(OrganizationalUnit).where(
+                OrganizationalUnit.client_id == client_id,
+                OrganizationalUnit.parent_unit_id == None,
+            )
+        )
+        if existing_root.scalar_one_or_none():
+            raise ValueError("A root company unit already exists for this tenant.")
+
+    # Rule 3: company_profile required for company and client_account
+    if unit_type in ("company", "client_account") and not company_profile:
+        raise ValueError(
+            f"A company_profile is required for units of type '{unit_type}'."
+        )
+
+    # Rule 4: client_account only in agency workspaces
+    if unit_type == "client_account" and workspace_mode != "agency":
+        raise ValueError("Client accounts are only available in agency workspaces.")
+
+    # Rule 5: parent-based nesting enforcement
+    if parent_unit_id is not None:
+        parent_result = await db.execute(
+            select(OrganizationalUnit).where(OrganizationalUnit.id == parent_unit_id)
+        )
+        parent_unit = parent_result.scalar_one_or_none()
+        if not parent_unit:
+            raise ValueError("Parent unit not found.")
+
+        if parent_unit.unit_type == "team":
+            raise ValueError("Teams are leaf nodes and cannot contain sub-units.")
+
+        if unit_type == "client_account" and parent_unit.unit_type == "client_account":
+            raise ValueError(
+                "A client account cannot be nested under another client account."
+            )
 
     unit = OrganizationalUnit(
         client_id=client_id,
@@ -35,6 +79,8 @@ async def create_org_unit(
         parent_unit_id=parent_unit_id,
         created_by=created_by,
         deletable_by=created_by,
+        is_root=(unit_type == "company"),
+        company_profile=company_profile,
     )
     db.add(unit)
     await db.flush()
