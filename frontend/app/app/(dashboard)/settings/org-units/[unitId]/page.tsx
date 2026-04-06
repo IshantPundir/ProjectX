@@ -22,6 +22,8 @@ interface OrgUnit {
   admin_delete_disabled: boolean;
   is_accessible: boolean;
   admin_emails: string[];
+  is_root: boolean;
+  company_profile: Record<string, string> | null;
 }
 
 interface MemberRole {
@@ -60,6 +62,7 @@ interface TeamMember {
 interface MeData {
   user_id: string;
   is_super_admin: boolean;
+  workspace_mode: string;
   assignments: {
     org_unit_id: string;
     org_unit_name: string;
@@ -71,19 +74,19 @@ interface MeData {
 /* ─── Constants ─── */
 
 const UNIT_TYPES = [
-  { value: "department", label: "Department" },
-  { value: "team", label: "Team" },
-  { value: "branch", label: "Branch" },
-  { value: "region", label: "Region" },
+  { value: "company", label: "Company" },
+  { value: "division", label: "Division" },
   { value: "client_account", label: "Client Account" },
+  { value: "region", label: "Region" },
+  { value: "team", label: "Team" },
 ] as const;
 
 const TYPE_LABELS: Record<string, string> = {
+  company: "Company",
+  division: "Division",
   client_account: "Client Account",
-  department: "Department",
-  team: "Team",
-  branch: "Branch",
   region: "Region",
+  team: "Team",
 };
 
 /* ─── Icons ─── */
@@ -173,10 +176,15 @@ export default function OrgUnitDetailPage() {
   const [editType, setEditType] = useState("");
   const [saving, setSaving] = useState(false);
 
+  // Company profile edit
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [profileForm, setProfileForm] = useState<Record<string, string>>({});
+  const [savingProfile, setSavingProfile] = useState(false);
+
   // Add sub-unit
   const [showAddSubUnit, setShowAddSubUnit] = useState(false);
   const [subUnitName, setSubUnitName] = useState("");
-  const [subUnitType, setSubUnitType] = useState("team");
+  const [subUnitType, setSubUnitType] = useState("division");
   const [creatingSubUnit, setCreatingSubUnit] = useState(false);
 
   // Delete unit
@@ -268,12 +276,19 @@ export default function OrgUnitDetailPage() {
 
   const canDelete = useMemo(() => {
     if (!me || !unit) return false;
+    if (unit.is_root) return false;
     if (me.is_super_admin) return true;
     if (unit.admin_delete_disabled) return false;
     if (!unit.deletable_by) return false;
     const isAdmin = me.assignments.some((a) => a.org_unit_id === unitId && a.role_name === "Admin");
     return isAdmin && me.user_id === unit.deletable_by;
   }, [me, unit, unitId]);
+
+  const createableTypes = UNIT_TYPES.filter((t) => {
+    if (t.value === "company") return false;
+    if (t.value === "client_account" && me?.workspace_mode !== "agency") return false;
+    return true;
+  });
 
   // Don't exclude existing members — same user can have multiple roles
   const filteredUsers = useMemo(() => {
@@ -316,6 +331,29 @@ export default function OrgUnitDetailPage() {
     }
   }
 
+  async function handleSaveProfile() {
+    setError("");
+    setSavingProfile(true);
+    try {
+      const token = await getToken();
+      if (!token) return;
+      await apiFetch(`/api/org-units/${unitId}`, {
+        method: "PUT",
+        token,
+        body: JSON.stringify({
+          set_company_profile: true,
+          company_profile: profileForm,
+        }),
+      });
+      setEditingProfile(false);
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save profile");
+    } finally {
+      setSavingProfile(false);
+    }
+  }
+
   async function handleCreateSubUnit(e: React.FormEvent) {
     e.preventDefault();
     if (!subUnitName.trim()) return;
@@ -334,7 +372,7 @@ export default function OrgUnitDetailPage() {
         }),
       });
       setSubUnitName("");
-      setSubUnitType("team");
+      setSubUnitType("division");
       setShowAddSubUnit(false);
       router.push(`/settings/org-units/${newUnit.id}`);
     } catch (err) {
@@ -596,6 +634,7 @@ export default function OrgUnitDetailPage() {
                     }}
                   />
                 </div>
+                {unit.unit_type !== "company" && (
                 <div>
                   <label htmlFor="edit-type" className="block text-xs font-medium text-zinc-600 mb-1">Type</label>
                   <select
@@ -609,6 +648,7 @@ export default function OrgUnitDetailPage() {
                     ))}
                   </select>
                 </div>
+                )}
               </div>
               <div className="flex gap-2">
                 <button
@@ -688,6 +728,153 @@ export default function OrgUnitDetailPage() {
             </div>
           )}
         </div>
+
+        {/* ─── Company Profile ─── */}
+        {(unit.unit_type === "company" || unit.unit_type === "client_account") && (
+          <div className="bg-white border border-zinc-200 rounded-xl p-6 mb-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold text-zinc-900">Company Profile</h2>
+              {canManage && !editingProfile && (
+                <button
+                  onClick={() => {
+                    setProfileForm({
+                      display_name: unit.company_profile?.display_name || "",
+                      industry: unit.company_profile?.industry || "",
+                      company_size: unit.company_profile?.company_size || "",
+                      culture_summary: unit.company_profile?.culture_summary || "",
+                      strong_hire: unit.company_profile?.strong_hire || "",
+                      brand_voice: unit.company_profile?.brand_voice || "",
+                    });
+                    setEditingProfile(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 text-sm text-zinc-500 hover:text-zinc-700 border border-zinc-200 rounded-lg px-3 py-1.5 cursor-pointer transition-colors duration-150"
+                >
+                  <IconPencil />
+                  Edit Profile
+                </button>
+              )}
+            </div>
+
+            {editingProfile ? (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label htmlFor="profile-display-name" className="block text-xs font-medium text-zinc-600 mb-1">Display Name</label>
+                    <input
+                      id="profile-display-name"
+                      type="text"
+                      value={profileForm.display_name || ""}
+                      onChange={(e) => setProfileForm({ ...profileForm, display_name: e.target.value })}
+                      className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-600 focus:border-transparent"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="profile-industry" className="block text-xs font-medium text-zinc-600 mb-1">Industry</label>
+                    <input
+                      id="profile-industry"
+                      type="text"
+                      value={profileForm.industry || ""}
+                      onChange={(e) => setProfileForm({ ...profileForm, industry: e.target.value })}
+                      className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-600 focus:border-transparent"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label htmlFor="profile-company-size" className="block text-xs font-medium text-zinc-600 mb-1">Company Size</label>
+                    <select
+                      id="profile-company-size"
+                      value={profileForm.company_size || ""}
+                      onChange={(e) => setProfileForm({ ...profileForm, company_size: e.target.value })}
+                      className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-600 cursor-pointer"
+                    >
+                      <option value="">Select...</option>
+                      <option value="Startup">Startup</option>
+                      <option value="SMB">SMB</option>
+                      <option value="Enterprise">Enterprise</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label htmlFor="profile-brand-voice" className="block text-xs font-medium text-zinc-600 mb-1">Brand Voice</label>
+                    <select
+                      id="profile-brand-voice"
+                      value={profileForm.brand_voice || ""}
+                      onChange={(e) => setProfileForm({ ...profileForm, brand_voice: e.target.value })}
+                      className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-600 cursor-pointer"
+                    >
+                      <option value="">Select...</option>
+                      <option value="Professional">Professional</option>
+                      <option value="Conversational">Conversational</option>
+                      <option value="Technical">Technical</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label htmlFor="profile-culture" className="block text-xs font-medium text-zinc-600 mb-1">Culture Summary</label>
+                  <textarea
+                    id="profile-culture"
+                    rows={3}
+                    value={profileForm.culture_summary || ""}
+                    onChange={(e) => setProfileForm({ ...profileForm, culture_summary: e.target.value })}
+                    className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-600 focus:border-transparent resize-none"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="profile-strong-hire" className="block text-xs font-medium text-zinc-600 mb-1">What a Strong Hire Looks Like</label>
+                  <textarea
+                    id="profile-strong-hire"
+                    rows={3}
+                    value={profileForm.strong_hire || ""}
+                    onChange={(e) => setProfileForm({ ...profileForm, strong_hire: e.target.value })}
+                    className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-600 focus:border-transparent resize-none"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleSaveProfile}
+                    disabled={savingProfile}
+                    className="bg-green-600 text-white px-3.5 py-1.5 rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50 cursor-pointer transition-colors duration-150"
+                  >
+                    {savingProfile ? "Saving..." : "Save Profile"}
+                  </button>
+                  <button
+                    onClick={() => setEditingProfile(false)}
+                    className="text-sm text-zinc-500 hover:text-zinc-700 px-3 py-1.5 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <dl className="grid grid-cols-2 gap-x-6 gap-y-4">
+                <div>
+                  <dt className="text-xs font-medium text-zinc-400">Display Name</dt>
+                  <dd className="text-sm text-zinc-900 mt-0.5">{unit.company_profile?.display_name || <span className="text-zinc-300">Not set</span>}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-medium text-zinc-400">Industry</dt>
+                  <dd className="text-sm text-zinc-900 mt-0.5">{unit.company_profile?.industry || <span className="text-zinc-300">Not set</span>}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-medium text-zinc-400">Company Size</dt>
+                  <dd className="text-sm text-zinc-900 mt-0.5">{unit.company_profile?.company_size || <span className="text-zinc-300">Not set</span>}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-medium text-zinc-400">Brand Voice</dt>
+                  <dd className="text-sm text-zinc-900 mt-0.5">{unit.company_profile?.brand_voice || <span className="text-zinc-300">Not set</span>}</dd>
+                </div>
+                <div className="col-span-2">
+                  <dt className="text-xs font-medium text-zinc-400">Culture Summary</dt>
+                  <dd className="text-sm text-zinc-900 mt-0.5 whitespace-pre-wrap">{unit.company_profile?.culture_summary || <span className="text-zinc-300">Not set</span>}</dd>
+                </div>
+                <div className="col-span-2">
+                  <dt className="text-xs font-medium text-zinc-400">What a Strong Hire Looks Like</dt>
+                  <dd className="text-sm text-zinc-900 mt-0.5 whitespace-pre-wrap">{unit.company_profile?.strong_hire || <span className="text-zinc-300">Not set</span>}</dd>
+                </div>
+              </dl>
+            )}
+          </div>
+        )}
 
         {/* ─── Deletion Settings (super admin only) ─── */}
         {me?.is_super_admin && unit && (
@@ -802,7 +989,7 @@ export default function OrgUnitDetailPage() {
                   onChange={(e) => setSubUnitType(e.target.value)}
                   className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-600 cursor-pointer"
                 >
-                  {UNIT_TYPES.map((t) => (
+                  {createableTypes.map((t) => (
                     <option key={t.value} value={t.value}>{t.label}</option>
                   ))}
                 </select>

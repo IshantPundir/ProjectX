@@ -13,6 +13,7 @@ const getMe = cache(async (token: string, apiUrl: string) => {
     is_super_admin: boolean;
     onboarding_complete: boolean;
     has_org_units: boolean;
+    workspace_mode: string;
   }>;
 });
 

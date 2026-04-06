@@ -22,10 +22,13 @@ interface OrgUnit {
   admin_delete_disabled: boolean;
   is_accessible: boolean;
   admin_emails: string[];
+  is_root: boolean;
+  company_profile: Record<string, string> | null;
 }
 
 interface MeData {
   is_super_admin: boolean;
+  workspace_mode: string;
   assignments: {
     org_unit_id: string;
     org_unit_name: string;
@@ -37,19 +40,19 @@ interface MeData {
 /* ─── Constants ─── */
 
 const UNIT_TYPES = [
-  { value: "department", label: "Department" },
-  { value: "team", label: "Team" },
-  { value: "branch", label: "Branch" },
-  { value: "region", label: "Region" },
+  { value: "company", label: "Company" },
+  { value: "division", label: "Division" },
   { value: "client_account", label: "Client Account" },
+  { value: "region", label: "Region" },
+  { value: "team", label: "Team" },
 ] as const;
 
 const TYPE_LABELS: Record<string, string> = {
+  company: "Company",
+  division: "Division",
   client_account: "Client Account",
-  department: "Department",
-  team: "Team",
-  branch: "Branch",
   region: "Region",
+  team: "Team",
 };
 
 /* ─── Icons ─── */
@@ -124,7 +127,7 @@ export default function OrgUnitsPage() {
   // Create form
   const [showCreate, setShowCreate] = useState(false);
   const [createName, setCreateName] = useState("");
-  const [createType, setCreateType] = useState("department");
+  const [createType, setCreateType] = useState("division");
   const [createParent, setCreateParent] = useState("");
   const [creating, setCreating] = useState(false);
 
@@ -174,7 +177,7 @@ export default function OrgUnitsPage() {
         }),
       });
       setCreateName("");
-      setCreateType("department");
+      setCreateType("division");
       setCreateParent("");
       setShowCreate(false);
       router.push(`/settings/org-units/${newUnit.id}`);
@@ -185,6 +188,12 @@ export default function OrgUnitsPage() {
   }
 
   const tree = useMemo(() => buildTree(units), [units]);
+
+  const createableTypes = UNIT_TYPES.filter((t) => {
+    if (t.value === "company") return false;
+    if (t.value === "client_account" && me?.workspace_mode !== "agency") return false;
+    return true;
+  });
 
   return (
     <div className="max-w-3xl">
@@ -256,7 +265,7 @@ export default function OrgUnitsPage() {
                 onChange={(e) => setCreateType(e.target.value)}
                 className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-600 cursor-pointer"
               >
-                {UNIT_TYPES.map((t) => (
+                {createableTypes.map((t) => (
                   <option key={t.value} value={t.value}>{t.label}</option>
                 ))}
               </select>
