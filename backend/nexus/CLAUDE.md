@@ -88,6 +88,45 @@ backend/nexus/
 
 ---
 
+## Organizational Unit Types
+
+Valid types (as of Phase 2): `company`, `division`, `client_account`, `region`, `team`
+
+### Rules
+
+**`company`**
+- Auto-created during onboarding. Never manually created by recruiters.
+- Non-deletable (`is_root = true`).
+- Exactly one per tenant. `parent_unit_id` must be NULL.
+- `unit_type` is immutable once set to `'company'`.
+- `company_profile` (JSONB) is required — cannot be null.
+
+**`client_account`**
+- Only available when `clients.workspace_mode = 'agency'`.
+- `company_profile` (JSONB) is required — cannot be null.
+- Cannot be nested under another `client_account` or under a `team`.
+- Can be nested under `company`, `division`, or `region`.
+
+**`division`**
+- No special data requirements. General intermediate grouping.
+- Cannot be nested under a `team`.
+
+**`region`**
+- No special data requirements. Geographic grouping.
+- Cannot be nested under a `team`.
+
+**`team`**
+- Leaf node. No child units of any type allowed under a team.
+- Enforced on the parent side at `create_org_unit` time.
+
+### Nesting Rule Enforcement
+
+All nesting rules are enforced in `create_org_unit` in `app/modules/org_units/service.py`.
+The single check `parent.unit_type == 'team' → reject` covers all child types.
+The extra check `unit_type == 'client_account' and parent.unit_type == 'client_account' → reject` handles the client_account-under-client_account case.
+
+---
+
 ## Absolute Rules
 
 ### Database Access
