@@ -1,6 +1,9 @@
+// DEPRECATED: This page is superseded by the onboarding wizard and the
+// (dashboard)/settings/org-units/page.tsx create form. It will be removed
+// in a future cleanup pass. Auth guard added to prevent unauthenticated access.
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { apiFetch } from "@/lib/api/client";
@@ -18,6 +21,16 @@ export default function NewOrgUnitPage() {
   const [name, setName] = useState("");
   const [unitType, setUnitType] = useState("department");
   const [error, setError] = useState("");
+
+  // Auth guard — redirect to login if no session
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session?.access_token) {
+        window.location.href = "/login";
+      }
+    });
+  }, []);
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
