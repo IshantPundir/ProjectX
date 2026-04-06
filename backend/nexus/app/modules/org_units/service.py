@@ -47,9 +47,7 @@ async def create_org_unit(
 
     # Rule 3: company_profile required for company and client_account
     if unit_type in ("company", "client_account") and not company_profile:
-        raise ValueError(
-            f"A company_profile is required for units of type '{unit_type}'."
-        )
+        raise ValueError(f"A company_profile is required for units of type '{unit_type}'.")
 
     # Rule 4: client_account only in agency workspaces
     if unit_type == "client_account" and workspace_mode != "agency":
@@ -68,9 +66,7 @@ async def create_org_unit(
             raise ValueError("Teams are leaf nodes and cannot contain sub-units.")
 
         if unit_type == "client_account" and parent_unit.unit_type == "client_account":
-            raise ValueError(
-                "A client account cannot be nested under another client account."
-            )
+            raise ValueError("A client account cannot be nested under another client account.")
 
     unit = OrganizationalUnit(
         client_id=client_id,
@@ -264,6 +260,8 @@ async def list_org_units(
             "name": u.name,
             "unit_type": u.unit_type,
             "member_count": counts.get(u.id, 0),
+            "is_root": u.is_root,
+            "company_profile": u.company_profile,
             "created_at": u.created_at.isoformat(),
             "created_by": str(u.created_by) if u.created_by else None,
             "created_by_email": email_map.get(u.created_by) if u.created_by else None,
@@ -337,9 +335,7 @@ async def update_org_unit(
     # Update company_profile if explicitly requested
     if set_company_profile:
         if unit.unit_type in ("company", "client_account") and not company_profile:
-            raise ValueError(
-                f"A company_profile is required for units of type '{unit.unit_type}'."
-            )
+            raise ValueError(f"A company_profile is required for units of type '{unit.unit_type}'.")
         unit.company_profile = company_profile
 
     after = {

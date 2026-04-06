@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_tenant_db
-from app.models import OrganizationalUnit, User
+from app.models import Client, OrganizationalUnit, User
 from app.modules.auth.context import UserContext, get_current_user_roles, require_super_admin
 from app.modules.org_units.schemas import (
     AssignRoleRequest,
@@ -46,6 +46,8 @@ def _build_response(
         name=unit.name,
         unit_type=unit.unit_type,
         member_count=member_count,
+        is_root=unit.is_root,
+        company_profile=unit.company_profile,
         created_at=unit.created_at.isoformat(),
         created_by=str(unit.created_by) if unit.created_by else None,
         created_by_email=email_map.get(unit.created_by) if unit.created_by else None,
@@ -87,6 +89,10 @@ async def create_unit(
                 status_code=403, detail="Only a super admin can create top-level units"
             )
 
+    # Load workspace_mode for the tenant
+    client_result = await db.execute(select(Client).where(Client.id == ctx.user.tenant_id))
+    client = client_result.scalar_one()
+
     try:
         unit = await create_org_unit(
             db,
@@ -97,6 +103,8 @@ async def create_unit(
             created_by=ctx.user.id,
             actor_email=ctx.user.email,
             ip_address=request.client.host if request.client else None,
+            workspace_mode=client.workspace_mode,
+            company_profile=data.company_profile,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -150,6 +158,8 @@ async def update_unit(
             actor_id=ctx.user.id,
             actor_email=ctx.user.email,
             ip_address=request.client.host if request.client else None,
+            company_profile=data.company_profile,
+            set_company_profile=data.set_company_profile,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

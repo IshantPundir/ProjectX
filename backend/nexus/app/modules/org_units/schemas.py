@@ -5,6 +5,7 @@ class CreateOrgUnitRequest(BaseModel):
     name: str
     unit_type: str
     parent_unit_id: str | None = None
+    company_profile: dict | None = None
 
 
 class UpdateOrgUnitRequest(BaseModel):
@@ -12,6 +13,8 @@ class UpdateOrgUnitRequest(BaseModel):
     unit_type: str | None = None
     deletable_by: str | None = None
     admin_delete_disabled: bool | None = None
+    company_profile: dict | None = None
+    set_company_profile: bool = False
 
 
 class OrgUnitResponse(BaseModel):
@@ -21,16 +24,16 @@ class OrgUnitResponse(BaseModel):
     name: str
     unit_type: str
     member_count: int
+    is_root: bool
+    company_profile: dict | None
     created_at: str
     created_by: str | None
     created_by_email: str | None
     deletable_by: str | None
     deletable_by_email: str | None
     admin_delete_disabled: bool
-    is_accessible: bool = True  # False for ancestor-only units in non-super-admin views
-    admin_emails: list[
-        str
-    ] = []  # Admin emails for inaccessible units (for "ask for access" message)
+    is_accessible: bool = True
+    admin_emails: list[str] = []
 
 
 class AssignRoleRequest(BaseModel):
