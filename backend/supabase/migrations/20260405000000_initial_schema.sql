@@ -16,6 +16,8 @@ CREATE TABLE public.clients (
     plan        TEXT NOT NULL DEFAULT 'trial'
                     CHECK (plan IN ('trial', 'pro', 'enterprise')),
     onboarding_complete BOOLEAN NOT NULL DEFAULT FALSE,
+    workspace_mode TEXT NOT NULL DEFAULT 'enterprise'
+                       CHECK (workspace_mode IN ('enterprise', 'agency')),
     super_admin_id UUID,                     -- FK added after users table
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -64,7 +66,9 @@ CREATE TABLE public.organizational_units (
     parent_unit_id  UUID REFERENCES public.organizational_units(id),
     name            TEXT NOT NULL,
     unit_type       TEXT NOT NULL
-                        CHECK (unit_type IN ('client_account', 'department', 'team', 'branch', 'region')),
+                        CHECK (unit_type IN ('company', 'division', 'client_account', 'region', 'team')),
+    is_root         BOOLEAN NOT NULL DEFAULT FALSE,
+    company_profile JSONB,
     created_by      UUID REFERENCES public.users(id),
     deletable_by    UUID REFERENCES public.users(id),
     admin_delete_disabled BOOLEAN NOT NULL DEFAULT FALSE,

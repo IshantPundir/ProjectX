@@ -135,7 +135,7 @@ async def create_test_org_unit(
     defaults = {
         "client_id": client_id,
         "name": f"Test Unit {n}",
-        "unit_type": "department",
+        "unit_type": "division",
         "created_at": now,
         "updated_at": now,
     }
