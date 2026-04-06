@@ -131,6 +131,17 @@ export default function OrgUnitsPage() {
   const [createParent, setCreateParent] = useState("");
   const [creating, setCreating] = useState(false);
 
+  // Client account profile modal
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [profileForm, setProfileForm] = useState({
+    display_name: "",
+    industry: "",
+    company_size: "",
+    culture_summary: "",
+    brand_voice: "professional",
+    what_good_looks_like: "",
+  });
+
   const getToken = useCallback(async () => {
     const supabase = createClient();
     const { data: { session } } = await supabase.auth.getSession();
@@ -160,8 +171,17 @@ export default function OrgUnitsPage() {
 
   useEffect(() => { loadUnits(); }, [loadUnits]);
 
-  async function handleCreate(e: React.FormEvent) {
+  function handleCreateSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (createType === "client_account") {
+      setProfileForm({ ...profileForm, display_name: createName.trim() });
+      setShowProfileModal(true);
+      return;
+    }
+    doCreate(null);
+  }
+
+  async function doCreate(companyProfile: Record<string, string> | null) {
     setCreating(true);
     setError("");
     try {
@@ -174,12 +194,14 @@ export default function OrgUnitsPage() {
           name: createName.trim(),
           unit_type: createType,
           parent_unit_id: createParent || null,
+          company_profile: companyProfile,
         }),
       });
       setCreateName("");
       setCreateType("division");
       setCreateParent("");
       setShowCreate(false);
+      setShowProfileModal(false);
       router.push(`/settings/org-units/${newUnit.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create unit");
@@ -238,7 +260,7 @@ export default function OrgUnitsPage() {
 
       {/* Create form */}
       {showCreate && me?.is_super_admin && (
-        <form onSubmit={handleCreate} className="bg-white border border-zinc-200 rounded-xl p-5 mb-5 space-y-4">
+        <form onSubmit={handleCreateSubmit} className="bg-white border border-zinc-200 rounded-xl p-5 mb-5 space-y-4">
           <h2 className="text-sm font-semibold text-zinc-900">Create Organizational Unit</h2>
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -381,6 +403,120 @@ export default function OrgUnitsPage() {
               </div>
             ),
           )}
+        </div>
+      )}
+
+      {/* Client Account Profile Modal */}
+      {showProfileModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="border-b border-zinc-200 px-6 py-4 flex items-center justify-between">
+              <div>
+                <h2 className="text-base font-semibold text-zinc-900">Client Account Profile</h2>
+                <p className="text-xs text-zinc-500 mt-0.5">
+                  Set up the profile for <span className="font-medium">{createName.trim()}</span>
+                </p>
+              </div>
+              <button
+                onClick={() => setShowProfileModal(false)}
+                className="text-zinc-400 hover:text-zinc-600 cursor-pointer"
+                aria-label="Close"
+              >
+                <IconX className="w-4 h-4" />
+              </button>
+            </div>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                doCreate({ ...profileForm, display_name: profileForm.display_name || createName.trim() });
+              }}
+              className="px-6 py-5 space-y-4"
+            >
+              <div>
+                <label className="block text-xs font-medium text-zinc-600 mb-1">Display Name</label>
+                <input
+                  type="text"
+                  value={profileForm.display_name}
+                  onChange={(e) => setProfileForm({ ...profileForm, display_name: e.target.value })}
+                  className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent"
+                  placeholder={createName.trim()}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-zinc-600 mb-1">Industry</label>
+                  <input
+                    type="text"
+                    value={profileForm.industry}
+                    onChange={(e) => setProfileForm({ ...profileForm, industry: e.target.value })}
+                    className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent"
+                    placeholder="e.g., Technology, Finance"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-zinc-600 mb-1">Company Size</label>
+                  <select
+                    value={profileForm.company_size}
+                    onChange={(e) => setProfileForm({ ...profileForm, company_size: e.target.value })}
+                    className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-600 cursor-pointer"
+                  >
+                    <option value="">Select...</option>
+                    <option value="Startup (1-50)">Startup (1-50)</option>
+                    <option value="SMB (51-500)">SMB (51-500)</option>
+                    <option value="Enterprise (500+)">Enterprise (500+)</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-zinc-600 mb-1">Brand Voice</label>
+                <select
+                  value={profileForm.brand_voice}
+                  onChange={(e) => setProfileForm({ ...profileForm, brand_voice: e.target.value })}
+                  className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-600 cursor-pointer"
+                >
+                  <option value="professional">Professional</option>
+                  <option value="conversational">Conversational</option>
+                  <option value="technical">Technical</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-zinc-600 mb-1">Culture Summary</label>
+                <textarea
+                  value={profileForm.culture_summary}
+                  onChange={(e) => setProfileForm({ ...profileForm, culture_summary: e.target.value })}
+                  rows={2}
+                  className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent resize-none"
+                  placeholder="Describe the client's company culture"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-zinc-600 mb-1">What a Strong Hire Looks Like</label>
+                <textarea
+                  value={profileForm.what_good_looks_like}
+                  onChange={(e) => setProfileForm({ ...profileForm, what_good_looks_like: e.target.value })}
+                  rows={2}
+                  className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent resize-none"
+                  placeholder="What qualities define a great hire for this client?"
+                />
+              </div>
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowProfileModal(false)}
+                  className="px-4 py-2 text-sm font-medium text-zinc-600 hover:text-zinc-800 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={creating}
+                  className="bg-blue-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 cursor-pointer transition-colors duration-150"
+                >
+                  {creating ? "Creating..." : "Create Client Account"}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>
