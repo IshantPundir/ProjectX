@@ -1,8 +1,8 @@
 # Phase 1 Implementation — Developer Documentation
 
-**Scope:** Auth, Client Onboarding, Team Invites, Roles & Permissions, Org Units
+**Scope:** Auth, Client Onboarding, Team Invites, Roles & Permissions, Org Units, Workspace Modes, Audit Log
 **Status:** Complete and functional
-**Last updated:** 2026-04-05
+**Last updated:** 2026-04-07
 
 ---
 
@@ -84,6 +84,7 @@ The tenant root entity. One row per company using ProjectX.
 | `logo_url` | TEXT | Nullable |
 | `plan` | TEXT NOT NULL | `trial` / `pro` / `enterprise`, default `trial` |
 | `onboarding_complete` | BOOLEAN | Default `false` — gates dashboard access |
+| `workspace_mode` | TEXT NOT NULL | `'enterprise'` / `'agency'`, default `'enterprise'` — determines available unit types |
 | `super_admin_id` | UUID FK -> users | DEFERRABLE INITIALLY DEFERRED (circular ref) |
 | `created_at` | TIMESTAMPTZ | |
 | `updated_at` | TIMESTAMPTZ | |
@@ -120,7 +121,9 @@ Hierarchical tree of company divisions. Self-referencing via `parent_unit_id`.
 | `client_id` | UUID FK -> clients NOT NULL | Tenant discriminator (named `client_id`, not `tenant_id`) |
 | `parent_unit_id` | UUID FK -> self | Nullable — NULL means top-level |
 | `name` | TEXT NOT NULL | |
-| `unit_type` | TEXT NOT NULL | `client_account` / `department` / `team` / `branch` / `region` |
+| `unit_type` | TEXT NOT NULL | `company` / `division` / `client_account` / `region` / `team` |
+| `is_root` | BOOLEAN NOT NULL | Default `false` — `true` only for the auto-created company root unit |
+| `company_profile` | JSONB | Required for `company` and `client_account` types. Contains: display_name, industry, company_size, culture_summary, hiring_bar, brand_voice, what_good_looks_like |
 | `created_by` | UUID FK -> users | |
 | `deletable_by` | UUID FK -> users | Specific user authorized to delete |
 | `admin_delete_disabled` | BOOLEAN | Default `false` — if true, only super admin can delete |
@@ -381,7 +384,8 @@ User enters password → frontend calls supabase.auth.signUp({ email, password }
         3. CREATE users row (auth_user_id, tenant_id, email)
         4. Detect projectx_admin_id is set → this is a super admin
         5. UPDATE clients SET super_admin_id = new_user.id
-    → Returns { redirect_to: "/onboarding" }
+        6. Auto-create root company unit (unit_type='company', is_root=true, placeholder company_profile)
+    → Returns { redirect_to: "/onboarding", user_id, tenant_id, root_unit_id }
 ```
 
 **If user already has a Supabase account** (e.g., re-accepting after a partial flow): the frontend falls back to `signInWithPassword()` instead of `signUp()`.
@@ -391,12 +395,16 @@ User enters password → frontend calls supabase.auth.signUp({ email, password }
 **Route:** `/onboarding` (Client App)
 **Guard:** Dashboard layout redirects here when `me.is_super_admin && !me.onboarding_complete`
 
-**Step 1 of 2 — Create First Org Unit:**
-- Form: Unit Name + Unit Type (department/team/branch/region/client_account)
-- API: `POST /api/org-units`
+Note: The root `company` unit was already auto-created in Step 3 (during invite claiming). Onboarding collects the workspace mode and company profile.
 
-**Step 2 of 2 — Complete Onboarding:**
-- Confirmation screen
+**Step 1 of 2 — Select Workspace Type:**
+- Two cards: "We're hiring for our own company" (enterprise) / "We're a recruiting agency" (agency)
+- API: `PATCH /api/settings/workspace` with `{ workspace_mode: "enterprise" | "agency" }`
+
+**Step 2 of 2 — Company Profile:**
+- Fetches org units via `GET /api/org-units`, finds root unit (`is_root === true`)
+- Form: Company Name (required), Industry, Company Size, Culture Summary, What a Strong Hire Looks Like
+- API: `PUT /api/org-units/{root_unit_id}` with `{ name, set_company_profile: true, company_profile: {...} }`
 - API: `POST /api/auth/onboarding/complete`
 - Backend validates: caller is super admin AND at least one org unit exists
 - Sets `client.onboarding_complete = true`
@@ -519,9 +527,9 @@ The `UserContext` dataclass (loaded via `get_current_user_roles` dependency) pro
 @dataclass
 class UserContext:
     user: User
-    client: Client
     is_super_admin: bool
-    assignments: list[UserRoleAssignment]  # pre-loaded with role + org_unit
+    workspace_mode: str = "enterprise"  # from clients.workspace_mode
+    assignments: list[RoleAssignment]   # pre-loaded with role + org_unit
 
     def has_role_in_unit(self, org_unit_id: UUID, role_name: str) -> bool
     def has_permission_in_unit(self, org_unit_id: UUID, permission: str) -> bool
@@ -552,12 +560,61 @@ All enforcement is server-side. The frontend role checks are UX convenience, not
 
 ## 7. Organizational Units
 
+### Unit Types
+
+Valid types: `company`, `division`, `client_account`, `region`, `team`
+
+| Type | Purpose | Rules |
+|---|---|---|
+| `company` | Root unit. Auto-created during onboarding. | Exactly one per tenant. `parent_unit_id` must be NULL. `is_root = true`. Non-deletable. Type immutable. `company_profile` required. |
+| `division` | General intermediate grouping. | Cannot be nested under a `team`. No special data requirements. |
+| `client_account` | Represents an external client (agency use). | Only when `workspace_mode = 'agency'`. `company_profile` required. Cannot nest under `team` or another `client_account`. |
+| `region` | Geographic grouping. | Cannot be nested under a `team`. No special data requirements. |
+| `team` | Leaf node. | Cannot have child units of any type. |
+
+### Workspace Modes
+
+Each tenant has a `workspace_mode` on the `clients` table:
+- **`enterprise`** (default): Hiring for own company. `client_account` units not available.
+- **`agency`**: Recruiting firm hiring for external clients. `client_account` units available.
+
+Set during onboarding via `PATCH /api/settings/workspace`.
+
+### Nesting Rules
+
+| Unit type being created | Forbidden parent types |
+|---|---|
+| `company` | Any — must have NULL parent |
+| `client_account` | `team`, `client_account` |
+| `division` | `team` |
+| `region` | `team` |
+| `team` | `team` |
+
+All nesting rules enforced in `create_org_unit` in `app/modules/org_units/service.py`.
+
 ### Tree Structure
 
-Org units form a self-referencing hierarchy:
-- Top-level units have `parent_unit_id = NULL`
+Org units form a self-referencing hierarchy rooted at the `company` unit:
+- The root company unit has `parent_unit_id = NULL` and `is_root = true`
+- All other units are descendants of the company root
 - Sub-units reference their parent via `parent_unit_id`
-- Supported types: `client_account`, `department`, `team`, `branch`, `region`
+
+### Company Profile
+
+`company` and `client_account` units store a `company_profile` JSONB field:
+```json
+{
+  "display_name": "Acme Corp",
+  "industry": "Technology",
+  "company_size": "Enterprise (500+)",
+  "culture_summary": "...",
+  "hiring_bar": "...",
+  "brand_voice": "professional",
+  "what_good_looks_like": "..."
+}
+```
+
+This profile is required (cannot be NULL) for these two types. Enforced at the application layer.
 
 ### Visibility Rules
 
@@ -576,9 +633,10 @@ Members are assigned to org units with specific roles:
 ### Deletion Rules
 
 An org unit can only be deleted if:
-1. It has no sub-units
-2. It has no member assignments
-3. The caller has permission: super admin, OR (`canManage` AND `deletable_by == caller` AND `admin_delete_disabled == false`)
+1. `is_root` is `false` (the root company unit can never be deleted)
+2. It has no sub-units
+3. It has no member assignments
+4. The caller has permission: super admin, OR (`canManage` AND `deletable_by == caller` AND `admin_delete_disabled == false`)
 
 ---
 
@@ -595,8 +653,16 @@ An org unit can only be deleted if:
 #### `POST /api/auth/complete-invite`
 **Auth:** Bearer (Supabase JWT)
 **Body:** `{ raw_token: string }`
-**Purpose:** Claims an invite, creates user row, sets super_admin_id if applicable
-**Response:** `{ redirect_to: string }` — `"/onboarding"` for super admins, `"/"` for members
+**Purpose:** Claims an invite, creates user row, sets super_admin_id if applicable. For super admins, also auto-creates the root `company` unit with a placeholder profile.
+**Response:**
+```json
+{
+  "redirect_to": "/onboarding" or "/",
+  "user_id": "uuid",
+  "tenant_id": "uuid",
+  "root_unit_id": "uuid"  // auto-created company root (empty string for team members)
+}
+```
 **Errors:** 400 (invalid token, email mismatch, already claimed)
 
 #### `GET /api/auth/me`
@@ -612,6 +678,7 @@ An org unit can only be deleted if:
   "is_super_admin": true,
   "onboarding_complete": true,
   "has_org_units": true,
+  "workspace_mode": "enterprise",
   "assignments": [
     {
       "org_unit_id": "uuid",
@@ -642,6 +709,14 @@ An org unit can only be deleted if:
 **Auth:** Bearer (`is_projectx_admin` required)
 **Purpose:** Lists all clients with their super admin and invite status
 **Response:** Array of `{ id, name, domain, plan, onboarding_complete, super_admin_email, invite_status, created_at }`
+
+### Workspace Routes (`/api/settings`)
+
+#### `PATCH /api/settings/workspace`
+**Auth:** Bearer (Super Admin only)
+**Body:** `{ workspace_mode: "enterprise" | "agency" }`
+**Purpose:** Set workspace mode during onboarding. Determines which unit types are available.
+**Response:** `{ status: "ok", workspace_mode: string }`
 
 ### Team Routes (`/api/settings/team`)
 
@@ -795,7 +870,7 @@ Both frontend apps have identical deps: `next@16.2.2`, `react@19`, `react-dom@19
 | Admin app has no server-side auth guard | Unauthenticated users see the admin shell briefly before client-side redirect | Low (internal tool) |
 | Middleware ordering in Nexus | `TenantMiddleware` reads `request.state.tenant_id` before `AuthMiddleware` sets it — structlog tenant context is always `None` on inbound | Low (logging only, RLS unaffected) |
 | Alembic not used for schema | All DDL is in Supabase migration. Alembic's `versions/` is empty. Future schema changes need a documented convention. | Medium |
-| `settings/org-units/new/page.tsx` outside `(dashboard)` group | Legacy route with no auth guard — predecessor to onboarding wizard, should be removed | Low |
+| `settings/org-units/new/page.tsx` outside `(dashboard)` group | Legacy route — auth guard added, deprecation comment added. Should be removed in a future cleanup. | Low |
 | `complete_invite` inline in router | Business logic (invite claiming, user creation) lives in `auth/router.py` instead of a service function. Audit call is a pragmatic exception. | Low (flagged with TODO) |
 
 ### Missing Libraries
@@ -836,7 +911,7 @@ These are specified as the intended stack but were not needed for Phase 1's rela
 | `backend/nexus/app/main.py` | App factory, middleware + router registration |
 | `backend/nexus/app/config.py` | All environment variables (pydantic-settings) |
 | `backend/nexus/app/database.py` | Three session types (tenant, bypass, raw) |
-| `backend/nexus/app/models.py` | All 6 ORM models |
+| `backend/nexus/app/models.py` | All 7 ORM models (includes AuditLog) |
 | `backend/nexus/app/middleware/auth.py` | JWT extraction, public path exclusions |
 | `backend/nexus/app/middleware/tenant.py` | Structlog tenant context binding |
 | `backend/nexus/app/modules/auth/service.py` | `verify_access_token()`, `require_projectx_admin()` |
@@ -847,7 +922,11 @@ These are specified as the intended stack but were not needed for Phase 1's rela
 | `backend/nexus/app/modules/admin/service.py` | `provision_client()` |
 | `backend/nexus/app/modules/settings/service.py` | Team invite CRUD, user deactivation |
 | `backend/nexus/app/modules/org_units/service.py` | Org unit CRUD, role assignment |
+| `backend/nexus/app/modules/audit/service.py` | `log_event()` — append-only audit trail helper |
+| `backend/nexus/app/modules/audit/actions.py` | Canonical audit action string constants |
 | `backend/nexus/app/modules/notifications/service.py` | Email abstraction (dry-run/Resend) |
+| `backend/supabase/migrations/20260405000001_audit_log.sql` | Audit log table DDL + RLS |
+| `backend/supabase/migrations/20260406000000_unit_types_v2.sql` | One-root-per-tenant unique index |
 
 ### Frontend — Essential Files
 
@@ -856,7 +935,7 @@ These are specified as the intended stack but were not needed for Phase 1's rela
 | `frontend/app/app/(dashboard)/layout.tsx` | Server-side auth guard, onboarding redirect, getMe |
 | `frontend/app/app/(auth)/login/page.tsx` | Login + JWT tenant check |
 | `frontend/app/app/(auth)/invite/page.tsx` | Invite acceptance + account setup |
-| `frontend/app/app/onboarding/page.tsx` | 2-step onboarding wizard |
+| `frontend/app/app/onboarding/page.tsx` | 2-step onboarding: workspace type selection + company profile |
 | `frontend/app/app/(dashboard)/settings/team/page.tsx` | Team management |
 | `frontend/app/app/(dashboard)/settings/org-units/page.tsx` | Org unit tree |
 | `frontend/app/app/(dashboard)/settings/org-units/[unitId]/page.tsx` | Unit detail + members |
