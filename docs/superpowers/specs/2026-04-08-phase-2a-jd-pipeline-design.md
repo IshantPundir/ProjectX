@@ -875,7 +875,7 @@ from typing import Final
 from uuid import UUID
 
 import openai
-import instructor
+from instructor.core import InstructorRetryException  # verified Day-1 Task 5 — use core path, not deprecated instructor.exceptions
 
 
 # --- JD-specific exception classes ---------------------------------------
@@ -906,10 +906,10 @@ class CompanyProfileIncompleteError(Exception):
 
 # --- Error sanitization for job_posting.status_error ---------------------
 #
-# IMPORTANT: the exact name of instructor's retry-exhausted exception class
-# must be verified on Day 1 (see Task 5). If the class is named differently
-# in the installed version, update the import and the mapping key below
-# BEFORE writing the actor.
+# Verified Day-1 (Task 5): use instructor.core.InstructorRetryException.
+# instructor.exceptions.InstructorRetryException is deprecated in v1.12.0
+# and will be removed in a future version. Both are the same class object,
+# but the non-deprecated path must be used to avoid startup warnings.
 
 _SAFE_MESSAGES: Final[dict[type[Exception], str]] = {
     openai.RateLimitError:
@@ -922,7 +922,7 @@ _SAFE_MESSAGES: Final[dict[type[Exception], str]] = {
         "AI provider authentication failed. Contact support.",
     openai.BadRequestError:
         "The job description could not be processed. Please check the input and retry.",
-    instructor.exceptions.InstructorRetryException:  # VERIFY name on Day 1 — Task 5
+    InstructorRetryException:  # from instructor.core import InstructorRetryException
         "The AI response did not match the expected format after retries. Please retry.",
 }
 
@@ -1630,6 +1630,11 @@ These MUST be the first tasks in the implementation plan before any new code is 
 
 **How:** `docker compose run nexus python -c "from langfuse.openai import AsyncOpenAI; print(AsyncOpenAI)"`. If import fails, pin the correct path and update the design before writing `app/ai/client.py`.
 
+**Verification result (2026-04-09):**
+- langfuse version: 2.60.10
+- Working import: `from langfuse.openai import AsyncOpenAI` — confirmed correct. The `langfuse.openai` submodule exists and re-exports `AsyncOpenAI` from `openai` with tracing wrappers applied. The import failed in the initial probe only because `openai` was not yet installed (it is a Phase 2A dependency); once `openai>=1.60,<2` is added to `pyproject.toml`, the import resolves to `<class 'openai.AsyncOpenAI'>` wrapped by langfuse.
+- Implication for Task 17: no changes needed — `client.py` should use `from langfuse.openai import AsyncOpenAI` exactly as sketched.
+
 ### Task 4 — Verify `reasoning_effort` parameter shape for the target model
 
 **Why:** The actor sketch in this spec passes `reasoning_effort=ai_config.extraction_effort` as a top-level kwarg to `client.chat.completions.create(...)`. For GPT-5-series models the parameter **may not be a top-level kwarg** — depending on SDK version and model endpoint, it may need to go into `extra_body={"reasoning_effort": ...}` or `response_format={"reasoning_effort": ...}`, or it may only be supported on the `client.responses.create(...)` endpoint rather than `chat.completions.create`. Getting this wrong means every Call 1 returns `400 Bad Request` at runtime and the retry loop burns through all three attempts before transitioning to `signals_extraction_failed`.
@@ -1652,6 +1657,19 @@ These MUST be the first tasks in the implementation plan before any new code is 
 3. Document the correct call shape in the Task 4 findings note **and update the actor code sketch in this spec before writing `app/modules/jd/actors.py`**.
 4. Also verify the same call shape works via `instructor.from_openai()` — `instructor` wraps `chat.completions.create` by default but may need a different mode for the responses endpoint.
 
+**Verification result (2026-04-09):**
+- Working shape for `gpt-5.2` + `reasoning_effort=medium`: **top-level kwarg** — confirmed with `openai==1.109.1`.
+- Sample call snippet:
+  ```python
+  await client.chat.completions.create(
+      model="gpt-5.2",
+      reasoning_effort="medium",
+      messages=[{"role": "user", "content": "..."}],
+  )
+  ```
+  Model responded with `"ready"` — no errors.
+- Implication for Task 26 (actor): use top-level kwarg as-is. The actor sketch in this spec (`reasoning_effort=ai_config.extraction_effort`) is correct. No changes needed.
+
 ### Task 5 — Verify `instructor` exception class name
 
 **Why:** `app/modules/jd/errors.py` references `instructor.exceptions.InstructorRetryException` in the `_SAFE_MESSAGES` mapping. The exact class name differs across `instructor` versions — it may be `InstructorRetryException`, `RetryException`, `IncompleteOutputException`, or `ValidationError` depending on which failure mode triggered the retry exhaustion. Referencing a wrong name at import time crashes the worker on boot; referencing a wrong name at runtime means the exception falls through to the generic "Extraction failed — please retry" message instead of the more specific "AI response did not match the expected format" message. Neither is a security issue (both are safe strings) but the import-time crash would block all Call 1 processing.
@@ -1671,6 +1689,12 @@ docker compose run nexus python -c \
 ```
 
 **If the class is named differently:** update the import path and the `_SAFE_MESSAGES` key in `errors.py` before writing the actor. If `instructor.exceptions` doesn't exist as a module at all (the package may have moved it), update the import accordingly.
+
+**Verification result (2026-04-09):**
+- instructor version: 1.12.0 (satisfies `>=1.7,<2`)
+- Retry-exhausted class: `InstructorRetryException` — confirmed as the class raised at retry exhaustion (raised in `instructor/core/retry.py` lines 285 and 442).
+- Import path status: `instructor.exceptions.InstructorRetryException` is still importable but **deprecated** in 1.12.0 with a `DeprecationWarning`: *"Importing from 'instructor.exceptions' is deprecated and will be removed in a future version. Please import from 'instructor.core' instead."*
+- Required update for Task 18 (errors.py): change the import from `instructor.exceptions.InstructorRetryException` to `from instructor.core import InstructorRetryException`, and update the `_SAFE_MESSAGES` mapping key accordingly. Both classes are the same object (`instructor.exceptions.InstructorRetryException is instructor.core.InstructorRetryException` → `True`), but the `errors.py` sketch must use the non-deprecated path to avoid a startup warning that will pollute logs in production.
 
 ---
 
