@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { cache } from "react";
 import SidebarNav from "./SidebarNav";
+import { DashboardProviders } from "@/components/dashboard/providers";
 
 const getMe = cache(async (token: string, apiUrl: string) => {
   const res = await fetch(`${apiUrl}/api/auth/me`, {
@@ -52,7 +53,9 @@ export default async function DashboardLayout({
         <h2 className="text-sm font-bold text-zinc-900 mb-6">ProjectX</h2>
         <SidebarNav userEmail={user.email ?? ""} />
       </aside>
-      <main className="flex-1 p-6">{children}</main>
+      <main className="flex-1 p-6">
+        <DashboardProviders>{children}</DashboardProviders>
+      </main>
     </div>
   );
 }
