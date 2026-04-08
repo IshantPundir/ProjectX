@@ -30,7 +30,15 @@ def get_openai_client() -> instructor.AsyncInstructor:
     """Return a memoized async OpenAI client wrapped with instructor.
 
     Memoization is safe because the client is stateless across calls and
-    the underlying httpx pool is managed by openai SDK internals."""
+    the underlying httpx pool is managed by openai SDK internals.
+
+    NOTE: max_retries is NOT a factory-level argument in instructor.
+    Passing it to from_openai() stores it in a forwarded-kwargs bucket
+    that leaks into every .create() call as an extra kwarg, producing
+    `TypeError: got multiple values for keyword argument 'max_retries'`
+    because instructor's per-call create() has its own internal default.
+    If we ever need a non-default schema-retry count, pass it per-call
+    in the actor via `max_retries=` on chat.completions.create()."""
     raw = AsyncOpenAI(
         api_key=settings.openai_api_key,
         timeout=ai_config.request_timeout_seconds,
@@ -38,5 +46,4 @@ def get_openai_client() -> instructor.AsyncInstructor:
     return instructor.from_openai(
         raw,
         mode=instructor.Mode.TOOLS_STRICT,
-        max_retries=ai_config.max_schema_retries,
     )
