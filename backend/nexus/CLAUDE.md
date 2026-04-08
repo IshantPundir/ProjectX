@@ -38,9 +38,15 @@ backend/nexus/
 │   ├── config.py                ← Settings via pydantic-settings (env vars only)
 │   ├── database.py              ← SQLAlchemy async engine, 3 session types (tenant/bypass/raw)
 │   ├── models.py                ← All ORM models (6 tables: clients, users, org units, roles, assignments, invites)
+│   ├── worker.py                ← Dramatiq worker entrypoint — imports all actor modules to register with broker
 │   ├── middleware/
 │   │   ├── auth.py              ← JWT extraction via JWKS, attaches token_payload to request.state
 │   │   └── tenant.py            ← Binds tenant_id to structlog context
+│   ├── ai/                      ← Provider-agnostic AI layer (Phase 2A)
+│   │   ├── config.py            ← AIConfig — env-driven model IDs and reasoning_effort
+│   │   ├── client.py            ← get_openai_client() — instructor.AsyncInstructor + langfuse.openai factory
+│   │   ├── prompts.py           ← PromptLoader — versioned prompt file reader, in-memory cache
+│   │   └── schemas.py           ← ExtractionOutput and structured output schemas with provenance validators
 │   └── modules/
 │       ├── auth/                ← JWT verification, UserContext, RBAC guards, /me endpoint, invite claiming
 │       │   ├── service.py       ← verify_access_token(), verify_candidate_token(), require_projectx_admin()
@@ -56,9 +62,9 @@ backend/nexus/
 │       │   ├── service.py       ← create_team_invite(), _delete_auth_user() via Supabase Admin API
 │       │   ├── schemas.py
 │       │   └── router.py        ← /api/settings/team/* (requires super_admin for writes)
-│       ├── org_units/           ← Org unit CRUD, member/role assignment
-│       │   ├── service.py       ← create/list/update/delete org units, assign/remove roles
-│       │   ├── schemas.py
+│       ├── org_units/           ← Org unit CRUD, member/role assignment, company profile ancestry
+│       │   ├── service.py       ← create/list/update/delete org units, assign/remove roles, company profile hooks
+│       │   ├── schemas.py       ← CompanyProfile strict schema, org unit request/response models
 │       │   └── router.py        ← /api/org-units/*
 │       ├── roles/               ← Role listing (system + tenant custom)
 │       │   ├── schemas.py
@@ -69,18 +75,29 @@ backend/nexus/
 │       │   ├── router.py
 │       │   └── templates/       ← HTML email templates (company_admin_invite, team_invite)
 │       ├── ats/                 ← [Stub] Per-ATS adapters, polling, outbound sync
-│       ├── jd/                  ← [Stub] JD parsing, project brief, interview config
+│       ├── jd/                  ← JD pipeline (Phase 2A)
+│       │   ├── router.py        ← /api/jd/* (5 endpoints: create, get, list, stream status, trigger enhance)
+│       │   ├── service.py       ← create_job_posting(), extract_and_enhance_jd() orchestration
+│       │   ├── schemas.py       ← JobPosting request/response models
+│       │   ├── errors.py        ← IllegalTransitionError (409), CompanyProfileIncompleteError (422)
+│       │   ├── state_machine.py ← JD state machine with audit trail
+│       │   ├── authz.py         ← require_job_access() — ancestry-walking authorization
+│       │   ├── actors.py        ← Dramatiq actor: extract_and_enhance_jd (Call 1 via OpenAI + instructor)
+│       │   └── sse.py           ← SSE status stream with dedup + terminal close
 │       ├── question_bank/       ← [Stub] AI generation pipeline, versioning, admin editing
 │       ├── scheduler/           ← [Stub] Session provisioning, invite dispatch, OTP
 │       ├── session/             ← [Stub] LiveKit orchestration, session state machine
 │       ├── analysis/            ← [Stub] Real-time scoring, probe decision logic
 │       └── reporting/           ← [Stub] Report compilation, score aggregation
+├── prompts/
+│   └── v1/
+│       └── jd_enhancement.txt   ← Versioned prompt for JD extraction + enhancement (Call 1)
 ├── migrations/                  ← Alembic (configured, versions/ empty — initial schema is in Supabase migration)
 │   └── versions/
 ├── tests/
 │   └── conftest.py              ← AsyncClient fixture
 ├── Dockerfile
-├── docker-compose.yml           ← nexus + redis services
+├── docker-compose.yml           ← nexus + nexus-worker + redis services
 ├── pyproject.toml
 ├── .env.example                 ← All required env vars documented
 └── CLAUDE.md                    ← you are here
@@ -166,6 +183,27 @@ from supabase import Client
 
 The only direct Supabase HTTP call is in `settings/service.py::_delete_auth_user()` for user deactivation (hitting the Admin API with the service role key). This is isolated and would be the single swap point.
 
+## AI Provider & Prompt Management — Load-Bearing
+
+Phase 2A introduces `app/ai/` as the provider-agnostic AI layer.
+
+- **AIConfig** (`app/ai/config.py`) — env-driven model IDs and `reasoning_effort`. Never hardcode. Swapping a model for a task is a single `.env` change.
+- **PromptLoader** (`app/ai/prompts.py`) — reads versioned prompts from `prompts/v{N}/<name>.txt`, cached in memory. Prompt updates are file changes, not code deploys.
+- **OpenAI client factory** (`app/ai/client.py`) — returns an `instructor.AsyncInstructor` wrapped around `langfuse.openai.AsyncOpenAI`. Langfuse tracing is a drop-in — no-op when `LANGFUSE_HOST` is empty.
+- **ExtractionOutput** and related schemas (`app/ai/schemas.py`) — strict Pydantic models for structured outputs. `source=ai_inferred` requires `inference_basis`; `ai_extracted` requires it to be null.
+
+Business logic imports `get_openai_client()` and `prompt_loader` from `app.ai.*` — never openai/instructor/langfuse directly. This is the single swap point for a future provider change.
+
+```python
+# CORRECT — provider-agnostic interface
+from app.ai.client import get_openai_client
+from app.ai.prompts import prompt_loader
+from app.ai.config import ai_config
+
+# WRONG — hard couples to OpenAI
+from openai import AsyncOpenAI
+```
+
 ### RBAC Enforcement
 - Auth middleware extracts JWT and attaches `token_payload` to `request.state` before any route handler runs.
 - Roles: `Admin`, `Recruiter`, `Hiring Manager`, `Interviewer`, `Observer` (system roles, seeded at migration)
@@ -202,12 +240,19 @@ The only direct Supabase HTTP call is in `settings/service.py::_delete_auth_user
 | `roles` | Role listing endpoint — returns system roles (visible to all) + tenant custom roles |
 | `notifications` | Provider-agnostic email dispatch. `DryRunProvider` (logs to stdout) and `ResendProvider`. HTML template rendering for invite emails. |
 
+### Phase 2A — Implemented
+
+| Module | What It Owns |
+|---|---|
+| `ai` | Provider-agnostic AI layer. `AIConfig` (env-driven model/effort), `PromptLoader` (file-system versioned prompts), `get_openai_client()` (instructor + langfuse.openai factory), `ExtractionOutput` schemas with provenance validators. |
+| `jd` | JD pipeline full implementation. `create_job_posting` with company profile ancestry gate, `extract_and_enhance_jd` Dramatiq actor (Call 1 via OpenAI + instructor), state machine with audit trail, `require_job_access` ancestry-walking authz, SSE status stream with dedup + terminal close, router with 5 endpoints, `IllegalTransitionError` (409) and `CompanyProfileIncompleteError` (422) exception handlers. |
+| `org_units` (extended) | Added `CompanyProfile` strict Pydantic schema, `find_company_profile_in_ancestry()` helper, `_validate_and_normalize_company_profile()` hook in `create_org_unit`/`update_org_unit`, `company_profile_completed_at/by` tracking stamps. |
+
 ### Future Phases — Stubbed
 
 | Module | What It Will Own |
 |---|---|
 | `ats` | Per-ATS adapter interface, Ceipal polling cron, Greenhouse/Workday webhooks, outbound sync after session completion |
-| `jd` | JD parsing and enrichment (AI), project brief upload, interview configuration, session settings |
 | `question_bank` | 4-layer context stack question generation, versioning, admin editing, mandatory question marking |
 | `scheduler` | Session provisioning, JWT invite generation, scheduling link, OTP dispatch, calendar invites |
 | `session` | LiveKit room creation/teardown, session state machine, Redis state management, copilot pipeline |
@@ -270,11 +315,11 @@ Tasks that must be async (never block the request cycle):
 
 ## AI Pipeline Rules
 
-### Async (Claude API — report quality, no latency pressure)
+### Async (OpenAI API — report quality, no latency pressure)
 Used for: question bank generation, post-session reports, signal analysis, candidate summaries.
 These are batch tasks. API latency is not a constraint.
 
-### Real-time (Claude Haiku — 1,200ms P50 budget end-to-end)
+### Real-time (OpenAI API (GPT-5 mini) — 1,200ms P50 budget end-to-end)
 Used for: live answer scoring, probe selection, dynamic question generation during sessions.
 
 Real-time latency budget:
@@ -283,7 +328,7 @@ Real-time latency budget:
 | WebRTC transport in | 20–50ms |
 | Voice activity detection | 100–150ms |
 | Deepgram Nova-3 STT | 200–300ms |
-| Claude Haiku inference | 200–400ms |
+| OpenAI API (GPT-5 mini) inference | 200–400ms |
 | TTS first audio byte | 80–300ms |
 | WebRTC transport out | 20–50ms |
 | **Total P50** | **~620–1,250ms** |
@@ -361,6 +406,21 @@ docker compose run nexus ruff check .
 # Type check
 docker compose run nexus mypy app/
 ```
+
+### Dramatiq worker (Phase 2A)
+
+```bash
+# Start worker alongside API + Redis
+docker compose up nexus-worker
+
+# Run directly (no container)
+dramatiq app.worker --processes 2 --threads 4
+
+# Worker logs
+docker compose logs -f nexus-worker
+```
+
+The worker reads actor definitions from `app/worker.py`, which imports every actor module so they register with the Redis broker at startup.
 
 ---
 
