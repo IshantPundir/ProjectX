@@ -18,9 +18,13 @@ from app.database import Base
 from app.main import app
 from app.models import Client, OrganizationalUnit, User
 
+# Default targets host.docker.internal so that `docker compose run --rm nexus pytest`
+# Just Works without an env var override. The host alias is provided by the
+# docker-compose.yml `extra_hosts` block. Tests run outside Docker can override
+# via TEST_DATABASE_URL=postgresql+asyncpg://postgres:postgres@127.0.0.1:54322/projectx_test
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL",
-    "postgresql+asyncpg://postgres:postgres@127.0.0.1:54322/projectx_test",
+    "postgresql+asyncpg://postgres:postgres@host.docker.internal:54322/projectx_test",
 )
 
 test_engine = create_async_engine(TEST_DATABASE_URL, echo=False)
