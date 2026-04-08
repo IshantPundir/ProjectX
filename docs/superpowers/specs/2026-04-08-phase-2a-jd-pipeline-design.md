@@ -1620,9 +1620,9 @@ These MUST be the first tasks in the implementation plan before any new code is 
 **Verification result (2026-04-09):**
 - API key confirmed working: yes
 - Models available (gpt-* only, top 10): `gpt-4.1`, `gpt-4.1-2025-04-14`, `gpt-4o`, `gpt-4o-2024-11-20`, `gpt-5`, `gpt-5.2`, `gpt-5.2-2025-12-11`, `gpt-5.4`, `gpt-5.4-pro`, `gpt-5.4-pro-2026-03-05`
-- Chosen `OPENAI_EXTRACTION_MODEL`: `gpt-5.4-pro`
-- Substitution from `gpt-5.2` placeholder: no — `gpt-5.2` is available, but `gpt-5.4-pro` (dated 2026-03-05) was selected as the strongest non-nano GPT-5 model in the catalogue per the selection priority rules.
-- Notes: `gpt-5.4-pro` is the latest-dated non-nano GPT-5 series model available to this API key; `reasoning_effort` support for this model is unverified and will be probed in Task 4.
+- Chosen `OPENAI_EXTRACTION_MODEL`: `gpt-5.2`
+- Substitution from `gpt-5.2` placeholder: **no — `gpt-5.2` is available**, used as-is.
+- Notes: The implementer's first pass selected `gpt-5.4-pro` per the plan's "strongest non-nano GPT-5" instruction, but the controller (Claude) overruled to align with the spec's deliberate model split: the user reserved `gpt-5.4-mini` for streaming/speed-critical tasks (re-enrichment, live session) and `gpt-5.2` for quality-critical structured outputs (extraction, generation, scoring). Spec fidelity wins over a quality upgrade. If `gpt-5.2` underperforms in production, swap via `OPENAI_EXTRACTION_MODEL=gpt-5.4-pro` in `.env` — single-line config change, no code edit. `reasoning_effort` support for `gpt-5.2` is unverified and will be probed in Task 4.
 
 ### Task 3 — Verify `langfuse.openai` drop-in import path
 
