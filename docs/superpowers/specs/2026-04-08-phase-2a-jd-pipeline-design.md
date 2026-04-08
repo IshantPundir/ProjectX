@@ -1617,6 +1617,13 @@ These MUST be the first tasks in the implementation plan before any new code is 
 
 **How:** `curl https://api.openai.com/v1/models -H "Authorization: Bearer $OPENAI_API_KEY" | jq '.data[].id'`. Pick the correct production model. Set `OPENAI_EXTRACTION_MODEL` in `.env.example` to the verified ID. Update the default in `config.py` to match.
 
+**Verification result (2026-04-09):**
+- API key confirmed working: yes
+- Models available (gpt-* only, top 10): `gpt-4.1`, `gpt-4.1-2025-04-14`, `gpt-4o`, `gpt-4o-2024-11-20`, `gpt-5`, `gpt-5.2`, `gpt-5.2-2025-12-11`, `gpt-5.4`, `gpt-5.4-pro`, `gpt-5.4-pro-2026-03-05`
+- Chosen `OPENAI_EXTRACTION_MODEL`: `gpt-5.4-pro`
+- Substitution from `gpt-5.2` placeholder: no — `gpt-5.2` is available, but `gpt-5.4-pro` (dated 2026-03-05) was selected as the strongest non-nano GPT-5 model in the catalogue per the selection priority rules.
+- Notes: `gpt-5.4-pro` is the latest-dated non-nano GPT-5 series model available to this API key; `reasoning_effort` support for this model is unverified and will be probed in Task 4.
+
 ### Task 3 — Verify `langfuse.openai` drop-in import path
 
 **Why:** The exact import path (`from langfuse.openai import AsyncOpenAI`) depends on the Langfuse SDK version already in `pyproject.toml`. SDK versions 2.x and 3.x differ on whether the wrapper lives at `langfuse.openai` or `langfuse.callback.openai` or similar.
