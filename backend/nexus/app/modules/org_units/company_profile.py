@@ -16,7 +16,6 @@ from typing import Final, Literal
 
 from pydantic import BaseModel, Field
 
-
 INDUSTRY_VALUES: Final[tuple[str, ...]] = (
     "fintech_financial_services",
     "healthcare_medtech",

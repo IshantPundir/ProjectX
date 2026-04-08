@@ -26,7 +26,6 @@ import openai
 # path avoids a startup DeprecationWarning that would pollute production logs.
 from instructor.core import InstructorRetryException
 
-
 # --- Exception classes ----------------------------------------------------
 
 class IllegalTransitionError(Exception):

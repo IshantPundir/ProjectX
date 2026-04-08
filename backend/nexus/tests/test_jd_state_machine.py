@@ -1,8 +1,5 @@
 """Tests for the JD state machine — legal and illegal transition pure logic."""
 
-import pytest
-
-from app.modules.jd.errors import IllegalTransitionError
 from app.modules.jd.state_machine import LEGAL_TRANSITIONS, is_legal_transition
 
 

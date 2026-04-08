@@ -4,8 +4,7 @@ looking for the first ancestor with a completed company_profile."""
 import pytest
 
 from app.modules.org_units.service import find_company_profile_in_ancestry
-from tests.conftest import create_test_client, create_test_org_unit, create_test_user
-
+from tests.conftest import create_test_client, create_test_org_unit
 
 _VALID_PROFILE = {
     "about": "We build real-time risk scoring infrastructure for mid-market lenders.",

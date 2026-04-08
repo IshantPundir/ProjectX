@@ -18,7 +18,6 @@ from tests.conftest import (
     create_test_user,
 )
 
-
 _VALID_PROFILE = {
     "about": "We build real-time risk scoring for mid-market lenders at scale.",
     "industry": "fintech_financial_services",

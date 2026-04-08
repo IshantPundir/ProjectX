@@ -6,7 +6,6 @@ from app.modules.jd.errors import CompanyProfileIncompleteError
 from app.modules.jd.service import create_job_posting
 from tests.conftest import create_test_client, create_test_org_unit, create_test_user
 
-
 _VALID_PROFILE = {
     "about": "We build real-time risk scoring for mid-market lenders at scale.",
     "industry": "fintech_financial_services",

@@ -9,8 +9,8 @@ from pydantic import ValidationError
 
 from app.modules.org_units.company_profile import (
     COMPANY_STAGE_VALUES,
-    CompanyProfile,
     INDUSTRY_VALUES,
+    CompanyProfile,
 )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "company_profile_enums.json"

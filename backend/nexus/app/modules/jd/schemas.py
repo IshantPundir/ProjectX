@@ -9,7 +9,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 JobStatus = Literal[
     "draft",
     "signals_extracting",

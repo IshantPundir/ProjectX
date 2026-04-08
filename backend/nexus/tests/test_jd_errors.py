@@ -3,7 +3,6 @@
 import uuid
 
 import openai
-import pytest
 
 from app.modules.jd.errors import (
     CompanyProfileIncompleteError,
