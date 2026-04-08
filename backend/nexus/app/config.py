@@ -35,8 +35,18 @@ class Settings(BaseSettings):
     livekit_api_key: str = ""
     livekit_api_secret: str = ""
 
-    # AI — Anthropic
-    anthropic_api_key: str = ""
+    # --- AI — OpenAI (Phase 2A) ---
+    openai_api_key: str = ""
+
+    # Model selection — env-driven, swappable without code changes.
+    # Consumed by app/ai/config.py::AIConfig in Task 14. Default placeholders;
+    # real values come from .env or deployment config.
+    openai_extraction_model: str = "gpt-5.2"
+    openai_extraction_effort: str = "medium"
+
+    # OpenAI request tuning
+    openai_request_timeout_seconds: float = 120.0
+    openai_max_retries: int = 2  # instructor-level schema retries; actor-level retries are separate
 
     # STT — Deepgram
     deepgram_api_key: str = ""
