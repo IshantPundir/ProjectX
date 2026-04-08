@@ -93,6 +93,51 @@ def create_app() -> FastAPI:
     application.include_router(org_units_router)
     application.include_router(roles_router)
 
+    # --- Exception handlers (Phase 2A — JD module) ---
+    from fastapi import Request
+    from fastapi.responses import JSONResponse
+
+    from app.modules.jd.errors import (
+        CompanyProfileIncompleteError,
+        IllegalTransitionError,
+    )
+
+    _ILLEGAL_TRANSITION_MESSAGES: dict[tuple[str, str], str] = {
+        ("signals_extracting", "signals_extracting"):
+            "Job is already being processed",
+        ("signals_extracted", "signals_extracting"):
+            "This job has already been extracted successfully — "
+            "retry is only valid after an extraction failure",
+        ("draft", "signals_extracted"):
+            "Job cannot transition directly from draft to extracted",
+    }
+
+    @application.exception_handler(IllegalTransitionError)
+    async def illegal_transition_handler(
+        request: Request, exc: IllegalTransitionError
+    ) -> JSONResponse:
+        key = (exc.from_state, exc.to_state)
+        detail = _ILLEGAL_TRANSITION_MESSAGES.get(
+            key,
+            f"Cannot transition job from {exc.from_state} to {exc.to_state}",
+        )
+        return JSONResponse(status_code=409, content={"detail": detail})
+
+    @application.exception_handler(CompanyProfileIncompleteError)
+    async def company_profile_incomplete_handler(
+        request: Request, exc: CompanyProfileIncompleteError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": (
+                    "Company profile must be completed before creating a job description. "
+                    "Visit Settings → Org Units → [your company] → Company Profile to finish setup."
+                ),
+                "org_unit_id": str(exc.org_unit_id),
+            },
+        )
+
     # --- Health check ---
     @application.get("/health", tags=["infra"])
     async def health() -> dict[str, str]:
