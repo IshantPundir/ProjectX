@@ -1606,6 +1606,11 @@ These MUST be the first tasks in the implementation plan before any new code is 
 
 **If it returns False** (exact-match only): `require_job_access()` becomes the **primary** enforcement path. `UserContext.has_permission_in_unit()` is called per-ancestor inside the local walk. Update the spec and the implementation accordingly before writing any JD endpoint.
 
+**Verification result (2026-04-09):**
+- `has_permission_in_unit()` inheritance behavior: False
+- Implementation observation from `app/modules/auth/context.py`: The method iterates over `self.assignments` and returns `True` only when `a.org_unit_id == org_unit_id` exactly matches — there is no ancestry walk or parent traversal of any kind.
+- Implication: `require_job_access()` will be the primary enforcement path. The local ancestry walk in `app/modules/jd/authz.py::_get_org_unit_ancestry()` is required.
+
 ### Task 2 — Verify OpenAI model access
 
 **Why:** The default `openai_extraction_model = "gpt-5.2"` is a placeholder. Before the first Call 1 dispatch, verify the real model ID against the OpenAI API key in the dev environment.
