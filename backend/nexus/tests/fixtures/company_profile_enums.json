@@ -1,0 +1,20 @@
+{
+  "industry": [
+    "fintech_financial_services",
+    "healthcare_medtech",
+    "ecommerce_retail",
+    "ai_ml_products",
+    "saas_enterprise_software",
+    "developer_tools_infrastructure",
+    "agency_consulting_staffing",
+    "media_content",
+    "logistics_supply_chain",
+    "other"
+  ],
+  "company_stage": [
+    "pre_seed_seed",
+    "series_a_b",
+    "series_c_plus",
+    "large_enterprise"
+  ]
+}
