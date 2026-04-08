@@ -4,23 +4,19 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { apiFetch } from "@/lib/api/client";
+import {
+  CompanyProfileForm,
+  type CompanyProfile,
+} from "@/components/dashboard/company-profile-form";
 
 type Step = "workspace" | "company-profile";
 type WorkspaceMode = "enterprise" | "agency";
-type CompanySize = "" | "1-50" | "51-500" | "500+";
 
 interface OrgUnit {
   id: string;
   name: string;
   is_root: boolean;
 }
-
-const COMPANY_SIZE_OPTIONS: { value: CompanySize; label: string }[] = [
-  { value: "", label: "Select company size" },
-  { value: "1-50", label: "Startup (1-50)" },
-  { value: "51-500", label: "SMB (51-500)" },
-  { value: "500+", label: "Enterprise (500+)" },
-];
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -33,12 +29,6 @@ export default function OnboardingPage() {
 
   // Step 2 state
   const [rootUnitId, setRootUnitId] = useState("");
-  const [companyName, setCompanyName] = useState("");
-  const [industry, setIndustry] = useState("");
-  const [companySize, setCompanySize] = useState<CompanySize>("");
-  const [cultureSummary, setCultureSummary] = useState("");
-  const [whatGoodLooksLike, setWhatGoodLooksLike] = useState("");
-  const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState("");
   const [fetchingOrg, setFetchingOrg] = useState(false);
 
@@ -96,10 +86,9 @@ export default function OnboardingPage() {
         const root = units.find((u) => u.is_root);
         if (root && !cancelled) {
           setRootUnitId(root.id);
-          setCompanyName(root.name);
         }
       } catch {
-        // If fetch fails, user can still type the name manually
+        // Non-fatal — profile form can still be submitted without pre-filling
       } finally {
         if (!cancelled) setFetchingOrg(false);
       }
@@ -112,50 +101,31 @@ export default function OnboardingPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step]);
 
-  async function handleSubmitProfile(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleSubmitProfile(value: CompanyProfile) {
     setProfileError("");
-    setProfileLoading(true);
 
-    try {
-      const token = await getToken();
-      if (!token) return;
+    const token = await getToken();
+    if (!token) return;
 
-      // Update the root org unit with company profile
-      if (rootUnitId) {
-        await apiFetch(`/api/org-units/${rootUnitId}`, {
-          method: "PUT",
-          token,
-          body: JSON.stringify({
-            name: companyName,
-            set_company_profile: true,
-            company_profile: {
-              display_name: companyName,
-              industry,
-              company_size: companySize,
-              culture_summary: cultureSummary,
-              hiring_bar: "",
-              brand_voice: "professional",
-              what_good_looks_like: whatGoodLooksLike,
-            },
-          }),
-        });
-      }
-
-      // Complete onboarding
-      await apiFetch("/api/auth/onboarding/complete", {
-        method: "POST",
+    if (rootUnitId) {
+      await apiFetch(`/api/org-units/${rootUnitId}`, {
+        method: "PUT",
         token,
+        body: JSON.stringify({
+          set_company_profile: true,
+          company_profile: value,
+        }),
       });
-
-      router.push("/");
-      router.refresh();
-    } catch (err) {
-      setProfileError(
-        err instanceof Error ? err.message : "Failed to save company profile"
-      );
-      setProfileLoading(false);
     }
+
+    // Complete onboarding
+    await apiFetch("/api/auth/onboarding/complete", {
+      method: "POST",
+      token,
+    });
+
+    router.push("/");
+    router.refresh();
   }
 
   const stepIndex = step === "workspace" ? 0 : 1;
@@ -393,8 +363,9 @@ export default function OnboardingPage() {
               Tell us about your company
             </h1>
             <p className="text-sm text-zinc-500 mt-2 leading-relaxed max-w-md mx-auto">
-              This helps our AI tailor interview questions and evaluation criteria
-              to your organization.
+              Four questions about your company. This takes about 2 minutes and
+              significantly improves the quality of your AI-generated interview
+              questions and rubrics.
             </p>
           </div>
 
@@ -420,133 +391,33 @@ export default function OnboardingPage() {
                   d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
                 />
               </svg>
-              <span className="ml-3 text-sm text-zinc-500">Loading your organization...</span>
+              <span className="ml-3 text-sm text-zinc-500">
+                Loading your organization...
+              </span>
             </div>
           ) : (
-            <form
-              onSubmit={handleSubmitProfile}
-              className="bg-white border border-zinc-200 rounded-xl p-7 space-y-5"
-            >
+            <div className="bg-white border border-zinc-200 rounded-xl p-7">
               {profileError && (
-                <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3">
+                <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3 mb-6">
                   {profileError}
                 </p>
               )}
-
-              {/* Company Name */}
-              <div>
-                <label
-                  htmlFor="company-name"
-                  className="block text-xs font-medium text-zinc-600 mb-1.5"
-                >
-                  Company Name <span className="text-red-500">*</span>
-                </label>
-                <input
-                  id="company-name"
-                  type="text"
-                  required
-                  value={companyName}
-                  onChange={(e) => setCompanyName(e.target.value)}
-                  className="w-full border border-zinc-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow duration-150"
-                  placeholder="Your company name"
-                />
-              </div>
-
-              {/* Industry */}
-              <div>
-                <label
-                  htmlFor="industry"
-                  className="block text-xs font-medium text-zinc-600 mb-1.5"
-                >
-                  Industry
-                </label>
-                <input
-                  id="industry"
-                  type="text"
-                  value={industry}
-                  onChange={(e) => setIndustry(e.target.value)}
-                  className="w-full border border-zinc-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow duration-150"
-                  placeholder="e.g., Technology, Healthcare, Finance"
-                />
-              </div>
-
-              {/* Company Size */}
-              <div>
-                <label
-                  htmlFor="company-size"
-                  className="block text-xs font-medium text-zinc-600 mb-1.5"
-                >
-                  Company Size
-                </label>
-                <select
-                  id="company-size"
-                  value={companySize}
-                  onChange={(e) => setCompanySize(e.target.value as CompanySize)}
-                  className="w-full border border-zinc-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white cursor-pointer transition-shadow duration-150"
-                >
-                  {COMPANY_SIZE_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Culture Summary */}
-              <div>
-                <label
-                  htmlFor="culture-summary"
-                  className="block text-xs font-medium text-zinc-600 mb-1.5"
-                >
-                  Culture Summary
-                </label>
-                <textarea
-                  id="culture-summary"
-                  rows={3}
-                  value={cultureSummary}
-                  onChange={(e) => setCultureSummary(e.target.value)}
-                  className="w-full border border-zinc-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none transition-shadow duration-150"
-                  placeholder="Describe your company culture in a few sentences"
-                />
-              </div>
-
-              {/* What a Strong Hire Looks Like */}
-              <div>
-                <label
-                  htmlFor="what-good-looks-like"
-                  className="block text-xs font-medium text-zinc-600 mb-1.5"
-                >
-                  What a Strong Hire Looks Like
-                </label>
-                <textarea
-                  id="what-good-looks-like"
-                  rows={3}
-                  value={whatGoodLooksLike}
-                  onChange={(e) => setWhatGoodLooksLike(e.target.value)}
-                  className="w-full border border-zinc-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none transition-shadow duration-150"
-                  placeholder="What qualities define a great hire at your company?"
-                />
-              </div>
-
-              {/* Actions */}
-              <div className="flex items-center gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setStep("workspace")}
-                  disabled={profileLoading}
-                  className="px-5 py-2.5 text-sm font-medium text-zinc-600 bg-zinc-100 rounded-lg hover:bg-zinc-200 disabled:opacity-50 cursor-pointer transition-colors duration-150"
-                >
-                  Back
-                </button>
-                <button
-                  type="submit"
-                  disabled={profileLoading || !companyName.trim()}
-                  className="flex-1 bg-blue-600 text-white rounded-lg py-2.5 text-sm font-medium hover:bg-blue-700 disabled:opacity-50 cursor-pointer transition-colors duration-150"
-                >
-                  {profileLoading ? "Saving..." : "Complete Setup"}
-                </button>
-              </div>
-            </form>
+              <CompanyProfileForm
+                onSubmit={async (value: CompanyProfile) => {
+                  try {
+                    await handleSubmitProfile(value);
+                  } catch (err) {
+                    setProfileError(
+                      err instanceof Error
+                        ? err.message
+                        : "Failed to save company profile"
+                    );
+                    throw err;
+                  }
+                }}
+                submitLabel="Finish Onboarding"
+              />
+            </div>
           )}
         </div>
       )}
