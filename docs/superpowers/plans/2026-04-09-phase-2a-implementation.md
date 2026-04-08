@@ -1672,8 +1672,12 @@ sanitize what reaches the DB and the frontend."""
 from typing import Final
 from uuid import UUID
 
-import instructor
 import openai
+
+# Day-1 Task 5 verification: instructor 1.12.0 deprecates instructor.exceptions
+# in favor of instructor.core. Both expose the same class object, but the new
+# path avoids a startup DeprecationWarning that would pollute production logs.
+from instructor.core import InstructorRetryException
 
 
 # --- Exception classes ----------------------------------------------------
@@ -1703,16 +1707,10 @@ class CompanyProfileIncompleteError(Exception):
 
 # --- Error sanitization --------------------------------------------------
 
-# NOTE: instructor's retry-exhausted exception class name was verified on
-# Day 1 (Task 5). If the class is named differently in the installed
-# version, update this import AND the _SAFE_MESSAGES key below.
-_INSTRUCTOR_RETRY_EXC: type[Exception]
-try:
-    _INSTRUCTOR_RETRY_EXC = instructor.exceptions.InstructorRetryException  # type: ignore[attr-defined]
-except AttributeError:
-    # Fallback: instructor versions where the exception lives at the root
-    _INSTRUCTOR_RETRY_EXC = Exception  # pragma: no cover — adjusted by Task 5 findings
-
+# Day-1 Task 5 verified: instructor 1.12.0 raises InstructorRetryException
+# from instructor.core when max_retries is exceeded. The legacy
+# instructor.exceptions path still works but emits a DeprecationWarning.
+# Use the canonical core path.
 
 _SAFE_MESSAGES: Final[dict[type[Exception], str]] = {
     openai.RateLimitError:
@@ -1725,7 +1723,7 @@ _SAFE_MESSAGES: Final[dict[type[Exception], str]] = {
         "AI provider authentication failed. Contact support.",
     openai.BadRequestError:
         "The job description could not be processed. Please check the input and retry.",
-    _INSTRUCTOR_RETRY_EXC:
+    InstructorRetryException:
         "The AI response did not match the expected format after retries. Please retry.",
 }
 
