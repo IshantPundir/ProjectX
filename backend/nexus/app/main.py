@@ -5,6 +5,13 @@ import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+# Dramatiq broker setup MUST be imported before any router that transitively
+# imports a @dramatiq.actor module. Otherwise the decorator runs against
+# Dramatiq's default broker (localhost:6379) and actor.send() calls from the
+# API process fail with "Connection refused" because Redis is a sibling
+# container, not on localhost inside the nexus container.
+from app import brokers  # noqa: F401
+
 from app.config import settings
 
 logger = structlog.get_logger()

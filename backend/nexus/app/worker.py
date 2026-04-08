@@ -6,19 +6,18 @@ Run in dev via:
 Run directly via:
     dramatiq app.worker --processes 2 --threads 4
 
-Every actor module must be imported here so Dramatiq registers the
-actors with the broker at worker startup. Without these imports,
-the Dramatiq CLI finds zero actors and exits with 'no actors registered'."""
+Broker setup lives in app/brokers.py so both the API and the worker
+share the same initialization. Importing app.brokers sets the Redis
+broker; importing the actor modules triggers their @dramatiq.actor
+decorators to register against that broker.
 
-import dramatiq
-from dramatiq.brokers.redis import RedisBroker
+Without the brokers import, Dramatiq falls back to a default RedisBroker
+at localhost:6379 — which fails inside the container where Redis is a
+sibling service."""
 
-from app.config import settings
+# Broker setup — MUST be imported before any actor module
+from app import brokers  # noqa: F401
 
-broker = RedisBroker(url=settings.redis_url)
-dramatiq.set_broker(broker)
+# Actor imports — registered against the broker above
+from app.modules.jd import actors as _jd_actors  # noqa: F401
 
-# Actor imports — MUST stay after set_broker so actors register against
-# the correct broker instance. Prefer `noqa: F401, E402` to suppress the
-# unused-import and module-level-not-at-top warnings.
-from app.modules.jd import actors as _jd_actors  # noqa: F401, E402
