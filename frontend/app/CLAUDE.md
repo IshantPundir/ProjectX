@@ -7,6 +7,12 @@
 
 ---
 
+## Next.js 16 Warning (AGENTS.md)
+
+Per `AGENTS.md` in this directory: **this Next.js version has breaking changes from training-data Next.js**. Before writing any new route, layout, or API handler file, consult the installed docs at `node_modules/next/dist/docs/`. Don't rely on memorized App Router patterns — they may have changed.
+
+---
+
 ## What This Surface Is
 
 The Next.js app serves **two distinct user surfaces** within a single codebase:
@@ -31,12 +37,26 @@ Both surfaces must be designed as **enterprise products**, not consumer apps. Cl
 - **Hosting MVP:** Railway
 - **Hosting Enterprise:** AWS ECS Fargate + CloudFront (same container, different target)
 
+### Currently Installed (Phase 2A)
+
+- **Component library:** shadcn/ui v4.2.0 (`base-nova` preset, **Base UI** not Radix — see ecosystem note below)
+- **Server state:** TanStack Query v5 (`@tanstack/react-query` + devtools, provider lives in `DashboardProviders` client boundary inside the server dashboard layout)
+- **Forms:** React Hook Form + Zod (`@hookform/resolvers/zod`)
+- **SSE client:** `@microsoft/fetch-event-source` (used for the JD status stream)
+- **Toast:** `sonner` (mounted via `<Toaster />` in `DashboardProviders`)
+
+**⚠️ shadcn v4 / Base UI ecosystem note:** shadcn v4 switched from Radix primitives to `@base-ui/react`. Writing custom components that extend shadcn primitives requires Base UI idioms:
+- `TooltipTrigger` uses `render={<span>...</span>}` instead of Radix's `asChild`
+- `TooltipProvider` uses `delay={150}` instead of Radix's `delayDuration`
+- `Select`'s `onValueChange` types its value as `unknown` (Zod validation catches invalid shapes)
+- `SelectTrigger` defaults to `w-fit` — add `w-full` explicitly when you need it to fill a grid column
+
+Don't blindly copy Radix patterns from the internet; check the actual component source in `components/ui/` before adapting anything.
+
 ### Planned for Phase 2+
 
-- **Component library:** shadcn/ui (primitives only — extend, don't override)
-- **State management:** Zustand for client-side global state; TanStack Query for server state and cache
-- **Real-time / WebRTC:** LiveKit React SDK (`@livekit/components-react`)
-- **Forms:** React Hook Form + Zod validation
+- **State management:** Zustand for client-side global state (deferred from Phase 2A)
+- **Real-time / WebRTC:** LiveKit React SDK (`@livekit/components-react`) — Phase 3
 
 ---
 
@@ -74,12 +94,43 @@ frontend/app/
 └── CLAUDE.md                         ← you are here
 ```
 
-### Planned Additions (Phase 2+)
+### Added in Phase 2A
+
+```
+├── app/
+│   └── (dashboard)/
+│       └── jobs/                         ← Job pipeline management (Phase 2A)
+│           ├── page.tsx                  ← Jobs list
+│           └── [jobId]/
+│               └── review/page.tsx       ← Three-panel JD review (server component shell)
+├── components/
+│   ├── ui/                               ← shadcn primitives — auto-generated, do not edit
+│   ├── dashboard/
+│   │   ├── providers.tsx                 ← DashboardProviders client boundary (TanStack Query + Toaster)
+│   │   ├── company-profile-form.tsx      ← Shared 4-field RHF+Zod form
+│   │   └── jd-panels/
+│   │       ├── SignalChip.tsx            ← Provenance-aware chip with inference tooltip
+│   │       ├── OriginalJdPanel.tsx       ← Collapses to drawer below 3xl
+│   │       ├── EnrichedJdPanel.tsx
+│   │       ├── SignalsPanel.tsx
+│   │       ├── LoadingSkeleton.tsx       ← Content-aware skeleton with SSE status pill
+│   │       └── ErrorBanner.tsx          ← Retry button + sanitized error message
+├── lib/
+│   ├── api/
+│   │   ├── client.ts                     ← existing apiFetch()
+│   │   └── jobs.ts                       ← NEW typed API namespace for JD module
+│   ├── auth/
+│   │   └── tokens.ts                     ← getFreshSupabaseToken() — no in-memory cache layer
+│   └── hooks/
+│       ├── use-job.ts                    ← TanStack Query wrapper for GET /api/jobs/{id}
+│       └── use-job-status-stream.ts      ← fetch-event-source SSE with query invalidation
+```
+
+### Planned Additions (Phase 3+)
 
 ```
 ├── app/
 │   ├── (dashboard)/
-│   │   ├── jobs/                 ← Job pipeline management
 │   │   ├── candidates/           ← Candidate cards, kanban board
 │   │   ├── sessions/             ← Live session management
 │   │   └── reports/              ← Evaluation report viewer
@@ -90,8 +141,6 @@ frontend/app/
 │           ├── session/          ← Live interview (2×2 video grid)
 │           └── complete/         ← Post-session completion screen
 ├── components/
-│   ├── ui/                       ← shadcn/ui primitives (auto-generated, don't edit)
-│   ├── dashboard/                ← Dashboard-specific composite components
 │   ├── interview/                ← Candidate session components
 │   ├── shared/                   ← Shared across both surfaces
 │   └── copilot/                  ← AI Copilot panel components
@@ -122,9 +171,7 @@ The Supabase client on the frontend is used **only** for Auth (session managemen
 - No `any` types. Use `unknown` + type narrowing if the shape is truly unknown.
 - All API response types must be explicitly typed. Co-locate types with their API call in `lib/api/`.
 
-### Component Placement Rules (Phase 2+)
-
-When the `components/` directory is created, follow this structure:
+### Component Placement Rules
 
 | Component type | Location |
 |---|---|
@@ -138,14 +185,15 @@ When the `components/` directory is created, follow this structure:
 
 Do not drop components at the root of `components/` without a subdirectory.
 
-**Current state:** Phase 1 has no `components/` directory. All UI is inline within page files.
+**Current state (Phase 2A):** `components/ui/` and `components/dashboard/` are live. `components/interview/`, `components/copilot/`, `components/shared/` are Phase 3+.
 
-### Forms (Phase 2+)
-- All forms should use React Hook Form + Zod. No uncontrolled forms.
+### Forms
+
+- All forms must use React Hook Form + Zod (`@hookform/resolvers/zod`). No uncontrolled forms.
 - Validation schemas defined in a co-located `schema.ts` file.
 - API error messages are surfaced to the relevant field, not just a toast.
 
-**Current state:** Phase 1 forms use raw `useState` + `e.preventDefault()`. Migrate to React Hook Form + Zod when these libraries are installed.
+**Current state (Phase 2A):** React Hook Form + Zod are installed. Phase 1 pages still use raw `useState` — migrate them when touching those pages.
 
 ### Secrets
 - **Never put API keys, secrets, or tokens in client-side code or environment variables prefixed with `NEXT_PUBLIC_`** unless that value is genuinely intended to be public (e.g., a LiveKit server URL).
@@ -195,11 +243,14 @@ Do not drop components at the root of `components/` without a subdirectory.
 - Token fetched fresh from `supabase.auth.getSession()` before each API call — no cached auth state
 - No global state library installed
 
-### Target (Phase 2+)
-- **Server state** (API data, cache, loading states): TanStack Query. No Zustand for this.
-- **Client-side global state** (UI state, session context, copilot buffer): Zustand.
-- **Form state**: React Hook Form. Not Zustand, not useState.
-- Avoid prop drilling beyond 2 levels — lift to Zustand or co-locate state in the route segment.
+### Current (Phase 2A)
+- **Server state** (API data, cache, loading states): TanStack Query v5. No Zustand for this.
+- **Form state**: React Hook Form + Zod. Not Zustand, not useState.
+- `DashboardProviders` client boundary wraps the server dashboard layout and mounts `QueryClientProvider`, `<Toaster />`, and `ReactQueryDevtools` (dev only).
+- Avoid prop drilling beyond 2 levels — co-locate state in the route segment or use TanStack Query cache.
+
+### Target (Phase 3+)
+- **Client-side global state** (UI state, session context, copilot buffer): Zustand (not yet installed).
 
 ---
 
@@ -239,10 +290,14 @@ const me = await apiFetch<MeData>('/api/auth/me', { token })
 const members = await apiFetch<TeamMember[]>('/api/settings/team/members', { token })
 ```
 
-### Target (Phase 2+)
-- Move to structured API client with namespaced methods: `api.jobs.list()`, `api.reports.get(id)`
-- Response types in shared `types/` directory
-- Auth header auto-injected from TanStack Query's auth context
+### Current (Phase 2A)
+- `lib/api/jobs.ts` is the first typed API namespace — use it as the pattern for new modules.
+- `lib/auth/tokens.ts` exports `getFreshSupabaseToken()` — call this instead of inline `getSession()` calls when building new hooks or API calls.
+- Auth header still passed explicitly per call (not auto-injected); TanStack Query hooks handle this via `getFreshSupabaseToken()`.
+
+### Target (Phase 3+)
+- Expand to `api.candidates.*`, `api.sessions.*`, `api.reports.*` namespaces
+- Shared `types/` directory for cross-module response types
 - Candidate session calls use the candidate JWT from the URL token — not Supabase
 
 ---
@@ -254,6 +309,8 @@ const members = await apiFetch<TeamMember[]>('/api/settings/team/members', { tok
 - Colours: use the design system tokens defined in `tailwind.config.ts`. Do not use raw colour values (e.g., `text-[#4A90E2]`).
 - Dark mode: not in scope for MVP. Do not build dark mode variants.
 - Responsive: dashboard is desktop-first (1280px minimum viewport target). Candidate interview UI must work on any device — candidates may join from mobile.
+
+**Custom breakpoints:** `3xl: 1440px` added in `app/globals.css` via the `@theme` directive (Phase 2A — for the three-panel JD review layout). Tailwind v4 uses `--breakpoint-<name>` CSS variables inside `@theme`, NOT a `tailwind.config.ts` file (there isn't one).
 
 ---
 
