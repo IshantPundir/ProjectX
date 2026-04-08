@@ -47,8 +47,8 @@ Each subdirectory has its own `CLAUDE.md` with context-specific rules. Always re
 | Task queue | Upstash Redis | With backend migration |
 | Real-time | LiveKit Cloud | Client requires A/V in VPC |
 | STT | Deepgram managed | Client requires audio isolation |
-| LLM async | Anthropic Claude API | — |
-| LLM real-time | Claude Haiku | Per-token cost > GPU cost |
+| LLM async | OpenAI API | — |
+| LLM real-time | OpenAI API (GPT-5 mini class) | Per-token cost > GPU cost |
 | TTS | Cartesia Sonic (pending benchmark) | — |
 | Storage | AWS S3 | Already native, no migration |
 | Email | Resend | Config swap only |
@@ -72,6 +72,12 @@ Each subdirectory has its own `CLAUDE.md` with context-specific rules. Always re
 ### Auth Abstraction — Load-Bearing
 - FastAPI must verify JWTs through a **provider-agnostic interface**. Never call the Supabase SDK directly in business logic.
 - This is what makes a future Cognito swap a config change, not a rewrite.
+
+### AI Provider — Load-Bearing
+- AI provider is OpenAI for the entire system (Phase 2A onwards).
+- All LLM calls go through the `app/ai/` module. Never call the OpenAI SDK (or `langfuse.openai`, or `instructor`) directly from business logic.
+- `AIConfig` in `app/ai/config.py` is the single source of truth for model IDs and reasoning_effort — env-driven, never hardcoded in service files.
+- Swapping a model for a task is a `.env` change, not a code change.
 
 ### Do NOT Use PostgREST
 - Supabase's auto-generated REST/GraphQL API (PostgREST) is disabled. All data access goes through FastAPI.
