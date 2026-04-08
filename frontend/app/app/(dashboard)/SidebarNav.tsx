@@ -24,6 +24,14 @@ function IconUsers({ className = "w-4 h-4" }: { className?: string }) {
   );
 }
 
+function IconBriefcase({ className = "w-4 h-4" }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 14.15v4.073a2.25 2.25 0 01-2.25 2.25h-12a2.25 2.25 0 01-2.25-2.25V9.75m16.5 4.4V9.75a2.25 2.25 0 00-2.25-2.25h-12A2.25 2.25 0 003.75 9.75v4.4m16.5 0a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25m16.5 0V9.75M3.75 14.15V9.75M15 7.5V6a3 3 0 00-6 0v1.5m6 0H9" />
+    </svg>
+  );
+}
+
 function IconBuilding({ className = "w-4 h-4" }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" aria-hidden="true">
@@ -52,6 +60,7 @@ function IconLogout({ className = "w-4 h-4" }: { className?: string }) {
 
 const NAV_ITEMS = [
   { href: "/", label: "Dashboard", icon: IconHome },
+  { href: "/jobs", label: "Jobs", icon: IconBriefcase },
   { href: "/settings/team", label: "Team", icon: IconUsers },
   { href: "/settings/org-units", label: "Org Units", icon: IconBuilding },
   { href: "/profile", label: "Profile", icon: IconUserCircle },
