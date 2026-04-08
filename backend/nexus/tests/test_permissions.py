@@ -8,7 +8,7 @@ def test_all_permissions_is_frozenset():
 
 
 def test_all_permissions_count():
-    assert len(ALL_PERMISSIONS) == 16
+    assert len(ALL_PERMISSIONS) == 17
 
 
 def test_known_permissions_present():
@@ -17,3 +17,9 @@ def test_known_permissions_present():
     assert "interviews.conduct" in ALL_PERMISSIONS
     assert "reports.export" in ALL_PERMISSIONS
     assert "settings.client" in ALL_PERMISSIONS
+
+
+def test_jobs_view_permission_exists():
+    """Phase 2A adds jobs.view as a new canonical permission."""
+    from app.modules.auth.permissions import ALL_PERMISSIONS
+    assert "jobs.view" in ALL_PERMISSIONS

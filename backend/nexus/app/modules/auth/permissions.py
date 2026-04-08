@@ -11,6 +11,7 @@ ALL_PERMISSIONS: frozenset[str] = frozenset(
         "users.deactivate",
         "org_units.create",
         "org_units.manage",
+        "jobs.view",
         "jobs.create",
         "jobs.manage",
         "candidates.view",
