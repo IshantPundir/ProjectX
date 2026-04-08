@@ -166,9 +166,16 @@ async def extract_and_enhance_jd(
     retries_so_far = current.options.get("retries", 0) if current else 0
 
     async with get_bypass_session() as db:
+        # SET LOCAL does NOT accept bind parameters in PostgreSQL — the
+        # value must be a literal. asyncpg translates :t → $1 which
+        # fails with "syntax error at or near $1". f-string interpolation
+        # is the correct pattern (same as app/database.py::get_tenant_db).
+        # Defensive UUID round-trip rejects any malformed tenant_id before
+        # it reaches the SQL; the result is always a canonical UUID string
+        # with no injection vectors.
+        safe_tenant_id = str(UUID(tenant_id))
         await db.execute(
-            text("SET LOCAL app.current_tenant = :t"),
-            {"t": tenant_id},
+            text(f"SET LOCAL app.current_tenant = '{safe_tenant_id}'")
         )
         try:
             await _run_extraction(
