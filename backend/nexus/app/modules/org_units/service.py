@@ -64,11 +64,13 @@ async def create_org_unit(
         if existing_root.scalar_one_or_none():
             raise ValueError("A root company unit already exists for this tenant.")
 
-    # Rule 3: company_profile required for company and client_account
-    if unit_type in ("company", "client_account") and not company_profile:
-        raise ValueError(f"A company_profile is required for units of type '{unit_type}'.")
-
-    # Strict shape validation (Phase 2A 4-field schema)
+    # Rule 3 (Phase 2A): company_profile is OPTIONAL on create. The invite
+    # completion flow creates the root company unit before the onboarding
+    # wizard has collected the 4-field profile; the wizard PATCHes the
+    # profile onto the unit as a follow-up step. JD creation enforces
+    # "profile must exist in ancestry" via find_company_profile_in_ancestry(),
+    # so the create-time relaxation does not weaken the invariant that matters.
+    # Strict shape validation still runs when a profile IS provided.
     validated_profile = _validate_and_normalize_company_profile(company_profile)
 
     # Rule 4: client_account only in agency workspaces

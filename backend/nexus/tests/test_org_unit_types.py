@@ -61,19 +61,25 @@ async def test_second_company_in_same_tenant_raises(db: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_company_without_profile_raises(db: AsyncSession):
-    """Company unit requires company_profile."""
+async def test_company_without_profile_is_allowed(db: AsyncSession):
+    """Phase 2A: company unit can be created with NULL company_profile.
+    The invite completion flow creates the root unit before the onboarding
+    wizard has collected the profile; the wizard PATCHes it afterward.
+    JD creation enforces 'profile must exist in ancestry' via
+    find_company_profile_in_ancestry() — that's the real gate."""
     client = await create_test_client(db)
-    with pytest.raises(ValueError, match="company_profile is required"):
-        await create_org_unit(
-            db=db,
-            client_id=client.id,
-            name="Root",
-            unit_type="company",
-            parent_unit_id=None,
-            workspace_mode="enterprise",
-            company_profile=None,
-        )
+    unit = await create_org_unit(
+        db=db,
+        client_id=client.id,
+        name="Root",
+        unit_type="company",
+        parent_unit_id=None,
+        workspace_mode="enterprise",
+        company_profile=None,
+    )
+    assert unit.unit_type == "company"
+    assert unit.company_profile is None
+    assert unit.company_profile_completed_at is None
 
 
 @pytest.mark.asyncio
@@ -105,20 +111,23 @@ async def test_change_type_of_root_company_raises(db: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_client_account_without_profile_raises(db: AsyncSession):
-    """client_account requires company_profile."""
+async def test_client_account_without_profile_is_allowed(db: AsyncSession):
+    """Phase 2A: client_account can be created with NULL company_profile.
+    Same rationale as test_company_without_profile_is_allowed — profile is
+    collected post-hoc and enforced at JD creation time via ancestry walk."""
     client = await create_test_client(db, workspace_mode="agency")
     root = await _create_root(db, client.id)
-    with pytest.raises(ValueError, match="company_profile is required"):
-        await create_org_unit(
-            db=db,
-            client_id=client.id,
-            name="Acme",
-            unit_type="client_account",
-            parent_unit_id=root.id,
-            workspace_mode="agency",
-            company_profile=None,
-        )
+    unit = await create_org_unit(
+        db=db,
+        client_id=client.id,
+        name="Acme",
+        unit_type="client_account",
+        parent_unit_id=root.id,
+        workspace_mode="agency",
+        company_profile=None,
+    )
+    assert unit.unit_type == "client_account"
+    assert unit.company_profile is None
 
 
 @pytest.mark.asyncio

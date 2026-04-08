@@ -112,7 +112,10 @@ async def complete_invite(
             {"user_id": str(user.id), "tenant_id": str(claimed_row.tenant_id)},
         )
 
-        # Auto-create root company unit with placeholder profile
+        # Auto-create root company unit WITHOUT a profile. The onboarding
+        # wizard's step 2 collects the 4-field profile and PATCHes it onto
+        # this unit. Phase 2A removed the "profile required on create" rule
+        # precisely to unblock this invite → onboarding transition.
         from app.modules.org_units.service import create_org_unit as _create_root_unit
 
         root_unit = await _create_root_unit(
@@ -124,15 +127,7 @@ async def complete_invite(
             created_by=user.id,
             actor_email=oauth_email,
             workspace_mode="enterprise",
-            company_profile={
-                "display_name": "",
-                "industry": "",
-                "company_size": "",
-                "culture_summary": "",
-                "hiring_bar": "",
-                "brand_voice": "professional",
-                "what_good_looks_like": "",
-            },
+            company_profile=None,
         )
         root_unit_id = str(root_unit.id)
 
