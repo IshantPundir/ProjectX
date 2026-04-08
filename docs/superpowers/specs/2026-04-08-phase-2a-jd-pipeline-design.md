@@ -497,21 +497,8 @@ async def stream_status(
     user: UserContext = Depends(get_current_user_roles),
 ) -> EventSourceResponse:
     await require_job_access(db, job_id, user, "view")
-
-    async def event_generator():
-        last_status: str | None = None
-        while True:
-            if await request.is_disconnected():
-                break
-            status_event = await get_job_status(db, job_id)
-            if status_event.status != last_status:
-                yield {"event": "status", "data": status_event.model_dump_json()}
-                last_status = status_event.status
-            if status_event.is_terminal:
-                break
-            await asyncio.sleep(1.5)
-
-    return EventSourceResponse(event_generator())
+    # Delegates to app/modules/jd/sse.py — see below
+    return EventSourceResponse(job_status_event_generator(db, job_id, request))
 
 
 @router.post("/{job_id}/retry", status_code=202)
@@ -524,7 +511,150 @@ async def retry_extraction(
     await retry_failed_extraction(db, job_id)
 ```
 
-**Router error handling** — `IllegalTransitionError` (raised from `state_machine.transition()`) **must be caught at the router layer and returned as HTTP 409 Conflict** with a human-readable message (e.g., `"Job is already being processed"` or `"Retry is only valid after an extraction failure"`). It must NEVER propagate as a 500. This is enforced via a FastAPI exception handler registered in `app/main.py`.
+**`app/modules/jd/sse.py`** — event generator
+
+The SSE event generator lives in its own module, not inline in the router. Rationale: keeps `router.py` focused on request/response orchestration; makes the generator unit-testable without spinning up FastAPI; the pattern is reusable for any future SSE endpoint (Call 2 re-enrichment in 2B, question bank generation status in 2C) so the contract (signature, termination semantics, polling cadence) is documented in one place.
+
+```python
+"""Server-Sent Events generator for job posting status updates.
+
+Contract:
+- Polls the job_postings row every POLL_INTERVAL_SECONDS (1.5s).
+- Emits a 'status' event ONLY when job.status changes from the last observed
+  value (de-duplication; no redundant frames).
+- Terminates and closes the HTTP connection when job.status reaches a
+  terminal state (signals_extracted or signals_extraction_failed).
+- Terminates immediately if the client disconnects mid-stream.
+- Does NOT enforce RBAC — the router's require_job_access() dependency has
+  already validated access before this generator is invoked.
+"""
+
+import asyncio
+from collections.abc import AsyncIterator
+from uuid import UUID
+
+from fastapi import Request
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.modules.jd.service import get_job_status
+from app.modules.jd.schemas import JobStatusEvent
+
+POLL_INTERVAL_SECONDS: float = 1.5
+TERMINAL_STATES: frozenset[str] = frozenset({
+    "signals_extracted",
+    "signals_extraction_failed",
+})
+
+
+async def job_status_event_generator(
+    db: AsyncSession,
+    job_id: UUID,
+    request: Request,
+) -> AsyncIterator[dict[str, str]]:
+    """Yield SSE events until the job reaches a terminal state or the
+    client disconnects. Each event is a dict shaped for sse-starlette's
+    EventSourceResponse: {'event': 'status', 'data': <json string>}."""
+    last_status: str | None = None
+    while True:
+        if await request.is_disconnected():
+            return
+
+        event: JobStatusEvent = await get_job_status(db, job_id)
+
+        if event.status != last_status:
+            yield {
+                "event": "status",
+                "data": event.model_dump_json(),
+            }
+            last_status = event.status
+
+        if event.status in TERMINAL_STATES:
+            return
+
+        await asyncio.sleep(POLL_INTERVAL_SECONDS)
+```
+
+**Router error handling** — two custom exception types from the JD module are caught at the FastAPI layer and mapped to specific HTTP status codes. They MUST NEVER propagate as 500.
+
+Both exception classes live in `app/modules/jd/errors.py` alongside `sanitize_error_for_user()` (single errors module for the module — not split across files):
+
+```python
+# app/modules/jd/errors.py (excerpt — full file also contains sanitize_error_for_user)
+
+class CompanyProfileIncompleteError(Exception):
+    """Raised by create_job_posting() when no ancestor of the target org unit
+    has a completed company_profile. Mapped to HTTP 422 at the router layer."""
+
+    def __init__(self, org_unit_id: UUID) -> None:
+        self.org_unit_id = org_unit_id
+        super().__init__(
+            f"Org unit {org_unit_id} has no ancestor with a completed company profile"
+        )
+
+
+class IllegalTransitionError(Exception):
+    """Raised when code attempts an illegal state transition.
+    Mapped to HTTP 409 Conflict at the router layer with a state-specific message.
+    (Also defined in app/modules/jd/state_machine.py — re-exported here for the
+    exception handler to import alongside CompanyProfileIncompleteError.)"""
+```
+
+**FastAPI exception handlers** — registered in `app/main.py` after router registration:
+
+```python
+# app/main.py (additions)
+
+from fastapi import Request
+from fastapi.responses import JSONResponse
+
+from app.modules.jd.errors import (
+    CompanyProfileIncompleteError,
+    IllegalTransitionError,
+)
+
+
+# Router-layer 409 mapping with state-specific messages.
+# New (from, to) pairs extend this dict as phases add states.
+_ILLEGAL_TRANSITION_MESSAGES: dict[tuple[str, str], str] = {
+    ("signals_extracting", "signals_extracting"):
+        "Job is already being processed",
+    ("signals_extracted", "signals_extracting"):
+        "This job has already been extracted successfully — "
+        "retry is only valid after an extraction failure",
+    ("draft", "signals_extracted"):
+        "Job cannot transition directly from draft to extracted",
+}
+
+
+@application.exception_handler(IllegalTransitionError)
+async def illegal_transition_handler(
+    request: Request, exc: IllegalTransitionError
+) -> JSONResponse:
+    key = (exc.from_state, exc.to_state)
+    detail = _ILLEGAL_TRANSITION_MESSAGES.get(
+        key,
+        f"Cannot transition job from {exc.from_state} to {exc.to_state}",
+    )
+    return JSONResponse(status_code=409, content={"detail": detail})
+
+
+@application.exception_handler(CompanyProfileIncompleteError)
+async def company_profile_incomplete_handler(
+    request: Request, exc: CompanyProfileIncompleteError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": (
+                "Company profile must be completed before creating a job description. "
+                "Visit Settings → Org Units → [your company] → Company Profile to finish setup."
+            ),
+            "org_unit_id": str(exc.org_unit_id),
+        },
+    )
+```
+
+The `org_unit_id` is included in the 422 body so the frontend can deep-link directly to the correct Company Profile tab. Frontend treats the message as authoritative; it does not construct its own error text from the error code.
 
 **`app/modules/jd/service.py`** — key signatures
 
@@ -719,38 +849,86 @@ def _build_user_message(job: JobPosting, profile: dict | None) -> str:
 
 **Failure transition timing:** the state transition to `signals_extraction_failed` happens **only on the final retry attempt**. Intermediate retries leave the row in `signals_extracting` so the frontend SSE stream keeps polling without showing "failed" flicker that self-heals on retry.
 
-**`app/modules/jd/errors.py`** — error sanitization helper
+**`app/modules/jd/errors.py`** — custom exceptions + error sanitization helper
+
+This file owns **three** responsibilities: the two JD-specific exception classes (`IllegalTransitionError`, `CompanyProfileIncompleteError`) and the `sanitize_error_for_user()` helper that maps third-party exception types to safe user-facing strings. Co-locating them keeps the "what can the JD module raise, and what reaches the user" surface area readable.
 
 ```python
-"""User-facing error sanitization for job_posting.status_error.
+"""JD module exceptions and user-facing error sanitization.
 
-The raw str(exc) from an OpenAI / HTTP / validation failure may leak:
+All JD-specific exception types live here, along with the sanitize helper
+used by the Dramatiq actor to convert third-party exceptions into safe,
+fixed user-facing strings before persisting them to job_posting.status_error.
+
+Why sanitize? The raw str(exc) from an OpenAI / HTTP / validation failure
+may leak:
 - API URLs (https://api.openai.com/v1/chat/completions)
 - API keys or bearer tokens embedded in headers
 - Request IDs that identify internal infrastructure
 - Stack-trace fragments with file paths
 - Prompt content (on validation errors, instructor may echo the payload)
 
-This helper maps exception TYPES to fixed, safe, user-facing strings.
-The rich exception detail is still captured in structlog / Sentry — we
-only sanitize what reaches the DB and the frontend."""
+Rich exception detail is still captured in structlog / Sentry — we only
+sanitize what reaches the DB and the frontend."""
 
 from typing import Final
+from uuid import UUID
 
 import openai
 import instructor
 
+
+# --- JD-specific exception classes ---------------------------------------
+
+class IllegalTransitionError(Exception):
+    """Raised by state_machine.transition() when a caller attempts a move
+    that's not in LEGAL_TRANSITIONS. Mapped to HTTP 409 Conflict by the
+    exception handler in app/main.py."""
+
+    def __init__(self, from_state: str, to_state: str) -> None:
+        self.from_state = from_state
+        self.to_state = to_state
+        super().__init__(f"Illegal transition: {from_state} → {to_state}")
+
+
+class CompanyProfileIncompleteError(Exception):
+    """Raised by create_job_posting() when no ancestor of the target org unit
+    has a completed company_profile. Mapped to HTTP 422 Unprocessable Entity
+    by the exception handler in app/main.py, with org_unit_id in the body so
+    the frontend can deep-link to the correct Company Profile tab."""
+
+    def __init__(self, org_unit_id: UUID) -> None:
+        self.org_unit_id = org_unit_id
+        super().__init__(
+            f"Org unit {org_unit_id} has no ancestor with a completed company profile"
+        )
+
+
+# --- Error sanitization for job_posting.status_error ---------------------
+#
+# IMPORTANT: the exact name of instructor's retry-exhausted exception class
+# must be verified on Day 1 (see Task 5). If the class is named differently
+# in the installed version, update the import and the mapping key below
+# BEFORE writing the actor.
+
 _SAFE_MESSAGES: Final[dict[type[Exception], str]] = {
-    openai.RateLimitError: "Our AI provider is rate-limiting us. Please retry in a minute.",
-    openai.APITimeoutError: "The AI provider timed out. Please retry.",
-    openai.APIConnectionError: "Could not reach the AI provider. Please retry.",
-    openai.AuthenticationError: "AI provider authentication failed. Contact support.",
-    openai.BadRequestError: "The job description could not be processed. Please check the input and retry.",
-    instructor.exceptions.InstructorRetryException:
+    openai.RateLimitError:
+        "Our AI provider is rate-limiting us. Please retry in a minute.",
+    openai.APITimeoutError:
+        "The AI provider timed out. Please retry.",
+    openai.APIConnectionError:
+        "Could not reach the AI provider. Please retry.",
+    openai.AuthenticationError:
+        "AI provider authentication failed. Contact support.",
+    openai.BadRequestError:
+        "The job description could not be processed. Please check the input and retry.",
+    instructor.exceptions.InstructorRetryException:  # VERIFY name on Day 1 — Task 5
         "The AI response did not match the expected format after retries. Please retry.",
 }
 
-_DEFAULT_MESSAGE: Final[str] = "Extraction failed — please retry. Contact support if this persists."
+_DEFAULT_MESSAGE: Final[str] = (
+    "Extraction failed — please retry. Contact support if this persists."
+)
 
 
 def sanitize_error_for_user(exc: Exception) -> str:
@@ -776,6 +954,12 @@ No exceptions, including the Dramatiq actor."""
 
 from typing import Final
 
+# IllegalTransitionError is defined in app/modules/jd/errors.py so that
+# exception handlers and other modules can import it without pulling in
+# the state machine module itself.
+from app.modules.jd.errors import IllegalTransitionError
+
+
 LEGAL_TRANSITIONS: Final[dict[str, set[str]]] = {
     "draft": {"signals_extracting"},
     "signals_extracting": {"signals_extracted", "signals_extraction_failed"},
@@ -784,16 +968,6 @@ LEGAL_TRANSITIONS: Final[dict[str, set[str]]] = {
     # Future states (2B/2C/2D) added here:
     # "signals_confirmed", "template_generating", ...
 }
-
-
-class IllegalTransitionError(Exception):
-    """Raised when code attempts an illegal state transition.
-    Caught at the router layer and returned as HTTP 409 Conflict."""
-
-    def __init__(self, from_state: str, to_state: str) -> None:
-        self.from_state = from_state
-        self.to_state = to_state
-        super().__init__(f"Illegal transition: {from_state} → {to_state}")
 
 
 async def transition(
@@ -1413,7 +1587,7 @@ Items consciously accepted as 2A gaps, documented so future phases can pick them
 | 6 | **`/api/admin/prompts/reload` endpoint** | `PromptLoader` supports hot-reload conceptually; endpoint not built in 2A. Restart the worker to reload. | When A/B testing begins |
 | 7 | **Per-tenant OpenAI API key isolation** | Single OpenAI key for the entire backend. Enterprise-mode per-tenant key support deferred. | Enterprise tier |
 | 8 | **Correlation ID stored on `job_posting` row** | Langfuse has it via trace metadata, audit log has it. No DB column yet. Add if forensic search from the DB becomes necessary. | 2B if needed |
-| 9 | **Dual-write risk: DB commit + Dramatiq enqueue are not atomic** | `create_job_posting()` commits the row and then enqueues the actor. If the enqueue call fails (Redis down, network partition) AFTER the commit succeeds, the row sits in `signals_extracting` forever without an actor to process it. **Mitigations in place in 2A:** (a) the retry endpoint (`POST /api/jobs/{id}/retry`) accepts jobs stuck in `signals_extracting` as well as `signals_extraction_failed` — the state machine allows the `signals_extracting → signals_extracting` re-dispatch as a no-op transition with a fresh enqueue attempt; (b) the actor's idempotency guard (`if job.status != 'signals_extracting': return`) prevents double-processing if the original actor does eventually run. **Not mitigated:** no background janitor that detects and auto-re-enqueues stuck jobs. Fix in a future phase via the transactional outbox pattern (enqueue row in a `dispatch_queue` table inside the same transaction as the job_posting insert, worker drains the outbox) or a periodic sweep. | Post-MVP hardening |
+| 9 | **Dual-write risk: DB commit + Dramatiq enqueue are not atomic** | `create_job_posting()` commits the row and then enqueues the actor. If the enqueue call fails (Redis down, network partition) AFTER the commit succeeds, the row sits in `signals_extracting` forever with no actor to process it and **no automatic recovery in 2A**. The state machine only permits `signals_extraction_failed → signals_extracting`, and the retry endpoint's precondition is `status == 'signals_extraction_failed'` — a `signals_extracting` row cannot be rescued through the public API. **Manual recovery procedure in 2A:** operator uses direct DB access to run `UPDATE job_postings SET status = 'signals_extraction_failed', status_error = 'Stuck in extraction — manual reset' WHERE id = ...`, after which the recruiter can hit `POST /api/jobs/{id}/retry` from the UI. **Partial mitigation that IS in place:** the actor's idempotency guard (`if job.status != 'signals_extracting': return`) prevents double-processing if a duplicate dispatch ever reaches it. **Not mitigated:** (a) no detection of stuck jobs — operators must be told by users that something is broken; (b) no automatic timeout that flips `signals_extracting` to `signals_extraction_failed` after N minutes; (c) no background janitor that re-enqueues orphaned jobs. **Future fix paths:** (1) transactional outbox pattern — write an `outbox` row in the same DB transaction as the job_posting insert, a background worker drains the outbox and enqueues actors; (2) periodic sweep task that finds `signals_extracting` rows older than N minutes and transitions them to `signals_extraction_failed`; (3) API-level retry that explicitly allows `signals_extracting → signals_extracting` as an idempotent re-dispatch with admin-only RBAC. | Post-MVP hardening |
 | 10 | **`updated_at` column frozen on Phase 1 tables** | Phase 1 has no trigger function for `updated_at` across `clients`, `users`, `organizational_units`, and other tables. Those columns stamp on INSERT via `DEFAULT NOW()` but never update on UPDATE. 2A's Migration 2 creates `public.set_updated_at()` as a reusable function and applies it to `job_postings`. Retrofitting Phase 1 tables is a small Supabase migration that should ship as a cross-cutting cleanup. | Cross-cutting cleanup PR |
 
 ---
@@ -1465,6 +1639,26 @@ These MUST be the first tasks in the implementation plan before any new code is 
 2. If it returns a 400 with a message about unknown parameters, try `extra_body={"reasoning_effort": "medium"}`. If the model belongs to the `responses` endpoint, switch to `client.responses.create(...)`.
 3. Document the correct call shape in the Task 4 findings note **and update the actor code sketch in this spec before writing `app/modules/jd/actors.py`**.
 4. Also verify the same call shape works via `instructor.from_openai()` — `instructor` wraps `chat.completions.create` by default but may need a different mode for the responses endpoint.
+
+### Task 5 — Verify `instructor` exception class name
+
+**Why:** `app/modules/jd/errors.py` references `instructor.exceptions.InstructorRetryException` in the `_SAFE_MESSAGES` mapping. The exact class name differs across `instructor` versions — it may be `InstructorRetryException`, `RetryException`, `IncompleteOutputException`, or `ValidationError` depending on which failure mode triggered the retry exhaustion. Referencing a wrong name at import time crashes the worker on boot; referencing a wrong name at runtime means the exception falls through to the generic "Extraction failed — please retry" message instead of the more specific "AI response did not match the expected format" message. Neither is a security issue (both are safe strings) but the import-time crash would block all Call 1 processing.
+
+**How:**
+```bash
+docker compose run nexus python -c \
+  "import instructor.exceptions; print(dir(instructor.exceptions))"
+```
+
+Also grep the installed package for the class that's actually raised after retry exhaustion:
+```bash
+docker compose run nexus python -c \
+  "import inspect, instructor; print(inspect.getsourcefile(instructor))"
+# then cat the exceptions module and confirm the class name raised after
+# max_retries is exceeded
+```
+
+**If the class is named differently:** update the import path and the `_SAFE_MESSAGES` key in `errors.py` before writing the actor. If `instructor.exceptions` doesn't exist as a module at all (the package may have moved it), update the import accordingly.
 
 ---
 
