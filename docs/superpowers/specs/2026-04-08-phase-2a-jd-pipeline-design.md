@@ -108,6 +108,7 @@ This spec is the product of 16 explicit clarifying questions answered by the use
 │    actors.py        @dramatiq.actor extract_and_enhance_jd                 │
 │    state_machine.py LEGAL_TRANSITIONS + transition() helper                │
 │    authz.py         require_job_access() — ancestry walk                   │
+│    errors.py        sanitize_error_for_user() — safe status_error strings  │
 │    sse.py           event generator (poll job_postings.status every 1.5s)  │
 │                                                                            │
 │  app/ai/                                                                   │
@@ -188,6 +189,22 @@ UPDATE organizational_units
 -- (Future: signals_confirmed, template_generating, template_draft,
 --  hm_review_pending, hm_reviewed, template_approved, screening_active, closed)
 
+-- ----------------------------------------------------------------------------
+-- updated_at trigger function (created fresh in 2A — Phase 1 has a latent gap:
+-- updated_at columns exist across Phase 1 tables but are never updated on
+-- UPDATE because no trigger function was ever created. Fixing Phase 1 tables
+-- retroactively is out of scope for 2A and listed in Deferred Hardening, but
+-- 2A tables get the correct behavior from the start.
+-- ----------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.set_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
 CREATE TABLE job_postings (
     id                        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id                 UUID NOT NULL REFERENCES clients(id),
@@ -212,6 +229,12 @@ CREATE TABLE job_postings (
 CREATE INDEX idx_job_postings_tenant_org_unit ON job_postings (tenant_id, org_unit_id);
 CREATE INDEX idx_job_postings_status          ON job_postings (tenant_id, status);
 CREATE INDEX idx_job_postings_created_at      ON job_postings (tenant_id, created_at DESC);
+
+-- updated_at trigger — fires BEFORE UPDATE, stamps NOW() on every modification
+CREATE TRIGGER set_job_postings_updated_at
+    BEFORE UPDATE ON job_postings
+    FOR EACH ROW
+    EXECUTE FUNCTION public.set_updated_at();
 
 -- RLS — mandatory per backend CLAUDE.md
 ALTER TABLE job_postings ENABLE ROW LEVEL SECURITY;
@@ -422,6 +445,10 @@ class ExtractionOutput(BaseModel):
 
 ### `app/modules/jd/` — Business logic
 
+**API prefix convention: `/api/jobs` — matching Phase 1.**
+
+Every Phase 1 router uses `/api/<module>` without any `/v1/` segment (verified across `auth`, `admin`, `settings`, `org-units`, `roles`, and the existing `jd/router.py` stub). The original vision document showed `/api/v1/jd/...` in some prose examples — that was an inconsistency with Phase 1, not a deliberate versioning strategy. **All 2A endpoints use `/api/jobs`**. If API versioning is introduced later, it will be applied as a cross-cutting migration to all modules at once, not one phase at a time.
+
 **`app/modules/jd/router.py`** (selected endpoints)
 
 ```python
@@ -542,7 +569,25 @@ async def list_job_postings(
     user: UserContext,
     org_unit_id: UUID | None = None,
     status: str | None = None,
-) -> list[JobPostingSummary]: ...
+) -> list[JobPostingSummary]:
+    """List jobs the user can view.
+
+    IMPLEMENTATION NOTE — verify before implementing:
+    A user may hold 'jobs.view' in multiple org units via different role
+    assignments (e.g., recruiter in Division A AND in Division B). The
+    listing query must return jobs visible in the UNION of all such
+    ancestries, not just the first one.
+
+    Two possible shapes:
+      1. WHERE job.org_unit_id IN (<flat list of user's visible units +
+         all descendants of those units>) — requires computing the set
+         of visible unit IDs up-front via a recursive CTE.
+      2. EXISTS correlated subquery against user_role_assignments walking
+         ancestry per row — simpler query but O(N) per row.
+
+    Option 1 is strictly better for pagination and count queries.
+    Pick option 1 unless profiling says otherwise. The set of visible
+    unit IDs is small (usually <100) so the IN clause is fine."""
 
 
 async def retry_failed_extraction(db: AsyncSession, job_id: UUID) -> None:
@@ -623,12 +668,21 @@ async def extract_and_enhance_jd(
                 },
             )
         except Exception as exc:
+            # Log full exception (exc_info) to structlog — this goes to stdout/Sentry
+            # and is safe because log sinks are trusted.
             log.error("jd.actor.call1_failed", exc_info=exc)
             current = CurrentMessage.get_current_message()
             retries_so_far = current.options.get("retries", 0) if current else 0
             if retries_so_far >= 2:
-                # Final attempt — transition to _failed and commit
-                await mark_extraction_failed(db, job_posting_id, str(exc))
+                # Final attempt — transition to _failed and commit.
+                # IMPORTANT: sanitize the exception before storing it in
+                # job_posting.status_error. The raw str(exc) may contain API URLs,
+                # keys, request IDs, or internal paths that must never reach the
+                # frontend. sanitize_error_for_user() maps exception TYPES to
+                # fixed user-facing strings; unrecognized types become the
+                # generic "Extraction failed — please retry".
+                safe_message = sanitize_error_for_user(exc)
+                await mark_extraction_failed(db, job_posting_id, safe_message)
                 await db.commit()
             raise   # Dramatiq retries on all non-final exceptions
 
@@ -664,6 +718,53 @@ def _build_user_message(job: JobPosting, profile: dict | None) -> str:
 ```
 
 **Failure transition timing:** the state transition to `signals_extraction_failed` happens **only on the final retry attempt**. Intermediate retries leave the row in `signals_extracting` so the frontend SSE stream keeps polling without showing "failed" flicker that self-heals on retry.
+
+**`app/modules/jd/errors.py`** — error sanitization helper
+
+```python
+"""User-facing error sanitization for job_posting.status_error.
+
+The raw str(exc) from an OpenAI / HTTP / validation failure may leak:
+- API URLs (https://api.openai.com/v1/chat/completions)
+- API keys or bearer tokens embedded in headers
+- Request IDs that identify internal infrastructure
+- Stack-trace fragments with file paths
+- Prompt content (on validation errors, instructor may echo the payload)
+
+This helper maps exception TYPES to fixed, safe, user-facing strings.
+The rich exception detail is still captured in structlog / Sentry — we
+only sanitize what reaches the DB and the frontend."""
+
+from typing import Final
+
+import openai
+import instructor
+
+_SAFE_MESSAGES: Final[dict[type[Exception], str]] = {
+    openai.RateLimitError: "Our AI provider is rate-limiting us. Please retry in a minute.",
+    openai.APITimeoutError: "The AI provider timed out. Please retry.",
+    openai.APIConnectionError: "Could not reach the AI provider. Please retry.",
+    openai.AuthenticationError: "AI provider authentication failed. Contact support.",
+    openai.BadRequestError: "The job description could not be processed. Please check the input and retry.",
+    instructor.exceptions.InstructorRetryException:
+        "The AI response did not match the expected format after retries. Please retry.",
+}
+
+_DEFAULT_MESSAGE: Final[str] = "Extraction failed — please retry. Contact support if this persists."
+
+
+def sanitize_error_for_user(exc: Exception) -> str:
+    """Return a safe user-facing message for the given exception.
+
+    Never returns str(exc) or any fragment of the exception args — only
+    fixed strings from the mapping above."""
+    for exc_type, message in _SAFE_MESSAGES.items():
+        if isinstance(exc, exc_type):
+            return message
+    return _DEFAULT_MESSAGE
+```
+
+The mapping starts minimal. New exception types are added as they're observed in production (via the unmapped-default branch, logged with exception type at WARN).
 
 **`app/modules/jd/state_machine.py`**
 
@@ -869,10 +970,11 @@ frontend/app/
 │   ├── api/
 │   │   ├── client.ts                    ← existing apiFetch() — unchanged
 │   │   └── jobs.ts                      ← NEW typed namespace
+│   ├── auth/
+│   │   └── tokens.ts                    ← NEW — getFreshSupabaseToken() helper
 │   └── hooks/
 │       ├── use-job-status-stream.ts     ← NEW — fetch-event-source wrapper
-│       ├── use-job.ts                   ← NEW — TanStack Query wrapper
-│       └── use-fresh-token.ts           ← NEW — cached Supabase token getter
+│       └── use-job.ts                   ← NEW — TanStack Query wrapper
 └── app/(dashboard)/
     ├── providers.tsx                    ← NEW — DashboardProviders
     ├── layout.tsx                       ← existing — wraps children in providers
@@ -949,8 +1051,57 @@ Two data sources:
 1. **TanStack Query** — full job payload from `GET /api/jobs/{id}`. Cached, invalidated on status change.
 2. **SSE status stream** — `useJobStatusStream(jobId)` hook that connects to `/api/jobs/{id}/status/stream`. On every status event, local state updates AND `queryClient.invalidateQueries(['jobs', jobId])` fires so the cached payload refreshes.
 
+**Supporting module — `lib/auth/tokens.ts`:**
+
 ```typescript
-// lib/hooks/use-job-status-stream.ts — corrected pattern
+// Fetches the current Supabase access token, refreshing if necessary.
+// Used by useJobStatusStream and the apiFetch() client.
+
+import { createClient } from '@/lib/supabase/client'
+
+export async function getFreshSupabaseToken(): Promise<string> {
+  const supabase = createClient()
+  const { data, error } = await supabase.auth.getSession()
+  if (error || !data.session) {
+    throw new Error('No active Supabase session')
+  }
+  return data.session.access_token
+}
+```
+
+No in-memory caching layer. `@supabase/ssr` already caches the session in cookies and auto-refreshes on expiry; re-calling `getSession()` is cheap. Adding a second cache layer would risk serving a stale token.
+
+**Supporting hook — `lib/hooks/use-job.ts`:**
+
+```typescript
+// TanStack Query wrapper for a single job. Used by the /jobs/[jobId] page.
+
+import { useQuery } from '@tanstack/react-query'
+import { jobsApi, JobPostingWithSnapshot } from '@/lib/api/jobs'
+import { getFreshSupabaseToken } from '@/lib/auth/tokens'
+
+export function useJob(jobId: string) {
+  return useQuery<JobPostingWithSnapshot>({
+    queryKey: ['jobs', jobId],
+    queryFn: async () => {
+      const token = await getFreshSupabaseToken()
+      return jobsApi.get(token, jobId)
+    },
+    enabled: !!jobId,
+    staleTime: 5_000,
+  })
+}
+```
+
+Query keys follow the pattern `['jobs', jobId]` so `useJobStatusStream` can invalidate them directly on every SSE event. No Zustand, no cross-hook coordination — the cache is the single source of truth.
+
+**SSE hook — `lib/hooks/use-job-status-stream.ts`:**
+
+```typescript
+// Corrected pattern — token fetched before opening SSE connection.
+// async/await CANNOT be used inside a synchronous object literal,
+// so we fetch the token in a .then() before calling fetchEventSource.
+
 import { fetchEventSource } from '@microsoft/fetch-event-source'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
@@ -1073,9 +1224,16 @@ Enforcement lives in **three places — defense in depth**:
 2. **Service-layer guards** — `retry_failed_extraction()` explicitly checks `job.status == 'signals_extraction_failed'`; `create_job_posting()` seeds `'draft'` then calls `transition()` to advance atomically.
 3. **Audit log rows** — every transition writes an `audit_log` entry with `action='job_posting.status_changed'` and payload `{from, to, correlation_id}`. Forensic record for any unexpected state.
 
-**Router error handling contract:** the FastAPI exception handler for `IllegalTransitionError` returns **HTTP 409 Conflict** with a human-readable message. It never propagates as 500. Example messages:
-- `{"detail": "Job is already being processed"}` — when POST /retry is called on a job in `signals_extracting`
-- `{"detail": "Retry is only valid after an extraction failure"}` — when POST /retry is called on a job in `signals_extracted`
+**Router error handling contract:** the FastAPI exception handler for `IllegalTransitionError` returns **HTTP 409 Conflict** with a human-readable message keyed on the `(from_state, to_state)` pair. It never propagates as 500. Required message mapping:
+
+| From state | Attempted transition | 409 message |
+|---|---|---|
+| `signals_extracting` | `signals_extracting` (retry pressed twice) | `"Job is already being processed"` |
+| `signals_extracted` | `signals_extracting` (retry on a completed job) | `"This job has already been extracted successfully — retry is only valid after an extraction failure"` |
+| `draft` | `signals_extracted` (defensive; should never fire) | `"Job cannot transition directly from draft to extracted"` |
+| fallback | any | `"Cannot transition job from {from} to {to}"` |
+
+The mapping lives in a small dispatch dict inside the exception handler, keyed on `(exc.from_state, exc.to_state)`. New phases extend the dict as they add transitions.
 
 **Not enforced at the DB layer in 2A.** A Postgres trigger or enum-based CHECK constraint is overkill when the app is the only writer and the transition set is small. Revisit in 2C when the state machine grows to 11+ states.
 
@@ -1255,6 +1413,8 @@ Items consciously accepted as 2A gaps, documented so future phases can pick them
 | 6 | **`/api/admin/prompts/reload` endpoint** | `PromptLoader` supports hot-reload conceptually; endpoint not built in 2A. Restart the worker to reload. | When A/B testing begins |
 | 7 | **Per-tenant OpenAI API key isolation** | Single OpenAI key for the entire backend. Enterprise-mode per-tenant key support deferred. | Enterprise tier |
 | 8 | **Correlation ID stored on `job_posting` row** | Langfuse has it via trace metadata, audit log has it. No DB column yet. Add if forensic search from the DB becomes necessary. | 2B if needed |
+| 9 | **Dual-write risk: DB commit + Dramatiq enqueue are not atomic** | `create_job_posting()` commits the row and then enqueues the actor. If the enqueue call fails (Redis down, network partition) AFTER the commit succeeds, the row sits in `signals_extracting` forever without an actor to process it. **Mitigations in place in 2A:** (a) the retry endpoint (`POST /api/jobs/{id}/retry`) accepts jobs stuck in `signals_extracting` as well as `signals_extraction_failed` — the state machine allows the `signals_extracting → signals_extracting` re-dispatch as a no-op transition with a fresh enqueue attempt; (b) the actor's idempotency guard (`if job.status != 'signals_extracting': return`) prevents double-processing if the original actor does eventually run. **Not mitigated:** no background janitor that detects and auto-re-enqueues stuck jobs. Fix in a future phase via the transactional outbox pattern (enqueue row in a `dispatch_queue` table inside the same transaction as the job_posting insert, worker drains the outbox) or a periodic sweep. | Post-MVP hardening |
+| 10 | **`updated_at` column frozen on Phase 1 tables** | Phase 1 has no trigger function for `updated_at` across `clients`, `users`, `organizational_units`, and other tables. Those columns stamp on INSERT via `DEFAULT NOW()` but never update on UPDATE. 2A's Migration 2 creates `public.set_updated_at()` as a reusable function and applies it to `job_postings`. Retrofitting Phase 1 tables is a small Supabase migration that should ship as a cross-cutting cleanup. | Cross-cutting cleanup PR |
 
 ---
 
@@ -1284,6 +1444,28 @@ These MUST be the first tasks in the implementation plan before any new code is 
 
 **How:** `docker compose run nexus python -c "from langfuse.openai import AsyncOpenAI; print(AsyncOpenAI)"`. If import fails, pin the correct path and update the design before writing `app/ai/client.py`.
 
+### Task 4 — Verify `reasoning_effort` parameter shape for the target model
+
+**Why:** The actor sketch in this spec passes `reasoning_effort=ai_config.extraction_effort` as a top-level kwarg to `client.chat.completions.create(...)`. For GPT-5-series models the parameter **may not be a top-level kwarg** — depending on SDK version and model endpoint, it may need to go into `extra_body={"reasoning_effort": ...}` or `response_format={"reasoning_effort": ...}`, or it may only be supported on the `client.responses.create(...)` endpoint rather than `chat.completions.create`. Getting this wrong means every Call 1 returns `400 Bad Request` at runtime and the retry loop burns through all three attempts before transitioning to `signals_extraction_failed`.
+
+**How:**
+1. After Task 2 (verified model ID), run a minimal standalone script that calls the target model with `reasoning_effort="medium"` via the chosen SDK path:
+   ```python
+   import openai, asyncio
+   async def probe():
+       c = openai.AsyncOpenAI(api_key=KEY)
+       r = await c.chat.completions.create(
+           model="<verified_id>",
+           reasoning_effort="medium",
+           messages=[{"role": "user", "content": "Say hi"}],
+       )
+       print(r)
+   asyncio.run(probe())
+   ```
+2. If it returns a 400 with a message about unknown parameters, try `extra_body={"reasoning_effort": "medium"}`. If the model belongs to the `responses` endpoint, switch to `client.responses.create(...)`.
+3. Document the correct call shape in the Task 4 findings note **and update the actor code sketch in this spec before writing `app/modules/jd/actors.py`**.
+4. Also verify the same call shape works via `instructor.from_openai()` — `instructor` wraps `chat.completions.create` by default but may need a different mode for the responses endpoint.
+
 ---
 
 ## Acceptance Criteria
@@ -1299,7 +1481,10 @@ Phase 2A is complete when **all of the following** are true:
 - [ ] `app/modules/jd/` implements: `router.py` (5 endpoints), `service.py`, `actors.py`, `state_machine.py`, `authz.py`, `sse.py`.
 - [ ] `app/worker.py` exists; `docker-compose.yml` has the `nexus-worker` service.
 - [ ] `ALL_PERMISSIONS` frozenset includes `jobs.view`; migration 3 seeds it into system roles.
-- [ ] FastAPI exception handler catches `IllegalTransitionError` → 409 Conflict.
+- [ ] FastAPI exception handler catches `IllegalTransitionError` → 409 Conflict with the state-specific message mapping.
+- [ ] Every `job_posting.status` transition writes an `audit_log` row with `action='job_posting.status_changed'` and payload containing `{from, to, correlation_id}`. Verified by an integration test that counts audit_log rows after a full happy-path flow.
+- [ ] `job_postings.updated_at` correctly advances on every UPDATE (verified by a trivial integration test that reads the column before and after a status transition).
+- [ ] `sanitize_error_for_user()` is called on every failure path before writing to `job_posting.status_error`. Integration test mocks `openai.RateLimitError` and asserts the stored message is the mapped string, NOT `str(exc)`.
 - [ ] All backend tests listed in Testing Strategy pass.
 - [ ] RLS enabled on `job_postings`, `job_posting_signal_snapshots`, `sessions` with both `tenant_isolation` and `service_role_bypass` policies.
 
