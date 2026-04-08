@@ -33,13 +33,16 @@ async def create_job_posting(
     deadline: date | None,
     correlation_id: str,
 ) -> JobPosting:
-    """Atomic:
-      1. Validate company_profile completeness via ancestry walk.
-      2. INSERT job_postings row in 'draft'.
-      3. Flush so the row has an ID.
-      4. Transition draft → signals_extracting via state_machine.transition().
-      5. Enqueue the Dramatiq actor (lazy import to break cycle).
-    Caller is responsible for db.commit().
+    """Validate profile ancestry, INSERT job_postings in 'draft', transition
+    to 'signals_extracting'. DOES NOT commit and DOES NOT enqueue the actor.
+
+    Commit is handled by the dependency's context manager (get_tenant_db
+    wraps the session in `async with session.begin()` — auto-commits on
+    successful exit). Enqueue is handled by the router via FastAPI
+    BackgroundTasks so the .send() call happens AFTER the transaction
+    commits — this narrows (but does not eliminate) the dual-write race
+    where a fast worker could dequeue before the DB commit lands. See
+    Deferred Hardening #9 in the spec.
 
     Raises:
         CompanyProfileIncompleteError: no ancestor has a completed profile.
@@ -71,15 +74,6 @@ async def create_job_posting(
         correlation_id=correlation_id,
     )
     await db.flush()
-
-    # Lazy import to avoid circular dependency (actors → service for persist)
-    from app.modules.jd.actors import extract_and_enhance_jd
-
-    extract_and_enhance_jd.send(
-        job_posting_id=str(job.id),
-        tenant_id=str(tenant_id),
-        correlation_id=correlation_id,
-    )
 
     logger.info(
         "jd.service.created",
@@ -158,7 +152,9 @@ async def retry_failed_extraction(
 ) -> JobPosting:
     """Precondition: job.status == 'signals_extraction_failed'.
     Transitions via state_machine (which enforces the precondition) and
-    re-enqueues the actor. Caller commits."""
+    clears status_error. DOES NOT commit and DOES NOT enqueue the actor —
+    the router handles both via BackgroundTasks (see create_job_posting
+    docstring for rationale)."""
     result = await db.execute(select(JobPosting).where(JobPosting.id == job_id))
     job = result.scalar_one()
 
@@ -172,11 +168,4 @@ async def retry_failed_extraction(
     job.status_error = None  # clear the previous error message
     await db.flush()
 
-    from app.modules.jd.actors import extract_and_enhance_jd
-
-    extract_and_enhance_jd.send(
-        job_posting_id=str(job.id),
-        tenant_id=str(job.tenant_id),
-        correlation_id=correlation_id,
-    )
     return job

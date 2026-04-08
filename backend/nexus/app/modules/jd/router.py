@@ -7,13 +7,14 @@ orchestration only. API prefix /api/jobs matches the Phase 1 convention
 import uuid
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from app.database import get_tenant_db
 from app.models import JobPostingSignalSnapshot
 from app.modules.auth.context import UserContext, get_current_user_roles
+from app.modules.jd.actors import extract_and_enhance_jd
 from app.modules.jd.authz import _get_org_unit_ancestry, require_job_access
 from app.modules.jd.schemas import (
     JobPostingCreate,
@@ -97,6 +98,7 @@ def _visible_unit_ids(user: UserContext, permission: str) -> list[UUID] | None:
 async def create_job(
     body: JobPostingCreate,
     request: Request,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_tenant_db),
     user: UserContext = Depends(get_current_user_roles),
 ) -> JobPostingWithSnapshot:
@@ -121,9 +123,27 @@ async def create_job(
         deadline=body.deadline,
         correlation_id=correlation_id,
     )
-    await db.commit()
-    job, snap = await get_job_posting_with_latest_snapshot(db, job.id)
-    return _job_with_snapshot_to_response(job, snap)
+
+    # Enqueue the Dramatiq actor AFTER the response is sent. FastAPI's
+    # BackgroundTasks run after the dependency's `async with session.begin()`
+    # context manager exits (which auto-commits the transaction), so the
+    # worker is guaranteed to see the committed job row when it dequeues.
+    # Do NOT call db.commit() manually — that closes the outer transaction
+    # and any subsequent query on `db` raises "closed transaction".
+    background_tasks.add_task(
+        extract_and_enhance_jd.send,
+        job_posting_id=str(job.id),
+        tenant_id=str(user.user.tenant_id),
+        correlation_id=correlation_id,
+    )
+
+    # Build response directly from the in-memory job. latest_snapshot is
+    # always None at creation time (the actor hasn't run yet). expire_on_commit
+    # is False on async_session_factory, so attribute access after the
+    # dependency's auto-commit remains safe — but we don't rely on that:
+    # we build the response BEFORE returning, while the session is still
+    # alive inside the context manager.
+    return _job_with_snapshot_to_response(job, None)
 
 
 @router.get("", response_model=list[JobPostingSummary])
@@ -171,6 +191,7 @@ async def stream_status(
 async def retry_extraction(
     job_id: UUID,
     request: Request,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_tenant_db),
     user: UserContext = Depends(get_current_user_roles),
 ) -> JobPostingSummary:
@@ -182,5 +203,14 @@ async def retry_extraction(
         actor_id=user.user.id,
         correlation_id=correlation_id,
     )
-    await db.commit()
+
+    # Same post-commit enqueue pattern as create_job (see that handler for
+    # the full rationale).
+    background_tasks.add_task(
+        extract_and_enhance_jd.send,
+        job_posting_id=str(job.id),
+        tenant_id=str(job.tenant_id),
+        correlation_id=correlation_id,
+    )
+
     return _job_to_summary(job)

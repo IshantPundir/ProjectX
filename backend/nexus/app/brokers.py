@@ -16,8 +16,18 @@ app.modules.*) ensures no circular import risk."""
 
 import dramatiq
 from dramatiq.brokers.redis import RedisBroker
+from dramatiq.middleware import AsyncIO
 
 from app.config import settings
 
 broker = RedisBroker(url=settings.redis_url)
+
+# AsyncIO middleware is REQUIRED for `async def` @dramatiq.actor functions.
+# Without it, the worker raises:
+#   RuntimeError: Global event loop thread not set. Have you added the
+#   AsyncIO middleware to your middleware stack?
+# The middleware spawns a background thread running an asyncio event loop
+# that async actors get scheduled onto. Sync actors are unaffected.
+broker.add_middleware(AsyncIO())
+
 dramatiq.set_broker(broker)

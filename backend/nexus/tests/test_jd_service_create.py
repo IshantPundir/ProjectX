@@ -1,4 +1,9 @@
-"""Tests for JD service create_job_posting — happy path + profile-gate failure."""
+"""Tests for JD service create_job_posting — happy path + profile-gate failure.
+
+Note: these tests exercise the service layer only. The service no longer
+enqueues the Dramatiq actor — that's the router's responsibility via
+FastAPI BackgroundTasks (to ensure .send() runs AFTER the DB commit).
+Router-level integration tests in test_jd_router.py verify the full flow."""
 
 import pytest
 
@@ -15,7 +20,9 @@ _VALID_PROFILE = {
 
 
 @pytest.mark.asyncio
-async def test_create_job_posting_happy_path(db, monkeypatch):
+async def test_create_job_posting_happy_path(db):
+    """Service creates the row, transitions state, and does NOT enqueue.
+    Enqueue is the router's responsibility via BackgroundTasks."""
     tenant = await create_test_client(db)
     await db.flush()
     user = await create_test_user(db, tenant.id)
@@ -26,15 +33,6 @@ async def test_create_job_posting_happy_path(db, monkeypatch):
         db, tenant.id, unit_type="team", parent_unit_id=company.id,
     )
     await db.flush()
-
-    # Stub Dramatiq dispatch so the test doesn't actually enqueue
-    dispatched: list = []
-    def fake_send(*args, **kwargs):
-        dispatched.append((args, kwargs))
-    monkeypatch.setattr(
-        "app.modules.jd.actors.extract_and_enhance_jd.send",
-        fake_send,
-    )
 
     job = await create_job_posting(
         db,
@@ -52,22 +50,17 @@ async def test_create_job_posting_happy_path(db, monkeypatch):
 
     assert job.status == "signals_extracting"
     assert job.title == "Sr. Integration Engineer"
-    assert len(dispatched) == 1
+    assert job.description_enriched is None  # actor hasn't run yet
 
 
 @pytest.mark.asyncio
-async def test_create_job_posting_blocks_without_profile(db, monkeypatch):
+async def test_create_job_posting_blocks_without_profile(db):
     tenant = await create_test_client(db)
     await db.flush()
     user = await create_test_user(db, tenant.id)
     # division has NO company_profile and no ancestor with one
     division = await create_test_org_unit(db, tenant.id, unit_type="division")
     await db.flush()
-
-    monkeypatch.setattr(
-        "app.modules.jd.actors.extract_and_enhance_jd.send",
-        lambda *a, **k: None,
-    )
 
     with pytest.raises(CompanyProfileIncompleteError):
         await create_job_posting(
