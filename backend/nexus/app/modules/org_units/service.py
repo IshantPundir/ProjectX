@@ -1,18 +1,37 @@
 """Org unit CRUD and role assignment service."""
 
 import uuid as uuid_mod
+from datetime import UTC, datetime
+from uuid import UUID
 
 import structlog
+from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import OrganizationalUnit, Role, User, UserRoleAssignment
 from app.modules.audit import actions as audit_actions
 from app.modules.audit.service import log_event
+from app.modules.org_units.company_profile import CompanyProfile
 
 logger = structlog.get_logger()
 
 VALID_UNIT_TYPES = {"company", "division", "client_account", "region", "team"}
+
+
+def _validate_and_normalize_company_profile(profile: dict | None) -> dict | None:
+    """Strict validation of the 4-field Phase 2A company profile shape.
+    Returns the validated dict (Pydantic round-trip) or raises ValueError
+    with a user-facing message."""
+    if profile is None:
+        return None
+    try:
+        return CompanyProfile(**profile).model_dump()
+    except ValidationError as e:
+        raise ValueError(
+            "Company profile validation failed: "
+            + "; ".join(f"{err['loc'][0]}: {err['msg']}" for err in e.errors())
+        )
 
 
 async def create_org_unit(
@@ -49,6 +68,9 @@ async def create_org_unit(
     if unit_type in ("company", "client_account") and not company_profile:
         raise ValueError(f"A company_profile is required for units of type '{unit_type}'.")
 
+    # Strict shape validation (Phase 2A 4-field schema)
+    validated_profile = _validate_and_normalize_company_profile(company_profile)
+
     # Rule 4: client_account only in agency workspaces
     if unit_type == "client_account" and workspace_mode != "agency":
         raise ValueError("Client accounts are only available in agency workspaces.")
@@ -76,10 +98,15 @@ async def create_org_unit(
         created_by=created_by,
         deletable_by=created_by,
         is_root=(unit_type == "company"),
-        company_profile=company_profile,
+        company_profile=validated_profile,
     )
     db.add(unit)
     await db.flush()
+
+    # Stamp completion tracking columns if a profile was saved
+    if validated_profile is not None:
+        unit.company_profile_completed_at = datetime.now(UTC)
+        unit.company_profile_completed_by = created_by
 
     # Admin inheritance: copy Admin role assignments from parent
     if parent_unit_id is not None:
@@ -336,7 +363,11 @@ async def update_org_unit(
     if set_company_profile:
         if unit.unit_type in ("company", "client_account") and not company_profile:
             raise ValueError(f"A company_profile is required for units of type '{unit.unit_type}'.")
-        unit.company_profile = company_profile
+        validated_profile = _validate_and_normalize_company_profile(company_profile)
+        unit.company_profile = validated_profile
+        if validated_profile is not None:
+            unit.company_profile_completed_at = datetime.now(UTC)
+            unit.company_profile_completed_by = actor_id
 
     after = {
         "name": unit.name,
@@ -661,3 +692,31 @@ async def nullify_deletable_by_for_user(
         .values(deletable_by=None)
     )
     return result.rowcount
+
+
+async def find_company_profile_in_ancestry(
+    db: AsyncSession, org_unit_id: UUID
+) -> dict | None:
+    """Walk parent_unit_id chain from the given unit up to root.
+    Return the first company_profile dict encountered. None if no ancestor
+    has one.
+
+    Used by create_job_posting() to validate that a JD can be created under
+    a given org unit, and by the Dramatiq actor's _build_user_message() to
+    pass company context into Call 1."""
+    current_id: UUID | None = org_unit_id
+    seen: set[UUID] = set()
+    while current_id is not None:
+        if current_id in seen:
+            return None  # defensive: corrupted data loop
+        seen.add(current_id)
+        result = await db.execute(
+            select(OrganizationalUnit).where(OrganizationalUnit.id == current_id)
+        )
+        unit = result.scalar_one_or_none()
+        if unit is None:
+            return None
+        if unit.company_profile:
+            return unit.company_profile
+        current_id = unit.parent_unit_id
+    return None

@@ -11,13 +11,10 @@ from app.modules.org_units.service import create_org_unit, delete_org_unit, upda
 from tests.conftest import create_test_client, create_test_user
 
 PLACEHOLDER_PROFILE = {
-    "display_name": "Test",
-    "industry": "Tech",
-    "company_size": "Startup",
-    "culture_summary": "",
-    "hiring_bar": "",
-    "brand_voice": "professional",
-    "what_good_looks_like": "",
+    "about": "We build real-time risk scoring infrastructure for mid-market lenders.",
+    "industry": "fintech_financial_services",
+    "company_stage": "series_a_b",
+    "hiring_bar": "Engineers who own problems end-to-end with high autonomy.",
 }
 
 

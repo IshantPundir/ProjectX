@@ -58,6 +58,8 @@ class OrganizationalUnit(Base):
     unit_type: Mapped[str] = mapped_column(String, nullable=False)
     is_root: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     company_profile: Mapped[dict | None] = mapped_column(JSONB)
+    company_profile_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    company_profile_completed_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
     deletable_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
     admin_delete_disabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
