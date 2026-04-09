@@ -5,6 +5,17 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { apiFetch } from "@/lib/api/client";
+import {
+  CompanyProfileForm,
+  type CompanyProfile,
+} from "@/components/dashboard/company-profile-form";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 /* ─── Types (match backend schemas exactly) ─── */
 
@@ -183,16 +194,10 @@ export default function OrgUnitDetailPage() {
   const [subUnitType, setSubUnitType] = useState("division");
   const [creatingSubUnit, setCreatingSubUnit] = useState(false);
 
-  // Client account profile modal for sub-unit creation
-  const [showSubUnitProfileModal, setShowSubUnitProfileModal] = useState(false);
-  const [subUnitProfileForm, setSubUnitProfileForm] = useState({
-    display_name: "",
-    industry: "",
-    company_size: "",
-    culture_summary: "",
-    brand_voice: "professional",
-    what_good_looks_like: "",
-  });
+  // Client account profile dialog for sub-unit creation — opened when the
+  // sub-unit create form is submitted with subUnitType === "client_account".
+  // The dialog hosts the shared CompanyProfileForm (Phase 2A 4-field shape).
+  const [showSubUnitProfileDialog, setShowSubUnitProfileDialog] = useState(false);
 
   // Delete unit
   const [deleting, setDeleting] = useState(false);
@@ -338,19 +343,37 @@ export default function OrgUnitDetailPage() {
     }
   }
 
-  function handleCreateSubUnitSubmit(e: React.FormEvent) {
+  async function handleCreateSubUnitSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!subUnitName.trim()) return;
     if (subUnitType === "client_account") {
-      setSubUnitProfileForm({ ...subUnitProfileForm, display_name: subUnitName.trim() });
-      setShowSubUnitProfileModal(true);
+      // Defer to the profile dialog — it drives the actual create.
+      setError("");
+      setShowSubUnitProfileDialog(true);
       return;
     }
-    doCreateSubUnit(null);
+    try {
+      await doCreateSubUnit(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create sub-unit");
+    }
   }
 
-  async function doCreateSubUnit(companyProfile: Record<string, string> | null) {
-    setError("");
+  async function handleSubUnitProfileSubmit(profile: CompanyProfile) {
+    // Called by CompanyProfileForm after Zod validation passes. Re-throw on
+    // failure so RHF resets `isSubmitting` and the dialog stays open for retry.
+    try {
+      await doCreateSubUnit(profile);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create sub-unit");
+      throw err;
+    }
+  }
+
+  // Creates the sub-unit under the current unitId and navigates to the new
+  // unit on success. Throws on failure so callers can reset submission state.
+  // Does NOT call setError — that's the caller's responsibility.
+  async function doCreateSubUnit(companyProfile: CompanyProfile | null) {
     setCreatingSubUnit(true);
     try {
       const token = await getToken();
@@ -368,10 +391,8 @@ export default function OrgUnitDetailPage() {
       setSubUnitName("");
       setSubUnitType("division");
       setShowAddSubUnit(false);
-      setShowSubUnitProfileModal(false);
+      setShowSubUnitProfileDialog(false);
       router.push(`/settings/org-units/${newUnit.id}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create sub-unit");
     } finally {
       setCreatingSubUnit(false);
     }
@@ -1109,122 +1130,38 @@ export default function OrgUnitDetailPage() {
           )}
         </div>
       </div>
-      {/* Client Account Profile Modal for sub-unit creation */}
-      {showSubUnitProfileModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-            <div className="border-b border-zinc-200 px-6 py-4 flex items-center justify-between">
-              <div>
-                <h2 className="text-base font-semibold text-zinc-900">Client Account Profile</h2>
-                <p className="text-xs text-zinc-500 mt-0.5">
-                  Set up the profile for <span className="font-medium">{subUnitName.trim()}</span>
-                </p>
-              </div>
-              <button
-                onClick={() => setShowSubUnitProfileModal(false)}
-                className="text-zinc-400 hover:text-zinc-600 cursor-pointer"
-                aria-label="Close"
-              >
-                <IconX className="w-4 h-4" />
-              </button>
-            </div>
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                doCreateSubUnit({
-                  ...subUnitProfileForm,
-                  display_name: subUnitProfileForm.display_name || subUnitName.trim(),
-                });
-              }}
-              className="px-6 py-5 space-y-4"
-            >
-              <div>
-                <label className="block text-xs font-medium text-zinc-600 mb-1">Display Name</label>
-                <input
-                  type="text"
-                  value={subUnitProfileForm.display_name}
-                  onChange={(e) => setSubUnitProfileForm({ ...subUnitProfileForm, display_name: e.target.value })}
-                  className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent"
-                  placeholder={subUnitName.trim()}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-medium text-zinc-600 mb-1">Industry</label>
-                  <input
-                    type="text"
-                    value={subUnitProfileForm.industry}
-                    onChange={(e) => setSubUnitProfileForm({ ...subUnitProfileForm, industry: e.target.value })}
-                    className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent"
-                    placeholder="e.g., Technology, Finance"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-zinc-600 mb-1">Company Size</label>
-                  <select
-                    value={subUnitProfileForm.company_size}
-                    onChange={(e) => setSubUnitProfileForm({ ...subUnitProfileForm, company_size: e.target.value })}
-                    className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-600 cursor-pointer"
-                  >
-                    <option value="">Select...</option>
-                    <option value="Startup (1-50)">Startup (1-50)</option>
-                    <option value="SMB (51-500)">SMB (51-500)</option>
-                    <option value="Enterprise (500+)">Enterprise (500+)</option>
-                  </select>
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-zinc-600 mb-1">Brand Voice</label>
-                <select
-                  value={subUnitProfileForm.brand_voice}
-                  onChange={(e) => setSubUnitProfileForm({ ...subUnitProfileForm, brand_voice: e.target.value })}
-                  className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-600 cursor-pointer"
-                >
-                  <option value="professional">Professional</option>
-                  <option value="conversational">Conversational</option>
-                  <option value="technical">Technical</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-zinc-600 mb-1">Culture Summary</label>
-                <textarea
-                  value={subUnitProfileForm.culture_summary}
-                  onChange={(e) => setSubUnitProfileForm({ ...subUnitProfileForm, culture_summary: e.target.value })}
-                  rows={2}
-                  className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent resize-none"
-                  placeholder="Describe the client's company culture"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-zinc-600 mb-1">What a Strong Hire Looks Like</label>
-                <textarea
-                  value={subUnitProfileForm.what_good_looks_like}
-                  onChange={(e) => setSubUnitProfileForm({ ...subUnitProfileForm, what_good_looks_like: e.target.value })}
-                  rows={2}
-                  className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent resize-none"
-                  placeholder="What qualities define a great hire for this client?"
-                />
-              </div>
-              <div className="flex justify-end gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowSubUnitProfileModal(false)}
-                  className="px-4 py-2 text-sm font-medium text-zinc-600 hover:text-zinc-800 cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={creatingSubUnit}
-                  className="bg-blue-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 cursor-pointer transition-colors duration-150"
-                >
-                  {creatingSubUnit ? "Creating..." : "Create Client Account"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      {/* Client Account Profile Dialog for sub-unit creation —
+          Opened when the sub-unit create form is submitted with
+          subUnitType === "client_account". Hosts the shared
+          CompanyProfileForm which owns its own validation and submission
+          state. On success, handleSubUnitProfileSubmit calls
+          doCreateSubUnit which navigates to the new unit. */}
+      <Dialog
+        open={showSubUnitProfileDialog}
+        onOpenChange={(open) => {
+          // Don't allow closing mid-create — the form button is also disabled
+          // via isSubmitting but guard against backdrop / Escape too.
+          if (creatingSubUnit) return;
+          setShowSubUnitProfileDialog(open);
+        }}
+      >
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Client Account Profile</DialogTitle>
+            <DialogDescription>
+              Set up the profile for{" "}
+              <span className="font-medium text-zinc-900">{subUnitName.trim()}</span>.
+              This describes the end client — the company your recruiters are
+              hiring <em>for</em>. It feeds the AI when generating JD enhancements
+              and interview questions for this client&apos;s roles.
+            </DialogDescription>
+          </DialogHeader>
+          <CompanyProfileForm
+            onSubmit={handleSubUnitProfileSubmit}
+            submitLabel="Create Client Account"
+          />
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
