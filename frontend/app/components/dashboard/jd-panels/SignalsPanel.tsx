@@ -31,11 +31,7 @@ function Section({
 
 export function SignalsPanel({ snapshot }: Props) {
   return (
-    <aside className="col-span-1 bg-white rounded-lg border border-zinc-200 p-5 space-y-5 overflow-auto">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 pb-2 border-b border-zinc-100">
-        Signals
-      </h3>
-
+    <div className="space-y-5">
       <div>
         <h4 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 mb-2">
           Role Summary
@@ -66,6 +62,6 @@ export function SignalsPanel({ snapshot }: Props) {
           </div>
         </div>
       </div>
-    </aside>
+    </div>
   )
 }
