@@ -7,11 +7,12 @@ orchestration only. API prefix /api/jobs matches the Phase 1 convention
 import uuid
 from uuid import UUID
 
+import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
-from app.database import get_tenant_db
+from app.database import get_tenant_db, get_tenant_session
 from app.models import JobPostingSignalSnapshot
 from app.modules.auth.context import UserContext, get_current_user_roles
 from app.modules.jd.actors import extract_and_enhance_jd
@@ -20,18 +21,24 @@ from app.modules.jd.schemas import (
     JobPostingCreate,
     JobPostingSummary,
     JobPostingWithSnapshot,
+    SaveSignalsRequest,
     SignalItemResponse,
     SignalSnapshotResponse,
 )
 from app.modules.jd.service import (
+    confirm_signals,
     create_job_posting,
     get_job_posting_with_latest_snapshot,
     list_job_postings,
     retry_failed_extraction,
+    save_signals,
+    trigger_reenrichment,
 )
+from app.modules.jd.state_machine import transition
 from app.modules.jd.sse import job_status_event_generator
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
+_log = structlog.get_logger()
 
 
 def _snapshot_to_response(
@@ -78,7 +85,94 @@ def _job_with_snapshot_to_response(job, snap) -> JobPostingWithSnapshot:
         created_at=job.created_at,
         updated_at=job.updated_at,
         latest_snapshot=_snapshot_to_response(snap),
+        enrichment_status=job.enrichment_status,
+        enrichment_error=job.enrichment_error,
+        is_confirmed=snap.confirmed_at is not None if snap else False,
     )
+
+
+async def _safe_dispatch_extraction(
+    job_posting_id: str,
+    tenant_id: str,
+    correlation_id: str,
+) -> None:
+    """Enqueue the Dramatiq actor, transitioning the job to failed if Redis
+    is unreachable. FastAPI BackgroundTasks silently swallow exceptions, so
+    without this wrapper a Redis outage leaves the job stuck in
+    signals_extracting forever with no error visible to the user."""
+    try:
+        extract_and_enhance_jd.send(
+            job_posting_id=job_posting_id,
+            tenant_id=tenant_id,
+            correlation_id=correlation_id,
+        )
+    except Exception as exc:
+        _log.error(
+            "jd.dispatch_failed",
+            job_posting_id=job_posting_id,
+            exc_info=exc,
+        )
+        # Open a new session to transition the job to failed — the request's
+        # session is already closed by the time BackgroundTasks run.
+        from sqlalchemy import select as sa_select
+
+        from app.models import JobPosting
+
+        async with get_tenant_session(tenant_id) as db:
+            result = await db.execute(
+                sa_select(JobPosting).where(JobPosting.id == UUID(job_posting_id))
+            )
+            job = result.scalar_one_or_none()
+            if job and job.status == "signals_extracting":
+                job.status_error = (
+                    "Failed to dispatch extraction job — please retry. "
+                    "If this persists, contact support."
+                )
+                await transition(
+                    db,
+                    job,
+                    to_state="signals_extraction_failed",
+                    actor_id=None,
+                    correlation_id=correlation_id,
+                )
+
+
+async def _safe_dispatch_reenrichment(
+    job_posting_id: str,
+    tenant_id: str,
+    correlation_id: str,
+) -> None:
+    """Enqueue the reenrich_jd Dramatiq actor, setting enrichment_status to
+    'failed' if Redis is unreachable. Same pattern as _safe_dispatch_extraction."""
+    try:
+        from app.modules.jd.actors import reenrich_jd
+
+        reenrich_jd.send(
+            job_posting_id=job_posting_id,
+            tenant_id=tenant_id,
+            correlation_id=correlation_id,
+        )
+    except Exception as exc:
+        _log.error(
+            "jd.reenrich_dispatch_failed",
+            job_posting_id=job_posting_id,
+            exc_info=exc,
+        )
+        from sqlalchemy import select as sa_select
+
+        from app.models import JobPosting
+
+        async with get_tenant_session(tenant_id) as db:
+            result = await db.execute(
+                sa_select(JobPosting).where(JobPosting.id == UUID(job_posting_id))
+            )
+            job = result.scalar_one_or_none()
+            if job:
+                job.enrichment_status = "failed"
+                job.enrichment_error = (
+                    "Failed to dispatch re-enrichment job — please retry. "
+                    "If this persists, contact support."
+                )
 
 
 def _visible_unit_ids(user: UserContext, permission: str) -> list[UUID] | None:
@@ -128,10 +222,10 @@ async def create_job(
     # BackgroundTasks run after the dependency's `async with session.begin()`
     # context manager exits (which auto-commits the transaction), so the
     # worker is guaranteed to see the committed job row when it dequeues.
-    # Do NOT call db.commit() manually — that closes the outer transaction
-    # and any subsequent query on `db` raises "closed transaction".
+    # _safe_dispatch_extraction wraps the send() call so a Redis outage
+    # transitions the job to failed instead of leaving it stuck forever.
     background_tasks.add_task(
-        extract_and_enhance_jd.send,
+        _safe_dispatch_extraction,
         job_posting_id=str(job.id),
         tenant_id=str(user.user.tenant_id),
         correlation_id=correlation_id,
@@ -184,7 +278,14 @@ async def stream_status(
     user: UserContext = Depends(get_current_user_roles),
 ) -> EventSourceResponse:
     await require_job_access(db, job_id, user, "view")
-    return EventSourceResponse(job_status_event_generator(db, job_id, request))
+    # Pass tenant_id instead of the DB session — the SSE generator opens
+    # short-lived sessions per poll to avoid holding a pool connection for
+    # the entire stream duration.
+    return EventSourceResponse(
+        job_status_event_generator(
+            str(user.user.tenant_id), job_id, request
+        )
+    )
 
 
 @router.post("/{job_id}/retry", status_code=202, response_model=JobPostingSummary)
@@ -204,13 +305,87 @@ async def retry_extraction(
         correlation_id=correlation_id,
     )
 
-    # Same post-commit enqueue pattern as create_job (see that handler for
-    # the full rationale).
+    # Same post-commit enqueue pattern as create_job.
     background_tasks.add_task(
-        extract_and_enhance_jd.send,
+        _safe_dispatch_extraction,
         job_posting_id=str(job.id),
         tenant_id=str(job.tenant_id),
         correlation_id=correlation_id,
     )
 
     return _job_to_summary(job)
+
+
+@router.patch("/{job_id}/signals", response_model=SignalSnapshotResponse)
+async def update_signals(
+    job_id: UUID,
+    body: SaveSignalsRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_tenant_db),
+    user: UserContext = Depends(get_current_user_roles),
+) -> SignalSnapshotResponse:
+    job = await require_job_access(db, job_id, user, "manage")
+    if job.status not in ("signals_extracted", "signals_confirmed"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot edit signals in status '{job.status}'",
+        )
+    correlation_id = request.headers.get("x-correlation-id", str(uuid.uuid4()))
+    snapshot = await save_signals(
+        db,
+        job=job,
+        body=body,
+        actor_id=user.user.id,
+        correlation_id=correlation_id,
+    )
+    return _snapshot_to_response(snapshot)  # type: ignore[return-value]
+
+
+@router.post("/{job_id}/signals/confirm", response_model=JobPostingSummary)
+async def confirm_signals_endpoint(
+    job_id: UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_tenant_db),
+    user: UserContext = Depends(get_current_user_roles),
+) -> JobPostingSummary:
+    job = await require_job_access(db, job_id, user, "manage")
+    if job.status != "signals_extracted":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot confirm signals in status '{job.status}'",
+        )
+    correlation_id = request.headers.get("x-correlation-id", str(uuid.uuid4()))
+    job = await confirm_signals(
+        db,
+        job=job,
+        actor_id=user.user.id,
+        correlation_id=correlation_id,
+    )
+    return _job_to_summary(job)
+
+
+@router.post("/{job_id}/enrich", status_code=202)
+async def enrich_job(
+    job_id: UUID,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_tenant_db),
+    user: UserContext = Depends(get_current_user_roles),
+) -> dict[str, str]:
+    job = await require_job_access(db, job_id, user, "manage")
+    if job.status not in ("signals_extracted", "signals_confirmed"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot trigger re-enrichment in status '{job.status}'",
+        )
+    correlation_id = request.headers.get("x-correlation-id", str(uuid.uuid4()))
+    await trigger_reenrichment(db, job=job)
+
+    background_tasks.add_task(
+        _safe_dispatch_reenrichment,
+        job_posting_id=str(job.id),
+        tenant_id=str(job.tenant_id),
+        correlation_id=correlation_id,
+    )
+
+    return {"status": "accepted"}
