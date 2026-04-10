@@ -17,6 +17,7 @@ const STATUS_LABELS: Record<JobStatus, string> = {
   signals_extracting: 'Extracting',
   signals_extraction_failed: 'Failed',
   signals_extracted: 'Ready',
+  signals_confirmed: 'Confirmed',
 }
 
 const STATUS_VARIANT: Record<
@@ -27,6 +28,7 @@ const STATUS_VARIANT: Record<
   signals_extracting: 'secondary',
   signals_extraction_failed: 'destructive',
   signals_extracted: 'default',
+  signals_confirmed: 'default',
 }
 
 export default function JobsListPage() {
