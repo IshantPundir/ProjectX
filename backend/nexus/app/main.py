@@ -36,8 +36,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     yield
 
     # Shutdown
+    from app.ai.client import shutdown_langfuse
     from app.database import engine
 
+    shutdown_langfuse()
     await engine.dispose()
     logger.info("nexus.shutdown")
 
@@ -117,6 +119,10 @@ def create_app() -> FastAPI:
             "retry is only valid after an extraction failure",
         ("draft", "signals_extracted"):
             "Job cannot transition directly from draft to extracted",
+        ("signals_confirmed", "signals_confirmed"):
+            "Signals are already confirmed",
+        ("signals_confirmed", "signals_extracting"):
+            "Cannot re-extract a confirmed job — edit signals instead",
     }
 
     @application.exception_handler(IllegalTransitionError)

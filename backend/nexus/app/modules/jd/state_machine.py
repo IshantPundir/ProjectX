@@ -24,9 +24,8 @@ LEGAL_TRANSITIONS: Final[dict[str, set[str]]] = {
     "draft": {"signals_extracting"},
     "signals_extracting": {"signals_extracted", "signals_extraction_failed"},
     "signals_extraction_failed": {"signals_extracting"},  # retry
-    "signals_extracted": set(),                            # terminal in 2A
-    # Future states added here as phases land:
-    # "signals_confirmed", "template_generating", ...
+    "signals_extracted": {"signals_confirmed"},
+    "signals_confirmed": {"signals_extracted"},
 }
 
 

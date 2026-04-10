@@ -28,8 +28,19 @@ def test_extracted_to_extracting_illegal():
     assert not is_legal_transition("signals_extracted", "signals_extracting")
 
 
-def test_extracted_is_terminal_in_2a():
-    assert LEGAL_TRANSITIONS["signals_extracted"] == set()
+def test_extracted_to_confirmed_legal():
+    """Phase 2B: recruiter can confirm signals from extracted state."""
+    assert is_legal_transition("signals_extracted", "signals_confirmed")
+
+
+def test_confirmed_to_extracted_legal():
+    """Phase 2B: editing chips after confirming auto-clears back to extracted."""
+    assert is_legal_transition("signals_confirmed", "signals_extracted")
+
+
+def test_confirmed_to_extracting_illegal():
+    """Cannot re-trigger extraction from a confirmed job."""
+    assert not is_legal_transition("signals_confirmed", "signals_extracting")
 
 
 def test_unknown_from_state_is_illegal():
