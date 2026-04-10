@@ -172,6 +172,144 @@ async def create_org_unit(
     return unit
 
 
+async def get_org_unit(
+    db: AsyncSession,
+    unit_id: uuid_mod.UUID,
+    client_id: uuid_mod.UUID,
+    user_id: uuid_mod.UUID,
+    is_super_admin: bool,
+) -> dict | None:
+    """Fetch a single org unit by id, scoped to the tenant.
+
+    Visibility follows the same rules as list_org_units:
+    - Super admin sees any unit in the tenant.
+    - Others see units where they hold Admin role, PLUS ancestors of
+      those units (ancestor-only units are returned with is_accessible=False
+      so the frontend can show a greyed "ask for access" state).
+
+    Returns None if the unit is not found, not in the tenant, or not visible
+    to the caller.
+    """
+    unit_result = await db.execute(
+        select(OrganizationalUnit).where(
+            OrganizationalUnit.id == unit_id,
+            OrganizationalUnit.client_id == client_id,
+        )
+    )
+    unit = unit_result.scalar_one_or_none()
+    if unit is None:
+        return None
+
+    if is_super_admin:
+        is_accessible = True
+    else:
+        # Find units where the caller holds the Admin role.
+        admin_role_q = await db.execute(
+            select(Role).where(Role.name == "Admin", Role.is_system == True)
+        )
+        admin_role = admin_role_q.scalar_one_or_none()
+
+        accessible_ids: set[uuid_mod.UUID] = set()
+        if admin_role:
+            assignment_result = await db.execute(
+                select(UserRoleAssignment.org_unit_id)
+                .where(
+                    UserRoleAssignment.user_id == user_id,
+                    UserRoleAssignment.role_id == admin_role.id,
+                )
+                .distinct()
+            )
+            accessible_ids = {row[0] for row in assignment_result.all()}
+
+        if not accessible_ids:
+            return None
+
+        # Walk up from each assigned unit to collect ancestors — the caller
+        # can see an ancestor even if they don't hold Admin on it directly,
+        # to support tree rendering / breadcrumbs.
+        all_result = await db.execute(
+            select(OrganizationalUnit).where(OrganizationalUnit.client_id == client_id)
+        )
+        unit_map = {u.id: u for u in all_result.scalars().all()}
+
+        visible_ids = set(accessible_ids)
+        for uid in list(accessible_ids):
+            current = unit_map.get(uid)
+            while current and current.parent_unit_id:
+                visible_ids.add(current.parent_unit_id)
+                current = unit_map.get(current.parent_unit_id)
+
+        if unit.id not in visible_ids:
+            return None
+
+        is_accessible = unit.id in accessible_ids
+
+    # Member count for this unit.
+    count_result = await db.execute(
+        select(func.count(func.distinct(UserRoleAssignment.user_id))).where(
+            UserRoleAssignment.org_unit_id == unit.id
+        )
+    )
+    member_count = count_result.scalar() or 0
+
+    # Created-by / deletable-by emails.
+    user_ids_to_load: set[uuid_mod.UUID] = set()
+    if unit.created_by:
+        user_ids_to_load.add(unit.created_by)
+    if unit.deletable_by:
+        user_ids_to_load.add(unit.deletable_by)
+
+    email_map: dict[uuid_mod.UUID, str] = {}
+    if user_ids_to_load:
+        email_result = await db.execute(
+            select(User.id, User.email).where(User.id.in_(user_ids_to_load))
+        )
+        email_map = {row[0]: row[1] for row in email_result.all()}
+
+    # For inaccessible (ancestor-only) units, surface admin emails so the
+    # frontend can render an "ask for access" affordance.
+    admin_emails: list[str] = []
+    if not is_accessible:
+        admin_role_result = await db.execute(
+            select(Role).where(Role.name == "Admin", Role.is_system == True)
+        )
+        admin_role = admin_role_result.scalar_one_or_none()
+        if admin_role:
+            admin_assign_result = await db.execute(
+                select(User.email)
+                .join(UserRoleAssignment, UserRoleAssignment.user_id == User.id)
+                .where(
+                    UserRoleAssignment.org_unit_id == unit.id,
+                    UserRoleAssignment.role_id == admin_role.id,
+                )
+            )
+            admin_emails = [row[0] for row in admin_assign_result.all()]
+
+    return {
+        "id": str(unit.id),
+        "client_id": str(unit.client_id),
+        "parent_unit_id": str(unit.parent_unit_id) if unit.parent_unit_id else None,
+        "name": unit.name,
+        "unit_type": unit.unit_type,
+        "member_count": member_count,
+        "is_root": unit.is_root,
+        "company_profile": unit.company_profile,
+        "company_profile_completed_at": (
+            unit.company_profile_completed_at.isoformat()
+            if unit.company_profile_completed_at
+            else None
+        ),
+        "created_at": unit.created_at.isoformat(),
+        "created_by": str(unit.created_by) if unit.created_by else None,
+        "created_by_email": email_map.get(unit.created_by) if unit.created_by else None,
+        "deletable_by": str(unit.deletable_by) if unit.deletable_by else None,
+        "deletable_by_email": email_map.get(unit.deletable_by) if unit.deletable_by else None,
+        "admin_delete_disabled": unit.admin_delete_disabled,
+        "is_accessible": is_accessible,
+        "admin_emails": admin_emails,
+    }
+
+
 async def list_org_units(
     db: AsyncSession,
     client_id: uuid_mod.UUID,
@@ -291,6 +429,11 @@ async def list_org_units(
             "member_count": counts.get(u.id, 0),
             "is_root": u.is_root,
             "company_profile": u.company_profile,
+            "company_profile_completed_at": (
+                u.company_profile_completed_at.isoformat()
+                if u.company_profile_completed_at
+                else None
+            ),
             "created_at": u.created_at.isoformat(),
             "created_by": str(u.created_by) if u.created_by else None,
             "created_by_email": email_map.get(u.created_by) if u.created_by else None,

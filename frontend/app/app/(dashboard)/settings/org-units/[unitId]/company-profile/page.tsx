@@ -17,7 +17,6 @@ type OrgUnit = {
   name: string
   unit_type: string
   company_profile: CompanyProfile | null
-  company_profile_completed_at: string | null
 }
 
 export default function CompanyProfilePage() {
@@ -38,7 +37,7 @@ export default function CompanyProfilePage() {
       const token = await getFreshSupabaseToken()
       return apiFetch(`/api/org-units/${unitId}`, {
         token,
-        method: 'PATCH',
+        method: 'PUT',
         body: JSON.stringify({
           set_company_profile: true,
           company_profile: profile,

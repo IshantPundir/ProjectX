@@ -20,7 +20,17 @@ from dramatiq.middleware import AsyncIO
 
 from app.config import settings
 
-broker = RedisBroker(url=settings.redis_url)
+broker = RedisBroker(
+    url=settings.redis_url,
+    # Prevent workers from hanging indefinitely on a slow/unresponsive Redis.
+    # socket_timeout applies to reads/writes, socket_connect_timeout to initial
+    # connection. health_check_interval verifies the connection is alive before
+    # each command if it has been idle for this many seconds.
+    socket_timeout=5,
+    socket_connect_timeout=5,
+    health_check_interval=10,
+    retry_on_timeout=True,
+)
 
 # AsyncIO middleware is REQUIRED for `async def` @dramatiq.actor functions.
 # Without it, the worker raises:

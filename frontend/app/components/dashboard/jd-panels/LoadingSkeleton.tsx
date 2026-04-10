@@ -5,6 +5,7 @@ import type { JobStatusEvent } from '@/lib/api/jobs'
 
 type Props = {
   status: JobStatusEvent | null
+  sseError?: string | null
 }
 
 /**
@@ -12,7 +13,7 @@ type Props = {
  * labels pre-rendered so the transition to real content feels like
  * filling in blanks rather than a full swap.
  */
-export function LoadingSkeleton({ status }: Props) {
+export function LoadingSkeleton({ status, sseError }: Props) {
   const statusText =
     status?.status === 'signals_extracting'
       ? 'Extracting signals and enriching JD…'
@@ -41,6 +42,11 @@ export function LoadingSkeleton({ status }: Props) {
           <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
           {statusText}
         </div>
+        {sseError && (
+          <div className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded px-3 py-1.5 mb-4">
+            {sseError}
+          </div>
+        )}
         <Skeleton className="h-4 w-[40%] mb-3" />
         <Skeleton className="h-3 w-full mb-2" />
         <Skeleton className="h-3 w-[90%] mb-2" />

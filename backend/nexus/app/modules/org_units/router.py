@@ -18,6 +18,7 @@ from app.modules.org_units.service import (
     assign_role,
     create_org_unit,
     delete_org_unit,
+    get_org_unit,
     list_org_units,
     list_unit_members,
     remove_role_from_user,
@@ -48,6 +49,11 @@ def _build_response(
         member_count=member_count,
         is_root=unit.is_root,
         company_profile=unit.company_profile,
+        company_profile_completed_at=(
+            unit.company_profile_completed_at.isoformat()
+            if unit.company_profile_completed_at
+            else None
+        ),
         created_at=unit.created_at.isoformat(),
         created_by=str(unit.created_by) if unit.created_by else None,
         created_by_email=email_map.get(unit.created_by) if unit.created_by else None,
@@ -120,6 +126,36 @@ async def list_units(
 ) -> list[OrgUnitResponse]:
     units = await list_org_units(db, ctx.user.tenant_id, ctx.user.id, ctx.is_super_admin)
     return [OrgUnitResponse(**u) for u in units]
+
+
+@router.get("/{unit_id}", response_model=OrgUnitResponse)
+async def get_unit(
+    unit_id: str,
+    ctx: UserContext = Depends(get_current_user_roles),
+    db: AsyncSession = Depends(get_tenant_db),
+) -> OrgUnitResponse:
+    """Fetch a single org unit by id.
+
+    Visibility mirrors list_org_units: super admins see any unit in their
+    tenant; other users see units they hold Admin on plus ancestors of those
+    units. Returns 404 if the unit does not exist, is in another tenant, or
+    is not visible to the caller.
+    """
+    try:
+        uid = uuid_mod.UUID(unit_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Org unit not found")
+
+    unit = await get_org_unit(
+        db,
+        unit_id=uid,
+        client_id=ctx.user.tenant_id,
+        user_id=ctx.user.id,
+        is_super_admin=ctx.is_super_admin,
+    )
+    if unit is None:
+        raise HTTPException(status_code=404, detail="Org unit not found")
+    return OrgUnitResponse(**unit)
 
 
 @router.put("/{unit_id}", response_model=OrgUnitResponse)

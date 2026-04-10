@@ -65,6 +65,12 @@ _SAFE_MESSAGES: Final[dict[type[Exception], str]] = {
         "Could not reach the AI provider. Please retry.",
     openai.AuthenticationError:
         "AI provider authentication failed. Contact support.",
+    openai.PermissionDeniedError:
+        "AI provider access denied — check model permissions. Contact support.",
+    openai.NotFoundError:
+        "AI model not found — check configuration. Contact support.",
+    openai.InternalServerError:
+        "The AI provider encountered an internal error. Please retry.",
     openai.BadRequestError:
         "The job description could not be processed. Please check the input and retry.",
     InstructorRetryException:

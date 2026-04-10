@@ -1,5 +1,8 @@
 """Tests for job_status_event_generator — de-dup, terminal close, disconnect."""
 
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock
+
 import pytest
 
 from app.modules.jd.schemas import JobStatusEvent
@@ -16,6 +19,24 @@ class FakeRequest:
     async def is_disconnected(self) -> bool:
         self.calls += 1
         return self.calls > self.disconnect_after
+
+
+class FakeSession:
+    """Minimal stand-in for AsyncSession used by the SSE generator."""
+
+    async def execute(self, stmt):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        pass
+
+
+@asynccontextmanager
+async def _fake_session_factory():
+    yield FakeSession()
 
 
 @pytest.mark.asyncio
@@ -50,10 +71,11 @@ async def test_emits_initial_then_terminal(monkeypatch):
         return events_to_yield[i]
 
     monkeypatch.setattr("app.modules.jd.sse.get_job_status", fake_get_job_status)
+    monkeypatch.setattr("app.modules.jd.sse.async_session_factory", _fake_session_factory)
     monkeypatch.setattr("app.modules.jd.sse.POLL_INTERVAL_SECONDS", 0.01)
 
     gen = job_status_event_generator(
-        db=None,
+        tenant_id="00000000-0000-0000-0000-000000000099",
         job_id="00000000-0000-0000-0000-000000000001",
         request=FakeRequest(),
     )
@@ -76,10 +98,11 @@ async def test_terminates_on_disconnect(monkeypatch):
         )
 
     monkeypatch.setattr("app.modules.jd.sse.get_job_status", fake_get_job_status)
+    monkeypatch.setattr("app.modules.jd.sse.async_session_factory", _fake_session_factory)
     monkeypatch.setattr("app.modules.jd.sse.POLL_INTERVAL_SECONDS", 0.01)
 
     gen = job_status_event_generator(
-        db=None,
+        tenant_id="00000000-0000-0000-0000-000000000099",
         job_id="00000000-0000-0000-0000-000000000001",
         request=FakeRequest(disconnect_after=0),
     )
@@ -96,10 +119,11 @@ async def test_missing_job_terminates_cleanly(monkeypatch):
         return None
 
     monkeypatch.setattr("app.modules.jd.sse.get_job_status", fake_get_job_status)
+    monkeypatch.setattr("app.modules.jd.sse.async_session_factory", _fake_session_factory)
     monkeypatch.setattr("app.modules.jd.sse.POLL_INTERVAL_SECONDS", 0.01)
 
     gen = job_status_event_generator(
-        db=None,
+        tenant_id="00000000-0000-0000-0000-000000000099",
         job_id="00000000-0000-0000-0000-000000000001",
         request=FakeRequest(),
     )

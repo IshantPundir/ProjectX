@@ -26,6 +26,7 @@ class OrgUnitResponse(BaseModel):
     member_count: int
     is_root: bool
     company_profile: dict | None
+    company_profile_completed_at: str | None = None
     created_at: str
     created_by: str | None
     created_by_email: str | None
