@@ -14,6 +14,7 @@ JobStatus = Literal[
     "signals_extracting",
     "signals_extraction_failed",
     "signals_extracted",
+    "signals_confirmed",
 ]
 
 
@@ -47,6 +48,22 @@ class JobPostingCreate(BaseModel):
     deadline: date | None = None
 
 
+class SignalItemInput(BaseModel):
+    value: str = Field(min_length=1)
+    source: Literal["ai_extracted", "ai_inferred", "recruiter"]
+    inference_basis: str | None = None
+
+
+class SaveSignalsRequest(BaseModel):
+    required_skills: list[SignalItemInput]
+    preferred_skills: list[SignalItemInput]
+    must_haves: list[SignalItemInput]
+    good_to_haves: list[SignalItemInput]
+    min_experience_years: int = Field(ge=0, le=50)
+    seniority_level: Literal["junior", "mid", "senior", "lead", "principal"]
+    role_summary: str = Field(min_length=10, max_length=2000)
+
+
 class JobPostingSummary(BaseModel):
     """Row shape for GET /api/jobs (list view)."""
 
@@ -75,6 +92,9 @@ class JobPostingWithSnapshot(BaseModel):
     created_at: datetime
     updated_at: datetime
     latest_snapshot: SignalSnapshotResponse | None = None
+    enrichment_status: str = "idle"
+    enrichment_error: str | None = None
+    is_confirmed: bool = False
 
 
 class JobStatusEvent(BaseModel):
@@ -84,6 +104,8 @@ class JobStatusEvent(BaseModel):
     status: JobStatus
     error: str | None = None
     signal_snapshot_version: int | None = None
+    enrichment_status: str = "idle"
+    is_confirmed: bool = False
 
     @property
     def is_terminal(self) -> bool:
