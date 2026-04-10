@@ -1,9 +1,15 @@
 import asyncio
+import sys
+import os
 from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
+
+# Ensure the project root is on sys.path so 'app' is importable when alembic
+# loads this file via its internal module loader (which doesn't inherit cwd).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.config import settings
 from app.database import Base
