@@ -20,6 +20,14 @@ class AIConfig:
         return settings.openai_extraction_effort
 
     @property
+    def reenrichment_model(self) -> str:
+        return settings.openai_reenrichment_model
+
+    @property
+    def reenrichment_effort(self) -> str:
+        return settings.openai_reenrichment_effort
+
+    @property
     def request_timeout_seconds(self) -> float:
         return settings.openai_request_timeout_seconds
 

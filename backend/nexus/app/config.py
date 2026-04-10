@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     # real values come from .env or deployment config.
     openai_extraction_model: str = "gpt-5.2"
     openai_extraction_effort: str = "medium"
+    openai_reenrichment_model: str = "gpt-5.2"
+    openai_reenrichment_effort: str = "medium"
 
     # OpenAI request tuning
     openai_request_timeout_seconds: float = 120.0
@@ -65,7 +67,8 @@ class Settings(BaseSettings):
 
     # Observability
     sentry_dsn: str = ""
-    langfuse_host: str = ""
+    langfuse_host: str = ""           # Legacy — prefer LANGFUSE_BASE_URL
+    langfuse_base_url: str = ""       # e.g. https://cloud.langfuse.com (Langfuse v2+ convention)
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
 

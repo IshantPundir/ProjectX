@@ -44,3 +44,7 @@ class ExtractedSignals(BaseModel):
 class ExtractionOutput(BaseModel):
     enriched_jd: str = Field(min_length=50)
     signals: ExtractedSignals
+
+
+class ReEnrichmentOutput(BaseModel):
+    enriched_jd: str = Field(min_length=200)
