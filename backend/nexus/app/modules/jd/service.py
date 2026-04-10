@@ -4,16 +4,16 @@ All mutations to job_postings.status go through state_machine.transition().
 The Dramatiq actor is imported lazily inside create_job_posting() to avoid
 a circular import (actors.py imports service.py for the snapshot persist)."""
 
-from datetime import date
+from datetime import UTC, date, datetime
 from uuid import UUID
 
 import structlog
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import JobPosting, JobPostingSignalSnapshot
-from app.modules.jd.errors import CompanyProfileIncompleteError
-from app.modules.jd.schemas import JobStatusEvent
+from app.modules.jd.errors import CompanyProfileIncompleteError, IllegalTransitionError
+from app.modules.jd.schemas import JobStatusEvent, SaveSignalsRequest
 from app.modules.jd.state_machine import transition
 from app.modules.org_units.service import find_company_profile_in_ancestry
 
@@ -140,6 +140,8 @@ async def get_job_status(db: AsyncSession, job_id: UUID) -> JobStatusEvent | Non
         status=job.status,  # type: ignore[arg-type]
         error=job.status_error,
         signal_snapshot_version=snapshot.version if snapshot else None,
+        enrichment_status=job.enrichment_status,
+        is_confirmed=snapshot.confirmed_at is not None if snapshot else False,
     )
 
 
@@ -168,4 +170,131 @@ async def retry_failed_extraction(
     job.status_error = None  # clear the previous error message
     await db.flush()
 
+    return job
+
+
+async def save_signals(
+    db: AsyncSession,
+    *,
+    job: JobPosting,
+    body: SaveSignalsRequest,
+    actor_id: UUID,
+    correlation_id: str,
+) -> JobPostingSignalSnapshot:
+    """Write a new snapshot version from recruiter edits.
+
+    If job was signals_confirmed, auto-transitions back to signals_extracted
+    so the recruiter can re-confirm after editing. The new snapshot has
+    confirmed_by=None, confirmed_at=None."""
+    if job.status == "signals_confirmed":
+        await transition(
+            db,
+            job,
+            to_state="signals_extracted",
+            actor_id=actor_id,
+            correlation_id=correlation_id,
+        )
+
+    # Determine next snapshot version
+    max_version_result = await db.execute(
+        select(func.max(JobPostingSignalSnapshot.version)).where(
+            JobPostingSignalSnapshot.job_posting_id == job.id
+        )
+    )
+    current_max = max_version_result.scalar() or 0
+
+    snapshot = JobPostingSignalSnapshot(
+        tenant_id=job.tenant_id,
+        job_posting_id=job.id,
+        version=current_max + 1,
+        required_skills=[item.model_dump() for item in body.required_skills],
+        preferred_skills=[item.model_dump() for item in body.preferred_skills],
+        must_haves=[item.model_dump() for item in body.must_haves],
+        good_to_haves=[item.model_dump() for item in body.good_to_haves],
+        min_experience_years=body.min_experience_years,
+        seniority_level=body.seniority_level,
+        role_summary=body.role_summary,
+        confirmed_by=None,
+        confirmed_at=None,
+    )
+    db.add(snapshot)
+    await db.flush()
+
+    logger.info(
+        "jd.service.signals_saved",
+        job_posting_id=str(job.id),
+        snapshot_version=snapshot.version,
+        correlation_id=correlation_id,
+    )
+    return snapshot
+
+
+async def confirm_signals(
+    db: AsyncSession,
+    *,
+    job: JobPosting,
+    actor_id: UUID,
+    correlation_id: str,
+) -> JobPosting:
+    """Confirm the latest snapshot — sets confirmed_by/at and transitions
+    job to signals_confirmed.
+
+    Raises:
+        ValueError: if no snapshot exists for this job.
+    """
+    snap_result = await db.execute(
+        select(JobPostingSignalSnapshot)
+        .where(JobPostingSignalSnapshot.job_posting_id == job.id)
+        .order_by(desc(JobPostingSignalSnapshot.version))
+        .limit(1)
+    )
+    snapshot = snap_result.scalar_one_or_none()
+    if snapshot is None:
+        raise ValueError("No snapshot to confirm")
+
+    snapshot.confirmed_by = actor_id
+    snapshot.confirmed_at = datetime.now(UTC)
+
+    await transition(
+        db,
+        job,
+        to_state="signals_confirmed",
+        actor_id=actor_id,
+        correlation_id=correlation_id,
+    )
+    await db.flush()
+
+    logger.info(
+        "jd.service.signals_confirmed",
+        job_posting_id=str(job.id),
+        snapshot_version=snapshot.version,
+        correlation_id=correlation_id,
+    )
+    return job
+
+
+async def trigger_reenrichment(
+    db: AsyncSession,
+    *,
+    job: JobPosting,
+) -> JobPosting:
+    """Set enrichment_status to 'streaming' and clear any previous error.
+
+    Raises:
+        IllegalTransitionError: if already streaming (prevents double-dispatch).
+    """
+    if job.enrichment_status == "streaming":
+        raise IllegalTransitionError(
+            from_state="enrichment:streaming",
+            to_state="enrichment:streaming",
+        )
+
+    job.enrichment_status = "streaming"
+    job.enrichment_error = None
+    await db.flush()
+
+    logger.info(
+        "jd.service.reenrichment_triggered",
+        job_posting_id=str(job.id),
+    )
     return job
