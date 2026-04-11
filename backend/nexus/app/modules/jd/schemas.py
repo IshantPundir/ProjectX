@@ -1,13 +1,20 @@
 """Pydantic request / response schemas for the JD module.
 
 These define the HTTP surface; internal ORM models live in app/models.py.
-Conversions between them live in service.py and router.py."""
+Conversions between them live in service.py and router.py.
+
+Signal Schema v2: universal flat list with type, priority, weight,
+knockout, stage, evaluation_method, and provenance metadata."""
 
 from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+# ---------------------------------------------------------------------------
+# Enum-style Literal types
+# ---------------------------------------------------------------------------
 
 JobStatus = Literal[
     "draft",
@@ -17,23 +24,117 @@ JobStatus = Literal[
     "signals_confirmed",
 ]
 
+EnrichmentStatus = Literal["idle", "streaming", "completed", "failed"]
+
+SignalType = Literal["competency", "experience", "credential", "behavioral"]
+SignalPriority = Literal["required", "preferred"]
+SignalStage = Literal["screen", "interview"]
+EvaluationMethod = Literal[
+    "verbal_response",
+    "code_exercise",
+    "scenario_walkthrough",
+    "credential_verify",
+    "behavioral_question",
+]
+
+EmploymentType = Literal[
+    "full_time", "part_time", "contract", "contract_to_hire", "internship",
+]
+WorkArrangement = Literal["onsite", "remote", "hybrid"]
+SalaryCurrency = Literal["USD", "EUR", "GBP", "INR", "CAD", "AUD"]
+TravelRequired = Literal["none", "occasional", "moderate", "extensive"]
+StartDatePref = Literal["immediate", "within_30_days", "within_60_days", "flexible"]
+SeniorityLevel = Literal["junior", "mid", "senior", "lead", "principal"]
+
+# ---------------------------------------------------------------------------
+# Evaluation method defaults — (type, stage) → default method
+# ---------------------------------------------------------------------------
+
+_EVALUATION_DEFAULTS: dict[tuple[str, str], EvaluationMethod] = {
+    ("competency", "screen"): "verbal_response",
+    ("competency", "interview"): "code_exercise",
+    ("experience", "screen"): "verbal_response",
+    ("experience", "interview"): "scenario_walkthrough",
+    ("credential", "screen"): "credential_verify",
+    ("credential", "interview"): "credential_verify",
+    ("behavioral", "screen"): "behavioral_question",
+    ("behavioral", "interview"): "behavioral_question",
+}
+
+
+def default_evaluation_method(
+    signal_type: SignalType, stage: SignalStage,
+) -> EvaluationMethod:
+    """Return the default evaluation method for a (type, stage) pair."""
+    return _EVALUATION_DEFAULTS.get(
+        (signal_type, stage), "verbal_response",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Signal item schemas
+# ---------------------------------------------------------------------------
 
 class SignalItemResponse(BaseModel):
+    """Signal as returned by the API (read-only, fully resolved)."""
+
     value: str
+    type: SignalType
+    priority: SignalPriority
+    weight: Literal[1, 2, 3]
+    knockout: bool
+    stage: SignalStage
+    evaluation_method: EvaluationMethod
+    evaluation_hint: str | None = None
     source: Literal["ai_extracted", "ai_inferred", "recruiter"]
     inference_basis: str | None = None
 
 
+class SignalItemInput(BaseModel):
+    """Signal as sent by the frontend (evaluation_method nullable — server fills default)."""
+
+    value: str = Field(min_length=1)
+    type: SignalType
+    priority: SignalPriority
+    weight: Literal[1, 2, 3] = 2
+    knockout: bool = False
+    stage: SignalStage
+    evaluation_method: EvaluationMethod | None = None
+    evaluation_hint: str | None = None
+    source: Literal["ai_extracted", "ai_inferred", "recruiter"]
+    inference_basis: str | None = None
+
+    @model_validator(mode="after")
+    def check_provenance(self) -> "SignalItemInput":
+        if self.source == "ai_inferred" and not self.inference_basis:
+            raise ValueError(
+                "Signal with source='ai_inferred' must have an inference_basis"
+            )
+        if self.source in ("ai_extracted", "recruiter") and self.inference_basis is not None:
+            raise ValueError(
+                f"Signal with source='{self.source}' must have inference_basis=null"
+            )
+        return self
+
+
+# ---------------------------------------------------------------------------
+# Snapshot schema
+# ---------------------------------------------------------------------------
+
 class SignalSnapshotResponse(BaseModel):
-    version: int
-    required_skills: list[SignalItemResponse]
-    preferred_skills: list[SignalItemResponse]
-    must_haves: list[SignalItemResponse]
-    good_to_haves: list[SignalItemResponse]
-    min_experience_years: int
+    """Versioned signal snapshot returned on job detail."""
+
+    signals: list[SignalItemResponse]
     seniority_level: str
     role_summary: str
+    confirmed_by: UUID | None = None
+    confirmed_at: datetime | None = None
+    version: int
 
+
+# ---------------------------------------------------------------------------
+# Job posting schemas
+# ---------------------------------------------------------------------------
 
 class JobPostingCreate(BaseModel):
     """POST /api/jobs request body."""
@@ -46,21 +147,21 @@ class JobPostingCreate(BaseModel):
     project_scope_raw: str | None = Field(default=None, max_length=20_000)
     target_headcount: int | None = Field(default=None, ge=1, le=10_000)
     deadline: date | None = None
-
-
-class SignalItemInput(BaseModel):
-    value: str = Field(min_length=1)
-    source: Literal["ai_extracted", "ai_inferred", "recruiter"]
-    inference_basis: str | None = None
+    employment_type: EmploymentType | None = None
+    work_arrangement: WorkArrangement | None = None
+    location: str | None = Field(default=None, max_length=500)
+    salary_range_min: int | None = Field(default=None, ge=0)
+    salary_range_max: int | None = Field(default=None, ge=0)
+    salary_currency: SalaryCurrency | None = None
+    travel_required: TravelRequired | None = None
+    start_date_pref: StartDatePref | None = None
 
 
 class SaveSignalsRequest(BaseModel):
-    required_skills: list[SignalItemInput]
-    preferred_skills: list[SignalItemInput]
-    must_haves: list[SignalItemInput]
-    good_to_haves: list[SignalItemInput]
-    min_experience_years: int = Field(ge=0, le=50)
-    seniority_level: Literal["junior", "mid", "senior", "lead", "principal"]
+    """PUT /api/jobs/{id}/signals — save edited signals."""
+
+    signals: list[SignalItemInput]
+    seniority_level: SeniorityLevel
     role_summary: str = Field(min_length=10, max_length=2000)
 
 
@@ -70,6 +171,9 @@ class JobPostingSummary(BaseModel):
     id: UUID
     title: str
     org_unit_id: UUID
+    org_unit_name: str | None = None
+    created_by_email: str | None = None
+    updated_by_email: str | None = None
     status: JobStatus
     status_error: str | None = None
     created_at: datetime
@@ -89,12 +193,21 @@ class JobPostingWithSnapshot(BaseModel):
     status_error: str | None = None
     target_headcount: int | None = None
     deadline: date | None = None
+    employment_type: str | None = None
+    work_arrangement: str | None = None
+    location: str | None = None
+    salary_range_min: int | None = None
+    salary_range_max: int | None = None
+    salary_currency: str | None = None
+    travel_required: str | None = None
+    start_date_pref: str | None = None
     created_at: datetime
     updated_at: datetime
     latest_snapshot: SignalSnapshotResponse | None = None
-    enrichment_status: str = "idle"
+    enrichment_status: EnrichmentStatus = "idle"
     enrichment_error: str | None = None
     is_confirmed: bool = False
+    can_manage: bool = False
 
 
 class JobStatusEvent(BaseModel):
@@ -104,9 +217,13 @@ class JobStatusEvent(BaseModel):
     status: JobStatus
     error: str | None = None
     signal_snapshot_version: int | None = None
-    enrichment_status: str = "idle"
+    enrichment_status: EnrichmentStatus = "idle"
     is_confirmed: bool = False
 
     @property
     def is_terminal(self) -> bool:
-        return self.status in {"signals_extracted", "signals_extraction_failed"}
+        return self.status in {
+            "signals_extracted",
+            "signals_extraction_failed",
+            "signals_confirmed",
+        }
