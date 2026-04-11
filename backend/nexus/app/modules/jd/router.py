@@ -46,23 +46,52 @@ def _snapshot_to_response(
 ) -> SignalSnapshotResponse | None:
     if snap is None:
         return None
+
+    from app.modules.jd.schemas import default_evaluation_method
+
+    response_signals = []
+    for item in snap.signals:
+        eval_method = item.get("evaluation_method") or default_evaluation_method(
+            item["type"], item["stage"]
+        )
+        response_signals.append(
+            SignalItemResponse(
+                value=item["value"],
+                type=item["type"],
+                priority=item["priority"],
+                weight=item.get("weight", 2),
+                knockout=item.get("knockout", False),
+                stage=item["stage"],
+                evaluation_method=eval_method,
+                evaluation_hint=item.get("evaluation_hint"),
+                source=item["source"],
+                inference_basis=item.get("inference_basis"),
+            )
+        )
+
     return SignalSnapshotResponse(
         version=snap.version,
-        required_skills=[SignalItemResponse(**item) for item in snap.required_skills],
-        preferred_skills=[SignalItemResponse(**item) for item in snap.preferred_skills],
-        must_haves=[SignalItemResponse(**item) for item in snap.must_haves],
-        good_to_haves=[SignalItemResponse(**item) for item in snap.good_to_haves],
-        min_experience_years=snap.min_experience_years,
+        signals=response_signals,
         seniority_level=snap.seniority_level,
         role_summary=snap.role_summary,
+        confirmed_by=snap.confirmed_by,
+        confirmed_at=snap.confirmed_at,
     )
 
 
-def _job_to_summary(job) -> JobPostingSummary:
+def _job_to_summary(
+    job,
+    org_unit_name: str | None = None,
+    created_by_email: str | None = None,
+    updated_by_email: str | None = None,
+) -> JobPostingSummary:
     return JobPostingSummary(
         id=job.id,
         title=job.title,
         org_unit_id=job.org_unit_id,
+        org_unit_name=org_unit_name,
+        created_by_email=created_by_email,
+        updated_by_email=updated_by_email,
         status=job.status,
         status_error=job.status_error,
         created_at=job.created_at,
@@ -70,7 +99,9 @@ def _job_to_summary(job) -> JobPostingSummary:
     )
 
 
-def _job_with_snapshot_to_response(job, snap) -> JobPostingWithSnapshot:
+def _job_with_snapshot_to_response(
+    job, snap, *, can_manage: bool = False,
+) -> JobPostingWithSnapshot:
     return JobPostingWithSnapshot(
         id=job.id,
         title=job.title,
@@ -82,12 +113,21 @@ def _job_with_snapshot_to_response(job, snap) -> JobPostingWithSnapshot:
         status_error=job.status_error,
         target_headcount=job.target_headcount,
         deadline=job.deadline,
+        employment_type=job.employment_type,
+        work_arrangement=job.work_arrangement,
+        location=job.location,
+        salary_range_min=job.salary_range_min,
+        salary_range_max=job.salary_range_max,
+        salary_currency=job.salary_currency,
+        travel_required=job.travel_required,
+        start_date_pref=job.start_date_pref,
         created_at=job.created_at,
         updated_at=job.updated_at,
         latest_snapshot=_snapshot_to_response(snap),
         enrichment_status=job.enrichment_status,
         enrichment_error=job.enrichment_error,
         is_confirmed=snap.confirmed_at is not None if snap else False,
+        can_manage=can_manage,
     )
 
 
@@ -173,19 +213,67 @@ async def _safe_dispatch_reenrichment(
                     "Failed to dispatch re-enrichment job — please retry. "
                     "If this persists, contact support."
                 )
+                from app.modules.audit.service import log_event
+
+                await log_event(
+                    db,
+                    tenant_id=job.tenant_id,
+                    actor_id=None,
+                    actor_email=None,
+                    action="job_posting.reenrich_dispatch_failed",
+                    resource="job_posting",
+                    resource_id=job.id,
+                    payload={"error": str(exc)},
+                    ip_address=None,
+                )
 
 
 def _visible_unit_ids(user: UserContext, permission: str) -> list[UUID] | None:
-    """Return the flat list of org unit IDs where the user holds `permission`,
-    or None if the user is a super admin (no filter needed).
+    """Return org unit IDs where the user can see jobs — the directly
+    assigned units PLUS all their descendants.
 
-    Note: this is the immediate-grant set, not the ancestry-expanded set.
-    For listing, this is the right semantic — we want jobs whose org unit
-    matches an ancestor where the user has the permission. The service
-    layer (list_job_postings) handles the visibility query."""
+    A recruiter with jobs.view on a 'division' should see jobs in child
+    'team' units too. Without descendant expansion, jobs under child units
+    are invisible in the list (even though require_job_access walks
+    ancestry for single-job access)."""
     if user.is_super_admin:
         return None
     return [a.org_unit_id for a in user.assignments if permission in a.permissions]
+
+
+async def _expand_with_descendants(
+    db: AsyncSession, unit_ids: list[UUID],
+) -> list[UUID]:
+    """Given a list of org unit IDs, return those IDs plus all their
+    descendants (children, grandchildren, etc.) by walking the tree."""
+    if not unit_ids:
+        return []
+
+    from sqlalchemy import select as sa_select
+
+    from app.models import OrganizationalUnit
+
+    # Load all units in the tenant (already RLS-scoped by the session)
+    result = await db.execute(sa_select(OrganizationalUnit))
+    all_units = result.scalars().all()
+
+    # Build parent→children map
+    children_map: dict[UUID, list[UUID]] = {}
+    for u in all_units:
+        if u.parent_unit_id:
+            children_map.setdefault(u.parent_unit_id, []).append(u.id)
+
+    # BFS to collect all descendants
+    expanded: set[UUID] = set(unit_ids)
+    queue = list(unit_ids)
+    while queue:
+        current = queue.pop()
+        for child_id in children_map.get(current, []):
+            if child_id not in expanded:
+                expanded.add(child_id)
+                queue.append(child_id)
+
+    return list(expanded)
 
 
 @router.post("", status_code=201, response_model=JobPostingWithSnapshot)
@@ -215,6 +303,14 @@ async def create_job(
         project_scope_raw=body.project_scope_raw,
         target_headcount=body.target_headcount,
         deadline=body.deadline,
+        employment_type=body.employment_type,
+        work_arrangement=body.work_arrangement,
+        location=body.location,
+        salary_range_min=body.salary_range_min,
+        salary_range_max=body.salary_range_max,
+        salary_currency=body.salary_currency,
+        travel_required=body.travel_required,
+        start_date_pref=body.start_date_pref,
         correlation_id=correlation_id,
     )
 
@@ -247,14 +343,52 @@ async def list_jobs(
     db: AsyncSession = Depends(get_tenant_db),
     user: UserContext = Depends(get_current_user_roles),
 ) -> list[JobPostingSummary]:
+    from sqlalchemy import select as sa_select
+
+    from app.models import OrganizationalUnit, User
+
     visible = _visible_unit_ids(user, "jobs.view")
+    # Expand to include descendant org units so a recruiter assigned to
+    # a parent division can see jobs in child teams.
+    if visible is not None:
+        visible = await _expand_with_descendants(db, visible)
     jobs = await list_job_postings(
         db,
         visible_org_unit_ids=visible,
         org_unit_filter=org_unit_id,
         status_filter=status,
     )
-    return [_job_to_summary(j) for j in jobs]
+    if not jobs:
+        return []
+
+    # Batch-load org unit names and user emails for the list view
+    unit_ids = {j.org_unit_id for j in jobs}
+    user_ids = {j.created_by for j in jobs}
+    for j in jobs:
+        if j.updated_by:
+            user_ids.add(j.updated_by)
+
+    unit_result = await db.execute(
+        sa_select(OrganizationalUnit.id, OrganizationalUnit.name).where(
+            OrganizationalUnit.id.in_(unit_ids)
+        )
+    )
+    unit_names: dict[UUID, str] = {row[0]: row[1] for row in unit_result.all()}
+
+    user_result = await db.execute(
+        sa_select(User.id, User.email).where(User.id.in_(user_ids))
+    )
+    user_emails: dict[UUID, str] = {row[0]: row[1] for row in user_result.all()}
+
+    return [
+        _job_to_summary(
+            j,
+            org_unit_name=unit_names.get(j.org_unit_id),
+            created_by_email=user_emails.get(j.created_by),
+            updated_by_email=user_emails.get(j.updated_by) if j.updated_by else None,
+        )
+        for j in jobs
+    ]
 
 
 @router.get("/{job_id}", response_model=JobPostingWithSnapshot)
@@ -267,7 +401,17 @@ async def get_job(
     job, snap = await get_job_posting_with_latest_snapshot(db, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
-    return _job_with_snapshot_to_response(job, snap)
+
+    # Check if the user has manage permission (for the Edit/Confirm UI).
+    # Super admins can always manage. For others, walk the ancestry.
+    can_manage = user.is_super_admin
+    if not can_manage:
+        ancestry = await _get_org_unit_ancestry(db, job.org_unit_id)
+        can_manage = any(
+            user.has_permission_in_unit(u.id, "jobs.manage") for u in ancestry
+        )
+
+    return _job_with_snapshot_to_response(job, snap, can_manage=can_manage)
 
 
 @router.get("/{job_id}/status/stream")
@@ -355,12 +499,15 @@ async def confirm_signals_endpoint(
             detail=f"Cannot confirm signals in status '{job.status}'",
         )
     correlation_id = request.headers.get("x-correlation-id", str(uuid.uuid4()))
-    job = await confirm_signals(
-        db,
-        job=job,
-        actor_id=user.user.id,
-        correlation_id=correlation_id,
-    )
+    try:
+        job = await confirm_signals(
+            db,
+            job=job,
+            actor_id=user.user.id,
+            correlation_id=correlation_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     return _job_to_summary(job)
 
 
@@ -379,7 +526,7 @@ async def enrich_job(
             detail=f"Cannot trigger re-enrichment in status '{job.status}'",
         )
     correlation_id = request.headers.get("x-correlation-id", str(uuid.uuid4()))
-    await trigger_reenrichment(db, job=job)
+    await trigger_reenrichment(db, job=job, actor_id=user.user.id)
 
     background_tasks.add_task(
         _safe_dispatch_reenrichment,
@@ -389,3 +536,26 @@ async def enrich_job(
     )
 
     return {"status": "accepted"}
+
+
+@router.delete("/{job_id}", status_code=200)
+async def delete_job(
+    job_id: UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_tenant_db),
+    user: UserContext = Depends(get_current_user_roles),
+) -> dict[str, str]:
+    from app.modules.jd.service import delete_job_posting
+
+    job = await require_job_access(db, job_id, user, "manage")
+    try:
+        await delete_job_posting(
+            db,
+            job=job,
+            actor_id=user.user.id,
+            actor_email=user.user.email,
+            ip_address=request.client.host if request.client else None,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return {"status": "deleted"}

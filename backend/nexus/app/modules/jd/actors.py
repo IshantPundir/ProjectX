@@ -81,6 +81,7 @@ async def _persist_enriched(
     increments (2, 3, …) so the unique constraint (job_posting_id, version)
     is never violated."""
     job.description_enriched = result.enriched_jd
+    job.enrichment_status = "completed"
 
     # Determine next snapshot version
     max_version_result = await db.execute(
@@ -94,13 +95,10 @@ async def _persist_enriched(
         tenant_id=job.tenant_id,
         job_posting_id=job.id,
         version=current_max + 1,
-        required_skills=[item.model_dump() for item in result.signals.required_skills],
-        preferred_skills=[item.model_dump() for item in result.signals.preferred_skills],
-        must_haves=[item.model_dump() for item in result.signals.must_haves],
-        good_to_haves=[item.model_dump() for item in result.signals.good_to_haves],
-        min_experience_years=result.signals.min_experience_years,
+        signals=[item.model_dump() for item in result.signals.signals],
         seniority_level=result.signals.seniority_level,
         role_summary=result.signals.role_summary,
+        prompt_version="v1",
     )
     db.add(snapshot)
 
@@ -292,11 +290,7 @@ def _build_reenrich_user_message(
     Context (profile) MUST come before documents (JD). See
     feedback_prompt_context_ordering in user memory."""
     snapshot_data = {
-        "required_skills": snapshot.required_skills,
-        "preferred_skills": snapshot.preferred_skills,
-        "must_haves": snapshot.must_haves,
-        "good_to_haves": snapshot.good_to_haves,
-        "min_experience_years": snapshot.min_experience_years,
+        "signals": snapshot.signals,
         "seniority_level": snapshot.seniority_level,
         "role_summary": snapshot.role_summary,
     }

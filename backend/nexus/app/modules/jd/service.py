@@ -31,6 +31,14 @@ async def create_job_posting(
     project_scope_raw: str | None,
     target_headcount: int | None,
     deadline: date | None,
+    employment_type: str | None = None,
+    work_arrangement: str | None = None,
+    location: str | None = None,
+    salary_range_min: int | None = None,
+    salary_range_max: int | None = None,
+    salary_currency: str | None = None,
+    travel_required: str | None = None,
+    start_date_pref: str | None = None,
     correlation_id: str,
 ) -> JobPosting:
     """Validate profile ancestry, INSERT job_postings in 'draft', transition
@@ -59,6 +67,14 @@ async def create_job_posting(
         project_scope_raw=project_scope_raw,
         target_headcount=target_headcount,
         deadline=deadline,
+        employment_type=employment_type,
+        work_arrangement=work_arrangement,
+        location=location,
+        salary_range_min=salary_range_min,
+        salary_range_max=salary_range_max,
+        salary_currency=salary_currency,
+        travel_required=travel_required,
+        start_date_pref=start_date_pref,
         status="draft",
         source="native",
         created_by=created_by,
@@ -195,6 +211,21 @@ async def save_signals(
             correlation_id=correlation_id,
         )
 
+    # Signals changed — enriched JD is now stale. Clear any prior
+    # enrichment error so the frontend doesn't show a contradictory state
+    # (idle status + old error message).
+    job.enrichment_status = "idle"
+    job.enrichment_error = None
+    job.updated_by = actor_id
+
+    # Lock the job row to prevent concurrent save_signals calls from
+    # computing the same MAX(version) and hitting a UniqueConstraint.
+    await db.execute(
+        select(JobPosting.id)
+        .where(JobPosting.id == job.id)
+        .with_for_update()
+    )
+
     # Determine next snapshot version
     max_version_result = await db.execute(
         select(func.max(JobPostingSignalSnapshot.version)).where(
@@ -207,11 +238,7 @@ async def save_signals(
         tenant_id=job.tenant_id,
         job_posting_id=job.id,
         version=current_max + 1,
-        required_skills=[item.model_dump() for item in body.required_skills],
-        preferred_skills=[item.model_dump() for item in body.preferred_skills],
-        must_haves=[item.model_dump() for item in body.must_haves],
-        good_to_haves=[item.model_dump() for item in body.good_to_haves],
-        min_experience_years=body.min_experience_years,
+        signals=[item.model_dump() for item in body.signals],
         seniority_level=body.seniority_level,
         role_summary=body.role_summary,
         confirmed_by=None,
@@ -254,6 +281,7 @@ async def confirm_signals(
 
     snapshot.confirmed_by = actor_id
     snapshot.confirmed_at = datetime.now(UTC)
+    job.updated_by = actor_id
 
     await transition(
         db,
@@ -277,6 +305,7 @@ async def trigger_reenrichment(
     db: AsyncSession,
     *,
     job: JobPosting,
+    actor_id: UUID | None = None,
 ) -> JobPosting:
     """Set enrichment_status to 'streaming' and clear any previous error.
 
@@ -291,6 +320,8 @@ async def trigger_reenrichment(
 
     job.enrichment_status = "streaming"
     job.enrichment_error = None
+    if actor_id:
+        job.updated_by = actor_id
     await db.flush()
 
     logger.info(
@@ -298,3 +329,41 @@ async def trigger_reenrichment(
         job_posting_id=str(job.id),
     )
     return job
+
+
+async def delete_job_posting(
+    db: AsyncSession,
+    *,
+    job: JobPosting,
+    actor_id: UUID,
+    actor_email: str | None = None,
+    ip_address: str | None = None,
+) -> None:
+    """Delete a job posting and its snapshots (CASCADE).
+
+    Does NOT delete jobs that are actively being processed
+    (signals_extracting or enrichment streaming)."""
+    if job.status == "signals_extracting":
+        raise ValueError("Cannot delete a job while signals are being extracted")
+    if job.enrichment_status == "streaming":
+        raise ValueError("Cannot delete a job while re-enrichment is in progress")
+
+    from app.modules.audit import actions as audit_actions
+    from app.modules.audit.service import log_event
+
+    await log_event(
+        db,
+        tenant_id=job.tenant_id,
+        actor_id=actor_id,
+        actor_email=actor_email,
+        action=audit_actions.JOB_POSTING_DELETED
+        if hasattr(audit_actions, "JOB_POSTING_DELETED")
+        else "job_posting.deleted",
+        resource="job_posting",
+        resource_id=job.id,
+        payload={"title": job.title, "status": job.status},
+        ip_address=ip_address,
+    )
+
+    await db.delete(job)
+    logger.info("jd.service.job_deleted", job_posting_id=str(job.id))
