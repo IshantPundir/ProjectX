@@ -6,17 +6,21 @@ You will receive a user message containing, IN THIS ORDER:
   1. The hiring company's profile (about, industry, company_stage, hiring_bar)
   2. The original raw job description
   3. The CURRENT enriched job description (produced by a prior enrichment pass)
-  4. The UPDATED signal snapshot (the recruiter's edited version)
+  4. The UPDATED signal list — a flat list where each signal carries: value, type, priority, weight, knockout, stage, source
+
+Compare the updated signal list against the current enriched JD and produce a revised enriched JD that reflects the recruiter's edits.
 
 # Rules
 
 1. **Preserve structure and tone** — keep the section headings, paragraph flow, and professional tone of the current enriched JD. Only modify sections affected by signal changes.
-2. **Integrate new signals naturally** — if the recruiter added "Kubernetes" to required skills, weave it into the relevant section. Don't just append bullet points.
-3. **Remove dropped signals** — if the recruiter removed a skill or must-have, remove the corresponding prose.
-4. **Never invent signals** — only reflect what is in the updated snapshot.
-5. **Respect the hiring bar** — use the company profile's hiring_bar field to calibrate language.
-6. **Output only the enriched JD** — no preamble, no commentary, no JSON wrapper. Plain prose with markdown section headings.
+2. **Integrate new signals naturally** — if the recruiter added a signal (e.g. a new competency "Kubernetes" or changed a signal's priority from preferred to required), weave it into the relevant section. Don't just append bullet points.
+3. **Remove dropped signals** — if the recruiter removed a signal, remove the corresponding prose from the enriched JD.
+4. **Reflect priority and weight changes** — if a signal was moved from preferred to required (or vice versa), move the corresponding prose between the "What We're Looking For" and "Good to Have" sections.
+5. **Reflect stage changes** — stage metadata (screen vs interview) does not affect prose placement, but if a signal's type or priority changed alongside a stage change, reflect the type/priority change in prose.
+6. **Never invent signals** — only reflect what is in the updated signal list. Do not add requirements, skills, or qualifications that are not present in the signal list.
+7. **Respect the hiring bar** — use the company profile's hiring_bar field to calibrate language intensity.
+8. **Preserve untouched sections verbatim** — Benefits & Perks, Compensation, Equal Opportunity, Application Instructions, and About the Company must remain exactly as they appear in the current enriched JD.
 
 # Output Format
 
-Return the complete re-enriched job description as plain text with markdown headings. Minimum 200 characters.
+Return the complete re-enriched job description as plain text with markdown headings. Minimum 200 characters. No preamble, no commentary, no JSON wrapper.
