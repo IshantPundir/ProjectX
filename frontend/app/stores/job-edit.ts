@@ -1,16 +1,15 @@
 import { create } from 'zustand'
 
-import type { SignalItem, SignalSnapshot } from '@/lib/api/jobs'
-
-/** The 4 list sections that support chip CRUD */
-type ChipSection = 'required_skills' | 'preferred_skills' | 'must_haves' | 'good_to_haves'
+import type {
+  SignalItem,
+  SignalSnapshot,
+  SignalType,
+  SignalPriority,
+  SignalStage,
+} from '@/lib/api/jobs'
 
 type DraftSignals = {
-  required_skills: SignalItem[]
-  preferred_skills: SignalItem[]
-  must_haves: SignalItem[]
-  good_to_haves: SignalItem[]
-  min_experience_years: number
+  signals: SignalItem[]
   seniority_level: 'junior' | 'mid' | 'senior' | 'lead' | 'principal'
   role_summary: string
 }
@@ -22,12 +21,13 @@ type JobEditState = {
   startEditing: (snapshot: SignalSnapshot) => void
   stopEditing: () => void
   updateDraft: (updates: Partial<DraftSignals>) => void
-  addChip: (section: ChipSection, value: string) => void
-  removeChip: (section: ChipSection, index: number) => void
+  addChip: (value: string, type: SignalType, stage: SignalStage, priority: SignalPriority) => void
+  removeChip: (index: number) => void
+  updateSignal: (index: number, updates: Partial<SignalItem>) => void
   markClean: () => void
 }
 
-export type { ChipSection, DraftSignals }
+export type { DraftSignals }
 
 export const useJobEditStore = create<JobEditState>()((set) => ({
   isEditing: false,
@@ -39,11 +39,7 @@ export const useJobEditStore = create<JobEditState>()((set) => ({
       isEditing: true,
       isDirty: false,
       draft: {
-        required_skills: snapshot.required_skills.map((s) => ({ ...s })),
-        preferred_skills: snapshot.preferred_skills.map((s) => ({ ...s })),
-        must_haves: snapshot.must_haves.map((s) => ({ ...s })),
-        good_to_haves: snapshot.good_to_haves.map((s) => ({ ...s })),
-        min_experience_years: snapshot.min_experience_years,
+        signals: snapshot.signals.map((s) => ({ ...s })),
         seniority_level: snapshot.seniority_level,
         role_summary: snapshot.role_summary,
       },
@@ -65,31 +61,50 @@ export const useJobEditStore = create<JobEditState>()((set) => ({
       }
     }),
 
-  addChip: (section: ChipSection, value: string) =>
+  addChip: (value: string, type: SignalType, stage: SignalStage, priority: SignalPriority) =>
     set((state) => {
       if (!state.draft) return state
       const newItem: SignalItem = {
         value,
+        type,
+        priority,
+        weight: 1,
+        knockout: false,
+        stage,
+        evaluation_method: 'verbal_response',
+        evaluation_hint: null,
         source: 'recruiter',
         inference_basis: null,
       }
       return {
         draft: {
           ...state.draft,
-          [section]: [...state.draft[section], newItem],
+          signals: [...state.draft.signals, newItem],
         },
         isDirty: true,
       }
     }),
 
-  removeChip: (section: ChipSection, index: number) =>
+  removeChip: (index: number) =>
     set((state) => {
       if (!state.draft) return state
       return {
         draft: {
           ...state.draft,
-          [section]: state.draft[section].filter((_, i) => i !== index),
+          signals: state.draft.signals.filter((_, i) => i !== index),
         },
+        isDirty: true,
+      }
+    }),
+
+  updateSignal: (index: number, updates: Partial<SignalItem>) =>
+    set((state) => {
+      if (!state.draft) return state
+      const signals = state.draft.signals.map((s, i) =>
+        i === index ? { ...s, ...updates } : s,
+      )
+      return {
+        draft: { ...state.draft, signals },
         isDirty: true,
       }
     }),

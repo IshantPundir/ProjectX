@@ -1,20 +1,52 @@
 import { apiFetch } from './client'
 
+// Signal enums
+export type SignalType = 'competency' | 'experience' | 'credential' | 'behavioral'
+export type SignalPriority = 'required' | 'preferred'
+export type SignalStage = 'screen' | 'interview'
+export type EvaluationMethod =
+  | 'verbal_response'
+  | 'code_exercise'
+  | 'scenario_walkthrough'
+  | 'credential_verify'
+  | 'behavioral_question'
+
+// Job metadata enums
+export type EmploymentType =
+  | 'full_time'
+  | 'part_time'
+  | 'contract'
+  | 'contract_to_hire'
+  | 'internship'
+export type WorkArrangement = 'onsite' | 'remote' | 'hybrid'
+export type SalaryCurrency = 'USD' | 'EUR' | 'GBP' | 'INR' | 'CAD' | 'AUD'
+export type TravelRequired = 'none' | 'occasional' | 'moderate' | 'extensive'
+export type StartDatePref =
+  | 'immediate'
+  | 'within_30_days'
+  | 'within_60_days'
+  | 'flexible'
+
 export type SignalItem = {
   value: string
+  type: SignalType
+  priority: SignalPriority
+  weight: 1 | 2 | 3
+  knockout: boolean
+  stage: SignalStage
+  evaluation_method: EvaluationMethod
+  evaluation_hint: string | null
   source: 'ai_extracted' | 'ai_inferred' | 'recruiter'
   inference_basis: string | null
 }
 
 export type SignalSnapshot = {
   version: number
-  required_skills: SignalItem[]
-  preferred_skills: SignalItem[]
-  must_haves: SignalItem[]
-  good_to_haves: SignalItem[]
-  min_experience_years: number
+  signals: SignalItem[]
   seniority_level: 'junior' | 'mid' | 'senior' | 'lead' | 'principal'
   role_summary: string
+  confirmed_by: string | null
+  confirmed_at: string | null
 }
 
 export type JobStatus =
@@ -28,6 +60,9 @@ export type JobPostingSummary = {
   id: string
   title: string
   org_unit_id: string
+  org_unit_name: string | null
+  created_by_email: string | null
+  updated_by_email: string | null
   status: JobStatus
   status_error: string | null
   created_at: string
@@ -46,6 +81,15 @@ export type JobPostingWithSnapshot = JobPostingSummary & {
   enrichment_status: EnrichmentStatus
   enrichment_error: string | null
   is_confirmed: boolean
+  can_manage: boolean
+  employment_type: EmploymentType | null
+  work_arrangement: WorkArrangement | null
+  location: string | null
+  salary_range_min: number | null
+  salary_range_max: number | null
+  salary_currency: SalaryCurrency | null
+  travel_required: TravelRequired | null
+  start_date_pref: StartDatePref | null
 }
 
 export type JobStatusEvent = {
@@ -64,14 +108,18 @@ export type CreateJobBody = {
   project_scope_raw: string | null
   target_headcount: number | null
   deadline: string | null
+  employment_type: EmploymentType | null
+  work_arrangement: WorkArrangement | null
+  location: string | null
+  salary_range_min: number | null
+  salary_range_max: number | null
+  salary_currency: SalaryCurrency | null
+  travel_required: TravelRequired | null
+  start_date_pref: StartDatePref | null
 }
 
 export type SaveSignalsBody = {
-  required_skills: SignalItem[]
-  preferred_skills: SignalItem[]
-  must_haves: SignalItem[]
-  good_to_haves: SignalItem[]
-  min_experience_years: number
+  signals: SignalItem[]
   seniority_level: 'junior' | 'mid' | 'senior' | 'lead' | 'principal'
   role_summary: string
 }
@@ -108,7 +156,7 @@ export const jobsApi = {
   saveSignals: (token: string, id: string, body: SaveSignalsBody): Promise<SignalSnapshot> =>
     apiFetch<SignalSnapshot>(`/api/jobs/${id}/signals`, {
       token,
-      method: 'PUT',
+      method: 'PATCH',
       body: JSON.stringify(body),
     }),
 
@@ -122,5 +170,11 @@ export const jobsApi = {
     apiFetch<{ status: string }>(`/api/jobs/${id}/enrich`, {
       token,
       method: 'POST',
+    }),
+
+  delete: (token: string, id: string): Promise<{ status: string }> =>
+    apiFetch<{ status: string }>(`/api/jobs/${id}`, {
+      token,
+      method: 'DELETE',
     }),
 }
