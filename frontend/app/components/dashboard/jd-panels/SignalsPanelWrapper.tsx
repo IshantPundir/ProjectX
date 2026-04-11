@@ -1,5 +1,7 @@
 'use client'
 
+import { useEffect } from 'react'
+
 import type { SignalSnapshot } from '@/lib/api/jobs'
 import { useConfirmSignals } from '@/lib/hooks/use-confirm-signals'
 import { useSaveSignals } from '@/lib/hooks/use-save-signals'
@@ -25,6 +27,13 @@ export function SignalsPanelWrapper({
 }: Props) {
   const isEditing = useJobEditStore((s) => s.isEditing)
   const isDirty = useJobEditStore((s) => s.isDirty)
+
+  // Reset editing state when navigating between jobs. The Zustand store
+  // is a global singleton — without this cleanup, editing state from
+  // job A bleeds into job B on navigation.
+  useEffect(() => {
+    return () => useJobEditStore.getState().stopEditing()
+  }, [jobId])
   const draft = useJobEditStore((s) => s.draft)
   const startEditing = useJobEditStore((s) => s.startEditing)
   const stopEditing = useJobEditStore((s) => s.stopEditing)
@@ -51,11 +60,7 @@ export function SignalsPanelWrapper({
     if (!draft) return
     saveSignals.mutate(
       {
-        required_skills: draft.required_skills,
-        preferred_skills: draft.preferred_skills,
-        must_haves: draft.must_haves,
-        good_to_haves: draft.good_to_haves,
-        min_experience_years: draft.min_experience_years,
+        signals: draft.signals,
         seniority_level: draft.seniority_level,
         role_summary: draft.role_summary,
       },
@@ -73,7 +78,7 @@ export function SignalsPanelWrapper({
   }
 
   return (
-    <aside className="col-span-1 bg-white rounded-lg border border-zinc-200 p-5 space-y-5 overflow-auto flex flex-col">
+    <aside className="col-span-1 bg-white rounded-lg border border-zinc-200 p-5 space-y-5 overflow-auto flex flex-col sticky top-4 self-start max-h-[calc(100vh-6rem)]">
       <div className="flex items-center justify-between pb-2 border-b border-zinc-100">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
           Signals

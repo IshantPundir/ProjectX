@@ -55,19 +55,48 @@ function Wrapper({ children }: { children: React.ReactNode }) {
 
 const SNAPSHOT: SignalSnapshot = {
   version: 1,
-  required_skills: [
-    { value: 'TypeScript', source: 'ai_extracted', inference_basis: null },
+  signals: [
+    {
+      value: 'TypeScript',
+      type: 'competency',
+      priority: 'required',
+      weight: 2,
+      knockout: false,
+      stage: 'interview',
+      evaluation_method: 'code_exercise',
+      evaluation_hint: null,
+      source: 'ai_extracted',
+      inference_basis: null,
+    },
+    {
+      value: 'React',
+      type: 'competency',
+      priority: 'preferred',
+      weight: 1,
+      knockout: false,
+      stage: 'interview',
+      evaluation_method: 'verbal_response',
+      evaluation_hint: null,
+      source: 'ai_inferred',
+      inference_basis: 'JD mentions frontend',
+    },
+    {
+      value: '3+ years experience',
+      type: 'experience',
+      priority: 'required',
+      weight: 2,
+      knockout: true,
+      stage: 'screen',
+      evaluation_method: 'verbal_response',
+      evaluation_hint: null,
+      source: 'ai_extracted',
+      inference_basis: null,
+    },
   ],
-  preferred_skills: [
-    { value: 'React', source: 'ai_inferred', inference_basis: 'JD mentions frontend' },
-  ],
-  must_haves: [
-    { value: '3+ years experience', source: 'ai_extracted', inference_basis: null },
-  ],
-  good_to_haves: [],
-  min_experience_years: 3,
   seniority_level: 'mid',
   role_summary: 'A mid-level frontend engineer role.',
+  confirmed_by: null,
+  confirmed_at: null,
 }
 
 // ---------------------------------------------------------------------------

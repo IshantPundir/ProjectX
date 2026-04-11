@@ -8,24 +8,44 @@ import {
 } from '@/components/ui/tooltip'
 import type { SignalItem } from '@/lib/api/jobs'
 
+const WEIGHT_DOTS: Record<1 | 2 | 3, string> = {
+  1: '\u25CF',
+  2: '\u25CF\u25CF',
+  3: '\u25CF\u25CF\u25CF',
+}
+
 /**
- * Provenance-aware chip following Q14 of the brainstorming session:
- * subtle tinted fill + color dot prefix. Inferred chips get a dashed
- * border and an inference_basis tooltip on hover.
+ * Provenance-aware chip with weight indicator and knockout badge.
  *
- *   ai_extracted → blue solid
- *   ai_inferred  → amber dashed with tooltip
- *   recruiter    → green solid (unused in 2A)
+ *   ai_extracted  -> blue solid
+ *   ai_inferred   -> amber dashed with tooltip
+ *   recruiter     -> green solid
+ *
+ * Weight shown as dots (1-3). Knockout signals show a red "KO" badge.
  */
 export function SignalChip({ item }: { item: SignalItem }) {
   const base =
     'inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-full border font-medium'
 
+  const chip = (
+    <>
+      <span className="text-[8px] leading-none opacity-60" aria-label={`weight ${item.weight}`}>
+        {WEIGHT_DOTS[item.weight]}
+      </span>
+      {item.value}
+      {item.knockout && (
+        <span className="ml-0.5 px-1 py-px text-[9px] font-bold leading-none rounded bg-red-100 text-red-600 border border-red-200">
+          KO
+        </span>
+      )}
+    </>
+  )
+
   if (item.source === 'ai_extracted') {
     return (
       <span className={`${base} bg-blue-50 text-blue-700 border-blue-200`}>
         <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-        {item.value}
+        {chip}
       </span>
     )
   }
@@ -43,7 +63,7 @@ export function SignalChip({ item }: { item: SignalItem }) {
                 className={`${base} bg-amber-50 text-amber-800 border border-dashed border-amber-400 cursor-default`}
               >
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                {item.value}
+                {chip}
               </span>
             }
           />
@@ -59,11 +79,11 @@ export function SignalChip({ item }: { item: SignalItem }) {
     )
   }
 
-  // recruiter — not used in 2A (read-only review) but supported for 2B
+  // recruiter
   return (
     <span className={`${base} bg-emerald-50 text-emerald-700 border-emerald-200`}>
       <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-      {item.value}
+      {chip}
     </span>
   )
 }
