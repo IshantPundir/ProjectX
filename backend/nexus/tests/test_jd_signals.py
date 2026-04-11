@@ -46,19 +46,16 @@ _TEST_BEARER = "test-integration-token"
 # Sample signal payloads
 # ---------------------------------------------------------------------------
 
-def _signal_item(value: str, source: str = "recruiter") -> dict:
-    """Build a signal item dict suitable for request bodies."""
-    return {"value": value, "source": source, "inference_basis": None}
-
-
 def _save_signals_body(**overrides) -> dict:
     """Return a valid SaveSignalsRequest body with sensible defaults."""
     base = {
-        "required_skills": [_signal_item("Python"), _signal_item("FastAPI")],
-        "preferred_skills": [_signal_item("Docker", "ai_extracted")],
-        "must_haves": [_signal_item("5+ years backend")],
-        "good_to_haves": [_signal_item("Kubernetes experience")],
-        "min_experience_years": 5,
+        "signals": [
+            {"value": "Python", "type": "competency", "priority": "required", "weight": 2, "knockout": False, "stage": "interview", "source": "ai_extracted", "inference_basis": None},
+            {"value": "FastAPI", "type": "competency", "priority": "required", "weight": 2, "knockout": False, "stage": "interview", "source": "ai_extracted", "inference_basis": None},
+            {"value": "Docker", "type": "competency", "priority": "preferred", "weight": 1, "knockout": False, "stage": "interview", "source": "ai_extracted", "inference_basis": None},
+            {"value": "5+ years backend", "type": "experience", "priority": "required", "weight": 2, "knockout": True, "stage": "screen", "source": "ai_extracted", "inference_basis": None},
+            {"value": "Kubernetes", "type": "competency", "priority": "preferred", "weight": 1, "knockout": False, "stage": "interview", "source": "recruiter", "inference_basis": None},
+        ],
         "seniority_level": "senior",
         "role_summary": "A senior backend engineer owning the platform end-to-end.",
     }
@@ -161,11 +158,13 @@ async def _make_job_with_snapshot(
         tenant_id=tenant_id,
         job_posting_id=job.id,
         version=1,
-        required_skills=[_signal_item("Python", "ai_extracted")],
-        preferred_skills=[_signal_item("Go", "ai_inferred")],
-        must_haves=[_signal_item("5+ years backend", "ai_extracted")],
-        good_to_haves=[],
-        min_experience_years=5,
+        signals=[
+            {"value": "Python", "type": "competency", "priority": "required", "weight": 2, "knockout": False, "stage": "interview", "source": "ai_extracted", "inference_basis": None},
+            {"value": "5+ years backend", "type": "experience", "priority": "required", "weight": 2, "knockout": True, "stage": "screen", "source": "ai_extracted", "inference_basis": None},
+            {"value": "CS degree", "type": "credential", "priority": "preferred", "weight": 1, "knockout": False, "stage": "screen", "source": "ai_extracted", "inference_basis": None},
+            {"value": "System Design", "type": "competency", "priority": "required", "weight": 3, "knockout": False, "stage": "interview", "source": "ai_inferred", "inference_basis": "Senior role implies architectural ownership"},
+            {"value": "Mentoring", "type": "behavioral", "priority": "preferred", "weight": 1, "knockout": False, "stage": "interview", "source": "ai_inferred", "inference_basis": "Senior role at growth-stage company"},
+        ],
         seniority_level="senior",
         role_summary="A senior backend engineer at a fintech startup.",
         confirmed_by=user_id if confirmed else None,
@@ -220,9 +219,9 @@ async def test_save_signals_creates_new_snapshot(db: AsyncSession, monkeypatch):
     assert response.status_code == 200, response.text
     data = response.json()
     assert data["version"] == 2
-    assert len(data["required_skills"]) == 2
-    assert data["required_skills"][0]["value"] == "Python"
-    assert data["required_skills"][0]["source"] == "recruiter"
+    assert len(data["signals"]) == 5
+    assert data["signals"][0]["value"] == "Python"
+    assert data["signals"][0]["source"] == "ai_extracted"
     assert data["seniority_level"] == "senior"
     assert data["role_summary"] == body["role_summary"]
 

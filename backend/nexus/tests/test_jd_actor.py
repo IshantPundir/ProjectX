@@ -9,7 +9,7 @@ import openai
 import pytest
 from sqlalchemy import select
 
-from app.ai.schemas import ExtractedSignals, ExtractionOutput, SignalItem
+from app.ai.schemas import ExtractedSignals, ExtractionOutput, SignalItemV2
 from app.models import JobPosting, JobPostingSignalSnapshot
 from app.modules.jd.actors import _run_extraction
 from tests.conftest import (
@@ -50,15 +50,13 @@ def _fake_extraction_output() -> ExtractionOutput:
     return ExtractionOutput(
         enriched_jd="A" * 80,
         signals=ExtractedSignals(
-            required_skills=[
-                SignalItem(value="Python", source="ai_extracted", inference_basis=None)
+            signals=[
+                SignalItemV2(value="Python", type="competency", priority="required", weight=2, knockout=False, stage="interview", source="ai_extracted", inference_basis=None),
+                SignalItemV2(value="5+ years backend", type="experience", priority="required", weight=2, knockout=True, stage="screen", source="ai_extracted", inference_basis=None),
+                SignalItemV2(value="CS degree", type="credential", priority="preferred", weight=1, knockout=False, stage="screen", source="ai_extracted", inference_basis=None),
+                SignalItemV2(value="System Design", type="competency", priority="required", weight=3, knockout=False, stage="interview", source="ai_inferred", inference_basis="Senior role implies architectural ownership"),
+                SignalItemV2(value="Mentoring", type="behavioral", priority="preferred", weight=1, knockout=False, stage="interview", source="ai_inferred", inference_basis="Senior role at growth-stage company"),
             ],
-            preferred_skills=[],
-            must_haves=[
-                SignalItem(value="5+ years backend", source="ai_extracted", inference_basis=None)
-            ],
-            good_to_haves=[],
-            min_experience_years=5,
             seniority_level="senior",
             role_summary="A senior backend engineer at a Series A fintech. Owns end-to-end.",
         ),
@@ -92,7 +90,7 @@ async def test_actor_happy_path_persists_snapshot(db, monkeypatch):
     snap = snap_result.scalar_one()
     assert snap.version == 1
     assert snap.seniority_level == "senior"
-    assert len(snap.required_skills) == 1
+    assert len(snap.signals) == 5
 
 
 @pytest.mark.asyncio
