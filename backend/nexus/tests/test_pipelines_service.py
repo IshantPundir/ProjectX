@@ -66,6 +66,13 @@ def _make_stage(
     )
 
 
+async def _set_tenant_ctx(db, tenant_id) -> None:
+    """Set the RLS tenant context for the current transaction."""
+    await db.execute(
+        sqlalchemy.text(f"SET LOCAL app.current_tenant = '{tenant_id}'")
+    )
+
+
 async def _setup_tenant_user_unit(db):
     """Create a tenant + user + company org unit, set RLS, return all three."""
     tenant = await create_test_client(db)
@@ -76,9 +83,7 @@ async def _setup_tenant_user_unit(db):
     tenant.super_admin_id = user.id
     await db.flush()
 
-    await db.execute(
-        sqlalchemy.text(f"SET LOCAL app.current_tenant = '{tenant.id}'")
-    )
+    await _set_tenant_ctx(db, tenant.id)
     return tenant, user, company
 
 

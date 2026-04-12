@@ -87,6 +87,18 @@ class PipelineStageInput(PipelineStageBase):
     model_config = ConfigDict(extra="forbid")
 
 
+class PipelineStageUpdateInput(PipelineStageInput):
+    """Stage input used on UPDATE — carries optional id to preserve row identity.
+
+    Existing stages pass their id; new stages (added via the UI "+ Add stage"
+    button) omit it. The service's diff-and-sync update matches incoming items
+    by id to existing rows.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    id: UUID | None = None
+
+
 class PipelineStageResponse(PipelineStageBase):
     """Stage as returned by the API."""
 
@@ -207,7 +219,7 @@ CreateJobPipelineRequest = (
 class UpdateJobPipelineRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    stages: list[PipelineStageInput] = Field(min_length=1)
+    stages: list[PipelineStageUpdateInput] = Field(min_length=1)
 
     @model_validator(mode="after")
     def check_positions_sequential(self) -> "UpdateJobPipelineRequest":
