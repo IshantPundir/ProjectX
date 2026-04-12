@@ -16,7 +16,7 @@ from app.models import (
     PipelineTemplate,
 )
 from app.modules.auth.context import UserContext
-from app.modules.jd.authz import _get_org_unit_ancestry
+from app.modules.org_units.service import get_org_unit_ancestry
 
 
 async def require_template_access(
@@ -41,7 +41,7 @@ async def require_template_access(
     if user.is_super_admin:
         return template
 
-    ancestry = await _get_org_unit_ancestry(db, template.org_unit_id)
+    ancestry = await get_org_unit_ancestry(db, template.org_unit_id)
     for unit in ancestry:
         if user.has_permission_in_unit(unit.id, "org_units.manage"):
             return template
@@ -72,7 +72,7 @@ async def require_instance_access(
 
     if not user.is_super_admin:
         permission = f"jobs.{action}"
-        ancestry = await _get_org_unit_ancestry(db, job.org_unit_id)
+        ancestry = await get_org_unit_ancestry(db, job.org_unit_id)
         if not any(
             user.has_permission_in_unit(unit.id, permission) for unit in ancestry
         ):

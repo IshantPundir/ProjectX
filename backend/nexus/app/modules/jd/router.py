@@ -16,7 +16,8 @@ from app.database import get_tenant_db, get_tenant_session
 from app.models import JobPostingSignalSnapshot
 from app.modules.auth.context import UserContext, get_current_user_roles
 from app.modules.jd.actors import extract_and_enhance_jd
-from app.modules.jd.authz import _get_org_unit_ancestry, require_job_access
+from app.modules.jd.authz import require_job_access
+from app.modules.org_units.service import get_org_unit_ancestry
 from app.modules.jd.schemas import (
     JobPostingCreate,
     JobPostingSummary,
@@ -286,7 +287,7 @@ async def create_job(
 ) -> JobPostingWithSnapshot:
     # jobs.create is enforced via ancestry walk on the target org unit
     if not user.is_super_admin:
-        ancestry = await _get_org_unit_ancestry(db, body.org_unit_id)
+        ancestry = await get_org_unit_ancestry(db, body.org_unit_id)
         if not any(user.has_permission_in_unit(u.id, "jobs.create") for u in ancestry):
             raise HTTPException(
                 status_code=403, detail="Missing jobs.create in ancestry"
@@ -406,7 +407,7 @@ async def get_job(
     # Super admins can always manage. For others, walk the ancestry.
     can_manage = user.is_super_admin
     if not can_manage:
-        ancestry = await _get_org_unit_ancestry(db, job.org_unit_id)
+        ancestry = await get_org_unit_ancestry(db, job.org_unit_id)
         can_manage = any(
             user.has_permission_in_unit(u.id, "jobs.manage") for u in ancestry
         )

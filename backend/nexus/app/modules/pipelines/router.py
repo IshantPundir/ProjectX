@@ -27,7 +27,7 @@ from app.models import (
     PipelineTemplateStage,
 )
 from app.modules.auth.context import UserContext, get_current_user_roles
-from app.modules.jd.authz import _get_org_unit_ancestry
+from app.modules.org_units.service import get_org_unit_ancestry
 from app.modules.pipelines.authz import (
     require_instance_access,
     require_template_access,
@@ -140,7 +140,7 @@ async def _require_org_unit_manage(
     """Check org_units.manage in ancestry. Raises 403 otherwise."""
     if user.is_super_admin:
         return
-    ancestry = await _get_org_unit_ancestry(db, org_unit_id)
+    ancestry = await get_org_unit_ancestry(db, org_unit_id)
     if not any(
         user.has_permission_in_unit(u.id, "org_units.manage") for u in ancestry
     ):

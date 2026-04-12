@@ -190,7 +190,7 @@ export default function JobPipelinePage() {
         <p className="text-sm text-zinc-500 mb-6">
           Pick a template from your library, the starter pack, or build from scratch.
         </p>
-        <Button onClick={() => setPickerOpen(true)}>Pick a pipeline</Button>
+        <Button onClick={() => setPickerOpen(true)} disabled={createMutation.isPending}>Pick a pipeline</Button>
         {pickerOpen && (
           <TemplatePickerDialog
             orgUnitId={job.org_unit_id}

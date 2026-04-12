@@ -16,31 +16,9 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import JobPosting, OrganizationalUnit
+from app.models import JobPosting
 from app.modules.auth.context import UserContext
-
-
-async def _get_org_unit_ancestry(
-    db: AsyncSession, org_unit_id: UUID
-) -> list[OrganizationalUnit]:
-    """Walk parent_unit_id chain from the given unit up to root.
-    Returns units in order: [starting_unit, parent, grandparent, ..., root]."""
-    chain: list[OrganizationalUnit] = []
-    current_id: UUID | None = org_unit_id
-    seen: set[UUID] = set()
-    while current_id is not None:
-        if current_id in seen:
-            break  # defensive: avoid infinite loop on corrupted data
-        seen.add(current_id)
-        result = await db.execute(
-            select(OrganizationalUnit).where(OrganizationalUnit.id == current_id)
-        )
-        unit = result.scalar_one_or_none()
-        if unit is None:
-            break
-        chain.append(unit)
-        current_id = unit.parent_unit_id
-    return chain
+from app.modules.org_units.service import get_org_unit_ancestry
 
 
 async def require_job_access(
@@ -67,7 +45,7 @@ async def require_job_access(
         return job
 
     permission = f"jobs.{action}"
-    ancestry = await _get_org_unit_ancestry(db, job.org_unit_id)
+    ancestry = await get_org_unit_ancestry(db, job.org_unit_id)
     for unit in ancestry:
         if user.has_permission_in_unit(unit.id, permission):
             return job
