@@ -73,7 +73,12 @@ function JobPipelineEditor({ job, pipeline, jobId }: EditorProps) {
   }
   function handleReset() {
     if (confirm('Discard your edits and reset to the source template?')) {
-      resetMutation.mutate()
+      resetMutation.mutate(undefined, {
+        onSuccess: (fresh) => {
+          setStages(fresh.stages.map(stripId))
+          setSelectedIndex(null)
+        },
+      })
     }
   }
 
@@ -132,11 +137,11 @@ function JobPipelineEditor({ job, pipeline, jobId }: EditorProps) {
           open={pickerOpen}
           onClose={() => setPickerOpen(false)}
           onPickTemplate={() => {
-            toast.error('Swapping template not yet implemented — delete and recreate')
+            toast('Template swapping is not yet available. To change the template, delete this pipeline and create a new one.')
             setPickerOpen(false)
           }}
           onPickStarter={() => {
-            toast.error('Swapping template not yet implemented — delete and recreate')
+            toast('Template swapping is not yet available. To change the template, delete this pipeline and create a new one.')
             setPickerOpen(false)
           }}
         />
@@ -157,6 +162,22 @@ export default function JobPipelinePage() {
 
   if (jobLoading || pipelineLoading || !job) {
     return <div className="text-sm text-zinc-500">Loading pipeline…</div>
+  }
+
+  if (!job.can_manage || job.status !== 'signals_confirmed') {
+    return (
+      <div className="max-w-4xl">
+        <Link
+          href={`/jobs/${jobId}`}
+          className="text-sm text-zinc-500 hover:text-zinc-900 mb-1 inline-block"
+        >
+          ← Back to job
+        </Link>
+        <p className="text-sm text-zinc-500 mt-4">
+          This pipeline is not available for editing.
+        </p>
+      </div>
+    )
   }
 
   if (!pipeline) {
