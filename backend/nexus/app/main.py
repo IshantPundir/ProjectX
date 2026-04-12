@@ -85,6 +85,7 @@ def create_app() -> FastAPI:
     from app.modules.settings.router import router as settings_router, workspace_router
     from app.modules.org_units.router import router as org_units_router
     from app.modules.roles.router import router as roles_router
+    from app.modules.pipelines.router import router as pipelines_router
 
     application.include_router(auth_router)
     application.include_router(ats_router)
@@ -101,6 +102,7 @@ def create_app() -> FastAPI:
     application.include_router(workspace_router)
     application.include_router(org_units_router)
     application.include_router(roles_router)
+    application.include_router(pipelines_router)
 
     # --- Exception handlers (Phase 2A — JD module) ---
     from fastapi import Request
