@@ -31,6 +31,7 @@ export function SignalFilterEditor({ value, onChange }: Props) {
             <button
               key={t}
               type="button"
+              aria-pressed={value.include_types.includes(t)}
               onClick={() =>
                 onChange({ ...value, include_types: toggle(value.include_types, t) })
               }
@@ -52,6 +53,7 @@ export function SignalFilterEditor({ value, onChange }: Props) {
             <button
               key={s}
               type="button"
+              aria-pressed={value.include_stages.includes(s)}
               onClick={() =>
                 onChange({ ...value, include_stages: toggle(value.include_stages, s) })
               }
@@ -73,6 +75,7 @@ export function SignalFilterEditor({ value, onChange }: Props) {
             <button
               key={w}
               type="button"
+              aria-pressed={value.include_weights.includes(w)}
               onClick={() =>
                 onChange({ ...value, include_weights: toggle(value.include_weights, w) })
               }
@@ -94,6 +97,7 @@ export function SignalFilterEditor({ value, onChange }: Props) {
             <button
               key={p}
               type="button"
+              aria-pressed={value.include_priority.includes(p)}
               onClick={() =>
                 onChange({ ...value, include_priority: toggle(value.include_priority, p) })
               }

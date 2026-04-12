@@ -28,17 +28,18 @@ export function StageConfigDrawer({ stage, onChange, onClose, onDelete }: Props)
   }
 
   return (
-    <aside className="fixed right-0 top-0 h-screen w-96 bg-white border-l border-zinc-200 shadow-xl z-50 overflow-y-auto">
+    <aside aria-labelledby="stage-config-heading" className="fixed right-0 top-0 h-screen w-96 bg-white border-l border-zinc-200 shadow-xl z-50 overflow-y-auto">
       <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-200">
-        <h3 className="text-sm font-semibold">Configure Stage</h3>
-        <button onClick={onClose} className="text-zinc-400 hover:text-zinc-900 text-xl leading-none">
+        <h3 id="stage-config-heading" className="text-sm font-semibold">Configure Stage</h3>
+        <button type="button" onClick={onClose} className="text-zinc-400 hover:text-zinc-900 text-xl leading-none">
           ×
         </button>
       </div>
       <div className="p-5 space-y-4">
         <div>
-          <label className="text-xs font-medium text-zinc-700">Name</label>
+          <label htmlFor="stage-name" className="text-xs font-medium text-zinc-700">Name</label>
           <input
+            id="stage-name"
             value={stage.name}
             onChange={(e) => update('name', e.target.value)}
             className="mt-1 w-full text-sm border border-zinc-200 rounded px-3 py-2"
@@ -46,8 +47,9 @@ export function StageConfigDrawer({ stage, onChange, onClose, onDelete }: Props)
         </div>
 
         <div>
-          <label className="text-xs font-medium text-zinc-700">Stage type</label>
+          <label htmlFor="stage-type" className="text-xs font-medium text-zinc-700">Stage type</label>
           <select
+            id="stage-type"
             value={stage.stage_type}
             onChange={(e) => update('stage_type', e.target.value as StageType)}
             className="mt-1 w-full text-sm border border-zinc-200 rounded px-3 py-2"
@@ -61,8 +63,9 @@ export function StageConfigDrawer({ stage, onChange, onClose, onDelete }: Props)
         </div>
 
         <div>
-          <label className="text-xs font-medium text-zinc-700">Duration (minutes)</label>
+          <label htmlFor="stage-duration" className="text-xs font-medium text-zinc-700">Duration (minutes)</label>
           <input
+            id="stage-duration"
             type="number"
             min={1}
             max={240}
@@ -73,8 +76,9 @@ export function StageConfigDrawer({ stage, onChange, onClose, onDelete }: Props)
         </div>
 
         <div>
-          <label className="text-xs font-medium text-zinc-700">Difficulty</label>
+          <label htmlFor="stage-difficulty" className="text-xs font-medium text-zinc-700">Difficulty</label>
           <select
+            id="stage-difficulty"
             value={stage.difficulty}
             onChange={(e) => update('difficulty', e.target.value as StageDifficulty)}
             className="mt-1 w-full text-sm border border-zinc-200 rounded px-3 py-2"
@@ -88,8 +92,9 @@ export function StageConfigDrawer({ stage, onChange, onClose, onDelete }: Props)
         </div>
 
         <div>
-          <label className="text-xs font-medium text-zinc-700">Advance behavior</label>
+          <label htmlFor="stage-advance" className="text-xs font-medium text-zinc-700">Advance behavior</label>
           <select
+            id="stage-advance"
             value={stage.advance_behavior}
             onChange={(e) => update('advance_behavior', e.target.value as AdvanceBehavior)}
             className="mt-1 w-full text-sm border border-zinc-200 rounded px-3 py-2"
