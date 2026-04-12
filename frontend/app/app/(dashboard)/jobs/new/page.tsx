@@ -4,7 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useForm, useWatch } from 'react-hook-form'
+import { useForm, useWatch, type Resolver } from 'react-hook-form'
 import { toast } from 'sonner'
 import { z } from 'zod'
 
@@ -75,13 +75,10 @@ const createJobSchema = z.object({
     .min(50, 'JD must be at least 50 characters')
     .max(50_000),
   project_scope_raw: z.string().max(20_000).optional().nullable(),
-  target_headcount: z
-    .number()
-    .int()
-    .min(1)
-    .max(10_000)
-    .optional()
-    .nullable(),
+  target_headcount: z.preprocess(
+    (v) => (v === '' || v === null || v === undefined ? null : Number(v)),
+    z.number().int().min(1).max(10_000).nullable().optional(),
+  ),
   // Metadata fields — all optional
   employment_type: z
     .enum(['full_time', 'part_time', 'contract', 'contract_to_hire', 'internship'])
@@ -92,8 +89,14 @@ const createJobSchema = z.object({
     .nullable()
     .optional(),
   location: z.string().max(500).optional().nullable(),
-  salary_range_min: z.number().min(0).optional().nullable(),
-  salary_range_max: z.number().min(0).optional().nullable(),
+  salary_range_min: z.preprocess(
+    (v) => (v === '' || v === null || v === undefined ? null : Number(v)),
+    z.number().min(0).nullable().optional(),
+  ),
+  salary_range_max: z.preprocess(
+    (v) => (v === '' || v === null || v === undefined ? null : Number(v)),
+    z.number().min(0).nullable().optional(),
+  ),
   salary_currency: z
     .enum(['USD', 'EUR', 'GBP', 'INR', 'CAD', 'AUD'])
     .nullable()
@@ -132,7 +135,7 @@ export default function NewJobPage() {
   })
 
   const form = useForm<CreateJobForm>({
-    resolver: zodResolver(createJobSchema),
+    resolver: zodResolver(createJobSchema) as Resolver<CreateJobForm>,
     defaultValues: {
       org_unit_id: '',
       title: '',
@@ -220,7 +223,15 @@ export default function NewJobPage() {
         New Job Description
       </h1>
       <form
-        onSubmit={form.handleSubmit((data) => createMutation.mutate(data))}
+        onSubmit={form.handleSubmit(
+          (data) => createMutation.mutate(data),
+          (errors) => {
+            const firstError = Object.values(errors)[0]
+            if (firstError?.message) {
+              toast.error(`Validation: ${firstError.message}`)
+            }
+          },
+        )}
         className="space-y-6"
       >
         <div>
@@ -361,19 +372,19 @@ export default function NewJobPage() {
 
           {/* Salary Range */}
           <div className="mt-4">
-            <Label>Salary Range</Label>
+            <Label>Salary Range (Annual, for internal screening only)</Label>
             <div className="grid grid-cols-3 gap-3 mt-2">
               <div>
                 <Input
                   type="number"
-                  placeholder="Min"
+                  placeholder="Min (annual)"
                   {...form.register('salary_range_min')}
                 />
               </div>
               <div>
                 <Input
                   type="number"
-                  placeholder="Max"
+                  placeholder="Max (annual)"
                   {...form.register('salary_range_max')}
                 />
               </div>

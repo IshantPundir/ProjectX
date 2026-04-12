@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { apiFetch } from "@/lib/api/client";
+import { Button } from "@/components/ui/button";
 import {
   CompanyProfileForm,
   type CompanyProfile,
@@ -936,6 +937,21 @@ export default function OrgUnitDetailPage() {
             </div>
           </div>
         )}
+
+        {/* ─── Pipeline Templates ─── */}
+        <div className="bg-white border border-zinc-200 rounded-lg p-5 mb-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-zinc-900">Pipeline Templates</h3>
+              <p className="text-xs text-zinc-500 mt-1">
+                Reusable interview pipelines for jobs in this org unit
+              </p>
+            </div>
+            <Link href={`/settings/org-units/${unitId}/pipeline-templates`}>
+              <Button variant="outline" size="sm">Manage templates</Button>
+            </Link>
+          </div>
+        </div>
 
         {/* ─── Members ─── */}
         <div>
