@@ -1,8 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
+import { AlertCircle, Check, Loader2 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { PipelineFunnel } from '@/components/dashboard/pipeline/PipelineFunnel'
@@ -13,13 +14,14 @@ import { useJobPipeline } from '@/lib/hooks/use-job-pipeline'
 import { useCreateJobPipeline } from '@/lib/hooks/use-create-job-pipeline'
 import { useSaveJobPipeline, useResetJobPipeline, useSwapJobPipeline } from '@/lib/hooks/use-save-job-pipeline'
 import type {
-  PipelineStageInput,
+  PipelineStageUpdateInput,
   JobPipelineInstance,
 } from '@/lib/api/pipelines'
 import type { JobPostingWithSnapshot } from '@/lib/api/jobs'
 
-function makeBlankStage(position: number): PipelineStageInput {
+function makeBlankStage(position: number): PipelineStageUpdateInput {
   return {
+    id: undefined, // new stage — backend will assign a UUID
     position,
     name: 'New Stage',
     stage_type: 'phone_screen',
@@ -33,51 +35,112 @@ function makeBlankStage(position: number): PipelineStageInput {
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function stripId({ id: _id, ...rest }: { id: string } & PipelineStageInput): PipelineStageInput {
-  return rest
-}
-
 type EditorProps = {
   job: JobPostingWithSnapshot
   pipeline: JobPipelineInstance
   jobId: string
 }
 
+const AUTOSAVE_DEBOUNCE_MS = 800
+
 function JobPipelineEditor({ job, pipeline, jobId }: EditorProps) {
   const saveMutation = useSaveJobPipeline(jobId)
   const resetMutation = useResetJobPipeline(jobId)
   const swapMutation = useSwapJobPipeline(jobId)
 
-  const [stages, setStages] = useState<PipelineStageInput[]>(() =>
-    pipeline.stages.map(stripId),
+  const [stages, setStages] = useState<PipelineStageUpdateInput[]>(() =>
+    pipeline.stages.map((s) => ({ ...s, id: s.id })),
   )
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [isDirty, setIsDirty] = useState(false)
 
-  function updateStage(index: number, updated: PipelineStageInput) {
-    setStages(stages.map((s, i) => (i === index ? updated : s)))
+  // Auto-save plumbing. stagesRef keeps the latest stages for the unmount flush;
+  // editGenRef prevents a late onSuccess from clearing isDirty if the user
+  // edited again while the mutation was in flight.
+  const saveTimerRef = useRef<number | null>(null)
+  const stagesRef = useRef(stages)
+  const editGenRef = useRef(0)
+
+  useEffect(() => {
+    stagesRef.current = stages
+  })
+
+  function scheduleSave(nextStages: PipelineStageUpdateInput[]) {
+    editGenRef.current += 1
+    const gen = editGenRef.current
+    setIsDirty(true)
+    if (saveTimerRef.current !== null) {
+      window.clearTimeout(saveTimerRef.current)
+    }
+    saveTimerRef.current = window.setTimeout(() => {
+      saveTimerRef.current = null
+      saveMutation.mutate(
+        { stages: nextStages },
+        {
+          onSuccess: () => {
+            // Only mark clean if no newer edit happened while this save was in flight
+            if (gen === editGenRef.current) {
+              setIsDirty(false)
+            }
+          },
+        },
+      )
+    }, AUTOSAVE_DEBOUNCE_MS)
+  }
+
+  // Flush any pending debounced save on unmount so last-second edits aren't lost
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current !== null) {
+        window.clearTimeout(saveTimerRef.current)
+        saveMutation.mutate({ stages: stagesRef.current })
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  function updateStage(index: number, updated: PipelineStageUpdateInput) {
+    setStages((prev) => {
+      const next = prev.map((s, i) => (i === index ? updated : s))
+      scheduleSave(next)
+      return next
+    })
   }
   function addStage() {
-    setStages([...stages, makeBlankStage(stages.length)])
+    setStages((prev) => {
+      const next = [...prev, makeBlankStage(prev.length)]
+      scheduleSave(next)
+      return next
+    })
   }
   function deleteStage(index: number) {
-    setStages(stages.filter((_, i) => i !== index).map((s, i) => ({ ...s, position: i })))
+    setStages((prev) => {
+      const next = prev.filter((_, i) => i !== index).map((s, i) => ({ ...s, position: i }))
+      scheduleSave(next)
+      return next
+    })
     setSelectedIndex(null)
-  }
-  function handleSave() {
-    saveMutation.mutate({ stages })
   }
   function handleReset() {
     if (confirm('Discard your edits and reset to the source template?')) {
+      // Pending local edits are about to be replaced — drop the debounced save
+      if (saveTimerRef.current !== null) {
+        window.clearTimeout(saveTimerRef.current)
+        saveTimerRef.current = null
+      }
+      setIsDirty(false)
       resetMutation.mutate(undefined, {
         onSuccess: (fresh) => {
-          setStages(fresh.stages.map(stripId))
+          setStages(fresh.stages.map((s) => ({ ...s, id: s.id })))
           setSelectedIndex(null)
         },
       })
     }
   }
+
+  const isSaving = isDirty || saveMutation.isPending
+  const saveFailed = saveMutation.isError && !isSaving
 
   return (
     <div className="max-w-4xl">
@@ -91,10 +154,31 @@ function JobPipelineEditor({ job, pipeline, jobId }: EditorProps) {
         </p>
       </div>
 
-      <div className="flex flex-wrap gap-2 mb-6">
-        <Button onClick={handleSave} disabled={saveMutation.isPending}>
-          {saveMutation.isPending ? 'Saving…' : 'Save'}
-        </Button>
+      <div className="flex flex-wrap items-center gap-3 mb-6">
+        {/* Auto-save status indicator — replaces the former Save button.
+            Changes are persisted automatically 800ms after the last edit. */}
+        <div
+          className="flex items-center gap-1.5 text-xs"
+          aria-live="polite"
+        >
+          {saveFailed ? (
+            <>
+              <AlertCircle className="w-3.5 h-3.5 text-red-500" aria-hidden="true" />
+              <span className="text-red-600">Failed to save</span>
+            </>
+          ) : isSaving ? (
+            <>
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-zinc-400" aria-hidden="true" />
+              <span className="text-zinc-500">Saving…</span>
+            </>
+          ) : (
+            <>
+              <Check className="w-3.5 h-3.5 text-emerald-500" aria-hidden="true" />
+              <span className="text-zinc-500">All changes saved</span>
+            </>
+          )}
+        </div>
+        <div className="flex-1" />
         <Button variant="outline" onClick={() => setPickerOpen(true)} disabled={swapMutation.isPending}>
           Swap template
         </Button>
@@ -139,7 +223,7 @@ function JobPipelineEditor({ job, pipeline, jobId }: EditorProps) {
               { source: 'template', template_id: t.id },
               {
                 onSuccess: (fresh) => {
-                  setStages(fresh.stages.map(stripId))
+                  setStages(fresh.stages.map((s) => ({ ...s, id: s.id })))
                   setSelectedIndex(null)
                   setPickerOpen(false)
                 },
@@ -151,7 +235,7 @@ function JobPipelineEditor({ job, pipeline, jobId }: EditorProps) {
               { source: 'starter', starter_key: s.key },
               {
                 onSuccess: (fresh) => {
-                  setStages(fresh.stages.map(stripId))
+                  setStages(fresh.stages.map((s) => ({ ...s, id: s.id })))
                   setSelectedIndex(null)
                   setPickerOpen(false)
                 },

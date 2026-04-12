@@ -38,6 +38,13 @@ export type PipelineStageInput = {
   advance_behavior: AdvanceBehavior
 }
 
+// Stage update shape — existing stages pass their id, new stages omit it.
+// The backend's diff-and-sync uses id to preserve row UUIDs through edits
+// so question banks FK'd to stage_id survive pipeline auto-save.
+export type PipelineStageUpdateInput = PipelineStageInput & {
+  id?: string
+}
+
 export type PipelineStageResponse = PipelineStageInput & {
   id: string
 }
@@ -98,7 +105,7 @@ export type CreateTemplateBody =
 export type UpdateTemplateBody = {
   name?: string
   description?: string | null
-  stages?: PipelineStageInput[]
+  stages?: PipelineStageUpdateInput[]
 }
 
 export type CreateJobPipelineBody =
@@ -107,7 +114,7 @@ export type CreateJobPipelineBody =
   | { source: 'scratch'; stages: PipelineStageInput[] }
 
 export type UpdateJobPipelineBody = {
-  stages: PipelineStageInput[]
+  stages: PipelineStageUpdateInput[]
 }
 
 export type SaveAsTemplateBody = {

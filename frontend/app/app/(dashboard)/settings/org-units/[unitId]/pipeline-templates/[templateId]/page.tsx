@@ -13,10 +13,11 @@ import { PipelineFunnel } from '@/components/dashboard/pipeline/PipelineFunnel'
 import { StageConfigDrawer } from '@/components/dashboard/pipeline/StageConfigDrawer'
 import { usePipelineTemplates } from '@/lib/hooks/use-pipeline-templates'
 import { useUpdateTemplate } from '@/lib/hooks/use-save-pipeline-template'
-import type { PipelineStageInput, PipelineTemplate } from '@/lib/api/pipelines'
+import type { PipelineStageUpdateInput, PipelineTemplate } from '@/lib/api/pipelines'
 
-function makeBlankStage(position: number): PipelineStageInput {
+function makeBlankStage(position: number): PipelineStageUpdateInput {
   return {
+    id: undefined, // new stage — backend will assign a UUID
     position,
     name: 'New Stage',
     stage_type: 'phone_screen',
@@ -30,11 +31,6 @@ function makeBlankStage(position: number): PipelineStageInput {
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function stripId({ id: _id, ...rest }: { id: string } & PipelineStageInput): PipelineStageInput {
-  return rest
-}
-
 type EditFormProps = {
   template: PipelineTemplate
   unitId: string
@@ -46,14 +42,14 @@ function EditTemplateForm({ template, unitId, templateId }: EditFormProps) {
 
   const [name, setName] = useState(() => template.name)
   const [description, setDescription] = useState(() => template.description ?? '')
-  const [stages, setStages] = useState<PipelineStageInput[]>(() =>
-    template.stages.map(stripId),
+  const [stages, setStages] = useState<PipelineStageUpdateInput[]>(() =>
+    template.stages.map((s) => ({ ...s, id: s.id })),
   )
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
 
   const updateMutation = useUpdateTemplate(unitId, templateId)
 
-  function updateStage(index: number, updated: PipelineStageInput) {
+  function updateStage(index: number, updated: PipelineStageUpdateInput) {
     setStages(stages.map((s, i) => (i === index ? updated : s)))
   }
   function addStage() {
