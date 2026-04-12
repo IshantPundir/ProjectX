@@ -33,6 +33,7 @@ from app.modules.pipelines.schemas import (
     CreateJobPipelineFromTemplate,
     CreateJobPipelineRequest,
     PipelineStageInput,
+    PipelineStageUpdateInput,
 )
 from app.modules.pipelines.starter_pack import (
     STARTER_TEMPLATES,
@@ -544,7 +545,7 @@ async def update_job_pipeline_stages(
     db: AsyncSession,
     *,
     instance: JobPipelineInstance,
-    stages: list["PipelineStageUpdateInput | PipelineStageInput"],
+    stages: list[PipelineStageUpdateInput | PipelineStageInput],
 ) -> JobPipelineInstance:
     """Replace the stages on a job pipeline instance via diff-and-sync.
 
@@ -554,8 +555,6 @@ async def update_job_pipeline_stages(
     are deleted. This preserves stage row identity across edits — critical so
     question banks FK'd to stage_id survive auto-save edits.
     """
-    from app.modules.pipelines.schemas import PipelineStageUpdateInput  # local import to avoid cycle
-
     # Load current stages for the instance
     existing_result = await db.execute(
         select(JobPipelineStage).where(
@@ -585,11 +584,7 @@ async def update_job_pipeline_stages(
             existing.duration_minutes = update.duration_minutes
             existing.difficulty = update.difficulty
             existing.signal_filter = update.signal_filter.model_dump()
-            existing.pass_criteria = (
-                update.pass_criteria.model_dump()
-                if hasattr(update.pass_criteria, "model_dump")
-                else dict(update.pass_criteria)
-            )
+            existing.pass_criteria = update.pass_criteria.model_dump()
             existing.advance_behavior = update.advance_behavior
         else:
             # Existing row that the recruiter removed
@@ -603,20 +598,10 @@ async def update_job_pipeline_stages(
 
     # Insert new stages (id=None or plain PipelineStageInput)
     for new_stage in incoming_new:
-        base_input = PipelineStageInput(
-            position=new_stage.position,
-            name=new_stage.name,
-            stage_type=new_stage.stage_type,
-            duration_minutes=new_stage.duration_minutes,
-            difficulty=new_stage.difficulty,
-            signal_filter=new_stage.signal_filter,
-            pass_criteria=new_stage.pass_criteria,
-            advance_behavior=new_stage.advance_behavior,
-        )
         db.add(
             JobPipelineStage(
                 **_stage_input_to_row_dict(
-                    base_input, instance.tenant_id, instance_id=instance.id
+                    new_stage, instance.tenant_id, instance_id=instance.id
                 )
             )
         )
