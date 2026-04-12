@@ -298,6 +298,37 @@ async def confirm_signals(
         snapshot_version=snapshot.version,
         correlation_id=correlation_id,
     )
+
+    # Auto-apply pipeline on signal confirmation.
+    # Failures here must NOT block the confirmation — the job is already
+    # confirmed. Log the error and continue.
+    try:
+        from app.modules.pipelines.service import auto_apply_pipeline_on_confirmation
+
+        await auto_apply_pipeline_on_confirmation(
+            db, job=job, actor_id=actor_id,
+        )
+    except Exception as exc:
+        logger.error(
+            "jd.pipeline_auto_apply_failed",
+            job_posting_id=str(job.id),
+            exc_info=exc,
+        )
+        from app.modules.audit.service import log_event
+        try:
+            await log_event(
+                db,
+                tenant_id=job.tenant_id,
+                actor_id=actor_id,
+                actor_email=None,
+                action="job_pipeline.auto_apply_failed",
+                resource="job_posting",
+                resource_id=job.id,
+                payload={"error": str(exc)[:500]},
+            )
+        except Exception:
+            pass  # audit log failure should never cascade
+
     return job
 
 
