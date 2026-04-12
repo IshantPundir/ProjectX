@@ -1,7 +1,9 @@
 'use client'
 
+import Link from 'next/link'
 import { useParams } from 'next/navigation'
 
+import { Button } from '@/components/ui/button'
 import { EnrichedJdPanel } from '@/components/dashboard/jd-panels/EnrichedJdPanel'
 import { ErrorBanner } from '@/components/dashboard/jd-panels/ErrorBanner'
 import { LoadingSkeleton } from '@/components/dashboard/jd-panels/LoadingSkeleton'
@@ -9,6 +11,7 @@ import { OriginalJdPanel } from '@/components/dashboard/jd-panels/OriginalJdPane
 import { SignalsPanelWrapper } from '@/components/dashboard/jd-panels/SignalsPanelWrapper'
 import { StaleBanner } from '@/components/dashboard/jd-panels/StaleBanner'
 import { useJob } from '@/lib/hooks/use-job'
+import { useJobPipeline } from '@/lib/hooks/use-job-pipeline'
 import { useJobStatusStream } from '@/lib/hooks/use-job-status-stream'
 import { useTriggerEnrich } from '@/lib/hooks/use-trigger-enrich'
 
@@ -17,6 +20,7 @@ export default function JobReviewPage() {
   const jobId = params.jobId
 
   const { data: job, isLoading } = useJob(jobId)
+  const { data: pipeline } = useJobPipeline(jobId)
   const { status, error: sseError } = useJobStatusStream(jobId)
   const triggerEnrich = useTriggerEnrich(jobId)
 
@@ -44,7 +48,22 @@ export default function JobReviewPage() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-zinc-900">{job.title}</h1>
+        <Link
+          href="/jobs"
+          className="text-sm text-zinc-500 hover:text-zinc-900 mb-1 inline-block"
+        >
+          ← Job Descriptions
+        </Link>
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-semibold text-zinc-900">{job.title}</h1>
+          {job.status === 'signals_confirmed' && job.can_manage && (
+            <Link href={`/jobs/${jobId}/pipeline`}>
+              <Button variant={pipeline ? 'outline' : 'default'}>
+                {pipeline ? 'View Pipeline' : 'Build Pipeline'}
+              </Button>
+            </Link>
+          )}
+        </div>
       </div>
 
       {showSkeleton && <LoadingSkeleton status={status} sseError={sseError} />}
@@ -54,7 +73,7 @@ export default function JobReviewPage() {
       )}
 
       {showPanels && job.latest_snapshot && job.description_enriched && (
-        <div className="grid grid-cols-[auto_1fr] 3xl:grid-cols-[1fr_2fr_1.2fr] gap-4 min-h-[70vh]">
+        <div className="grid grid-cols-[auto_1fr_minmax(280px,320px)] 3xl:grid-cols-[1fr_2fr_1.2fr] gap-4 min-h-[70vh]">
           <OriginalJdPanel
             descriptionRaw={job.description_raw}
             projectScopeRaw={job.project_scope_raw}
@@ -74,7 +93,7 @@ export default function JobReviewPage() {
           <SignalsPanelWrapper
             snapshot={job.latest_snapshot}
             isConfirmed={job.is_confirmed}
-            canManage={true}
+            canManage={job.can_manage}
             jobId={jobId}
           />
         </div>
