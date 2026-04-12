@@ -191,6 +191,145 @@ class JobPostingSignalSnapshot(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("NOW()"))
 
 
+class PipelineTemplate(Base):
+    """Phase 2C.1 — reusable interview pipeline template per org unit.
+
+    Templates are owned by an org unit and can be applied to jobs as
+    a starting point. Editing a template does NOT affect existing job
+    pipelines (jobs get snapshotted instances)."""
+
+    __tablename__ = "pipeline_templates"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False
+    )
+    org_unit_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizational_units.id"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    is_default: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    from_starter: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("NOW()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("NOW()")
+    )
+
+
+class PipelineTemplateStage(Base):
+    """Ordered stage within a pipeline template."""
+
+    __tablename__ = "pipeline_template_stages"
+    __table_args__ = (
+        UniqueConstraint(
+            "template_id", "position", name="uq_template_stage_position"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False
+    )
+    template_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("pipeline_templates.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    stage_type: Mapped[str] = mapped_column(String, nullable=False)
+    duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    difficulty: Mapped[str] = mapped_column(String, nullable=False)
+    signal_filter: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    pass_criteria: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    advance_behavior: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("NOW()")
+    )
+
+
+class JobPipelineInstance(Base):
+    """Per-job pipeline instance — snapshotted from a template.
+
+    Editing an instance does NOT propagate to the source template."""
+
+    __tablename__ = "job_pipeline_instances"
+    __table_args__ = (
+        UniqueConstraint("job_posting_id", name="uq_job_pipeline_instance_job"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False
+    )
+    job_posting_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("job_postings.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source_template_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("pipeline_templates.id", ondelete="SET NULL"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("NOW()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("NOW()")
+    )
+
+
+class JobPipelineStage(Base):
+    """Ordered stage within a job pipeline instance."""
+
+    __tablename__ = "job_pipeline_stages"
+    __table_args__ = (
+        UniqueConstraint(
+            "instance_id", "position", name="uq_job_pipeline_stage_position"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False
+    )
+    instance_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("job_pipeline_instances.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    stage_type: Mapped[str] = mapped_column(String, nullable=False)
+    duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    difficulty: Mapped[str] = mapped_column(String, nullable=False)
+    signal_filter: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    pass_criteria: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    advance_behavior: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("NOW()")
+    )
+
+
 class Session(Base):
     """Phase 3 stub. Defined in 2A so Phase 3 FKs have a parent.
     candidate_id column exists but NO FK constraint until Phase 3
