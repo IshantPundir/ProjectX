@@ -3,7 +3,7 @@
 > **Status:** Approved design — ready for implementation planning
 > **Date:** 2026-04-12
 > **Depends on:** Phase 2C.1 (Pipeline Builder) — shipped
-> **Prerequisite for:** Phase 3 (Interview Session Engine)
+> **Prerequisite for:** Phase 3 (session engine)
 
 ---
 
@@ -11,7 +11,7 @@
 
 Phase 2C.2 builds the **question bank generation system** that takes a confirmed pipeline (2C.1) and the job's signal schema (2B) and produces **rich, structured, audit-grade interview questions** per pipeline stage. Recruiters review and edit the generated questions through a dedicated review surface, then explicitly confirm each bank to mark it ready for Phase 3 interview sessions.
 
-The quality of this phase determines how well the Interview AI (Phase 3) can screen and evaluate candidates and how defensible the resulting evaluation reports are. The structured schema (evidence-based rubric anchors, follow-up probes, mandatory knockout enforcement) is specifically designed for downstream consumption by a live interview AI that must score candidates consistently, catch bluffing, and produce legally defensible hiring reports.
+The quality of this phase determines how well the Phase 3 session engine can screen and evaluate candidates and how defensible the resulting evaluation reports are. The structured schema (evidence-based rubric anchors, follow-up probes, mandatory knockout enforcement) is specifically designed for downstream consumption by a live interview AI that must score candidates consistently, catch bluffing, and produce legally defensible hiring reports.
 
 ---
 
@@ -122,7 +122,7 @@ Three-layer architecture, matching the rest of the codebase:
 
 - **One bank per pipeline stage, not per job.** Matches 2C.1's modular pipeline architecture (1–5+ stages per job). A fixed "two banks" model couldn't represent single-stage or four-plus-stage pipelines. Each stage's bank is generated with that stage's specific metadata (type, duration, difficulty, signal_filter.include_types).
 
-- **Separate tables, not JSONB on `job_pipeline_stages`.** Rich question structure (~10 fields with nested arrays and discriminated rubric object) is not a good fit for JSONB on a parent row. Separate `stage_question_banks` + `stage_questions` tables give clean FKs, proper indexing (including GIN on `signal_ids`), cascade behavior, and audit-friendly structure.
+- **Separate tables, not JSONB on `job_pipeline_stages`.** Rich question structure (~10 fields with nested arrays and discriminated rubric object) is not a good fit for JSONB on a parent row. Separate `stage_question_banks` + `stage_questions` tables give clean FKs, proper indexing (including GIN on `signal_values`), cascade behavior, and audit-friendly structure.
 
 - **Bank belongs to the stage instance, not the template.** The `stage_question_banks` row is FK'd to `job_pipeline_stages` (the per-job instance), not `pipeline_template_stages`. This matches 2C.1's snapshot invariant: templates are reusable recipes; banks are generated for one specific job's specific stage instance.
 
@@ -178,19 +178,32 @@ CREATE POLICY "service_role_bypass" ON stage_question_banks
 **State transitions:**
 
 ```
-draft → generating → reviewing → confirmed
-                  ↓
-               failed (with error) → draft (on retry via re-generate)
+Generation flow:
+    draft       → generating → reviewing (on LLM success)
+    reviewing   → generating (on "Regenerate all" from reviewing)
+    confirmed   → generating (on "Regenerate all" from confirmed)
+    failed      → generating (on retry — direct, skips draft)
+    generating  → failed (on LLM error) — carries error message
 
-reviewing → generating (on "Regenerate all")
-confirmed → reviewing (on any question edit — auto-revert)
-confirmed → generating (on "Regenerate all" from confirmed state)
+Recruiter-edit auto-revert:
+    confirmed   → reviewing (on ANY question edit, create, delete, reorder,
+                              or single-question regen completion)
+                              — also CLEARS confirmed_at and confirmed_by
+
+First-content transition:
+    draft       → reviewing (on first question created by recruiter
+                              before generation has run)
+
+Explicit confirmation:
+    reviewing   → confirmed (on POST /confirm; gated by coverage + budget checks)
 ```
 
 **Rationale:**
 - `draft` as the initial state gives Phase 3 a clean check (`status = 'confirmed'`) without NULL handling
-- `confirmed → reviewing` on edit prevents silent drift away from a confirmed state
-- No explicit "unconfirm" endpoint — auto-revert on edit + regenerate-from-any-state covers all cases
+- `confirmed → reviewing` on ANY edit prevents silent drift from a confirmed state
+- Clearing `confirmed_at` / `confirmed_by` on auto-revert means the column always reflects the CURRENT confirmation state. Full audit trail of past confirmations lives in the `audit_log` table via `log_event`.
+- `failed → generating` is direct (no intermediate `draft` hop) — retrying a failed bank goes straight to generation. The old `generation_error` is cleared on the transition.
+- No explicit "unconfirm" endpoint — auto-revert on edit + regenerate-from-any-state covers all cases.
 
 ### `stage_questions`
 
@@ -202,7 +215,7 @@ CREATE TABLE stage_questions (
     position              INTEGER NOT NULL CHECK (position >= 0),
     source                TEXT NOT NULL,
     text                  TEXT NOT NULL,
-    signal_ids            UUID[] NOT NULL,
+    signal_values         TEXT[] NOT NULL,
     estimated_minutes     NUMERIC(4,1) NOT NULL,
     is_mandatory          BOOLEAN NOT NULL DEFAULT FALSE,
     follow_ups            JSONB NOT NULL DEFAULT '[]',
@@ -217,7 +230,7 @@ CREATE TABLE stage_questions (
 );
 
 CREATE UNIQUE INDEX ix_stage_questions_bank_position ON stage_questions(bank_id, position);
-CREATE INDEX ix_stage_questions_signals_gin ON stage_questions USING GIN (signal_ids);
+CREATE INDEX ix_stage_questions_signal_values_gin ON stage_questions USING GIN (signal_values);
 
 ALTER TABLE stage_questions ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "tenant_isolation" ON stage_questions
@@ -230,7 +243,7 @@ CREATE POLICY "service_role_bypass" ON stage_questions
 
 | Field | Type | Rationale |
 |---|---|---|
-| `signal_ids` | `UUID[]` (GIN-indexed) | 1–3 signals per question. Join table would add overhead for zero query benefit; GIN handles reverse lookup cheaply. |
+| `signal_values` | `TEXT[]` (GIN-indexed) | 1–3 signals per question. **Signals do not have stable UUIDs** — the Phase 2B signal schema identifies signals only by their `value` string inside the `job_posting_signal_snapshots.signals` JSONB array. Questions reference signals by value. The bank's pinned `signal_snapshot_id` makes these references stable (snapshots are append-only; values inside a given snapshot version never change). Lookup is O(n) over the snapshot's ~5–20 signals — trivial. |
 | `follow_ups`, `positive_evidence`, `red_flags` | `JSONB` | Small arrays, always read with the parent question, never queried independently. JSONB is the right granularity. |
 | `rubric` | `JSONB` | `{excellent, meets_bar, below_bar}` is a unit. Future level changes bump prompt version, not schema. |
 | Depth target | **omitted** | Phase 3 reads stage difficulty directly via `bank → stage` join. Terminology clash with stage difficulty avoided. |
@@ -343,7 +356,6 @@ The "leave headroom" hint prevents stage 2 from saturating all depth questions, 
 
 ```python
 from pydantic import BaseModel, Field
-from uuid import UUID
 
 class QuestionRubric(BaseModel):
     excellent: str = Field(..., min_length=20, max_length=300,
@@ -356,7 +368,10 @@ class QuestionRubric(BaseModel):
 class GeneratedQuestion(BaseModel):
     position: int = Field(..., ge=0)
     text: str = Field(..., min_length=10, max_length=500)
-    signal_ids: list[UUID] = Field(..., min_length=1, max_length=3)
+    signal_values: list[str] = Field(..., min_length=1, max_length=3,
+                                      description="Signal VALUES from the pinned snapshot that "
+                                                  "this question probes. Must exactly match values "
+                                                  "in the snapshot's signals array.")
     estimated_minutes: float = Field(..., gt=0, le=15)
     is_mandatory: bool
     follow_ups: list[str] = Field(..., min_length=0, max_length=3)
@@ -370,33 +385,35 @@ class StageQuestionBankOutput(BaseModel):
                                 description="1-sentence: what this stage tests")
     questions: list[GeneratedQuestion] = Field(..., min_length=1, max_length=15)
     coverage_notes: str = Field(..., min_length=20, max_length=500,
-                                description="Why you allocated questions this way — for debugging")
+                                description="Chain-of-thought: why you allocated questions this way. "
+                                            "Captured by Langfuse trace for debugging — NOT stored in the DB.")
 ```
 
-`instructor` automatically rejects outputs that don't match and retries with the validation error as context. This catches ~95% of schema violations before they hit the DB.
+`instructor` automatically rejects outputs that don't match and retries with the validation error as context. This catches ~95% of schema violations before they hit the DB. The `coverage_notes` field is a chain-of-thought artifact that flows through the Langfuse trace (which already captures full LLM input/output) — the service reads it for logging but discards it from the persisted question bank.
 
 ### Post-validation checks (application-level)
 
-After `instructor` validates, the service runs additional checks:
+After `instructor` validates, the service runs additional checks against the pinned snapshot:
 
-1. All `signal_ids` exist in the pinned signal snapshot. Failure → `bank.status = 'failed'`
-2. Knockout signals → `is_mandatory = true`. If LLM forgot, server flips the bit and logs a warning.
-3. Signal type filter respected. All `signal_ids` reference signals whose `type` is in `stage.signal_filter.include_types`. Failure → reject.
-4. Duration budget: sum of `estimated_minutes` is 85–105% of `stage.duration_minutes`. Warning only, doesn't fail.
-5. Question count within range for stage type. Warning only.
-6. No duplicate signal coverage at same depth. Warning only.
+1. **Signal value existence:** every `signal_value` in every question must exactly match a `value` in the pinned snapshot's `signals` array. Any unmatched value → the LLM hallucinated a signal → `bank.status = 'failed'` with error listing unmatched values.
+2. **Knockout → mandatory coherence:** for each question's `signal_values`, look up the matching signals in the snapshot; if any of them has `knockout=true` but the question has `is_mandatory=false`, the server flips `is_mandatory=true` and logs a warning (the LLM should have set this but didn't — safe auto-correction).
+3. **Signal type filter enforcement:** every signal referenced by a question must have `type` in `stage.signal_filter.include_types`. Any violation → `bank.status = 'failed'` (the LLM probed a signal type this stage is not supposed to touch).
+4. **Duration budget:** sum of `estimated_minutes` is within 85–105% of `stage.duration_minutes`. Warning only, doesn't fail the bank (recruiter can regenerate or edit).
+5. **Question count within range for stage type.** Warning only.
+6. **No duplicate signal coverage at same depth** (two questions both probing signal X at "depth" level). Warning only.
 
-Failures in 1, 2, 3 → bank → `failed` with specific error message.
+Failures in 1 and 3 → bank → `failed` with specific error message naming the offending signals.
+Warning in 2 is auto-corrected server-side before writing to DB.
 Warnings in 4, 5, 6 → log via structlog and proceed.
 
 ### Dramatiq actors
 
 ```python
-@dramatiq.actor(queue_name="ai", max_retries=2, time_limit=60_000)
+@dramatiq.actor(max_retries=2, time_limit=60_000)
 def generate_question_bank_stage(bank_id: str) -> None:
     """Generate questions for ONE stage's bank. Retries on transient failures."""
 
-@dramatiq.actor(queue_name="ai", max_retries=0, time_limit=600_000)
+@dramatiq.actor(max_retries=0, time_limit=600_000)
 def generate_question_bank_pipeline(instance_id: str, started_by: str) -> None:
     """Generate banks for ALL stages in a pipeline, SEQUENTIALLY.
 
@@ -407,14 +424,23 @@ def generate_question_bank_pipeline(instance_id: str, started_by: str) -> None:
     User retries failed stages individually.
     """
 
-@dramatiq.actor(queue_name="ai", max_retries=2, time_limit=30_000)
-def regenerate_question(question_id: str, replace_signal_ids: list[str] | None = None) -> None:
+@dramatiq.actor(max_retries=2, time_limit=30_000)
+def regenerate_question(question_id: str, replace_signal_values: list[str] | None = None) -> None:
     """Regenerate a single question slot. Uses the regenerate-one prompt
     template which takes 'other questions in this bank' as 'do not duplicate'
-    context. Replaces the question in place, preserving its UUID."""
+    context. Replaces the question in place, preserving its UUID.
+
+    replace_signal_values: if provided, the new question probes these signals
+    instead of the original's signals. Otherwise, it probes the same signals
+    as the question being replaced. Source flips to 'ai_regenerated'.
+
+    On completion, bank.status flips confirmed → reviewing if it was confirmed
+    (consistent with the edit auto-revert rule)."""
 ```
 
 **Why `max_retries=0` on the pipeline actor:** retrying a 10-minute actor is expensive and risks double-generation. Individual stage retries cover transient failures.
+
+**Dramatiq queue:** use the same queue the existing JD enhancement actors use (Phase 2A's `extract_and_enhance_jd` and re-enrich actors). If Phase 2A registered actors on the default queue, these new actors go there too. If Phase 2A has a dedicated AI queue, reuse that name. Consistency with the existing pattern > naming aspiration.
 
 ### SSE status stream
 
@@ -489,30 +515,38 @@ POST /api/jobs/{job_id}/pipeline/questions/generate-all
      - Fires sequential pipeline Dramatiq actor
 
 POST /api/jobs/{job_id}/pipeline/stages/{stage_id}/questions/{question_id}/regenerate
-     Request: { replace_signal_ids?: UUID[] }
+     Request: { replace_signal_values?: string[] }
      Response: 202 { question_id, status: 'regenerating' }
      - Fires single-question regen actor
+     - On completion: bank status flips confirmed → reviewing if needed
 ```
 
 ### Mutation endpoints (recruiter edits)
 
 ```
 POST /api/jobs/{job_id}/pipeline/stages/{stage_id}/questions
-     Request: CreateQuestionBody (full question with all fields required)
+     Request: CreateQuestionBody (full question with all fields required,
+              includes signal_values: string[] matching the pinned snapshot)
      Response: 201 { question: QuestionResponse }
      - source = 'recruiter' (forced server-side)
-     - Bank status flips confirmed → reviewing
+     - Validates every signal_value exists in the bank's pinned snapshot AND
+       is in stage.signal_filter.include_types
+     - Bank status flips draft → reviewing (if it had no questions before)
+     - Bank status flips confirmed → reviewing (if it was confirmed)
 
 PATCH /api/jobs/{job_id}/pipeline/stages/{stage_id}/questions/{question_id}
-      Request: UpdateQuestionBody (any subset of editable fields)
+      Request: UpdateQuestionBody (any subset of editable fields; signal_values
+               follows the same validation as create)
       Response: 200 { question: QuestionResponse }
       - Sets edited_by_recruiter = true
       - Bank status flips confirmed → reviewing if needed
+      - On auto-revert: clears bank.confirmed_at and bank.confirmed_by
+        (audit trail lives in audit_log, not on the bank row)
 
 DELETE /api/jobs/{job_id}/pipeline/stages/{stage_id}/questions/{question_id}
        Response: 204
        - Re-packs remaining positions to 0..N-1
-       - Bank status flips confirmed → reviewing
+       - Bank status flips confirmed → reviewing (auto-revert with confirmed_at cleared)
 
 PATCH /api/jobs/{job_id}/pipeline/stages/{stage_id}/questions/reorder
       Request: { question_ids: UUID[] } — new order
@@ -553,7 +587,13 @@ async def require_bank_access(
     action: Literal['view', 'manage'],
 ) -> tuple[StageQuestionBank, JobPipelineStage, JobPosting]:
     """Walks bank → stage → instance → job → org_unit → ancestry.
-    Raises 404 on missing bank, 403 on unauthorized access."""
+
+    - 404 when the bank doesn't exist in the tenant's scope. This includes
+      cross-tenant access: RLS hides other tenants' rows, so a cross-tenant
+      request looks identical to a missing bank (information hiding pattern).
+    - 403 when the bank exists but the user lacks `jobs.{action}` on any
+      ancestor org unit.
+    """
 
 async def require_question_access(db, question_id, user, action):
     """Same walk starting from a question."""
@@ -697,7 +737,18 @@ pipeline.generation_complete            →  ['banks', jobId]
 
 ### Staleness detection (`is_stale` flag)
 
-Computed server-side: `bank.signal_snapshot_id != job.latest_confirmed_snapshot_id`. When true, the frontend shows a yellow banner on the affected bank. Prevents silent drift.
+Computed server-side when serializing the `BankResponse`. The `job_postings` table does NOT have a `latest_confirmed_snapshot_id` column — instead, the "latest confirmed snapshot" is derived via a query against `job_posting_signal_snapshots`:
+
+```sql
+SELECT id FROM job_posting_signal_snapshots
+WHERE job_posting_id = :job_id AND confirmed_at IS NOT NULL
+ORDER BY version DESC
+LIMIT 1
+```
+
+The `is_stale` flag is true when `bank.signal_snapshot_id != <result of the above query>`. The service caches this lookup across all banks in a single request (one query per job, not per bank) when building `BanksOverviewResponse`.
+
+When `is_stale=true`, the frontend shows a yellow banner on the affected bank: *"Signals have changed since this bank was generated. Click 'Regenerate' to pick up the latest signals."* Prevents silent drift.
 
 ### Tests (vitest)
 
@@ -773,7 +824,7 @@ backend/nexus/tests/
 | Frontend components | ~9 |
 | **Total new tests** | **~90** |
 
-Post-Phase-2C.2 target: ~270 backend + ~22 frontend tests.
+Post-Phase-2C.2 target: ~261 backend + ~22 frontend tests (baseline 180 + 13 → +81 + 9).
 
 ### Observability
 
