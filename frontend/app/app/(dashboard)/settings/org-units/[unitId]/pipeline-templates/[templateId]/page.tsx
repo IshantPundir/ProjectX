@@ -129,7 +129,7 @@ function EditTemplateForm({ template, unitId, templateId }: EditFormProps) {
         </Link>
       </div>
 
-      {selectedIndex !== null && (
+      {selectedIndex !== null && stages[selectedIndex] !== undefined && (
         <StageConfigDrawer
           stage={stages[selectedIndex]}
           onChange={(updated) => updateStage(selectedIndex, updated)}
@@ -146,11 +146,24 @@ export default function EditTemplatePage() {
   const unitId = params.unitId
   const templateId = params.templateId
 
-  const { data: templates } = usePipelineTemplates(unitId)
+  const { data: templates, isLoading } = usePipelineTemplates(unitId)
   const template = templates?.find((t) => t.id === templateId)
 
-  if (!template) {
+  if (isLoading) {
     return <div className="text-sm text-zinc-500">Loading template…</div>
+  }
+  if (!template) {
+    return (
+      <div className="text-sm text-zinc-500">
+        Template not found.{' '}
+        <Link
+          href={`/settings/org-units/${unitId}/pipeline-templates`}
+          className="text-blue-600 hover:underline"
+        >
+          Back to templates
+        </Link>
+      </div>
+    )
   }
 
   return <EditTemplateForm key={template.id} template={template} unitId={unitId} templateId={templateId} />

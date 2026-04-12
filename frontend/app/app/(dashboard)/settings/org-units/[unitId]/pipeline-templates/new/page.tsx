@@ -137,7 +137,7 @@ export default function NewTemplatePage() {
         </Link>
       </div>
 
-      {selectedIndex !== null && (
+      {selectedIndex !== null && stages[selectedIndex] !== undefined && (
         <StageConfigDrawer
           stage={stages[selectedIndex]}
           onChange={(updated) => updateStage(selectedIndex, updated)}
