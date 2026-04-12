@@ -132,7 +132,7 @@ export function StageConfigDrawer({ stage, onChange, onClose, onDelete }: Props)
           </div>
 
           <div>
-            <div className="text-xs font-medium text-zinc-700 mb-1">Signal filter</div>
+            <div className="text-xs font-medium text-zinc-700 mb-1">Signal types</div>
             <SignalFilterEditor
               value={stage.signal_filter}
               onChange={(sf) => update('signal_filter', sf)}

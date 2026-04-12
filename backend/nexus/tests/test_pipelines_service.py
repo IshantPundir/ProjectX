@@ -60,9 +60,6 @@ def _make_stage(
         difficulty="easy",
         signal_filter=SignalFilter(
             include_types=["competency", "experience", "credential", "behavioral"],
-            include_stages=["screen"],
-            include_weights=[1, 2, 3],
-            include_priority=["required", "preferred"],
         ),
         pass_criteria=PassCriteriaKnockout(type="all_knockouts_pass"),
         advance_behavior="auto_advance",

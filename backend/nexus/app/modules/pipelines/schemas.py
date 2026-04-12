@@ -25,15 +25,27 @@ AdvanceBehavior = Literal["auto_advance", "manual_review"]
 # --- Signal filter ---
 
 SignalFilterType = Literal["competency", "experience", "credential", "behavioral"]
-SignalFilterStage = Literal["screen", "interview"]
-SignalFilterPriority = Literal["required", "preferred"]
 
 
 class SignalFilter(BaseModel):
+    """Which signal types this stage probes.
+
+    Every stage in the pipeline can probe every signal — there is no
+    stage-level filtering by weight, priority, or signal origin stage.
+    Question-generation at runtime (Phase 2C.2) will allocate probe
+    time across signals based on weight × priority × stage depth.
+
+    The one dimension here is `include_types`, because some types
+    genuinely do not belong in every stage:
+
+    - `credential` is verified via documents, not live interviews
+    - `behavioral` is best probed by humans, not AI stages
+
+    Recruiters narrow this per stage to reflect that reality.
+    """
+    model_config = ConfigDict(extra="forbid")
+
     include_types: list[SignalFilterType]
-    include_stages: list[SignalFilterStage]
-    include_weights: list[Literal[1, 2, 3]]
-    include_priority: list[SignalFilterPriority]
 
 
 # --- Pass criteria (discriminated union) ---

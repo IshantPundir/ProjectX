@@ -24,9 +24,6 @@ function makeBlankStage(position: number): PipelineStageInput {
     difficulty: 'easy',
     signal_filter: {
       include_types: ['competency', 'experience', 'credential', 'behavioral'],
-      include_stages: ['screen'],
-      include_weights: [1, 2, 3],
-      include_priority: ['required', 'preferred'],
     },
     pass_criteria: { type: 'all_knockouts_pass' },
     advance_behavior: 'auto_advance',

@@ -14,9 +14,6 @@ function makeStage(position: number, name: string): PipelineStageInput {
     difficulty: 'easy',
     signal_filter: {
       include_types: ['competency'],
-      include_stages: ['screen'],
-      include_weights: [1, 2, 3],
-      include_priority: ['required'],
     },
     pass_criteria: { type: 'all_knockouts_pass' },
     advance_behavior: 'auto_advance',

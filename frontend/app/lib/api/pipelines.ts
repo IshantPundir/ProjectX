@@ -16,9 +16,6 @@ export type AdvanceBehavior = 'auto_advance' | 'manual_review'
 
 export type SignalFilter = {
   include_types: ('competency' | 'experience' | 'credential' | 'behavioral')[]
-  include_stages: ('screen' | 'interview')[]
-  include_weights: (1 | 2 | 3)[]
-  include_priority: ('required' | 'preferred')[]
 }
 
 // --- Pass criteria discriminated union ---

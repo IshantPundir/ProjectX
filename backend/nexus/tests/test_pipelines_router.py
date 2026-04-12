@@ -120,9 +120,6 @@ def _stage_dict(position: int = 0, name: str = "Phone Screen", stage_type: str =
         "difficulty": "easy",
         "signal_filter": {
             "include_types": ["competency", "experience", "credential", "behavioral"],
-            "include_stages": ["screen"],
-            "include_weights": [1, 2, 3],
-            "include_priority": ["required", "preferred"],
         },
         "pass_criteria": {"type": "all_knockouts_pass"},
         "advance_behavior": "auto_advance",
@@ -349,14 +346,14 @@ async def test_set_default_clears_previous_default(db: AsyncSession):
     db.add(PipelineTemplateStage(
         tenant_id=tenant.id, template_id=a.id, position=0, name="x",
         stage_type="phone_screen", duration_minutes=10, difficulty="easy",
-        signal_filter={"include_types": ["competency"], "include_stages": ["screen"], "include_weights": [1], "include_priority": ["required"]},
+        signal_filter={"include_types": ["competency"]},
         pass_criteria={"type": "all_knockouts_pass"},
         advance_behavior="auto_advance",
     ))
     db.add(PipelineTemplateStage(
         tenant_id=tenant.id, template_id=b.id, position=0, name="y",
         stage_type="phone_screen", duration_minutes=10, difficulty="easy",
-        signal_filter={"include_types": ["competency"], "include_stages": ["screen"], "include_weights": [1], "include_priority": ["required"]},
+        signal_filter={"include_types": ["competency"]},
         pass_criteria={"type": "all_knockouts_pass"},
         advance_behavior="auto_advance",
     ))
@@ -398,7 +395,7 @@ async def test_delete_default_returns_409(db: AsyncSession):
     db.add(PipelineTemplateStage(
         tenant_id=tenant.id, template_id=tpl.id, position=0, name="x",
         stage_type="phone_screen", duration_minutes=10, difficulty="easy",
-        signal_filter={"include_types": ["competency"], "include_stages": ["screen"], "include_weights": [1], "include_priority": ["required"]},
+        signal_filter={"include_types": ["competency"]},
         pass_criteria={"type": "all_knockouts_pass"},
         advance_behavior="auto_advance",
     ))
@@ -436,7 +433,7 @@ async def test_delete_non_default_returns_204(db: AsyncSession):
     db.add(PipelineTemplateStage(
         tenant_id=tenant.id, template_id=tpl.id, position=0, name="x",
         stage_type="phone_screen", duration_minutes=10, difficulty="easy",
-        signal_filter={"include_types": ["competency"], "include_stages": ["screen"], "include_weights": [1], "include_priority": ["required"]},
+        signal_filter={"include_types": ["competency"]},
         pass_criteria={"type": "all_knockouts_pass"},
         advance_behavior="auto_advance",
     ))
@@ -532,14 +529,14 @@ async def test_update_job_pipeline_replaces_stages(db: AsyncSession):
     db.add(JobPipelineStage(
         tenant_id=tenant.id, instance_id=instance.id, position=0, name="OldA",
         stage_type="phone_screen", duration_minutes=10, difficulty="easy",
-        signal_filter={"include_types": ["competency"], "include_stages": ["screen"], "include_weights": [1], "include_priority": ["required"]},
+        signal_filter={"include_types": ["competency"]},
         pass_criteria={"type": "all_knockouts_pass"},
         advance_behavior="auto_advance",
     ))
     db.add(JobPipelineStage(
         tenant_id=tenant.id, instance_id=instance.id, position=1, name="OldB",
         stage_type="ai_interview", duration_minutes=30, difficulty="medium",
-        signal_filter={"include_types": ["competency"], "include_stages": ["interview"], "include_weights": [2], "include_priority": ["required"]},
+        signal_filter={"include_types": ["competency"]},
         pass_criteria={"type": "score_threshold", "threshold": 70},
         advance_behavior="auto_advance",
     ))
@@ -588,7 +585,7 @@ async def test_reset_returns_409_when_built_from_scratch(db: AsyncSession):
     db.add(JobPipelineStage(
         tenant_id=tenant.id, instance_id=instance.id, position=0, name="A",
         stage_type="phone_screen", duration_minutes=10, difficulty="easy",
-        signal_filter={"include_types": ["competency"], "include_stages": ["screen"], "include_weights": [1], "include_priority": ["required"]},
+        signal_filter={"include_types": ["competency"]},
         pass_criteria={"type": "all_knockouts_pass"},
         advance_behavior="auto_advance",
     ))
@@ -642,9 +639,6 @@ async def test_swap_job_pipeline_replaces_instance(db: AsyncSession):
         difficulty="easy",
         signal_filter={
             "include_types": ["competency"],
-            "include_stages": ["screen"],
-            "include_weights": [1],
-            "include_priority": ["required"],
         },
         pass_criteria={"type": "all_knockouts_pass"},
         advance_behavior="auto_advance",
