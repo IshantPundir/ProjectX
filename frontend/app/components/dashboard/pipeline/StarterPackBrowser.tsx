@@ -9,10 +9,18 @@ type Props = {
 }
 
 export function StarterPackBrowser({ onUse }: Props) {
-  const { data: starters, isLoading } = useStarterPack()
+  const { data: starters, isLoading, isError } = useStarterPack()
 
   if (isLoading) {
     return <div className="text-sm text-zinc-500">Loading starter pack…</div>
+  }
+
+  if (isError) {
+    return (
+      <div className="text-sm text-red-600">
+        Failed to load starter pack. Please try again.
+      </div>
+    )
   }
 
   return (

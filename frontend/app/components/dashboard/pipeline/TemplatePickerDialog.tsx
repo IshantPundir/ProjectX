@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { PipelineTemplate, StarterTemplate } from '@/lib/api/pipelines'
 import { Button } from '@/components/ui/button'
 import { StarterPackBrowser } from './StarterPackBrowser'
@@ -22,7 +22,16 @@ export function TemplatePickerDialog({
   onPickStarter,
 }: Props) {
   const [tab, setTab] = useState<'library' | 'starters'>('library')
-  const { data: templates } = usePipelineTemplates(orgUnitId)
+  const { data: templates } = usePipelineTemplates(orgUnitId, { enabled: open })
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [open, onClose])
 
   if (!open) return null
 
