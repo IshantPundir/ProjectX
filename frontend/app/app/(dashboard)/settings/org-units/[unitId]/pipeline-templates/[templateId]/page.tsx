@@ -43,7 +43,7 @@ function EditTemplateForm({ template, unitId, templateId }: EditFormProps) {
   const [name, setName] = useState(() => template.name)
   const [description, setDescription] = useState(() => template.description ?? '')
   const [stages, setStages] = useState<PipelineStageUpdateInput[]>(() =>
-    template.stages.map((s) => ({ ...s, id: s.id })),
+    template.stages.map((s) => ({ ...s })),
   )
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
 

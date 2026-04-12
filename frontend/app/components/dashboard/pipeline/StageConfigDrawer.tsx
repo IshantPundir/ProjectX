@@ -2,14 +2,14 @@
 
 import { useEffect, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
-import type { PipelineStageInput, StageType, StageDifficulty, AdvanceBehavior } from '@/lib/api/pipelines'
+import type { PipelineStageInput, PipelineStageUpdateInput, StageType, StageDifficulty, AdvanceBehavior } from '@/lib/api/pipelines'
 import { DifficultySlider } from './DifficultySlider'
 import { SignalFilterEditor } from './SignalFilterEditor'
 import { PassCriteriaEditor } from './PassCriteriaEditor'
 
 type Props = {
-  stage: PipelineStageInput
-  onChange: (stage: PipelineStageInput) => void
+  stage: PipelineStageUpdateInput
+  onChange: (stage: PipelineStageUpdateInput) => void
   onClose: () => void
 }
 

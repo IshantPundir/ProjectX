@@ -49,7 +49,7 @@ function JobPipelineEditor({ job, pipeline, jobId }: EditorProps) {
   const swapMutation = useSwapJobPipeline(jobId)
 
   const [stages, setStages] = useState<PipelineStageUpdateInput[]>(() =>
-    pipeline.stages.map((s) => ({ ...s, id: s.id })),
+    pipeline.stages.map((s) => ({ ...s })),
   )
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -132,7 +132,7 @@ function JobPipelineEditor({ job, pipeline, jobId }: EditorProps) {
       setIsDirty(false)
       resetMutation.mutate(undefined, {
         onSuccess: (fresh) => {
-          setStages(fresh.stages.map((s) => ({ ...s, id: s.id })))
+          setStages(fresh.stages.map((s) => ({ ...s })))
           setSelectedIndex(null)
         },
       })
@@ -223,7 +223,7 @@ function JobPipelineEditor({ job, pipeline, jobId }: EditorProps) {
               { source: 'template', template_id: t.id },
               {
                 onSuccess: (fresh) => {
-                  setStages(fresh.stages.map((s) => ({ ...s, id: s.id })))
+                  setStages(fresh.stages.map((s) => ({ ...s })))
                   setSelectedIndex(null)
                   setPickerOpen(false)
                 },
@@ -235,7 +235,7 @@ function JobPipelineEditor({ job, pipeline, jobId }: EditorProps) {
               { source: 'starter', starter_key: s.key },
               {
                 onSuccess: (fresh) => {
-                  setStages(fresh.stages.map((s) => ({ ...s, id: s.id })))
+                  setStages(fresh.stages.map((s) => ({ ...s })))
                   setSelectedIndex(null)
                   setPickerOpen(false)
                 },
