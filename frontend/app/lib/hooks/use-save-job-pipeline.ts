@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
   pipelinesApi,
+  type CreateJobPipelineBody,
   type JobPipelineInstance,
   type UpdateJobPipelineBody,
 } from '@/lib/api/pipelines'
@@ -36,5 +37,19 @@ export function useResetJobPipeline(jobId: string) {
       void qc.invalidateQueries({ queryKey: ['job-pipeline', jobId] })
     },
     onError: (err) => toast.error(`Failed to reset: ${err.message}`),
+  })
+}
+
+export function useSwapJobPipeline(jobId: string) {
+  const qc = useQueryClient()
+  return useMutation<JobPipelineInstance, Error, CreateJobPipelineBody>({
+    mutationFn: async (body) => {
+      const token = await getFreshSupabaseToken()
+      return pipelinesApi.swapJobPipeline(token, jobId, body)
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['job-pipeline', jobId] })
+    },
+    onError: (err) => toast.error(`Failed to swap pipeline: ${err.message}`),
   })
 }

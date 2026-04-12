@@ -3,7 +3,6 @@
 import { useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { PipelineFunnel } from '@/components/dashboard/pipeline/PipelineFunnel'
@@ -12,7 +11,7 @@ import { TemplatePickerDialog } from '@/components/dashboard/pipeline/TemplatePi
 import { useJob } from '@/lib/hooks/use-job'
 import { useJobPipeline } from '@/lib/hooks/use-job-pipeline'
 import { useCreateJobPipeline } from '@/lib/hooks/use-create-job-pipeline'
-import { useSaveJobPipeline, useResetJobPipeline } from '@/lib/hooks/use-save-job-pipeline'
+import { useSaveJobPipeline, useResetJobPipeline, useSwapJobPipeline } from '@/lib/hooks/use-save-job-pipeline'
 import type {
   PipelineStageInput,
   JobPipelineInstance,
@@ -51,6 +50,7 @@ type EditorProps = {
 function JobPipelineEditor({ job, pipeline, jobId }: EditorProps) {
   const saveMutation = useSaveJobPipeline(jobId)
   const resetMutation = useResetJobPipeline(jobId)
+  const swapMutation = useSwapJobPipeline(jobId)
 
   const [stages, setStages] = useState<PipelineStageInput[]>(() =>
     pipeline.stages.map(stripId),
@@ -98,7 +98,7 @@ function JobPipelineEditor({ job, pipeline, jobId }: EditorProps) {
         <Button onClick={handleSave} disabled={saveMutation.isPending}>
           {saveMutation.isPending ? 'Saving…' : 'Save'}
         </Button>
-        <Button variant="outline" onClick={() => setPickerOpen(true)}>
+        <Button variant="outline" onClick={() => setPickerOpen(true)} disabled={swapMutation.isPending}>
           Swap template
         </Button>
         {pipeline.source_template_id && (
@@ -136,14 +136,30 @@ function JobPipelineEditor({ job, pipeline, jobId }: EditorProps) {
           orgUnitId={job.org_unit_id}
           open={pickerOpen}
           onClose={() => setPickerOpen(false)}
-          onPickTemplate={() => {
-            toast('Template swapping is not yet available. To change the template, delete this pipeline and create a new one.')
-            setPickerOpen(false)
-          }}
-          onPickStarter={() => {
-            toast('Template swapping is not yet available. To change the template, delete this pipeline and create a new one.')
-            setPickerOpen(false)
-          }}
+          onPickTemplate={(t) =>
+            swapMutation.mutate(
+              { source: 'template', template_id: t.id },
+              {
+                onSuccess: (fresh) => {
+                  setStages(fresh.stages.map(stripId))
+                  setSelectedIndex(null)
+                  setPickerOpen(false)
+                },
+              },
+            )
+          }
+          onPickStarter={(s) =>
+            swapMutation.mutate(
+              { source: 'starter', starter_key: s.key },
+              {
+                onSuccess: (fresh) => {
+                  setStages(fresh.stages.map(stripId))
+                  setSelectedIndex(null)
+                  setPickerOpen(false)
+                },
+              },
+            )
+          }
         />
       )}
     </div>

@@ -223,4 +223,15 @@ export const pipelinesApi = {
       token,
       method: 'POST',
     }),
+
+  swapJobPipeline: (
+    token: string,
+    jobId: string,
+    body: CreateJobPipelineBody,
+  ): Promise<JobPipelineInstance> =>
+    apiFetch<JobPipelineInstance>(`/api/jobs/${jobId}/pipeline/swap`, {
+      method: 'POST',
+      token,
+      body: JSON.stringify(body),
+    }),
 }

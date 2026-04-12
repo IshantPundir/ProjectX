@@ -27,7 +27,13 @@ from app.modules.pipelines.errors import (
     PipelineAlreadyExistsError,
     StarterKeyNotFoundError,
 )
-from app.modules.pipelines.schemas import PipelineStageInput
+from app.modules.pipelines.schemas import (
+    CreateJobPipelineFromScratch,
+    CreateJobPipelineFromStarter,
+    CreateJobPipelineFromTemplate,
+    CreateJobPipelineRequest,
+    PipelineStageInput,
+)
 from app.modules.pipelines.starter_pack import (
     STARTER_TEMPLATES,
     SYSTEM_FALLBACK_STARTER,
@@ -490,6 +496,48 @@ async def create_job_pipeline_from_scratch(
         source="scratch",
     )
     return instance
+
+
+async def swap_job_pipeline(
+    db: AsyncSession,
+    *,
+    job: JobPosting,
+    instance: JobPipelineInstance,
+    body: CreateJobPipelineRequest,
+) -> JobPipelineInstance:
+    """Atomically replace a job's pipeline instance with one built from a new source.
+
+    Deletes the existing instance (cascading its stages) and creates a new one
+    via the existing create helpers — all within a single transaction.
+
+    Note: the returned instance has a new `id`. Callers should reload it via
+    `get_job_pipeline_with_stages` before returning to HTTP.
+    """
+    old_instance_id = instance.id
+    await db.delete(instance)
+    await db.flush()
+
+    if isinstance(body, CreateJobPipelineFromTemplate):
+        new_instance = await create_job_pipeline_from_template(
+            db, job=job, template_id=body.template_id
+        )
+    elif isinstance(body, CreateJobPipelineFromStarter):
+        new_instance = await create_job_pipeline_from_starter(
+            db, job=job, starter_key=body.starter_key
+        )
+    else:
+        scratch: CreateJobPipelineFromScratch = body  # type: ignore[assignment]
+        new_instance = await create_job_pipeline_from_scratch(
+            db, job=job, stages=scratch.stages
+        )
+
+    logger.info(
+        "pipelines.job_instance_swapped",
+        job_posting_id=str(job.id),
+        old_instance_id=str(old_instance_id),
+        new_instance_id=str(new_instance.id),
+    )
+    return new_instance
 
 
 async def update_job_pipeline_stages(

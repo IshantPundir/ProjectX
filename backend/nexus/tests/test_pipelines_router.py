@@ -606,3 +606,73 @@ async def test_reset_returns_409_when_built_from_scratch(db: AsyncSession):
         restore()
 
     assert response.status_code == 409, response.text
+
+
+# ---------------------------------------------------------------------------
+# Swap job pipeline — scratch → starter
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_swap_job_pipeline_replaces_instance(db: AsyncSession):
+    """POST /swap atomically replaces an existing pipeline instance.
+
+    Scenario: pipeline was created from scratch; swap to a starter pack.
+    Asserts: response has new stages (from starter), no source_template_id,
+    and the old instance id is gone (new id differs).
+    """
+    tenant, user, company = await _setup_org(db)
+    job = await _make_confirmed_job(db, tenant.id, company.id, user.id)
+
+    # Create an initial pipeline from scratch so we have something to swap
+    initial_instance = JobPipelineInstance(
+        tenant_id=tenant.id,
+        job_posting_id=job.id,
+        source_template_id=None,
+    )
+    db.add(initial_instance)
+    await db.flush()
+    db.add(JobPipelineStage(
+        tenant_id=tenant.id,
+        instance_id=initial_instance.id,
+        position=0,
+        name="OldStage",
+        stage_type="phone_screen",
+        duration_minutes=10,
+        difficulty="easy",
+        signal_filter={
+            "include_types": ["competency"],
+            "include_stages": ["screen"],
+            "include_weights": [1],
+            "include_priority": ["required"],
+        },
+        pass_criteria={"type": "all_knockouts_pass"},
+        advance_behavior="auto_advance",
+    ))
+    await db.commit()
+
+    old_instance_id = initial_instance.id
+
+    headers, restore = _setup_test_context(db, user, tenant.id, is_super_admin=True)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.post(
+                f"/api/jobs/{job.id}/pipeline/swap",
+                json={"source": "starter", "starter_key": "standard_technical"},
+                headers=headers,
+            )
+    finally:
+        restore()
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    # New instance has a different id
+    assert data["id"] != str(old_instance_id)
+    # Came from a starter — no source_template_id
+    assert data["source_template_id"] is None
+    # standard_technical starter has 3 stages
+    assert len(data["stages"]) == 3
+    stage_names = [s["name"] for s in data["stages"]]
+    assert "OldStage" not in stage_names

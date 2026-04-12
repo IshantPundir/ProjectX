@@ -70,6 +70,7 @@ from app.modules.pipelines.service import (
     reset_job_pipeline_to_source,
     save_job_pipeline_as_template,
     set_template_as_default,
+    swap_job_pipeline,
     update_job_pipeline_stages,
     update_source_template_from_job,
     update_template,
@@ -383,6 +384,31 @@ async def update_job_pipeline(
     result = await get_job_pipeline_with_stages(db, job_id)
     if result is None:
         raise HTTPException(status_code=500, detail="Reload failed")
+    new_instance, stages, source_template = result
+    return _instance_to_response(new_instance, stages, source_template)
+
+
+@router.post(
+    "/api/jobs/{job_id}/pipeline/swap",
+    response_model=JobPipelineInstanceResponse,
+)
+async def swap_job_pipeline_endpoint(
+    job_id: UUID,
+    body: CreateJobPipelineRequest,
+    db: AsyncSession = Depends(get_tenant_db),
+    user: UserContext = Depends(get_current_user_roles),
+) -> JobPipelineInstanceResponse:
+    """Swap a job's pipeline to a different template or starter, atomically."""
+    job, instance = await require_instance_access(db, job_id, user, "manage")
+    if instance is None:
+        raise HTTPException(status_code=404, detail="No pipeline to swap")
+    try:
+        await swap_job_pipeline(db, job=job, instance=instance, body=body)
+    except StarterKeyNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    result = await get_job_pipeline_with_stages(db, job_id)
+    if result is None:
+        raise HTTPException(status_code=500, detail="Swap succeeded but reload failed")
     new_instance, stages, source_template = result
     return _instance_to_response(new_instance, stages, source_template)
 
