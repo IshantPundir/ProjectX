@@ -1,37 +1,78 @@
 'use client'
 
+import { ChevronDown, Users } from 'lucide-react'
 import type { PipelineStageInput } from '@/lib/api/pipelines'
 import { StageSlab } from './StageSlab'
 
 type Props = {
   stages: PipelineStageInput[]
   onStageClick?: (index: number) => void
+  onStageDelete?: (index: number) => void
   selectedIndex?: number
 }
 
-export function PipelineFunnel({ stages, onStageClick, selectedIndex }: Props) {
+export function PipelineFunnel({ stages, onStageClick, onStageDelete, selectedIndex }: Props) {
+  const hasStages = stages.length > 0
+  // Width narrows from 100% at top to 50% at the bottom, linear interpolation.
+  // Handles single-stage case via Math.max guard.
+  const widthFor = (i: number) => 100 - (i * (50 / Math.max(stages.length - 1, 1)))
+
   return (
-    <div className="flex flex-col items-center gap-3 py-4">
+    <div className="flex flex-col items-center gap-2 py-4">
+      {/* Top pill — Applications */}
+      {hasStages && (
+        <>
+          <div className="w-full max-w-[600px] bg-gradient-to-b from-blue-50 to-blue-100/50 border border-blue-200 rounded-xl px-5 py-2.5 flex items-center justify-between shadow-sm">
+            <div className="flex items-center gap-2">
+              <Users className="w-4 h-4 text-blue-600" />
+              <div>
+                <div className="text-sm font-semibold text-blue-900">Applications</div>
+                <div className="text-[11px] text-blue-600/70">Top of funnel — candidate pool</div>
+              </div>
+            </div>
+          </div>
+          <ChevronDown className="w-4 h-4 text-zinc-300" aria-hidden="true" />
+        </>
+      )}
+
       {stages.map((stage, i) => {
-        // Funnel width narrows from top to bottom: 100% at top, 60% at bottom
-        const width = 100 - (i * (40 / Math.max(stages.length - 1, 1)))
+        const width = widthFor(i)
         return (
-          <div
-            key={`${i}-${stage.name}`}
-            style={{ width: `${width}%`, maxWidth: '600px' }}
-            className="relative"
-          >
-            <StageSlab
-              stage={stage}
-              selected={selectedIndex === i}
-              onClick={() => onStageClick?.(i)}
-            />
+          <div key={`${i}-${stage.name}`} className="w-full flex flex-col items-center">
+            <div
+              style={{ width: `${width}%`, maxWidth: '600px', minWidth: '280px' }}
+              className="transition-all duration-300"
+            >
+              <StageSlab
+                stage={stage}
+                position={i + 1}
+                selected={selectedIndex === i}
+                onClick={() => onStageClick?.(i)}
+                onDelete={onStageDelete ? () => onStageDelete(i) : undefined}
+              />
+            </div>
             {i < stages.length - 1 && (
-              <div className="flex justify-center mt-1 text-zinc-400 text-lg">↓</div>
+              <ChevronDown className="w-4 h-4 text-zinc-300 my-1.5" aria-hidden="true" />
             )}
           </div>
         )
       })}
+
+      {/* Bottom pill — Offers */}
+      {hasStages && (
+        <>
+          <ChevronDown className="w-4 h-4 text-zinc-300" aria-hidden="true" />
+          <div
+            className="bg-gradient-to-b from-emerald-50 to-emerald-100/50 border border-emerald-200 rounded-xl px-5 py-2.5 flex items-center gap-2 shadow-sm"
+            style={{ width: '50%', maxWidth: '300px', minWidth: '240px' }}
+          >
+            <div className="flex-1 text-center">
+              <div className="text-sm font-semibold text-emerald-900">Offers</div>
+              <div className="text-[11px] text-emerald-700/70">Hired candidates</div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }

@@ -23,22 +23,22 @@ function makeStage(position: number, name: string): PipelineStageInput {
 describe('PipelineFunnel', () => {
   it('renders all stages in order', () => {
     const stages = [
-      makeStage(0, 'Phone Screen'),
-      makeStage(1, 'AI Interview'),
-      makeStage(2, 'Panel'),
+      makeStage(0, 'Initial Screen'),
+      makeStage(1, 'Deep Interview'),
+      makeStage(2, 'Hiring Panel'),
     ]
     render(<PipelineFunnel stages={stages} />)
-    expect(screen.getByText('Phone Screen')).toBeInTheDocument()
-    expect(screen.getByText('AI Interview')).toBeInTheDocument()
-    expect(screen.getByText('Panel')).toBeInTheDocument()
+    expect(screen.getByText('Initial Screen')).toBeInTheDocument()
+    expect(screen.getByText('Deep Interview')).toBeInTheDocument()
+    expect(screen.getByText('Hiring Panel')).toBeInTheDocument()
   })
 
   it('calls onStageClick with the index when a stage is clicked', async () => {
     const user = userEvent.setup()
-    const stages = [makeStage(0, 'Phone Screen'), makeStage(1, 'AI Interview')]
+    const stages = [makeStage(0, 'Initial Screen'), makeStage(1, 'Deep Interview')]
     const onClick = vi.fn()
     render(<PipelineFunnel stages={stages} onStageClick={onClick} />)
-    await user.click(screen.getByText('AI Interview'))
+    await user.click(screen.getByText('Deep Interview'))
     expect(onClick).toHaveBeenCalledWith(1)
   })
 

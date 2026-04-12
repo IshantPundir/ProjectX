@@ -103,11 +103,13 @@ function EditTemplateForm({ template, unitId, templateId }: EditFormProps) {
         </div>
       </div>
 
-      <div className="bg-zinc-50 rounded-lg border border-zinc-200 p-6 mb-4">
-        <h2 className="text-sm font-semibold mb-3">Stages</h2>
+      <div className="bg-gradient-to-b from-zinc-50 to-white rounded-lg border border-zinc-200 p-8 mb-4">
+        <h2 className="text-sm font-semibold text-zinc-900 mb-0.5">Interview Pipeline</h2>
+        <p className="text-xs text-zinc-500 mb-4">Stages candidates move through in order</p>
         <PipelineFunnel
           stages={stages}
           onStageClick={setSelectedIndex}
+          onStageDelete={stages.length > 1 ? (i) => deleteStage(i) : undefined}
           selectedIndex={selectedIndex ?? undefined}
         />
         <div className="flex justify-center mt-4">
@@ -131,7 +133,6 @@ function EditTemplateForm({ template, unitId, templateId }: EditFormProps) {
           stage={stages[selectedIndex]}
           onChange={(updated) => updateStage(selectedIndex, updated)}
           onClose={() => setSelectedIndex(null)}
-          onDelete={stages.length > 1 ? () => deleteStage(selectedIndex) : undefined}
         />
       )}
     </div>
