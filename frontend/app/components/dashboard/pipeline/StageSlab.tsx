@@ -68,10 +68,10 @@ export function StageSlab({ stage, position, selected, onClick, onDelete }: Prop
           onClick?.()
         }
       }}
-      className={`group relative bg-white border border-zinc-200 rounded-xl shadow-sm hover:shadow-md hover:border-zinc-300 transition cursor-pointer overflow-hidden ${ring}`}
+      className={`group relative bg-white border border-zinc-200 rounded-xl shadow-sm hover:shadow-md hover:border-zinc-300 transition cursor-pointer ${ring}`}
     >
-      {/* Left accent bar */}
-      <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${accent}`} aria-hidden="true" />
+      {/* Left accent bar — rounded-l-xl so corners match the card without needing overflow-hidden on the root (which would clip the dropdown menu) */}
+      <div className={`absolute left-0 top-0 bottom-0 w-1.5 rounded-l-xl ${accent}`} aria-hidden="true" />
 
       <div className="flex items-center gap-3 pl-5 pr-2 py-3">
         {/* Number circle */}
