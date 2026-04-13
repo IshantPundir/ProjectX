@@ -22,7 +22,15 @@ export async function apiFetch<T>(
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(body.detail || `API error: ${res.status}`);
+    // FastAPI 422 returns detail as an array of validation errors, not a string.
+    // e.g. [{"loc": ["body","title"], "msg": "field required", "type": "..."}]
+    const detail = body.detail;
+    const message = Array.isArray(detail)
+      ? detail.map((e: { msg: string }) => e.msg).join(', ')
+      : typeof detail === 'string'
+        ? detail
+        : `API error: ${res.status}`;
+    throw new Error(message);
   }
 
   return res.json();
