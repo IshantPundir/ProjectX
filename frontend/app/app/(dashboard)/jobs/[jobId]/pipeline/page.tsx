@@ -13,6 +13,7 @@ import { useJob } from '@/lib/hooks/use-job'
 import { useJobPipeline } from '@/lib/hooks/use-job-pipeline'
 import { useCreateJobPipeline } from '@/lib/hooks/use-create-job-pipeline'
 import { useSaveJobPipeline, useResetJobPipeline, useSwapJobPipeline } from '@/lib/hooks/use-save-job-pipeline'
+import { useBanksOverview } from '@/lib/hooks/use-banks-overview'
 import type {
   PipelineStageUpdateInput,
   JobPipelineInstance,
@@ -47,6 +48,10 @@ function JobPipelineEditor({ job, pipeline, jobId }: EditorProps) {
   const saveMutation = useSaveJobPipeline(jobId)
   const resetMutation = useResetJobPipeline(jobId)
   const swapMutation = useSwapJobPipeline(jobId)
+
+  const { data: overview } = useBanksOverview(jobId)
+  const confirmedCount = overview?.banks.filter((b) => b.status === 'confirmed').length ?? 0
+  const totalBanks = overview?.banks.length ?? 0
 
   const [stages, setStages] = useState<PipelineStageUpdateInput[]>(() =>
     pipeline.stages.map((s) => ({ ...s })),
@@ -179,6 +184,22 @@ function JobPipelineEditor({ job, pipeline, jobId }: EditorProps) {
           )}
         </div>
         <div className="flex-1" />
+        <Link href={`/jobs/${jobId}/questions`}>
+          <Button variant="outline" size="sm">
+            Review questions →
+            {totalBanks > 0 && (
+              <span
+                className={`ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                  confirmedCount === totalBanks && totalBanks > 0
+                    ? 'bg-emerald-100 text-emerald-700'
+                    : 'bg-zinc-100 text-zinc-600'
+                }`}
+              >
+                {confirmedCount} of {totalBanks} confirmed
+              </span>
+            )}
+          </Button>
+        </Link>
         <Button variant="outline" onClick={() => setPickerOpen(true)} disabled={swapMutation.isPending}>
           Swap template
         </Button>
