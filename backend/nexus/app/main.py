@@ -153,6 +153,41 @@ def create_app() -> FastAPI:
             },
         )
 
+    # --- Exception handlers (Phase 2C.2 — question_bank module) ---
+    from app.modules.question_bank.errors import (
+        BankAlreadyGeneratingError as QB_BankAlreadyGeneratingError,
+        BankNotInReviewingError as QB_BankNotInReviewingError,
+        DurationBudgetOutOfRangeError as QB_DurationBudgetOutOfRangeError,
+        KnockoutUnprobedError as QB_KnockoutUnprobedError,
+    )
+
+    @application.exception_handler(QB_BankAlreadyGeneratingError)
+    async def qb_already_generating(
+        request: Request, exc: QB_BankAlreadyGeneratingError
+    ) -> JSONResponse:
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+    @application.exception_handler(QB_BankNotInReviewingError)
+    async def qb_not_reviewing(
+        request: Request, exc: QB_BankNotInReviewingError
+    ) -> JSONResponse:
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+    @application.exception_handler(QB_KnockoutUnprobedError)
+    async def qb_knockout_unprobed(
+        request: Request, exc: QB_KnockoutUnprobedError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={"detail": str(exc), "signal_value": exc.signal_value},
+        )
+
+    @application.exception_handler(QB_DurationBudgetOutOfRangeError)
+    async def qb_duration_out_of_range(
+        request: Request, exc: QB_DurationBudgetOutOfRangeError
+    ) -> JSONResponse:
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
+
     # --- Health check ---
     @application.get("/health", tags=["infra"])
     async def health() -> dict[str, str]:
