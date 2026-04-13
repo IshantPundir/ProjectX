@@ -43,6 +43,10 @@ def upgrade() -> None:
             name="stage_question_banks_status_check",
         ),
         sa.ForeignKeyConstraint(
+            ["tenant_id"], ["clients.id"],
+            name="fk_stage_question_banks_tenant",
+        ),
+        sa.ForeignKeyConstraint(
             ["stage_id"], ["job_pipeline_stages.id"],
             ondelete="CASCADE", name="fk_stage_question_banks_stage",
         ),
@@ -124,6 +128,10 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "source IN ('ai_generated', 'ai_regenerated', 'recruiter')",
             name="stage_questions_source_check",
+        ),
+        sa.ForeignKeyConstraint(
+            ["tenant_id"], ["clients.id"],
+            name="fk_stage_questions_tenant",
         ),
         sa.ForeignKeyConstraint(
             ["bank_id"], ["stage_question_banks.id"],
