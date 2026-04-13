@@ -31,7 +31,7 @@ from app.models import (
     StageQuestionBank,
 )
 from app.modules.audit.service import log_event
-from app.modules.org_units.service import get_org_unit_ancestry
+from app.modules.org_units.service import find_company_profile_in_ancestry
 from app.modules.question_bank.schemas import (
     GeneratedQuestion,  # noqa: F401  (re-exported for downstream consumers)
     SingleQuestionOutput,
@@ -62,17 +62,6 @@ STAGE_TYPE_TO_PROMPT = {
     "panel_interview": "question_bank_panel_interview",
     "take_home": "question_bank_take_home",
 }
-
-
-async def _find_company_profile(
-    db, *, org_unit_id: UUID
-) -> dict | None:
-    """Walk ancestry to find the nearest org unit with a company_profile set."""
-    ancestry = await get_org_unit_ancestry(db, org_unit_id)
-    for unit in ancestry:
-        if unit.company_profile:
-            return unit.company_profile
-    return None
 
 
 async def _load_pipeline_context(
@@ -258,12 +247,13 @@ async def _generate_one_bank(
     instance: JobPipelineInstance,
     job: JobPosting,
     snapshot: JobPostingSignalSnapshot,
+    started_by: UUID,
 ) -> None:
     """Run generation for one bank. Must be called with bank.status='generating'.
     On success → transitions to reviewing. On error → transitions to failed.
     Caller must commit or rollback."""
     try:
-        company_profile = await _find_company_profile(db, org_unit_id=job.org_unit_id)
+        company_profile = await find_company_profile_in_ancestry(db, job.org_unit_id)
         pipeline_stages = await _load_pipeline_context(
             db, instance_id=instance.id
         )
@@ -318,9 +308,7 @@ async def _generate_one_bank(
         )
 
         # Transition bank → reviewing
-        transition_to_reviewing_after_generation(
-            bank, user_id=bank.generated_by or UUID(int=0)
-        )
+        transition_to_reviewing_after_generation(bank, user_id=started_by)
     except Exception as exc:
         logger.error(
             "question_bank.generation_failed",
@@ -398,6 +386,7 @@ async def generate_question_bank_stage(
                 instance=instance,
                 job=job,
                 snapshot=snapshot,
+                started_by=UUID(started_by),
             )
             await log_event(
                 db,
@@ -494,6 +483,7 @@ async def generate_question_bank_pipeline(
                     instance=instance,
                     job=job,
                     snapshot=snapshot,
+                    started_by=UUID(started_by),
                 )
                 succeeded += 1
                 await db.flush()
