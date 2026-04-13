@@ -33,10 +33,15 @@ async def _check_permission(
     org_unit_id: UUID,
     action: Action,
 ) -> bool:
-    """Walk the org unit's ancestry and check if the user has jobs.{action} anywhere along it."""
+    """Super-admin short-circuit, then walk the org unit's ancestry checking jobs.{action}."""
+    if user.is_super_admin:
+        return True
     required = f"jobs.{action}"
     ancestry = await get_org_unit_ancestry(db, org_unit_id)
-    return any(user.has_permission_in_unit(unit.id, required) for unit in ancestry)
+    for unit in ancestry:
+        if user.has_permission_in_unit(unit.id, required):
+            return True
+    return False
 
 
 async def require_bank_access(
