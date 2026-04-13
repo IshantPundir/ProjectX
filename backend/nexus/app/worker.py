@@ -45,6 +45,9 @@ from app import brokers  # noqa: F401, E402
 # Actor imports — registered against the broker above
 from app.modules.jd import actors as _jd_actors  # noqa: F401, E402
 
+# Phase 2C.2 — question bank generation actors
+from app.modules.question_bank import actors as _question_bank_actors  # noqa: F401, E402
+
 # Flush Langfuse traces on worker exit so pending events aren't lost.
 from app.ai.client import shutdown_langfuse  # noqa: E402
 

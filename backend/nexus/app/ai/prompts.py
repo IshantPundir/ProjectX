@@ -38,5 +38,15 @@ class PromptLoader:
             )
         return self._cache[name]
 
+    def load_pair(self, common_name: str, type_name: str) -> str:
+        """Concatenate a common header file with a per-type specialization file.
+
+        Used by question_bank actors: common = 'question_bank_common',
+        type = 'question_bank_phone_screen'. Returns header + '\n\n' + type.
+        """
+        header = self.get(common_name)
+        specialization = self.get(type_name)
+        return f"{header}\n\n{specialization}"
+
 
 prompt_loader = PromptLoader()

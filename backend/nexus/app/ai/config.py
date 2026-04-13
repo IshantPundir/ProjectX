@@ -27,6 +27,11 @@ class AIConfig:
     def reenrichment_effort(self) -> str:
         return settings.openai_reenrichment_effort
 
+    # Phase 2C.2 — question generation
+    @property
+    def question_bank_model(self) -> str:
+        return settings.openai_question_bank_model
+
     @property
     def request_timeout_seconds(self) -> float:
         return settings.openai_request_timeout_seconds

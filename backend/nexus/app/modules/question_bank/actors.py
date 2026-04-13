@@ -1,0 +1,669 @@
+"""Dramatiq actors for question bank generation.
+
+Three actors:
+- generate_question_bank_stage: generate ONE stage's bank
+- generate_question_bank_pipeline: generate ALL stages sequentially
+- regenerate_question: replace ONE question in an existing bank
+
+All actors use get_bypass_session and SET LOCAL app.current_tenant for RLS,
+matching the pattern from app/modules/jd/actors.py.
+"""
+
+from __future__ import annotations
+
+from uuid import UUID
+
+import dramatiq
+import structlog
+from sqlalchemy import select
+from sqlalchemy.sql import text
+
+from app.ai.client import get_openai_client
+from app.ai.config import ai_config
+from app.ai.prompts import prompt_loader
+from app.database import get_bypass_session
+from app.models import (
+    JobPipelineInstance,
+    JobPipelineStage,
+    JobPosting,
+    JobPostingSignalSnapshot,
+    StageQuestion,
+    StageQuestionBank,
+)
+from app.modules.audit.service import log_event
+from app.modules.org_units.service import get_org_unit_ancestry
+from app.modules.question_bank.schemas import (
+    GeneratedQuestion,  # noqa: F401  (re-exported for downstream consumers)
+    SingleQuestionOutput,
+    StageQuestionBankOutput,
+)
+from app.modules.question_bank.service import (
+    compute_is_stale,  # noqa: F401  (re-exported for downstream consumers)
+    get_bank_questions,
+    replace_question_in_place,
+    transition_to_failed,
+    transition_to_generating,
+    transition_to_reviewing_after_generation,
+    validate_llm_output_against_snapshot,
+    write_generated_questions,
+)
+
+logger = structlog.get_logger()
+
+
+# ---------------------------------------------------------------------------
+# Prompt assembly helpers
+# ---------------------------------------------------------------------------
+
+STAGE_TYPE_TO_PROMPT = {
+    "phone_screen": "question_bank_phone_screen",
+    "ai_interview": "question_bank_ai_interview",
+    "human_interview": "question_bank_human_interview",
+    "panel_interview": "question_bank_panel_interview",
+    "take_home": "question_bank_take_home",
+}
+
+
+async def _find_company_profile(
+    db, *, org_unit_id: UUID
+) -> dict | None:
+    """Walk ancestry to find the nearest org unit with a company_profile set."""
+    ancestry = await get_org_unit_ancestry(db, org_unit_id)
+    for unit in ancestry:
+        if unit.company_profile:
+            return unit.company_profile
+    return None
+
+
+async def _load_pipeline_context(
+    db, *, instance_id: UUID
+) -> list[dict]:
+    """Load all stages in the instance with their metadata, ordered by position."""
+    result = await db.execute(
+        select(JobPipelineStage)
+        .where(JobPipelineStage.instance_id == instance_id)
+        .order_by(JobPipelineStage.position)
+    )
+    stages = list(result.scalars().all())
+    return [
+        {
+            "id": str(s.id),
+            "position": s.position,
+            "name": s.name,
+            "stage_type": s.stage_type,
+            "duration_minutes": s.duration_minutes,
+            "difficulty": s.difficulty,
+            "advance_behavior": s.advance_behavior,
+        }
+        for s in stages
+    ]
+
+
+async def _load_prior_stages_questions(
+    db, *, instance_id: UUID, current_position: int
+) -> list[dict]:
+    """Load questions from stages with position < current_position, grouped by stage."""
+    stage_result = await db.execute(
+        select(JobPipelineStage)
+        .where(
+            JobPipelineStage.instance_id == instance_id,
+            JobPipelineStage.position < current_position,
+        )
+        .order_by(JobPipelineStage.position)
+    )
+    prior_stages = list(stage_result.scalars().all())
+
+    out = []
+    for stage in prior_stages:
+        bank_result = await db.execute(
+            select(StageQuestionBank).where(StageQuestionBank.stage_id == stage.id)
+        )
+        bank = bank_result.scalar_one_or_none()
+        questions: list[dict] = []
+        if bank is not None:
+            q_result = await db.execute(
+                select(StageQuestion)
+                .where(StageQuestion.bank_id == bank.id)
+                .order_by(StageQuestion.position)
+            )
+            for q in q_result.scalars().all():
+                questions.append(
+                    {
+                        "position": q.position,
+                        "text": q.text,
+                        "signal_values": q.signal_values,
+                        "is_mandatory": q.is_mandatory,
+                        "rubric_meets_bar": q.rubric.get("meets_bar", ""),
+                    }
+                )
+        out.append(
+            {
+                "stage_name": stage.name,
+                "stage_type": stage.stage_type,
+                "duration_minutes": stage.duration_minutes,
+                "difficulty": stage.difficulty,
+                "questions": questions,
+            }
+        )
+    return out
+
+
+def _build_user_message(
+    *,
+    job: JobPosting,
+    snapshot: JobPostingSignalSnapshot,
+    company_profile: dict | None,
+    stage: JobPipelineStage,
+    pipeline_stages: list[dict],
+    prior_stages_questions: list[dict],
+) -> str:
+    """Build the user message — all context for the LLM.
+
+    Order matters: context (company profile + JD + signals) BEFORE the stage-
+    specific instructions. This matches the 'prompt_context_ordering' rule
+    established in Phase 2A.
+    """
+    parts = []
+
+    parts.append("# JOB CONTEXT\n")
+    parts.append(f"Job title: {job.title}\n")
+    parts.append(f"Role summary: {snapshot.role_summary}\n")
+    parts.append(f"Seniority: {snapshot.seniority_level}\n")
+    if job.description_enriched:
+        parts.append(
+            f"\n## Enriched JD\n\n{job.description_enriched}\n"
+        )
+
+    if company_profile:
+        parts.append("\n# COMPANY PROFILE\n")
+        for key in ("about", "industry", "company_stage", "hiring_bar"):
+            if key in company_profile:
+                parts.append(f"{key}: {company_profile[key]}\n")
+
+    parts.append("\n# SIGNALS TO ASSESS (pinned snapshot)\n")
+    parts.append(
+        "Each signal is listed with its metadata. Use the `value` field exactly "
+        "as-is in your question's `signal_values` output.\n\n"
+    )
+    for signal in snapshot.signals:
+        parts.append(
+            f"- value: {signal['value']!r}\n"
+            f"  type: {signal['type']}\n"
+            f"  priority: {signal['priority']}\n"
+            f"  weight: {signal['weight']}\n"
+            f"  knockout: {signal.get('knockout', False)}\n"
+            f"  stage_tag: {signal['stage']}\n"
+        )
+
+    parts.append("\n# PIPELINE CONTEXT\n")
+    current_idx = next(
+        (i for i, s in enumerate(pipeline_stages) if s["id"] == str(stage.id)),
+        0,
+    )
+    parts.append(
+        f"This pipeline has {len(pipeline_stages)} stages. "
+        f"You are generating questions for STAGE {current_idx + 1}.\n\n"
+    )
+
+    for i, s in enumerate(pipeline_stages):
+        is_current = s["id"] == str(stage.id)
+        marker = " (CURRENT — you are generating this)" if is_current else ""
+        parts.append(
+            f"## Stage {i + 1} — {s['name']}{marker}\n"
+            f"  Type: {s['stage_type']}, Duration: {s['duration_minutes']} min, "
+            f"Difficulty: {s['difficulty']}\n"
+        )
+
+        if not is_current and i < current_idx and i < len(prior_stages_questions):
+            prior = prior_stages_questions[i]
+            if prior["questions"]:
+                parts.append(
+                    f"  Already generated questions ({len(prior['questions'])}):\n"
+                )
+                for q in prior["questions"]:
+                    mandatory = " [MANDATORY]" if q["is_mandatory"] else ""
+                    parts.append(
+                        f"    Q{q['position']}{mandatory} "
+                        f"(probes: {q['signal_values']}):\n"
+                        f"      {q['text']}\n"
+                        f"      Rubric meets_bar: {q['rubric_meets_bar']}\n"
+                    )
+
+    parts.append("\n# THIS STAGE'S METADATA\n")
+    parts.append(
+        f"Name: {stage.name}\n"
+        f"Type: {stage.stage_type}\n"
+        f"Duration: {stage.duration_minutes} min\n"
+        f"Difficulty: {stage.difficulty}\n"
+        f"Signal type filter (include_types): "
+        f"{stage.signal_filter.get('include_types', [])}\n"
+        f"Advance behavior: {stage.advance_behavior}\n"
+    )
+    parts.append(
+        "\nNow generate the structured question bank output as specified "
+        "in the system instructions.\n"
+    )
+    return "".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Core generation function (shared by the stage and pipeline actors)
+# ---------------------------------------------------------------------------
+
+async def _generate_one_bank(
+    db,
+    *,
+    bank: StageQuestionBank,
+    stage: JobPipelineStage,
+    instance: JobPipelineInstance,
+    job: JobPosting,
+    snapshot: JobPostingSignalSnapshot,
+) -> None:
+    """Run generation for one bank. Must be called with bank.status='generating'.
+    On success → transitions to reviewing. On error → transitions to failed.
+    Caller must commit or rollback."""
+    try:
+        company_profile = await _find_company_profile(db, org_unit_id=job.org_unit_id)
+        pipeline_stages = await _load_pipeline_context(
+            db, instance_id=instance.id
+        )
+        prior_stages_questions = await _load_prior_stages_questions(
+            db, instance_id=instance.id, current_position=stage.position
+        )
+
+        type_prompt = STAGE_TYPE_TO_PROMPT.get(stage.stage_type)
+        if type_prompt is None:
+            raise RuntimeError(f"No prompt file mapped for stage_type={stage.stage_type}")
+
+        system_prompt = prompt_loader.load_pair("question_bank_common", type_prompt)
+        user_message = _build_user_message(
+            job=job,
+            snapshot=snapshot,
+            company_profile=company_profile,
+            stage=stage,
+            pipeline_stages=pipeline_stages,
+            prior_stages_questions=prior_stages_questions,
+        )
+
+        client = get_openai_client()
+        result: StageQuestionBankOutput = await client.chat.completions.create(
+            model=ai_config.question_bank_model,
+            response_model=StageQuestionBankOutput,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+            max_retries=2,
+        )
+
+        logger.info(
+            "question_bank.llm_response_received",
+            bank_id=str(bank.id),
+            question_count=len(result.questions),
+            coverage_notes_preview=result.coverage_notes[:100],
+        )
+
+        # Post-validate
+        allowed_types = stage.signal_filter.get("include_types", [])
+        validated = await validate_llm_output_against_snapshot(
+            db,
+            snapshot=snapshot,
+            allowed_types=allowed_types,
+            questions=result.questions,
+        )
+
+        # Write questions to the DB (wipes prior AI-sourced, keeps recruiter-sourced)
+        await write_generated_questions(
+            db, bank=bank, questions=validated, source="ai_generated"
+        )
+
+        # Transition bank → reviewing
+        transition_to_reviewing_after_generation(
+            bank, user_id=bank.generated_by or UUID(int=0)
+        )
+    except Exception as exc:
+        logger.error(
+            "question_bank.generation_failed",
+            bank_id=str(bank.id),
+            error=str(exc),
+            exc_info=True,
+        )
+        transition_to_failed(bank, error=str(exc)[:500])
+        raise
+
+
+# ---------------------------------------------------------------------------
+# Actor: single stage
+# ---------------------------------------------------------------------------
+
+@dramatiq.actor(
+    max_retries=2,
+    min_backoff=2_000,
+    max_backoff=60_000,
+    queue_name="question_bank_generation",
+)
+async def generate_question_bank_stage(
+    bank_id: str,
+    tenant_id: str,
+    started_by: str,
+) -> None:
+    """Generate questions for ONE stage's bank. Retries on transient failures.
+
+    Before the first call, the router must have:
+    - Ensured the bank exists
+    - Set bank.status = 'generating'
+    - Committed so the actor sees the updated state
+    """
+    async with get_bypass_session() as db:
+        safe_tenant_id = str(UUID(tenant_id))
+        await db.execute(
+            text(f"SET LOCAL app.current_tenant = '{safe_tenant_id}'")
+        )
+
+        bank_result = await db.execute(
+            select(StageQuestionBank).where(StageQuestionBank.id == UUID(bank_id))
+        )
+        bank = bank_result.scalar_one_or_none()
+        if bank is None:
+            logger.error("question_bank.bank_missing", bank_id=bank_id)
+            return
+
+        # Load stage, instance, job, snapshot
+        stage_result = await db.execute(
+            select(JobPipelineStage).where(JobPipelineStage.id == bank.stage_id)
+        )
+        stage = stage_result.scalar_one()
+        instance_result = await db.execute(
+            select(JobPipelineInstance).where(
+                JobPipelineInstance.id == stage.instance_id
+            )
+        )
+        instance = instance_result.scalar_one()
+        job_result = await db.execute(
+            select(JobPosting).where(JobPosting.id == bank.job_posting_id)
+        )
+        job = job_result.scalar_one()
+        snap_result = await db.execute(
+            select(JobPostingSignalSnapshot).where(
+                JobPostingSignalSnapshot.id == bank.signal_snapshot_id
+            )
+        )
+        snapshot = snap_result.scalar_one()
+
+        try:
+            await _generate_one_bank(
+                db,
+                bank=bank,
+                stage=stage,
+                instance=instance,
+                job=job,
+                snapshot=snapshot,
+            )
+            await log_event(
+                db,
+                tenant_id=UUID(tenant_id),
+                actor_id=UUID(started_by),
+                actor_email=None,
+                action="question_bank.bank_generated",
+                resource="stage_question_bank",
+                resource_id=bank.id,
+            )
+            await db.commit()
+        except Exception:
+            await db.commit()  # commit the 'failed' status
+            raise
+
+
+# ---------------------------------------------------------------------------
+# Actor: full pipeline (sequential — required for anti-lie coherence)
+# ---------------------------------------------------------------------------
+
+@dramatiq.actor(
+    max_retries=0,
+    time_limit=600_000,  # 10 minutes
+    queue_name="question_bank_generation",
+)
+async def generate_question_bank_pipeline(
+    instance_id: str,
+    tenant_id: str,
+    started_by: str,
+) -> None:
+    """Generate banks for ALL stages in a pipeline, sequentially.
+
+    Sequential is REQUIRED — stage N needs to see stages 1..N-1's questions.
+    On mid-pipeline failure: marks that stage failed, CONTINUES to next stage.
+    User retries failed stages individually via the single-stage endpoint.
+    """
+    async with get_bypass_session() as db:
+        safe_tenant_id = str(UUID(tenant_id))
+        await db.execute(
+            text(f"SET LOCAL app.current_tenant = '{safe_tenant_id}'")
+        )
+
+        instance_result = await db.execute(
+            select(JobPipelineInstance).where(
+                JobPipelineInstance.id == UUID(instance_id)
+            )
+        )
+        instance = instance_result.scalar_one_or_none()
+        if instance is None:
+            logger.error("question_bank.instance_missing", instance_id=instance_id)
+            return
+
+        job_result = await db.execute(
+            select(JobPosting).where(JobPosting.id == instance.job_posting_id)
+        )
+        job = job_result.scalar_one()
+
+        stages_result = await db.execute(
+            select(JobPipelineStage)
+            .where(JobPipelineStage.instance_id == instance.id)
+            .order_by(JobPipelineStage.position)
+        )
+        stages = list(stages_result.scalars().all())
+
+        succeeded = 0
+        failed = 0
+        for stage in stages:
+            # Ensure bank exists and is in generating state
+            from app.modules.question_bank.service import ensure_bank_exists
+            bank = await ensure_bank_exists(db, stage=stage, job=job)
+            try:
+                transition_to_generating(bank)
+                await db.flush()
+            except Exception as exc:
+                logger.warning(
+                    "question_bank.skip_busy_stage",
+                    stage_id=str(stage.id),
+                    reason=str(exc),
+                )
+                continue
+
+            snap_result = await db.execute(
+                select(JobPostingSignalSnapshot).where(
+                    JobPostingSignalSnapshot.id == bank.signal_snapshot_id
+                )
+            )
+            snapshot = snap_result.scalar_one()
+
+            try:
+                await _generate_one_bank(
+                    db,
+                    bank=bank,
+                    stage=stage,
+                    instance=instance,
+                    job=job,
+                    snapshot=snapshot,
+                )
+                succeeded += 1
+                await db.flush()
+            except Exception as exc:
+                logger.error(
+                    "question_bank.pipeline_stage_failed",
+                    stage_id=str(stage.id),
+                    error=str(exc),
+                )
+                failed += 1
+                # _generate_one_bank already transitioned the bank to failed
+                await db.flush()
+                continue  # move to next stage
+
+        await log_event(
+            db,
+            tenant_id=UUID(tenant_id),
+            actor_id=UUID(started_by),
+            actor_email=None,
+            action="question_bank.pipeline_generation_complete",
+            resource="job_pipeline_instance",
+            resource_id=instance.id,
+            payload={"succeeded": succeeded, "failed": failed, "total": len(stages)},
+        )
+        await db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Actor: single question regeneration
+# ---------------------------------------------------------------------------
+
+@dramatiq.actor(
+    max_retries=2,
+    min_backoff=2_000,
+    max_backoff=30_000,
+    queue_name="question_bank_generation",
+)
+async def regenerate_question(
+    question_id: str,
+    tenant_id: str,
+    started_by: str,
+    replace_signal_values: list[str] | None = None,
+) -> None:
+    """Regenerate a single question slot, preserving its UUID.
+
+    Uses the regenerate-one prompt which takes other questions in the bank
+    as 'do not duplicate' context.
+    """
+    async with get_bypass_session() as db:
+        safe_tenant_id = str(UUID(tenant_id))
+        await db.execute(
+            text(f"SET LOCAL app.current_tenant = '{safe_tenant_id}'")
+        )
+
+        q_result = await db.execute(
+            select(StageQuestion).where(StageQuestion.id == UUID(question_id))
+        )
+        question = q_result.scalar_one_or_none()
+        if question is None:
+            logger.error("question_bank.question_missing", question_id=question_id)
+            return
+
+        bank_result = await db.execute(
+            select(StageQuestionBank).where(StageQuestionBank.id == question.bank_id)
+        )
+        bank = bank_result.scalar_one()
+        stage_result = await db.execute(
+            select(JobPipelineStage).where(JobPipelineStage.id == bank.stage_id)
+        )
+        stage = stage_result.scalar_one()
+        instance_result = await db.execute(
+            select(JobPipelineInstance).where(
+                JobPipelineInstance.id == stage.instance_id
+            )
+        )
+        instance = instance_result.scalar_one()
+        job_result = await db.execute(
+            select(JobPosting).where(JobPosting.id == bank.job_posting_id)
+        )
+        job = job_result.scalar_one()
+        snap_result = await db.execute(
+            select(JobPostingSignalSnapshot).where(
+                JobPostingSignalSnapshot.id == bank.signal_snapshot_id
+            )
+        )
+        snapshot = snap_result.scalar_one()
+
+        # Build prompt: common header + regenerate_one + rich user context
+        system_prompt = prompt_loader.load_pair(
+            "question_bank_common", "question_bank_regenerate_one"
+        )
+
+        other_questions = await get_bank_questions(db, bank.id)
+        other_questions = [q for q in other_questions if q.id != question.id]
+        target_signals = replace_signal_values or question.signal_values
+
+        user_parts = [
+            f"# JOB CONTEXT\n\nJob: {job.title}\nSeniority: {snapshot.seniority_level}\n\n",
+            "# SIGNALS (pinned snapshot)\n",
+        ]
+        for signal in snapshot.signals:
+            user_parts.append(
+                f"- {signal['value']!r} (type: {signal['type']}, "
+                f"weight: {signal['weight']}, knockout: {signal.get('knockout', False)})\n"
+            )
+
+        user_parts.append("\n# CURRENT QUESTION BEING REPLACED\n")
+        user_parts.append(
+            f"Text: {question.text}\n"
+            f"Probes: {question.signal_values}\n"
+            f"Rubric meets_bar: {question.rubric.get('meets_bar', '')}\n"
+            f"Estimated minutes: {question.estimated_minutes}\n"
+        )
+
+        user_parts.append("\n# TARGET SIGNALS (probe these)\n")
+        for v in target_signals:
+            user_parts.append(f"- {v!r}\n")
+
+        user_parts.append("\n# OTHER QUESTIONS IN THIS STAGE'S BANK — DO NOT DUPLICATE\n")
+        for q in other_questions:
+            user_parts.append(
+                f"- Q{q.position}: {q.text} (probes: {q.signal_values})\n"
+            )
+
+        user_parts.append(
+            f"\n# STAGE METADATA\n"
+            f"Type: {stage.stage_type}, Duration: {stage.duration_minutes} min, "
+            f"Difficulty: {stage.difficulty}\n"
+        )
+
+        user_parts.append(
+            "\nNow generate ONE replacement question as a SingleQuestionOutput.\n"
+        )
+
+        client = get_openai_client()
+        result: SingleQuestionOutput = await client.chat.completions.create(
+            model=ai_config.question_bank_model,
+            response_model=SingleQuestionOutput,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": "".join(user_parts)},
+            ],
+            max_retries=2,
+        )
+
+        # Post-validate the one question against the snapshot
+        allowed_types = stage.signal_filter.get("include_types", [])
+        await validate_llm_output_against_snapshot(
+            db,
+            snapshot=snapshot,
+            allowed_types=allowed_types,
+            questions=[result.question],
+        )
+
+        await replace_question_in_place(
+            db, question=question, new_data=result.question
+        )
+        # Auto-revert on edit (confirmed → reviewing if needed)
+        from app.modules.question_bank.state_machine import auto_revert_on_edit
+        auto_revert_on_edit(bank)
+        await db.flush()
+
+        await log_event(
+            db,
+            tenant_id=UUID(tenant_id),
+            actor_id=UUID(started_by),
+            actor_email=None,
+            action="question_bank.question_regenerated",
+            resource="stage_question",
+            resource_id=question.id,
+            payload={"bank_id": str(bank.id)},
+        )
+        await db.commit()
