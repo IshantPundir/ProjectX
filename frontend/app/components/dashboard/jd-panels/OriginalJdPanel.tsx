@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 type Props = {
   descriptionRaw: string
@@ -14,6 +14,18 @@ type Props = {
  */
 export function OriginalJdPanel({ descriptionRaw, projectScopeRaw }: Props) {
   const [expanded, setExpanded] = useState(false)
+  const closeRef = useRef<HTMLButtonElement>(null)
+
+  // Escape key closes the modal; focus is moved to the close button on open
+  useEffect(() => {
+    if (!expanded) return
+    closeRef.current?.focus()
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setExpanded(false)
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [expanded])
 
   return (
     <>
@@ -68,6 +80,7 @@ export function OriginalJdPanel({ descriptionRaw, projectScopeRaw }: Props) {
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-semibold">Original JD</h3>
               <button
+                ref={closeRef}
                 type="button"
                 onClick={() => setExpanded(false)}
                 className="text-zinc-400 hover:text-zinc-900 text-xl leading-none"

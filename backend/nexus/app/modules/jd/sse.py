@@ -2,10 +2,11 @@
 
 Contract:
   - Polls the job_postings row every POLL_INTERVAL_SECONDS.
-  - Emits a 'status' event ONLY when job.status changes from the last
-    observed value (de-duplication).
+  - Emits a 'status' event when job.status OR enrichment_status changes
+    from the last observed value (de-duplication on both fields).
   - Terminates and closes the HTTP connection when the job reaches a
-    terminal state (signals_extracted or signals_extraction_failed).
+    terminal state (signals_extracted, signals_extraction_failed, or
+    signals_confirmed) AND enrichment is not actively streaming.
   - Terminates immediately if the client disconnects mid-stream.
   - Does NOT enforce RBAC — the router's require_job_access() dependency
     has already validated access before this generator is invoked.
@@ -39,13 +40,13 @@ async def job_status_event_generator(
 ) -> AsyncIterator[dict[str, str]]:
     """Yield SSE events until terminal state or client disconnect."""
     last_status: str | None = None
+    last_enrichment_status: str | None = None
     while True:
         if await request.is_disconnected():
             return
 
         # Open a fresh session per iteration — returned to the pool as
-        # soon as the query completes. This prevents long-lived SSE
-        # streams from holding pool connections indefinitely.
+        # soon as the query completes.
         async with async_session_factory() as db:
             import sqlalchemy
 
@@ -57,14 +58,25 @@ async def job_status_event_generator(
         if event is None:
             return  # job disappeared (shouldn't happen under RLS scope)
 
-        if event.status != last_status:
+        # Emit when either status OR enrichment_status changes
+        if (
+            event.status != last_status
+            or event.enrichment_status != last_enrichment_status
+        ):
             yield {
                 "event": "status",
                 "data": event.model_dump_json(),
             }
             last_status = event.status
+            last_enrichment_status = event.enrichment_status
 
-        if event.status in TERMINAL_STATES:
+        # Only close the stream when the job is in a terminal state AND
+        # enrichment is not actively streaming (we need to stay open to
+        # deliver the enrichment completion event).
+        if (
+            event.status in TERMINAL_STATES
+            and event.enrichment_status != "streaming"
+        ):
             return
 
         await asyncio.sleep(POLL_INTERVAL_SECONDS)
