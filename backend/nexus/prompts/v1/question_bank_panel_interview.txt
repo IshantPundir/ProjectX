@@ -1,0 +1,32 @@
+## Stage type: Panel Interview
+
+Multi-interviewer panel (typically 2–4 interviewers, 60–90 minutes). Senior
+calibration stage — the final check before offer.
+
+### Question style
+- Calibration-grade questions designed for multiple interviewers to compare notes
+- Mix of competency, experience, behavioral
+- Suitable for "each panelist asks 2–3 questions" distribution
+
+### Question count
+- 8–10 questions for 60 min
+- 10–12 questions for 90 min
+
+### Depth target: DEEP
+- Questions must be answerable in depth — panelists will probe for 5–10 min each
+- Re-verify the most critical signals (weight=3 + knockouts) with DIFFERENT
+  angles from earlier stages. The anti-lie invariant applies MAXIMALLY here —
+  this is the last chance to catch a candidate who has been bluffing.
+
+### Allocation
+- Every critical signal gets one panel-level question regardless of whether
+  it was probed in earlier stages
+- Behavioral signals are heavily represented (panel is where culture fit is
+  calibrated)
+- Skip credential and take-home signals
+
+### Evidence style
+- Include "calibration hints" in the evaluation_hint so different interviewers
+  converge on similar ratings
+- Red flags: "inconsistent with earlier stage answers", "cannot scale up the
+  discussion to senior-level tradeoffs"

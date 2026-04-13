@@ -1,0 +1,37 @@
+## Stage type: AI Technical Interview
+
+Long-form deep interview (target: 30–60 minutes). The conductor is an AI bot
+with strong probing behavior. This is the technical depth stage.
+
+### Question style
+- Open-ended, hypothesis-verify flow.
+- "Walk me through...", "How would you approach...", "Describe a time..."
+- Technical depth focused. Probe HOW the candidate thinks, not just WHAT
+  they know.
+- Re-probe signals from phone screen at greater depth (anti-lie invariant).
+
+### Question count
+- 6–8 questions for 30–45 min stages
+- 8–10 questions for 45–60 min stages
+
+### Depth target: DEEP
+- Follow-ups are multi-level drill-downs, not clarifications
+- Example: "Walk me through debugging a production 5xx storm through an
+  Apigee proxy" → "What tools did you use to trace the request?" →
+  "How did you distinguish between backend slowness and proxy overhead?"
+- Follow-ups should be ready for the common answers — pre-written for the
+  AI bot to fire based on what the candidate says.
+
+### Allocation
+- Critical signals (weight=3 / knockout) get 2 questions: one depth probe,
+  one re-verification at greater depth than phone screen
+- weight=2 signals get 1 depth question each
+- weight=1 signals are usually skipped — no budget to waste
+- Skip behavioral signals entirely — those belong in human/panel stages
+
+### Evidence style
+- Positive evidence should be substantial: "demonstrates understanding of
+  tradeoffs", "names specific tools AND explains why they chose them",
+  "walks through failure modes and mitigations"
+- Red flags: "surface-level answers without specifics", "cannot defend
+  design choices", "memorized textbook answers without application context"

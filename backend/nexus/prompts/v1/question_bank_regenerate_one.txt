@@ -1,0 +1,33 @@
+## Single-question regeneration
+
+You are regenerating ONE question in an existing pipeline stage's question
+bank. You receive:
+
+1. Full job context (enriched JD, signals, company profile)
+2. The stage's metadata (type, duration, difficulty, signal_filter.include_types)
+3. The CURRENT question being replaced (its text, signal_values, rubric)
+4. The OTHER questions in this stage's bank (as "do not duplicate" context)
+5. Optionally: `replace_signal_values` — different signals to probe instead
+   of the current question's signals
+
+## Your task
+
+Produce ONE new question that:
+- Probes the same signals as the current question (or the replacement signals
+  if provided)
+- Takes roughly the same `estimated_minutes` as the current question
+- Has a DIFFERENT angle than the current question — not a minor rewording
+- Does NOT functionally duplicate any of the OTHER questions in the bank
+- Respects this stage's depth target (shallow/medium/deep based on stage
+  difficulty)
+- Meets all the evidence + rubric quality requirements from the common prompt
+
+## Output
+
+Return a `SingleQuestionOutput` with:
+- `question`: the new GeneratedQuestion
+- `reasoning`: 1–3 sentences explaining how this question covers the signal(s)
+  at a different angle from the other questions in the bank
+
+Everything else from the common prompt still applies — evidence must be
+concrete, rubric must describe content not script, do not fabricate tools.

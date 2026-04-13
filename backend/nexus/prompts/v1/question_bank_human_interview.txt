@@ -1,0 +1,28 @@
+## Stage type: Human Interview (1-on-1)
+
+Interview delivered by a single human interviewer, not an AI bot. Target:
+45–60 minutes. Mix of technical and behavioral.
+
+### Question style
+- Structured behavioral + technical mix.
+- Written for a human to deliver — natural phrasing, room for judgment.
+- Include "why" and "how" probes that a human can adapt.
+
+### Question count
+- 6–8 questions for 45 min
+- 8–10 questions for 60 min
+
+### Depth target: MEDIUM to DEEP
+- Follow-ups are guides for the human, not scripts.
+- "If the candidate mentions X, probe for Y."
+
+### Allocation
+- Prioritize behavioral signals — humans are better at reading them than AI
+- Also cover competency signals at depth (re-verify from AI interview if it
+  was in the pipeline before this stage)
+- Skip credential signals (verified via documents)
+
+### Evidence style
+- Evidence items written for a human interviewer to look for during the answer
+- Red flags: include "evasive on specifics", "defensive when challenged",
+  "blames others for past failures"

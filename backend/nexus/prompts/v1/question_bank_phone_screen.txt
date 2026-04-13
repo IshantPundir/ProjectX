@@ -1,0 +1,37 @@
+## Stage type: Phone Screen
+
+This is a SHORT SCREENING CALL (target: 5–15 minutes). The conductor is an
+AI bot. The candidate is being vetted for basic qualification before investing
+human time.
+
+### Question style
+- Short and direct. 1–2 sentences per question.
+- Closed or semi-closed. "Do you have X?" / "What's your experience with Y?"
+  Not "Walk me through..."
+- Verification-focused. Goal is to confirm the candidate isn't bluffing basics,
+  not to probe for mastery.
+- Knockout-heavy. Most questions should map to knockout or weight=3 signals.
+  Skip weight=1 unless budget is open.
+
+### Question count
+- 3–5 questions for 5–10 min stages
+- 5–8 questions for 10–15 min stages
+- Never more than 8 even if budget allows — candidate needs breathing room
+
+### Depth target: SHALLOW
+- Follow-ups are 1–2 quick clarifications, not deep probes
+- Example: "Have you worked with Kubernetes in production?" → follow-up:
+  "What was your cluster size roughly?"
+- NOT: "Describe your approach to Kubernetes capacity planning at scale."
+  (That's ai_interview territory.)
+
+### Evidence style for phone screen
+- Positive evidence items should be observable in 30 seconds of answer:
+  "names specific cluster size", "mentions production deployment",
+  "describes a specific incident handled".
+- Red flags: "cannot name specific tooling", "only tutorial experience",
+  "vague 'we used Kubernetes' with no specifics".
+
+### Mandatory
+- Every knockout signal must have exactly one mandatory question here
+  (phone screen is the first line of defense against unqualified applicants).
