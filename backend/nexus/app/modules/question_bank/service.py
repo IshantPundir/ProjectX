@@ -28,10 +28,8 @@ from app.models import (
 )
 from app.modules.audit.service import log_event
 from app.modules.question_bank.errors import (
-    BankNotFoundError,
     DurationBudgetOutOfRangeError,
     KnockoutUnprobedError,
-    QuestionNotFoundError,
     SignalTypeNotAllowedError,
     SignalValueNotInSnapshotError,
 )
