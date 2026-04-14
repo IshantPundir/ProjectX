@@ -365,6 +365,7 @@ class StageQuestionBank(Base):
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'draft'"))
     prompt_version: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'v1'"))
     generation_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    coverage_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     generated_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=True

@@ -44,6 +44,7 @@ export type BankResponse = {
   status: BankStatus
   prompt_version: string
   generation_error: string | null
+  coverage_notes: string | null
   generated_at: string | null
   generated_by: string | null
   confirmed_at: string | null

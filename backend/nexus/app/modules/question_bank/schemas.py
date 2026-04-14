@@ -81,7 +81,9 @@ class StageQuestionBankOutput(BaseModel):
         ..., min_length=20, max_length=2000,
         description=(
             "Chain-of-thought: why you allocated questions this way. "
-            "Captured by Langfuse for debugging — NOT stored in the DB."
+            "Persisted on the bank row for audit and debugging. Explain "
+            "signal coverage choices, knockout handling, and any override "
+            "decisions (e.g., pulling an interview-tagged signal forward)."
         ),
     )
 
@@ -186,6 +188,7 @@ class BankResponse(BaseModel):
     status: BankStatus
     prompt_version: str
     generation_error: str | None
+    coverage_notes: str | None
     generated_at: datetime | None
     generated_by: UUID | None
     confirmed_at: datetime | None

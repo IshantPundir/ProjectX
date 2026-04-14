@@ -303,6 +303,9 @@ async def _generate_one_bank(
             questions=result.questions,
         )
 
+        # Persist the LLM's allocation reasoning
+        bank.coverage_notes = result.coverage_notes
+
         # Write questions to the DB (wipes prior AI-sourced, keeps recruiter-sourced)
         await write_generated_questions(
             db, bank=bank, questions=validated, source="ai_generated"

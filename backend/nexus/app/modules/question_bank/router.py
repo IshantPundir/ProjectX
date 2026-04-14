@@ -108,6 +108,7 @@ def _bank_to_response(
         status=bank.status,  # type: ignore[arg-type]
         prompt_version=bank.prompt_version,
         generation_error=bank.generation_error,
+        coverage_notes=bank.coverage_notes,
         generated_at=bank.generated_at,
         generated_by=bank.generated_by,
         confirmed_at=bank.confirmed_at,
