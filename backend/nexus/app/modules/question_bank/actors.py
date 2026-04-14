@@ -278,12 +278,13 @@ async def _generate_one_bank(
         client = get_openai_client()
         result: StageQuestionBankOutput = await client.chat.completions.create(
             model=ai_config.question_bank_model,
+            reasoning_effort=ai_config.question_bank_effort,
             response_model=StageQuestionBankOutput,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
             ],
-            max_retries=2,
+            max_retries=1,
         )
 
         logger.info(
@@ -409,7 +410,7 @@ async def generate_question_bank_stage(
 
 @dramatiq.actor(
     max_retries=0,
-    time_limit=600_000,  # 10 minutes
+    time_limit=1_800_000,  # 30 minutes
     queue_name="question_bank_generation",
 )
 async def generate_question_bank_pipeline(
@@ -621,12 +622,13 @@ async def regenerate_question(
         client = get_openai_client()
         result: SingleQuestionOutput = await client.chat.completions.create(
             model=ai_config.question_bank_model,
+            reasoning_effort=ai_config.question_bank_effort,
             response_model=SingleQuestionOutput,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": "".join(user_parts)},
             ],
-            max_retries=2,
+            max_retries=1,
         )
 
         # Post-validate the one question against the snapshot

@@ -33,15 +33,15 @@ class QuestionRubric(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     excellent: str = Field(
-        ..., min_length=20, max_length=300,
+        ..., min_length=20,
         description="Anchor for top-of-scale — what a strong answer contains",
     )
     meets_bar: str = Field(
-        ..., min_length=20, max_length=300,
+        ..., min_length=20,
         description="Anchor for middle — what an acceptable answer contains",
     )
     below_bar: str = Field(
-        ..., min_length=20, max_length=300,
+        ..., min_length=20,
         description="Anchor for bottom — what a weak answer looks like",
     )
 
@@ -74,11 +74,11 @@ class StageQuestionBankOutput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    stage_summary: str = Field(..., min_length=20, max_length=300,
+    stage_summary: str = Field(..., min_length=20,
                                 description="1-sentence: what this stage tests")
     questions: list[GeneratedQuestion] = Field(..., min_length=1, max_length=15)
     coverage_notes: str = Field(
-        ..., min_length=20, max_length=500,
+        ..., min_length=20, max_length=2000,
         description=(
             "Chain-of-thought: why you allocated questions this way. "
             "Captured by Langfuse for debugging — NOT stored in the DB."

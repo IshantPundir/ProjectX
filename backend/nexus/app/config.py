@@ -46,9 +46,10 @@ class Settings(BaseSettings):
     openai_reenrichment_model: str = "gpt-5.2"
     openai_reenrichment_effort: str = "medium"
     openai_question_bank_model: str = "gpt-5"
+    openai_question_bank_effort: str = "high"
 
     # OpenAI request tuning
-    openai_request_timeout_seconds: float = 120.0
+    openai_request_timeout_seconds: float = 240.0
     openai_max_retries: int = 2  # instructor-level schema retries; actor-level retries are separate
 
     # STT — Deepgram
