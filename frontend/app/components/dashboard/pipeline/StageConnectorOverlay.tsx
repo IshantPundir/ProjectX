@@ -10,9 +10,10 @@ type Paths = {
 
 type Props = {
   selectedStageId: string | null
+  hidden?: boolean
 }
 
-export function StageConnectorOverlay({ selectedStageId }: Props) {
+export function StageConnectorOverlay({ selectedStageId, hidden }: Props) {
   const [paths, setPaths] = useState<Paths | null>(null)
   const rafRef = useRef<number | null>(null)
 
@@ -97,7 +98,7 @@ export function StageConnectorOverlay({ selectedStageId }: Props) {
     }
   }, [selectedStageId])
 
-  if (!paths) return null
+  if (hidden || !paths) return null
 
   return (
     <svg

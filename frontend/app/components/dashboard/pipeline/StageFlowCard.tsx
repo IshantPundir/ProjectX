@@ -102,6 +102,7 @@ export function StageFlowCard({
   const accent = STAGE_TYPE_ACCENT[stage.stage_type] ?? 'bg-zinc-400'
   const typeText = STAGE_TYPE_TEXT[stage.stage_type] ?? 'text-zinc-600'
   const hasId = !!stage.id
+  const isGenerating = bankStatus === 'generating'
 
   const baseClasses = selected
     ? 'border-blue-500 bg-blue-50/50 shadow-md'
@@ -126,6 +127,10 @@ export function StageFlowCard({
       }}
       className={`group relative w-full max-w-[340px] rounded-xl border transition ${baseClasses} ${
         hasId ? 'cursor-pointer' : 'cursor-wait opacity-80'
+      } ${
+        isGenerating
+          ? 'overflow-hidden stage-generating-glow stage-generating-shimmer'
+          : ''
       }`}
     >
       {/* Selected accent bar on the left edge */}
@@ -190,6 +195,11 @@ export function StageFlowCard({
           </button>
         )}
       </div>
+
+      {/* Indeterminate progress bar — only while generating */}
+      {isGenerating && (
+        <div className="stage-generating-progress" aria-hidden="true" />
+      )}
     </div>
   )
 }

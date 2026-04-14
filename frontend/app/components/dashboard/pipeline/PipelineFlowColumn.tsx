@@ -2,8 +2,28 @@
 
 import { useRef } from 'react'
 import { ChevronDown, Plus, Users } from 'lucide-react'
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import {
+  restrictToVerticalAxis,
+  restrictToParentElement,
+} from '@dnd-kit/modifiers'
+
 import { Button } from '@/components/ui/button'
-import { StageFlowCard } from './StageFlowCard'
+import { SortableStageCard } from './SortableStageCard'
 import type { PipelineStageUpdateInput } from '@/lib/api/pipelines'
 import type { BankResponse } from '@/lib/api/question-banks'
 
@@ -14,6 +34,8 @@ type Props = {
   onStageClick: (stageId: string) => void
   onStageDelete?: (index: number) => void
   onAddStage: () => void
+  onReorder: (nextStages: PipelineStageUpdateInput[]) => void
+  onDragStateChange: (dragging: boolean) => void
 }
 
 export function PipelineFlowColumn({
@@ -23,8 +45,44 @@ export function PipelineFlowColumn({
   onStageClick,
   onStageDelete,
   onAddStage,
+  onReorder,
+  onDragStateChange,
 }: Props) {
   const columnRef = useRef<HTMLDivElement>(null)
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 6 },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  )
+
+  // Items for the SortableContext. Only stages with an id participate.
+  // Stages without an id are rendered but aren't sortable (they're "Saving…").
+  const sortableItems = stages
+    .filter((s) => s.id !== undefined)
+    .map((s) => s.id as string)
+
+  function handleDragStart() {
+    onDragStateChange(true)
+  }
+
+  function handleDragEnd(event: DragEndEvent) {
+    onDragStateChange(false)
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const oldIndex = stages.findIndex((s) => s.id === active.id)
+    const newIndex = stages.findIndex((s) => s.id === over.id)
+    if (oldIndex < 0 || newIndex < 0) return
+    const reordered = arrayMove(stages, oldIndex, newIndex)
+    onReorder(reordered)
+  }
+
+  function handleDragCancel() {
+    onDragStateChange(false)
+  }
 
   return (
     <div
@@ -58,35 +116,54 @@ export function PipelineFlowColumn({
           <ChevronDown className="w-4 h-4 text-zinc-300" aria-hidden="true" />
         )}
 
-        {/* Stage cards */}
-        {stages.map((stage, i) => {
-          const stageId = stage.id ?? null
-          const bank = stageId
-            ? banks.find((b) => b.stage_id === stageId)
-            : null
-          const selected = stageId !== null && stageId === selectedStageId
-          return (
-            <div
-              key={`${i}-${stageId ?? 'new'}`}
-              className="w-full flex flex-col items-center"
-            >
-              <StageFlowCard
-                stage={stage}
-                position={i + 1}
-                selected={selected}
-                bankStatus={bank?.status ?? null}
-                onClick={() => stageId && onStageClick(stageId)}
-                onDelete={onStageDelete ? () => onStageDelete(i) : undefined}
-              />
-              {i < stages.length - 1 && (
-                <ChevronDown
-                  className="w-4 h-4 text-zinc-300 my-1.5"
-                  aria-hidden="true"
-                />
-              )}
-            </div>
-          )
-        })}
+        {/* Stage cards — wrapped in DndContext for drag-to-reorder */}
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          modifiers={[restrictToVerticalAxis, restrictToParentElement]}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+          onDragCancel={handleDragCancel}
+        >
+          <SortableContext
+            items={sortableItems}
+            strategy={verticalListSortingStrategy}
+          >
+            {stages.map((stage, i) => {
+              const stageId = stage.id ?? null
+              const sortableId = stageId ?? `temp-${i}`
+              const bank = stageId
+                ? banks.find((b) => b.stage_id === stageId)
+                : null
+              const selected = stageId !== null && stageId === selectedStageId
+              return (
+                <div
+                  key={sortableId}
+                  className="w-full flex flex-col items-center"
+                >
+                  <SortableStageCard
+                    stage={stage}
+                    sortableId={sortableId}
+                    position={i + 1}
+                    selected={selected}
+                    bankStatus={bank?.status ?? null}
+                    onClick={() => stageId && onStageClick(stageId)}
+                    onDelete={
+                      onStageDelete ? () => onStageDelete(i) : undefined
+                    }
+                    draggable={!!stageId}
+                  />
+                  {i < stages.length - 1 && (
+                    <ChevronDown
+                      className="w-4 h-4 text-zinc-300 my-1.5"
+                      aria-hidden="true"
+                    />
+                  )}
+                </div>
+              )
+            })}
+          </SortableContext>
+        </DndContext>
 
         {stages.length > 0 && (
           <ChevronDown className="w-4 h-4 text-zinc-300" aria-hidden="true" />
@@ -103,7 +180,12 @@ export function PipelineFlowColumn({
         </div>
 
         {/* Add stage button */}
-        <Button variant="outline" size="sm" onClick={onAddStage} className="mt-4">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onAddStage}
+          className="mt-4"
+        >
           <Plus className="w-3.5 h-3.5 mr-1" />
           Add stage
         </Button>

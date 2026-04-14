@@ -61,6 +61,7 @@ export function UnifiedPipelineView({ job, pipeline, jobId }: Props) {
   )
   const [pickerOpen, setPickerOpen] = useState(false)
   const [isDirty, setIsDirty] = useState(false)
+  const [isDragging, setIsDragging] = useState(false)
 
   // Autosave plumbing (preserved verbatim from legacy page)
   const saveTimerRef = useRef<number | null>(null)
@@ -209,6 +210,15 @@ export function UnifiedPipelineView({ job, pipeline, jobId }: Props) {
     if (deletedId === selectedStageId) {
       selectStage(null)
     }
+  }
+
+  function reorderStages(nextStagesRaw: PipelineStageUpdateInput[]) {
+    // Re-assign position by array index so the backend diff + sync sees the
+    // new order. The drag source kept stage objects intact, so we only
+    // rewrite `position`.
+    const nextStages = nextStagesRaw.map((s, i) => ({ ...s, position: i }))
+    setStages(nextStages)
+    scheduleSave(nextStages)
   }
 
   function handleReset() {
@@ -370,6 +380,8 @@ export function UnifiedPipelineView({ job, pipeline, jobId }: Props) {
           onStageClick={(stageId) => selectStage(stageId)}
           onStageDelete={stages.length > 1 ? deleteStage : undefined}
           onAddStage={addStage}
+          onReorder={reorderStages}
+          onDragStateChange={setIsDragging}
         />
 
         <StageInspectorPanel
@@ -385,7 +397,10 @@ export function UnifiedPipelineView({ job, pipeline, jobId }: Props) {
           }}
         />
 
-        <StageConnectorOverlay selectedStageId={selectedStageId} />
+        <StageConnectorOverlay
+          selectedStageId={selectedStageId}
+          hidden={isDragging}
+        />
       </div>
 
       {pickerOpen && (
