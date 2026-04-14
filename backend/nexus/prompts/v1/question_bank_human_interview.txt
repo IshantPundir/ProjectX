@@ -8,19 +8,27 @@ Interview delivered by a single human interviewer, not an AI bot. Target:
 - Written for a human to deliver — natural phrasing, room for judgment.
 - Include "why" and "how" probes that a human can adapt.
 
-### Question count
-- 6–8 questions for 45 min
-- 8–10 questions for 60 min
+### Question count and coverage
+
+Generate the FULL menu for maximum coverage. Do NOT cap to duration budget. Typical output:
+  - 45 min stage: 10–14 questions (4–6 mandatory + 6–8 optional)
+  - 60 min stage: 12–16 questions (5–7 mandatory + 7–9 optional)
+
+Mandatory total must fit within stage duration with 20–30% headroom. Optional questions can exceed the stage duration in aggregate — the human interviewer skips them when the clock runs short or the candidate needs more depth on a specific topic.
 
 ### Depth target: MEDIUM to DEEP
 - Follow-ups are guides for the human, not scripts.
 - "If the candidate mentions X, probe for Y."
 
 ### Allocation
-- Prioritize behavioral signals — humans are better at reading them than AI
-- Also cover competency signals at depth (re-verify from AI interview if it
-  was in the pipeline before this stage)
-- Skip credential signals (verified via documents)
+
+- **Behavioral signals are the priority** — humans read them more accurately than AI bots. Every behavioral signal in the snapshot with weight ≥ 2 should get at least one question here. Mark the first question probing each knockout behavioral signal (if any) as mandatory; others optional.
+
+- **Competency signals:** re-verify at depth. If the AI interview already probed a competency signal, this stage probes it at a DIFFERENT angle (e.g., AI interview asked about technical implementation; human stage asks about team tradeoffs or mentorship for the same competency). Mark the FIRST question per knockout competency as mandatory; depth probes optional.
+
+- Skip credential signals (verified via documents).
+
+- Order by priority: mandatory knockouts first (low positions), then mandatory non-knockout weight=3, then optional behavioral depth, then optional competency depth, then weight=1 bonus.
 
 ### Evidence style
 - Evidence items written for a human interviewer to look for during the answer

@@ -59,19 +59,28 @@ class KnockoutUnprobedError(Exception):
         )
 
 
-class DurationBudgetOutOfRangeError(Exception):
-    """Sum of estimated_minutes is outside the 50–150% range at confirm time."""
+class MandatoryOverrunError(Exception):
+    """Sum of mandatory questions' estimated_minutes exceeds the stage duration.
 
-    def __init__(self, bank_id: UUID, total_minutes: float, stage_minutes: int):
+    Only mandatory questions count — optional depth probes may exceed duration
+    in aggregate. The session bot skips optional questions when the clock runs out,
+    but it cannot skip mandatory questions, so mandatory total must fit.
+    """
+
+    def __init__(
+        self,
+        bank_id: UUID,
+        mandatory_minutes: float,
+        stage_minutes: int,
+    ):
         self.bank_id = bank_id
-        self.total_minutes = total_minutes
+        self.mandatory_minutes = mandatory_minutes
         self.stage_minutes = stage_minutes
-        self.min_allowed = round(stage_minutes * 0.5, 1)
-        self.max_allowed = round(stage_minutes * 1.5, 1)
         super().__init__(
-            f"Question time budget ({total_minutes} min) is outside the allowed "
-            f"range for this {stage_minutes}-minute stage "
-            f"({self.min_allowed}–{self.max_allowed} min)"
+            f"Mandatory question time ({mandatory_minutes} min) exceeds the "
+            f"stage's session duration ({stage_minutes} min). The session bot "
+            f"cannot skip mandatory questions — either shorten mandatory questions, "
+            f"demote some to optional, or increase the stage duration."
         )
 
 

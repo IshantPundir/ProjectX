@@ -28,8 +28,8 @@ from app.models import (
 )
 from app.modules.audit.service import log_event
 from app.modules.question_bank.errors import (
-    DurationBudgetOutOfRangeError,
     KnockoutUnprobedError,
+    MandatoryOverrunError,
     SignalTypeNotAllowedError,
     SignalValueNotInSnapshotError,
 )
@@ -241,25 +241,31 @@ async def validate_knockout_coverage(
             )
 
 
-async def validate_duration_budget(
+async def validate_mandatory_fits_session(
     db: AsyncSession,
     bank: StageQuestionBank,
 ) -> None:
-    """Raise DurationBudgetOutOfRangeError if sum outside 50–150% of stage duration."""
+    """Raise MandatoryOverrunError if mandatory question minutes exceed stage duration.
+
+    Only mandatory questions are time-budgeted. Optional depth probes may exceed
+    the stage duration in aggregate — the session bot skips them when the clock
+    runs out. But the bot cannot skip mandatory questions, so mandatory total
+    MUST fit within the stage's session time limit.
+    """
     stage_result = await db.execute(
         select(JobPipelineStage).where(JobPipelineStage.id == bank.stage_id)
     )
     stage = stage_result.scalar_one()
 
     questions = await get_bank_questions(db, bank.id)
-    total = float(sum(q.estimated_minutes for q in questions))
-    min_allowed = stage.duration_minutes * 0.5
-    max_allowed = stage.duration_minutes * 1.5
+    mandatory_total = float(
+        sum(q.estimated_minutes for q in questions if q.is_mandatory)
+    )
 
-    if total < min_allowed or total > max_allowed:
-        raise DurationBudgetOutOfRangeError(
+    if mandatory_total > stage.duration_minutes:
+        raise MandatoryOverrunError(
             bank_id=bank.id,
-            total_minutes=total,
+            mandatory_minutes=mandatory_total,
             stage_minutes=stage.duration_minutes,
         )
 
@@ -275,10 +281,18 @@ async def validate_llm_output_against_snapshot(
 
     - signal_values must all exist in the snapshot → SignalValueNotInSnapshotError
     - signal types must be in allowed_types → SignalTypeNotAllowedError
-    - knockout signals → is_mandatory auto-corrected to True (warning logged)
+    - Mandatory knockout auto-correction: for each knockout signal, the EARLIEST
+      question probing it (by position) must be mandatory. Subsequent questions
+      probing the same knockout signal are auto-demoted to optional (depth probes).
+      This guarantees exactly one mandatory verification per knockout; the rest
+      become session-bot-adaptive optional probes.
     """
     snapshot_by_value = {s["value"]: s for s in snapshot.signals}
+    knockout_values = {
+        s["value"] for s in snapshot.signals if s.get("knockout", False)
+    }
 
+    # First pass: signal validation on every question
     for q in questions:
         for value in q.signal_values:
             if value not in snapshot_by_value:
@@ -293,17 +307,38 @@ async def validate_llm_output_against_snapshot(
                     allowed_types=allowed_types,
                 )
 
-        # Auto-correct is_mandatory for knockouts
-        probes_knockout = any(
-            snapshot_by_value[v].get("knockout", False) for v in q.signal_values
-        )
-        if probes_knockout and not q.is_mandatory:
-            logger.warning(
-                "question_bank.auto_corrected_mandatory",
-                signal_values=q.signal_values,
-                reason="knockout_signal_without_mandatory",
-            )
-            q.is_mandatory = True
+    # Second pass: mandatory auto-correction in position order.
+    # For each knockout signal, the earliest question probing it claims the
+    # mandatory slot; later questions probing the same knockout are demoted.
+    knockouts_covered: set[str] = set()
+    for q in sorted(questions, key=lambda x: x.position):
+        knockouts_in_q = set(q.signal_values) & knockout_values
+        if not knockouts_in_q:
+            # Non-knockout question — leave is_mandatory as-is (trust the LLM)
+            continue
+
+        unclaimed = knockouts_in_q - knockouts_covered
+        if unclaimed:
+            # Earliest question covering these knockouts — must be mandatory
+            if not q.is_mandatory:
+                logger.warning(
+                    "question_bank.upgraded_to_mandatory",
+                    signal_values=q.signal_values,
+                    reason="earliest_knockout_question_must_be_mandatory",
+                )
+                q.is_mandatory = True
+            knockouts_covered.update(unclaimed)
+        else:
+            # All knockouts in this question are already covered by earlier
+            # mandatory questions — demote this one to optional depth probe
+            if q.is_mandatory:
+                logger.info(
+                    "question_bank.demoted_to_optional",
+                    signal_values=q.signal_values,
+                    reason="duplicate_knockout_coverage",
+                )
+                q.is_mandatory = False
+
     return questions
 
 
@@ -611,7 +646,7 @@ async def confirm_bank(
 ) -> StageQuestionBank:
     """Transition bank to 'confirmed' after running all validators."""
     await validate_knockout_coverage(db, bank)
-    await validate_duration_budget(db, bank)
+    await validate_mandatory_fits_session(db, bank)
     transition_to_confirmed(bank, user_id=user_id)
     await db.flush()
 
@@ -635,7 +670,7 @@ __all__ = [
     "compute_is_stale",
     "get_latest_confirmed_snapshot",
     "validate_knockout_coverage",
-    "validate_duration_budget",
+    "validate_mandatory_fits_session",
     "validate_llm_output_against_snapshot",
     "write_generated_questions",
     "replace_question_in_place",

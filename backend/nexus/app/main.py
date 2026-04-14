@@ -157,8 +157,8 @@ def create_app() -> FastAPI:
     from app.modules.question_bank.errors import (
         BankAlreadyGeneratingError as QB_BankAlreadyGeneratingError,
         BankNotInReviewingError as QB_BankNotInReviewingError,
-        DurationBudgetOutOfRangeError as QB_DurationBudgetOutOfRangeError,
         KnockoutUnprobedError as QB_KnockoutUnprobedError,
+        MandatoryOverrunError as QB_MandatoryOverrunError,
     )
 
     @application.exception_handler(QB_BankAlreadyGeneratingError)
@@ -182,9 +182,9 @@ def create_app() -> FastAPI:
             content={"detail": str(exc), "signal_value": exc.signal_value},
         )
 
-    @application.exception_handler(QB_DurationBudgetOutOfRangeError)
-    async def qb_duration_out_of_range(
-        request: Request, exc: QB_DurationBudgetOutOfRangeError
+    @application.exception_handler(QB_MandatoryOverrunError)
+    async def qb_mandatory_overrun(
+        request: Request, exc: QB_MandatoryOverrunError
     ) -> JSONResponse:
         return JSONResponse(status_code=409, content={"detail": str(exc)})
 

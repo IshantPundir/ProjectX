@@ -30,8 +30,8 @@ from app.models import (
 from app.modules.question_bank.errors import (
     BankAlreadyGeneratingError,
     BankNotInReviewingError,
-    DurationBudgetOutOfRangeError,
     KnockoutUnprobedError,
+    MandatoryOverrunError,
     SignalTypeNotAllowedError,
     SignalValueNotInSnapshotError,
 )
@@ -447,38 +447,57 @@ async def test_confirm_bank_rejects_uncovered_knockout(db):
 
 
 @pytest.mark.asyncio
-async def test_confirm_bank_rejects_duration_out_of_range(db):
+async def test_confirm_bank_rejects_mandatory_overrun(db):
+    """Mandatory questions whose estimated_minutes sum exceeds stage duration → 409."""
     tenant, user, unit = await _setup_tenant_user_unit(db)
     job, snapshot = await _make_job_with_signals(
         db, tenant.id, unit.id, user.id,
-        signals=[_signal(value="Python")],
+        signals=[
+            _signal(
+                value="TestSignal",
+                signal_type="competency",
+                knockout=True,
+                weight=3,
+            )
+        ],
     )
-    # Stage of 30 mins → allowed range 15..45
     _instance, stage = await _make_pipeline_and_stage(
-        db, job=job, duration_minutes=30,
+        db, job=job, stage_type="phone_screen", duration_minutes=10,
     )
+
     bank = await ensure_bank_exists(db, stage=stage, job=job)
     bank.status = "reviewing"
     await db.flush()
 
-    # Add a single 5-minute question — total 5 < 15
-    await _add_recruiter_question(
-        db,
-        bank=bank,
-        snapshot=snapshot,
-        user_id=user.id,
-        signal_values=["Python"],
-        estimated_minutes=5.0,
+    # Add a mandatory question whose estimated_minutes exceeds stage duration
+    q = StageQuestion(
+        tenant_id=tenant.id,
+        bank_id=bank.id,
+        position=0,
+        source="ai_generated",
+        text="Test question that takes too long",
+        signal_values=["TestSignal"],
+        estimated_minutes=15.0,  # > 10 min stage
+        is_mandatory=True,
+        follow_ups=[],
+        positive_evidence=["observable 1", "observable 2", "observable 3"],
+        red_flags=["red flag 1", "red flag 2"],
+        rubric={
+            "excellent": "Strong answer with concrete specifics and examples.",
+            "meets_bar": "Acceptable answer with general correctness.",
+            "below_bar": "Weak answer lacking specifics or incorrect.",
+        },
+        evaluation_hint="Look for concrete specifics.",
     )
-    # Edit reverted bank back to reviewing? auto_revert turns draft→reviewing.
-    # Make sure status is reviewing for confirm
-    bank.status = "reviewing"
+    db.add(q)
     await db.flush()
 
-    with pytest.raises(DurationBudgetOutOfRangeError):
+    with pytest.raises(MandatoryOverrunError) as excinfo:
         await confirm_bank(
             db, bank=bank, user_id=user.id, user_email=user.email
         )
+    assert excinfo.value.mandatory_minutes == 15.0
+    assert excinfo.value.stage_minutes == 10
 
 
 @pytest.mark.asyncio

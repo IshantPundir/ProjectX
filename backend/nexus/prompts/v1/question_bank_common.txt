@@ -55,19 +55,37 @@ If an evidence item fails this checklist (e.g. "candidate sounds confident," "go
 
 ## 3. Signal allocation math
 
-Allocate questions proportionally to weight × priority. weight=3 or knockout → 2 questions (one verification, one depth). weight=2 → 1 question. weight=1 → 0–1. Cap by duration budget — each Q takes ~3–8 min including answer and follow-ups. Sum of estimated_minutes should be 85–105% of stage duration.
+Allocate questions proportionally to weight × priority. weight=3 or knockout → 2 questions (one verification, one depth at a different angle). weight=2 → 1 question at this stage's target depth. weight=1 → 0–1 if relevant and the menu has room.
+
+**Generate the FULL menu for maximum coverage. Do NOT cap to stage duration.** The session bot is adaptive — it reads real-time candidate signals and decides when to advance, skip a question, or stop the session early. Your job is to produce comprehensive coverage; the bot decides what to actually ask.
+
+Stage `duration_minutes` is a SESSION TIME LIMIT the bot honors, NOT a generation budget you must match. Your generated questions can (and often should) sum to more than `duration_minutes` — that gives the bot material to draw from when the candidate is strong and finishes fast, or to skip when the candidate is struggling and time is short.
+
+`estimated_minutes` on each question is a HINT for the session scheduler — how long that question + answer + follow-ups typically takes in realistic conversation. Keep it calibrated to actual cognitive load, not evenly divided budgets. A 4-sub-topic question deserves more minutes than a single-topic verification. A simple "have you used X?" gets 1–2 min; a "walk me through designing Y" gets 5–8 min; a full case-study scenario gets 8–12 min.
+
+The ONLY hard constraint: the sum of `estimated_minutes` across MANDATORY questions MUST fit within the stage `duration_minutes`. Mandatory questions are unskippable — the bot cannot move past them. Optional depth probes may exceed duration in aggregate; the bot will skip them under time pressure. Plan the mandatory set to fit comfortably (leave 20–30% headroom for candidate verbosity).
 
 Apply `stage.signal_filter.include_types` BEFORE allocation. If `include_types = ["competency", "experience"]`, behavioral and credential signals are off-limits for this stage regardless of weight. They will be probed in a different stage.
 
-If allocation produces more questions than the duration budget allows, drop the lowest-weight signals first. Never inflate question count to "use up" budget — fewer high-quality questions beats more shallow ones.
+**Question ordering is load-bearing.** Because the session bot may stop early (candidate is weak, or time runs out), the highest-priority questions must be at the lowest positions. Order your output as follows:
 
-Each question also carries a `position` field used to order questions within the stage. Lower position = earlier. Mandatory and knockout questions go first. Within the remaining slots, order by descending weight so the most important signals are probed while the candidate is freshest.
+  1. Positions 0..M-1: mandatory knockout verification questions (one per knockout, in descending signal weight order)
+  2. Positions M..K: mandatory non-knockout verification (rare — only if a non-knockout weight=3 signal has no knockout siblings)
+  3. Positions K+1..P: optional depth probes for knockouts (second question per knockout, different angle)
+  4. Positions P+1..W: optional weight=2 signal probes
+  5. Positions W+1..end: optional weight=1 bonus questions and any leftover depth probes
 
-## 4. Mandatory knockouts
+A candidate who gets cut short at position 3 should still have had their knockouts verified. Order your questions as if the bot might stop at any point after the mandatory set.
 
-Any signal with knockout=true gets a corresponding question with is_mandatory=true, appearing early in stage order (low position number).
+## 4. Mandatory knockouts — exactly one mandatory per knockout signal
 
-Mandatory questions must be unskippable in the conductor — the AI bot or human interviewer cannot move past them without an answer. Position them at the start of the stage so an unqualified candidate is caught before deeper time is invested.
+Any signal with knockout=true gets EXACTLY ONE mandatory question: the earliest-positioned question probing it. Subsequent questions probing the same knockout signal (depth re-probes, alternate angles) MUST be marked `is_mandatory=false` — they are optional depth probes the session bot fires only if time permits AND the candidate is still in contention.
+
+Why: mandatory means unskippable. The session bot cannot move past a mandatory question without an answer. If BOTH the verification AND the depth question on a knockout are mandatory, a verbose candidate on the first one consumes all the session time and the bot is forced to ask the second one anyway, burning the clock. Making only the first mandatory lets the bot use the second as an adaptive "if there's time and the candidate is borderline" probe.
+
+Position mandatory questions at positions 0..M-1 (where M = count of distinct knockouts) so an unqualified candidate is caught before deeper time is invested. The bot always asks every mandatory question before any optional one, regardless of remaining positions.
+
+If your allocation produces a second knockout question that you feel is critical, DO NOT mark it mandatory. Trust the ordering: place it immediately after the last mandatory slot (so it's the first optional question the bot considers) and the bot will pick it up for borderline candidates.
 
 ## 5. Company tone
 
@@ -86,10 +104,11 @@ DO NOT generate any of the following. These are auto-rejection conditions, not s
   3. Vague positive_evidence — "gives detailed answer," "communicates well," "shows enthusiasm," "demonstrates passion." Replace with concrete observables.
   4. Duplicate questions across the pipeline. See the anti-lie rules — re-probes at different angles are required, but rewordings of the same question are forbidden.
   5. Signals filtered out by `stage.signal_filter.include_types`. If a signal type is excluded, do not probe it in this stage even if it is critical overall.
-  6. More questions than the duration budget allows. Better to ask 6 sharp questions than 10 shallow ones.
+  6. Shallow questions padded to hit a question count target. Better to ask 6 sharp questions than 10 shallow ones — the bot will skip what it doesn't need, so don't inflate count to fill a menu.
   7. Hallucinated technical details, tools, or domain facts not present in the JD or signals. If the JD says "REST APIs" do not invent "GraphQL federation" as a follow-up.
   8. Discriminatory, personal, or protected-class probes — never reference age, marital status, family plans, religion, national origin, disability, or anything else outside the candidate's professional record.
   9. Trick questions, brain teasers, or puzzles unrelated to the role. They produce noise, not signal.
+  10. Questions that bundle more than 2 orthogonal sub-topics in the text. A good question has ONE primary ask (optionally with follow-ups to drill into specific sub-aspects); it does NOT list 5 independent topics in the question body. BANNED example: "Have you implemented OAuth 2.0/JWT and mTLS on Apigee and configured rate limiting/quotas or threat protection for production APIs?" (4 distinct topics — lets bluffers skate by with "yes, all of those"). OK example: "Have you implemented OAuth 2.0 or JWT validation on Apigee?" — one primary ask, with rate limiting/mTLS deferred to separate questions or to follow-ups. If you need to probe multiple related sub-topics, split into multiple questions or rely on follow-ups for drill-down.
 
 # Output schema
 

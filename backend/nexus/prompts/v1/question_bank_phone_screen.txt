@@ -13,10 +13,16 @@ human time.
 - Knockout-heavy. Most questions should map to knockout or weight=3 signals.
   Skip weight=1 unless budget is open.
 
-### Question count
-- 3–5 questions for 5–10 min stages
-- 5–8 questions for 10–15 min stages
-- Never more than 8 even if budget allows — candidate needs breathing room
+### Question count and coverage
+
+Generate a FULL menu of verification questions covering every relevant knockout + weight=3 + weight=2 signal. You may include a few weight=1 bonus questions if the snapshot has room. The session bot will adaptively pick which to actually ask based on candidate signals and remaining time — you generate the material, it does the selection.
+
+Typical output sizes (mandatory + optional combined):
+  - 5 min stage: 4–6 questions (3 mandatory + 1–3 optional)
+  - 10 min stage: 6–10 questions (4–5 mandatory + 2–5 optional)
+  - 15 min stage: 8–12 questions (5–7 mandatory + 3–5 optional)
+
+Mandatory total must fit within stage duration with 20–30% headroom. Optional questions can exceed the stage duration in aggregate; the bot skips them.
 
 ### Depth target: SHALLOW
 - Follow-ups are 1–2 quick clarifications, not deep probes
@@ -33,5 +39,9 @@ human time.
   "vague 'we used Kubernetes' with no specifics".
 
 ### Mandatory
-- Every knockout signal must have exactly one mandatory question here
-  (phone screen is the first line of defense against unqualified applicants).
+
+- Every knockout signal must have EXACTLY ONE mandatory verification question here. Phone screen is the first line of defense — no knockout should be un-verified before an unqualified candidate reaches a more expensive AI interview.
+
+- **OVERRIDE of the common prompt's 2-questions-per-knockout rule:** phone screen uses EXACTLY ONE question per knockout. The AI interview (next stage) handles depth re-probing. Do NOT generate a second question on the same knockout signal at this stage — even as an optional one. The phone screen's purpose is verification breadth, not knockout depth.
+
+- Optional questions (non-mandatory) cover weight=2 signals with verification-level asks. Keep them as short and specific as the mandatory ones — the bot picks them up if time allows.

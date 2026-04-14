@@ -930,8 +930,9 @@ async def test_post_confirm_reviewing_bank_returns_200(
     db: AsyncSession, monkeypatch
 ):
     _stub_actor_sends(monkeypatch)
-    # Need a bank in reviewing with valid duration budget (15-45min for 30min stage).
-    # 4 * 5min questions = 20min — within range.
+    # Need a bank in reviewing with no mandatory-minutes overrun. Default
+    # _build_full_setup creates non-mandatory recruiter questions so the
+    # mandatory-fits-session validator always passes on this path.
     setup = await _build_full_setup(
         db,
         bank_status="reviewing",

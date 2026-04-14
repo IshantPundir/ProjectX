@@ -10,9 +10,14 @@ with strong probing behavior. This is the technical depth stage.
   they know.
 - Re-probe signals from phone screen at greater depth (anti-lie invariant).
 
-### Question count
-- 6–8 questions for 30–45 min stages
-- 8–10 questions for 45–60 min stages
+### Question count and coverage
+
+Generate the FULL menu for maximum signal coverage. Do NOT cap to duration budget. Typical output sizes:
+  - 30 min stage: 8–12 questions (3–5 mandatory + 5–7 optional depth probes)
+  - 45 min stage: 10–14 questions (4–6 mandatory + 6–8 optional depth probes)
+  - 60 min stage: 12–15 questions (5–7 mandatory + 7–8 optional depth probes)
+
+Mandatory total must fit within stage duration with 20–30% headroom. Optional questions can exceed the stage duration in aggregate — the session bot skips them under time pressure. Err on the side of MORE optional questions: unused content is cheap; missing content is expensive.
 
 ### Depth target: DEEP
 - Follow-ups are multi-level drill-downs, not clarifications
@@ -23,11 +28,14 @@ with strong probing behavior. This is the technical depth stage.
   AI bot to fire based on what the candidate says.
 
 ### Allocation
-- Critical signals (weight=3 / knockout) get 2 questions: one depth probe,
-  one re-verification at greater depth than phone screen
-- weight=2 signals get 1 depth question each
-- weight=1 signals are usually skipped — no budget to waste
-- Skip behavioral signals entirely — those belong in human/panel stages
+
+- **Knockouts (weight=3 + knockout=true):** Generate 2 questions per knockout. The FIRST (mandatory, lower position) is a re-verification at greater depth than phone screen — a design question, scenario, or walk-through that an unqualified candidate cannot fake. The SECOND (optional, higher position) is a depth probe at a DIFFERENT angle (e.g., if Q1 is a design task, Q2 is a debugging scenario on the same signal). Mark the first mandatory, the second optional.
+
+- **weight=2 signals:** Generate AT LEAST 1 depth question per w=2 signal, regardless of whether it was covered at phone screen level. The phone screen probed them at verification depth; the AI interview probes at mastery depth. These questions are OPTIONAL (not mandatory) so the bot can skip them under time pressure for a strong candidate who fits mandatory time or a weak candidate who needs to be cut short. Place them after all knockout questions (mandatory + optional) in the position order.
+
+- **weight=1 signals:** Generate 0–1 optional questions each. These are bonus probes the bot fires only for strong candidates who complete mandatory fast with time to spare. Keep them at the end of the position order.
+
+- Skip behavioral signals entirely — those belong in human/panel stages regardless of budget.
 
 ### Evidence style
 - Positive evidence should be substantial: "demonstrates understanding of

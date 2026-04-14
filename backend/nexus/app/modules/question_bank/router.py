@@ -33,8 +33,8 @@ from app.modules.question_bank.authz import (
 from app.modules.question_bank.errors import (
     BankAlreadyGeneratingError,
     BankNotInReviewingError,
-    DurationBudgetOutOfRangeError,
     KnockoutUnprobedError,
+    MandatoryOverrunError,
     SignalTypeNotAllowedError,
     SignalValueNotInSnapshotError,
 )
@@ -496,7 +496,7 @@ async def confirm_bank_endpoint(
                 f"no mandatory question"
             ),
         )
-    except DurationBudgetOutOfRangeError as exc:
+    except MandatoryOverrunError as exc:
         raise HTTPException(409, detail=str(exc))
 
     await db.commit()
