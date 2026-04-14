@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+
 import { createClient } from "@/lib/supabase/client";
-import { apiFetch } from "@/lib/api/client";
+import { orgUnitsApi, type MeData, type OrgUnit } from "@/lib/api/org-units";
 import {
   CompanyProfileForm,
   type CompanyProfile,
@@ -15,38 +16,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-
-/* ─── Types ─── */
-
-interface OrgUnit {
-  id: string;
-  client_id: string;
-  parent_unit_id: string | null;
-  name: string;
-  unit_type: string;
-  member_count: number;
-  created_at: string;
-  created_by: string | null;
-  created_by_email: string | null;
-  deletable_by: string | null;
-  deletable_by_email: string | null;
-  admin_delete_disabled: boolean;
-  is_accessible: boolean;
-  admin_emails: string[];
-  is_root: boolean;
-  company_profile: CompanyProfile | null;
-}
-
-interface MeData {
-  is_super_admin: boolean;
-  workspace_mode: string;
-  assignments: {
-    org_unit_id: string;
-    org_unit_name: string;
-    role_name: string;
-    permissions: string[];
-  }[];
-}
+import { OrgUnitCanvas } from "@/components/dashboard/org-units/OrgUnitCanvas";
+import { OrgUnitDetailPanel } from "@/components/dashboard/org-units/OrgUnitDetailPanel";
+import { OrgUnitTreeListFallback } from "@/components/dashboard/org-units/OrgUnitTreeListFallback";
 
 /* ─── Constants ─── */
 
@@ -58,19 +30,17 @@ const UNIT_TYPES = [
   { value: "team", label: "Team" },
 ] as const;
 
-const TYPE_LABELS: Record<string, string> = {
-  company: "Company",
-  division: "Division",
-  client_account: "Client Account",
-  region: "Region",
-  team: "Team",
-};
-
 /* ─── Icons ─── */
 
 function IconPlus({ className = "w-4 h-4" }: { className?: string }) {
   return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+    <svg
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+      strokeWidth={2}
+      stroke="currentColor"
+    >
       <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
     </svg>
   );
@@ -78,42 +48,50 @@ function IconPlus({ className = "w-4 h-4" }: { className?: string }) {
 
 function IconX({ className = "w-3.5 h-3.5" }: { className?: string }) {
   return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+    <svg
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+      strokeWidth={2}
+      stroke="currentColor"
+    >
       <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-    </svg>
-  );
-}
-
-function IconUsers({ className = "w-4 h-4" }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-      <path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" />
-    </svg>
-  );
-}
-
-function IconChevron({ className = "w-3 h-3" }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
-      <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
     </svg>
   );
 }
 
 function IconBuilding({ className = "w-5 h-5" }: { className?: string }) {
   return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21" />
+    <svg
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+      strokeWidth={1.5}
+      stroke="currentColor"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21"
+      />
     </svg>
   );
 }
 
 /* ─── Helpers ─── */
 
-function buildTree(units: OrgUnit[]): { unit: OrgUnit; depth: number }[] {
+// Flatten the units tree for the parent-unit <select> — preserves the
+// indented visual that the old list view used, without pulling in the full
+// fallback component.
+function flattenForSelect(
+  units: OrgUnit[],
+): { unit: OrgUnit; depth: number }[] {
   const childrenMap = new Map<string | null, OrgUnit[]>();
   for (const u of units) {
-    childrenMap.set(u.parent_unit_id, [...(childrenMap.get(u.parent_unit_id) || []), u]);
+    childrenMap.set(u.parent_unit_id, [
+      ...(childrenMap.get(u.parent_unit_id) || []),
+      u,
+    ]);
   }
   const result: { unit: OrgUnit; depth: number }[] = [];
   function walk(parentId: string | null, depth: number) {
@@ -135,6 +113,9 @@ export default function OrgUnitsPage() {
   const [error, setError] = useState("");
   const [me, setMe] = useState<MeData | null>(null);
 
+  // Canvas selection (side panel driven by this)
+  const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
+
   // Create form
   const [showCreate, setShowCreate] = useState(false);
   const [createName, setCreateName] = useState("");
@@ -150,7 +131,9 @@ export default function OrgUnitsPage() {
 
   const getToken = useCallback(async () => {
     const supabase = createClient();
-    const { data: { session } } = await supabase.auth.getSession();
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
     if (!session?.access_token) {
       window.location.href = "/login";
       return null;
@@ -163,8 +146,8 @@ export default function OrgUnitsPage() {
       const token = await getToken();
       if (!token) return;
       const [unitsData, meData] = await Promise.all([
-        apiFetch<OrgUnit[]>("/api/org-units", { token }),
-        apiFetch<MeData>("/api/auth/me", { token }),
+        orgUnitsApi.list(token),
+        orgUnitsApi.me(token),
       ]);
       setUnits(unitsData);
       setMe(meData);
@@ -175,7 +158,20 @@ export default function OrgUnitsPage() {
     }
   }, [getToken]);
 
-  useEffect(() => { loadUnits(); }, [loadUnits]);
+  useEffect(() => {
+    loadUnits();
+  }, [loadUnits]);
+
+  // Close the side panel on Escape.
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape" && selectedUnitId) {
+        setSelectedUnitId(null);
+      }
+    }
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [selectedUnitId]);
 
   async function handleCreateSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -213,15 +209,11 @@ export default function OrgUnitsPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      const newUnit = await apiFetch<OrgUnit>("/api/org-units", {
-        method: "POST",
-        token,
-        body: JSON.stringify({
-          name: createName.trim(),
-          unit_type: createType,
-          parent_unit_id: createParent || null,
-          company_profile: companyProfile,
-        }),
+      const newUnit = await orgUnitsApi.create(token, {
+        name: createName.trim(),
+        unit_type: createType,
+        parent_unit_id: createParent || null,
+        company_profile: companyProfile,
       });
       setCreateName("");
       setCreateType("division");
@@ -234,21 +226,37 @@ export default function OrgUnitsPage() {
     }
   }
 
-  const tree = useMemo(() => buildTree(units), [units]);
+  // Called from the side panel's "Add child unit" action — presets the parent
+  // in the create form and opens it.
+  function handleAddChild(parentId: string) {
+    setCreateParent(parentId);
+    setShowCreate(true);
+    setSelectedUnitId(null);
+  }
+
+  const selectOptions = useMemo(() => flattenForSelect(units), [units]);
+  const selectedUnit = useMemo(
+    () => units.find((u) => u.id === selectedUnitId) ?? null,
+    [units, selectedUnitId],
+  );
 
   const createableTypes = UNIT_TYPES.filter((t) => {
     if (t.value === "company") return false;
-    if (t.value === "client_account" && me?.workspace_mode !== "agency") return false;
+    if (t.value === "client_account" && me?.workspace_mode !== "agency")
+      return false;
     return true;
   });
 
   return (
-    <div className="max-w-3xl">
+    <div className="max-w-[1600px] mx-auto">
       <div className="flex items-center justify-between mb-5">
         <div>
-          <h1 className="text-lg font-semibold text-zinc-900">Organizational Units</h1>
+          <h1 className="text-lg font-semibold text-zinc-900">
+            Organizational Units
+          </h1>
           <p className="text-xs text-zinc-400 mt-0.5">
-            {units.length} unit{units.length !== 1 ? "s" : ""} in your organization
+            {units.length} unit{units.length !== 1 ? "s" : ""} in your
+            organization
           </p>
         </div>
         {me?.is_super_admin && (
@@ -277,7 +285,11 @@ export default function OrgUnitsPage() {
           className="flex items-start justify-between text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3 mb-4"
         >
           <span>{error}</span>
-          <button onClick={() => setError("")} className="ml-2 shrink-0 cursor-pointer" aria-label="Dismiss error">
+          <button
+            onClick={() => setError("")}
+            className="ml-2 shrink-0 cursor-pointer"
+            aria-label="Dismiss error"
+          >
             <IconX className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -285,11 +297,19 @@ export default function OrgUnitsPage() {
 
       {/* Create form */}
       {showCreate && me?.is_super_admin && (
-        <form onSubmit={handleCreateSubmit} className="bg-white border border-zinc-200 rounded-xl p-5 mb-5 space-y-4">
-          <h2 className="text-sm font-semibold text-zinc-900">Create Organizational Unit</h2>
+        <form
+          onSubmit={handleCreateSubmit}
+          className="bg-white border border-zinc-200 rounded-xl p-5 mb-5 space-y-4"
+        >
+          <h2 className="text-sm font-semibold text-zinc-900">
+            Create Organizational Unit
+          </h2>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label htmlFor="create-name" className="block text-xs font-medium text-zinc-600 mb-1">
+              <label
+                htmlFor="create-name"
+                className="block text-xs font-medium text-zinc-600 mb-1"
+              >
                 Name
               </label>
               <input
@@ -303,7 +323,10 @@ export default function OrgUnitsPage() {
               />
             </div>
             <div>
-              <label htmlFor="create-type" className="block text-xs font-medium text-zinc-600 mb-1">
+              <label
+                htmlFor="create-type"
+                className="block text-xs font-medium text-zinc-600 mb-1"
+              >
                 Type
               </label>
               <select
@@ -313,15 +336,21 @@ export default function OrgUnitsPage() {
                 className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-600 cursor-pointer"
               >
                 {createableTypes.map((t) => (
-                  <option key={t.value} value={t.value}>{t.label}</option>
+                  <option key={t.value} value={t.value}>
+                    {t.label}
+                  </option>
                 ))}
               </select>
             </div>
           </div>
           {units.length > 0 && (
             <div>
-              <label htmlFor="create-parent" className="block text-xs font-medium text-zinc-600 mb-1">
-                Parent Unit <span className="font-normal text-zinc-400">(optional)</span>
+              <label
+                htmlFor="create-parent"
+                className="block text-xs font-medium text-zinc-600 mb-1"
+              >
+                Parent Unit{" "}
+                <span className="font-normal text-zinc-400">(optional)</span>
               </label>
               <select
                 id="create-parent"
@@ -330,8 +359,11 @@ export default function OrgUnitsPage() {
                 className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-600 cursor-pointer"
               >
                 <option value="">None (top-level)</option>
-                {tree.map(({ unit: u, depth }) => (
-                  <option key={u.id} value={u.id}>{"\u00A0\u00A0".repeat(depth)}{u.name}</option>
+                {selectOptions.map(({ unit: u, depth }) => (
+                  <option key={u.id} value={u.id}>
+                    {"\u00A0\u00A0".repeat(depth)}
+                    {u.name}
+                  </option>
                 ))}
               </select>
             </div>
@@ -348,17 +380,22 @@ export default function OrgUnitsPage() {
         </form>
       )}
 
-      {/* Unit list */}
+      {/* Content: canvas (desktop) + fallback (mobile) */}
       {loading ? (
         <div className="space-y-2">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="h-14 bg-zinc-100 rounded-lg animate-pulse" />
+            <div
+              key={i}
+              className="h-14 bg-zinc-100 rounded-lg animate-pulse"
+            />
           ))}
         </div>
       ) : units.length === 0 ? (
         <div className="text-center py-20 border border-dashed border-zinc-200 rounded-xl">
           <IconBuilding className="w-8 h-8 text-zinc-300 mx-auto mb-3" />
-          <p className="text-sm text-zinc-500 mb-1">No organizational units yet</p>
+          <p className="text-sm text-zinc-500 mb-1">
+            No organizational units yet
+          </p>
           <p className="text-xs text-zinc-400 mb-4">
             Create your first unit to start assigning team members to roles.
           </p>
@@ -373,62 +410,33 @@ export default function OrgUnitsPage() {
           )}
         </div>
       ) : (
-        <div className="bg-white border border-zinc-200 rounded-xl divide-y divide-zinc-100">
-          {tree.map(({ unit: u, depth }) =>
-            u.is_accessible ? (
-              <button
-                key={u.id}
-                type="button"
-                onClick={() => router.push(`/settings/org-units/${u.id}`)}
-                className="w-full flex items-center justify-between py-3.5 pr-4 hover:bg-zinc-50 cursor-pointer transition-colors duration-100 text-left group first:rounded-t-xl last:rounded-b-xl"
-                style={{ paddingLeft: `${depth * 24 + 16}px` }}
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  {depth > 0 && (
-                    <IconChevron className="w-2.5 h-2.5 text-zinc-300 shrink-0" />
-                  )}
-                  <span className="text-sm font-medium text-zinc-900 truncate">{u.name}</span>
-                  <span className="bg-zinc-100 text-zinc-500 px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0">
-                    {TYPE_LABELS[u.unit_type] || u.unit_type}
-                  </span>
-                </div>
-                <div className="flex items-center gap-4 shrink-0">
-                  <span className="inline-flex items-center gap-1 text-xs text-zinc-400">
-                    <IconUsers className="w-3 h-3" />
-                    {u.member_count}
-                  </span>
-                  <svg
-                    className="w-4 h-4 text-zinc-300 group-hover:text-zinc-500 transition-colors duration-100"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    strokeWidth={2}
-                    stroke="currentColor"
-                  >
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-                  </svg>
-                </div>
-              </button>
-            ) : (
-              /* Greyed-out ancestor unit — not clickable */
-              <div
-                key={u.id}
-                className="w-full flex items-center justify-between py-3.5 pr-4 first:rounded-t-xl last:rounded-b-xl opacity-40"
-                style={{ paddingLeft: `${depth * 24 + 16}px` }}
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  {depth > 0 && (
-                    <IconChevron className="w-2.5 h-2.5 text-zinc-300 shrink-0" />
-                  )}
-                  <span className="text-sm font-medium text-zinc-400 truncate">{u.name}</span>
-                  <span className="bg-zinc-100 text-zinc-400 px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0">
-                    {TYPE_LABELS[u.unit_type] || u.unit_type}
-                  </span>
-                </div>
-                <span className="text-xs text-zinc-300">No access</span>
-              </div>
-            ),
-          )}
-        </div>
+        <>
+          {/* Desktop canvas */}
+          <div className="hidden md:block h-[calc(100vh-18rem)] min-h-[500px]">
+            <OrgUnitCanvas
+              units={units}
+              selectedUnitId={selectedUnitId}
+              onNodeClick={setSelectedUnitId}
+            />
+          </div>
+          {/* Mobile fallback list */}
+          <div className="md:hidden">
+            <OrgUnitTreeListFallback
+              units={units}
+              onUnitClick={(id) => router.push(`/settings/org-units/${id}`)}
+            />
+          </div>
+        </>
+      )}
+
+      {/* Side panel — driven by canvas selection */}
+      {selectedUnit && (
+        <OrgUnitDetailPanel
+          unit={selectedUnit}
+          onClose={() => setSelectedUnitId(null)}
+          onAddChild={handleAddChild}
+          canAddChild={me?.is_super_admin ?? false}
+        />
       )}
 
       {/* Client Account Profile Dialog —
@@ -451,10 +459,13 @@ export default function OrgUnitsPage() {
             <DialogTitle>Client Account Profile</DialogTitle>
             <DialogDescription>
               Set up the profile for{" "}
-              <span className="font-medium text-zinc-900">{createName.trim()}</span>.
-              This describes the end client — the company your recruiters are
-              hiring <em>for</em>. It feeds the AI when generating JD enhancements
-              and interview questions for this client&apos;s roles.
+              <span className="font-medium text-zinc-900">
+                {createName.trim()}
+              </span>
+              . This describes the end client — the company your recruiters are
+              hiring <em>for</em>. It feeds the AI when generating JD
+              enhancements and interview questions for this client&apos;s
+              roles.
             </DialogDescription>
           </DialogHeader>
           <CompanyProfileForm
