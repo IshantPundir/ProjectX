@@ -15,6 +15,7 @@ Tracing:
 
 import asyncio
 import json
+import time
 from uuid import UUID
 
 import dramatiq
@@ -166,16 +167,27 @@ async def _run_extraction(
         },
     )
 
+    client = get_openai_client()
+    prompt = prompt_loader.get("jd_enhancement")
+    user_message = _build_user_message(job, profile)
+
+    log.info(
+        "jd.llm_call.start",
+        call_type="extraction",
+        model=ai_config.extraction_model,
+        reasoning_effort=ai_config.extraction_effort,
+        system_prompt_chars=len(prompt),
+        user_message_chars=len(user_message),
+    )
+    call_started_at = time.monotonic()
     try:
-        client = get_openai_client()
-        prompt = prompt_loader.get("jd_enhancement")
         extraction: ExtractionOutput = await client.chat.completions.create(
             model=ai_config.extraction_model,
             reasoning_effort=ai_config.extraction_effort,
             response_model=ExtractionOutput,
             messages=[
                 {"role": "system", "content": prompt},
-                {"role": "user", "content": _build_user_message(job, profile)},
+                {"role": "user", "content": user_message},
             ],
             name="jd_enhancement_call1",
             metadata={
@@ -186,12 +198,17 @@ async def _run_extraction(
             },
         )
     except Exception as exc:
+        duration_sec = time.monotonic() - call_started_at
         is_permanent = isinstance(exc, _PERMANENT_EXCEPTIONS)
         log.error(
-            "jd.actor.call1_failed",
-            exc_info=exc,
+            "jd.llm_call.failed",
+            call_type="extraction",
+            duration_sec=round(duration_sec, 2),
+            error_type=type(exc).__name__,
+            error_message=str(exc)[:500],
             permanent=is_permanent,
             retries_so_far=retries_so_far,
+            exc_info=exc,
         )
 
         if is_permanent or retries_so_far >= 2:
@@ -211,6 +228,13 @@ async def _run_extraction(
         raise  # Transient error — Dramatiq retries with backoff
 
     # Success path
+    duration_sec = time.monotonic() - call_started_at
+    log.info(
+        "jd.llm_call.complete",
+        call_type="extraction",
+        duration_sec=round(duration_sec, 2),
+        signal_count=len(extraction.signals.signals),
+    )
     await _persist_enriched(db, job, extraction)
     await transition(
         db, job,
@@ -372,16 +396,27 @@ async def _run_reenrichment(
         },
     )
 
+    client = get_openai_client()
+    prompt = prompt_loader.get("jd_reenrichment")
+    user_message = _build_reenrich_user_message(job, profile, snapshot)
+
+    log.info(
+        "jd.llm_call.start",
+        call_type="reenrichment",
+        model=ai_config.reenrichment_model,
+        reasoning_effort=ai_config.reenrichment_effort,
+        system_prompt_chars=len(prompt),
+        user_message_chars=len(user_message),
+    )
+    call_started_at = time.monotonic()
     try:
-        client = get_openai_client()
-        prompt = prompt_loader.get("jd_reenrichment")
         reenriched: ReEnrichmentOutput = await client.chat.completions.create(
             model=ai_config.reenrichment_model,
             reasoning_effort=ai_config.reenrichment_effort,
             response_model=ReEnrichmentOutput,
             messages=[
                 {"role": "system", "content": prompt},
-                {"role": "user", "content": _build_reenrich_user_message(job, profile, snapshot)},
+                {"role": "user", "content": user_message},
             ],
             name="jd_reenrichment_call2",
             metadata={
@@ -392,12 +427,17 @@ async def _run_reenrichment(
             },
         )
     except Exception as exc:
+        duration_sec = time.monotonic() - call_started_at
         is_permanent = isinstance(exc, _PERMANENT_EXCEPTIONS)
         log.error(
-            "jd.reenrich.call2_failed",
-            exc_info=exc,
+            "jd.llm_call.failed",
+            call_type="reenrichment",
+            duration_sec=round(duration_sec, 2),
+            error_type=type(exc).__name__,
+            error_message=str(exc)[:500],
             permanent=is_permanent,
             retries_so_far=retries_so_far,
+            exc_info=exc,
         )
 
         if is_permanent or retries_so_far >= 1:
@@ -408,6 +448,13 @@ async def _run_reenrichment(
         raise  # Transient error — Dramatiq retries with backoff
 
     # Success path
+    duration_sec = time.monotonic() - call_started_at
+    log.info(
+        "jd.llm_call.complete",
+        call_type="reenrichment",
+        duration_sec=round(duration_sec, 2),
+        enriched_jd_chars=len(reenriched.enriched_jd),
+    )
     job.description_enriched = reenriched.enriched_jd
     job.enrichment_status = "completed"
     job.enriched_manually_edited = True

@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     openai_reenrichment_model: str = "gpt-5.2"
     openai_reenrichment_effort: str = "medium"
     openai_question_bank_model: str = "gpt-5"
-    openai_question_bank_effort: str = "high"
+    openai_question_bank_effort: str = "medium"
 
     # OpenAI request tuning
     openai_request_timeout_seconds: float = 240.0

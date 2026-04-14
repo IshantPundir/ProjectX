@@ -11,6 +11,7 @@ matching the pattern from app/modules/jd/actors.py.
 
 from __future__ import annotations
 
+import time
 from uuid import UUID
 
 import dramatiq
@@ -276,21 +277,52 @@ async def _generate_one_bank(
         )
 
         client = get_openai_client()
-        result: StageQuestionBankOutput = await client.chat.completions.create(
-            model=ai_config.question_bank_model,
-            reasoning_effort=ai_config.question_bank_effort,
-            response_model=StageQuestionBankOutput,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ],
-            max_retries=1,
-        )
 
         logger.info(
-            "question_bank.llm_response_received",
+            "question_bank.llm_call.start",
             bank_id=str(bank.id),
+            stage_id=str(stage.id),
+            stage_type=stage.stage_type,
+            model=ai_config.question_bank_model,
+            reasoning_effort=ai_config.question_bank_effort,
+            system_prompt_chars=len(system_prompt),
+            user_message_chars=len(user_message),
+        )
+        call_started_at = time.monotonic()
+        try:
+            result: StageQuestionBankOutput = await client.chat.completions.create(
+                model=ai_config.question_bank_model,
+                reasoning_effort=ai_config.question_bank_effort,
+                response_model=StageQuestionBankOutput,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                max_retries=1,
+            )
+        except Exception as llm_exc:
+            duration_sec = time.monotonic() - call_started_at
+            logger.error(
+                "question_bank.llm_call.failed",
+                bank_id=str(bank.id),
+                stage_id=str(stage.id),
+                stage_type=stage.stage_type,
+                duration_sec=round(duration_sec, 2),
+                error_type=type(llm_exc).__name__,
+                error_message=str(llm_exc)[:500],
+                exc_info=True,
+            )
+            raise
+
+        duration_sec = time.monotonic() - call_started_at
+        logger.info(
+            "question_bank.llm_call.complete",
+            bank_id=str(bank.id),
+            stage_id=str(stage.id),
+            stage_type=stage.stage_type,
+            duration_sec=round(duration_sec, 2),
             question_count=len(result.questions),
+            coverage_notes_chars=len(result.coverage_notes),
             coverage_notes_preview=result.coverage_notes[:100],
         )
 
@@ -623,15 +655,51 @@ async def regenerate_question(
         )
 
         client = get_openai_client()
-        result: SingleQuestionOutput = await client.chat.completions.create(
+
+        logger.info(
+            "question_bank.llm_call.start",
+            call_type="regenerate_question",
+            question_id=str(question.id),
+            bank_id=str(bank.id),
             model=ai_config.question_bank_model,
             reasoning_effort=ai_config.question_bank_effort,
-            response_model=SingleQuestionOutput,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": "".join(user_parts)},
-            ],
-            max_retries=1,
+            system_prompt_chars=len(system_prompt),
+            user_message_chars=sum(len(p) for p in user_parts),
+        )
+        call_started_at = time.monotonic()
+        try:
+            result: SingleQuestionOutput = await client.chat.completions.create(
+                model=ai_config.question_bank_model,
+                reasoning_effort=ai_config.question_bank_effort,
+                response_model=SingleQuestionOutput,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": "".join(user_parts)},
+                ],
+                max_retries=1,
+            )
+        except Exception as llm_exc:
+            duration_sec = time.monotonic() - call_started_at
+            logger.error(
+                "question_bank.llm_call.failed",
+                call_type="regenerate_question",
+                question_id=str(question.id),
+                bank_id=str(bank.id),
+                duration_sec=round(duration_sec, 2),
+                error_type=type(llm_exc).__name__,
+                error_message=str(llm_exc)[:500],
+                exc_info=True,
+            )
+            raise
+
+        duration_sec = time.monotonic() - call_started_at
+        logger.info(
+            "question_bank.llm_call.complete",
+            call_type="regenerate_question",
+            question_id=str(question.id),
+            bank_id=str(bank.id),
+            duration_sec=round(duration_sec, 2),
+            reasoning_chars=len(result.reasoning),
         )
 
         # Post-validate the one question against the snapshot
