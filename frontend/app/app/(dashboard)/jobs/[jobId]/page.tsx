@@ -1,9 +1,8 @@
 'use client'
 
-import Link from 'next/link'
-import { useParams } from 'next/navigation'
+import { useEffect } from 'react'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
 
-import { Button } from '@/components/ui/button'
 import { EnrichedJdPanel } from '@/components/dashboard/jd-panels/EnrichedJdPanel'
 import { ErrorBanner } from '@/components/dashboard/jd-panels/ErrorBanner'
 import { LoadingSkeleton } from '@/components/dashboard/jd-panels/LoadingSkeleton'
@@ -18,11 +17,21 @@ import { useTriggerEnrich } from '@/lib/hooks/use-trigger-enrich'
 export default function JobReviewPage() {
   const params = useParams<{ jobId: string }>()
   const jobId = params.jobId
+  const searchParams = useSearchParams()
+  const router = useRouter()
 
   const { data: job, isLoading } = useJob(jobId)
   const { data: pipeline } = useJobPipeline(jobId)
   const { status, error: sseError } = useJobStatusStream(jobId)
   const triggerEnrich = useTriggerEnrich(jobId)
+
+  // Redirect to Pipeline tab if pipeline exists and user didn't explicitly
+  // request the JD tab via ?tab=jd (which the tab link in the layout sets).
+  useEffect(() => {
+    if (!pipeline) return
+    if (searchParams.get('tab') === 'jd') return
+    router.replace(`/jobs/${jobId}/pipeline`)
+  }, [pipeline, searchParams, router, jobId])
 
   if (isLoading || !job) {
     return <LoadingSkeleton status={status} sseError={sseError} />
@@ -47,25 +56,6 @@ export default function JobReviewPage() {
 
   return (
     <div>
-      <div className="mb-6">
-        <Link
-          href="/jobs"
-          className="text-sm text-zinc-500 hover:text-zinc-900 mb-1 inline-block"
-        >
-          ← Job Descriptions
-        </Link>
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-semibold text-zinc-900">{job.title}</h1>
-          {job.status === 'signals_confirmed' && job.can_manage && (
-            <Link href={`/jobs/${jobId}/pipeline`}>
-              <Button variant={pipeline ? 'outline' : 'default'}>
-                {pipeline ? 'View Pipeline' : 'Build Pipeline'}
-              </Button>
-            </Link>
-          )}
-        </div>
-      </div>
-
       {showSkeleton && <LoadingSkeleton status={status} sseError={sseError} />}
 
       {showError && (

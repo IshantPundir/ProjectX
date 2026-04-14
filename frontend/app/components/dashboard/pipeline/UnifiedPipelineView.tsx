@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { AlertCircle, Check, Loader2 } from 'lucide-react'
-import Link from 'next/link'
 
 import { Button } from '@/components/ui/button'
 import { PipelineFlowColumn } from './PipelineFlowColumn'
@@ -289,86 +288,73 @@ export function UnifiedPipelineView({ job, pipeline, jobId }: Props) {
 
   return (
     <div className="flex flex-col h-[calc(100vh-6rem)] min-h-[640px]">
-      {/* Page header */}
-      <div className="mb-4">
-        <Link
-          href={`/jobs/${jobId}`}
-          className="text-sm text-zinc-500 hover:text-zinc-900 mb-1 inline-block"
-        >
-          ← Back to job
-        </Link>
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-semibold text-zinc-900">
-              {job.title}
-            </h1>
-            <p className="text-sm text-zinc-500">
-              Pipeline
-              {pipeline.source_template_name &&
-                ` · from "${pipeline.source_template_name}"`}
-            </p>
-          </div>
-          <div className="flex items-center gap-3 flex-shrink-0">
-            <div
-              className="flex items-center gap-1.5 text-xs"
-              aria-live="polite"
-            >
-              {saveFailed ? (
-                <>
-                  <AlertCircle
-                    className="w-3.5 h-3.5 text-red-500"
-                    aria-hidden="true"
-                  />
-                  <span className="text-red-600">Failed to save</span>
-                </>
-              ) : isSaving ? (
-                <>
-                  <Loader2
-                    className="w-3.5 h-3.5 animate-spin text-zinc-400"
-                    aria-hidden="true"
-                  />
-                  <span className="text-zinc-500">Saving…</span>
-                </>
-              ) : (
-                <>
-                  <Check
-                    className="w-3.5 h-3.5 text-emerald-500"
-                    aria-hidden="true"
-                  />
-                  <span className="text-zinc-500">All changes saved</span>
-                </>
-              )}
-            </div>
-            {totalBanks > 0 && (
-              <span
-                className={`text-[10px] font-bold px-2 py-1 rounded ${
-                  confirmedCount === totalBanks
-                    ? 'bg-emerald-100 text-emerald-700'
-                    : 'bg-zinc-100 text-zinc-600'
-                }`}
-              >
-                {confirmedCount} of {totalBanks} confirmed
-              </span>
+      {/* Pipeline meta + actions */}
+      <div className="flex items-center justify-between gap-4 mb-4">
+        <p className="text-sm text-zinc-500">
+          Pipeline
+          {pipeline.source_template_name &&
+            ` · from "${pipeline.source_template_name}"`}
+        </p>
+        <div className="flex items-center gap-3 flex-shrink-0">
+          <div
+            className="flex items-center gap-1.5 text-xs"
+            aria-live="polite"
+          >
+            {saveFailed ? (
+              <>
+                <AlertCircle
+                  className="w-3.5 h-3.5 text-red-500"
+                  aria-hidden="true"
+                />
+                <span className="text-red-600">Failed to save</span>
+              </>
+            ) : isSaving ? (
+              <>
+                <Loader2
+                  className="w-3.5 h-3.5 animate-spin text-zinc-400"
+                  aria-hidden="true"
+                />
+                <span className="text-zinc-500">Saving…</span>
+              </>
+            ) : (
+              <>
+                <Check
+                  className="w-3.5 h-3.5 text-emerald-500"
+                  aria-hidden="true"
+                />
+                <span className="text-zinc-500">All changes saved</span>
+              </>
             )}
+          </div>
+          {totalBanks > 0 && (
+            <span
+              className={`text-[10px] font-bold px-2 py-1 rounded ${
+                confirmedCount === totalBanks
+                  ? 'bg-emerald-100 text-emerald-700'
+                  : 'bg-zinc-100 text-zinc-600'
+              }`}
+            >
+              {confirmedCount} of {totalBanks} confirmed
+            </span>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setPickerOpen(true)}
+            disabled={swapMutation.isPending}
+          >
+            Swap template
+          </Button>
+          {pipeline.source_template_id && (
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setPickerOpen(true)}
-              disabled={swapMutation.isPending}
+              onClick={handleReset}
+              disabled={resetMutation.isPending}
             >
-              Swap template
+              Reset to source
             </Button>
-            {pipeline.source_template_id && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleReset}
-                disabled={resetMutation.isPending}
-              >
-                Reset to source
-              </Button>
-            )}
-          </div>
+          )}
         </div>
       </div>
 
