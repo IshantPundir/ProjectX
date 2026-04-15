@@ -32,8 +32,8 @@ Both surfaces must be designed as **enterprise products**, not consumer apps. Cl
 - **Language:** TypeScript (strict mode — `"strict": true` in tsconfig)
 - **Styling:** Tailwind CSS v4 (utility-first — no custom CSS unless strictly necessary)
 - **Auth:** @supabase/ssr v0.10 (cookie-based SSR sessions) + @supabase/supabase-js
-- **HTTP client:** `apiFetch` wrapper in `lib/api/client.ts` — typed fetch, all calls go to Nexus
-- **State management:** Local `useState` + `useEffect` (no global state library yet)
+- **HTTP client:** `apiFetch` wrapper in `lib/api/client.ts` — typed fetch wrapping Nexus. Throws `ApiError extends Error` with an HTTP `status` field. Consumers narrow with `err instanceof ApiError && err.status === N`.
+- **Token retrieval:** `getFreshSupabaseToken()` in `lib/auth/tokens.ts`. Use this in new hooks and mutations — do not call `supabase.auth.getSession()` inline.
 - **Hosting MVP:** Railway
 - **Hosting Enterprise:** AWS ECS Fargate + CloudFront (same container, different target)
 
@@ -42,8 +42,14 @@ Both surfaces must be designed as **enterprise products**, not consumer apps. Cl
 - **Component library:** shadcn/ui v4.2.0 (`base-nova` preset, **Base UI** not Radix — see ecosystem note below)
 - **Server state:** TanStack Query v5 (`@tanstack/react-query` + devtools, provider lives in `DashboardProviders` client boundary inside the server dashboard layout)
 - **Forms:** React Hook Form + Zod (`@hookform/resolvers/zod`)
-- **SSE client:** `@microsoft/fetch-event-source` (used for the JD status stream)
+- **SSE client:** `@microsoft/fetch-event-source` — used by `use-job-status-stream` and `use-questions-status-stream`. Both hooks use a ref-mirroring pattern so stage/job selection doesn't churn the underlying connection; `useJobStatusStream` also caps total reconnect attempts via `MAX_TOTAL_RETRIES` to prevent runaway loops.
 - **Toast:** `sonner` (mounted via `<Toaster />` in `DashboardProviders`)
+- **Testing:** Vitest + @testing-library/react + jsdom. Run via `npm run test`.
+
+### Currently Installed (Phase 2C)
+
+- **Drag & drop:** `@dnd-kit/core` + `@dnd-kit/sortable` with `KeyboardSensor` wired for a11y. Used by `PipelineFlowColumn` for stage reordering.
+- **Node-link canvas:** `@xyflow/react` v12 + `dagre` for layout. Used by the org-units infinite-canvas tree view. Custom node types are adapted via a typed cast in `OrgUnitCanvas.tsx`.
 
 **⚠️ shadcn v4 / Base UI ecosystem note:** shadcn v4 switched from Radix primitives to `@base-ui/react`. Writing custom components that extend shadcn primitives requires Base UI idioms:
 - `TooltipTrigger` uses `render={<span>...</span>}` instead of Radix's `asChild`
@@ -237,17 +243,15 @@ Do not drop components at the root of `components/` without a subdirectory.
 
 ## State Management
 
-### Current (Phase 1)
-- All state is local `useState` + `useEffect` with manual fetch patterns
-- Server-side data: `React.cache()` used for `/api/auth/me` in dashboard layout (deduplicates across render tree)
-- Token fetched fresh from `supabase.auth.getSession()` before each API call — no cached auth state
-- No global state library installed
-
-### Current (Phase 2A)
+### Current (Phase 2A+)
 - **Server state** (API data, cache, loading states): TanStack Query v5. No Zustand for this.
 - **Form state**: React Hook Form + Zod. Not Zustand, not useState.
 - `DashboardProviders` client boundary wraps the server dashboard layout and mounts `QueryClientProvider`, `<Toaster />`, and `ReactQueryDevtools` (dev only).
 - Avoid prop drilling beyond 2 levels — co-locate state in the route segment or use TanStack Query cache.
+- **Query key discipline**: list endpoints use distinct keys from their detail siblings. E.g. the jobs list uses `['jobs-list']` while `useJob(id)` uses `['jobs', id]`. Prefix matching on invalidate calls means the wrong key shape clobbers unrelated caches.
+
+### Legacy (Phase 1 pages still pending migration)
+Login, invite, and onboarding pages still use raw `useState` + `fetch`. Per convention: **migrate them when you touch them**, not as a standalone refactor.
 
 ### Target (Phase 3+)
 - **Client-side global state** (UI state, session context, copilot buffer): Zustand (not yet installed).
@@ -320,6 +324,18 @@ const members = await apiFetch<TeamMember[]>('/api/settings/team/members', { tok
 - Use semantic HTML (`button`, `nav`, `main`, `section` etc.) — not `div` soup.
 - ARIA labels on icon-only buttons and non-obvious interactive elements.
 - Video grid elements must have appropriate labels for screen reader context.
+- **Dialogs and drawers must move focus on open.** Use a `ref` + `useEffect(() => { if (open) ref.current?.focus() }, [open])` pattern. Both `StageConfigDrawer` (focuses the name input) and `TemplatePickerDialog` (focuses the close button — templates load async so focusing a card would race) follow this. WCAG 2.4.3.
+- **Drag-and-drop needs a keyboard alternative.** `@dnd-kit` components wire `KeyboardSensor` with `sortableKeyboardCoordinates`.
+
+---
+
+## Security
+
+- **Security headers** are set in `next.config.ts` `headers()`: `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`. The dashboard surface also exposes `Permissions-Policy: camera=(self), microphone=(self), geolocation=()` for the upcoming candidate session video flow. CSP is a planned follow-up (needs nonce wiring).
+- **Post-auth redirects must be allowlisted.** Any `router.push(urlFromBackend)` where the URL is controlled by a mutation response must validate that the value starts with `/` (and does not start with `//`) before navigating. Without this, a compromised or MITM'd response creates an open redirect. The invite completion flow in `app/(auth)/invite/page.tsx` does this; any new post-auth redirect must follow suit.
+- **No `dangerouslySetInnerHTML`** for backend-returned strings. Render as text content with `whitespace-pre-wrap` instead.
+- **No `localStorage` for auth tokens.** Only non-sensitive UI preferences live in localStorage (e.g. `pipeline-inspector-tab`).
+- **No direct Supabase data calls from the frontend** (`supabase.from(...).select(...)`). The only Supabase client usage is auth/session management. All data goes through `apiFetch` to Nexus.
 
 ---
 

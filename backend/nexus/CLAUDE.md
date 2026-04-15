@@ -13,19 +13,24 @@
 - **Framework:** FastAPI (async throughout)
 - **DB driver:** asyncpg (direct PostgreSQL connection — NOT PostgREST)
 - **ORM:** SQLAlchemy async (asyncpg driver)
-- **Schema management:** Supabase migrations (initial schema); Alembic configured for future incremental changes
-- **Task queue:** Dramatiq + Redis (not yet used — Phase 1 uses `BackgroundTasks` for email only)
+- **Schema management:** Supabase SQL for the initial cut + Supabase-managed objects (auth hook, `supabase_auth_admin` grants); Alembic for every incremental change after that. `migrations/versions/` currently has 12 revisions up through `0012_rename_service_role_bypass`.
+- **Task queue:** Dramatiq + Redis. Used for JD extraction/re-enrichment and question-bank generation. Notification dispatch still runs via FastAPI `BackgroundTasks` (short, non-retryable).
 - **Containerisation:** Docker + Docker Compose
 - **Hosting MVP:** Railway
 - **Hosting Enterprise:** AWS ECS Fargate (same Docker image, different target)
 
 ---
 
-## Current State (Phase 1)
+## Current State
 
-Phase 1 implements: auth, multi-tenancy, client provisioning, team invites, org units, roles & permissions, and the notification abstraction (email only). All interview-related modules (ATS, JD, question bank, scheduler, session, analysis, reporting) are registered as routers but contain no business logic yet.
+- **Phase 1** — done: auth (Supabase + provider-agnostic interface), multi-tenancy with RLS, client provisioning, team invites, org units (hierarchical tree with typed nesting rules), roles & permissions, audit log, notification abstraction (Resend + dry-run).
+- **Phase 2A** — done: JD pipeline (create → extract → confirm → re-enrich), signal schema v2 with provenance, Dramatiq worker, `app/ai/` provider-agnostic AI layer, OpenAI instructor + Langfuse (self-hosted) tracing.
+- **Phase 2B** — done: signal editing with snapshot versioning + row-locked version conflict detection, company profile ancestry walk.
+- **Phase 2C.1** — done: pipeline builder (templates + per-job instances + stages), drag-to-reorder, tenant-scoped template library, starter pipelines.
+- **Phase 2C.2** — done: question bank generation (adaptive coverage, mandatory demotion, per-stage LLM call, bundling discipline, SSE progress stream).
+- **Phase 3** — pending: LiveKit AI interview agent, candidate session flow, post-session report compilation.
 
-See `docs/phase-1-implementation.md` for detailed developer documentation of the current implementation.
+Stubbed modules (routers registered, no business logic yet): `ats`, `scheduler`, `session`, `analysis`, `reporting`.
 
 ---
 
@@ -74,25 +79,40 @@ backend/nexus/
 │       │   ├── schemas.py
 │       │   ├── router.py
 │       │   └── templates/       ← HTML email templates (company_admin_invite, team_invite)
+│       ├── audit/               ← Audit log writer — tenant-scoped append-only trail (Batch A fixed its RLS INSERT gap in migration 0008)
 │       ├── ats/                 ← [Stub] Per-ATS adapters, polling, outbound sync
-│       ├── jd/                  ← JD pipeline (Phase 2A)
-│       │   ├── router.py        ← /api/jd/* (5 endpoints: create, get, list, stream status, trigger enhance)
-│       │   ├── service.py       ← create_job_posting(), extract_and_enhance_jd() orchestration
+│       ├── jd/                  ← JD pipeline (Phase 2A + 2B)
+│       │   ├── router.py        ← /api/jd/* (create, get, list, stream status, re-enrich, confirm signals)
+│       │   ├── service.py       ← create_job_posting, confirm_signals, save_signals (FOR UPDATE row lock + version conflict detection)
 │       │   ├── schemas.py       ← JobPosting request/response models
 │       │   ├── errors.py        ← IllegalTransitionError (409), CompanyProfileIncompleteError (422)
 │       │   ├── state_machine.py ← JD state machine with audit trail
 │       │   ├── authz.py         ← require_job_access() — ancestry-walking authorization
-│       │   ├── actors.py        ← Dramatiq actor: extract_and_enhance_jd (Call 1 via OpenAI + instructor)
-│       │   └── sse.py           ← SSE status stream with dedup + terminal close
-│       ├── question_bank/       ← [Stub] AI generation pipeline, versioning, admin editing
+│       │   ├── actors.py        ← Dramatiq actors: extract_and_enhance_jd (Call 1), reenrich_jd (Call 2)
+│       │   └── sse.py           ← SSE status stream — routes every poll through get_tenant_session (Batch F)
+│       ├── pipelines/            ← Phase 2C.1 — template library, per-job instance, stage CRUD, drag-to-reorder
+│       │   ├── router.py         ← /api/pipelines/* templates + /api/jobs/{id}/pipeline instance
+│       │   ├── service.py        ← auto_apply_pipeline_on_confirmation, PipelineAlreadyExistsError
+│       │   ├── authz.py          ← require_template_access — ancestry-walking template authz
+│       │   └── errors.py
+│       ├── question_bank/        ← Phase 2C.2 — AI generation, adaptive coverage, mandatory demotion, bundling
+│       │   ├── router.py         ← /api/jobs/{id}/banks/* — list (idempotent GET), generate, regenerate, update, stream
+│       │   ├── service.py        ← get_banks_for_pipeline (bulk 4-query load), ensure_bank_exists
+│       │   ├── authz.py          ← require_bank_access_by_stage, require_question_access
+│       │   ├── state_machine.py  ← IllegalTransitionError, ReorderMismatchError
+│       │   ├── actors.py         ← Dramatiq actors: generate_question_bank_stage (per-stage LLM call)
+│       │   └── sse.py            ← SSE status stream — routes every poll through get_tenant_session (Batch F)
 │       ├── scheduler/           ← [Stub] Session provisioning, invite dispatch, OTP
 │       ├── session/             ← [Stub] LiveKit orchestration, session state machine
 │       ├── analysis/            ← [Stub] Real-time scoring, probe decision logic
 │       └── reporting/           ← [Stub] Report compilation, score aggregation
 ├── prompts/
 │   └── v1/
-│       └── jd_enhancement.txt   ← Versioned prompt for JD extraction + enhancement (Call 1)
-├── migrations/                  ← Alembic (configured, versions/ empty — initial schema is in Supabase migration)
+│       ├── jd_enhancement.txt       ← Call 1 — JD extraction + enhancement
+│       ├── jd_reenrichment.txt      ← Call 2 — re-enrichment after signal edits
+│       ├── question_bank_common.txt ← Shared system prompt for question bank calls
+│       └── question_bank_<stage_type>.txt ← Per-stage-type system prompts
+├── migrations/                  ← Alembic — 12 revisions covering Phase 2A/2B/2C.1/2C.2 + RLS hardening (0008–0012)
 │   └── versions/
 ├── tests/
 │   └── conftest.py              ← AsyncClient fixture
@@ -179,11 +199,15 @@ CREATE POLICY "service_bypass" ON <table_name>
   USING (current_setting('app.bypass_rls', true) = 'true');
 ```
 
-`FOR SELECT USING (...)` without a matching `WITH CHECK` is a trap: it silently blocks INSERT/UPDATE/DELETE from tenant-scoped sessions because the implicit CHECK falls through to `service_bypass`, which is false when `app.bypass_rls` is unset. Phase 1 tables (clients, users, organizational_units, user_role_assignments, user_invites, audit_log) were originally written with this broken pattern; migrations 0008 and 0009 corrected them.
+**Two traps to avoid:**
+
+1. **`FOR SELECT USING (...)` without a matching `WITH CHECK`** silently blocks INSERT/UPDATE/DELETE from tenant-scoped sessions because the implicit CHECK falls through to `service_bypass`, which is false when `app.bypass_rls` is unset. Phase 1 tables (clients, users, organizational_units, user_role_assignments, user_invites, audit_log) were originally written with this broken pattern; migrations 0008 and 0009 corrected them.
+
+2. **Raw `::uuid` cast without `NULLIF`.** `SET LOCAL app.current_tenant = '<uuid>'` reverts at transaction end, but for a custom GUC that was never declared at session boot, PostgreSQL restores it to empty string `""` — **not** NULL. The next pooled request that evaluates `current_setting('app.current_tenant', true)::uuid` crashes with `invalid input syntax for type uuid: ""`. Migration 0011 wraps every tenant-filter policy in `NULLIF(current_setting(...), '')::uuid`. Any new policy must do the same.
 
 **Do NOT use `auth.jwt()` in RLS policies.** It returns null when connecting via direct asyncpg — it only works through PostgREST. Using it will silently block all queries or fail to isolate tenants.
 
-Add a migration lint check to catch tables missing RLS policies before they reach production.
+**Runtime verification**: `app/main.py` runs a startup assertion (`_assert_rls_completeness`) that queries `pg_policies` for every tenant-scoped table and aborts startup with a CRITICAL log if any table is missing `tenant_isolation` (with non-NULL `WITH CHECK`) or `service_bypass`. Skipped under `ENVIRONMENT=test` or when `DB_RUNTIME_ROLE` is unset. When adding a new tenant-scoped table, add it to the enumerated list in that helper.
 
 ### Auth Abstraction — Load-Bearing Constraint
 JWT verification goes through a **provider-agnostic interface** in `app/modules/auth/`. Business logic never calls the Supabase Python SDK directly. This is what makes a future Cognito swap a config change, not a rewrite.
@@ -196,6 +220,16 @@ from app.modules.auth.context import get_current_user_roles, UserContext
 # WRONG — hard couples to Supabase
 from supabase import Client
 ```
+
+`verify_access_token()` enforces:
+- **Algorithm pinning** — `algorithms=["ES256"]` only (Supabase's auth hook signs ES256; `RS256` was removed in Batch G to close an algorithm-confusion surface).
+- **Audience** — `aud = "authenticated"` (Supabase's default role claim).
+- **Issuer** — when `settings.supabase_url` is set, `iss` must equal `{supabase_url}/auth/v1`. This prevents a token minted by a different Supabase project that shares the JWKS path from authenticating to this backend.
+- **JWKS caching** — fetched once, refreshed on key rotation.
+
+Candidate JWTs (single-use session tokens, HS256, signed with `CANDIDATE_JWT_SECRET`) are the separate `verify_candidate_token()` path. Algorithm is hardcoded to `["HS256"]`; there is no algorithm allowlist confusion path.
+
+> **⚠ Phase 3 prerequisite**: candidate-JWT **single-use enforcement** is currently a TODO (`middleware/auth.py`). Not exploitable today because session endpoints are stubbed, but it MUST land before any Phase 3 session endpoint (start / consent / transcript) becomes live. Required: atomic mark-used on first verification (Redis SET NX or a `used_at` column with `UPDATE … WHERE used_at IS NULL RETURNING`), then reject replay.
 
 The only direct Supabase HTTP call is in `settings/service.py::_delete_auth_user()` for user deactivation (hitting the Admin API with the service role key). This is isolated and would be the single swap point.
 
@@ -260,17 +294,35 @@ from openai import AsyncOpenAI
 
 | Module | What It Owns |
 |---|---|
-| `ai` | Provider-agnostic AI layer. `AIConfig` (env-driven model/effort), `PromptLoader` (file-system versioned prompts), `get_openai_client()` (instructor + langfuse.openai factory), `ExtractionOutput` schemas with provenance validators. |
-| `jd` | JD pipeline full implementation. `create_job_posting` with company profile ancestry gate, `extract_and_enhance_jd` Dramatiq actor (Call 1 via OpenAI + instructor), state machine with audit trail, `require_job_access` ancestry-walking authz, SSE status stream with dedup + terminal close, router with 5 endpoints, `IllegalTransitionError` (409) and `CompanyProfileIncompleteError` (422) exception handlers. |
-| `org_units` (extended) | Added `CompanyProfile` strict Pydantic schema, `find_company_profile_in_ancestry()` helper, `_validate_and_normalize_company_profile()` hook in `create_org_unit`/`update_org_unit`, `company_profile_completed_at/by` tracking stamps. |
+| `ai` | Provider-agnostic AI layer. `AIConfig` (env-driven model/effort), `PromptLoader` (versioned prompts, in-memory cache), `get_openai_client()` (instructor + langfuse.openai factory with self-hosted-only guard — `_is_langfuse_cloud_host()` raises outside dev), `ExtractionOutput` schemas with provenance validators. |
+| `jd` | JD pipeline full implementation. `create_job_posting` with company profile ancestry gate, `extract_and_enhance_jd` + `reenrich_jd` Dramatiq actors (Call 1 + Call 2), state machine with audit trail, `require_job_access` ancestry-walking authz, SSE status stream via `get_tenant_session` (Batch F RLS fix), `x-correlation-id` header validation (Batch D), router with create/get/list/stream/re-enrich/confirm-signals endpoints. |
+| `org_units` (extended) | `CompanyProfile` strict Pydantic schema, `find_company_profile_in_ancestry()` helper, `_validate_and_normalize_company_profile()` hook in create/update, `company_profile_completed_at/by` tracking stamps. |
+| `audit` | Append-only audit log with tenant-scoped RLS (migration 0008 added the missing `FOR INSERT WITH CHECK` policy that was silently dropping tenant-scoped writes). |
+
+### Phase 2B — Implemented
+
+| Module | What It Owns |
+|---|---|
+| `jd` (extended) | `save_signals` uses `SELECT … FOR UPDATE` row lock + `MAX(version)` check to detect concurrent edits and raise `VersionConflictError`. `confirm_signals` treats `PipelineAlreadyExistsError` as an idempotent no-op; other errors continue through the error + audit path. |
+
+### Phase 2C.1 — Implemented
+
+| Module | What It Owns |
+|---|---|
+| `pipelines` | Pipeline template library scoped by org unit, per-job pipeline instance, stage CRUD (name/type/duration/difficulty/signal filter/pass criteria/advance behavior), drag-to-reorder, template swap, reset-to-source. Auto-apply on signal confirmation via `auto_apply_pipeline_on_confirmation`. Ancestry-walking authz via `require_template_access`. |
+
+### Phase 2C.2 — Implemented
+
+| Module | What It Owns |
+|---|---|
+| `question_bank` | Per-stage question bank generation via Dramatiq actor. Adaptive coverage (mandatory-fits-session validation, mandatory demotion auto-correction, duration as session time limit not generation budget), bundling discipline, per-stage-type prompts, coverage notes persistence for audit trail. `list_banks` GET is read-idempotent (Batch G — returns placeholder entries for stages without banks, does NOT create drafts on poll). State machine raises typed exceptions (`IllegalTransitionError`, `ReorderMismatchError`). Bulk `get_banks_for_pipeline` uses 4 constant queries instead of 1+2N. `@observe` decorators on actors wire Langfuse trace metadata. |
 
 ### Future Phases — Stubbed
 
 | Module | What It Will Own |
 |---|---|
 | `ats` | Per-ATS adapter interface, Ceipal polling cron, Greenhouse/Workday webhooks, outbound sync after session completion |
-| `question_bank` | 4-layer context stack question generation, versioning, admin editing, mandatory question marking |
-| `scheduler` | Session provisioning, JWT invite generation, scheduling link, OTP dispatch, calendar invites |
+| `scheduler` | Session provisioning, JWT invite generation, scheduling link, OTP dispatch, calendar invites. **Must enforce candidate-JWT single-use** on first verification (see audit Round 2 H1 — not exploitable today because session endpoints are stubbed, must land before any Phase 3 code ships) |
 | `session` | LiveKit room creation/teardown, session state machine, Redis state management, copilot pipeline |
 | `analysis` | Real-time answer scoring, probe selection logic, signal detection (depth, specificity, evidence quality) |
 | `reporting` | Post-session report compilation, per-question scorecards, transcript assembly, score aggregation, PDF generation |
@@ -368,20 +420,38 @@ from app.modules.notifications import send_email, send_sms
 import resend
 ```
 
+### Invite / confirmation link URLs
+
+Outbound emails (company admin invite, team invite, invite resend) build links pointing at the frontend. **Read `settings.frontend_base_url`** — do NOT hardcode or branch on `settings.debug`. The old pattern `"http://localhost:3000" if settings.debug else "https://app.projectx.com"` silently sent staging invites to production when staging deployed with `DEBUG=false`. Every environment must set `FRONTEND_BASE_URL` in its `.env` explicitly.
+
 ---
 
 ## Database Migrations
 
 ### Current State
-The initial schema (6 tables, all RLS policies, system role seeds, and the auth hook) lives in `backend/supabase/migrations/20260405000000_initial_schema.sql`. This is the single source of truth for the current schema. Alembic is configured (`migrations/env.py`) but `versions/` is empty.
+The initial schema (6 tables, first-cut RLS policies, system role seeds, and the Supabase auth hook) lives in `backend/supabase/migrations/20260405000000_initial_schema.sql`. Every incremental change since Phase 2A has been an Alembic migration in `migrations/versions/`. Current head: `0012_rename_service_role_bypass`.
+
+Migrations so far:
+- `0001_phase_2b_columns` — signal editing + version columns
+- `0002_add_updated_by_to_job_postings` — track the last editor for audit
+- `0003_signal_schema_v2` — provenance-aware signal model
+- `0004_pipeline_builder` — Phase 2C.1 tables
+- `0005_simplify_signal_filter` — flatten legacy include/exclude nesting
+- `0006_question_banks` — Phase 2C.2 tables
+- `0007_add_coverage_notes` — audit trail for coverage decisions
+- `0008_audit_log_tenant_insert` — **RLS hardening**: fixed `audit_log` silently dropping tenant writes
+- `0009_phase1_rls_full_command` — **RLS hardening**: Phase 1 tables get full-command `tenant_isolation` (USING + WITH CHECK)
+- `0010_create_nexus_app_role` — **RLS hardening**: dedicated `nexus_app` role with `NOBYPASSRLS` + grants; without this every policy is a runtime no-op because `postgres` has `rolbypassrls=true`
+- `0011_rls_nullif_tenant` — **RLS hardening**: wraps `current_setting('app.current_tenant', true)::uuid` in `NULLIF(..., '')::uuid` everywhere. Fixes a PG quirk where `SET LOCAL` reverts a custom GUC to empty-string rather than NULL on transaction end, making the cast crash on the next pooled request.
+- `0012_rename_service_role_bypass` — **cleanup**: rename `service_role_bypass` → `service_bypass` on Phase 2A/2C tables for consistency with the canonical name used elsewhere. Makes future policy-lint tooling sound.
 
 ### Going Forward
 - Future schema changes should use Alembic migrations in `migrations/versions/`.
-- Every new table must include `tenant_id UUID NOT NULL` and have the RLS policy applied.
+- Every new tenant-scoped table must include `tenant_id UUID NOT NULL` AND the canonical RLS policy pair (`tenant_isolation` with USING + WITH CHECK, `service_bypass` with USING). Use `NULLIF(current_setting('app.current_tenant', true), '')::uuid` — not the raw cast.
+- The **startup RLS completeness check** in `app/main.py` (added in Batch G) queries `pg_policies` on app boot and aborts startup with a structured CRITICAL log if any tenant-scoped table is missing `tenant_isolation` (with non-NULL WITH CHECK) or `service_bypass`. The check is skipped when `ENVIRONMENT=test` or `DB_RUNTIME_ROLE` is unset. Add your new table to the enumerated list in that helper.
 - Alembic runs as a pre-deployment step.
 - A rollback script is required before any migration merges.
-- Migration lint: fail the CI pipeline if any table is missing RLS policies.
-- If adding new auth-hook-dependent tables, update both the Supabase migration (for grants) and Alembic (for the table DDL).
+- If adding new auth-hook-dependent tables, update both the Supabase migration (for `supabase_auth_admin` grants) and Alembic (for the table DDL).
 
 ---
 

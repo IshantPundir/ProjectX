@@ -68,6 +68,8 @@ Each subdirectory has its own `CLAUDE.md` with context-specific rules. Always re
 - All S3 buckets are private. Pre-signed URL access only. No exceptions.
 - RBAC is enforced at FastAPI middleware on every endpoint. Role is checked before any processing begins.
 - Tenant isolation is enforced at the PostgreSQL RLS layer — never in application code alone.
+- **RLS is actually enforced at runtime** via a dedicated `nexus_app` role (`NOBYPASSRLS`, created by migration 0010). Every `get_tenant_db` / `get_bypass_db` session runs `SET LOCAL ROLE nexus_app` before any query. The default `postgres` Supabase role has `rolbypassrls=true` and would otherwise silently skip every policy. See `backend/nexus/CLAUDE.md` → "RLS runtime role" for the full model.
+- The app verifies its RLS state at boot via a startup assertion (`_assert_rls_completeness` in `app/main.py`) that queries `pg_policies` and aborts on any missing policy.
 
 ### Auth Abstraction — Load-Bearing
 - FastAPI must verify JWTs through a **provider-agnostic interface**. Never call the Supabase SDK directly in business logic.
@@ -117,14 +119,23 @@ Each subdirectory has its own `CLAUDE.md` with context-specific rules. Always re
 
 ### RLS Pattern (asyncpg — NOT PostgREST)
 ```sql
--- FastAPI middleware sets before every transaction:
+-- Every request runs under `nexus_app` (NOBYPASSRLS) inside an explicit transaction.
+-- `get_tenant_db` issues these two SETs at the top of each request transaction:
+SET LOCAL ROLE nexus_app;
 SET LOCAL app.current_tenant = '<uuid>';
 
--- RLS policy on every tenant-scoped table:
+-- Canonical RLS policy pair on every tenant-scoped table:
 CREATE POLICY "tenant_isolation" ON <table>
-  USING (tenant_id = current_setting('app.current_tenant', true)::uuid);
+  USING      (tenant_id = NULLIF(current_setting('app.current_tenant', true), '')::uuid)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant', true), '')::uuid);
+CREATE POLICY "service_bypass" ON <table>
+  USING (current_setting('app.bypass_rls', true) = 'true');
 ```
-`auth.jwt()` returns null in our context. Do not use it in RLS policies.
+
+Critical rules that are easy to get wrong:
+- **`NULLIF(..., '')::uuid`** — raw `::uuid` crashes on empty string, which PostgreSQL restores to a custom GUC after `SET LOCAL` reverts at transaction end. Always wrap with `NULLIF`.
+- **`tenant_isolation` must have both `USING` and `WITH CHECK`** with no `FOR SELECT` restriction. `FOR SELECT USING (...)` silently blocks all writes from tenant sessions.
+- **`auth.jwt()` returns null** in our asyncpg context. Do not use it in RLS policies — it only works through PostgREST.
 
 ---
 
