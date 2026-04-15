@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import type { PipelineTemplate, StarterTemplate } from '@/lib/api/pipelines'
 import { Button } from '@/components/ui/button'
 import { StarterPackBrowser } from './StarterPackBrowser'
@@ -23,6 +23,17 @@ export function TemplatePickerDialog({
 }: Props) {
   const [tab, setTab] = useState<'library' | 'starters'>('library')
   const { data: templates } = usePipelineTemplates(orgUnitId, { enabled: open })
+
+  // WCAG 2.4.3: focus the close button when the dialog opens. Templates
+  // load asynchronously so focusing a template card would be racy — the
+  // close button is always rendered, and arrow/tab keys let the user
+  // walk into the content from there.
+  const closeButtonRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    closeButtonRef.current?.focus()
+  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -50,6 +61,7 @@ export function TemplatePickerDialog({
         <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-200">
           <h2 id="template-picker-title" className="text-sm font-semibold">Pick a pipeline</h2>
           <button
+            ref={closeButtonRef}
             type="button"
             onClick={onClose}
             aria-label="Close dialog"

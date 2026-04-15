@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import type { PipelineStageInput, PipelineStageUpdateInput, StageType, StageDifficulty, AdvanceBehavior } from '@/lib/api/pipelines'
 import { DifficultySlider } from './DifficultySlider'
@@ -28,6 +28,15 @@ const ADVANCE_BEHAVIORS: { value: AdvanceBehavior; label: string }[] = [
 
 export function StageConfigDrawer({ stage, onChange, onClose }: Props) {
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  // WCAG 2.4.3: when the modal mounts (parent renders it conditionally
+  // when a stage is selected), move focus to the first interactive
+  // element so keyboard users start inside the dialog instead of
+  // wherever they triggered it from.
+  const nameInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    nameInputRef.current?.focus()
+  }, [])
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -78,6 +87,7 @@ export function StageConfigDrawer({ stage, onChange, onClose }: Props) {
                 Name
               </label>
               <input
+                ref={nameInputRef}
                 id="stage-name"
                 type="text"
                 value={stage.name}
