@@ -177,8 +177,24 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # --- CORS ---
-    # Always use the explicit settings.cors_origins list. A wildcard
+    # --- Middleware ---
+    # Order matters: Starlette's `add_middleware` inserts at position 0,
+    # so the LAST added is the OUTERMOST. We need CORSMiddleware to be the
+    # outermost layer so that error responses returned by inner middleware
+    # (e.g. AuthMiddleware short-circuiting with a 401) still pass through
+    # CORS on the way out and pick up `Access-Control-Allow-Origin`.
+    # Without this, browsers see the 401 as a CORS-blocked response and
+    # surface it client-side as `TypeError: Failed to fetch` instead of an
+    # ordinary HTTP error — making auth failures look like network
+    # failures and breaking error handling in the dashboard.
+    from app.middleware.auth import AuthMiddleware
+    from app.middleware.tenant import TenantMiddleware
+
+    application.add_middleware(TenantMiddleware)
+    application.add_middleware(AuthMiddleware)
+
+    # CORS goes LAST so it ends up as the outermost middleware. Always use
+    # the explicit settings.cors_origins list. A wildcard
     # (`allow_origins=["*"]`) combined with `allow_credentials=True` is
     # rejected by all modern browsers, so the old "debug = wildcard"
     # shortcut never actually worked for credentialed requests — it only
@@ -192,13 +208,6 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
         expose_headers=["x-correlation-id"],
     )
-
-    # --- Middleware ---
-    from app.middleware.auth import AuthMiddleware
-    from app.middleware.tenant import TenantMiddleware
-
-    application.add_middleware(TenantMiddleware)
-    application.add_middleware(AuthMiddleware)
 
     # --- Routers ---
     from app.modules.ats.router import router as ats_router

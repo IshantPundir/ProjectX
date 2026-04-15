@@ -36,9 +36,15 @@ def verify_access_token(token: str) -> TokenPayload | None:
     be accepted).
 
     Issuer check:
-        Supabase GoTrue sets iss = `{supabase_url}/auth/v1`. When
-        `settings.supabase_url` is configured we enforce it; otherwise we
-        skip the check (dev bootstrap, tests that mock JWKS).
+        Supabase GoTrue stamps `iss` with the API URL it sees from its OWN
+        process, which in Supabase local under Docker is `127.0.0.1` even
+        though the backend reaches Supabase via `host.docker.internal`.
+        We therefore use `settings.supabase_jwt_issuer` if explicitly set
+        (the right answer for any environment where the network-reachable
+        Supabase URL doesn't match the issuer Supabase advertises).
+        Otherwise we fall back to `{supabase_url}/auth/v1` (works for
+        Supabase Cloud, where the two URLs are the same). Empty for both
+        skips the issuer check — only safe in tests / JWKS-mocked CI.
 
     Audience check:
         Supabase signs user tokens with `aud = "authenticated"`. Always
@@ -53,8 +59,13 @@ def verify_access_token(token: str) -> TokenPayload | None:
             "audience": "authenticated",
             "options": {"verify_exp": True, "verify_aud": True},
         }
-        if settings.supabase_url:
-            decode_kwargs["issuer"] = f"{settings.supabase_url.rstrip('/')}/auth/v1"
+        expected_issuer: str | None = None
+        if settings.supabase_jwt_issuer:
+            expected_issuer = settings.supabase_jwt_issuer
+        elif settings.supabase_url:
+            expected_issuer = f"{settings.supabase_url.rstrip('/')}/auth/v1"
+        if expected_issuer:
+            decode_kwargs["issuer"] = expected_issuer
         payload = jwt.decode(
             token,
             signing_key.key,

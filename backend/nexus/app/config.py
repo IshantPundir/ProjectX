@@ -54,6 +54,18 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_service_role_key: str = ""
 
+    # JWT issuer string the backend expects in dashboard tokens. Defaults to
+    # `{supabase_url}/auth/v1` which matches Supabase Cloud, where the
+    # backend's network-reachable URL and the issuer Supabase advertises in
+    # tokens are the same string. In Supabase local under Docker they
+    # diverge: the container reaches Supabase via `host.docker.internal`
+    # but Supabase advertises itself as `127.0.0.1` (its own self-view), so
+    # the derived issuer never matches the actual `iss` claim. Set this
+    # explicitly in any environment where SUPABASE_URL doesn't match the
+    # real `iss`. Empty string disables the issuer check entirely (not
+    # recommended).
+    supabase_jwt_issuer: str = ""
+
     # Candidate JWT (separate signing key — treat as DB credential).
     # REQUIRED in any non-test environment. No default — empty at import-time
     # is caught by the field_validator below. Signing algorithm is hardcoded

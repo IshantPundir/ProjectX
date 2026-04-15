@@ -16,6 +16,10 @@ services:
       - SUPABASE_JWKS_URL=http://host.docker.internal:54321/auth/v1/.well-known/jwks.json
       # Supabase Admin API for auth user lifecycle (delete on deactivate)
       - SUPABASE_URL=http://host.docker.internal:54321
+      # Issuer claim — Supabase GoTrue stamps `iss` with the URL it sees from
+      # ITS OWN process (`127.0.0.1`), not the one we use to reach it. Without
+      # this override every request fails with "Invalid issuer" 401.
+      - SUPABASE_JWT_ISSUER=http://127.0.0.1:54321/auth/v1
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -38,6 +42,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - SUPABASE_JWKS_URL=http://host.docker.internal:54321/auth/v1/.well-known/jwks.json
       - SUPABASE_URL=http://host.docker.internal:54321
+      - SUPABASE_JWT_ISSUER=http://127.0.0.1:54321/auth/v1
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
