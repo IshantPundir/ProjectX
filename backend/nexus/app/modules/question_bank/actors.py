@@ -472,7 +472,22 @@ async def generate_question_bank_stage(
             )
             await db.commit()
         except Exception:
-            await db.commit()  # commit the 'failed' status
+            # Only commit if _generate_one_bank ran its `except` branch and
+            # already transitioned the bank to 'failed'. Anything else
+            # (e.g. a DB outage between the LLM call and the status write,
+            # or a bug higher up in the stack) would commit partially-
+            # written state. Roll back and re-raise so Dramatiq can retry
+            # or dead-letter the task cleanly.
+            if bank.status == "failed":
+                await db.commit()
+            else:
+                logger.warning(
+                    "question_bank.stage_actor_rollback",
+                    bank_id=str(bank.id),
+                    bank_status=bank.status,
+                    reason="exception_outside_failed_transition",
+                )
+                await db.rollback()
             raise
 
 
