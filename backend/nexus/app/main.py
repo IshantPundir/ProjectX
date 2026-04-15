@@ -1,6 +1,7 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+import sqlalchemy
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,6 +16,123 @@ from app import brokers  # noqa: F401
 from app.config import settings
 
 logger = structlog.get_logger()
+
+
+# Every tenant-scoped table MUST carry BOTH a `tenant_isolation` policy
+# (with a non-NULL WITH CHECK — the full-command form) AND a
+# `service_bypass` policy. A partial rollout that drops RLS on even one
+# table silently turns that table into a cross-tenant leak.
+#
+# This list is kept in sync with app/models.py + the migration history.
+# Update it whenever a new tenant-scoped table lands — the startup
+# assertion below will fail loudly if the corresponding migration forgets
+# to add the two policies.
+_TENANT_SCOPED_TABLES: tuple[str, ...] = (
+    "clients",
+    "users",
+    "organizational_units",
+    "user_role_assignments",
+    "user_invites",
+    "audit_log",
+    "job_postings",
+    "job_posting_signal_snapshots",
+    "sessions",
+    "pipeline_templates",
+    "pipeline_template_stages",
+    "job_pipeline_instances",
+    "job_pipeline_stages",
+    "stage_question_banks",
+    "stage_questions",
+)
+
+
+async def _assert_rls_completeness() -> None:
+    """Verify every tenant-scoped table has both tenant_isolation + service_bypass.
+
+    Runs once at startup. If any table is missing either policy — or if
+    tenant_isolation has a NULL WITH CHECK, which is the 'FOR SELECT
+    trap' described in backend/CLAUDE.md — we log CRITICAL and raise
+    RuntimeError so the deploy aborts instead of silently shipping with
+    partially-applied RLS.
+
+    Skips when:
+      - settings.environment == 'test': the test suite uses
+        Base.metadata.create_all, not real alembic migrations, so the
+        policies don't exist at the test DB level.
+      - settings.db_runtime_role is None: the role switch is disabled,
+        which means every connection runs as postgres (BYPASSRLS). There
+        is nothing to enforce, so checking the policies would be
+        misleading. This is the bootstrap configuration before migration
+        0010 has run.
+    """
+    if settings.environment == "test":
+        return
+    if not settings.db_runtime_role:
+        return
+
+    # Imported lazily so importing app.main at test-collection time does
+    # not open a DB engine.
+    from app.database import async_session_factory
+
+    async with async_session_factory() as session:
+        result = await session.execute(
+            sqlalchemy.text(
+                """
+                SELECT tablename, policyname, with_check
+                FROM pg_policies
+                WHERE schemaname = 'public'
+                  AND policyname IN ('tenant_isolation', 'service_bypass')
+                """
+            )
+        )
+        rows = result.all()
+
+    found_tenant_isolation: dict[str, object] = {}
+    found_service_bypass: set[str] = set()
+    for tablename, policyname, with_check in rows:
+        if policyname == "tenant_isolation":
+            found_tenant_isolation[tablename] = with_check
+        elif policyname == "service_bypass":
+            found_service_bypass.add(tablename)
+
+    missing_isolation: list[str] = []
+    missing_check: list[str] = []
+    missing_bypass: list[str] = []
+
+    for table in _TENANT_SCOPED_TABLES:
+        if table not in found_tenant_isolation:
+            missing_isolation.append(table)
+        else:
+            # with_check is None when the policy was written as
+            # FOR SELECT / FOR INSERT / FOR UPDATE USING (...) with no
+            # matching WITH CHECK — the 'silent trap' that blocks writes
+            # from tenant sessions. See backend/CLAUDE.md.
+            if found_tenant_isolation[table] is None:
+                missing_check.append(table)
+        if table not in found_service_bypass:
+            missing_bypass.append(table)
+
+    if missing_isolation or missing_check or missing_bypass:
+        logger.critical(
+            "rls.completeness_check_failed",
+            missing_tenant_isolation=missing_isolation,
+            missing_with_check=missing_check,
+            missing_service_bypass=missing_bypass,
+            tenant_scoped_tables=list(_TENANT_SCOPED_TABLES),
+        )
+        raise RuntimeError(
+            "RLS completeness check failed — refusing to start. "
+            f"missing tenant_isolation: {missing_isolation!r}; "
+            f"tenant_isolation without WITH CHECK: {missing_check!r}; "
+            f"missing service_bypass: {missing_bypass!r}. "
+            "This means a migration shipped partially-applied RLS — fix "
+            "the corresponding migration and redeploy."
+        )
+
+    logger.info(
+        "rls.completeness_check_ok",
+        tables_verified=len(_TENANT_SCOPED_TABLES),
+    )
 
 
 @asynccontextmanager
@@ -32,6 +150,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         wrapper_class=structlog.make_filtering_bound_logger(10 if settings.debug else 20),
     )
     logger.info("nexus.startup", environment=settings.environment)
+
+    # Block startup if any tenant-scoped table is missing an RLS policy.
+    # This is the last line of defence against a deploy that ships a
+    # migration which forgot to enable RLS or forgot the WITH CHECK
+    # clause.
+    await _assert_rls_completeness()
 
     yield
 
