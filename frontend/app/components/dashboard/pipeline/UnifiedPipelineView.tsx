@@ -111,6 +111,25 @@ export function UnifiedPipelineView({ job, pipeline, jobId }: Props) {
     [router, searchParams, jobId],
   )
 
+  // Combined write: set stage and tab in a single router.replace. Used by
+  // the auto-select effect below to avoid racing two separate useCallback
+  // helpers on the same searchParams snapshot.
+  const selectStageAndTab = useCallback(
+    (stageId: string, tab: 'questions' | 'config') => {
+      const params = new URLSearchParams(searchParams.toString())
+      params.set('stage', stageId)
+      if (tab === 'questions') {
+        params.delete('tab')
+      } else {
+        params.set('tab', tab)
+      }
+      router.replace(`/jobs/${jobId}/pipeline?${params.toString()}`, {
+        scroll: false,
+      })
+    },
+    [router, searchParams, jobId],
+  )
+
   const setActiveTab = useCallback(
     (tab: 'questions' | 'config') => {
       if (typeof window !== 'undefined') {
@@ -130,32 +149,45 @@ export function UnifiedPipelineView({ job, pipeline, jobId }: Props) {
     [router, searchParams, jobId],
   )
 
-  // Auto-select first un-confirmed stage on initial mount if no ?stage param
+  // Auto-select first un-confirmed stage on initial mount if no ?stage param.
+  //
+  // Uses the stable selectStage / selectStageAndTab useCallbacks and reads
+  // stages through stagesRef so we don't need `stages` itself in the dep
+  // array (which would rerun this on every keystroke). The effect is
+  // guarded by `selectedStageId` — once a stage is chosen it becomes a
+  // no-op until the user explicitly clears the selection.
+  const stagesLen = stages.length
   useEffect(() => {
     if (selectedStageId) return
-    if (stages.length === 0) return
+    if (stagesLen === 0) return
 
     const firstUnconfirmed = overview?.banks.find(
       (b) => b.status !== 'confirmed',
     )
-    const targetStageId = firstUnconfirmed?.stage_id ?? stages[0]?.id ?? null
-    if (targetStageId) {
-      const params = new URLSearchParams(searchParams.toString())
-      params.set('stage', targetStageId)
-      const memoryTab =
-        typeof window !== 'undefined'
-          ? (localStorage.getItem('pipeline-inspector-tab') as
-              | 'questions'
-              | 'config'
-              | null)
-          : null
-      if (memoryTab && memoryTab !== 'questions') params.set('tab', memoryTab)
-      router.replace(`/jobs/${jobId}/pipeline?${params.toString()}`, {
-        scroll: false,
-      })
+    const targetStageId =
+      firstUnconfirmed?.stage_id ?? stagesRef.current[0]?.id ?? null
+    if (!targetStageId) return
+
+    const memoryTab =
+      typeof window !== 'undefined'
+        ? (localStorage.getItem('pipeline-inspector-tab') as
+            | 'questions'
+            | 'config'
+            | null)
+        : null
+
+    if (memoryTab && memoryTab !== 'questions') {
+      selectStageAndTab(targetStageId, memoryTab)
+    } else {
+      selectStage(targetStageId)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [overview, stages.length])
+  }, [
+    overview,
+    stagesLen,
+    selectedStageId,
+    selectStage,
+    selectStageAndTab,
+  ])
 
   function scheduleSave(nextStages: PipelineStageUpdateInput[]) {
     editGenRef.current += 1
