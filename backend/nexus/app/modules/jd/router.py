@@ -41,6 +41,26 @@ from app.modules.jd.sse import job_status_event_generator
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 _log = structlog.get_logger()
 
+# Max length for an inbound x-correlation-id header. 128 is generous — uuid4
+# is 36 chars — but caps log-field growth and blocks pathological values.
+_MAX_CORRELATION_ID_LEN = 128
+
+
+def _get_correlation_id(request: Request) -> str:
+    """Extract x-correlation-id or mint a fresh uuid4.
+
+    The header is untrusted input, so we validate before propagating it to
+    logs, Langfuse tags, and actor kwargs:
+      - must be non-empty and <= 128 chars
+      - must be printable ASCII (no control chars, no unicode)
+    Invalid values are discarded and replaced with a fresh uuid4 so a
+    forensic trail is still preserved per-request.
+    """
+    raw = request.headers.get("x-correlation-id")
+    if raw and 0 < len(raw) <= _MAX_CORRELATION_ID_LEN and raw.isascii() and raw.isprintable():
+        return raw
+    return str(uuid.uuid4())
+
 
 def _snapshot_to_response(
     snap: JobPostingSignalSnapshot | None,
@@ -293,7 +313,7 @@ async def create_job(
                 status_code=403, detail="Missing jobs.create in ancestry"
             )
 
-    correlation_id = request.headers.get("x-correlation-id", str(uuid.uuid4()))
+    correlation_id = _get_correlation_id(request)
     job = await create_job_posting(
         db,
         tenant_id=user.user.tenant_id,
@@ -442,7 +462,7 @@ async def retry_extraction(
     user: UserContext = Depends(get_current_user_roles),
 ) -> JobPostingSummary:
     await require_job_access(db, job_id, user, "manage")
-    correlation_id = request.headers.get("x-correlation-id", str(uuid.uuid4()))
+    correlation_id = _get_correlation_id(request)
     job = await retry_failed_extraction(
         db,
         job_id=job_id,
@@ -475,7 +495,7 @@ async def update_signals(
             status_code=409,
             detail=f"Cannot edit signals in status '{job.status}'",
         )
-    correlation_id = request.headers.get("x-correlation-id", str(uuid.uuid4()))
+    correlation_id = _get_correlation_id(request)
     snapshot = await save_signals(
         db,
         job=job,
@@ -499,7 +519,7 @@ async def confirm_signals_endpoint(
             status_code=409,
             detail=f"Cannot confirm signals in status '{job.status}'",
         )
-    correlation_id = request.headers.get("x-correlation-id", str(uuid.uuid4()))
+    correlation_id = _get_correlation_id(request)
     try:
         job = await confirm_signals(
             db,
@@ -526,7 +546,7 @@ async def enrich_job(
             status_code=409,
             detail=f"Cannot trigger re-enrichment in status '{job.status}'",
         )
-    correlation_id = request.headers.get("x-correlation-id", str(uuid.uuid4()))
+    correlation_id = _get_correlation_id(request)
     await trigger_reenrichment(db, job=job, actor_id=user.user.id)
 
     background_tasks.add_task(
