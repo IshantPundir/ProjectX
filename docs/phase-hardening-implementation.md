@@ -1,6 +1,6 @@
 # Post-Phase-2C Hardening — Developer Documentation
 
-**Scope:** Batches D/F/G — RLS runtime role, NULLIF policies, startup assertion, JWT hardening, SSE RLS fix, security headers, FRONTEND_BASE_URL, correlation-ID validation, and misc front/back fixes
+**Scope:** Batches A / E / F / G — RLS runtime role, NULLIF policies, startup assertion, JWT hardening, SSE RLS fix, security headers, FRONTEND_BASE_URL, correlation-ID validation, and misc front/back fixes
 **Status:** Complete and shipped through 2026-04-15
 **Last updated:** 2026-04-15
 
@@ -36,21 +36,22 @@ See also:
 
 ## 1. What This Covers
 
-This doc walks the post-Phase-2C hardening work — everything between commit `380fbf2` (JWT tightening, the first Batch G fix) and `HEAD`. It is the companion to the sibling phase docs, which flag individual drift points under "Spec drift" headings and delegate the full story to this file.
+This doc walks the post-Phase-2C hardening work — everything between commit `5f4fb02` (Batch A — Round 1 security fixes, Apr 15 14:01) and `HEAD`. It is the companion to the sibling phase docs, which flag individual drift points under "Spec drift" headings and delegate the full story to this file.
 
-Three audit-round batches are described here:
+Batches are labeled by the audit round they addressed, not alphabetically — A / E / F / G here. B and C existed (backend cleanup and frontend important items respectively) but landed no RLS/auth/hardening code that this doc covers, and D was not used as a label in any commit message. The labels below come directly from the commit messages themselves (`Batch A` in `5f4fb02`, `Batch E` in `bd4b6bb`, `Batch F` + `Batch G` in `6292ffd` / `c79682d`).
 
 | Batch | Focus | Load-bearing migrations | Load-bearing code |
 |---|---|---|---|
-| **Batch D (Round 1 security fixes)** | Audit log RLS, SSE disconnect, Redis safe-dispatch, post-commit query bug, candidate JWT secret validation, correlation-ID validation, CORS cleanup | `0008_audit_log_tenant_insert` | `jd/router.py::_get_correlation_id`, `audit/service.py`, `question_bank/router.py` |
-| **Batch E/F (RLS enforcement + SSE fix)** | Phase 1 full-command policies, `nexus_app` runtime role, NULLIF cast, SSE routed through `get_tenant_session` | `0009_phase1_rls_full_command`, `0010_create_nexus_app_role`, `0011_rls_nullif_tenant` | `database.py::_apply_runtime_role`, `jd/sse.py`, `question_bank/sse.py` |
-| **Batch G (Round 2 hardening)** | JWT ES256+audience+issuer, policy rename, startup RLS check, CORS-on-401, FRONTEND_BASE_URL, security headers, misc front-end fixes | `0012_rename_service_role_bypass` | `auth/service.py`, `main.py::_assert_rls_completeness`, `next.config.ts`, `config.py::frontend_base_url`, `invite/page.tsx` |
+| **Batch A (Round 1 security fixes)** | Audit log RLS, SSE disconnect, Redis safe-dispatch, post-commit query bug, candidate JWT secret validation, correlation-ID validation, CORS cleanup | `0008_audit_log_tenant_insert` | `jd/router.py::_get_correlation_id`, `audit/service.py`, `question_bank/router.py` |
+| **Batch E (RLS enforcement at the DB layer)** | Phase 1 full-command policies, `nexus_app` runtime role, NULLIF cast | `0009_phase1_rls_full_command`, `0010_create_nexus_app_role`, `0011_rls_nullif_tenant` | `database.py::_apply_runtime_role` |
+| **Batch F (SSE + invite follow-ups)** | SSE routed through `get_tenant_session`, invite completion redirect allowlist | — | `jd/sse.py`, `question_bank/sse.py`, `invite/page.tsx` |
+| **Batch G (Round 2 hardening)** | JWT ES256+audience+issuer, policy rename, startup RLS check, CORS-on-401, FRONTEND_BASE_URL, security headers, misc front-end fixes | `0012_rename_service_role_bypass` | `auth/service.py`, `main.py::_assert_rls_completeness`, `next.config.ts`, `config.py::frontend_base_url` |
 
 A handful of the fixes are mechanism-dependent on each other:
 
 - Migration **0009** fixes Phase 1 policy shape, but is a no-op until the app stops connecting as `postgres` — migration **0010** is what makes the fix take effect.
 - Migration **0011** (NULLIF) is invisible under `postgres` for the same reason; it only surfaced as a crash after 0010 flipped runtime enforcement on.
-- The **startup assertion** in `app/main.py` is the safety net that prevents a future drop-through regression of either 0009 or 0011.
+- The **startup assertion** in `app/main.py` catches a future drop-through regression of either 0009 or 0011 at boot rather than in production.
 
 Every section below calls out the exact commit hash(es) that made the fix — these are load-bearing for this doc in a way they aren't for the sibling phase docs.
 
@@ -424,7 +425,7 @@ The net result after 0011 is that both forms converge on the canonical full-comm
 
 Root `CLAUDE.md` canonicalises the bypass policy name as `service_bypass`. Phase 1 tables shipped with that name. But a handful of Phase 2A/2C migrations — Alembic `0004_pipeline_builder`, `0006_question_banks`, and the Supabase SQL migration `20260410000001_phase_2a_job_postings.sql` — shipped with the older variant `service_role_bypass` instead. Both names work at runtime because they compare the same GUC expression; the problem is tooling convergence: the startup RLS completeness check ([Section 7](#7-startup-rls-completeness-check)) expects a single canonical bypass policy name per tenant-scoped table.
 
-This was cosmetic drift at the runtime level but load-bearing for the new static check.
+The rename was cosmetic at the runtime level — policies continued to grant the same access regardless of name — but load-bearing for `_assert_rls_completeness` in Section 7, which queries `pg_policies` for the literal names `tenant_isolation` and `service_bypass`. A table still running under the old `service_role_bypass` name would show up as "missing service_bypass" and fail the boot check.
 
 ### What's fixed
 
@@ -495,7 +496,7 @@ Even with 0009/0010/0011/0012 all landed, the system was still one forgetful mig
 Two skip conditions keep tests and bootstrap deployments working:
 
 - **`ENVIRONMENT=test`** — the test suite uses `Base.metadata.create_all`, not real Alembic migrations, so the policies don't exist at the test DB level.
-- **`DB_RUNTIME_ROLE` unset** — the role switch is disabled, so every connection runs as `postgres` (BYPASSRLS). There is nothing to enforce, so checking the policies would be misleading. This is the bootstrap configuration before migration 0010 has run.
+- **`DB_RUNTIME_ROLE` unset or empty** — the role switch is disabled, so every connection runs as `postgres` (BYPASSRLS). There is nothing to enforce, so checking the policies would be misleading. This is the bootstrap configuration before migration 0010 has run.
 
 ### The enumerated table list
 
@@ -672,7 +673,7 @@ The fix introduces `SUPABASE_JWT_ISSUER` as an explicit override. In Supabase lo
 
 ### JWKS caching
 
-`PyJWKClient(settings.supabase_jwks_url, cache_keys=True)` is a module-level singleton. Keys are fetched once per process lifetime; the client handles key rotation internally by refreshing when it sees a `kid` it doesn't recognise. This is unchanged from before Batch G — not a fix, but important context for the "JWT section" story.
+`PyJWKClient(settings.supabase_jwks_url, cache_keys=True)` is a lazy-initialised process-lifetime singleton (set on first call to `_get_jwks_client()` in `auth/service.py` lines 17–25, which checks whether the module-level `_jwks_client` is still `None` and constructs it if so). Once initialized, keys are fetched once per process lifetime; the client handles key rotation internally by refreshing when it sees a `kid` it doesn't recognise. This is unchanged from before Batch G — not a fix, but important context for the "JWT section" story.
 
 ### Candidate JWT path — unchanged but documented
 
@@ -699,7 +700,7 @@ def verify_candidate_token(token: str) -> CandidateTokenPayload | None:
         ...
 ```
 
-The hardcoding is a deliberate policy decision: a signing algorithm must never be a deployment-flag-switchable value. Batch A (commit `5f4fb02`) also deleted the `candidate_jwt_algorithm` config setting and removed the `"change-me-candidate-secret"` default, so `CANDIDATE_JWT_SECRET` must now be set explicitly in any non-test environment — enforced by a `@field_validator` on `Settings.candidate_jwt_secret` that raises if the value is empty outside `ENVIRONMENT=test`.
+The hardcoding is a deliberate policy decision: a signing algorithm must never be a deployment-flag-switchable value. Batch A (commit `5f4fb02`) also deleted the `candidate_jwt_algorithm` config setting and removed the `"change-me-candidate-secret"` default, so `CANDIDATE_JWT_SECRET` must now be set explicitly in any non-test environment — enforced by a `@field_validator` on `Settings.candidate_jwt_secret` (`config.py` lines 75–87) that raises `ValueError` whenever the value is empty *and* `environment != "test"`. The `environment != "test"` branch is what lets the test suite run with an unset secret; every other environment (`development`, `staging`, `production`) must provide one at import time or the app refuses to boot.
 
 ### What's still missing
 
@@ -757,7 +758,7 @@ application.add_middleware(
 
 With this order, every response — including auth rejections from `AuthMiddleware` — traverses `CORSMiddleware` on the way out and picks up `Access-Control-Allow-Origin`. The dashboard can now read 401 error detail via the normal `ApiError.status === 401` branch.
 
-A secondary cleanup in Batch A (commit `5f4fb02`) had already removed the old `allow_origins=["*"]` + `allow_credentials=True` combo that browsers reject anyway — the old "debug = wildcard" shortcut never actually worked for credentialed requests. It only masked configuration mistakes.
+A secondary cleanup in Batch A (commit `5f4fb02`) had already replaced the old `allow_origins=["*"]` default with the explicit `settings.cors_origins` list shown above.
 
 ---
 
@@ -779,7 +780,7 @@ async with async_session_factory() as db:
 
 Two overlapping bugs:
 
-1. **No role switch.** Because `_apply_runtime_role` was never called, the SSE connection stayed on the `postgres` role (`rolbypassrls=true`), and every `tenant_isolation` policy on the tables it touched was a silent no-op. RLS was bypassed on streaming paths entirely. Under Batch E/F RLS hardening this became a live exploit window: a crafted `jobId` / `stageId` in the URL that slipped past the router's `require_*_access` dependency would return cross-tenant rows because the database layer was not filtering.
+1. **No role switch.** Because `_apply_runtime_role` was never called, the SSE connection stayed on the `postgres` role (`rolbypassrls=true`), and every `tenant_isolation` policy on the tables it touched was a silent no-op. RLS was bypassed on streaming paths entirely. Under Batch E's RLS hardening (0009/0010/0011) this became a live exploit window: a crafted `jobId` / `stageId` in the URL that slipped past the router's `require_*_access` dependency would return cross-tenant rows because the database layer was not filtering.
 2. **Implicit transactions.** Without `session.begin()`, `SET LOCAL app.current_tenant` and the subsequent `SELECT` could land in *separate* implicit transactions under SQLAlchemy's autobegin. `SET LOCAL` is scoped to the transaction that issues it; if the cursor implicitly committed after the `SET`, the `SELECT` would run with `app.current_tenant` reset and RLS — if it had been enforced — would see an empty GUC and return zero rows. Latent bug masked by bug #1.
 
 ### What's fixed
@@ -851,7 +852,7 @@ for ev in events_to_emit:
     yield ev
 ```
 
-Tenant-ID coercion via `uuid.UUID(str(tenant_id))` appears at the top of both generators as a defense-in-depth match against `get_tenant_db`'s `_coerce_tenant_id` — a malformed tenant claim fails fast with a canonicalisation error rather than landing in the `SET LOCAL` string.
+Tenant-ID coercion via `uuid.UUID(str(tenant_id))` appears at the top of both generators to fail-fast in the caller (raises `ValueError` before reaching `get_tenant_session`, which would also coerce the value via `_coerce_tenant_id` but deeper in the call chain). A malformed tenant claim produces a canonicalisation error rather than landing in the `SET LOCAL` string.
 
 ### Cross-reference
 
@@ -925,7 +926,7 @@ The admin app has no legitimate need for camera, mic, or geolocation and denies 
 
 ### What's NOT set
 
-**CSP is deliberately out of scope for this batch.** Setting a meaningful Content Security Policy requires nonce wiring across server components, inline scripts (Next.js bootstrap, React Query devtools, Tailwind v4), and third-party SDKs (Supabase, LiveKit). That work is a planned follow-up. Until then, the four headers above give clickjacking, MIME-sniffing, referrer-leak, and feature-policy defense.
+**CSP is deliberately out of scope for this batch.** Setting a meaningful Content Security Policy requires nonce wiring across server components, inline scripts (Next.js bootstrap, React Query devtools, Tailwind v4), and third-party SDKs (Supabase, LiveKit). That work is a planned follow-up. Until then, the four headers above cover clickjacking, MIME sniffing, referrer leakage, and feature policy.
 
 ### Cross-reference
 
