@@ -4,8 +4,13 @@ import { ChevronDown, Users } from 'lucide-react'
 import type { PipelineStageInput } from '@/lib/api/pipelines'
 import { StageSlab } from './StageSlab'
 
+// Accept either PipelineStageInput (scratch stages with no backend id yet)
+// or the saved variant with a stable UUID. `id` is only used for React keys
+// below — the render code doesn't depend on it.
+type FunnelStage = PipelineStageInput & { id?: string }
+
 type Props = {
-  stages: PipelineStageInput[]
+  stages: FunnelStage[]
   onStageClick?: (index: number) => void
   onStageDelete?: (index: number) => void
   selectedIndex?: number
@@ -38,7 +43,7 @@ export function PipelineFunnel({ stages, onStageClick, onStageDelete, selectedIn
       {stages.map((stage, i) => {
         const width = widthFor(i)
         return (
-          <div key={`${i}-${stage.name}`} className="w-full flex flex-col items-center">
+          <div key={stage.id ?? `scratch-${i}`} className="w-full flex flex-col items-center">
             <div
               style={{ width: `${width}%`, maxWidth: '600px', minWidth: '280px' }}
               className="transition-all duration-300"
