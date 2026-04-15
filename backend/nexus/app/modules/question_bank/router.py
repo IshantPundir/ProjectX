@@ -43,6 +43,7 @@ from app.modules.question_bank.schemas import (
     BankWithQuestionsResponse,
     CreateQuestionBody,
     GenerateResponse,
+    PlaceholderBankResponse,
     QuestionResponse,
     QuestionRubric,
     RegenerateQuestionBody,
@@ -255,35 +256,53 @@ async def list_banks(
     db: AsyncSession = Depends(get_tenant_db),
     user: UserContext = Depends(get_current_user_roles),
 ) -> BanksOverviewResponse:
-    """Lightweight list of all banks in the pipeline (sidebar data)."""
+    """Lightweight list of all banks in the pipeline (sidebar data).
+
+    MUST be read-idempotent. Previously this endpoint called
+    `ensure_bank_exists` in a loop, which created a draft StageQuestionBank
+    row for every stage on every GET. A single sidebar poll against an
+    8-stage pipeline would write 8 rows — a violation of HTTP GET semantics
+    and a slow leak into stage_question_banks on every tab refresh.
+
+    Now: return a real BankResponse for every stage where a bank row
+    already exists, and a synthetic PlaceholderBankResponse
+    (`status = "not_generated"`) for every stage without one. The POST
+    /questions/generate endpoint still calls ensure_bank_exists — that's
+    the single legal write path.
+    """
     instance, _job = await require_pipeline_access(db, job_id, user, "view")
 
-    # Ensure every stage has a bank row (draft if missing)
+    # Load every stage in position order. We render one entry per stage
+    # regardless of whether a bank row exists.
     stages_result = await db.execute(
         select(JobPipelineStage)
         .where(JobPipelineStage.instance_id == instance.id)
         .order_by(JobPipelineStage.position)
     )
     stages = list(stages_result.scalars().all())
-    job_result = await db.execute(
-        select(JobPosting).where(JobPosting.id == instance.job_posting_id)
-    )
-    job = job_result.scalar_one()
 
-    for stage in stages:
-        await ensure_bank_exists(db, stage=stage, job=job)
-    await db.flush()
-
+    # Pull all existing bank rows for this pipeline in one round trip.
     rows = await get_banks_for_pipeline(db, instance)
-    banks = [
-        _bank_to_response(
-            bank,
-            question_count=question_count,
-            total_minutes=total_minutes,
-            is_stale=is_stale,
+    banks_by_stage: dict[UUID, tuple[StageQuestionBank, int, float, bool]] = {
+        bank.stage_id: (bank, qc, tm, stale)
+        for bank, qc, tm, stale in rows
+    }
+
+    banks: list[BankResponse | PlaceholderBankResponse] = []
+    for stage in stages:
+        row = banks_by_stage.get(stage.id)
+        if row is None:
+            banks.append(PlaceholderBankResponse(stage_id=stage.id))
+            continue
+        bank, question_count, total_minutes, is_stale = row
+        banks.append(
+            _bank_to_response(
+                bank,
+                question_count=question_count,
+                total_minutes=total_minutes,
+                is_stale=is_stale,
+            )
         )
-        for bank, question_count, total_minutes, is_stale in rows
-    ]
     return BanksOverviewResponse(banks=banks)
 
 

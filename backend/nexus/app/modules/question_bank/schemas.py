@@ -222,8 +222,24 @@ class BankWithQuestionsResponse(BankResponse):
     questions: list[QuestionResponse]
 
 
+class PlaceholderBankResponse(BaseModel):
+    """Synthetic entry for a stage that has no bank row yet.
+
+    The GET /questions endpoint must be idempotent — it cannot create a
+    draft bank row just so the sidebar has something to render. When a
+    stage has never been generated, we return this shape instead. The
+    frontend keys off `status == "not_generated"` to show the "Generate"
+    call-to-action.
+    """
+
+    stage_id: UUID
+    status: Literal["not_generated"] = "not_generated"
+    question_count: int = 0
+    total_minutes: float = 0.0
+
+
 class BanksOverviewResponse(BaseModel):
-    banks: list[BankResponse]
+    banks: list[BankResponse | PlaceholderBankResponse]
 
 
 class GenerateResponse(BaseModel):

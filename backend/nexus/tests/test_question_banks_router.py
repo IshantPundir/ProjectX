@@ -493,6 +493,85 @@ async def test_get_bank_nonexistent_job_returns_404(
 
 
 # ---------------------------------------------------------------------------
+# 3b. GET banks overview is read-idempotent (H6)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_banks_overview_does_not_create_draft_rows(
+    db: AsyncSession, monkeypatch
+):
+    """GET /pipeline/questions must not write StageQuestionBank rows.
+
+    The endpoint used to call ensure_bank_exists() in a loop, creating
+    one draft row per stage on every request. This regression test
+    builds a 3-stage pipeline with zero existing banks, hits GET twice
+    in a row, and asserts the bank count stays at zero while every
+    stage is represented as a placeholder entry.
+    """
+    _stub_actor_sends(monkeypatch)
+
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    signals = [_signal(value="Python")]
+    job, _snapshot = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id, signals=signals,
+    )
+    instance, stage_a = await _make_pipeline_and_stage(
+        db, job=job, name="Phone Screen", position=0,
+    )
+    _instance, stage_b = await _make_pipeline_and_stage(
+        db, job=job, name="AI Interview", stage_type="ai_interview",
+        position=1, instance=instance,
+    )
+    _instance, stage_c = await _make_pipeline_and_stage(
+        db, job=job, name="Human Interview", stage_type="human_interview",
+        position=2, instance=instance,
+    )
+    # No ensure_bank_exists call — we want a pipeline with zero banks.
+
+    async def _count_banks() -> int:
+        result = await db.execute(
+            select(StageQuestionBank).where(
+                StageQuestionBank.job_posting_id == job.id
+            )
+        )
+        return len(list(result.scalars().all()))
+
+    assert await _count_banks() == 0
+
+    headers, restore = _setup_test_context(db, user, tenant.id)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            resp1 = await ac.get(
+                f"/api/jobs/{job.id}/pipeline/questions",
+                headers=headers,
+            )
+            resp2 = await ac.get(
+                f"/api/jobs/{job.id}/pipeline/questions",
+                headers=headers,
+            )
+    finally:
+        restore()
+
+    assert resp1.status_code == 200, resp1.text
+    assert resp2.status_code == 200, resp2.text
+
+    # Still zero — the GET did not write.
+    assert await _count_banks() == 0
+
+    data = resp2.json()
+    assert len(data["banks"]) == 3
+    stage_ids = {str(stage_a.id), str(stage_b.id), str(stage_c.id)}
+    assert {b["stage_id"] for b in data["banks"]} == stage_ids
+    for entry in data["banks"]:
+        assert entry["status"] == "not_generated"
+        assert entry["question_count"] == 0
+        assert entry["total_minutes"] == 0
+
+
+# ---------------------------------------------------------------------------
 # 4. POST generate stage — 202 + status='generating'
 # ---------------------------------------------------------------------------
 
