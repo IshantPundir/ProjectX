@@ -277,7 +277,11 @@ function TypeGroupEditor({
         {label}
       </h5>
       {items.map(({ item, realIndex }) => (
-        <EditableChipRow key={realIndex} item={item} realIndex={realIndex} />
+        <EditableChipRow
+          key={`${realIndex}-${item.value}`}
+          item={item}
+          realIndex={realIndex}
+        />
       ))}
       <AddSignalInput type={type} stage={stage} priority="required" />
     </div>
