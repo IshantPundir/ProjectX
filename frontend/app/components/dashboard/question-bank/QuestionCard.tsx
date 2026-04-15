@@ -150,7 +150,15 @@ export function QuestionCard({
 
       {expanded && (
         <div className="border-t border-zinc-100 p-4 bg-zinc-50 space-y-4">
+          {/*
+            Force remount on question identity change (e.g. after regeneration
+            returns a new question.id). Without this, QuestionEditForm's
+            useState initializers never re-run, so stale local text can be
+            flushed by the 800ms debounced autosave, overwriting the freshly
+            regenerated question text.
+          */}
           <QuestionEditForm
+            key={question.id}
             jobId={jobId}
             stageId={stageId}
             question={question}
