@@ -35,8 +35,7 @@ router = APIRouter(prefix="/api/settings/team", tags=["settings"])
 
 async def _send_team_invite_email(email: str, company_name: str, raw_token: str) -> None:
     """Send team invite email. Called via BackgroundTasks after transaction commits."""
-    base_url = "http://localhost:3000" if settings.debug else "https://app.projectx.com"
-    invite_url = f"{base_url}/invite?token={raw_token}"
+    invite_url = f"{settings.frontend_base_url}/invite?token={raw_token}"
 
     html = render_template(
         "team_invite.html",
@@ -81,8 +80,7 @@ async def invite_endpoint(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    base_url = "http://localhost:3000" if settings.debug else "https://app.projectx.com"
-    invite_url = f"{base_url}/invite?token={raw_token}"
+    invite_url = f"{settings.frontend_base_url}/invite?token={raw_token}"
     background_tasks.add_task(_send_team_invite_email, data.email, client_name, raw_token)
 
     return TeamInviteResponse(
@@ -134,8 +132,7 @@ async def resend_endpoint(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    base_url = "http://localhost:3000" if settings.debug else "https://app.projectx.com"
-    invite_url = f"{base_url}/invite?token={raw_token}"
+    invite_url = f"{settings.frontend_base_url}/invite?token={raw_token}"
     background_tasks.add_task(_send_team_invite_email, new_invite.email, company_name, raw_token)
 
     return ResendInviteResponse(

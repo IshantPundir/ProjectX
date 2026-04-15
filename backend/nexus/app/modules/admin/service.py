@@ -54,8 +54,7 @@ async def provision_client(
     await db.flush()  # get invite.id
 
     # Send invite email
-    base_url = "http://localhost:3000" if settings.debug else "https://app.projectx.com"
-    invite_url = f"{base_url}/invite?token={raw_token}"
+    invite_url = f"{settings.frontend_base_url}/invite?token={raw_token}"
 
     html = render_template(
         "company_admin_invite.html",

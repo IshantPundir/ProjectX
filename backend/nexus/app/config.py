@@ -124,5 +124,17 @@ class Settings(BaseSettings):
     # CORS
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:3000", "http://127.0.0.1:3001"]
 
+    # Frontend base URL — used to build invite/confirmation links in emails.
+    # Previously hardcoded with a `debug ? localhost : app.projectx.com`
+    # ternary, which meant a staging deploy with DEBUG=false would mint
+    # invite links that point at production. Now every environment must
+    # set FRONTEND_BASE_URL explicitly.
+    frontend_base_url: str = "http://localhost:3000"
+
+    @field_validator("frontend_base_url")
+    @classmethod
+    def _strip_trailing_slash(cls, v: str) -> str:
+        return v.rstrip("/")
+
 
 settings = Settings()
