@@ -19,6 +19,17 @@ DIFFICULTIES = ("easy", "medium", "hard")
 ADVANCE_BEHAVIORS = ("auto_advance", "manual_review")
 
 
+def _sql_in(values: tuple[str, ...]) -> str:
+    """Render a tuple of string literals as a SQL ``IN (...)`` clause.
+
+    Produces output that is byte-identical to ``f"{values!r}"`` for a plain
+    tuple of strings but does not rely on Python's tuple ``__repr__`` as a
+    stand-in for SQL syntax. Values must be trusted static literals — this
+    helper does not escape embedded quotes.
+    """
+    return "(" + ", ".join("'" + v + "'" for v in values) + ")"
+
+
 def upgrade() -> None:
     # --- pipeline_templates ---
     op.create_table(
@@ -68,15 +79,15 @@ def upgrade() -> None:
     )
     op.create_check_constraint(
         "ck_template_stages_stage_type", "pipeline_template_stages",
-        f"stage_type IN {STAGE_TYPES}"
+        f"stage_type IN {_sql_in(STAGE_TYPES)}"
     )
     op.create_check_constraint(
         "ck_template_stages_difficulty", "pipeline_template_stages",
-        f"difficulty IN {DIFFICULTIES}"
+        f"difficulty IN {_sql_in(DIFFICULTIES)}"
     )
     op.create_check_constraint(
         "ck_template_stages_advance_behavior", "pipeline_template_stages",
-        f"advance_behavior IN {ADVANCE_BEHAVIORS}"
+        f"advance_behavior IN {_sql_in(ADVANCE_BEHAVIORS)}"
     )
     op.create_check_constraint(
         "ck_template_stages_duration", "pipeline_template_stages",
@@ -132,15 +143,15 @@ def upgrade() -> None:
     )
     op.create_check_constraint(
         "ck_job_pipeline_stages_stage_type", "job_pipeline_stages",
-        f"stage_type IN {STAGE_TYPES}"
+        f"stage_type IN {_sql_in(STAGE_TYPES)}"
     )
     op.create_check_constraint(
         "ck_job_pipeline_stages_difficulty", "job_pipeline_stages",
-        f"difficulty IN {DIFFICULTIES}"
+        f"difficulty IN {_sql_in(DIFFICULTIES)}"
     )
     op.create_check_constraint(
         "ck_job_pipeline_stages_advance_behavior", "job_pipeline_stages",
-        f"advance_behavior IN {ADVANCE_BEHAVIORS}"
+        f"advance_behavior IN {_sql_in(ADVANCE_BEHAVIORS)}"
     )
     op.create_check_constraint(
         "ck_job_pipeline_stages_duration", "job_pipeline_stages",
