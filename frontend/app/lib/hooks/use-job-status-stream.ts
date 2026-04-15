@@ -13,6 +13,13 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
  *  giving up. Protects against loops when the refresh token is also expired. */
 const MAX_AUTH_RETRIES = 2
 
+/** Absolute ceiling on reconnection attempts across the effect's lifetime,
+ *  counting auth retries, transient errors, and every other reason a
+ *  connect() might recurse. Once hit, the stream stops permanently and
+ *  the hook surfaces an error — TanStack Query's polling fallback on
+ *  useJob() still keeps the page usable. */
+const MAX_TOTAL_RETRIES = 20
+
 /** Thrown when the server returns a non-retryable client error (401/403).
  *  fetch-event-source retries when onerror doesn't throw; we throw this to
  *  break OUT of the library's retry loop so we can reconnect with a fresh
@@ -27,6 +34,9 @@ type StreamResult = {
   /** Non-null when the SSE connection failed. The page still works
    *  (TanStack Query polls), but live updates are unavailable. */
   error: string | null
+  /** Whether the hook still has an active stream. Flips to false when
+   *  the absolute retry ceiling is reached and the hook gives up. */
+  isStreaming: boolean
 }
 
 /**
@@ -45,13 +55,20 @@ type StreamResult = {
 export function useJobStatusStream(jobId: string): StreamResult {
   const [status, setStatus] = useState<JobStatusEvent | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [isStreaming, setIsStreaming] = useState(true)
   const queryClient = useQueryClient()
 
   useEffect(() => {
     if (!jobId) return
 
+    setIsStreaming(true)
     const ctrl = new AbortController()
     let authRetries = 0
+    // Absolute ceiling across ALL reconnection attempts — auth retries,
+    // transient retries bubbled through onerror, anything that could
+    // loop. Prevents runaway reconnection storms against a persistently
+    // failing server.
+    let totalRetries = 0
 
     async function connect(): Promise<void> {
       if (ctrl.signal.aborted) return
@@ -123,6 +140,15 @@ export function useJobStatusStream(jobId: string): StreamResult {
               if (err instanceof AuthSSEError || err instanceof FatalSSEError) {
                 throw err
               }
+              // Every onerror counts against the absolute ceiling — this
+              // catches runaway transient-retry loops even when the outer
+              // connect() is not being re-entered.
+              totalRetries++
+              if (totalRetries > MAX_TOTAL_RETRIES) {
+                throw new FatalSSEError(
+                  'Live updates unavailable — reconnection limit reached.',
+                )
+              }
               // Transient errors: don't throw → library auto-retries with backoff.
               // If the token expires during this internal retry, the next attempt
               // will get 401 → onopen throws AuthSSEError → we break out and
@@ -140,22 +166,34 @@ export function useJobStatusStream(jobId: string): StreamResult {
         // ---- 3a. Auth failure → re-fetch token and reconnect ----
         if (err instanceof AuthSSEError) {
           authRetries++
-          if (authRetries <= MAX_AUTH_RETRIES) {
+          totalRetries++
+          if (
+            authRetries <= MAX_AUTH_RETRIES &&
+            totalRetries <= MAX_TOTAL_RETRIES
+          ) {
             return connect()
           }
-          // Exhausted retries — refresh token is also expired.
-          setError('Session expired — please log in again.')
+          // Either auth retries exhausted (refresh token dead) or absolute
+          // ceiling hit (something is persistently broken upstream).
+          setIsStreaming(false)
+          setError(
+            authRetries > MAX_AUTH_RETRIES
+              ? 'Session expired — please log in again.'
+              : 'Live updates unavailable — reconnection limit reached.',
+          )
           return
         }
 
         // ---- 3b. Fatal client error → stop permanently ----
         if (err instanceof FatalSSEError) {
+          setIsStreaming(false)
           setError(err.message)
           return
         }
 
         // ---- 3c. Unexpected error ----
         console.warn('SSE connection failed', err)
+        setIsStreaming(false)
         setError('Live updates unavailable — page will refresh automatically.')
       }
     }
@@ -164,5 +202,5 @@ export function useJobStatusStream(jobId: string): StreamResult {
     return () => ctrl.abort()
   }, [jobId, queryClient])
 
-  return { status, error }
+  return { status, error, isStreaming }
 }
