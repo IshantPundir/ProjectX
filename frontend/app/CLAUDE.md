@@ -279,7 +279,7 @@ Do not drop components at the root of `components/` without a subdirectory.
 - Single `apiFetch<T>()` function — generic typed `fetch` wrapper
 - Base URL from `NEXT_PUBLIC_API_URL` (defaults to `http://127.0.0.1:8000`)
 - Token passed explicitly per call (not auto-injected)
-- Handles FastAPI error shape: parses `{ detail: string }` from non-OK responses
+- Handles FastAPI error shape: parses `{ detail: string }` and 422 `{ detail: ValidationError[] }` from non-OK responses, throws `ApiError` with the HTTP `status`
 - Response types defined inline per-page (no shared `types/` directory yet)
 
 ```typescript
@@ -306,7 +306,7 @@ const members = await apiFetch<TeamMember[]>('/api/settings/team/members', { tok
 
 - Use Tailwind utility classes. Do not write custom CSS unless a utility genuinely does not exist.
 - Spacing: use the Tailwind spacing scale. Do not use arbitrary values (e.g., `mt-[17px]`) unless absolutely necessary for pixel-perfect requirements.
-- Colours: use the design system tokens defined in `tailwind.config.ts`. Do not use raw colour values (e.g., `text-[#4A90E2]`).
+- Colours: use the design system tokens defined in `app/globals.css` via the Tailwind v4 `@theme` directive. Do not use raw colour values (e.g., `text-[#4A90E2]`).
 - Dark mode: not in scope for MVP. Do not build dark mode variants.
 - Responsive: dashboard is desktop-first (1280px minimum viewport target). Candidate interview UI must work on any device — candidates may join from mobile.
 
@@ -334,7 +334,7 @@ npm run type-check   # tsc --noEmit — must pass with zero errors
 
 CI will fail if `lint` or `type-check` have errors. Fix before pushing.
 
-Note: Vitest is not yet installed. Tests will be added in Phase 2+.
+Vitest is installed (Phase 2A). Run `npm run test` to execute the suite.
 
 ---
 
