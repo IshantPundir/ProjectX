@@ -73,11 +73,16 @@ frontend/admin/
 
 ## Auth Pattern
 
-**There is no `middleware.ts` or server-side auth guard.** Route protection is client-side only:
-- The dashboard page checks `supabase.auth.getSession()` in `useEffect` and redirects to `/login` if no token
-- This means an unauthenticated user briefly sees the admin shell before redirect
+**Route protection is enforced server-side via Next.js middleware.** The middleware handler lives in `frontend/admin/proxy.ts` (exported as `proxy`, matched by the `config.matcher` at the bottom of that file). On every non-static request it:
 
-The admin account must have `is_projectx_admin: true` in their Supabase `app_metadata` to use the backend admin endpoints. This flag is set outside this app (e.g., via Supabase dashboard or CLI).
+1. Calls `supabase.auth.getUser()` to cryptographically validate the session (also refreshes the token cookie if needed).
+2. Redirects unauthenticated users away from any non-public route to `/login`.
+3. Checks `user.app_metadata.is_projectx_admin`. Non-admin authenticated users are redirected to `/pending-approval`. Only admins reach `/dashboard` and `/dashboard/provision`.
+4. Redirects already-authenticated users away from `/login` and `/signup`.
+
+This means the unauthenticated admin shell is never rendered — the redirect happens before the React tree mounts.
+
+The `is_projectx_admin: true` claim must be set in the admin user's Supabase `app_metadata` outside this app (via Supabase dashboard, CLI, or a backend provisioning script). The frontend does not grant or modify this flag.
 
 ---
 
