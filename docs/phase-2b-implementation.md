@@ -171,7 +171,7 @@ The handler rejects with **409** if `job.status not in ('signals_extracted', 'si
 3. **Stamp the editor.** `job.updated_by = actor_id`.
 4. **Acquire a row lock.** Execute `SELECT job_postings.id WHERE id = :job_id FOR UPDATE`. This serialises concurrent `save_signals` calls on the same parent job so they can't race on the `MAX(version)` read.
 5. **Compute the next version.** `SELECT max(version) FROM job_posting_signal_snapshots WHERE job_posting_id = :job_id`. Start at 0 for an empty set; next version = `current_max + 1`.
-6. **Insert the new snapshot row.** `signals = [item.model_dump() for item in body.signals]`, `seniority_level` and `role_summary` from the body, `confirmed_by = None`, `confirmed_at = None`, `prompt_version = None` (only actors stamp prompt_version). The unique constraint `(job_posting_id, version)` backstops the version pick even if the FOR UPDATE lock were bypassed.
+6. **Insert the new snapshot row.** `signals = [item.model_dump() for item in body.signals]`, `seniority_level` and `role_summary` from the body, `confirmed_by = None`, `confirmed_at = None`. The insert leaves `prompt_version` unset (the column is nullable and defaults to NULL); only Call 1's `_persist_enriched` stamps it. The unique constraint `(job_posting_id, version)` backstops the version pick even if the FOR UPDATE lock were bypassed.
 7. **Flush and log.** `db.flush()` stages the write; the commit happens when the `get_tenant_db` dependency's transaction exits. `jd.service.signals_saved` is logged with `{job_posting_id, snapshot_version, correlation_id}`.
 
 ### What the FOR UPDATE lock actually does
@@ -235,7 +235,7 @@ Router rejects with **409** if `job.status not in ('signals_extracted', 'signals
 
 ### Actor: `reenrich_jd` (app/modules/jd/actors.py)
 
-Registered via `@dramatiq.actor(max_retries=1, min_backoff=2_000, max_backoff=30_000, queue_name="jd_reenrichment")`. Note the **`max_retries=1`** — one less than Call 1. Re-enrichment is user-initiated and should fail fast so the recruiter sees the error and retries manually rather than waiting on an exponential backoff.
+Registered via `@dramatiq.actor(max_retries=1, min_backoff=2_000, max_backoff=30_000, queue_name="jd_reenrichment")`. Note the **`max_retries=1`** (Call 1 uses `max_retries=2` — see `docs/phase-2a-implementation.md`). Re-enrichment is user-initiated and should fail fast so the recruiter sees the error and retries manually rather than waiting on an exponential backoff.
 
 The actor's outer wrapper is the same pattern as Call 1:
 
@@ -349,7 +349,7 @@ Existing Phase 2A endpoints had response shape changes too:
 | Editing in wrong state | 409 | `{"detail": "Cannot edit signals in status '<state>'"}` |
 | Confirming in wrong state | 409 | `{"detail": "Cannot confirm signals in status '<state>'"}` |
 | Enriching in wrong state | 409 | `{"detail": "Cannot trigger re-enrichment in status '<state>'"}` |
-| Double-dispatch re-enrichment | 409 | `{"detail": "Cannot transition job from enrichment:streaming to enrichment:streaming"}` — fallback branch of `_ILLEGAL_TRANSITION_MESSAGES` in `app/main.py` |
+| Double-dispatch re-enrichment | 409 | `{"detail": "Cannot transition job from enrichment:streaming to enrichment:streaming"}` — formatted by the generic `f'Cannot transition job from {from_state} to {to_state}'` fallback in `app/main.py`, since `(enrichment:streaming, enrichment:streaming)` is not a keyed entry in `_ILLEGAL_TRANSITION_MESSAGES` |
 | Already-confirmed re-confirm | 409 | `{"detail": "Signals are already confirmed"}` — keyed entry in `_ILLEGAL_TRANSITION_MESSAGES` |
 | Missing `jobs.manage` | 403 | `{"detail": "Missing jobs.manage in job's org unit ancestry"}` |
 | Cross-tenant or missing job | 404 | `{"detail": "Job not found"}` |
@@ -395,7 +395,7 @@ No body. Returns `202` with `{"status": "accepted"}`. Side effects: `enrichment_
 
 ## 8. Frontend Architecture
 
-Phase 2B is the first frontend surface where the full post-Phase 2A stack (Zustand, TanStack Query v5, Vitest, sonner toasts, shadcn + Base UI primitives) is actively used. All files below are under `frontend/app/`.
+Phase 2B is the first frontend surface where the full post-Phase 2A stack (Zustand, TanStack Query v5, Vitest, sonner toasts, shadcn + Base UI primitives) is actively used (shadcn v4 ships on Base UI, not Radix — see `frontend/app/CLAUDE.md` for the ecosystem gotchas). All files below are under `frontend/app/`.
 
 ### Entry point
 
@@ -425,7 +425,7 @@ Phase 2B is the first frontend surface where the full post-Phase 2A stack (Zusta
 | `startEditing(snapshot)` | Hydrate draft from snapshot (deep-copies signals to avoid mutating query cache), set `isEditing=true`, `isDirty=false` |
 | `stopEditing()` | Clear draft, `isEditing=false`, `isDirty=false` |
 | `updateDraft(partial)` | Merge into draft, set dirty |
-| `addChip(value, type, stage, priority)` | Append a new `recruiter`-sourced chip with `weight=1`, `knockout=false`, `evaluation_method='verbal_response'`, `inference_basis=null` |
+| `addChip(value, type, stage, priority)` | Append a new `recruiter`-sourced chip with `weight=1`, `knockout=false`, `evaluation_method='verbal_response'`, `inference_basis=null` (The Pydantic default is `weight=2` — see Section 3's signal item schema. The frontend intentionally starts new chips at `weight=1` so recruiter-added chips appear as lowest-priority until explicitly raised.) |
 | `removeChip(index)` | `filter((_, i) => i !== index)` |
 | `updateSignal(index, partial)` | Merge partial into the indexed signal |
 | `markClean()` | `isDirty=false` — called by the save hook on success before `stopEditing()` |
