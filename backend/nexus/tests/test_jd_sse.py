@@ -35,7 +35,7 @@ class FakeSession:
 
 
 @asynccontextmanager
-async def _fake_session_factory():
+async def _fake_tenant_session(tenant_id: str):
     yield FakeSession()
 
 
@@ -71,7 +71,7 @@ async def test_emits_initial_then_terminal(monkeypatch):
         return events_to_yield[i]
 
     monkeypatch.setattr("app.modules.jd.sse.get_job_status", fake_get_job_status)
-    monkeypatch.setattr("app.modules.jd.sse.async_session_factory", _fake_session_factory)
+    monkeypatch.setattr("app.modules.jd.sse.get_tenant_session", _fake_tenant_session)
     monkeypatch.setattr("app.modules.jd.sse.POLL_INTERVAL_SECONDS", 0.01)
 
     gen = job_status_event_generator(
@@ -98,7 +98,7 @@ async def test_terminates_on_disconnect(monkeypatch):
         )
 
     monkeypatch.setattr("app.modules.jd.sse.get_job_status", fake_get_job_status)
-    monkeypatch.setattr("app.modules.jd.sse.async_session_factory", _fake_session_factory)
+    monkeypatch.setattr("app.modules.jd.sse.get_tenant_session", _fake_tenant_session)
     monkeypatch.setattr("app.modules.jd.sse.POLL_INTERVAL_SECONDS", 0.01)
 
     gen = job_status_event_generator(
@@ -119,7 +119,7 @@ async def test_missing_job_terminates_cleanly(monkeypatch):
         return None
 
     monkeypatch.setattr("app.modules.jd.sse.get_job_status", fake_get_job_status)
-    monkeypatch.setattr("app.modules.jd.sse.async_session_factory", _fake_session_factory)
+    monkeypatch.setattr("app.modules.jd.sse.get_tenant_session", _fake_tenant_session)
     monkeypatch.setattr("app.modules.jd.sse.POLL_INTERVAL_SECONDS", 0.01)
 
     gen = job_status_event_generator(
