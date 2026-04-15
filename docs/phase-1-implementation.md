@@ -2,7 +2,16 @@
 
 **Scope:** Auth, Client Onboarding, Team Invites, Roles & Permissions, Org Units, Workspace Modes, Audit Log
 **Status:** Complete and functional
-**Last updated:** 2026-04-07
+**Last updated:** 2026-04-15
+
+---
+
+**Sibling phase documentation:**
+Phase 2A (JD pipeline): `docs/phase-2a-implementation.md`
+Phase 2B (signal editing): `docs/phase-2b-implementation.md`
+Phase 2C.1 (pipeline builder): `docs/phase-2c1-implementation.md`
+Phase 2C.2 (question bank generation): `docs/phase-2c2-implementation.md`
+Post-2C hardening: `docs/phase-hardening-implementation.md`
 
 ---
 
@@ -17,7 +26,8 @@
 7. [Organizational Units](#7-organizational-units)
 8. [API Reference](#8-api-reference)
 9. [Frontend Architecture](#9-frontend-architecture)
-10. [Known Gaps & Technical Debt](#10-known-gaps--technical-debt)
+10. [Post-Phase-1 Amendments (Hardening Batches)](#10-post-phase-1-amendments-hardening-batches)
+11. [Known Gaps & Technical Debt](#11-known-gaps--technical-debt)
 
 ---
 
@@ -40,7 +50,7 @@ Phase 1 delivers the foundation: identity, multi-tenancy, team management, and o
 | Backend framework | FastAPI (async), Python 3.12 |
 | Database | PostgreSQL 17 via Supabase (local Docker for dev) |
 | ORM | SQLAlchemy async + asyncpg driver |
-| Schema management | Supabase migrations (not Alembic — see note below) |
+| Schema management | Supabase migrations (Phase 1 initial schema) + Alembic (Phase 2A onwards — see note below) |
 | Auth provider | Supabase GoTrue (email/password only, no OAuth) |
 | JWT verification | PyJWKClient (JWKS endpoint), ES256 algorithm |
 | Frontend framework | Next.js 16.2.2, React 19, TypeScript strict |
@@ -49,7 +59,7 @@ Phase 1 delivers the foundation: identity, multi-tenancy, team management, and o
 | Email | Resend (with dry-run mode for dev) |
 | State management | Local useState/useEffect (Zustand/TanStack Query not yet adopted) |
 
-**Alembic vs. Supabase migrations:** The initial schema lives entirely in `backend/supabase/migrations/20260405000000_initial_schema.sql`. Alembic is configured (`backend/nexus/migrations/env.py`) but `versions/` is empty. All DDL, RLS policies, seed data, and the auth hook are in the Supabase migration.
+**Alembic vs. Supabase migrations:** Phase 1's initial schema lives in `backend/supabase/migrations/20260405000000_initial_schema.sql` — all Phase 1 DDL, RLS policies, seed data, and the auth hook are in the Supabase migration because Alembic was adopted later. Alembic is configured at `backend/nexus/migrations/env.py` and, as of 2026-04-15, has 12 revisions (0001 through 0012) covering Phase 2A / 2B / 2C.1 / 2C.2 schema changes and the post-2C hardening migrations (0008–0012) that repaired Phase 1's RLS pattern. See Section 10 for the hardening migrations that touched Phase 1 tables.
 
 ---
 
@@ -220,13 +230,14 @@ Append-only audit trail for all tenant-scoped mutations. Never update or delete 
 
 ### RLS Pattern
 
-Every tenant-scoped query runs inside a transaction that first sets the session variable:
+Every tenant-scoped query runs inside a transaction that first sets the runtime role and the session variable:
 
 ```sql
+SET LOCAL ROLE nexus_app;
 SET LOCAL app.current_tenant = '<tenant-uuid>';
 ```
 
-RLS policies read this via `current_setting('app.current_tenant', true)::UUID`.
+RLS policies read this via `NULLIF(current_setting('app.current_tenant', true), '')::uuid`.
 
 For admin/internal operations that need cross-tenant access:
 
@@ -235,6 +246,8 @@ SET LOCAL app.bypass_rls = 'true';
 ```
 
 **`auth.jwt()` is NOT used in any RLS policy.** It returns null when connecting via asyncpg (it only works through PostgREST).
+
+> Note (2026-04-15): As shipped in Phase 1, Phase 1 tables used a non-canonical `FOR SELECT USING(...)`-only policy pattern, the `tenant_isolation` USING clause used a raw `::uuid` cast, and the runtime did NOT switch to a NOBYPASSRLS role — all three were runtime no-ops or latent bugs. Migrations 0008–0012 repaired each of these. The canonical pattern shown above is what lives on Phase 1 tables today. See Section 10 for the full mechanism and each migration's scope. The per-table `RLS:` summaries in Section 2 describe the intent of each policy (SELECT filter on tenant_id + service bypass); the on-disk policies are now full-command `tenant_isolation` (USING + WITH CHECK) pairs plus `service_bypass`, with `audit_log` additionally carrying a `FOR INSERT WITH CHECK` policy so tenant sessions can write rows.
 
 ---
 
@@ -291,6 +304,8 @@ def verify_access_token(token: str) -> TokenPayload | None:
     # Returns None on any failure — never raises
 ```
 
+> Note (2026-04-15): Batch G hardened this path. `algorithms` is now pinned to `["ES256"]` only (RS256 removed), and both an audience check (`aud=authenticated`) and an issuer check (`iss == {supabase_url}/auth/v1` when configured) are enforced. See Section 10 for the full mechanism.
+
 ### Middleware Chain
 
 **Registration order in `app/main.py`:**
@@ -306,7 +321,7 @@ application.add_middleware(AuthMiddleware)      # runs inner
 
 - **TenantMiddleware** (`middleware/tenant.py`): Binds `tenant_id` from `request.state` to structlog context for structured logging.
 
-**RLS enforcement** is NOT in middleware — it happens inside `get_tenant_db()` (a FastAPI dependency) which runs `SET LOCAL app.current_tenant = '<uuid>'` at the start of each database session.
+**RLS enforcement** is NOT in middleware — it happens inside `get_tenant_db()` (a FastAPI dependency) which runs `SET LOCAL ROLE nexus_app` followed by `SET LOCAL app.current_tenant = '<uuid>'` at the start of each database session. The role switch is what makes RLS actually fire at runtime — the default `postgres` role has `rolbypassrls=true` and would otherwise silently skip every policy. See Section 10.
 
 ### Three Database Session Types
 
@@ -860,7 +875,48 @@ Both frontend apps have identical deps: `next@16.2.2`, `react@19`, `react-dom@19
 
 ---
 
-## 10. Known Gaps & Technical Debt
+## 10. Post-Phase-1 Amendments (Hardening Batches)
+
+This document was first written on 2026-04-07, before Batches A / E / F / G landed. Several changes shipped between 2026-04-14 and 2026-04-15 touched Phase 1 tables and the RLS enforcement model. The full walkthrough lives in `docs/phase-hardening-implementation.md`; a summary below so readers of this doc understand the current state of the Phase 1 tables.
+
+### RLS pattern evolution
+
+Phase 1 tables (`clients`, `users`, `organizational_units`, `roles`, `user_role_assignments`, `user_invites`, `audit_log`) originally shipped with a non-canonical RLS pattern. Five Alembic migrations repaired it:
+
+| Migration | Fix |
+|---|---|
+| `0008_audit_log_tenant_insert` | `audit_log` was missing a `FOR INSERT WITH CHECK` policy, silently dropping tenant-scoped writes. Added the missing policy. |
+| `0009_phase1_rls_full_command` | Phase 1 tables shipped with `FOR SELECT USING(...)`-only policies, which silently blocked INSERT/UPDATE/DELETE from tenant sessions because the implicit CHECK fell through to `service_bypass` (false when `app.bypass_rls` is unset). Replaced with the canonical full-command `tenant_isolation` pair (USING + WITH CHECK). |
+| `0010_create_nexus_app_role` | Created the `nexus_app` Postgres role with `NOBYPASSRLS`. Every `get_tenant_db` / `get_bypass_db` session now runs `SET LOCAL ROLE nexus_app` at the top of the transaction. Without this, every RLS policy was a runtime no-op because the default `postgres` role has `rolbypassrls=true`. |
+| `0011_rls_null_safe_current_tenant` | Wrapped `current_setting('app.current_tenant', true)::uuid` in `NULLIF(..., '')::uuid` on every policy. Fixes a Postgres quirk where `SET LOCAL` restores a custom GUC to empty string (not NULL) at transaction end, which crashed the next pooled request. |
+| `0012_rename_service_role_bypass` | Renamed `service_role_bypass` → `service_bypass` on tables that were still on the old name, for consistency with the canonical name used by the startup assertion. |
+
+Section 2's per-table `RLS:` summaries describe the intent of each policy (the SELECT filter on `tenant_id` and the service bypass). The on-disk policies after migration 0012 are canonical full-command `tenant_isolation` pairs (USING + WITH CHECK) plus `service_bypass`, with `audit_log` additionally carrying an INSERT WITH CHECK policy.
+
+### Startup RLS completeness check
+
+`app/main.py::_assert_rls_completeness` now queries `pg_policies` at boot and aborts with a CRITICAL log if any enumerated tenant-scoped table is missing `tenant_isolation` (with non-NULL `WITH CHECK`) or `service_bypass`. Skipped under `ENVIRONMENT=test` or when `DB_RUNTIME_ROLE` is unset (for the bootstrap-from-fresh-cluster case).
+
+### Auth hardening
+
+Phase 1's `verify_access_token` gained three additional checks in Batch G:
+
+1. **Algorithm pinning** — `algorithms=["ES256"]` only. RS256 was removed to close an algorithm-confusion surface.
+2. **Audience check** — `aud=authenticated` (Supabase's default role claim).
+3. **Issuer check** — when `settings.supabase_url` is set, `iss` must match `{supabase_url}/auth/v1`. Prevents a token minted by a different Supabase project sharing the JWKS path from authenticating.
+
+### Frontend hardening that affected Phase 1 surfaces
+
+- **Security headers** on both `frontend/app/next.config.ts` and `frontend/admin/next.config.ts` — `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`. The dashboard additionally sets `Permissions-Policy: camera=(self), microphone=(self), geolocation=()`.
+- **Configurable `FRONTEND_BASE_URL`** — removed the `settings.debug` branching that sent staging invites to production.
+- **Same-origin redirect allowlist** on the invite completion flow.
+- **CORS-on-401 fix** — the frontend couldn't read 401 error detail until CORS headers were applied on all error paths.
+
+For the full mechanism of each fix and the commits that made them, see `docs/phase-hardening-implementation.md`.
+
+---
+
+## 11. Known Gaps & Technical Debt
 
 ### Architecture
 
@@ -869,7 +925,7 @@ Both frontend apps have identical deps: `next@16.2.2`, `react@19`, `react-dom@19
 | No `middleware.ts` in either frontend app | `/onboarding` route accessible by direct URL without auth; admin app has no server-side protection | Medium |
 | Admin app has no server-side auth guard | Unauthenticated users see the admin shell briefly before client-side redirect | Low (internal tool) |
 | Middleware ordering in Nexus | `TenantMiddleware` reads `request.state.tenant_id` before `AuthMiddleware` sets it — structlog tenant context is always `None` on inbound | Low (logging only, RLS unaffected) |
-| Alembic not used for schema | All DDL is in Supabase migration. Alembic's `versions/` is empty. Future schema changes need a documented convention. | Medium |
+| Alembic adoption split point | Phase 1 DDL lives in the Supabase migration; Phase 2A onwards uses Alembic (revisions 0001–0012 as of 2026-04-15). New Phase 1 table changes now go through Alembic — see migrations 0008–0012 for examples. | Resolved |
 | `settings/org-units/new/page.tsx` outside `(dashboard)` group | Legacy route — auth guard added, deprecation comment added. Should be removed in a future cleanup. | Low |
 | `complete_invite` inline in router | Business logic (invite claiming, user creation) lives in `auth/router.py` instead of a service function. Audit call is a pragmatic exception. | Low (flagged with TODO) |
 
