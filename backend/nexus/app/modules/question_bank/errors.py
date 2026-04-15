@@ -10,29 +10,31 @@ from __future__ import annotations
 from uuid import UUID
 
 
-class BankNotFoundError(Exception):
-    """The requested bank does not exist (or is invisible due to RLS)."""
-
-    def __init__(self, bank_id: UUID | None = None, stage_id: UUID | None = None):
-        self.bank_id = bank_id
-        self.stage_id = stage_id
-        super().__init__(f"Bank not found (bank_id={bank_id}, stage_id={stage_id})")
-
-
-class QuestionNotFoundError(Exception):
-    """The requested question does not exist."""
-
-    def __init__(self, question_id: UUID):
-        self.question_id = question_id
-        super().__init__(f"Question not found: {question_id}")
-
-
 class BankAlreadyGeneratingError(Exception):
     """Generation was triggered while another generation was already in progress."""
 
     def __init__(self, bank_id: UUID):
         self.bank_id = bank_id
         super().__init__(f"Bank {bank_id} is already in 'generating' state")
+
+
+class IllegalTransitionError(Exception):
+    """The bank's current state does not allow the requested transition.
+
+    Distinct from BankAlreadyGeneratingError — that one signals the specific
+    double-trigger case (bank is already generating); this one signals any
+    OTHER illegal source state (e.g., trying to transition from 'generating'
+    to 'confirmed' without going through 'reviewing'). Both map to HTTP 409
+    but with different detail messages so the frontend can surface precise
+    feedback.
+    """
+
+    def __init__(self, from_state: str, to_state: str):
+        self.from_state = from_state
+        self.to_state = to_state
+        super().__init__(
+            f"Illegal bank state transition: {from_state!r} → {to_state!r}"
+        )
 
 
 class BankNotInReviewingError(Exception):
@@ -108,7 +110,29 @@ class SignalTypeNotAllowedError(Exception):
         )
 
 
-class StarterNotSupportedError(Exception):
-    """Placeholder for unsupported generation actions."""
+class ReorderMismatchError(Exception):
+    """The set of question_ids in a reorder request doesn't match the bank's
+    current questions.
 
-    pass
+    Raised by service.reorder_questions when the incoming list is a strict
+    subset / superset / disjoint set relative to the existing bank.
+    """
+
+    def __init__(self, bank_id: UUID, expected: set[UUID], received: set[UUID]):
+        self.bank_id = bank_id
+        self.expected = expected
+        self.received = received
+        super().__init__(
+            f"Reorder list for bank {bank_id} must contain exactly the "
+            f"existing question IDs"
+        )
+
+
+class ReorderDuplicateError(Exception):
+    """The reorder list contains duplicate question IDs."""
+
+    def __init__(self, bank_id: UUID):
+        self.bank_id = bank_id
+        super().__init__(
+            f"Reorder list for bank {bank_id} contains duplicate question IDs"
+        )

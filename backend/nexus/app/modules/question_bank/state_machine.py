@@ -18,8 +18,11 @@ from app.models import StageQuestionBank
 from app.modules.question_bank.errors import (
     BankAlreadyGeneratingError,
     BankNotInReviewingError,
+    IllegalTransitionError,
 )
 
+# Canonical BankStatus. schemas.py imports this and re-exports it so both
+# layers stay in sync (B8 consolidation).
 BankStatus = Literal["draft", "generating", "reviewing", "confirmed", "failed"]
 
 # Legal transitions. Each value is the set of statuses the left-hand state can move to.
@@ -41,20 +44,37 @@ def _now_utc() -> datetime:
 def transition_to_generating(bank: StageQuestionBank) -> None:
     """draft | reviewing | confirmed | failed → generating.
 
-    Raises BankAlreadyGeneratingError if the bank is already generating.
+    Raises:
+      BankAlreadyGeneratingError — the bank is already in 'generating'.
+        This is the common double-trigger case and carries a specific
+        user-facing message.
+      IllegalTransitionError — any OTHER illegal source state (defensive:
+        should be unreachable if LEGAL is kept in sync with the diagram).
     """
     if bank.status == "generating":
         raise BankAlreadyGeneratingError(bank_id=bank.id)
-    if bank.status not in LEGAL or "generating" not in LEGAL[bank.status]:  # defensive
-        raise BankAlreadyGeneratingError(bank_id=bank.id)
+    if bank.status not in LEGAL or "generating" not in LEGAL[bank.status]:
+        raise IllegalTransitionError(
+            from_state=bank.status, to_state="generating"
+        )
     bank.status = "generating"
     bank.generation_error = None
     bank.updated_at = _now_utc()
 
 
 def transition_to_reviewing_after_generation(bank: StageQuestionBank, *, user_id: UUID) -> None:
-    """generating → reviewing on LLM success."""
-    assert bank.status == "generating", f"expected generating, got {bank.status}"
+    """generating → reviewing on LLM success.
+
+    NOTE: this is a caller-bug guard, not a user-facing error. Replaced
+    `assert` with an explicit raise so the check survives `python -O`
+    (which strips assertions and would silently mutate bank state
+    through an invalid source).
+    """
+    if bank.status != "generating":
+        raise RuntimeError(
+            f"transition_to_reviewing_after_generation requires "
+            f"status='generating', got {bank.status!r}"
+        )
     bank.status = "reviewing"
     bank.generated_at = _now_utc()
     bank.generated_by = user_id
@@ -62,8 +82,17 @@ def transition_to_reviewing_after_generation(bank: StageQuestionBank, *, user_id
 
 
 def transition_to_failed(bank: StageQuestionBank, *, error: str) -> None:
-    """generating → failed with error message."""
-    assert bank.status == "generating", f"expected generating, got {bank.status}"
+    """generating → failed with error message.
+
+    NOTE: caller-bug guard (same reasoning as
+    transition_to_reviewing_after_generation — asserts are stripped
+    under `python -O`).
+    """
+    if bank.status != "generating":
+        raise RuntimeError(
+            f"transition_to_failed requires status='generating', "
+            f"got {bank.status!r}"
+        )
     bank.status = "failed"
     bank.generation_error = error
     bank.updated_at = _now_utc()

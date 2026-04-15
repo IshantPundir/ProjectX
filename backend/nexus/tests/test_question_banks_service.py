@@ -32,6 +32,7 @@ from app.modules.question_bank.errors import (
     BankNotInReviewingError,
     KnockoutUnprobedError,
     MandatoryOverrunError,
+    ReorderMismatchError,
     SignalTypeNotAllowedError,
     SignalValueNotInSnapshotError,
 )
@@ -908,7 +909,8 @@ async def test_reorder_questions_rejects_mismatched_id_set(db):
         text="Question bravo text here?",
     )
 
-    with pytest.raises(ValueError):
+    # B9: reorder now raises typed ReorderMismatchError (was bare ValueError).
+    with pytest.raises(ReorderMismatchError):
         await reorder_questions(
             db,
             bank=bank,

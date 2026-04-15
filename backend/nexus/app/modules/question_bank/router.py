@@ -16,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_tenant_db, get_tenant_session
 from app.models import (
-    JobPipelineInstance,  # noqa: F401  (return type of require_pipeline_access)
     JobPipelineStage,
     JobPosting,
     JobPostingSignalSnapshot,
@@ -26,7 +25,6 @@ from app.models import (
 from app.modules.auth.context import UserContext, get_current_user_roles
 from app.modules.question_bank import actors as bank_actors
 from app.modules.question_bank.authz import (
-    require_bank_access,  # noqa: F401  (plan-mandated import; not used in router body)
     require_bank_access_by_stage,
     require_pipeline_access,
     require_question_access,
@@ -59,7 +57,6 @@ from app.modules.question_bank.service import (
     ensure_bank_exists,
     get_bank_questions,
     get_banks_for_pipeline,
-    get_latest_confirmed_snapshot,  # noqa: F401  (plan-mandated import; not used in router body)
     reorder_questions,
     transition_to_generating,
     update_question,
@@ -507,16 +504,16 @@ async def reorder_questions_endpoint(
     if bank is None:
         raise HTTPException(404, detail="No bank for this stage")
 
-    try:
-        await reorder_questions(
-            db,
-            bank=bank,
-            question_ids=body.question_ids,
-            user_id=user.user.id,
-            user_email=user.user.email,
-        )
-    except ValueError as exc:
-        raise HTTPException(400, detail=str(exc))
+    # ReorderMismatchError / ReorderDuplicateError are handled globally in
+    # app/main.py as 400 responses. Letting them bubble keeps the message
+    # specific ("contains duplicates" vs "must match the existing set").
+    await reorder_questions(
+        db,
+        bank=bank,
+        question_ids=body.question_ids,
+        user_id=user.user.id,
+        user_email=user.user.email,
+    )
 
     # IMPORTANT: build the response BEFORE db.commit().
     #

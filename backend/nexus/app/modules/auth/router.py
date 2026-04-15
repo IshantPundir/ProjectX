@@ -167,7 +167,24 @@ async def get_current_user(
     ctx: UserContext = Depends(get_current_user_roles),
     db: AsyncSession = Depends(get_bypass_db),
 ) -> MeResponse:
-    """Return the current user's profile, assignments, and company info."""
+    """Return the current user's profile, assignments, and company info.
+
+    RLS bypass justification (B2):
+      Uses get_bypass_db rather than get_tenant_db because:
+      1. get_current_user_roles already runs under a bypass session — it
+         resolves the user row by auth_user_id, which is needed to discover
+         tenant_id in the first place.
+      2. For newly-signed-up users whose JWT was issued before the auth
+         hook could fill in tenant_id (edge case: user row not yet in DB
+         when the token was minted), payload.tenant_id may be "". That
+         would trip _coerce_tenant_id and 401 the user on every dashboard
+         load, including the onboarding redirect path.
+      3. /me only SELECTs the caller's own Client and counts their own
+         OrganizationalUnit rows — both are scoped by user.tenant_id from
+         the authenticated DB user row, not from the JWT. There is no
+         cross-tenant read surface even without RLS enforcement.
+      When tenant propagation in the JWT is rock-solid we can revisit.
+    """
     user = ctx.user
 
     # Get client name
@@ -213,6 +230,15 @@ async def complete_onboarding(
     """Mark onboarding as complete. Super admin only.
 
     Validates: caller is super admin AND at least one org unit exists.
+
+    RLS bypass justification (B2):
+      Uses get_bypass_db because this endpoint UPDATEs `clients.onboarding_complete`.
+      The `clients` table has only a `tenant_read` SELECT policy plus
+      `service_bypass` for all commands — there is no UPDATE policy under
+      tenant isolation, so writes must run under bypass_rls. Swapping to
+      get_tenant_db would silently 0-row the UPDATE under RLS.
+      Authorization is enforced by require_super_admin (checked explicitly
+      above via ctx.is_super_admin) before any mutation happens.
     """
     if not ctx.is_super_admin:
         raise HTTPException(status_code=403, detail="Only the super admin can complete onboarding")

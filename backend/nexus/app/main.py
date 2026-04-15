@@ -162,8 +162,11 @@ def create_app() -> FastAPI:
     from app.modules.question_bank.errors import (
         BankAlreadyGeneratingError as QB_BankAlreadyGeneratingError,
         BankNotInReviewingError as QB_BankNotInReviewingError,
+        IllegalTransitionError as QB_IllegalTransitionError,
         KnockoutUnprobedError as QB_KnockoutUnprobedError,
         MandatoryOverrunError as QB_MandatoryOverrunError,
+        ReorderDuplicateError as QB_ReorderDuplicateError,
+        ReorderMismatchError as QB_ReorderMismatchError,
     )
 
     @application.exception_handler(QB_BankAlreadyGeneratingError)
@@ -171,6 +174,19 @@ def create_app() -> FastAPI:
         request: Request, exc: QB_BankAlreadyGeneratingError
     ) -> JSONResponse:
         return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+    @application.exception_handler(QB_IllegalTransitionError)
+    async def qb_illegal_transition(
+        request: Request, exc: QB_IllegalTransitionError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": str(exc),
+                "from_state": exc.from_state,
+                "to_state": exc.to_state,
+            },
+        )
 
     @application.exception_handler(QB_BankNotInReviewingError)
     async def qb_not_reviewing(
@@ -192,6 +208,18 @@ def create_app() -> FastAPI:
         request: Request, exc: QB_MandatoryOverrunError
     ) -> JSONResponse:
         return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+    @application.exception_handler(QB_ReorderMismatchError)
+    async def qb_reorder_mismatch(
+        request: Request, exc: QB_ReorderMismatchError
+    ) -> JSONResponse:
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+    @application.exception_handler(QB_ReorderDuplicateError)
+    async def qb_reorder_duplicate(
+        request: Request, exc: QB_ReorderDuplicateError
+    ) -> JSONResponse:
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
 
     # --- Health check ---
     @application.get("/health", tags=["infra"])

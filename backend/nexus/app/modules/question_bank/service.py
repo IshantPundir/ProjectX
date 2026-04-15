@@ -30,6 +30,8 @@ from app.modules.audit.service import log_event
 from app.modules.question_bank.errors import (
     KnockoutUnprobedError,
     MandatoryOverrunError,
+    ReorderDuplicateError,
+    ReorderMismatchError,
     SignalTypeNotAllowedError,
     SignalValueNotInSnapshotError,
 )
@@ -161,32 +163,54 @@ async def get_banks_for_pipeline(
     """Return (bank, question_count, total_minutes, is_stale) tuples for every
     bank in the pipeline, ordered by stage position. Missing banks are NOT
     included — caller is expected to handle 'no bank yet' states separately.
+
+    Query shape: 4 statements total (stages + banks + questions + latest
+    snapshot), regardless of pipeline size. Previously this was a 1 + 2N
+    loop that fired two extra SELECTs per stage on every pipeline overview
+    load — painful under concurrency for a pipeline with 8 stages
+    (1 + 16 = 17 queries per page load). (B7 fix.)
     """
-    # Load stages in position order
+    # 1. Load stages in position order.
     stage_result = await db.execute(
         select(JobPipelineStage)
         .where(JobPipelineStage.instance_id == instance.id)
         .order_by(JobPipelineStage.position)
     )
     stages = list(stage_result.scalars().all())
+    if not stages:
+        return []
 
-    # Cache latest confirmed snapshot once for staleness
+    stage_ids = [s.id for s in stages]
+
+    # 2. Bulk-load all banks for these stages in one statement.
+    bank_result = await db.execute(
+        select(StageQuestionBank).where(StageQuestionBank.stage_id.in_(stage_ids))
+    )
+    banks_by_stage: dict[UUID, StageQuestionBank] = {
+        b.stage_id: b for b in bank_result.scalars().all()
+    }
+
+    bank_ids = [b.id for b in banks_by_stage.values()]
+
+    # 3. Bulk-load all questions for those banks in one statement.
+    questions_by_bank: dict[UUID, list[StageQuestion]] = {}
+    if bank_ids:
+        q_result = await db.execute(
+            select(StageQuestion).where(StageQuestion.bank_id.in_(bank_ids))
+        )
+        for q in q_result.scalars().all():
+            questions_by_bank.setdefault(q.bank_id, []).append(q)
+
+    # 4. Cache latest confirmed snapshot once for staleness computation.
     latest = await get_latest_confirmed_snapshot(db, instance.job_posting_id)
     latest_id = latest.id if latest else None
 
     out: list[tuple[StageQuestionBank, int, float, bool]] = []
     for stage in stages:
-        bank_result = await db.execute(
-            select(StageQuestionBank).where(StageQuestionBank.stage_id == stage.id)
-        )
-        bank = bank_result.scalar_one_or_none()
+        bank = banks_by_stage.get(stage.id)
         if bank is None:
             continue
-
-        q_result = await db.execute(
-            select(StageQuestion).where(StageQuestion.bank_id == bank.id)
-        )
-        questions = list(q_result.scalars().all())
+        questions = questions_by_bank.get(bank.id, [])
         question_count = len(questions)
         total_minutes = float(sum(q.estimated_minutes for q in questions))
         is_stale = latest_id is not None and bank.signal_snapshot_id != latest_id
@@ -608,17 +632,28 @@ async def reorder_questions(
     user_id: UUID,
     user_email: str | None,
 ) -> None:
-    """Set positions 0..N-1 from the given order. Validates the set matches."""
+    """Set positions 0..N-1 from the given order. Validates the set matches.
+
+    Raises:
+      ReorderDuplicateError — the list contains the same ID twice.
+      ReorderMismatchError — the set of IDs doesn't exactly equal the
+        bank's current question set (missing IDs, unknown IDs, both).
+    """
     existing = await get_bank_questions(db, bank.id)
     existing_ids = {q.id for q in existing}
     incoming_ids = set(question_ids)
 
-    if existing_ids != incoming_ids:
-        raise ValueError(
-            "Reorder list must contain exactly the existing question IDs"
-        )
+    # Duplicate check first — a list like [A, A, B] would pass the set-
+    # equality check against {A, B} while still being invalid.
     if len(question_ids) != len(incoming_ids):
-        raise ValueError("Reorder list contains duplicates")
+        raise ReorderDuplicateError(bank_id=bank.id)
+
+    if existing_ids != incoming_ids:
+        raise ReorderMismatchError(
+            bank_id=bank.id,
+            expected=existing_ids,
+            received=incoming_ids,
+        )
 
     by_id = {q.id: q for q in existing}
     for i, qid in enumerate(question_ids):

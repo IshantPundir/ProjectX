@@ -15,13 +15,16 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # ---------------------------------------------------------------------------
 # Shared enums
 # ---------------------------------------------------------------------------
 
-BankStatus = Literal["draft", "generating", "reviewing", "confirmed", "failed"]
+# BankStatus is the single canonical definition — re-exported from
+# state_machine.py so both layers stay in sync. (B8 consolidation.)
+from app.modules.question_bank.state_machine import BankStatus  # noqa: E402
+
 QuestionSource = Literal["ai_generated", "ai_regenerated", "recruiter"]
 
 
@@ -139,6 +142,21 @@ class UpdateQuestionBody(BaseModel):
     rubric: QuestionRubric | None = None
     evaluation_hint: str | None = Field(default=None, min_length=10, max_length=200)
     position: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def at_least_one_field(self) -> "UpdateQuestionBody":
+        """Reject an empty PATCH body.
+
+        Without this guard, an empty `{}` request body passes Pydantic
+        (all fields default to None), hits update_question(), and triggers
+        auto_revert_on_edit() — silently flipping a confirmed bank back to
+        reviewing with zero field changes. Force callers to send at least
+        one semantically meaningful field.
+        """
+        provided = self.model_dump(exclude_unset=True)
+        if not provided:
+            raise ValueError("At least one field must be provided to update")
+        return self
 
 
 class ReorderBody(BaseModel):

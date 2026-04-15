@@ -59,10 +59,38 @@ def langfuse_enabled() -> bool:
     )
 
 
+def _is_langfuse_cloud_host(url: str) -> bool:
+    """True if the Langfuse URL points at any cloud.langfuse.com subdomain.
+
+    Matches both the US (us.cloud.langfuse.com) and EU (cloud.langfuse.com)
+    managed instances, plus any future `*.langfuse.com` host. Self-hosted
+    deployments use the operator's own domain and are not affected.
+    """
+    if not url:
+        return False
+    # Strip scheme and path; keep only the host portion.
+    stripped = url
+    for prefix in ("https://", "http://"):
+        if stripped.startswith(prefix):
+            stripped = stripped[len(prefix):]
+            break
+    host = stripped.split("/", 1)[0].split(":", 1)[0].lower()
+    return host == "langfuse.com" or host.endswith(".langfuse.com")
+
+
 def _ensure_langfuse_configured() -> None:
     """Configure the langfuse_context singleton (used by @observe() and the
     OpenAI wrapper) with explicit host/keys. Safe to call multiple times;
-    the actual configure() only runs once."""
+    the actual configure() only runs once.
+
+    Cloud prevention: CLAUDE.md prohibits routing candidate evaluation data
+    through managed Langfuse cloud (AIVIA + third-party sub-processor rules).
+    If the configured host resolves to *.langfuse.com outside
+    `ENVIRONMENT=development`, this raises RuntimeError on first call so the
+    process fails closed at startup rather than silently leaking PII. In
+    development we still allow it (for quick benchmarking) but log a loud
+    warning.
+    """
     global _langfuse_configured
     if _langfuse_configured:
         return
@@ -73,6 +101,24 @@ def _ensure_langfuse_configured() -> None:
         langfuse_context.configure(enabled=False)
         logger.info("langfuse.disabled", reason="missing url or keys")
         return
+
+    if _is_langfuse_cloud_host(url):
+        if settings.environment != "development":
+            raise RuntimeError(
+                "Langfuse cloud is prohibited in non-development environments "
+                "— use self-hosted per CLAUDE.md. Set LANGFUSE_BASE_URL to a "
+                "self-hosted instance, or leave it empty to disable tracing."
+            )
+        logger.warning(
+            "langfuse.cloud_host_in_dev",
+            host=url,
+            message=(
+                "Langfuse is pointed at *.langfuse.com. This is only allowed "
+                "in ENVIRONMENT=development. Do NOT deploy this configuration "
+                "to staging or production — candidate transcripts would leak "
+                "to a third-party sub-processor."
+            ),
+        )
 
     langfuse_context.configure(
         public_key=settings.langfuse_public_key,

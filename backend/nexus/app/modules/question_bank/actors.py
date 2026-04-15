@@ -16,6 +16,7 @@ from uuid import UUID
 
 import dramatiq
 import structlog
+from langfuse.decorators import langfuse_context, observe
 from sqlalchemy import select
 from sqlalchemy.sql import text
 
@@ -34,12 +35,11 @@ from app.models import (
 from app.modules.audit.service import log_event
 from app.modules.org_units.service import find_company_profile_in_ancestry
 from app.modules.question_bank.schemas import (
-    GeneratedQuestion,  # noqa: F401  (re-exported for downstream consumers)
     SingleQuestionOutput,
     StageQuestionBankOutput,
 )
 from app.modules.question_bank.service import (
-    compute_is_stale,  # noqa: F401  (re-exported for downstream consumers)
+    ensure_bank_exists,
     get_bank_questions,
     replace_question_in_place,
     transition_to_failed,
@@ -48,6 +48,7 @@ from app.modules.question_bank.service import (
     validate_llm_output_against_snapshot,
     write_generated_questions,
 )
+from app.modules.question_bank.state_machine import auto_revert_on_edit
 
 logger = structlog.get_logger()
 
@@ -240,6 +241,7 @@ def _build_user_message(
 # Core generation function (shared by the stage and pipeline actors)
 # ---------------------------------------------------------------------------
 
+@observe(name="question_bank_generate")
 async def _generate_one_bank(
     db,
     *,
@@ -252,7 +254,33 @@ async def _generate_one_bank(
 ) -> None:
     """Run generation for one bank. Must be called with bank.status='generating'.
     On success → transitions to reviewing. On error → transitions to failed.
-    Caller must commit or rollback."""
+    Caller must commit or rollback.
+
+    Tracing:
+      @observe creates a Langfuse trace named 'question_bank_generate'.
+      The OpenAI call inside (via langfuse.openai.AsyncOpenAI) is
+      auto-captured as a nested generation span. Trace metadata includes
+      bank_id, stage_id, tenant_id, and model/effort so traces are
+      searchable per-bank in the Langfuse dashboard. session_id groups
+      all retries of the same bank into one Langfuse session (matching
+      jd/actors.py). (B13 wiring.)
+    """
+    # Attach trace metadata for Langfuse dashboard search / grouping.
+    langfuse_context.update_current_trace(
+        session_id=str(bank.id),
+        tags=["question_bank_generate", f"stage_type:{stage.stage_type}"],
+        metadata={
+            "bank_id": str(bank.id),
+            "stage_id": str(stage.id),
+            "stage_type": stage.stage_type,
+            "tenant_id": str(bank.tenant_id),
+            "job_posting_id": str(job.id),
+            "model": ai_config.question_bank_model,
+            "reasoning_effort": ai_config.question_bank_effort,
+            "prompt_version": bank.prompt_version,
+        },
+    )
+
     try:
         company_profile = await find_company_profile_in_ancestry(db, job.org_unit_id)
         pipeline_stages = await _load_pipeline_context(
@@ -299,6 +327,15 @@ async def _generate_one_bank(
                     {"role": "user", "content": user_message},
                 ],
                 max_retries=1,
+                name="question_bank_generate_call1",
+                metadata={
+                    "bank_id": str(bank.id),
+                    "stage_id": str(stage.id),
+                    "stage_type": stage.stage_type,
+                    "tenant_id": str(bank.tenant_id),
+                    "job_posting_id": str(job.id),
+                    "prompt_version": bank.prompt_version,
+                },
             )
         except Exception as llm_exc:
             duration_sec = time.monotonic() - call_started_at
@@ -491,7 +528,6 @@ async def generate_question_bank_pipeline(
         failed = 0
         for stage in stages:
             # Ensure bank exists and is in generating state
-            from app.modules.question_bank.service import ensure_bank_exists
             bank = await ensure_bank_exists(db, stage=stage, job=job)
             try:
                 transition_to_generating(bank)
@@ -551,6 +587,162 @@ async def generate_question_bank_pipeline(
 # Actor: single question regeneration
 # ---------------------------------------------------------------------------
 
+@observe(name="question_bank_regenerate")
+async def _regenerate_one_question(
+    db,
+    *,
+    question: StageQuestion,
+    bank: StageQuestionBank,
+    stage: JobPipelineStage,
+    job: JobPosting,
+    snapshot: JobPostingSignalSnapshot,
+    replace_signal_values: list[str] | None,
+) -> None:
+    """Inner helper for regenerate_question that owns the LLM + DB write.
+
+    Separated from the Dramatiq actor so @observe() can wrap only the
+    observable path (not the actor's session bootstrap). Matches the
+    jd/actors.py `_run_extraction` pattern. (B13 wiring.)
+    """
+    # Attach trace metadata for Langfuse dashboard search / grouping.
+    langfuse_context.update_current_trace(
+        session_id=str(bank.id),
+        tags=["question_bank_regenerate", f"stage_type:{stage.stage_type}"],
+        metadata={
+            "bank_id": str(bank.id),
+            "stage_id": str(stage.id),
+            "stage_type": stage.stage_type,
+            "tenant_id": str(bank.tenant_id),
+            "job_posting_id": str(job.id),
+            "question_id": str(question.id),
+            "model": ai_config.question_bank_model,
+            "reasoning_effort": ai_config.question_bank_effort,
+            "prompt_version": bank.prompt_version,
+        },
+    )
+
+    # Build prompt: common header + regenerate_one + rich user context
+    system_prompt = prompt_loader.load_pair(
+        "question_bank_common", "question_bank_regenerate_one"
+    )
+
+    other_questions = await get_bank_questions(db, bank.id)
+    other_questions = [q for q in other_questions if q.id != question.id]
+    target_signals = replace_signal_values or question.signal_values
+
+    user_parts = [
+        f"# JOB CONTEXT\n\nJob: {job.title}\nSeniority: {snapshot.seniority_level}\n\n",
+        "# SIGNALS (pinned snapshot)\n",
+    ]
+    for signal in snapshot.signals:
+        user_parts.append(
+            f"- {signal['value']!r} (type: {signal['type']}, "
+            f"weight: {signal['weight']}, knockout: {signal.get('knockout', False)})\n"
+        )
+
+    user_parts.append("\n# CURRENT QUESTION BEING REPLACED\n")
+    user_parts.append(
+        f"Text: {question.text}\n"
+        f"Probes: {question.signal_values}\n"
+        f"Rubric meets_bar: {question.rubric.get('meets_bar', '')}\n"
+        f"Estimated minutes: {question.estimated_minutes}\n"
+    )
+
+    user_parts.append("\n# TARGET SIGNALS (probe these)\n")
+    for v in target_signals:
+        user_parts.append(f"- {v!r}\n")
+
+    user_parts.append("\n# OTHER QUESTIONS IN THIS STAGE'S BANK — DO NOT DUPLICATE\n")
+    for q in other_questions:
+        user_parts.append(
+            f"- Q{q.position}: {q.text} (probes: {q.signal_values})\n"
+        )
+
+    user_parts.append(
+        f"\n# STAGE METADATA\n"
+        f"Type: {stage.stage_type}, Duration: {stage.duration_minutes} min, "
+        f"Difficulty: {stage.difficulty}\n"
+    )
+
+    user_parts.append(
+        "\nNow generate ONE replacement question as a SingleQuestionOutput.\n"
+    )
+
+    client = get_openai_client()
+
+    logger.info(
+        "question_bank.llm_call.start",
+        call_type="regenerate_question",
+        question_id=str(question.id),
+        bank_id=str(bank.id),
+        model=ai_config.question_bank_model,
+        reasoning_effort=ai_config.question_bank_effort,
+        system_prompt_chars=len(system_prompt),
+        user_message_chars=sum(len(p) for p in user_parts),
+    )
+    call_started_at = time.monotonic()
+    try:
+        result: SingleQuestionOutput = await client.chat.completions.create(
+            model=ai_config.question_bank_model,
+            reasoning_effort=ai_config.question_bank_effort,
+            response_model=SingleQuestionOutput,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": "".join(user_parts)},
+            ],
+            max_retries=1,
+            name="question_bank_regenerate_call1",
+            metadata={
+                "bank_id": str(bank.id),
+                "stage_id": str(stage.id),
+                "stage_type": stage.stage_type,
+                "tenant_id": str(bank.tenant_id),
+                "job_posting_id": str(job.id),
+                "question_id": str(question.id),
+                "prompt_version": bank.prompt_version,
+            },
+        )
+    except Exception as llm_exc:
+        duration_sec = time.monotonic() - call_started_at
+        logger.error(
+            "question_bank.llm_call.failed",
+            call_type="regenerate_question",
+            question_id=str(question.id),
+            bank_id=str(bank.id),
+            duration_sec=round(duration_sec, 2),
+            error_type=type(llm_exc).__name__,
+            error_message=str(llm_exc)[:500],
+            exc_info=True,
+        )
+        raise
+
+    duration_sec = time.monotonic() - call_started_at
+    logger.info(
+        "question_bank.llm_call.complete",
+        call_type="regenerate_question",
+        question_id=str(question.id),
+        bank_id=str(bank.id),
+        duration_sec=round(duration_sec, 2),
+        reasoning_chars=len(result.reasoning),
+    )
+
+    # Post-validate the one question against the snapshot
+    allowed_types = stage.signal_filter.get("include_types", [])
+    await validate_llm_output_against_snapshot(
+        db,
+        snapshot=snapshot,
+        allowed_types=allowed_types,
+        questions=[result.question],
+    )
+
+    await replace_question_in_place(
+        db, question=question, new_data=result.question
+    )
+    # Auto-revert on edit (confirmed → reviewing if needed)
+    auto_revert_on_edit(bank)
+    await db.flush()
+
+
 @dramatiq.actor(
     max_retries=2,
     min_backoff=2_000,
@@ -566,7 +758,9 @@ async def regenerate_question(
     """Regenerate a single question slot, preserving its UUID.
 
     Uses the regenerate-one prompt which takes other questions in the bank
-    as 'do not duplicate' context.
+    as 'do not duplicate' context. Delegates the observable LLM + DB write
+    path to `_regenerate_one_question` so @observe() wraps just that
+    portion (matching jd/actors.py).
     """
     async with get_bypass_session() as db:
         safe_tenant_id = str(UUID(tenant_id))
@@ -595,7 +789,7 @@ async def regenerate_question(
                 JobPipelineInstance.id == stage.instance_id
             )
         )
-        instance = instance_result.scalar_one()
+        _instance = instance_result.scalar_one()
         job_result = await db.execute(
             select(JobPosting).where(JobPosting.id == bank.job_posting_id)
         )
@@ -607,117 +801,15 @@ async def regenerate_question(
         )
         snapshot = snap_result.scalar_one()
 
-        # Build prompt: common header + regenerate_one + rich user context
-        system_prompt = prompt_loader.load_pair(
-            "question_bank_common", "question_bank_regenerate_one"
-        )
-
-        other_questions = await get_bank_questions(db, bank.id)
-        other_questions = [q for q in other_questions if q.id != question.id]
-        target_signals = replace_signal_values or question.signal_values
-
-        user_parts = [
-            f"# JOB CONTEXT\n\nJob: {job.title}\nSeniority: {snapshot.seniority_level}\n\n",
-            "# SIGNALS (pinned snapshot)\n",
-        ]
-        for signal in snapshot.signals:
-            user_parts.append(
-                f"- {signal['value']!r} (type: {signal['type']}, "
-                f"weight: {signal['weight']}, knockout: {signal.get('knockout', False)})\n"
-            )
-
-        user_parts.append("\n# CURRENT QUESTION BEING REPLACED\n")
-        user_parts.append(
-            f"Text: {question.text}\n"
-            f"Probes: {question.signal_values}\n"
-            f"Rubric meets_bar: {question.rubric.get('meets_bar', '')}\n"
-            f"Estimated minutes: {question.estimated_minutes}\n"
-        )
-
-        user_parts.append("\n# TARGET SIGNALS (probe these)\n")
-        for v in target_signals:
-            user_parts.append(f"- {v!r}\n")
-
-        user_parts.append("\n# OTHER QUESTIONS IN THIS STAGE'S BANK — DO NOT DUPLICATE\n")
-        for q in other_questions:
-            user_parts.append(
-                f"- Q{q.position}: {q.text} (probes: {q.signal_values})\n"
-            )
-
-        user_parts.append(
-            f"\n# STAGE METADATA\n"
-            f"Type: {stage.stage_type}, Duration: {stage.duration_minutes} min, "
-            f"Difficulty: {stage.difficulty}\n"
-        )
-
-        user_parts.append(
-            "\nNow generate ONE replacement question as a SingleQuestionOutput.\n"
-        )
-
-        client = get_openai_client()
-
-        logger.info(
-            "question_bank.llm_call.start",
-            call_type="regenerate_question",
-            question_id=str(question.id),
-            bank_id=str(bank.id),
-            model=ai_config.question_bank_model,
-            reasoning_effort=ai_config.question_bank_effort,
-            system_prompt_chars=len(system_prompt),
-            user_message_chars=sum(len(p) for p in user_parts),
-        )
-        call_started_at = time.monotonic()
-        try:
-            result: SingleQuestionOutput = await client.chat.completions.create(
-                model=ai_config.question_bank_model,
-                reasoning_effort=ai_config.question_bank_effort,
-                response_model=SingleQuestionOutput,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": "".join(user_parts)},
-                ],
-                max_retries=1,
-            )
-        except Exception as llm_exc:
-            duration_sec = time.monotonic() - call_started_at
-            logger.error(
-                "question_bank.llm_call.failed",
-                call_type="regenerate_question",
-                question_id=str(question.id),
-                bank_id=str(bank.id),
-                duration_sec=round(duration_sec, 2),
-                error_type=type(llm_exc).__name__,
-                error_message=str(llm_exc)[:500],
-                exc_info=True,
-            )
-            raise
-
-        duration_sec = time.monotonic() - call_started_at
-        logger.info(
-            "question_bank.llm_call.complete",
-            call_type="regenerate_question",
-            question_id=str(question.id),
-            bank_id=str(bank.id),
-            duration_sec=round(duration_sec, 2),
-            reasoning_chars=len(result.reasoning),
-        )
-
-        # Post-validate the one question against the snapshot
-        allowed_types = stage.signal_filter.get("include_types", [])
-        await validate_llm_output_against_snapshot(
+        await _regenerate_one_question(
             db,
+            question=question,
+            bank=bank,
+            stage=stage,
+            job=job,
             snapshot=snapshot,
-            allowed_types=allowed_types,
-            questions=[result.question],
+            replace_signal_values=replace_signal_values,
         )
-
-        await replace_question_in_place(
-            db, question=question, new_data=result.question
-        )
-        # Auto-revert on edit (confirmed → reviewing if needed)
-        from app.modules.question_bank.state_machine import auto_revert_on_edit
-        auto_revert_on_edit(bank)
-        await db.flush()
 
         await log_event(
             db,
