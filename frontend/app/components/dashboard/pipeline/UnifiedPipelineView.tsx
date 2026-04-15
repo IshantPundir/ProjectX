@@ -68,15 +68,23 @@ export function UnifiedPipelineView({ job, pipeline, jobId }: Props) {
   const stagesRef = useRef(stages)
   const editGenRef = useRef(0)
 
-  useEffect(() => {
-    stagesRef.current = stages
-  })
-
   // Selected stage + tab from URL
   const selectedStageId = searchParams.get('stage')
   const activeTab = (searchParams.get('tab') ?? 'questions') as
     | 'questions'
     | 'config'
+
+  // Mirror the latest stages + selectedStageId into refs so the keyboard
+  // handler effect below can read fresh values without re-binding the
+  // listener on every keystroke. Without this, depending on `stages` in
+  // the keyboard effect tears down + re-adds the document listener every
+  // single edit during pipeline editing.
+  const selectedStageIdRef = useRef(selectedStageId)
+
+  useEffect(() => {
+    stagesRef.current = stages
+    selectedStageIdRef.current = selectedStageId
+  })
 
   // Stream live bank updates for the currently-selected stage
   useQuestionsStatusStream(jobId, selectedStageId)
@@ -255,6 +263,14 @@ export function UnifiedPipelineView({ job, pipeline, jobId }: Props) {
   }
 
   // Keyboard shortcuts
+  //
+  // The handler reads stages + selectedStageId from refs (mirrored above)
+  // rather than closure-captured values, so the effect dep array can stay
+  // stable at [selectStage, setActiveTab]. Both of those are useCallback'd
+  // against [router, searchParams, jobId], so they only change when the
+  // route does — NOT on every keystroke. Depending on `stages` directly
+  // here would tear down + re-attach the document listener on every edit
+  // during pipeline editing, which is churny (even if not broken).
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
       const target = e.target as HTMLElement
@@ -266,30 +282,33 @@ export function UnifiedPipelineView({ job, pipeline, jobId }: Props) {
         return
       }
 
-      if (e.key === 'Escape' && selectedStageId) {
+      const currentStages = stagesRef.current
+      const currentSelectedId = selectedStageIdRef.current
+
+      if (e.key === 'Escape' && currentSelectedId) {
         e.preventDefault()
         selectStage(null)
         return
       }
 
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-        if (stages.length === 0) return
+        if (currentStages.length === 0) return
         e.preventDefault()
-        const currentIdx = selectedStageId
-          ? stages.findIndex((s) => s.id === selectedStageId)
+        const currentIdx = currentSelectedId
+          ? currentStages.findIndex((s) => s.id === currentSelectedId)
           : -1
         const delta = e.key === 'ArrowDown' ? 1 : -1
         const nextIdx = Math.max(
           0,
-          Math.min(stages.length - 1, currentIdx + delta),
+          Math.min(currentStages.length - 1, currentIdx + delta),
         )
-        const nextStageId = stages[nextIdx]?.id
+        const nextStageId = currentStages[nextIdx]?.id
         if (nextStageId) selectStage(nextStageId)
         return
       }
 
       if (e.key === 'q' || e.key === 'Q') {
-        if (selectedStageId) {
+        if (currentSelectedId) {
           e.preventDefault()
           setActiveTab('questions')
         }
@@ -297,7 +316,7 @@ export function UnifiedPipelineView({ job, pipeline, jobId }: Props) {
       }
 
       if (e.key === 'c' || e.key === 'C') {
-        if (selectedStageId) {
+        if (currentSelectedId) {
           e.preventDefault()
           setActiveTab('config')
         }
@@ -305,7 +324,7 @@ export function UnifiedPipelineView({ job, pipeline, jobId }: Props) {
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
-  }, [selectedStageId, stages, selectStage, setActiveTab])
+  }, [selectStage, setActiveTab])
 
   const isSaving = isDirty || saveMutation.isPending
   const saveFailed = saveMutation.isError && !isSaving

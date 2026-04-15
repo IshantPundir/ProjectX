@@ -18,7 +18,11 @@ export function useSaveJobPipeline(jobId: string) {
       return pipelinesApi.updateJobPipeline(token, jobId, body)
     },
     onSuccess: () => {
-      toast.success('Pipeline saved')
+      // Intentionally no toast: this mutation is called every ~800ms
+      // from UnifiedPipelineView's autosave debounce. The inline
+      // "All changes saved" / "Saving…" indicator is the authoritative
+      // UI signal; firing a success toast per autosave would drown out
+      // real notifications. Failures still toast via onError.
       void qc.invalidateQueries({ queryKey: ['job-pipeline', jobId] })
     },
     onError: (err) => toast.error(`Failed to save pipeline: ${err.message}`),

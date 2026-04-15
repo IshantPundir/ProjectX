@@ -1,5 +1,24 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
+/**
+ * Error thrown by apiFetch when the backend returns a non-OK response.
+ *
+ * Carries the HTTP status code alongside the parsed detail message so
+ * callers can branch on status (e.g. 404 => "not found, return null")
+ * without resorting to fragile substring matching on err.message.
+ *
+ * Extends the built-in Error, so any existing `catch (err) { err.message }`
+ * code continues to work unchanged.
+ */
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 export async function apiFetch<T>(
   path: string,
   options: RequestInit & { token?: string } = {},
@@ -30,7 +49,7 @@ export async function apiFetch<T>(
       : typeof detail === 'string'
         ? detail
         : `API error: ${res.status}`;
-    throw new Error(message);
+    throw new ApiError(message, res.status);
   }
 
   return res.json();

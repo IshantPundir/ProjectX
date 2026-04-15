@@ -1,4 +1,4 @@
-import { apiFetch } from './client'
+import { apiFetch, ApiError } from './client'
 
 // --- Enum types ---
 
@@ -169,19 +169,24 @@ export const pipelinesApi = {
     }),
 
   // Job pipeline
-  getJobPipeline: (token: string, jobId: string): Promise<JobPipelineInstance | null> =>
-    apiFetch<JobPipelineInstance>(`/api/jobs/${jobId}/pipeline`, { token }).catch(
-      (err: unknown) => {
-        // Backend returns 404 with "No pipeline for this job" detail when none exists
-        if (
-          err instanceof Error &&
-          (err.message.includes('No pipeline') || err.message.includes('404'))
-        ) {
-          return null
-        }
-        throw err
-      },
-    ),
+  getJobPipeline: async (
+    token: string,
+    jobId: string,
+  ): Promise<JobPipelineInstance | null> => {
+    try {
+      return await apiFetch<JobPipelineInstance>(
+        `/api/jobs/${jobId}/pipeline`,
+        { token },
+      )
+    } catch (err) {
+      // Backend returns 404 when no pipeline has been created yet.
+      // Status-based check (not substring matching on err.message) so
+      // backend detail message changes don't silently swallow unrelated
+      // errors here.
+      if (err instanceof ApiError && err.status === 404) return null
+      throw err
+    }
+  },
 
   createJobPipeline: (
     token: string,

@@ -27,11 +27,19 @@ export default function JobReviewPage() {
 
   // Redirect to Pipeline tab if pipeline exists and user didn't explicitly
   // request the JD tab via ?tab=jd (which the tab link in the layout sets).
+  //
+  // We MUST also gate on job.status === 'signals_confirmed', otherwise a
+  // stale pipeline row (e.g., after the user re-extracted signals) would
+  // trap the user in a redirect loop: /jobs/{id} -> /jobs/{id}/pipeline ->
+  // "not available for editing" page with a "Back to job" link -> back to
+  // /jobs/{id} -> redirect fires again. The pipeline page only allows
+  // editing when status === 'signals_confirmed', so only redirect then.
   useEffect(() => {
     if (!pipeline) return
+    if (job?.status !== 'signals_confirmed') return
     if (searchParams.get('tab') === 'jd') return
     router.replace(`/jobs/${jobId}/pipeline`)
-  }, [pipeline, searchParams, router, jobId])
+  }, [pipeline, job?.status, searchParams, router, jobId])
 
   if (isLoading || !job) {
     return <LoadingSkeleton status={status} sseError={sseError} />

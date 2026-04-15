@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { createClient } from "@/lib/supabase/client";
+import { getFreshSupabaseToken } from "@/lib/auth/tokens";
 import { orgUnitsApi, type MeData, type OrgUnit } from "@/lib/api/org-units";
 import {
   CompanyProfileForm,
@@ -129,16 +129,13 @@ export default function OrgUnitsPage() {
   // POST /api/org-units call via handleClientAccountProfileSubmit.
   const [showProfileDialog, setShowProfileDialog] = useState(false);
 
-  const getToken = useCallback(async () => {
-    const supabase = createClient();
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    if (!session?.access_token) {
+  const getToken = useCallback(async (): Promise<string | null> => {
+    try {
+      return await getFreshSupabaseToken();
+    } catch {
       window.location.href = "/login";
       return null;
     }
-    return session.access_token;
   }, []);
 
   const loadUnits = useCallback(async () => {

@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
 import { apiFetch } from "@/lib/api/client";
+import { getFreshSupabaseToken } from "@/lib/auth/tokens";
 
 interface TeamMemberAssignment {
   org_unit_id: string;
@@ -135,14 +135,13 @@ export default function TeamPage() {
   const [inviteLoading, setInviteLoading] = useState(false);
   const [inviteSuccess, setInviteSuccess] = useState("");
 
-  async function getToken() {
-    const supabase = createClient();
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session?.access_token) {
+  async function getToken(): Promise<string | null> {
+    try {
+      return await getFreshSupabaseToken();
+    } catch {
       window.location.href = "/login";
       return null;
     }
-    return session.access_token;
   }
 
   async function loadData() {

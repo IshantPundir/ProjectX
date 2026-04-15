@@ -45,13 +45,17 @@ export default function ProvisionPage() {
         }),
       });
 
+      // Stay on this page so the operator can copy the invite URL —
+      // it's actionable info that the operator needs to send to the new
+      // company admin manually. router.push'ing away here used to cause
+      // the inviteUrl success block below to never render (state was set
+      // then the page navigated before React could paint).
       if (result.invite_url) {
         setInviteUrl(result.invite_url);
       }
-
-      router.push("/dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Provisioning failed");
+    } finally {
       setLoading(false);
     }
   }
@@ -77,11 +81,29 @@ export default function ProvisionPage() {
           </p>
         )}
         {inviteUrl && (
-          <div className="text-sm bg-green-50 border border-green-200 rounded-lg p-3">
-            <p className="font-medium text-green-800 mb-1">
-              Invite URL (dry-run mode):
+          <div className="text-sm bg-green-50 border border-green-200 rounded-lg p-3 space-y-2">
+            <p className="font-medium text-green-800">
+              Client provisioned. Send this invite URL to the new admin:
             </p>
-            <code className="text-xs break-all text-green-700">{inviteUrl}</code>
+            <code className="block text-xs break-all text-green-700 bg-white border border-green-100 rounded p-2">
+              {inviteUrl}
+            </code>
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => navigator.clipboard?.writeText(inviteUrl)}
+                className="px-3 py-1.5 text-xs font-medium text-green-800 border border-green-300 rounded hover:bg-green-100"
+              >
+                Copy URL
+              </button>
+              <button
+                type="button"
+                onClick={() => router.push("/dashboard")}
+                className="px-3 py-1.5 text-xs font-medium text-white bg-green-700 rounded hover:bg-green-800"
+              >
+                Done — back to dashboard
+              </button>
+            </div>
           </div>
         )}
         <div>
@@ -158,10 +180,14 @@ export default function ProvisionPage() {
           </button>
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || !!inviteUrl}
             className="px-5 py-2.5 bg-zinc-900 text-white rounded-lg text-sm font-medium hover:bg-zinc-800 disabled:opacity-50"
           >
-            {loading ? "Provisioning..." : "Provision & Send Invite"}
+            {loading
+              ? "Provisioning..."
+              : inviteUrl
+                ? "Provisioned"
+                : "Provision & Send Invite"}
           </button>
         </div>
       </form>

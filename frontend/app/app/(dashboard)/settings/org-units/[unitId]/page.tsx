@@ -3,8 +3,8 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/client";
 import { apiFetch } from "@/lib/api/client";
+import { getFreshSupabaseToken } from "@/lib/auth/tokens";
 import { Button } from "@/components/ui/button";
 import {
   CompanyProfileForm,
@@ -217,14 +217,13 @@ export default function OrgUnitDetailPage() {
     onConfirm: () => void;
   } | null>(null);
 
-  const getToken = useCallback(async () => {
-    const supabase = createClient();
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session?.access_token) {
+  const getToken = useCallback(async (): Promise<string | null> => {
+    try {
+      return await getFreshSupabaseToken();
+    } catch {
       window.location.href = "/login";
       return null;
     }
-    return session.access_token;
   }, []);
 
   /* ─── Data loading ─── */
