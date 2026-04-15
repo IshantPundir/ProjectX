@@ -161,7 +161,24 @@ export function UnifiedPipelineView({ job, pipeline, jobId }: Props) {
       saveMutation.mutate(
         { stages: nextStages },
         {
-          onSuccess: () => {
+          onSuccess: (updated) => {
+            // Merge backend-assigned IDs into any local stages that don't
+            // have one yet (newly added via "Add stage"). Match by position
+            // since the backend preserves it and Phase 2C.1's stable-ID
+            // guarantee means existing IDs are never renumbered. Without
+            // this merge, new stages stay with id=undefined forever and
+            // show "Saving…" until a full page refresh re-fetches them.
+            setStages((prev) => {
+              if (prev.every((s) => s.id !== undefined)) return prev
+              const byPosition = new Map(
+                updated.stages.map((s) => [s.position, s.id]),
+              )
+              return prev.map((s) =>
+                s.id === undefined
+                  ? { ...s, id: byPosition.get(s.position) ?? s.id }
+                  : s,
+              )
+            })
             if (gen === editGenRef.current) {
               setIsDirty(false)
             }
