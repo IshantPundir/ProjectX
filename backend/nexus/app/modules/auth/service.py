@@ -29,15 +29,36 @@ def verify_access_token(token: str) -> TokenPayload | None:
     """Verify a dashboard user JWT via JWKS (ES256).
 
     Returns None if the token is invalid, expired, or malformed.
+
+    Algorithm allowlist is fixed to ES256 — our Supabase auth hook signs
+    only ES256, so accepting RS256 or anything else would only widen the
+    attack surface (a compromised JWKS entry under a different alg could
+    be accepted).
+
+    Issuer check:
+        Supabase GoTrue sets iss = `{supabase_url}/auth/v1`. When
+        `settings.supabase_url` is configured we enforce it; otherwise we
+        skip the check (dev bootstrap, tests that mock JWKS).
+
+    Audience check:
+        Supabase signs user tokens with `aud = "authenticated"`. Always
+        enforce it — the string is a GoTrue invariant, not a per-
+        deployment setting.
     """
     try:
         client = _get_jwks_client()
         signing_key = client.get_signing_key_from_jwt(token)
+        decode_kwargs: dict = {
+            "algorithms": ["ES256"],
+            "audience": "authenticated",
+            "options": {"verify_exp": True, "verify_aud": True},
+        }
+        if settings.supabase_url:
+            decode_kwargs["issuer"] = f"{settings.supabase_url.rstrip('/')}/auth/v1"
         payload = jwt.decode(
             token,
             signing_key.key,
-            algorithms=["ES256", "RS256"],
-            options={"verify_exp": True, "verify_aud": False},
+            **decode_kwargs,
         )
         return TokenPayload(
             sub=payload["sub"],

@@ -30,7 +30,12 @@ def mock_jwks_client(ec_key_pair):
 
 
 def _make_token(private_key, **overrides) -> str:
-    """Create a JWT signed with the test private key."""
+    """Create a JWT signed with the test private key.
+
+    Mirrors the shape Supabase GoTrue emits: `aud` = 'authenticated' and
+    `iss` = `<supabase_url>/auth/v1`. verify_access_token() enforces both.
+    """
+    from app.config import settings
     payload = {
         "sub": "test-user-uuid",
         "tenant_id": "test-tenant-uuid",
@@ -40,6 +45,9 @@ def _make_token(private_key, **overrides) -> str:
         "exp": int(time.time()) + 3600,
         "iat": int(time.time()),
         "aud": "authenticated",
+        "iss": f"{settings.supabase_url.rstrip('/')}/auth/v1"
+        if settings.supabase_url
+        else "http://127.0.0.1:54321/auth/v1",
     }
     payload.update(overrides)
     return pyjwt.encode(payload, private_key, algorithm="ES256")
