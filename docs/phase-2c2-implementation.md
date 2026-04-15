@@ -130,7 +130,7 @@ lib/hooks/
                                        selectedStageId (commit 2dfa766)
 ```
 
-The "questions page" route `/jobs/[jobId]/questions` is a single-file redirect: it reads `useBanksOverview`, picks the first stage, and `router.replace`s to `/jobs/{id}/pipeline?stage=...`. **Spec drift** — the design spec proposed a dedicated questions page with sidebar + main pane; what shipped is one merged page (`/jobs/{id}/pipeline`) where `UnifiedPipelineView` hosts the `StageInspectorPanel` with two tabs ("Questions" + "Configuration"). The question-bank surface is a tab inside the pipeline editor, not a sibling page. The redirect preserves spec-era links in the wild.
+The "questions page" route `/jobs/[jobId]/questions` is a single-file redirect (see Section 11 for the route shape). **Spec drift** — the design spec proposed a dedicated questions page with sidebar + main pane; what shipped is one merged page (`/jobs/{id}/pipeline`) where `UnifiedPipelineView` hosts the `StageInspectorPanel` with two tabs ("Questions" + "Configuration"). The question-bank surface is a tab inside the pipeline editor, not a sibling page.
 
 ---
 
@@ -153,7 +153,7 @@ One row per `job_pipeline_stages.id`. Status-machine root.
 | `id` | UUID PK | `gen_random_uuid()` |
 | `tenant_id` | UUID NOT NULL, FK → `clients.id` | RLS scoping |
 | `stage_id` | UUID NOT NULL, FK → `job_pipeline_stages.id` **ON DELETE CASCADE** | Unique via `ix_stage_question_banks_stage` |
-| `job_posting_id` | UUID NOT NULL, FK → `job_postings.id` **ON DELETE CASCADE** | Convenience for bulk loads and RLS predicate wiring |
+| `job_posting_id` | UUID NOT NULL, FK → `job_postings.id` **ON DELETE CASCADE** | Convenience for bulk loads (saves one join in `get_banks_for_pipeline`) |
 | `signal_snapshot_id` | UUID NOT NULL, FK → `job_posting_signal_snapshots.id` | Pinned at bank creation; **no CASCADE** — snapshots are append-only |
 | `status` | TEXT NOT NULL DEFAULT `'draft'` | CHECK `IN ('draft','generating','reviewing','confirmed','failed')` |
 | `prompt_version` | TEXT NOT NULL DEFAULT `'v1'` | Bumps on prompt evolution (none shipped yet) |
@@ -298,7 +298,7 @@ Decorated with `@observe(name="question_bank_generate")`. Wrapping only this inn
 7. `user_message = _build_user_message(...)` — ordered `# JOB CONTEXT` → enriched JD → `# COMPANY PROFILE` → `# SIGNALS TO ASSESS` (full snapshot dump with value / type / priority / weight / knockout / stage_tag) → `# PIPELINE CONTEXT` (every stage, with prior-stage questions inlined under each) → `# THIS STAGE'S METADATA` → closing instruction. Strings are rendered via Python f-strings; `repr()` on `signal['value']` preserves quotes so the LLM copies the string verbatim.
 8. `get_openai_client()` returns a Phase 2A-shared `instructor.AsyncInstructor` wrapping `langfuse.openai.AsyncOpenAI`. Self-hosted Langfuse is enforced via the `_is_langfuse_cloud_host()` check inside the factory.
 9. `client.chat.completions.create(...)` is called with `response_model=StageQuestionBankOutput`, `model=ai_config.question_bank_model`, `reasoning_effort=ai_config.question_bank_effort`, `max_retries=1`, and an explicit `name="question_bank_generate_call1"` for Langfuse. `AIConfig` reads the model id and effort from `settings.openai_question_bank_model` / `settings.openai_question_bank_effort`, so swapping models is a `.env` change — not a code change.
-10. Log `question_bank.llm_call.start` before the call and `question_bank.llm_call.complete` after, with `duration_sec`, `question_count`, and `coverage_notes_preview` (first 100 chars). Errors log `question_bank.llm_call.failed` with `error_type`, truncated `error_message`, and `exc_info=True` before re-raising.
+10. Log `question_bank.llm_call.start` before the call and `question_bank.llm_call.complete` after, with `duration_sec`, `question_count`, and `coverage_notes_preview` (first 100 chars). Errors log `question_bank.llm_call.failed` with `error_type`, truncated `error_message`, and `exc_info=True` before re-raising. Non-LLM exceptions inside `_generate_one_bank` hit the outer `except Exception` in the actor wrapper (step 15) and log `question_bank.generation_failed` + call `transition_to_failed`.
 11. Run `validate_llm_output_against_snapshot(db, snapshot=snapshot, allowed_types=allowed_types, questions=result.questions)` — post-LLM validation pass. Section 4 walks this in full.
 12. **Persist coverage_notes**: `bank.coverage_notes = result.coverage_notes`. This is the 0007-era change — the spec wanted this to live only in the Langfuse trace, but the shipped behavior writes it on the bank row so later audit surfaces can read it directly.
 13. `write_generated_questions(db, bank=bank, questions=validated, source="ai_generated")` — deletes all existing `ai_generated` and `ai_regenerated` rows for the bank (recruiter-sourced questions are preserved), inserts the new ones with their positions offset past any surviving recruiter rows, flushes, then re-packs positions to 0..N-1. The re-pack step matters because the offset-insert strategy leaves holes if a bank had, say, a recruiter question at position 3.
@@ -320,7 +320,7 @@ Actor (`generate_question_bank_pipeline`, `max_retries=0`, `time_limit=1_800_000
 2. Load the instance, job, and all stages in position order.
 3. For each stage, in order:
    - `ensure_bank_exists(db, stage=stage, job=job)` — creates the bank row if the stage doesn't have one yet.
-   - `transition_to_generating(bank)`. If this raises (e.g. the bank was already in `generating` via an earlier single-stage trigger), log `question_bank.skip_busy_stage` and `continue` to the next stage.
+   - `transition_to_generating(bank)`. If this raises (catches every exception via bare `except`, not just `BankAlreadyGeneratingError`; the logged reason is `str(exc)`), log `question_bank.skip_busy_stage` and `continue` to the next stage.
    - Load the pinned snapshot.
    - Call `_generate_one_bank(...)`. On success, increment `succeeded`, `flush`, continue.
    - On exception, log `question_bank.pipeline_stage_failed`, increment `failed`, `flush`, and `continue`. `_generate_one_bank` has already transitioned the bank to `failed` via its inner except branch.
@@ -386,7 +386,7 @@ Called immediately after the LLM returns and before any DB writes. Takes the pin
 
 The invariant after this pass: **every knockout signal has exactly one mandatory question — the earliest in position order that probes it.** Subsequent probes of the same knockout are optional depth probes the session bot can skip under time pressure.
 
-The phone-screen prompt file also carries a hard override: *"phone screen uses EXACTLY ONE question per knockout. The AI interview (next stage) handles depth re-probing."* The post-validation logic doesn't know about this stage-type rule — it only enforces the "earliest one is mandatory, later ones are optional" invariant, which is compatible with both styles.
+The phone-screen prompt file (`prompts/v1/question_bank_phone_screen.txt`) carries an additional hard override baked into the prompt text — not enforced by code. Readers hunting the rule should look in the prompt, not `service.py`: *"phone screen uses EXACTLY ONE question per knockout. The AI interview (next stage) handles depth re-probing."* The post-validation logic doesn't know about this stage-type rule — it only enforces the "earliest one is mandatory, later ones are optional" invariant, which is compatible with both styles.
 
 ### Mandatory budget check at confirmation — `service.validate_mandatory_fits_session`
 
@@ -454,12 +454,14 @@ A regression test in `test_question_banks_router.py` (added in the same commit) 
 
 `service.get_banks_for_pipeline(db, instance)` returns `list[tuple[StageQuestionBank, int, float, bool]]` — one tuple per stage that has a bank, carrying `(bank, question_count, total_minutes, is_stale)`. Called by the list endpoint and (indirectly) by anything that needs a whole-pipeline overview.
 
-**Query count: exactly 4, regardless of pipeline size.**
+**Query count: up to 4, regardless of pipeline size.**
 
 1. Load all stages for the instance in position order.
 2. Bulk-load all banks for those stages in one `WHERE stage_id IN (...)` query. Build `banks_by_stage: dict[UUID, StageQuestionBank]`.
 3. Bulk-load all questions for those banks in one `WHERE bank_id IN (...)` query. Build `questions_by_bank: dict[UUID, list[StageQuestion]]`.
 4. Load the job's latest confirmed signal snapshot once (single `get_latest_confirmed_snapshot(db, instance.job_posting_id)` call).
+
+If no stages have banks yet, query 3 (question fetch) is short-circuited and the total is 3.
 
 Then assemble the output tuples in Python: for each stage, look up its bank (skip if absent), compute `question_count = len(questions)` and `total_minutes = float(sum(q.estimated_minutes for q in questions))`, and compute `is_stale = latest_id is not None and bank.signal_snapshot_id != latest_id`.
 
@@ -483,7 +485,6 @@ The per-request single-query `get_latest_confirmed_snapshot` has no session-leve
 |---|---|---|---|
 | `draft` | `generating` | `transition_to_generating` | Explicit recruiter trigger; raises `BankAlreadyGeneratingError` if bank is already `generating`, `IllegalTransitionError` for any other illegal source |
 | `draft` | `reviewing` | `auto_revert_on_edit` (implicit) | First recruiter-created question on a bank that has never been generated — see `create_recruiter_question` |
-| `draft` | `failed` | `transition_to_failed` | Defensive — unreachable via the current actor flow (actors always go through `generating` first), but the LEGAL map permits it |
 | `generating` | `reviewing` | `transition_to_reviewing_after_generation(user_id=...)` | On LLM success; stamps `generated_at`, `generated_by`, `updated_at`. Guards against wrong source state with an explicit `RuntimeError` (not `assert` — asserts are stripped under `python -O`) |
 | `generating` | `failed` | `transition_to_failed(error=str)` | On LLM / validation error; stamps `generation_error` (truncated to 500 chars) |
 | `reviewing` | `generating` | `transition_to_generating` | "Regenerate all" on a reviewing bank |
@@ -491,6 +492,8 @@ The per-request single-query `get_latest_confirmed_snapshot` has no session-leve
 | `confirmed` | `generating` | `transition_to_generating` | "Regenerate all" on a confirmed bank |
 | `confirmed` | `reviewing` | `auto_revert_on_edit` (implicit) | Triggered by any recruiter edit/create/delete/reorder/regen-completion that mutates the bank |
 | `failed` | `generating` | `transition_to_generating` | Retry after failure; direct, no intermediate `draft` hop. Clears `generation_error` |
+
+Note: although `LEGAL_TRANSITIONS` permits `draft → failed`, the `transition_to_failed()` helper unconditionally raises `RuntimeError` unless the bank is already in `generating`, so this path is unreachable at the helper layer — the LEGAL map entry is dead.
 
 ### Error classes (all mapped to HTTP responses in `app/main.py`)
 
@@ -654,7 +657,7 @@ The hook uses the built-in auto-retry of `fetch-event-source` for transient erro
 |---|---|
 | `bank.status_changed` (any stage) | Sidebar badge re-renders via `useBanksOverview` refetch |
 | `bank.status_changed` (selected stage) | Main pane's `BankHeader` + `QuestionList` re-render via `useBankWithQuestions` refetch |
-| `bank.question_updated` (selected stage) | Same as above (Section 10 API Reference — this event is emitted by the spec but not yet produced by the server; handler is future-proofed) |
+| `bank.question_updated` (selected stage) | Handler registered on the frontend but the backend `sse.py` never emits this event — currently dead. See Known Gaps. |
 | `pipeline.generation_complete` | Sidebar refetches once more; stream closes |
 | `error` | Logged to console via `onerror` — stream closes via the server-side `should_terminate` |
 
@@ -682,17 +685,12 @@ All 11 endpoints are registered under `/api` with the `question_bank` router tag
 
 ### Error shapes
 
-| Error class | HTTP | Body | Raised by |
+See Section 7 for the full error class inventory and HTTP status mapping.
+
+Non-domain failure modes specific to the endpoints:
+
+| Error | HTTP | Body | Raised by |
 |---|---|---|---|
-| `BankAlreadyGeneratingError` | 409 | `{"detail": "Bank <uuid> is already in 'generating' state"}` | `transition_to_generating` — generate endpoints |
-| `IllegalTransitionError` | 409 | `{"detail": "...", "from_state": "...", "to_state": "..."}` | `transition_to_generating` fallback |
-| `BankNotInReviewingError` | 409 | `{"detail": "Cannot confirm bank <uuid>: current status is '...', expected 'reviewing'"}` | `confirm_bank` |
-| `KnockoutUnprobedError` | 409 | `{"detail": "Cannot confirm: knockout signal '<value>' has no mandatory question", "signal_value": "<value>"}` | `validate_knockout_coverage` |
-| `MandatoryOverrunError` | 409 | `{"detail": "Mandatory question time (... min) exceeds the stage's session duration (... min). ..."}` | `validate_mandatory_fits_session` |
-| `SignalValueNotInSnapshotError` | 400 | `{"detail": "Signal value '<value>' does not exist in snapshot <uuid>"}` | Post-LLM validation and recruiter create/update |
-| `SignalTypeNotAllowedError` | 400 | `{"detail": "Signal '<value>' has type '<type>' which is not in this stage's allowed types [...]"}` | Post-LLM validation and recruiter create/update |
-| `ReorderMismatchError` | 400 | `{"detail": "Reorder list for bank <uuid> must contain exactly the existing question IDs"}` | `reorder_questions` |
-| `ReorderDuplicateError` | 400 | `{"detail": "Reorder list for bank <uuid> contains duplicate question IDs"}` | `reorder_questions` |
 | Dispatch failures | 503 | `{"detail": "Failed to enqueue ... job — please retry. ..."}` | `_safe_dispatch_*` wrappers |
 | Missing bank / stage / question / pipeline | 404 | `{"detail": "..."}` | `require_*_access` helpers |
 | Missing permission | 403 | `{"detail": "You do not have permission to ... questions for this job"}` | `require_*_access` ancestry walk |
@@ -815,7 +813,7 @@ And the `generation_error` red-text message under the title when `bank.status ==
 
 ### `BankStatusBadge`
 
-Pure-render component. `STATUS_STYLES` maps each of the 5 statuses to `{bg, text, label}` Tailwind classes. Icons are `Clock` (reviewing), `Lock` (confirmed), `AlertCircle` (failed), `Loader2 animate-spin` (generating), `Check` (draft — yes, counter-intuitive, but matches the spec's visual). The `small` prop scales down padding / icon size for inline display next to each stage in the flow column.
+Pure-render component. `STATUS_STYLES` maps each of the 5 statuses to `{bg, text, label}` Tailwind classes. Icons are `Clock` (reviewing), `Lock` (confirmed), `AlertCircle` (failed), `Loader2 animate-spin` (generating), and for draft falls through to `Check` as a ternary default — counter-intuitive but shipped; not a spec-driven visual choice. The `small` prop scales down padding / icon size for inline display next to each stage in the flow column.
 
 ### `QuestionCard`
 
