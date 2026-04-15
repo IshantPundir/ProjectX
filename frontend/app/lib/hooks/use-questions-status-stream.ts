@@ -2,7 +2,7 @@
 
 import { fetchEventSource } from '@microsoft/fetch-event-source'
 import { useQueryClient } from '@tanstack/react-query'
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 
 import { getFreshSupabaseToken } from '@/lib/auth/tokens'
 
@@ -27,6 +27,16 @@ export function useQuestionsStatusStream(
   selectedStageId: string | null,
 ) {
   const queryClient = useQueryClient()
+
+  // Mirror selectedStageId into a ref so the onmessage handler below reads
+  // the latest value without re-running the effect. Without this, every
+  // stage selection tears down + reopens the SSE connection (because
+  // selectedStageId would be in the dep array), which is wasteful and
+  // causes a brief gap in live updates each time the user clicks a stage.
+  const selectedStageIdRef = useRef(selectedStageId)
+  useEffect(() => {
+    selectedStageIdRef.current = selectedStageId
+  })
 
   useEffect(() => {
     if (!jobId) return
@@ -56,13 +66,17 @@ export function useQuestionsStatusStream(
                 queryKey: ['banks', jobId],
               })
               // Bank-level events also invalidate the selected bank detail.
+              // Read the current selected stage from the ref rather than
+              // closure-captured state so this handler stays stable for the
+              // lifetime of the stream.
+              const currentStageId = selectedStageIdRef.current
               if (
                 (ev.event === 'bank.status_changed' ||
                   ev.event === 'bank.question_updated') &&
-                selectedStageId
+                currentStageId
               ) {
                 void queryClient.invalidateQueries({
-                  queryKey: ['bank', jobId, selectedStageId],
+                  queryKey: ['bank', jobId, currentStageId],
                 })
               }
             },
@@ -79,5 +93,5 @@ export function useQuestionsStatusStream(
 
     void run()
     return () => controller.abort()
-  }, [jobId, selectedStageId, queryClient])
+  }, [jobId, queryClient])
 }
