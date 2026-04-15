@@ -315,10 +315,10 @@ The helper is called in four places:
 
 | Caller | File | Purpose |
 |---|---|---|
-| `create_job_posting` | `app/modules/jd/service.py` | Gate: refuses to insert a job row if no ancestor has a profile. Raises `CompanyProfileIncompleteError` with the target `org_unit_id` so the frontend can deep-link to the Company Profile tab (mapped to 422 at the router). |
-| `_run_extraction` (Call 1) | `app/modules/jd/actors.py` | Defensive re-check inside the actor. This should never fail given the creation-time gate, but if it does the actor marks the job as `signals_extraction_failed` instead of crashing. |
-| `_run_reenrichment` (Call 2) | `app/modules/jd/actors.py` | Same defensive re-check for Call 2. Failure sets `enrichment_status='failed'` with a sanitised error message. |
-| Pipeline scoping (2C.1) | `app/modules/pipelines/` via `get_org_unit_ancestry` | The pipeline builder walks the same ancestor chain through `get_org_unit_ancestry` (a sibling helper, returns the full chain as a list) for template visibility scoping. The two helpers share the same walk shape; `find_company_profile_in_ancestry` returns early on the first match, `get_org_unit_ancestry` returns the full list. |
+| `create_job_posting` | `app/modules/jd/service.py:58` | Gate: refuses to insert a job row if no ancestor has a profile. Raises `CompanyProfileIncompleteError` with the target `org_unit_id` so the frontend can deep-link to the Company Profile tab (mapped to 422 at the router). |
+| `_run_extraction` (Call 1) | `app/modules/jd/actors.py:139` | Defensive re-check inside the actor. This should never fail given the creation-time gate, but if it does the actor marks the job as `signals_extraction_failed` instead of crashing. |
+| `_run_reenrichment` (Call 2) | `app/modules/jd/actors.py:378` | Same defensive re-check for Call 2. Failure sets `enrichment_status='failed'` with a sanitised error message. |
+| `generate_question_bank_stage` | `app/modules/question_bank/actors.py:285` | Loads the profile as context for the question bank generation prompt (passed into `_build_user_message` alongside the JD snapshot and pipeline stages). Not part of Phase 2B's scope — this caller ships with Phase 2C.2 — but listed here because it reuses the same helper the ancestry walk introduced. |
 
 The walk is cycle-safe via a `seen` set — `parent_unit_id` is supposed to be acyclic but corrupted data should not hang a request.
 
