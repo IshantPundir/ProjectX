@@ -54,14 +54,19 @@ def create_app() -> FastAPI:
     )
 
     # --- CORS ---
-    # In debug mode, allow all origins so LAN devices can reach the API.
-    # In production, restrict to the configured list.
+    # Always use the explicit settings.cors_origins list. A wildcard
+    # (`allow_origins=["*"]`) combined with `allow_credentials=True` is
+    # rejected by all modern browsers, so the old "debug = wildcard"
+    # shortcut never actually worked for credentialed requests — it only
+    # masked configuration mistakes. Operators who need LAN access in
+    # debug mode should add their LAN origin to CORS_ORIGINS.
     application.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"] if settings.debug else settings.cors_origins,
+        allow_origins=settings.cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["x-correlation-id"],
     )
 
     # --- Middleware ---

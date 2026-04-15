@@ -19,6 +19,7 @@ Session management:
 """
 
 import asyncio
+import uuid
 from collections.abc import AsyncIterator
 from uuid import UUID
 
@@ -39,6 +40,10 @@ async def job_status_event_generator(
     request: Request,
 ) -> AsyncIterator[dict[str, str]]:
     """Yield SSE events until terminal state or client disconnect."""
+    # Canonicalise tenant_id through uuid.UUID so the SET LOCAL statement
+    # can't be tampered with via a malformed claim. Matches get_tenant_db's
+    # defense; Dramatiq actors do the same.
+    safe_tenant_id = str(uuid.UUID(str(tenant_id)))
     last_status: str | None = None
     last_enrichment_status: str | None = None
     while True:
@@ -51,7 +56,7 @@ async def job_status_event_generator(
             import sqlalchemy
 
             await db.execute(
-                sqlalchemy.text(f"SET LOCAL app.current_tenant = '{tenant_id}'")
+                sqlalchemy.text(f"SET LOCAL app.current_tenant = '{safe_tenant_id}'")
             )
             event = await get_job_status(db, job_id)
 

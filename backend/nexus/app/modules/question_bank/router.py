@@ -8,12 +8,13 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+import structlog
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_tenant_db
+from app.database import get_tenant_db, get_tenant_session
 from app.models import (
     JobPipelineInstance,  # noqa: F401  (return type of require_pipeline_access)
     JobPipelineStage,
@@ -64,8 +65,131 @@ from app.modules.question_bank.service import (
     update_question,
 )
 from app.modules.question_bank.sse import stream_question_bank_status
+from app.modules.question_bank.state_machine import transition_to_failed
 
 router = APIRouter(prefix="/api", tags=["question_bank"])
+_log = structlog.get_logger()
+
+
+# ---------------------------------------------------------------------------
+# Safe Dramatiq dispatch wrappers
+# ---------------------------------------------------------------------------
+#
+# Without these, a Redis outage at the moment of `.send()` raises *after* the
+# request-scoped transaction has already been committed. The bank is left
+# stuck in "generating" with no actor running, and the user sees a spinner
+# forever. Each helper:
+#   1. Attempts the enqueue.
+#   2. On failure: opens a fresh bypass session (the request session is gone),
+#      transitions the stranded resource, commits, and raises 503.
+# Modelled after app/modules/jd/router.py::_safe_dispatch_extraction.
+
+
+async def _safe_dispatch_generate_stage(
+    bank_id: UUID,
+    tenant_id: UUID,
+    user_id: UUID,
+) -> None:
+    """Enqueue generate_question_bank_stage; on failure, flip the bank to
+    'failed' with an operator-friendly error so the UI stops spinning."""
+    try:
+        bank_actors.generate_question_bank_stage.send(
+            str(bank_id), str(tenant_id), str(user_id)
+        )
+    except Exception as exc:
+        _log.error(
+            "question_bank.dispatch_stage_failed",
+            bank_id=str(bank_id),
+            tenant_id=str(tenant_id),
+            exc_info=exc,
+        )
+        # Open a new tenant session — the request's session is already
+        # committed and closed. transition_to_failed asserts the bank is in
+        # 'generating', which is exactly the state the router just set it to.
+        try:
+            async with get_tenant_session(str(tenant_id)) as db:
+                bank_result = await db.execute(
+                    select(StageQuestionBank).where(StageQuestionBank.id == bank_id)
+                )
+                bank = bank_result.scalar_one_or_none()
+                if bank is not None and bank.status == "generating":
+                    transition_to_failed(
+                        bank,
+                        error="Failed to enqueue generation job — please retry",
+                    )
+        except Exception as rollback_exc:
+            _log.error(
+                "question_bank.dispatch_rollback_failed",
+                bank_id=str(bank_id),
+                exc_info=rollback_exc,
+            )
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Failed to enqueue question generation job — please retry. "
+                "If this persists, contact support."
+            ),
+        )
+
+
+async def _safe_dispatch_generate_pipeline(
+    instance_id: UUID,
+    tenant_id: UUID,
+    user_id: UUID,
+) -> None:
+    """Enqueue generate_question_bank_pipeline. Pipeline-level generate-all
+    does NOT pre-transition any banks (they transition inside the actor
+    loop), so there is nothing to roll back. Log loudly and raise 503."""
+    try:
+        bank_actors.generate_question_bank_pipeline.send(
+            str(instance_id), str(tenant_id), str(user_id)
+        )
+    except Exception as exc:
+        _log.error(
+            "question_bank.dispatch_pipeline_failed",
+            instance_id=str(instance_id),
+            tenant_id=str(tenant_id),
+            exc_info=exc,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Failed to enqueue pipeline generation job — please retry. "
+                "If this persists, contact support."
+            ),
+        )
+
+
+async def _safe_dispatch_regenerate_question(
+    question_id: UUID,
+    tenant_id: UUID,
+    user_id: UUID,
+    replace_signal_values: list[str] | None,
+) -> None:
+    """Enqueue regenerate_question. Single-question regen does not
+    pre-transition the bank, so there is nothing to roll back. Log loudly
+    and raise 503."""
+    try:
+        bank_actors.regenerate_question.send(
+            str(question_id),
+            str(tenant_id),
+            str(user_id),
+            replace_signal_values,
+        )
+    except Exception as exc:
+        _log.error(
+            "question_bank.dispatch_regenerate_failed",
+            question_id=str(question_id),
+            tenant_id=str(tenant_id),
+            exc_info=exc,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Failed to enqueue question regeneration job — please retry. "
+                "If this persists, contact support."
+            ),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -226,13 +350,19 @@ async def generate_stage_questions(
     except BankAlreadyGeneratingError as exc:
         raise HTTPException(409, detail=str(exc))
     bank.generated_by = user.user.id
+    # Capture values BEFORE commit — after commit the request session has
+    # app.current_tenant unset and attribute refreshes will fail RLS.
+    bank_id = bank.id
+    bank_tenant_id = bank.tenant_id
     await db.flush()
     await db.commit()
 
-    bank_actors.generate_question_bank_stage.send(
-        str(bank.id), str(bank.tenant_id), str(user.user.id)
+    await _safe_dispatch_generate_stage(
+        bank_id=bank_id,
+        tenant_id=bank_tenant_id,
+        user_id=user.user.id,
     )
-    return GenerateResponse(bank_id=bank.id, status="generating")
+    return GenerateResponse(bank_id=bank_id, status="generating")
 
 
 @router.post(
@@ -260,9 +390,15 @@ async def generate_all_questions(
             409, detail="Another bank is currently generating in this pipeline"
         )
 
+    # Capture IDs BEFORE commit — after commit the request session has
+    # app.current_tenant unset and further attribute access is unsafe.
+    instance_id = instance.id
+    tenant_id = job.tenant_id
     await db.commit()
-    bank_actors.generate_question_bank_pipeline.send(
-        str(instance.id), str(job.tenant_id), str(user.user.id)
+    await _safe_dispatch_generate_pipeline(
+        instance_id=instance_id,
+        tenant_id=tenant_id,
+        user_id=user.user.id,
     )
     return GenerateResponse(bank_id=None, status="generating")
 
@@ -284,15 +420,20 @@ async def regenerate_one_question(
     question, bank, _stage, _job = await require_question_access(
         db, question_id, user, "manage"
     )
+    # Capture IDs BEFORE commit — after commit the request session has
+    # app.current_tenant unset and further attribute access is unsafe.
+    question_id_val = question.id
+    bank_id = bank.id
+    bank_tenant_id = bank.tenant_id
     await db.commit()
 
-    bank_actors.regenerate_question.send(
-        str(question.id),
-        str(bank.tenant_id),
-        str(user.user.id),
-        body.replace_signal_values,
+    await _safe_dispatch_regenerate_question(
+        question_id=question_id_val,
+        tenant_id=bank_tenant_id,
+        user_id=user.user.id,
+        replace_signal_values=body.replace_signal_values,
     )
-    return GenerateResponse(bank_id=bank.id, status="generating")
+    return GenerateResponse(bank_id=bank_id, status="generating")
 
 
 # ---------------------------------------------------------------------------
@@ -377,12 +518,18 @@ async def reorder_questions_endpoint(
     except ValueError as exc:
         raise HTTPException(400, detail=str(exc))
 
-    await db.commit()
-
+    # IMPORTANT: build the response BEFORE db.commit().
+    #
+    # get_tenant_db's `SET LOCAL app.current_tenant` is scoped to the outer
+    # transaction. Once we commit, the session implicitly starts a new
+    # transaction with app.current_tenant unset, and subsequent queries
+    # return zero rows under RLS. The integration-test harness wraps each
+    # test in a nested transaction that hides this — but production does
+    # not, so the response would be populated with empty questions.
     questions = await get_bank_questions(db, bank.id)
     is_stale = await compute_is_stale(db, bank)
     total_minutes = float(sum(q.estimated_minutes for q in questions))
-    return BankWithQuestionsResponse(
+    response = BankWithQuestionsResponse(
         **_bank_to_response(
             bank,
             question_count=len(questions),
@@ -391,6 +538,9 @@ async def reorder_questions_endpoint(
         ).model_dump(),
         questions=[_question_to_response(q) for q in questions],
     )
+
+    await db.commit()
+    return response
 
 
 @router.patch(
@@ -499,17 +649,21 @@ async def confirm_bank_endpoint(
     except MandatoryOverrunError as exc:
         raise HTTPException(409, detail=str(exc))
 
-    await db.commit()
-
+    # IMPORTANT: build the response BEFORE db.commit() — same reasoning as
+    # reorder_questions_endpoint. Post-commit queries on the tenant session
+    # run with app.current_tenant unset and RLS returns zero rows.
     questions = await get_bank_questions(db, bank.id)
     is_stale = await compute_is_stale(db, bank)
     total_minutes = float(sum(q.estimated_minutes for q in questions))
-    return _bank_to_response(
+    response = _bank_to_response(
         bank,
         question_count=len(questions),
         total_minutes=total_minutes,
         is_stale=is_stale,
     )
+
+    await db.commit()
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -519,12 +673,23 @@ async def confirm_bank_endpoint(
 @router.get("/jobs/{job_id}/pipeline/questions/status-stream")
 async def questions_status_stream(
     job_id: UUID,
+    request: Request,
     db: AsyncSession = Depends(get_tenant_db),
     user: UserContext = Depends(get_current_user_roles),
 ) -> StreamingResponse:
-    """SSE stream of bank status + question update events."""
+    """SSE stream of bank status + question update events.
+
+    `request` is injected so the generator can call `is_disconnected()`
+    each poll iteration and bail out when the browser tab closes — without
+    this, orphaned streams hold DB connections until the 10-minute idle
+    timeout and can exhaust the pool under concurrency.
+    """
     _instance, job = await require_pipeline_access(db, job_id, user, "view")
     return StreamingResponse(
-        stream_question_bank_status(tenant_id=job.tenant_id, job_id=job_id),
+        stream_question_bank_status(
+            request=request,
+            tenant_id=job.tenant_id,
+            job_id=job_id,
+        ),
         media_type="text/event-stream",
     )

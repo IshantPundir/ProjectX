@@ -56,12 +56,18 @@ def verify_access_token(token: str) -> TokenPayload | None:
 
 
 def verify_candidate_token(token: str) -> CandidateTokenPayload | None:
-    """Verify a single-use candidate session JWT (HS256)."""
+    """Verify a single-use candidate session JWT.
+
+    Signing algorithm is hardcoded to HS256 as a policy decision — never
+    read from config. A misconfigured environment variable must not be
+    able to weaken verification (e.g., accept 'none' or swap to a weaker
+    HMAC variant).
+    """
     try:
         payload = jwt.decode(
             token,
             settings.candidate_jwt_secret,
-            algorithms=[settings.candidate_jwt_algorithm],
+            algorithms=["HS256"],
             options={"verify_exp": True},
         )
         return CandidateTokenPayload(

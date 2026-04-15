@@ -42,9 +42,20 @@ async def log_event(
             db.add(entry)
             await db.flush()
     except Exception as exc:
+        # Audit logging must never break a business operation, so we swallow
+        # the exception. But we MUST surface it loudly to observability so
+        # regressions (e.g., RLS policy mis-configurations, missing INSERT
+        # permission on audit_log) do not silently erode the compliance
+        # audit trail. Include the full exception via exc_info so Sentry
+        # captures the traceback.
         logger.error(
             "audit.log_event_failed",
             action=action,
             resource=resource,
+            tenant_id=str(tenant_id),
+            actor_id=str(actor_id) if actor_id else None,
+            resource_id=str(resource_id) if resource_id else None,
             error=str(exc),
+            error_type=type(exc).__name__,
+            exc_info=exc,
         )

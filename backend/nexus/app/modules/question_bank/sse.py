@@ -1,16 +1,24 @@
 """Server-Sent Events stream for question bank generation status.
 
 Polls the DB every 500ms, emits events only when state changes (dedup).
-Closes when all banks in the pipeline are terminal OR on 10 minutes of idle.
+Closes when all banks in the pipeline are terminal OR on 10 minutes of idle
+OR when the client disconnects.
+
+Disconnect detection is critical: without it, an orphaned browser tab
+would hold the stream open until the 10-minute idle timeout, pinning ~2 DB
+connections per poll iteration. 15-20 orphaned streams exhausts the pool.
+Matches the pattern used in app/modules/jd/sse.py.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from uuid import UUID
 
 import structlog
+from fastapi import Request
 from sqlalchemy import select
 
 from app.database import async_session_factory
@@ -30,21 +38,33 @@ IDLE_TIMEOUT_SEC = 600  # 10 minutes
 
 async def stream_question_bank_status(
     *,
+    request: Request,
     tenant_id: UUID,
     job_id: UUID,
 ):
     """Async generator yielding SSE-formatted event strings.
 
     Format: `event: <name>\\ndata: <json>\\n\\n`
+
+    The ``request`` parameter is used to detect client disconnects: if the
+    browser closes the tab or the connection drops, the generator bails
+    out on the next iteration and the DB session is returned to the pool.
     """
+    # Canonicalise tenant_id through uuid.UUID so the SET LOCAL statement
+    # is safe to interpolate (same defense used by get_tenant_db).
+    safe_tenant_id = str(uuid.UUID(str(tenant_id)))
+
     last_snapshots: dict[UUID, dict] = {}  # bank_id → last emitted state
-    idle_since = asyncio.get_event_loop().time()
+    idle_since = asyncio.get_running_loop().time()
 
     while True:
+        if await request.is_disconnected():
+            return
+
         async with async_session_factory() as db:
             from sqlalchemy.sql import text
             await db.execute(
-                text(f"SET LOCAL app.current_tenant = '{tenant_id}'")
+                text(f"SET LOCAL app.current_tenant = '{safe_tenant_id}'")
             )
 
             # Load pipeline + stages + banks
@@ -110,8 +130,8 @@ async def stream_question_bank_status(
                     yield _format("bank.status_changed", event_payload)
 
         if any_change:
-            idle_since = asyncio.get_event_loop().time()
-        elif asyncio.get_event_loop().time() - idle_since > IDLE_TIMEOUT_SEC:
+            idle_since = asyncio.get_running_loop().time()
+        elif asyncio.get_running_loop().time() - idle_since > IDLE_TIMEOUT_SEC:
             # Close the stream after 10 minutes of no changes
             return
 

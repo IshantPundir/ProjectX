@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -7,7 +8,7 @@ class Settings(BaseSettings):
     # App
     app_name: str = "Nexus"
     debug: bool = False
-    environment: str = "development"  # development | staging | production
+    environment: str = "development"  # development | staging | production | test
 
     # Database (asyncpg)
     database_url: str = "postgresql+asyncpg://postgres:postgres@127.0.0.1:54322/postgres"
@@ -23,9 +24,25 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_service_role_key: str = ""
 
-    # Candidate JWT (separate signing key — treat as DB credential)
-    candidate_jwt_secret: str = "change-me-candidate-secret"
-    candidate_jwt_algorithm: str = "HS256"
+    # Candidate JWT (separate signing key — treat as DB credential).
+    # REQUIRED in any non-test environment. No default — empty at import-time
+    # is caught by the field_validator below. Signing algorithm is hardcoded
+    # to HS256 in app/modules/auth/service.py; it is NOT a deployment setting.
+    candidate_jwt_secret: str = ""
+
+    @field_validator("candidate_jwt_secret")
+    @classmethod
+    def _candidate_secret_required(cls, v: str, info) -> str:
+        # info.data contains already-validated fields, including `environment`.
+        env = info.data.get("environment", "development")
+        if not v and env != "test":
+            raise ValueError(
+                "CANDIDATE_JWT_SECRET is required (generate with: "
+                "`openssl rand -hex 32`). This signs candidate session JWTs "
+                "and must never be empty in dev/staging/prod. Set "
+                "ENVIRONMENT=test to skip this check in the test suite."
+            )
+        return v
 
     # Notifications
     notifications_dry_run: bool = True  # True = log emails to stdout, False = send via Resend

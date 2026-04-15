@@ -5,6 +5,12 @@ without needing to truncate tables.
 """
 
 import os
+
+# Mark the environment as `test` BEFORE importing app.config / app.main so
+# the candidate_jwt_secret field validator skips its required-in-non-test
+# check. Production deployments must set CANDIDATE_JWT_SECRET explicitly.
+os.environ.setdefault("ENVIRONMENT", "test")
+
 import uuid
 from datetime import UTC, datetime
 
