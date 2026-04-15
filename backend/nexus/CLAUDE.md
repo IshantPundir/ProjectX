@@ -153,17 +153,33 @@ The extra check `unit_type == 'client_account' and parent.unit_type == 'client_a
 - Admin/internal operations use `get_bypass_db()` which runs `SET LOCAL app.bypass_rls = 'true'`.
 - All three session types are defined in `app/database.py`.
 
+### RLS runtime role — Load-Bearing
+
+The Supabase local `postgres` role has `rolbypassrls=true`. A role with that attribute **ignores every RLS policy on every table, regardless of policy contents**. Connecting as `postgres` alone gives you zero tenant isolation at the database layer — only the application's WHERE clauses would keep tenants apart, with no backstop.
+
+The fix: every `get_tenant_db` and `get_bypass_db` session runs `SET LOCAL ROLE nexus_app` at the top of its transaction. `nexus_app` is created by alembic migration `0010_create_nexus_app_role` with `NOBYPASSRLS`, so its queries are subject to the full policy pair:
+
+- `tenant_isolation` grants row access when `tenant_id = current_setting('app.current_tenant')` (set by `get_tenant_db`)
+- `service_bypass` grants row access when `current_setting('app.bypass_rls') = 'true'` (set by `get_bypass_db`)
+
+The switch is controlled by `DB_RUNTIME_ROLE` in `.env` (default `nexus_app`). Leaving it empty disables the switch — **only safe in tests and in the first bootstrap of a fresh cluster before migration 0010 has run**. Never ship production config with it empty.
+
+Alembic continues to run as `postgres` because only that role has CREATE privileges; migrations are the only place that should ever touch schema.
+
 ### RLS Pattern — Always Applied
-Every tenant-scoped table MUST have this RLS policy:
+Every tenant-scoped table MUST have this RLS policy pair (the canonical full-command form — NO `FOR SELECT`):
 ```sql
--- Tenant isolation policy
+-- Tenant isolation — applies to SELECT/INSERT/UPDATE/DELETE
 CREATE POLICY "tenant_isolation" ON <table_name>
-  USING (tenant_id = current_setting('app.current_tenant', true)::uuid);
+  USING      (tenant_id = current_setting('app.current_tenant', true)::uuid)
+  WITH CHECK (tenant_id = current_setting('app.current_tenant', true)::uuid);
 
 -- Service role bypass (for internal admin ops)
-CREATE POLICY "service_role_bypass" ON <table_name>
+CREATE POLICY "service_bypass" ON <table_name>
   USING (current_setting('app.bypass_rls', true) = 'true');
 ```
+
+`FOR SELECT USING (...)` without a matching `WITH CHECK` is a trap: it silently blocks INSERT/UPDATE/DELETE from tenant-scoped sessions because the implicit CHECK falls through to `service_bypass`, which is false when `app.bypass_rls` is unset. Phase 1 tables (clients, users, organizational_units, user_role_assignments, user_invites, audit_log) were originally written with this broken pattern; migrations 0008 and 0009 corrected them.
 
 **Do NOT use `auth.jwt()` in RLS policies.** It returns null when connecting via direct asyncpg — it only works through PostgREST. Using it will silently block all queries or fail to isolate tenants.
 

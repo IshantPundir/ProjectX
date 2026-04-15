@@ -13,6 +13,36 @@ class Settings(BaseSettings):
     # Database (asyncpg)
     database_url: str = "postgresql+asyncpg://postgres:postgres@127.0.0.1:54322/postgres"
 
+    # PostgreSQL role that per-request sessions run under via `SET LOCAL ROLE`.
+    # This is how RLS is actually enforced — the `postgres` role in Supabase
+    # has rolbypassrls=true, so without switching role every query bypasses
+    # all tenant_isolation / service_bypass policies. nexus_app is created
+    # by migration 0010 with NOBYPASSRLS + least-privilege grants.
+    #
+    # Leave empty (None) to skip the role switch. Tests do this because the
+    # test DB uses SQLAlchemy Base.metadata.create_all rather than real
+    # migrations, so nexus_app isn't created there.
+    #
+    # Dev/staging/prod should set DB_RUNTIME_ROLE=nexus_app in their .env
+    # AFTER running `alembic upgrade head` at least once.
+    db_runtime_role: str | None = None
+
+    @field_validator("db_runtime_role")
+    @classmethod
+    def _validate_db_runtime_role(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            return None
+        # Guard against SQL injection — this value is interpolated into a
+        # `SET LOCAL ROLE <name>` statement because asyncpg can't parameterise
+        # DDL-like commands. Accept only PG identifier characters.
+        import re
+        if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", v):
+            raise ValueError(
+                f"DB_RUNTIME_ROLE must be a PostgreSQL identifier "
+                f"([a-zA-Z_][a-zA-Z0-9_]*), got: {v!r}"
+            )
+        return v
+
     # Redis
     redis_url: str = "redis://localhost:6379/0"
 

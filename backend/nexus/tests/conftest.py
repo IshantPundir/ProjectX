@@ -11,6 +11,16 @@ import os
 # check. Production deployments must set CANDIDATE_JWT_SECRET explicitly.
 os.environ.setdefault("ENVIRONMENT", "test")
 
+# Force DB_RUNTIME_ROLE empty in tests regardless of what .env says. The
+# test database uses SQLAlchemy Base.metadata.create_all (see _create_tables
+# below), not real alembic migrations, so the `nexus_app` role that
+# migration 0010 creates doesn't have GRANTs on test tables. If a test
+# happens to exercise the real session helpers (most tests override them
+# via dependency_overrides, but not all) the helper would try
+# `SET LOCAL ROLE nexus_app` and subsequent queries would fail with
+# "permission denied". Empty string disables the role switch unconditionally.
+os.environ["DB_RUNTIME_ROLE"] = ""
+
 import uuid
 from datetime import UTC, datetime
 

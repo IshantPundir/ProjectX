@@ -49,12 +49,37 @@ class Base(DeclarativeBase):
     pass
 
 
+async def _apply_runtime_role(session: AsyncSession) -> None:
+    """Switch the session's PG role to `settings.db_runtime_role` if configured.
+
+    The `postgres` role in Supabase has rolbypassrls=true, which makes every
+    tenant_isolation / service_bypass policy a no-op. Switching to a role
+    without that attribute (e.g. `nexus_app`, created by migration 0010) is
+    the only way to actually enforce RLS at runtime.
+
+    SET LOCAL ROLE is scoped to the current transaction and auto-reverts
+    on commit/rollback, so pooled connections don't cross-contaminate.
+
+    When `db_runtime_role` is None (tests, or a deployment that hasn't yet
+    run migration 0010) we skip the switch. The connection stays on postgres
+    which has BYPASSRLS, so tests continue to work without special setup.
+    """
+    role = settings.db_runtime_role
+    if role is None:
+        return
+    # Role name was validated against [a-zA-Z_][a-zA-Z0-9_]* at config
+    # load time, so the interpolation below is safe. asyncpg can't
+    # parameterise DDL-like commands.
+    await session.execute(sqlalchemy.text(f"SET LOCAL ROLE {role}"))
+
+
 @asynccontextmanager
 async def get_tenant_session(tenant_id: str) -> AsyncGenerator[AsyncSession]:
     """Yield a session with RLS tenant context set."""
     safe_tenant_id = _coerce_tenant_id(tenant_id)
     async with async_session_factory() as session:
         async with session.begin():
+            await _apply_runtime_role(session)
             # SET LOCAL doesn't support parameterized queries in asyncpg.
             # tenant_id is canonicalised via uuid.UUID() above — safe to
             # interpolate into the statement string.
@@ -80,6 +105,7 @@ async def get_bypass_session() -> AsyncGenerator[AsyncSession, None]:
     """
     async with async_session_factory() as session:
         async with session.begin():
+            await _apply_runtime_role(session)
             await session.execute(
                 sqlalchemy.text("SET LOCAL app.bypass_rls = 'true'")
             )
@@ -94,6 +120,7 @@ async def get_bypass_db() -> AsyncGenerator[AsyncSession, None]:
     """
     async with async_session_factory() as session:
         async with session.begin():
+            await _apply_runtime_role(session)
             await session.execute(
                 sqlalchemy.text("SET LOCAL app.bypass_rls = 'true'")
             )
@@ -110,6 +137,7 @@ async def get_tenant_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
     safe_tenant_id = _coerce_tenant_id(tenant_id)
     async with async_session_factory() as session:
         async with session.begin():
+            await _apply_runtime_role(session)
             # SET LOCAL doesn't support parameterized queries in asyncpg.
             # tenant_id is canonicalised via uuid.UUID() above — safe to
             # interpolate into the statement string.
