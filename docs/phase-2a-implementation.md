@@ -22,7 +22,7 @@ See also:
 3. [Auth & Permissions](#3-auth--permissions)
 4. [JD State Machine](#4-jd-state-machine)
 5. [Company Profile Gate](#5-company-profile-gate)
-6. [Call 1 Extraction (the AI Actor Path)](#6-call-1-extraction-the-ai-actor-path)
+6. [Call 1 Extraction (The AI Actor Path)](#6-call-1-extraction-the-ai-actor-path)
 7. [`app/ai/` Layer (Provider-Agnostic)](#7-appai-layer-provider-agnostic)
 8. [API Reference](#8-api-reference)
 9. [Frontend Architecture](#9-frontend-architecture)
@@ -43,7 +43,7 @@ The shipped flow, end to end:
 1. Recruiter opens the dashboard and clicks **+ New JD**. The paste form collects a title, raw JD text, optional project scope, and a target `org_unit_id` inside their tenant.
 2. Frontend `POST /api/jobs` reaches `create_job_posting()` in `app/modules/jd/service.py`. The service first walks the target org unit's ancestry via `find_company_profile_in_ancestry` and refuses to insert the row if no ancestor has a completed `company_profile` — this is the company-profile gate, raised as `CompanyProfileIncompleteError` → HTTP 422 with the offending `org_unit_id` in the body so the frontend can deep-link to the Company Profile tab.
 3. Profile present → INSERT `job_postings(status='draft')`. The state machine transitions `draft → signals_extracting`, writes a `job_posting.status_changed` audit row, and the service schedules the `extract_and_enhance_jd` Dramatiq actor (lazy import to break the `actors ↔ service` circular reference). The HTTP response is `201 Created` with the fresh job and a null `latest_snapshot`.
-4. The `nexus-worker` container picks up the message from the `jd_extraction` Redis queue. The actor opens a `get_bypass_session`, sets `app.current_tenant` via `SET LOCAL`, delegates to `_run_extraction`, and drives the Call 1 LLM call through the `app/ai/` layer: `instructor` for structured-output enforcement (`ExtractionOutput` Pydantic model), `langfuse.openai` for LLM tracing, `OpenAIConfig` for the model id and `reasoning_effort` (env-driven, never hardcoded).
+4. The `nexus-worker` container picks up the message from the `jd_extraction` Redis queue. The actor opens a `get_bypass_session`, sets `app.current_tenant` via `SET LOCAL`, delegates to `_run_extraction`, and drives the Call 1 LLM call through the `app/ai/` layer: `instructor` for structured-output enforcement (`ExtractionOutput` Pydantic model), `langfuse.openai` for LLM tracing, `AIConfig` for the model id and `reasoning_effort` (env-driven, never hardcoded).
 5. On success, the actor writes `description_enriched` back to the job row, inserts a `job_posting_signal_snapshots` row with `version=1`, transitions `signals_extracting → signals_extracted`, and commits. On failure (OpenAI 4xx/5xx, `InstructorRetryException`, schema drift), Dramatiq retries up to 3 total attempts with exponential backoff; the final retry writes `sanitize_error_for_user(exc)` to `status_error` and transitions to `signals_extraction_failed`.
 6. Throughout, the frontend holds a Server-Sent Events connection open at `GET /api/jobs/{id}/status/stream`. The backend polls the row every 1.5s, dedupes, and emits a `status` event on change. Terminal states (`signals_extracted`, `signals_extraction_failed`) close the stream. The frontend's `useJobStatusStream` hook invalidates the TanStack Query `['jobs', jobId]` key on every event so the review surface re-fetches and the skeleton swaps out for the three-panel view.
 
@@ -732,7 +732,7 @@ Opens an SSE connection via `@microsoft/fetch-event-source` (not the native `Eve
   2. `signals_extraction_failed` → `<ErrorBanner jobId={jobId} error={job.status_error} />`.
   3. `signals_extracted` + `latest_snapshot` + `description_enriched` → the three-panel grid.
 
-  The grid uses a custom `3xl` Tailwind breakpoint (1440px+, defined in `tailwind.config`) to switch from a 2-column layout (rail + content) to a 3-column layout (`1fr_2fr_1.2fr`).
+  The grid uses a custom `3xl` Tailwind breakpoint (1440px+, defined in `app/globals.css` via the `@theme` directive (Tailwind v4 — there is no `tailwind.config.ts`)) to switch from a 2-column layout (rail + content) to a 3-column layout (`1fr_2fr_1.2fr`).
 
 ### The three panels
 
