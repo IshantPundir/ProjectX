@@ -21,7 +21,7 @@ import structlog
 from fastapi import Request
 from sqlalchemy import select
 
-from app.database import async_session_factory
+from app.database import get_tenant_session
 from app.models import (
     JobPipelineInstance,
     JobPipelineStage,
@@ -50,8 +50,8 @@ async def stream_question_bank_status(
     browser closes the tab or the connection drops, the generator bails
     out on the next iteration and the DB session is returned to the pool.
     """
-    # Canonicalise tenant_id through uuid.UUID so the SET LOCAL statement
-    # is safe to interpolate (same defense used by get_tenant_db).
+    # Canonicalise tenant_id so get_tenant_session's own validation can't
+    # trip on a malformed claim (same defense used by get_tenant_db).
     safe_tenant_id = str(uuid.UUID(str(tenant_id)))
 
     last_snapshots: dict[UUID, dict] = {}  # bank_id → last emitted state
@@ -61,13 +61,20 @@ async def stream_question_bank_status(
         if await request.is_disconnected():
             return
 
-        async with async_session_factory() as db:
-            from sqlalchemy.sql import text
-            await db.execute(
-                text(f"SET LOCAL app.current_tenant = '{safe_tenant_id}'")
-            )
+        # Collect events inside the session context, yield them after the
+        # session is released. Two reasons: (1) holding the DB connection
+        # across a `yield` would pin a pool slot while the client processes
+        # events, and (2) `get_tenant_session` wraps SET LOCAL ROLE nexus_app
+        # + SET LOCAL app.current_tenant in a single explicit transaction —
+        # opening the session raw via async_session_factory() would skip
+        # the role switch and RLS would be silently bypassed on streaming.
+        events_to_emit: list[str] = []
+        should_terminate = False
+        any_change = False
+        all_terminal = True
+        num_stages = 0
 
-            # Load pipeline + stages + banks
+        async with get_tenant_session(safe_tenant_id) as db:
             instance_result = await db.execute(
                 select(JobPipelineInstance).where(
                     JobPipelineInstance.job_posting_id == job_id
@@ -75,59 +82,68 @@ async def stream_question_bank_status(
             )
             instance = instance_result.scalar_one_or_none()
             if instance is None:
-                yield _format("error", {"error": "No pipeline for this job"})
-                return
+                events_to_emit.append(
+                    _format("error", {"error": "No pipeline for this job"})
+                )
+                should_terminate = True
+            else:
+                stages_result = await db.execute(
+                    select(JobPipelineStage)
+                    .where(JobPipelineStage.instance_id == instance.id)
+                    .order_by(JobPipelineStage.position)
+                )
+                stages = list(stages_result.scalars().all())
+                num_stages = len(stages)
 
-            stages_result = await db.execute(
-                select(JobPipelineStage)
-                .where(JobPipelineStage.instance_id == instance.id)
-                .order_by(JobPipelineStage.position)
-            )
-            stages = list(stages_result.scalars().all())
-
-            any_change = False
-            all_terminal = True
-
-            for stage in stages:
-                bank_result = await db.execute(
-                    select(StageQuestionBank).where(
-                        StageQuestionBank.stage_id == stage.id
+                for stage in stages:
+                    bank_result = await db.execute(
+                        select(StageQuestionBank).where(
+                            StageQuestionBank.stage_id == stage.id
+                        )
                     )
-                )
-                bank = bank_result.scalar_one_or_none()
-                if bank is None:
-                    all_terminal = False
-                    continue
+                    bank = bank_result.scalar_one_or_none()
+                    if bank is None:
+                        all_terminal = False
+                        continue
 
-                q_result = await db.execute(
-                    select(StageQuestion).where(StageQuestion.bank_id == bank.id)
-                )
-                questions = list(q_result.scalars().all())
-                question_count = len(questions)
-                total_minutes = float(sum(q.estimated_minutes for q in questions))
+                    q_result = await db.execute(
+                        select(StageQuestion).where(StageQuestion.bank_id == bank.id)
+                    )
+                    questions = list(q_result.scalars().all())
+                    question_count = len(questions)
+                    total_minutes = float(sum(q.estimated_minutes for q in questions))
 
-                if bank.status in ("draft", "generating"):
-                    all_terminal = False
+                    if bank.status in ("draft", "generating"):
+                        all_terminal = False
 
-                current_state = {
-                    "status": bank.status,
-                    "question_count": question_count,
-                    "total_minutes": total_minutes,
-                    "error": bank.generation_error,
-                }
-
-                if last_snapshots.get(bank.id) != current_state:
-                    any_change = True
-                    last_snapshots[bank.id] = current_state
-                    event_payload = {
-                        "stage_id": str(stage.id),
+                    current_state = {
                         "status": bank.status,
                         "question_count": question_count,
                         "total_minutes": total_minutes,
+                        "error": bank.generation_error,
                     }
-                    if bank.generation_error:
-                        event_payload["error"] = bank.generation_error
-                    yield _format("bank.status_changed", event_payload)
+
+                    if last_snapshots.get(bank.id) != current_state:
+                        any_change = True
+                        last_snapshots[bank.id] = current_state
+                        event_payload = {
+                            "stage_id": str(stage.id),
+                            "status": bank.status,
+                            "question_count": question_count,
+                            "total_minutes": total_minutes,
+                        }
+                        if bank.generation_error:
+                            event_payload["error"] = bank.generation_error
+                        events_to_emit.append(
+                            _format("bank.status_changed", event_payload)
+                        )
+
+        # Session released — yield events without holding a pool slot.
+        for ev in events_to_emit:
+            yield ev
+
+        if should_terminate:
+            return
 
         if any_change:
             idle_since = asyncio.get_running_loop().time()
@@ -135,15 +151,17 @@ async def stream_question_bank_status(
             # Close the stream after 10 minutes of no changes
             return
 
-        if all_terminal and len(last_snapshots) == len(stages):
+        if all_terminal and len(last_snapshots) == num_stages:
             # All banks reached a terminal state — emit completion and close
             succeeded = sum(
-                1 for s in last_snapshots.values() if s["status"] == "confirmed" or s["status"] == "reviewing"
+                1
+                for s in last_snapshots.values()
+                if s["status"] == "confirmed" or s["status"] == "reviewing"
             )
             failed = sum(1 for s in last_snapshots.values() if s["status"] == "failed")
             yield _format(
                 "pipeline.generation_complete",
-                {"succeeded": succeeded, "failed": failed, "total": len(stages)},
+                {"succeeded": succeeded, "failed": failed, "total": num_stages},
             )
             return
 

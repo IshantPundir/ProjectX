@@ -25,7 +25,7 @@ from uuid import UUID
 
 from fastapi import Request
 
-from app.database import async_session_factory
+from app.database import get_tenant_session
 from app.modules.jd.service import get_job_status
 
 POLL_INTERVAL_SECONDS: float = 1.5
@@ -40,8 +40,8 @@ async def job_status_event_generator(
     request: Request,
 ) -> AsyncIterator[dict[str, str]]:
     """Yield SSE events until terminal state or client disconnect."""
-    # Canonicalise tenant_id through uuid.UUID so the SET LOCAL statement
-    # can't be tampered with via a malformed claim. Matches get_tenant_db's
+    # Canonicalise tenant_id through uuid.UUID so get_tenant_session's
+    # own validation can't trip on a malformed claim. Matches get_tenant_db's
     # defense; Dramatiq actors do the same.
     safe_tenant_id = str(uuid.UUID(str(tenant_id)))
     last_status: str | None = None
@@ -50,14 +50,11 @@ async def job_status_event_generator(
         if await request.is_disconnected():
             return
 
-        # Open a fresh session per iteration — returned to the pool as
-        # soon as the query completes.
-        async with async_session_factory() as db:
-            import sqlalchemy
-
-            await db.execute(
-                sqlalchemy.text(f"SET LOCAL app.current_tenant = '{safe_tenant_id}'")
-            )
+        # get_tenant_session handles SET LOCAL ROLE nexus_app + SET LOCAL
+        # app.current_tenant inside a single explicit transaction. Opening
+        # the session raw via async_session_factory() would skip the role
+        # switch and RLS would be silently bypassed on streaming paths.
+        async with get_tenant_session(safe_tenant_id) as db:
             event = await get_job_status(db, job_id)
 
         if event is None:
