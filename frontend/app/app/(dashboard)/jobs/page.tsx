@@ -38,7 +38,11 @@ export default function JobsListPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
 
   const { data, isLoading, error } = useQuery<JobPostingSummary[]>({
-    queryKey: ['jobs'],
+    // Narrower than ['jobs'] so that ['jobs', jobId] detail queries are
+    // not invalidated by mutations that only need to refresh the list.
+    // TanStack Query does prefix matching, so ['jobs'] would invalidate
+    // both the list and every detail cache.
+    queryKey: ['jobs-list'],
     queryFn: async () => {
       const token = await getFreshSupabaseToken()
       return jobsApi.list(token)
@@ -53,7 +57,7 @@ export default function JobsListPage() {
     onSuccess: (_, ids) => {
       toast.success(`${ids.length} job(s) deleted`)
       setSelected(new Set())
-      queryClient.invalidateQueries({ queryKey: ['jobs'] })
+      queryClient.invalidateQueries({ queryKey: ['jobs-list'] })
     },
     onError: (err) => {
       toast.error(`Delete failed: ${err.message}`)
