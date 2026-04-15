@@ -135,7 +135,16 @@ function InviteContent() {
         },
       );
 
-      router.push(result.redirect_to);
+      // Guard against open-redirect — the backend-returned `redirect_to`
+      // must be a same-origin relative path. The only legitimate values
+      // today are `/` and `/onboarding`; a malicious/MITM'd response
+      // sending `https://evil.com` or `//evil.com` would otherwise
+      // navigate a freshly-authenticated user off-site.
+      const safeRedirect = result.redirect_to?.startsWith("/") &&
+        !result.redirect_to.startsWith("//")
+        ? result.redirect_to
+        : "/";
+      router.push(safeRedirect);
       router.refresh();
     } catch (err) {
       setError(
