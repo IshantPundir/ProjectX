@@ -301,12 +301,25 @@ async def confirm_signals(
 
     # Auto-apply pipeline on signal confirmation.
     # Failures here must NOT block the confirmation — the job is already
-    # confirmed. Log the error and continue.
+    # confirmed. Log and continue.
+    #
+    # PipelineAlreadyExistsError is the expected idempotency case: a
+    # re-confirm of an already-piped job hits this path every time.
+    # Demote that to debug so real errors are not buried by a steady
+    # noise floor; everything else logs at error and still gets a
+    # dedicated audit event.
     try:
+        from app.modules.pipelines.errors import PipelineAlreadyExistsError
         from app.modules.pipelines.service import auto_apply_pipeline_on_confirmation
 
         await auto_apply_pipeline_on_confirmation(
             db, job=job, actor_id=actor_id,
+        )
+    except PipelineAlreadyExistsError:
+        logger.debug(
+            "jd.pipeline_auto_apply_skipped_existing",
+            job_posting_id=str(job.id),
+            reason="pipeline_already_exists",
         )
     except Exception as exc:
         logger.error(
