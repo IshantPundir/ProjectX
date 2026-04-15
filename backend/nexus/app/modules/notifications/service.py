@@ -15,7 +15,7 @@ import structlog
 from jinja2 import Environment, FileSystemLoader
 
 from app.config import settings
-from app.modules.notifications.schemas import EmailMessage, SMSMessage
+from app.modules.notifications.schemas import SMSMessage
 
 logger = structlog.get_logger()
 

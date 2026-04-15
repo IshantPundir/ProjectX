@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_bypass_db
-from app.models import Client, OrganizationalUnit, Role, User, UserInvite, UserRoleAssignment
+from app.models import Client, OrganizationalUnit, User, UserInvite
 from app.modules.audit import actions as audit_actions
 from app.modules.audit.service import log_event
 from app.modules.auth.context import UserContext, get_current_user_roles

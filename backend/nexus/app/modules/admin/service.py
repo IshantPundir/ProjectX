@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models import Client, User, UserInvite
+from app.models import Client, UserInvite
 from app.modules.audit import actions as audit_actions
 from app.modules.audit.service import log_event
 from app.modules.notifications.service import render_template, send_email

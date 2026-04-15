@@ -562,7 +562,6 @@ async def update_job_pipeline_stages(
         )
     )
     existing_list = list(existing_result.scalars().all())
-    existing_by_id: dict[UUID, JobPipelineStage] = {s.id: s for s in existing_list}
 
     # Partition incoming into id-matched updates vs new inserts
     incoming_by_id: dict[UUID, PipelineStageUpdateInput] = {}

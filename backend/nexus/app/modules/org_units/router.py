@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_tenant_db
 from app.models import Client, OrganizationalUnit, User
-from app.modules.auth.context import UserContext, get_current_user_roles, require_super_admin
+from app.modules.auth.context import UserContext, get_current_user_roles
 from app.modules.org_units.schemas import (
     AssignRoleRequest,
     CreateOrgUnitRequest,
