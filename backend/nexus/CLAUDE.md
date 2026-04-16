@@ -303,7 +303,7 @@ from openai import AsyncOpenAI
 
 | Module | What It Owns |
 |---|---|
-| `jd` (extended) | `save_signals` uses `SELECT … FOR UPDATE` row lock + `MAX(version)` check to detect concurrent edits and raise `VersionConflictError`. `confirm_signals` treats `PipelineAlreadyExistsError` as an idempotent no-op; other errors continue through the error + audit path. |
+| `jd` (extended) | `save_signals` uses `SELECT … FOR UPDATE` on the parent job row to serialize concurrent writers, then inserts a new snapshot at `MAX(version) + 1`. A unique constraint on `(job_posting_id, version)` backstops the lock. There is no optimistic concurrency check — clients don't send an `expected_version` and the server doesn't raise a conflict error. `confirm_signals` treats `PipelineAlreadyExistsError` as an idempotent no-op; other errors continue through the error + audit path. |
 
 ### Phase 2C.1 — Implemented
 
