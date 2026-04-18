@@ -177,10 +177,10 @@ class InterviewerAgent(Agent):
 
         # PROBE / ADVANCE / SKIP — fire the speech.
         # generate_reply() is synchronous, returns a SpeechHandle.
-        logger.debug(
+        logger.info(
             "generate_reply.firing",
             action=action.value,
-            instruction_preview=context_injection[:100],
+            instruction=context_injection[:300],
         )
         self.session.generate_reply(instructions=context_injection)
 

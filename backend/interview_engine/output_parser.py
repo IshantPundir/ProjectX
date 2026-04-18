@@ -53,6 +53,8 @@ async def parse_interview_output(
     last_yielded = 0
     observation_fired = False
 
+    stream_id = id(text)  # unique identifier for this stream invocation
+
     try:
         async for chunk in text:
             acc += chunk
@@ -72,18 +74,40 @@ async def parse_interview_output(
             if len(full_response) > last_yielded:
                 yield full_response[last_yielded:]
 
+            # Log the full response text the TTS will speak
+            logger.info(
+                "stream.tts_text",
+                stream_id=stream_id,
+                text=full_response[:200] if full_response else "(empty)",
+                text_length=len(full_response),
+            )
+
             # Fire observation callback
             obs_data = parsed.get("observation")
             if obs_data and on_observation:
                 try:
                     obs = SteeringObservation.model_validate(obs_data)
+                    logger.debug(
+                        "stream.observation_extracted",
+                        stream_id=stream_id,
+                        summary=obs.answer_summary[:100],
+                        wants_probe=obs.wants_to_probe,
+                        disengaged=obs.candidate_disengaged,
+                    )
                     on_observation(obs)
                     observation_fired = True
                 except Exception as exc:
                     logger.warning(
                         "observation.parse_failed",
+                        stream_id=stream_id,
                         error=str(exc),
                     )
+            else:
+                logger.debug(
+                    "stream.no_observation",
+                    stream_id=stream_id,
+                    obs_data_present=obs_data is not None,
+                )
 
         except json.JSONDecodeError:
             # Graceful degradation -- yield entire accumulated text as speech
@@ -92,7 +116,9 @@ async def parse_interview_output(
                 yield acc
             logger.warning(
                 "structured_output.parse_failed",
+                stream_id=stream_id,
                 text_length=len(acc),
+                raw_preview=acc[:200],
             )
     finally:
         # Always fire on_complete so the caller knows this stream is done
