@@ -135,6 +135,18 @@ class InterviewerAgent(Agent):
         Returns:
             Instruction for what to say next. Follow it exactly.
         """
+        # Reject empty observations — the LLM sometimes calls the tool
+        # during the greeting with blank fields, which would advance the
+        # state machine before the candidate even speaks.
+        if not answer_summary or not answer_summary.strip():
+            logger.warning("observation.rejected_empty")
+            return (
+                "You called this tool without an answer to observe. "
+                "Do NOT call record_observation during greetings, "
+                "rephrases, or when the candidate has not spoken. "
+                "Continue with the current question."
+            )
+
         observation = SteeringObservation(
             answer_summary=answer_summary,
             signals_demonstrated=signals_demonstrated,

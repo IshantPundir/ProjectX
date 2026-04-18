@@ -191,11 +191,16 @@ class InterviewStateMachine:
         if observation.candidate_disengaged:
             return Action.CLOSE
 
-        # 2. Probe — LLM wants deeper AND probes remaining AND time permits.
+        # 2. Probe — LLM wants deeper AND probes remaining AND time permits
+        #    AND the candidate actually gave a substantive (even if weak)
+        #    answer.  If the answer is a flat "I don't know" or similar
+        #    non-answer, probing is pointless — the follow-up questions
+        #    assume the candidate has SOME experience to dig into.
         if (
             observation.wants_to_probe
             and self.state.probes_fired_for_current < self.max_probes_per_question
             and not self.state.is_time_critical()
+            and not self._is_non_answer(observation)
         ):
             return Action.PROBE
 
@@ -289,6 +294,35 @@ class InterviewStateMachine:
             f"Watch for: {red_flags}\n"
             f'Hint: "{q.evaluation_hint}"'
         )
+
+    @staticmethod
+    def _is_non_answer(observation: SteeringObservation) -> bool:
+        """Detect flat non-answers where probing would be pointless.
+
+        Follow-up probes assume the candidate gave SOME answer to dig
+        into.  If the candidate said "I don't know" or "no experience",
+        firing a probe like "how long did it take from first alert..."
+        is nonsensical and frustrating.
+        """
+        s = observation.answer_summary.lower()
+        non_answer_phrases = (
+            "don't know",
+            "do not know",
+            "don't have experience",
+            "do not have experience",
+            "no experience",
+            "never worked",
+            "can't answer",
+            "cannot answer",
+            "not sure",
+            "no idea",
+            "could not provide",
+            "could not answer",
+            "did not provide",
+            "unable to answer",
+            "declined to answer",
+        )
+        return any(phrase in s for phrase in non_answer_phrases)
 
     def _get_follow_up(self) -> str:
         """Return the next unused follow-up for the current question."""
