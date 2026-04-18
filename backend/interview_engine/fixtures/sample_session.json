@@ -1,0 +1,276 @@
+{
+  "session_id": "sess_01JD7K3M9Q4X5VB2N8RWTYP6CF",
+  "job_title": "Senior Backend Engineer",
+  "role_summary": "Design, build, and operate high-throughput payment processing services in a microservices architecture. Own the transaction lifecycle from API ingestion through settlement, ensuring sub-100ms p99 latency and five-nines uptime for card-present and card-not-present flows.",
+  "seniority_level": "senior",
+  "company": {
+    "about": "Vectra Pay is a Series B fintech company building a unified payments platform that lets SaaS companies embed card processing, ACH, and real-time pay-outs into their products through a single API.",
+    "industry": "fintech",
+    "company_stage": "series_b",
+    "hiring_bar": "We hire engineers who have shipped payment or financial infrastructure at scale, think in failure modes first, and treat observability as a feature — not an afterthought."
+  },
+  "candidate": {
+    "name": "Jordan Rivera",
+    "email": "jordan.rivera@example.com"
+  },
+  "stage": {
+    "stage_id": "stg_01JD7K3M9R5Y6WC3P9SXUZQ7DG",
+    "stage_type": "ai_interview",
+    "name": "Technical Phone Screen",
+    "duration_minutes": 12,
+    "difficulty": "medium",
+    "advance_behavior": "manual_review",
+    "questions": [
+      {
+        "id": "q_01JD7K3M9S6Z7XD4QATYVA8REH",
+        "position": 0,
+        "text": "Walk me through how you would design a payment authorization service that needs to handle ten thousand requests per second with sub-hundred-millisecond p99 latency. What are the key architectural decisions you would make and why?",
+        "signal_values": ["system_design", "scalability", "latency_awareness"],
+        "estimated_minutes": 2.0,
+        "is_mandatory": true,
+        "follow_ups": [
+          "How would you handle a downstream processor timeout without double-charging the customer?",
+          "What data store would you choose for the authorization cache, and what is your eviction strategy?",
+          "How do you size your connection pools to the card networks?"
+        ],
+        "positive_evidence": [
+          "Mentions idempotency keys to prevent duplicate charges",
+          "Discusses connection pooling and back-pressure mechanisms",
+          "Considers geographic distribution for latency reduction",
+          "References circuit breakers or bulkhead patterns for processor failover"
+        ],
+        "red_flags": [
+          "Proposes a synchronous monolith without addressing concurrency",
+          "No mention of idempotency or duplicate prevention",
+          "Ignores failure modes entirely"
+        ],
+        "rubric": {
+          "excellent": "Presents a layered architecture with idempotency, circuit breakers, connection pool sizing rationale, and a concrete latency budget breakdown across hops.",
+          "meets_bar": "Identifies the need for idempotency and horizontal scaling but lacks depth on failure handling or latency budgeting.",
+          "below_bar": "Describes a generic web service without addressing payment-specific concerns like duplicate prevention or processor timeouts."
+        },
+        "evaluation_hint": "Listen for whether the candidate allocates a latency budget across network hops and has a concrete strategy for preventing duplicate charges."
+      },
+      {
+        "id": "q_01JD7K3M9T7A8YE5RBUZWB9SFJ",
+        "position": 1,
+        "text": "Tell me about a time you debugged a production incident involving money movement. What was the root cause, how did you find it, and what did you change to prevent recurrence?",
+        "signal_values": ["incident_response", "debugging_depth"],
+        "estimated_minutes": 2.0,
+        "is_mandatory": true,
+        "follow_ups": [
+          "How long did it take from first alert to mitigation, and what would you do differently to shorten that window?",
+          "What observability gaps did the incident reveal?"
+        ],
+        "positive_evidence": [
+          "Describes a structured incident response timeline with clear phases",
+          "Explains the exact debugging steps taken to isolate the root cause",
+          "Mentions concrete preventive measures implemented post-incident",
+          "References metrics, logs, or traces used during investigation"
+        ],
+        "red_flags": [
+          "Cannot describe a specific incident with enough detail to be credible",
+          "Blames others without taking ownership of the resolution",
+          "No mention of follow-up actions or process improvements"
+        ],
+        "rubric": {
+          "excellent": "Narrates a specific incident with clear timeline, root-cause chain, and post-mortem actions including monitoring improvements and code changes.",
+          "meets_bar": "Describes a real incident and resolution but is vague on the exact debugging methodology or follow-up prevention steps.",
+          "below_bar": "Gives a hypothetical answer or cannot articulate the debugging process beyond restarting the service."
+        },
+        "evaluation_hint": "Look for specificity in the timeline and whether the candidate can articulate the exact chain of events from symptom to root cause."
+      },
+      {
+        "id": "q_01JD7K3M9U8B9ZF6SCVAXC0TGK",
+        "position": 2,
+        "text": "Our platform processes both card-present and card-not-present transactions. How would you model the transaction lifecycle as a state machine, and how do you ensure no transaction gets stuck in an intermediate state?",
+        "signal_values": ["domain_modeling", "reliability"],
+        "estimated_minutes": 1.5,
+        "is_mandatory": true,
+        "follow_ups": [
+          "How do you handle the case where a void request succeeds at the processor but your database write fails?",
+          "What is your approach to reconciliation between your internal state and the processor's state?"
+        ],
+        "positive_evidence": [
+          "Defines explicit states like authorized, captured, settled, voided, refunded with valid transitions",
+          "Mentions saga pattern or outbox pattern for distributed state consistency",
+          "Discusses dead-letter queues or timeout-based sweepers for stuck transactions",
+          "Considers idempotent state transitions"
+        ],
+        "red_flags": [
+          "Cannot articulate more than two or three transaction states",
+          "No strategy for handling stuck or orphaned transactions"
+        ],
+        "rubric": {
+          "excellent": "Draws a complete state graph with explicit transitions, timeout sweepers for stuck states, and an outbox or saga pattern for cross-service consistency.",
+          "meets_bar": "Identifies the major states and mentions the need for timeout handling but does not detail the consistency mechanism.",
+          "below_bar": "Treats the transaction as a simple success-or-failure binary without intermediate states."
+        },
+        "evaluation_hint": "Check whether the candidate models void and partial-capture as first-class states and has a concrete answer for orphaned transactions."
+      },
+      {
+        "id": "q_01JD7K3M9V9C0AG7TDWBYE1UHL",
+        "position": 3,
+        "text": "How do you approach database schema design for a multi-tenant payment platform where each merchant's data must be strictly isolated but you still need cross-tenant analytics for fraud detection?",
+        "signal_values": ["data_modeling", "tenant_isolation"],
+        "estimated_minutes": 1.5,
+        "is_mandatory": true,
+        "follow_ups": [
+          "How would you handle schema migrations across thousands of tenant-scoped tables without downtime?",
+          "What indexes would you create to support both tenant-scoped queries and cross-tenant fraud aggregations?"
+        ],
+        "positive_evidence": [
+          "Discusses row-level security or tenant-id scoping with strong enforcement",
+          "Separates the OLTP path from the analytics path using CDC or materialized views",
+          "Considers the trade-offs between shared-schema and schema-per-tenant",
+          "Mentions connection pooling implications of multi-tenancy"
+        ],
+        "red_flags": [
+          "Proposes application-level filtering only without database-level enforcement",
+          "No awareness of the tension between isolation and cross-tenant queries",
+          "Ignores migration complexity in a multi-tenant setup"
+        ],
+        "rubric": {
+          "excellent": "Articulates a shared-schema with RLS approach for OLTP, a separate analytics store fed by CDC for cross-tenant queries, and a zero-downtime migration strategy.",
+          "meets_bar": "Chooses a reasonable isolation model and acknowledges the analytics challenge but lacks a concrete solution for cross-tenant fraud queries.",
+          "below_bar": "Suggests separate databases per tenant without considering operational complexity, or relies solely on application-level WHERE clauses."
+        },
+        "evaluation_hint": "Pay attention to whether the candidate distinguishes between the transactional isolation requirement and the cross-tenant analytics requirement."
+      },
+      {
+        "id": "q_01JD7K3M9W0D1BH8UEXCYF2VJM",
+        "position": 4,
+        "text": "Describe your approach to building an observability stack for a payment system. What metrics, logs, and traces would you consider non-negotiable, and how would you alert on them without drowning in noise?",
+        "signal_values": ["observability", "operational_maturity"],
+        "estimated_minutes": 1.5,
+        "is_mandatory": true,
+        "follow_ups": [
+          "How do you correlate a single payment request across five or more microservices?",
+          "What is your strategy for setting alert thresholds that adapt to traffic patterns?"
+        ],
+        "positive_evidence": [
+          "Lists specific payment metrics like authorization rate, decline rate, and settlement latency",
+          "Describes distributed tracing with correlation IDs across service boundaries",
+          "Mentions structured logging with consistent schemas",
+          "Discusses alert fatigue mitigation through SLO-based alerting or anomaly detection"
+        ],
+        "red_flags": [
+          "Only mentions generic application metrics without payment-specific signals",
+          "No strategy for reducing alert noise",
+          "Cannot explain how to trace a request across services"
+        ],
+        "rubric": {
+          "excellent": "Defines payment-specific SLIs, implements SLO-based alerting with burn-rate windows, uses distributed tracing with correlation IDs, and has a concrete log schema.",
+          "meets_bar": "Identifies important payment metrics and mentions tracing but does not detail the alerting strategy or log structure.",
+          "below_bar": "Describes a generic logging setup without payment-specific metrics or distributed tracing."
+        },
+        "evaluation_hint": "Listen for payment-domain-specific metrics rather than generic CPU and memory monitoring. Correlation IDs are a strong positive signal."
+      },
+      {
+        "id": "q_01JD7K3M9X1E2CJ9VFYDZ03WKN",
+        "position": 5,
+        "text": "We use Python with async frameworks for our backend services. Can you explain how you have used async I/O in production, what pitfalls you have encountered, and how you ensured correctness under concurrency?",
+        "signal_values": ["python_depth", "concurrency"],
+        "estimated_minutes": 1.5,
+        "is_mandatory": false,
+        "follow_ups": [
+          "How do you test async code for race conditions?",
+          "When would you choose threads over async, and vice versa, in a Python payment service?"
+        ],
+        "positive_evidence": [
+          "Describes real production use of asyncio with connection pools and task groups",
+          "Mentions pitfalls like blocking the event loop with synchronous calls",
+          "Discusses strategies for testing concurrent code such as deterministic schedulers or property-based tests",
+          "Understands the GIL's implications for CPU-bound work in async contexts"
+        ],
+        "red_flags": [
+          "Confuses threading with async I/O",
+          "Cannot name a specific pitfall encountered in production",
+          "Has not used async Python beyond toy examples"
+        ],
+        "rubric": {
+          "excellent": "Demonstrates production async experience with concrete examples of pitfalls found and resolved, testing strategies for concurrency, and clear criteria for choosing async versus threads.",
+          "meets_bar": "Has used async in production and can name common pitfalls but lacks depth on testing or decision criteria.",
+          "below_bar": "Theoretical understanding only, cannot describe a real scenario where async was used or a pitfall encountered."
+        },
+        "evaluation_hint": "Probe for whether the candidate has actually debugged an async issue in production versus reciting textbook knowledge."
+      },
+      {
+        "id": "q_01JD7K3M9Y2F3DK0WGZEA14XLP",
+        "position": 6,
+        "text": "How would you design an API versioning strategy for a payments API that hundreds of merchants integrate with? How do you deprecate old versions without breaking existing integrations?",
+        "signal_values": ["api_design", "backward_compatibility"],
+        "estimated_minutes": 1.0,
+        "is_mandatory": false,
+        "follow_ups": [
+          "How do you handle a breaking change to the webhook payload schema?",
+          "What tooling would you build to track which merchants are on which API version?"
+        ],
+        "positive_evidence": [
+          "Proposes a dated or numbered versioning scheme with clear deprecation windows",
+          "Discusses backward-compatible additive changes versus breaking changes",
+          "Mentions migration tooling or compatibility layers for merchants",
+          "Considers webhook versioning as a separate concern from REST versioning"
+        ],
+        "red_flags": [
+          "No deprecation strategy — just removes old endpoints",
+          "Ignores webhook contracts in the versioning discussion"
+        ],
+        "rubric": {
+          "excellent": "Presents a versioning scheme with deprecation timelines, merchant migration tooling, compatibility shims, and separate webhook versioning considerations.",
+          "meets_bar": "Proposes a reasonable versioning approach with deprecation periods but does not address webhook versioning or migration tooling.",
+          "below_bar": "Suggests breaking changes with no migration path or claims versioning is unnecessary."
+        },
+        "evaluation_hint": "Check whether the candidate considers webhooks as part of the API contract that also needs versioning and deprecation handling."
+      },
+      {
+        "id": "q_01JD7K3M9Z3G4EL1XHAFB25YMQ",
+        "position": 7,
+        "text": "You need to add a new payment method — say, real-time bank transfers — to an existing platform that only supports card payments. Walk me through how you would plan and execute this integration end to end.",
+        "signal_values": ["integration_planning", "technical_execution"],
+        "estimated_minutes": 1.5,
+        "is_mandatory": false,
+        "follow_ups": [
+          "How would you handle the fact that bank transfer settlement times are fundamentally different from card settlement?",
+          "What is your rollout strategy to limit blast radius if the new payment method has issues?"
+        ],
+        "positive_evidence": [
+          "Starts with understanding the differences in settlement timing and failure modes",
+          "Proposes a feature-flagged rollout with a limited merchant cohort",
+          "Discusses adapter or strategy pattern to abstract payment method differences",
+          "Considers the impact on reconciliation, reporting, and refund flows"
+        ],
+        "red_flags": [
+          "Jumps straight to coding without understanding the domain differences",
+          "No rollout strategy or risk mitigation plan",
+          "Treats bank transfers as identical to card payments"
+        ],
+        "rubric": {
+          "excellent": "Maps out the domain differences first, proposes an abstraction layer, plans a phased rollout with feature flags, and addresses downstream impacts on reconciliation and refunds.",
+          "meets_bar": "Identifies the key domain differences and proposes an abstraction layer but does not detail the rollout or downstream impact plan.",
+          "below_bar": "Treats the integration as a simple API call without considering settlement differences, failure modes, or rollout strategy."
+        },
+        "evaluation_hint": "The strongest candidates will lead with the domain analysis — settlement timing, failure modes, reconciliation — before discussing code architecture."
+      }
+    ]
+  },
+  "signals": [
+    "system_design",
+    "scalability",
+    "latency_awareness",
+    "incident_response",
+    "debugging_depth",
+    "domain_modeling",
+    "reliability",
+    "data_modeling",
+    "tenant_isolation",
+    "observability",
+    "operational_maturity",
+    "python_depth",
+    "concurrency",
+    "api_design",
+    "backward_compatibility",
+    "integration_planning",
+    "technical_execution"
+  ]
+}
