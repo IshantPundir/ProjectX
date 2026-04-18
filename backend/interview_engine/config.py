@@ -24,11 +24,10 @@ class InterviewEngineConfig(BaseSettings):
     results_dir: str = "results"
 
     # -- LLM (direct OpenAI API via OPENAI_API_KEY) -------------------------
-    # gpt-4o-mini does NOT reliably call function tools — it freestyles
-    # the interview without using record_observation. gpt-4o is the
-    # minimum model that reliably follows tool-calling instructions
-    # with complex system prompts.
-    interview_llm_model: str = "gpt-4o"
+    # gpt-5.3-chat-latest: proven reliable with function tool calls
+    # (every turn in prior testing). gpt-4o-mini freestyled the entire
+    # interview without calling the tool once. Don't downgrade.
+    interview_llm_model: str = "gpt-5.3-chat-latest"
     interview_reasoning_effort: str = "low"
 
     # -- TTS (direct Cartesia API via CARTESIA_API_KEY) --------------------
