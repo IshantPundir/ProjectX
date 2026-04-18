@@ -45,7 +45,7 @@ class InterviewEngineConfig(BaseSettings):
     # Minimum silence (seconds) before committing a turn.
     endpointing_min_delay: float = 1.5
     # Maximum silence before forcing a turn commit.
-    endpointing_max_delay: float = 8.0
+    endpointing_max_delay: float = 4.0
 
     # -- Agent identity ----------------------------------------------------
     agent_name: str = "Dakota"
