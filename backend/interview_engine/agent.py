@@ -5,10 +5,9 @@ agent worker, and waits to be dispatched into interview rooms. Each
 dispatch creates an InterviewerAgent that conducts a structured
 technical interview driven by a deterministic state machine.
 
-The LLM calls @function_tool(record_observation) after each candidate
-answer.  The tool runs the state machine and returns the next question
-or instruction, which the LLM speaks in the same response.  No output
-parser, no gating, no separate generate_reply for probes.
+Uses direct provider API keys (Deepgram, OpenAI, Cartesia) instead of
+the LiveKit inference gateway — cheaper, no shared credit pool, no
+gateway rate limits. LiveKit is still used for WebRTC rooms/transport.
 """
 
 import structlog
@@ -21,12 +20,14 @@ from livekit.agents import (
     JobProcess,
     TurnHandlingOptions,
     cli,
-    inference,
     room_io,
 )
 from livekit.plugins import silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from livekit.plugins import ai_coustics
+from livekit.plugins import deepgram
+from livekit.plugins import openai
+from livekit.plugins import cartesia
 
 from config import InterviewEngineConfig
 from context_loader import load_session_config
@@ -55,8 +56,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
     1. Load session config (fixture or room metadata)
     2. Create InterviewerAgent (state machine + system prompt + tool)
-    3. Start AgentSession — the LLM auto-responds to candidate speech
-       and calls the record_observation tool for state machine control
+    3. Start AgentSession with direct provider STT/LLM/TTS
     """
     session_config = await load_session_config(engine_config)
 
@@ -74,17 +74,16 @@ async def entrypoint(ctx: JobContext) -> None:
     )
 
     session = AgentSession(
-        stt=inference.STT(
+        # Direct provider plugins — each reads its API key from env:
+        #   DEEPGRAM_API_KEY, OPENAI_API_KEY, CARTESIA_API_KEY
+        stt=deepgram.STT(
             model=engine_config.stt_model,
             language=engine_config.stt_language,
         ),
-        llm=inference.LLM(
+        llm=openai.LLM(
             model=engine_config.interview_llm_model,
-            extra_kwargs={
-                "reasoning_effort": engine_config.interview_reasoning_effort,
-            },
         ),
-        tts=inference.TTS(
+        tts=cartesia.TTS(
             model=engine_config.tts_model,
             voice=engine_config.tts_voice,
             language=engine_config.tts_language,

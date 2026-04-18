@@ -23,17 +23,17 @@ class InterviewEngineConfig(BaseSettings):
     # -- Results output ----------------------------------------------------
     results_dir: str = "results"
 
-    # -- LLM (via LiveKit inference gateway) -------------------------------
-    interview_llm_model: str = "openai/gpt-5.3-chat-latest"
+    # -- LLM (direct OpenAI API via OPENAI_API_KEY) -------------------------
+    interview_llm_model: str = "gpt-4o-mini"
     interview_reasoning_effort: str = "low"
 
-    # -- TTS ---------------------------------------------------------------
-    tts_model: str = "cartesia/sonic-3"
+    # -- TTS (direct Cartesia API via CARTESIA_API_KEY) --------------------
+    tts_model: str = "sonic-2024-10-19"
     tts_voice: str = "9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"
     tts_language: str = "en"
 
-    # -- STT ---------------------------------------------------------------
-    stt_model: str = "deepgram/nova-3"
+    # -- STT (direct Deepgram API via DEEPGRAM_API_KEY) --------------------
+    stt_model: str = "nova-3"
     stt_language: str = "en"
 
     # -- Interview constraints ---------------------------------------------
