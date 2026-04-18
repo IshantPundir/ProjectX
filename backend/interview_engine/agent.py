@@ -100,6 +100,7 @@ async def entrypoint(ctx: JobContext) -> None:
         tts_text_transforms=[output_processor],
         turn_handling=TurnHandlingOptions(
             turn_detection=MultilingualModel(),
+            preemptive_generation={"enabled": False},
         ),
         vad=ctx.proc.userdata["vad"],
     )

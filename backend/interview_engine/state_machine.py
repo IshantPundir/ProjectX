@@ -187,6 +187,10 @@ class InterviewStateMachine:
         if self.state.is_time_expired():
             return Action.CLOSE
 
+        # 1b. Candidate explicitly wants to end the interview.
+        if observation.candidate_disengaged:
+            return Action.CLOSE
+
         # 2. Probe — LLM wants deeper AND probes remaining AND time permits.
         if (
             observation.wants_to_probe

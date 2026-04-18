@@ -157,6 +157,15 @@ class SteeringObservation(BaseModel):
     wants_to_probe: bool = Field(
         description="LLM's recommendation to probe deeper (state machine validates).",
     )
+    candidate_disengaged: bool = Field(
+        default=False,
+        description=(
+            "True when the candidate explicitly says they want to stop, "
+            "leave, or refuse to continue (e.g. 'I'm done', 'I don't want "
+            "to answer any more'). NOT set for 'I don't know' — that's just "
+            "a weak answer, not disengagement."
+        ),
+    )
     notes: str = Field(
         default="",
         description="Free-form notes for the post-session evaluator.",
