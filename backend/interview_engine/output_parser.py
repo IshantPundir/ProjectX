@@ -19,7 +19,7 @@ forwarded to TTS as-is so the candidate always hears a response.
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterable, Callable
+from collections.abc import AsyncGenerator, AsyncIterable, Callable
 
 import structlog
 
@@ -36,7 +36,7 @@ logger = structlog.get_logger(__name__)
 async def parse_interview_output(
     text: AsyncIterable[str],
     on_observation: Callable[[SteeringObservation], None] | None = None,
-) -> AsyncIterable[str]:
+) -> AsyncGenerator[str, None]:
     """Stream ``response`` tokens to TTS immediately.
 
     Fires *on_observation* when the full observation is available.

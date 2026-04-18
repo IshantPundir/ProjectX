@@ -128,7 +128,7 @@ class InterviewerAgent(Agent):
 
         # Schedule the async operation on the running event loop.
         # _on_observation is a sync callback invoked from the output parser.
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         if action == Action.CLOSE:
             loop.create_task(self._close_interview(context_injection))
