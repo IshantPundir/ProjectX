@@ -4,6 +4,11 @@ Connects to LiveKit Cloud (or self-hosted), registers as an available
 agent worker, and waits to be dispatched into interview rooms. Each
 dispatch creates an InterviewerAgent that conducts a structured
 technical interview driven by a deterministic state machine.
+
+The LLM calls @function_tool(record_observation) after each candidate
+answer.  The tool runs the state machine and returns the next question
+or instruction, which the LLM speaks in the same response.  No output
+parser, no gating, no separate generate_reply for probes.
 """
 
 import structlog
@@ -25,14 +30,12 @@ from livekit.plugins import ai_coustics
 
 from config import InterviewEngineConfig
 from context_loader import load_session_config
-from output_parser import create_output_processor
 from agents.interviewer import InterviewerAgent
 
 load_dotenv(".env")
 
 logger = structlog.get_logger("interview-engine")
 
-# Load engine config once at module level
 engine_config = InterviewEngineConfig()
 
 server = AgentServer()
@@ -48,14 +51,13 @@ server.setup_fnc = prewarm
 
 @server.rtc_session(agent_name="Dakota-1785")
 async def entrypoint(ctx: JobContext) -> None:
-    """Per-session entrypoint. Called when LiveKit dispatches this agent to a room.
+    """Per-session entrypoint.
 
-    1. Load session config (from fixture or room metadata)
-    2. Create the InterviewerAgent (builds state machine + system prompt)
-    3. Wire the structured output parser into tts_text_transforms
-    4. Start the AgentSession
+    1. Load session config (fixture or room metadata)
+    2. Create InterviewerAgent (state machine + system prompt + tool)
+    3. Start AgentSession — the LLM auto-responds to candidate speech
+       and calls the record_observation tool for state machine control
     """
-    # 1. Load session context
     session_config = await load_session_config(engine_config)
 
     logger.info(
@@ -66,23 +68,11 @@ async def entrypoint(ctx: JobContext) -> None:
         question_count=len(session_config.stage.questions),
     )
 
-    # 2. Create the interview agent
     agent = InterviewerAgent(
         session_config=session_config,
         engine_config=engine_config,
     )
 
-    # 3. Create the output processor wired to the agent's observation callback.
-    #    The processor is a Callable[[AsyncIterable[str]], AsyncIterable[str]]
-    #    which matches the TextTransforms callable variant accepted by
-    #    tts_text_transforms. It streams the "response" field to TTS while
-    #    accumulating the full JSON to extract SteeringObservation.
-    output_processor = create_output_processor(
-        on_observation=agent._on_observation,
-        on_complete=agent._on_stream_complete,
-    )
-
-    # 4. Build the AgentSession with config-driven model strings
     session = AgentSession(
         stt=inference.STT(
             model=engine_config.stt_model,
@@ -90,14 +80,15 @@ async def entrypoint(ctx: JobContext) -> None:
         ),
         llm=inference.LLM(
             model=engine_config.interview_llm_model,
-            extra_kwargs={"reasoning_effort": engine_config.interview_reasoning_effort},
+            extra_kwargs={
+                "reasoning_effort": engine_config.interview_reasoning_effort,
+            },
         ),
         tts=inference.TTS(
             model=engine_config.tts_model,
             voice=engine_config.tts_voice,
             language=engine_config.tts_language,
         ),
-        tts_text_transforms=[output_processor],
         turn_handling=TurnHandlingOptions(
             turn_detection=MultilingualModel(),
             preemptive_generation={"enabled": False},
@@ -109,7 +100,6 @@ async def entrypoint(ctx: JobContext) -> None:
         vad=ctx.proc.userdata["vad"],
     )
 
-    # 5. Start the session
     await session.start(
         agent=agent,
         room=ctx.room,
