@@ -60,6 +60,10 @@ class InterviewerAgent(Agent):
         self._transcript: list[TranscriptEntry] = []
         self._session_start_ms: int = 0
 
+        # Gate: only process observations that follow a real candidate answer,
+        # not observations from the agent's own generate_reply output.
+        self._accept_observations: bool = False
+
         # Initialize the LiveKit Agent with the system prompt
         super().__init__(instructions=system_prompt)
 
@@ -85,13 +89,17 @@ class InterviewerAgent(Agent):
 
         # Generate the greeting, then the first question.
         # The LLM will greet, then immediately ask the first question.
-        await self.session.generate_reply(
+        self.session.generate_reply(
             instructions=(
                 f"{greeting_instruction}\n\n"
                 f"Then immediately ask the first question:\n{first_q_context}"
             ),
             allow_interruptions=False,
         )
+
+        # Now that the agent has asked the first question, enable
+        # observation processing for the candidate's answer.
+        self._accept_observations = True
 
         logger.info(
             "interview.started",
@@ -110,7 +118,22 @@ class InterviewerAgent(Agent):
 
         This is the interview control loop:
         observation -> state machine decision -> context injection -> next turn
+
+        **Gating:** Only processes observations from the candidate's actual
+        answer, not from the agent's own ``generate_reply`` output.  The
+        ``_accept_observations`` flag is set to True after the agent asks a
+        question and cleared after we process the candidate's answer.  This
+        prevents a runaway loop where generate_reply → parser → observation
+        → generate_reply → ... cycles without waiting for the candidate.
         """
+        if not self._accept_observations:
+            logger.debug("observation.ignored_gate_closed")
+            return
+
+        # Disable the gate — we'll re-enable after the agent's next speech
+        # finishes and the system is ready for the candidate to speak again.
+        self._accept_observations = False
+
         # Let the state machine decide
         action = self.state_machine.decide_next_action(observation)
 
@@ -126,18 +149,29 @@ class InterviewerAgent(Agent):
             phase=self.state_machine.state.phase.value,
         )
 
-        # Schedule the async operation on the running event loop.
-        # _on_observation is a sync callback invoked from the output parser.
-        loop = asyncio.get_running_loop()
-
         if action == Action.CLOSE:
+            # Close: fire farewell speech, then write results async
+            loop = asyncio.get_running_loop()
             loop.create_task(self._close_interview(context_injection))
             return
 
-        # For PROBE, ADVANCE, SKIP -- inject the next instruction
-        loop.create_task(
-            self.session.generate_reply(instructions=context_injection)
-        )
+        # PROBE / ADVANCE / SKIP — fire the speech.
+        # generate_reply() is synchronous, returns a SpeechHandle (not a
+        # coroutine).  Do NOT wrap in create_task — just call it directly.
+        self.session.generate_reply(instructions=context_injection)
+
+        # Re-enable the observation gate after a delay.  The agent needs
+        # time to speak the question/probe before we accept the candidate's
+        # next answer.  The delay must be long enough to cover the agent's
+        # speech but short enough that we don't miss the candidate's answer.
+        # 4 seconds covers most question deliveries (8-15 words at TTS pace).
+        loop = asyncio.get_running_loop()
+        loop.call_later(4.0, self._reopen_observation_gate)
+
+    def _reopen_observation_gate(self) -> None:
+        """Re-enable observation processing after the agent finishes speaking."""
+        self._accept_observations = True
+        logger.debug("observation.gate_reopened")
 
     # ------------------------------------------------------------------
     # Interview closure
@@ -145,10 +179,13 @@ class InterviewerAgent(Agent):
 
     async def _close_interview(self, closing_instruction: str) -> None:
         """Handle interview closure: farewell + result writing."""
-        await self.session.generate_reply(
+        # generate_reply returns a SpeechHandle; await it to wait for
+        # the farewell speech to finish before writing results.
+        handle = self.session.generate_reply(
             instructions=closing_instruction,
             allow_interruptions=False,
         )
+        await handle
 
         # Write results
         result = self._build_session_result()
