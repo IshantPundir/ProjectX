@@ -64,12 +64,19 @@ class InterviewerAgent(Agent):
         # generate_reply → parser → observation → generate_reply cycles
         # without waiting for the candidate to speak.
         #
-        # _skip_next_observation: set True when we call generate_reply.
-        # The NEXT observation callback (from that generate_reply's output)
-        # is skipped. Cleared by _on_stream_complete when the stream finishes.
+        # Problem: on_observation and on_complete fire in the SAME async
+        # generator invocation.  If on_observation sets a skip flag and
+        # on_complete immediately clears it, the flag is True for
+        # microseconds — useless.
         #
-        # Starts True so the greeting+first-question output is skipped.
-        self._skip_next_observation: bool = True
+        # Solution: _pending_skips counts how many FUTURE streams should
+        # have their observations skipped.  _skip_incremented_this_stream
+        # prevents on_complete from decrementing the counter that was JUST
+        # incremented by on_observation in the same stream.
+        #
+        # Starts at 1 so the greeting+first-question output is skipped.
+        self._pending_skips: int = 1
+        self._skip_incremented_this_stream: bool = False
         self._gate_safety_timeout: asyncio.TimerHandle | None = None
 
         # Initialize the LiveKit Agent with the system prompt
@@ -126,15 +133,27 @@ class InterviewerAgent(Agent):
         This is the interview control loop:
         observation → state machine decision → context injection → next turn
 
-        **Gating:** ``_skip_next_observation`` prevents processing observations
-        from the agent's own ``generate_reply`` output.  The flag is set True
-        before each ``generate_reply`` call and cleared by ``_on_stream_complete``
-        when that stream finishes.  This is event-driven (not timer-based), so
-        it handles short probes and long questions equally well.
+        **Gating:** ``_pending_skips`` counts how many future streams should
+        have their observations skipped.  When ``_pending_skips > 0``, this
+        observation is from an agent-initiated ``generate_reply`` output and
+        is ignored.  ``_on_stream_complete`` decrements the counter — but
+        only on the NEXT stream, not the one that incremented it (tracked
+        via ``_skip_incremented_this_stream``).
         """
-        if self._skip_next_observation:
-            logger.debug("observation.skipped_agent_initiated")
+        if self._pending_skips > 0:
+            logger.debug(
+                "observation.skipped",
+                pending_skips=self._pending_skips,
+                summary=observation.answer_summary[:80] if observation.answer_summary else "",
+            )
             return
+
+        logger.info(
+            "observation.processing",
+            summary=observation.answer_summary[:120],
+            signals=observation.signals_demonstrated,
+            wants_probe=observation.wants_to_probe,
+        )
 
         # Let the state machine decide
         action = self.state_machine.decide_next_action(observation)
@@ -158,16 +177,23 @@ class InterviewerAgent(Agent):
 
         # PROBE / ADVANCE / SKIP — fire the speech.
         # generate_reply() is synchronous, returns a SpeechHandle.
+        logger.debug(
+            "generate_reply.firing",
+            action=action.value,
+            instruction_preview=context_injection[:100],
+        )
         self.session.generate_reply(instructions=context_injection)
 
-        # Mark that the NEXT stream (from this generate_reply) should be
-        # skipped.  _on_stream_complete will clear this when that stream
-        # finishes, re-opening the gate for the candidate's next answer.
-        self._skip_next_observation = True
+        # The generate_reply we just fired will produce ONE output stream.
+        # That stream's observation must be skipped (it's the agent speaking,
+        # not the candidate answering).  Increment _pending_skips and mark
+        # that we did it in THIS stream so on_complete doesn't decrement it
+        # prematurely.
+        self._pending_skips += 1
+        self._skip_incremented_this_stream = True
+        logger.debug("gate.skip_queued", pending_skips=self._pending_skips)
 
-        # Safety timeout: if _on_stream_complete never fires (e.g. LLM
-        # error, stream dropped), force-clear after 15s so the interview
-        # doesn't freeze.
+        # Safety timeout
         loop = asyncio.get_running_loop()
         if self._gate_safety_timeout:
             self._gate_safety_timeout.cancel()
@@ -178,25 +204,50 @@ class InterviewerAgent(Agent):
     def _on_stream_complete(self, had_observation: bool) -> None:
         """Called by the output parser when each LLM output stream finishes.
 
-        If ``_skip_next_observation`` is True, this stream was from an
-        agent-initiated ``generate_reply``.  Clear the flag so the NEXT
-        observation (from the candidate's answer) gets processed.
+        Decrements ``_pending_skips`` so the NEXT candidate-triggered stream
+        gets processed.  But does NOT decrement if ``_pending_skips`` was
+        incremented during THIS SAME stream (by ``_on_observation``), because
+        ``on_observation`` and ``on_complete`` fire sequentially in the same
+        generator — decrementing here would undo the increment immediately.
         """
-        if self._skip_next_observation:
-            self._skip_next_observation = False
-            if self._gate_safety_timeout:
+        if self._skip_incremented_this_stream:
+            # The skip was set IN this stream's on_observation.
+            # Don't touch _pending_skips — let the NEXT stream's
+            # on_complete decrement it.
+            self._skip_incremented_this_stream = False
+            logger.debug(
+                "stream.complete_skip_preserved",
+                pending_skips=self._pending_skips,
+                had_observation=had_observation,
+            )
+            return
+
+        if self._pending_skips > 0:
+            self._pending_skips -= 1
+            if self._gate_safety_timeout and self._pending_skips == 0:
                 self._gate_safety_timeout.cancel()
                 self._gate_safety_timeout = None
             logger.debug(
-                "observation.gate_cleared",
-                stream_had_observation=had_observation,
+                "stream.complete_skip_consumed",
+                pending_skips=self._pending_skips,
+                had_observation=had_observation,
+            )
+        else:
+            logger.debug(
+                "stream.complete",
+                pending_skips=self._pending_skips,
+                had_observation=had_observation,
             )
 
     def _force_reopen_gate(self) -> None:
-        """Safety fallback: clear the gate if _on_stream_complete never fires."""
-        self._skip_next_observation = False
+        """Safety fallback: clear the gate if on_stream_complete never fires."""
+        logger.warning(
+            "gate.force_cleared",
+            pending_skips=self._pending_skips,
+        )
+        self._pending_skips = 0
+        self._skip_incremented_this_stream = False
         self._gate_safety_timeout = None
-        logger.warning("observation.gate_force_cleared_by_timeout")
 
     # ------------------------------------------------------------------
     # Interview closure
