@@ -101,6 +101,10 @@ async def entrypoint(ctx: JobContext) -> None:
         turn_handling=TurnHandlingOptions(
             turn_detection=MultilingualModel(),
             preemptive_generation={"enabled": False},
+            endpointing={
+                "min_delay": engine_config.endpointing_min_delay,
+                "max_delay": engine_config.endpointing_max_delay,
+            },
         ),
         vad=ctx.proc.userdata["vad"],
     )

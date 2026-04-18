@@ -40,5 +40,12 @@ class InterviewEngineConfig(BaseSettings):
     max_probes_per_question: int = 2
     time_warning_threshold: float = 0.8  # warn at 80% elapsed
 
+    # -- Turn detection / endpointing --------------------------------------
+    # Interview-tuned: candidates pause to think mid-answer.
+    # Minimum silence (seconds) before committing a turn.
+    endpointing_min_delay: float = 1.5
+    # Maximum silence before forcing a turn commit.
+    endpointing_max_delay: float = 8.0
+
     # -- Agent identity ----------------------------------------------------
     agent_name: str = "Dakota"
