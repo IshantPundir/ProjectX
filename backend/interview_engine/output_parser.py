@@ -36,10 +36,14 @@ logger = structlog.get_logger(__name__)
 async def parse_interview_output(
     text: AsyncIterable[str],
     on_observation: Callable[[SteeringObservation], None] | None = None,
+    on_complete: Callable[[bool], None] | None = None,
 ) -> AsyncGenerator[str, None]:
     """Stream ``response`` tokens to TTS immediately.
 
     Fires *on_observation* when the full observation is available.
+    Fires *on_complete(had_observation)* when the stream finishes,
+    regardless of whether an observation was found -- this allows
+    the caller to track when each LLM output is fully processed.
 
     If the LLM outputs malformed JSON (not valid structured output),
     yields all text as-is to TTS (graceful degradation -- the candidate
@@ -47,55 +51,72 @@ async def parse_interview_output(
     """
     acc = ""
     last_yielded = 0
+    observation_fired = False
 
-    async for chunk in text:
-        acc += chunk
-
-        # Try to yield new response content incrementally
-        new_text = _extract_response_delta(acc, last_yielded)
-        if new_text:
-            last_yielded += len(new_text)
-            yield new_text
-
-    # Stream complete -- try to parse the full JSON
     try:
-        parsed = json.loads(acc)
+        async for chunk in text:
+            acc += chunk
 
-        # Yield any remaining response text we didn't stream yet
-        full_response = parsed.get("response", "")
-        if len(full_response) > last_yielded:
-            yield full_response[last_yielded:]
+            # Try to yield new response content incrementally
+            new_text = _extract_response_delta(acc, last_yielded)
+            if new_text:
+                last_yielded += len(new_text)
+                yield new_text
 
-        # Fire observation callback
-        obs_data = parsed.get("observation")
-        if obs_data and on_observation:
+        # Stream complete -- try to parse the full JSON
+        try:
+            parsed = json.loads(acc)
+
+            # Yield any remaining response text we didn't stream yet
+            full_response = parsed.get("response", "")
+            if len(full_response) > last_yielded:
+                yield full_response[last_yielded:]
+
+            # Fire observation callback
+            obs_data = parsed.get("observation")
+            if obs_data and on_observation:
+                try:
+                    obs = SteeringObservation.model_validate(obs_data)
+                    on_observation(obs)
+                    observation_fired = True
+                except Exception as exc:
+                    logger.warning(
+                        "observation.parse_failed",
+                        error=str(exc),
+                    )
+
+        except json.JSONDecodeError:
+            # Graceful degradation -- yield entire accumulated text as speech
+            # if nothing was yielded from incremental extraction.
+            if last_yielded == 0:
+                yield acc
+            logger.warning(
+                "structured_output.parse_failed",
+                text_length=len(acc),
+            )
+    finally:
+        # Always fire on_complete so the caller knows this stream is done
+        if on_complete:
             try:
-                obs = SteeringObservation.model_validate(obs_data)
-                on_observation(obs)
-            except Exception as exc:
-                logger.warning(
-                    "observation.parse_failed",
-                    error=str(exc),
-                )
-
-    except json.JSONDecodeError:
-        # Graceful degradation -- yield entire accumulated text as speech
-        # if nothing was yielded from incremental extraction.
-        if last_yielded == 0:
-            yield acc
-        logger.warning(
-            "structured_output.parse_failed",
-            text_length=len(acc),
-        )
+                on_complete(observation_fired)
+            except Exception:
+                pass
 
 
 def create_output_processor(
     on_observation: Callable[[SteeringObservation], None] | None = None,
+    on_complete: Callable[[bool], None] | None = None,
 ) -> Callable[[AsyncIterable[str]], AsyncIterable[str]]:
-    """Create a bound output processor for use with LiveKit AgentSession."""
+    """Create a bound output processor for use with LiveKit AgentSession.
+
+    *on_complete* fires when each LLM output stream finishes, with a
+    boolean indicating whether an observation was extracted.  This lets
+    the caller gate observation processing per-stream (e.g. skip
+    observations from agent-initiated ``generate_reply`` outputs).
+    """
 
     async def processor(text: AsyncIterable[str]) -> AsyncIterable[str]:
-        async for chunk in parse_interview_output(text, on_observation):
+        async for chunk in parse_interview_output(text, on_observation, on_complete):
             yield chunk
 
     return processor

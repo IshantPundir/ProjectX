@@ -60,9 +60,17 @@ class InterviewerAgent(Agent):
         self._transcript: list[TranscriptEntry] = []
         self._session_start_ms: int = 0
 
-        # Gate: only process observations that follow a real candidate answer,
-        # not observations from the agent's own generate_reply output.
-        self._accept_observations: bool = False
+        # Observation gating: prevents the runaway loop where
+        # generate_reply → parser → observation → generate_reply cycles
+        # without waiting for the candidate to speak.
+        #
+        # _skip_next_observation: set True when we call generate_reply.
+        # The NEXT observation callback (from that generate_reply's output)
+        # is skipped. Cleared by _on_stream_complete when the stream finishes.
+        #
+        # Starts True so the greeting+first-question output is skipped.
+        self._skip_next_observation: bool = True
+        self._gate_safety_timeout: asyncio.TimerHandle | None = None
 
         # Initialize the LiveKit Agent with the system prompt
         super().__init__(instructions=system_prompt)
@@ -88,7 +96,10 @@ class InterviewerAgent(Agent):
         first_q_context = self.state_machine.get_first_question_context()
 
         # Generate the greeting, then the first question.
-        # The LLM will greet, then immediately ask the first question.
+        # _skip_next_observation is already True (set in __init__), so the
+        # greeting output's observation will be skipped.  _on_stream_complete
+        # clears the flag when the greeting stream finishes, readying the
+        # gate for the candidate's first answer.
         self.session.generate_reply(
             instructions=(
                 f"{greeting_instruction}\n\n"
@@ -96,10 +107,6 @@ class InterviewerAgent(Agent):
             ),
             allow_interruptions=False,
         )
-
-        # Now that the agent has asked the first question, enable
-        # observation processing for the candidate's answer.
-        self._accept_observations = True
 
         logger.info(
             "interview.started",
@@ -117,22 +124,17 @@ class InterviewerAgent(Agent):
         """Called by the output parser when a complete observation is captured.
 
         This is the interview control loop:
-        observation -> state machine decision -> context injection -> next turn
+        observation → state machine decision → context injection → next turn
 
-        **Gating:** Only processes observations from the candidate's actual
-        answer, not from the agent's own ``generate_reply`` output.  The
-        ``_accept_observations`` flag is set to True after the agent asks a
-        question and cleared after we process the candidate's answer.  This
-        prevents a runaway loop where generate_reply → parser → observation
-        → generate_reply → ... cycles without waiting for the candidate.
+        **Gating:** ``_skip_next_observation`` prevents processing observations
+        from the agent's own ``generate_reply`` output.  The flag is set True
+        before each ``generate_reply`` call and cleared by ``_on_stream_complete``
+        when that stream finishes.  This is event-driven (not timer-based), so
+        it handles short probes and long questions equally well.
         """
-        if not self._accept_observations:
-            logger.debug("observation.ignored_gate_closed")
+        if self._skip_next_observation:
+            logger.debug("observation.skipped_agent_initiated")
             return
-
-        # Disable the gate — we'll re-enable after the agent's next speech
-        # finishes and the system is ready for the candidate to speak again.
-        self._accept_observations = False
 
         # Let the state machine decide
         action = self.state_machine.decide_next_action(observation)
@@ -150,28 +152,51 @@ class InterviewerAgent(Agent):
         )
 
         if action == Action.CLOSE:
-            # Close: fire farewell speech, then write results async
             loop = asyncio.get_running_loop()
             loop.create_task(self._close_interview(context_injection))
             return
 
         # PROBE / ADVANCE / SKIP — fire the speech.
-        # generate_reply() is synchronous, returns a SpeechHandle (not a
-        # coroutine).  Do NOT wrap in create_task — just call it directly.
+        # generate_reply() is synchronous, returns a SpeechHandle.
         self.session.generate_reply(instructions=context_injection)
 
-        # Re-enable the observation gate after a delay.  The agent needs
-        # time to speak the question/probe before we accept the candidate's
-        # next answer.  The delay must be long enough to cover the agent's
-        # speech but short enough that we don't miss the candidate's answer.
-        # 4 seconds covers most question deliveries (8-15 words at TTS pace).
-        loop = asyncio.get_running_loop()
-        loop.call_later(4.0, self._reopen_observation_gate)
+        # Mark that the NEXT stream (from this generate_reply) should be
+        # skipped.  _on_stream_complete will clear this when that stream
+        # finishes, re-opening the gate for the candidate's next answer.
+        self._skip_next_observation = True
 
-    def _reopen_observation_gate(self) -> None:
-        """Re-enable observation processing after the agent finishes speaking."""
-        self._accept_observations = True
-        logger.debug("observation.gate_reopened")
+        # Safety timeout: if _on_stream_complete never fires (e.g. LLM
+        # error, stream dropped), force-clear after 15s so the interview
+        # doesn't freeze.
+        loop = asyncio.get_running_loop()
+        if self._gate_safety_timeout:
+            self._gate_safety_timeout.cancel()
+        self._gate_safety_timeout = loop.call_later(
+            15.0, self._force_reopen_gate
+        )
+
+    def _on_stream_complete(self, had_observation: bool) -> None:
+        """Called by the output parser when each LLM output stream finishes.
+
+        If ``_skip_next_observation`` is True, this stream was from an
+        agent-initiated ``generate_reply``.  Clear the flag so the NEXT
+        observation (from the candidate's answer) gets processed.
+        """
+        if self._skip_next_observation:
+            self._skip_next_observation = False
+            if self._gate_safety_timeout:
+                self._gate_safety_timeout.cancel()
+                self._gate_safety_timeout = None
+            logger.debug(
+                "observation.gate_cleared",
+                stream_had_observation=had_observation,
+            )
+
+    def _force_reopen_gate(self) -> None:
+        """Safety fallback: clear the gate if _on_stream_complete never fires."""
+        self._skip_next_observation = False
+        self._gate_safety_timeout = None
+        logger.warning("observation.gate_force_cleared_by_timeout")
 
     # ------------------------------------------------------------------
     # Interview closure

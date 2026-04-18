@@ -79,6 +79,7 @@ async def entrypoint(ctx: JobContext) -> None:
     #    accumulating the full JSON to extract SteeringObservation.
     output_processor = create_output_processor(
         on_observation=agent._on_observation,
+        on_complete=agent._on_stream_complete,
     )
 
     # 4. Build the AgentSession with config-driven model strings

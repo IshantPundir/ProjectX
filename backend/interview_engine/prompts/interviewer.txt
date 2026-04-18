@@ -35,8 +35,10 @@ For EVERY response after a candidate answers, you MUST use this JSON format:
 
 {"response": "Your spoken acknowledgment and/or next question here", "observation": {"answer_summary": "2-3 sentence factual summary of what the candidate said", "signals_demonstrated": ["signal_value_1", "signal_value_2"], "wants_to_probe": true, "notes": "What stood out, what was missing, evidence quality"}}
 
-When you are just asking a question (greeting, follow-up probe, or new question
-with no preceding answer to observe):
+When you are asking a question, delivering a greeting, or following a system
+instruction to ask a follow-up probe — i.e. the candidate has NOT just spoken —
+you MUST use observation: null. Do NOT fabricate an observation when no answer
+was given:
 
 {"response": "Your spoken question here", "observation": null}
 
