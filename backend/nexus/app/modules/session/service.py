@@ -18,7 +18,7 @@ import uuid
 from datetime import datetime, timedelta, UTC
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
@@ -35,12 +35,15 @@ from app.modules.auth.context import UserContext
 from app.modules.auth.service import create_candidate_token
 from app.modules.org_units.service import find_company_profile_in_ancestry
 from app.modules.session.errors import (
+    IllegalStartStateError,
     InvalidOtpError,
     InvalidSessionStateError,
     OtpExpiredError,
     OtpMaxAttemptsReachedError,
     OtpRateLimitedError,
+    OtpRequiredError,
     SessionNotFoundError,
+    TokenAlreadyUsedError,
 )
 from app.modules.session.otp import generate_code, hash_code, verify_code
 from app.modules.session.schemas import PreCheckResponse, SessionState
@@ -332,3 +335,78 @@ async def _log_otp_failure(
         resource_id=sess.id,
         payload={"reason": reason, "attempts_consumed": attempts},
     )
+
+
+async def start_session(
+    db: AsyncSession,
+    *,
+    session_id: UUID,
+    jti: uuid.UUID,
+    ip_address: str | None,
+    user_agent: str | None,
+) -> str:
+    """Atomic single-use start.
+
+    Returns 'pending' — the router converts this to a 501 LIVEKIT_INTEGRATION_PENDING.
+    When LiveKit wires in Phase 3D, this function returns room credentials instead.
+
+    Raises:
+        IllegalStartStateError — state != 'consented'
+        OtpRequiredError        — otp_required but otp_verified_at is None
+        TokenAlreadyUsedError   — atomic UPDATE matched 0 rows (replay or expired/superseded)
+    """
+    sess = await _load_session_or_404(db, session_id)
+
+    if sess.state != SessionState.CONSENTED.value:
+        raise IllegalStartStateError()
+
+    if sess.otp_required and sess.otp_verified_at is None:
+        raise OtpRequiredError()
+
+    # Atomic single-use — the load-bearing invariant
+    result = await db.execute(
+        update(CandidateSessionToken)
+        .where(
+            CandidateSessionToken.jti == jti,
+            CandidateSessionToken.used_at.is_(None),
+            CandidateSessionToken.expires_at > datetime.now(UTC),
+            CandidateSessionToken.superseded_at.is_(None),
+        )
+        .values(
+            used_at=datetime.now(UTC),
+            used_ip=ip_address,
+            used_user_agent=user_agent,
+        )
+        .returning(CandidateSessionToken.jti)
+    )
+    updated_jti = result.scalar_one_or_none()
+    if updated_jti is None:
+        await log_event(
+            db,
+            tenant_id=sess.tenant_id,
+            actor_id=None,
+            actor_email=None,
+            action="session.token_replay_blocked",
+            resource="session",
+            resource_id=sess.id,
+            payload={"jti": str(jti), "ip": ip_address, "ua": user_agent},
+        )
+        raise TokenAlreadyUsedError()
+
+    # Transition → active
+    sess.state = transition(SessionState.CONSENTED, SessionState.ACTIVE).value
+    sess.started_at = datetime.now(UTC)
+    sess.state_changed_at = datetime.now(UTC)
+    await db.flush()
+
+    await log_event(
+        db,
+        tenant_id=sess.tenant_id,
+        actor_id=None,
+        actor_email=None,
+        action="session.token_used",
+        resource="session",
+        resource_id=sess.id,
+        payload={"jti": str(jti), "ip": ip_address},
+    )
+    return "pending"
