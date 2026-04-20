@@ -115,3 +115,79 @@ async def test_supersede_token_marks_prior_and_links_successor(db):
     await db.refresh(old)
     assert old.superseded_at is not None
     assert old.superseded_by == new.jti
+
+
+@pytest.mark.asyncio
+async def test_get_pre_check_context_advances_created_to_pre_check(db):
+    tenant, user, stage, candidate, assignment = await _seed_assignment(db)
+    ctx = _make_ctx(user)
+    sess = await service.create_session(
+        db, assignment=assignment, stage=stage, otp_required=False, user=ctx,
+    )
+    assert sess.state == "created"
+
+    resp = await service.get_pre_check_context(db, session_id=sess.id)
+
+    assert resp.state == SessionState.PRE_CHECK
+    assert resp.session_id == sess.id
+    assert resp.job_title  # company / title populated (may be empty string if helper returns "")
+    await db.refresh(sess)
+    assert sess.state == "pre_check"
+
+
+@pytest.mark.asyncio
+async def test_get_pre_check_context_is_monotonic_from_consented(db):
+    tenant, user, stage, candidate, assignment = await _seed_assignment(db)
+    ctx = _make_ctx(user)
+    sess = await service.create_session(
+        db, assignment=assignment, stage=stage, otp_required=True, user=ctx,
+    )
+    sess.state = "consented"
+    sess.consent_recorded_at = datetime.now(UTC)
+    await db.flush()
+
+    resp = await service.get_pre_check_context(db, session_id=sess.id)
+
+    assert resp.state == SessionState.CONSENTED  # no regression
+    await db.refresh(sess)
+    assert sess.state == "consented"
+
+
+@pytest.mark.asyncio
+async def test_record_consent_stamps_and_transitions(db):
+    tenant, user, stage, candidate, assignment = await _seed_assignment(db)
+    ctx = _make_ctx(user)
+    sess = await service.create_session(
+        db, assignment=assignment, stage=stage, otp_required=False, user=ctx,
+    )
+    # Must be at pre_check before consent is allowed
+    sess.state = "pre_check"
+    await db.flush()
+
+    await service.record_consent(
+        db, session_id=sess.id, user_agent="Mozilla/5.0", ip_address="1.2.3.4",
+    )
+    await db.refresh(sess)
+
+    assert sess.state == "consented"
+    assert sess.consent_recorded_at is not None
+
+
+@pytest.mark.asyncio
+async def test_record_consent_is_idempotent_once_already_consented(db):
+    tenant, user, stage, _c, assignment = await _seed_assignment(db)
+    ctx = _make_ctx(user)
+    sess = await service.create_session(
+        db, assignment=assignment, stage=stage, otp_required=False, user=ctx,
+    )
+    sess.state = "consented"
+    original_ts = datetime.now(UTC)
+    sess.consent_recorded_at = original_ts
+    await db.flush()
+
+    await service.record_consent(
+        db, session_id=sess.id, user_agent="NewUA", ip_address="1.2.3.4",
+    )
+    await db.refresh(sess)
+    # Timestamp not overwritten
+    assert sess.consent_recorded_at == original_ts

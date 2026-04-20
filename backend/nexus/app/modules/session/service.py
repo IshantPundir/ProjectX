@@ -22,14 +22,24 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
+    Candidate,
     CandidateJobAssignment,
     CandidateSessionToken,
     JobPipelineStage,
+    JobPosting,
+    OrganizationalUnit,
     Session,
 )
 from app.modules.audit.service import log_event
 from app.modules.auth.context import UserContext
 from app.modules.auth.service import create_candidate_token
+from app.modules.org_units.service import find_company_profile_in_ancestry
+from app.modules.session.errors import (
+    InvalidSessionStateError,
+    SessionNotFoundError,
+)
+from app.modules.session.schemas import PreCheckResponse, SessionState
+from app.modules.session.state_machine import advance_on_pre_check_load, transition
 
 
 async def create_session(
@@ -103,3 +113,110 @@ async def supersede_token(
     prior.superseded_at = datetime.now(UTC)
     prior.superseded_by = successor.jti
     await db.flush()
+
+
+async def _load_session_or_404(db: AsyncSession, session_id: UUID) -> Session:
+    result = await db.execute(select(Session).where(Session.id == session_id))
+    sess = result.scalar_one_or_none()
+    if sess is None:
+        raise SessionNotFoundError()
+    return sess
+
+
+async def get_pre_check_context(
+    db: AsyncSession, session_id: UUID
+) -> PreCheckResponse:
+    """Load the session + contextual info for the candidate-facing /pre-check endpoint.
+
+    Advances state created → pre_check on first load (monotonic — no regression
+    from any later state). Emits `session.pre_check_loaded` audit event ONLY on
+    the first transition (idempotent loads don't spam the audit log).
+    """
+    sess = await _load_session_or_404(db, session_id)
+    prior_state = SessionState(sess.state)
+    new_state = advance_on_pre_check_load(prior_state)
+
+    if new_state != prior_state:
+        sess.state = new_state.value
+        sess.state_changed_at = datetime.now(UTC)
+        await db.flush()
+        await log_event(
+            db,
+            tenant_id=sess.tenant_id,
+            actor_id=None,      # candidate-driven; no Supabase user
+            actor_email=None,
+            action="session.pre_check_loaded",
+            resource="session",
+            resource_id=sess.id,
+            payload={},
+        )
+
+    # Resolve presentation context
+    stage = (await db.execute(
+        select(JobPipelineStage).where(JobPipelineStage.id == sess.stage_id)
+    )).scalar_one()
+    assignment = (await db.execute(
+        select(CandidateJobAssignment)
+        .where(CandidateJobAssignment.id == sess.assignment_id)
+    )).scalar_one()
+    job = (await db.execute(
+        select(JobPosting).where(JobPosting.id == assignment.job_posting_id)
+    )).scalar_one()
+    company_profile = await find_company_profile_in_ancestry(db, job.org_unit_id)
+    company_name = (company_profile or {}).get("name") or ""
+
+    return PreCheckResponse(
+        session_id=sess.id,
+        company_name=company_name,
+        job_title=job.title,
+        stage_name=stage.name,
+        duration_minutes=stage.duration_minutes,
+        consent_text=_CONSENT_TEXT,
+        state=SessionState(sess.state),
+        otp_required=sess.otp_required,
+        otp_verified_at=sess.otp_verified_at,
+    )
+
+
+_CONSENT_TEXT = (
+    "I consent to this interview being recorded and reviewed by the hiring team. "
+    "I understand this is an AI-led interview and my responses will be analyzed. "
+    "I understand I can withdraw at any time before the interview starts."
+)
+
+
+async def record_consent(
+    db: AsyncSession,
+    *,
+    session_id: UUID,
+    user_agent: str,
+    ip_address: str | None,
+) -> None:
+    """Stamp consent_recorded_at and transition pre_check → consented.
+
+    Idempotent — if already consented, refreshes nothing (AIVIA record must
+    preserve the original timestamp).
+    """
+    sess = await _load_session_or_404(db, session_id)
+    if sess.state == SessionState.CONSENTED.value:
+        return  # Idempotent — no re-stamp
+    if sess.state != SessionState.PRE_CHECK.value:
+        raise InvalidSessionStateError(
+            f"Cannot consent from state={sess.state!r}"
+        )
+
+    sess.state = transition(SessionState.PRE_CHECK, SessionState.CONSENTED).value
+    sess.consent_recorded_at = datetime.now(UTC)
+    sess.state_changed_at = datetime.now(UTC)
+    await db.flush()
+
+    await log_event(
+        db,
+        tenant_id=sess.tenant_id,
+        actor_id=None,
+        actor_email=None,
+        action="session.consent_recorded",
+        resource="session",
+        resource_id=sess.id,
+        payload={"user_agent": user_agent, "ip": ip_address},
+    )
