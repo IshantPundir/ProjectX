@@ -191,3 +191,126 @@ async def test_record_consent_is_idempotent_once_already_consented(db):
     await db.refresh(sess)
     # Timestamp not overwritten
     assert sess.consent_recorded_at == original_ts
+
+
+@pytest.mark.asyncio
+async def test_request_otp_issues_code_and_wipes_prior_attempts(db):
+    tenant, user, stage, _c, assignment = await _seed_assignment(db, otp_default=True)
+    ctx = _make_ctx(user)
+    sess = await service.create_session(
+        db, assignment=assignment, stage=stage, otp_required=True, user=ctx,
+    )
+    sess.state = "consented"
+    sess.otp_attempts = 2  # stale attempts from a prior (expired) code
+    await db.flush()
+
+    code = await service.request_otp(db, session_id=sess.id)
+
+    await db.refresh(sess)
+    assert len(code) == 6 and code.isdigit()
+    assert sess.otp_hash is not None
+    assert sess.otp_issued_at is not None
+    assert sess.otp_attempts == 0
+
+
+@pytest.mark.asyncio
+async def test_request_otp_enforces_rate_limit(db):
+    from datetime import timedelta
+    from app.modules.session.errors import OtpRateLimitedError
+    tenant, user, stage, _c, assignment = await _seed_assignment(db, otp_default=True)
+    ctx = _make_ctx(user)
+    sess = await service.create_session(
+        db, assignment=assignment, stage=stage, otp_required=True, user=ctx,
+    )
+    sess.state = "consented"
+    sess.otp_issued_at = datetime.now(UTC) - timedelta(seconds=10)
+    sess.otp_hash = "dummy"
+    await db.flush()
+
+    with pytest.raises(OtpRateLimitedError) as exc:
+        await service.request_otp(db, session_id=sess.id)
+    assert exc.value.retry_after_seconds > 40  # ~50s remaining
+
+
+@pytest.mark.asyncio
+async def test_verify_otp_success_wipes_hash_and_stamps_verified(db):
+    tenant, user, stage, _c, assignment = await _seed_assignment(db, otp_default=True)
+    ctx = _make_ctx(user)
+    sess = await service.create_session(
+        db, assignment=assignment, stage=stage, otp_required=True, user=ctx,
+    )
+    sess.state = "consented"
+    await db.flush()
+    code = await service.request_otp(db, session_id=sess.id)
+
+    await service.verify_otp(db, session_id=sess.id, code=code)
+
+    await db.refresh(sess)
+    assert sess.otp_hash is None
+    assert sess.otp_verified_at is not None
+
+
+@pytest.mark.asyncio
+async def test_verify_otp_wrong_code_increments_attempts(db):
+    from app.modules.session.errors import InvalidOtpError
+    tenant, user, stage, _c, assignment = await _seed_assignment(db, otp_default=True)
+    ctx = _make_ctx(user)
+    sess = await service.create_session(
+        db, assignment=assignment, stage=stage, otp_required=True, user=ctx,
+    )
+    sess.state = "consented"
+    await db.flush()
+    await service.request_otp(db, session_id=sess.id)
+
+    with pytest.raises(InvalidOtpError) as exc:
+        await service.verify_otp(db, session_id=sess.id, code="000000")
+    assert exc.value.attempts_remaining == 2
+
+
+@pytest.mark.asyncio
+async def test_verify_otp_third_miss_wipes_and_raises_max_attempts(db):
+    from app.modules.session.errors import (
+        InvalidOtpError, OtpMaxAttemptsReachedError,
+    )
+    tenant, user, stage, _c, assignment = await _seed_assignment(db, otp_default=True)
+    ctx = _make_ctx(user)
+    sess = await service.create_session(
+        db, assignment=assignment, stage=stage, otp_required=True, user=ctx,
+    )
+    sess.state = "consented"
+    await db.flush()
+    await service.request_otp(db, session_id=sess.id)
+
+    # 2 misses
+    for _ in range(2):
+        with pytest.raises(InvalidOtpError):
+            await service.verify_otp(db, session_id=sess.id, code="000000")
+    # 3rd miss: MAX_ATTEMPTS_REACHED + hash wiped
+    with pytest.raises(OtpMaxAttemptsReachedError):
+        await service.verify_otp(db, session_id=sess.id, code="000000")
+
+    await db.refresh(sess)
+    assert sess.otp_hash is None
+    assert sess.otp_verified_at is None
+
+
+@pytest.mark.asyncio
+async def test_verify_otp_after_expiry_raises_otp_expired(db):
+    from datetime import timedelta
+    from app.modules.session.errors import OtpExpiredError
+    tenant, user, stage, _c, assignment = await _seed_assignment(db, otp_default=True)
+    ctx = _make_ctx(user)
+    sess = await service.create_session(
+        db, assignment=assignment, stage=stage, otp_required=True, user=ctx,
+    )
+    sess.state = "consented"
+    await db.flush()
+    await service.request_otp(db, session_id=sess.id)
+    # Backdate issuance by 11 minutes
+    sess.otp_issued_at = datetime.now(UTC) - timedelta(minutes=11)
+    await db.flush()
+
+    with pytest.raises(OtpExpiredError):
+        await service.verify_otp(db, session_id=sess.id, code="000000")
+    await db.refresh(sess)
+    assert sess.otp_hash is None

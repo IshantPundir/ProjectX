@@ -15,7 +15,7 @@ Rules (per Phase 3B lessons-learned):
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, UTC
+from datetime import datetime, timedelta, UTC
 from uuid import UUID
 
 from sqlalchemy import select
@@ -35,11 +35,21 @@ from app.modules.auth.context import UserContext
 from app.modules.auth.service import create_candidate_token
 from app.modules.org_units.service import find_company_profile_in_ancestry
 from app.modules.session.errors import (
+    InvalidOtpError,
     InvalidSessionStateError,
+    OtpExpiredError,
+    OtpMaxAttemptsReachedError,
+    OtpRateLimitedError,
     SessionNotFoundError,
 )
+from app.modules.session.otp import generate_code, hash_code, verify_code
 from app.modules.session.schemas import PreCheckResponse, SessionState
 from app.modules.session.state_machine import advance_on_pre_check_load, transition
+
+
+OTP_RATE_LIMIT_SECONDS = 60
+OTP_LIFETIME_SECONDS = 600  # 10 minutes
+OTP_MAX_ATTEMPTS = 3
 
 
 async def create_session(
@@ -219,4 +229,106 @@ async def record_consent(
         resource="session",
         resource_id=sess.id,
         payload={"user_agent": user_agent, "ip": ip_address},
+    )
+
+
+async def request_otp(db: AsyncSession, session_id: UUID) -> str:
+    """Generate + hash + persist a fresh OTP. Returns plaintext code for email dispatch.
+
+    Rate-limited: rejects if `now() - otp_issued_at < 60s`.
+    Resets `otp_attempts = 0` on every new issuance.
+    Emits `session.otp_issued` audit event.
+    """
+    sess = await _load_session_or_404(db, session_id)
+    now = datetime.now(UTC)
+
+    if sess.otp_issued_at is not None:
+        elapsed = (now - sess.otp_issued_at).total_seconds()
+        if elapsed < OTP_RATE_LIMIT_SECONDS:
+            retry_after = int(OTP_RATE_LIMIT_SECONDS - elapsed)
+            raise OtpRateLimitedError(retry_after_seconds=retry_after)
+
+    code = generate_code()
+    sess.otp_hash = hash_code(code)
+    sess.otp_issued_at = now
+    sess.otp_attempts = 0
+    sess.otp_verified_at = None  # new code → prior verification invalid
+    await db.flush()
+
+    await log_event(
+        db,
+        tenant_id=sess.tenant_id,
+        actor_id=None,
+        actor_email=None,
+        action="session.otp_issued",
+        resource="session",
+        resource_id=sess.id,
+        payload={},
+    )
+    return code
+
+
+async def verify_otp(db: AsyncSession, *, session_id: UUID, code: str) -> None:
+    """Verify candidate-supplied OTP. Emits audit on verify + each failure.
+
+    Order of checks (matters for error surface):
+      1. No active code?   → InvalidOtpError(attempts_remaining=OTP_MAX_ATTEMPTS)
+      2. Expired?          → wipe + OtpExpiredError
+      3. Match?            → wipe + stamp otp_verified_at + success
+      4. Mismatch?
+         - attempts+1 == MAX → wipe + OtpMaxAttemptsReachedError
+         - else              → keep hash, InvalidOtpError(attempts_remaining)
+    """
+    sess = await _load_session_or_404(db, session_id)
+    now = datetime.now(UTC)
+
+    if sess.otp_hash is None or sess.otp_issued_at is None:
+        raise InvalidOtpError(attempts_remaining=OTP_MAX_ATTEMPTS)
+    if (now - sess.otp_issued_at).total_seconds() > OTP_LIFETIME_SECONDS:
+        sess.otp_hash = None
+        await db.flush()
+        await _log_otp_failure(db, sess, reason="expired", attempts=sess.otp_attempts)
+        raise OtpExpiredError()
+
+    if verify_code(code, sess.otp_hash):
+        sess.otp_hash = None
+        sess.otp_verified_at = now
+        await db.flush()
+        await log_event(
+            db,
+            tenant_id=sess.tenant_id,
+            actor_id=None,
+            actor_email=None,
+            action="session.otp_verified",
+            resource="session",
+            resource_id=sess.id,
+            payload={"attempts_consumed": sess.otp_attempts},
+        )
+        return
+
+    # Mismatch
+    sess.otp_attempts = (sess.otp_attempts or 0) + 1
+    if sess.otp_attempts >= OTP_MAX_ATTEMPTS:
+        sess.otp_hash = None
+        await db.flush()
+        await _log_otp_failure(db, sess, reason="max_attempts", attempts=sess.otp_attempts)
+        raise OtpMaxAttemptsReachedError()
+
+    await db.flush()
+    await _log_otp_failure(db, sess, reason="invalid", attempts=sess.otp_attempts)
+    raise InvalidOtpError(attempts_remaining=OTP_MAX_ATTEMPTS - sess.otp_attempts)
+
+
+async def _log_otp_failure(
+    db: AsyncSession, sess: Session, *, reason: str, attempts: int
+) -> None:
+    await log_event(
+        db,
+        tenant_id=sess.tenant_id,
+        actor_id=None,
+        actor_email=None,
+        action="session.otp_verification_failed",
+        resource="session",
+        resource_id=sess.id,
+        payload={"reason": reason, "attempts_consumed": attempts},
     )
