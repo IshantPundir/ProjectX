@@ -14,6 +14,7 @@ Service functions flush; the surrounding session factory commits.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import func, or_, select
@@ -37,8 +38,10 @@ from app.modules.candidates.errors import (
 )
 from app.modules.candidates.schemas import (
     AssignmentCreateRequest,
+    AssignmentUpdateRequest,
     CandidateCreateRequest,
     CandidateUpdateRequest,
+    StageTransitionRequest,
 )
 from app.modules.candidates.sources import CandidateSource
 
@@ -286,6 +289,129 @@ async def create_assignment(
             "job_posting_id": str(request.job_posting_id),
             "target_stage_id": str(target_stage.id),
             "assignment_id": str(assignment.id),
+        },
+    )
+    return assignment
+
+
+async def update_assignment_status(
+    db: AsyncSession,
+    assignment_id: UUID,
+    request: AssignmentUpdateRequest,
+    user: UserContext,
+) -> CandidateJobAssignment:
+    """Update the status of a candidate-job assignment.
+
+    All transitions are legal — recruiter has final say. An audit row records
+    the from/to pair. Raises CandidateNotFoundError if the assignment is
+    missing (re-used 404 code for the candidates module).
+    """
+    assignment = (await db.execute(
+        select(CandidateJobAssignment).where(CandidateJobAssignment.id == assignment_id)
+    )).scalar_one_or_none()
+    if assignment is None:
+        raise CandidateNotFoundError()
+
+    from_status = assignment.status
+    assignment.status = request.status.value
+    assignment.status_changed_at = datetime.now(UTC)
+    await db.flush()
+
+    await log_event(
+        db,
+        tenant_id=assignment.tenant_id,
+        actor_id=user.user.id,
+        actor_email=user.user.email,
+        action="candidate.assignment_status_changed",
+        resource="assignment",
+        resource_id=assignment.id,
+        payload={"from_status": from_status, "to_status": request.status.value},
+    )
+    return assignment
+
+
+async def transition_stage(
+    db: AsyncSession,
+    assignment_id: UUID,
+    request: StageTransitionRequest,
+    user: UserContext,
+) -> CandidateJobAssignment:
+    """Atomically move an assignment to a new stage.
+
+    Row-locks the assignment for the duration of the transition, closes the
+    open progress row with outcome='advanced', flips current_stage_id, and
+    appends a new open progress row. Audit row records from/to stages,
+    override flag, and reason.
+
+    Raises:
+        CandidateNotFoundError: assignment_id missing.
+        StageNotInPipelineError: target_stage_id does not belong to the
+            current JD's pipeline instance.
+    """
+    assignment = (await db.execute(
+        select(CandidateJobAssignment)
+        .where(CandidateJobAssignment.id == assignment_id)
+        .with_for_update()
+    )).scalar_one_or_none()
+    if assignment is None:
+        raise CandidateNotFoundError()
+
+    pipeline = (await db.execute(
+        select(JobPipelineInstance).where(
+            JobPipelineInstance.job_posting_id == assignment.job_posting_id
+        )
+    )).scalar_one_or_none()
+    if pipeline is None:
+        raise StageNotInPipelineError(str(request.target_stage_id))
+
+    target = (await db.execute(
+        select(JobPipelineStage).where(
+            JobPipelineStage.id == request.target_stage_id,
+            JobPipelineStage.instance_id == pipeline.id,
+        )
+    )).scalar_one_or_none()
+    if target is None:
+        raise StageNotInPipelineError(str(request.target_stage_id))
+
+    from_stage_id = assignment.current_stage_id
+    now = datetime.now(UTC)
+
+    current = (await db.execute(
+        select(CandidateStageProgress).where(
+            CandidateStageProgress.assignment_id == assignment_id,
+            CandidateStageProgress.exited_at.is_(None),
+        )
+    )).scalar_one_or_none()
+    if current is not None:
+        current.exited_at = now
+        current.outcome = "advanced"
+
+    assignment.current_stage_id = target.id
+    new_progress = CandidateStageProgress(
+        tenant_id=assignment.tenant_id,
+        assignment_id=assignment_id,
+        stage_id=target.id,
+        entered_at=now,
+        moved_by=user.user.id,
+        override=request.override,
+        reason=request.reason,
+    )
+    db.add(new_progress)
+    await db.flush()
+
+    await log_event(
+        db,
+        tenant_id=assignment.tenant_id,
+        actor_id=user.user.id,
+        actor_email=user.user.email,
+        action="candidate.stage_transitioned",
+        resource="assignment",
+        resource_id=assignment.id,
+        payload={
+            "from_stage": str(from_stage_id),
+            "to_stage": str(target.id),
+            "override": request.override,
+            "reason": request.reason,
         },
     )
     return assignment
