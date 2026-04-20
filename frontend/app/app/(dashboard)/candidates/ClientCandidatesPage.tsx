@@ -1,9 +1,11 @@
 'use client'
 
 import { useRouter, useSearchParams } from 'next/navigation'
-import { useCallback } from 'react'
+import { useCallback, useMemo } from 'react'
 
 import { Button } from '@/components/ui/button'
+
+import CandidateListView from './CandidateListView'
 
 type CandidatesView = 'list' | 'kanban'
 
@@ -17,12 +19,11 @@ export default function ClientCandidatesPage() {
 
   const jd = searchParams.get('jd')
   const view = normalizeView(searchParams.get('view'))
-  // q and status are read here for future tasks (List view / filters) — they
-  // participate in the URL-state contract documented in Task 17 even though
-  // there's no UI to wire them to yet. Keep them in the derived values so the
-  // setter helper preserves them when other dimensions change.
   const q = searchParams.get('q') ?? ''
   const status = searchParams.get('status') ?? ''
+  const stageId = searchParams.get('stage_id') ?? ''
+  const offsetRaw = searchParams.get('offset')
+  const offset = offsetRaw ? Math.max(0, Number.parseInt(offsetRaw, 10) || 0) : 0
 
   const updateParams = useCallback(
     (patch: Record<string, string | null>) => {
@@ -35,6 +36,20 @@ export default function ClientCandidatesPage() {
       router.replace(`/candidates${qs ? `?${qs}` : ''}`, { scroll: false })
     },
     [router, searchParams],
+  )
+
+  // Stable filters object for <CandidateListView />. Memoizing avoids
+  // churning the `['candidates-list', filters]` query key when unrelated
+  // state changes on this page.
+  const listFilters = useMemo(
+    () => ({
+      q,
+      status,
+      jobId: jd ?? '',
+      stageId,
+      offset,
+    }),
+    [q, status, jd, stageId, offset],
   )
 
   const kanbanDisabled = !jd
@@ -111,19 +126,18 @@ export default function ClientCandidatesPage() {
         </div>
       </div>
 
-      <div className="bg-white border border-zinc-200 rounded-lg p-12 text-center">
-        {view === 'kanban' ? (
+      {view === 'kanban' ? (
+        <div className="bg-white border border-zinc-200 rounded-lg p-12 text-center">
           <p className="text-sm text-zinc-500">
             Kanban view coming in Task 22
           </p>
-        ) : (
-          <p className="text-sm text-zinc-500">List view coming in Task 19</p>
-        )}
-        {/* Surface the URL-state values for quick visual QA during scaffolding. */}
-        <p className="mt-4 text-xs text-zinc-400">
-          jd={jd ?? '—'} · view={view} · q={q || '—'} · status={status || '—'}
-        </p>
-      </div>
+        </div>
+      ) : (
+        <CandidateListView
+          filters={listFilters}
+          onFiltersChange={updateParams}
+        />
+      )}
     </div>
   )
 }
