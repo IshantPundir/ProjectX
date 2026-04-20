@@ -7,6 +7,7 @@ import { useCandidateSession } from '@/lib/hooks/use-candidate-session'
 import { CameraMicStep } from './CameraMicStep'
 import { ConsentStep } from './ConsentStep'
 import { OtpStep } from './OtpStep'
+import { StartStep } from './StartStep'
 
 type WizardStepKey =
   | 'consent'
@@ -73,9 +74,9 @@ export function WizardShell({ token }: { token: string }) {
         <CameraMicStep onPass={() => setCamMicPassed(true)} />
       )}
       {currentStep === 'cam-mic' && camMicPassed && (
-        <StartStepPlaceholder token={token} />
+        <StartStep token={token} />
       )}
-      {currentStep === 'start' && <StartStepPlaceholder token={token} />}
+      {currentStep === 'start' && <StartStep token={token} />}
       {currentStep === 'already-started' && <AlreadyStartedPanel />}
     </div>
   )
@@ -112,9 +113,6 @@ function StepIndicator({
   )
 }
 
-function StartStepPlaceholder({ token: _t }: { token: string }) {
-  return <p>Start step (Task 3C.2.7)</p>
-}
 function AlreadyStartedPanel() {
   return (
     <div className="rounded-lg bg-zinc-100 p-6 text-center">
