@@ -46,7 +46,12 @@ from app.modules.session.errors import (
     TokenAlreadyUsedError,
 )
 from app.modules.session.otp import generate_code, hash_code, verify_code
-from app.modules.session.schemas import PreCheckResponse, SessionState
+from app.modules.session.schemas import (
+    PreCheckResponse,
+    SessionDetailResponse,
+    SessionListPage,
+    SessionState,
+)
 from app.modules.session.state_machine import advance_on_pre_check_load, transition
 
 
@@ -410,3 +415,88 @@ async def start_session(
         payload={"jti": str(jti), "ip": ip_address},
     )
     return "pending"
+
+
+async def get_session(
+    db: AsyncSession, *, session_id: UUID
+) -> SessionDetailResponse:
+    """Load a session + its stage name for recruiter-side detail views."""
+    sess = await _load_session_or_404(db, session_id)
+    stage_name = (await db.execute(
+        select(JobPipelineStage.name).where(JobPipelineStage.id == sess.stage_id)
+    )).scalar_one()
+    return SessionDetailResponse(
+        id=sess.id,
+        assignment_id=sess.assignment_id,
+        stage_id=sess.stage_id,
+        stage_name=stage_name,
+        state=SessionState(sess.state),
+        state_changed_at=sess.state_changed_at,
+        otp_required=sess.otp_required,
+        consent_recorded_at=sess.consent_recorded_at,
+        scheduled_for=sess.scheduled_for,
+        started_at=sess.started_at,
+        completed_at=sess.completed_at,
+        created_at=sess.created_at,
+    )
+
+
+async def list_sessions(
+    db: AsyncSession,
+    *,
+    tenant_id: UUID,
+    filters: dict,
+    offset: int = 0,
+    limit: int = 50,
+) -> SessionListPage:
+    """List sessions with filters: assignment_id, state, created_after, created_before.
+
+    Batch-loads stage names via a single IN query to avoid N+1.
+    """
+    from sqlalchemy import func
+
+    base = select(Session).where(Session.tenant_id == tenant_id)
+    if (aid := filters.get("assignment_id")) is not None:
+        base = base.where(Session.assignment_id == aid)
+    if (st := filters.get("state")) is not None:
+        base = base.where(Session.state == st)
+    if (after := filters.get("created_after")) is not None:
+        base = base.where(Session.created_at >= after)
+    if (before := filters.get("created_before")) is not None:
+        base = base.where(Session.created_at <= before)
+
+    total = (await db.execute(
+        select(func.count()).select_from(base.subquery())
+    )).scalar_one()
+
+    rows = list((await db.execute(
+        base.order_by(Session.created_at.desc()).offset(offset).limit(limit)
+    )).scalars().all())
+
+    # Batch-load stage names
+    stage_ids = {r.stage_id for r in rows}
+    stage_names: dict[UUID, str] = {}
+    if stage_ids:
+        stage_names = dict((await db.execute(
+            select(JobPipelineStage.id, JobPipelineStage.name)
+            .where(JobPipelineStage.id.in_(stage_ids))
+        )).all())
+
+    items = [
+        SessionDetailResponse(
+            id=r.id,
+            assignment_id=r.assignment_id,
+            stage_id=r.stage_id,
+            stage_name=stage_names.get(r.stage_id, ""),
+            state=SessionState(r.state),
+            state_changed_at=r.state_changed_at,
+            otp_required=r.otp_required,
+            consent_recorded_at=r.consent_recorded_at,
+            scheduled_for=r.scheduled_for,
+            started_at=r.started_at,
+            completed_at=r.completed_at,
+            created_at=r.created_at,
+        )
+        for r in rows
+    ]
+    return SessionListPage(items=items, total=total, offset=offset, limit=limit)

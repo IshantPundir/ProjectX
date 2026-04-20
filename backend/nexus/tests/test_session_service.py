@@ -407,3 +407,49 @@ async def test_start_session_rejects_when_otp_required_but_not_verified(db):
             db, session_id=sess.id, jti=token_row.jti,
             ip_address="1.2.3.4", user_agent="UA",
         )
+
+
+@pytest.mark.asyncio
+async def test_get_session_returns_detail_shape(db):
+    tenant, user, stage, _c, assignment = await _seed_assignment(db)
+    ctx = _make_ctx(user)
+    sess = await service.create_session(
+        db, assignment=assignment, stage=stage, otp_required=False, user=ctx,
+    )
+    resp = await service.get_session(db, session_id=sess.id)
+    assert resp.id == sess.id
+    assert resp.stage_name == stage.name
+    assert resp.state == SessionState.CREATED
+
+
+@pytest.mark.asyncio
+async def test_get_session_missing_raises_session_not_found(db):
+    from app.modules.session.errors import SessionNotFoundError
+    with pytest.raises(SessionNotFoundError):
+        await service.get_session(db, session_id=uuid.uuid4())
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_filters_by_assignment_and_state(db):
+    tenant, user, stage, _c, assignment = await _seed_assignment(db)
+    ctx = _make_ctx(user)
+    s1 = await service.create_session(
+        db, assignment=assignment, stage=stage, otp_required=False, user=ctx,
+    )
+    s2 = await service.create_session(
+        db, assignment=assignment, stage=stage, otp_required=False, user=ctx,
+    )
+    s2.state = "cancelled"
+    await db.flush()
+
+    page = await service.list_sessions(
+        db, tenant_id=tenant.id, filters={"assignment_id": assignment.id},
+    )
+    assert page.total == 2
+
+    page_active = await service.list_sessions(
+        db, tenant_id=tenant.id,
+        filters={"assignment_id": assignment.id, "state": "created"},
+    )
+    assert page_active.total == 1
+    assert page_active.items[0].id == s1.id
