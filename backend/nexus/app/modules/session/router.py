@@ -11,13 +11,8 @@ fails). Recruiter endpoints authenticate via the normal Supabase Bearer
 flow through the `get_current_user_roles` dependency.
 
 Routers exported:
-  * `candidate_session_router` — new canonical name used by Task 3C.1.19.
-  * `session_router`            — new canonical name used by Task 3C.1.19.
-
-Transitional shim at end of file:
-  `router` + `candidate_router` aliases remain so main.py continues to
-  import under the old Phase-2A stub names until 3C.1.19 updates main.py
-  imports in the follow-up commit. Drop the aliases once 3C.1.19 lands.
+  * `candidate_session_router` — canonical candidate-facing router.
+  * `session_router`            — canonical recruiter-read router.
 """
 from __future__ import annotations
 
@@ -238,13 +233,3 @@ async def list_sessions_endpoint(
         offset=offset,
         limit=limit,
     )
-
-
-# --- Transitional aliases ----------------------------------------------------
-# main.py still imports `router` + `candidate_router` under the old Phase-2A
-# stub names. Task 3C.1.19 will update those imports to the canonical
-# `session_router` + `candidate_session_router` names and drop these
-# aliases. Keeping them for one commit keeps main.py importable between
-# 3C.1.17 and 3C.1.19 so the regression test suite doesn't break mid-chain.
-router = session_router
-candidate_router = candidate_session_router

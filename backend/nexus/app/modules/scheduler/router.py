@@ -110,10 +110,3 @@ async def post_revoke_endpoint(
     _require_manage(user)
     await scheduler_service.revoke_invite(db, session_id=session_id, user=user)
     return Response(status_code=204)
-
-
-# --- Transitional alias ------------------------------------------------------
-# main.py still imports `router` under the old Phase-2A stub name. Task
-# 3C.1.19 updates that import to `scheduler_router`; keeping the alias
-# here means main.py stays importable between commits.
-router = scheduler_router

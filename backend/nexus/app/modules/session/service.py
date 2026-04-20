@@ -367,7 +367,28 @@ async def start_session(
     """
     sess = await _load_session_or_404(db, session_id)
 
+    # Replay disambiguation: if the session has already progressed past
+    # 'consented' *and* this exact token row has `used_at` set, the caller
+    # is re-posting a previously-consumed single-use token. That is a
+    # distinct failure mode from "wrong state for this action" — surface
+    # it as TOKEN_ALREADY_USED (409) rather than INVALID_SESSION_STATE
+    # so clients can distinguish the two on the wire.
     if sess.state != SessionState.CONSENTED.value:
+        token_row = (await db.execute(
+            select(CandidateSessionToken).where(CandidateSessionToken.jti == jti)
+        )).scalar_one_or_none()
+        if token_row is not None and token_row.used_at is not None:
+            await log_event(
+                db,
+                tenant_id=sess.tenant_id,
+                actor_id=None,
+                actor_email=None,
+                action="session.token_replay_blocked",
+                resource="session",
+                resource_id=sess.id,
+                payload={"jti": str(jti), "ip": ip_address, "ua": user_agent},
+            )
+            raise TokenAlreadyUsedError()
         raise IllegalStartStateError()
 
     if sess.otp_required and sess.otp_verified_at is None:
@@ -399,7 +420,7 @@ async def start_session(
             action="session.token_replay_blocked",
             resource="session",
             resource_id=sess.id,
-            payload={"jti": str(jti), "ip": ip_address, "ua": user_agent},
+            payload={"jti": str(jti), "ua": user_agent, "ip": ip_address},
         )
         raise TokenAlreadyUsedError()
 

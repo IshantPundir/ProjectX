@@ -47,6 +47,8 @@ _TENANT_SCOPED_TABLES: tuple[str, ...] = (
     "candidates",
     "candidate_job_assignments",
     "candidate_stage_progress",
+    # Phase 3C — scheduler + session
+    "candidate_session_tokens",
 )
 
 
@@ -217,8 +219,8 @@ def create_app() -> FastAPI:
     from app.modules.ats.router import router as ats_router
     from app.modules.jd.router import router as jd_router
     from app.modules.question_bank.router import router as question_bank_router
-    from app.modules.scheduler.router import router as scheduler_router
-    from app.modules.session.router import router as session_router, candidate_router
+    from app.modules.scheduler.router import scheduler_router
+    from app.modules.session.router import candidate_session_router, session_router
     from app.modules.analysis.router import router as analysis_router
     from app.modules.reporting.router import router as reporting_router
     from app.modules.notifications.router import router as notifications_router
@@ -237,12 +239,9 @@ def create_app() -> FastAPI:
     application.include_router(ats_router)
     application.include_router(jd_router)
     application.include_router(question_bank_router)
-    application.include_router(scheduler_router)
-    application.include_router(session_router)
     application.include_router(analysis_router)
     application.include_router(reporting_router)
     application.include_router(notifications_router)
-    application.include_router(candidate_router)
     application.include_router(admin_router)
     application.include_router(settings_router)
     application.include_router(workspace_router)
@@ -251,6 +250,10 @@ def create_app() -> FastAPI:
     application.include_router(pipelines_router)
     application.include_router(candidates_router)
     application.include_router(candidates_kanban_router)
+    # Phase 3C — scheduler + session
+    application.include_router(scheduler_router)
+    application.include_router(candidate_session_router)
+    application.include_router(session_router)
 
     # --- Exception handlers (Phase 2A — JD module) ---
     from fastapi import Request
@@ -457,6 +460,184 @@ def create_app() -> FastAPI:
             content={
                 "detail": "Resume must be a PDF (content-type application/pdf)",
                 "code": "INVALID_RESUME_CONTENT_TYPE",
+            },
+        )
+
+    # --- Exception handlers (Phase 3C — scheduler + session) ---
+    from app.modules.scheduler.errors import (
+        AssignmentNotActiveError,
+        InvalidStageTypeForInviteError,
+        SessionAlreadyStartedError,
+    )
+    from app.modules.session.errors import (
+        IllegalStartStateError,
+        InvalidOtpError,
+        InvalidSessionStateError,
+        OtpExpiredError,
+        OtpMaxAttemptsReachedError,
+        OtpRateLimitedError,
+        OtpRequiredError,
+        SessionNotFoundError,
+        TokenAlreadyUsedError,
+        TokenSupersededError,
+    )
+
+    @application.exception_handler(InvalidStageTypeForInviteError)
+    async def _invalid_stage_type_for_invite(
+        request: Request, exc: InvalidStageTypeForInviteError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": str(exc),
+                "code": "INVALID_STAGE_TYPE_FOR_INVITE",
+                "stage_type": exc.stage_type,
+            },
+        )
+
+    @application.exception_handler(AssignmentNotActiveError)
+    async def _assignment_not_active(
+        request: Request, exc: AssignmentNotActiveError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": str(exc) or "Assignment is not active",
+                "code": "ASSIGNMENT_NOT_ACTIVE",
+            },
+        )
+
+    @application.exception_handler(SessionAlreadyStartedError)
+    async def _session_already_started(
+        request: Request, exc: SessionAlreadyStartedError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": str(exc) or "Session already started",
+                "code": "SESSION_ALREADY_STARTED",
+            },
+        )
+
+    @application.exception_handler(SessionNotFoundError)
+    async def _session_not_found(
+        request: Request, exc: SessionNotFoundError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=404,
+            content={"detail": "Session not found"},
+        )
+
+    @application.exception_handler(TokenSupersededError)
+    async def _token_superseded(
+        request: Request, exc: TokenSupersededError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=401,
+            content={
+                "detail": str(exc) or "Token has been superseded",
+                "code": "TOKEN_SUPERSEDED",
+            },
+        )
+
+    @application.exception_handler(IllegalStartStateError)
+    async def _illegal_start_state(
+        request: Request, exc: IllegalStartStateError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": str(exc) or "Session is not in a startable state",
+                "code": "INVALID_SESSION_STATE",
+            },
+        )
+
+    @application.exception_handler(InvalidSessionStateError)
+    async def _invalid_session_state(
+        request: Request, exc: InvalidSessionStateError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": str(exc) or "Invalid session state for this action",
+                "code": "INVALID_SESSION_STATE",
+            },
+        )
+
+    @application.exception_handler(OtpRequiredError)
+    async def _otp_required(
+        request: Request, exc: OtpRequiredError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": str(exc) or "OTP verification required",
+                "code": "OTP_REQUIRED",
+            },
+        )
+
+    @application.exception_handler(OtpRateLimitedError)
+    async def _otp_rate_limited(
+        request: Request, exc: OtpRateLimitedError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=429,
+            headers={"Retry-After": str(exc.retry_after_seconds)},
+            content={
+                "detail": str(exc),
+                "code": "OTP_RATE_LIMITED",
+                "retry_after_seconds": exc.retry_after_seconds,
+            },
+        )
+
+    @application.exception_handler(OtpExpiredError)
+    async def _otp_expired(
+        request: Request, exc: OtpExpiredError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": str(exc) or "OTP has expired",
+                "code": "OTP_EXPIRED",
+                "attempts_remaining": 0,
+            },
+        )
+
+    @application.exception_handler(OtpMaxAttemptsReachedError)
+    async def _otp_max_attempts(
+        request: Request, exc: OtpMaxAttemptsReachedError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": str(exc) or "Maximum OTP attempts reached",
+                "code": "OTP_MAX_ATTEMPTS_REACHED",
+                "attempts_remaining": 0,
+            },
+        )
+
+    @application.exception_handler(InvalidOtpError)
+    async def _invalid_otp(
+        request: Request, exc: InvalidOtpError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": str(exc),
+                "code": "INVALID_OTP",
+                "attempts_remaining": exc.attempts_remaining,
+            },
+        )
+
+    @application.exception_handler(TokenAlreadyUsedError)
+    async def _token_already_used(
+        request: Request, exc: TokenAlreadyUsedError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": str(exc) or "Token has already been used",
+                "code": "TOKEN_ALREADY_USED",
             },
         )
 

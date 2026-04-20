@@ -36,3 +36,21 @@ def test_kanban_router_registered_under_jobs_prefix():
     from app.main import app
     paths = {getattr(r, "path", "") for r in app.routes}
     assert any("/candidates/kanban" in p for p in paths)
+
+
+def test_tenant_scoped_tables_includes_session_tables():
+    from app.main import _TENANT_SCOPED_TABLES
+    assert "sessions" in _TENANT_SCOPED_TABLES
+    assert "candidate_session_tokens" in _TENANT_SCOPED_TABLES
+
+
+def test_scheduler_router_registered():
+    from app.main import app
+    paths = {getattr(r, "path", "") for r in app.routes}
+    assert any(p.startswith("/api/scheduler/") for p in paths)
+
+
+def test_candidate_session_router_registered():
+    from app.main import app
+    paths = {getattr(r, "path", "") for r in app.routes}
+    assert any(p.startswith("/api/candidate-session/") for p in paths)
