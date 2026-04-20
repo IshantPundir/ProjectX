@@ -287,3 +287,210 @@ async def test_list_candidates_pagination(db):
     assert len(page2.items) == 2
     # Disjoint pages
     assert {c.id for c in page1.items}.isdisjoint({c.id for c in page2.items})
+
+
+from app.models import (
+    CandidateStageProgress,
+    JobPipelineInstance,
+    JobPipelineStage,
+    JobPosting,
+)
+
+
+async def _make_job_with_stages(db, tenant_id, user_id, stage_names=("Screening", "Interview")):
+    org_unit = await create_test_org_unit(db, tenant_id)
+    job = JobPosting(
+        tenant_id=tenant_id,
+        org_unit_id=org_unit.id,
+        title="Engineer",
+        description_raw="R" * 60,
+        created_by=user_id,
+        status="draft",
+    )
+    db.add(job)
+    await db.flush()
+    instance = JobPipelineInstance(tenant_id=tenant_id, job_posting_id=job.id)
+    db.add(instance)
+    await db.flush()
+    stages = []
+    for i, name in enumerate(stage_names):
+        s = JobPipelineStage(
+            tenant_id=tenant_id,
+            instance_id=instance.id,
+            position=i,
+            name=name,
+            stage_type="ai_interview",
+            duration_minutes=30,
+            difficulty="medium",
+            signal_filter={},
+            pass_criteria={},
+            advance_behavior="manual",
+        )
+        db.add(s)
+        stages.append(s)
+    await db.flush()
+    return job, stages
+
+
+@pytest.mark.asyncio
+async def test_create_assignment_defaults_to_first_stage(db):
+    from app.modules.candidates.service import create_assignment
+    from app.modules.candidates.schemas import AssignmentCreateRequest
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    ctx = _make_ctx(user)
+
+    candidate = Candidate(
+        tenant_id=tenant.id, name="Alice", email="alice@example.com",
+        source="manual", created_by=user.id,
+    )
+    db.add(candidate)
+    await db.flush()
+
+    job, stages = await _make_job_with_stages(db, tenant.id, user.id)
+    req = AssignmentCreateRequest(job_posting_id=job.id)
+    a = await create_assignment(db, candidate.id, req, ctx)
+
+    assert a.candidate_id == candidate.id
+    assert a.job_posting_id == job.id
+    assert a.current_stage_id == stages[0].id
+    assert a.status == "active"
+
+
+@pytest.mark.asyncio
+async def test_create_assignment_writes_initial_progress_row(db):
+    from app.modules.candidates.service import create_assignment
+    from app.modules.candidates.schemas import AssignmentCreateRequest
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    ctx = _make_ctx(user)
+    candidate = Candidate(
+        tenant_id=tenant.id, name="Bob", email="bob@example.com",
+        source="manual", created_by=user.id,
+    )
+    db.add(candidate)
+    await db.flush()
+
+    job, stages = await _make_job_with_stages(db, tenant.id, user.id)
+    a = await create_assignment(
+        db, candidate.id, AssignmentCreateRequest(job_posting_id=job.id), ctx
+    )
+
+    progress_rows = (await db.execute(
+        select(CandidateStageProgress).where(CandidateStageProgress.assignment_id == a.id)
+    )).scalars().all()
+    assert len(progress_rows) == 1
+    assert progress_rows[0].stage_id == a.current_stage_id
+    assert progress_rows[0].exited_at is None
+
+
+@pytest.mark.asyncio
+async def test_create_assignment_honors_target_stage(db):
+    from app.modules.candidates.service import create_assignment
+    from app.modules.candidates.schemas import AssignmentCreateRequest
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    ctx = _make_ctx(user)
+    candidate = Candidate(
+        tenant_id=tenant.id, name="Cara", email="cara@example.com",
+        source="manual", created_by=user.id,
+    )
+    db.add(candidate)
+    await db.flush()
+
+    job, stages = await _make_job_with_stages(db, tenant.id, user.id)
+    # pick the 2nd stage
+    a = await create_assignment(
+        db,
+        candidate.id,
+        AssignmentCreateRequest(job_posting_id=job.id, target_stage_id=stages[1].id),
+        ctx,
+    )
+    assert a.current_stage_id == stages[1].id
+
+
+@pytest.mark.asyncio
+async def test_create_assignment_stage_not_in_pipeline_raises(db):
+    from app.modules.candidates.errors import StageNotInPipelineError
+    from app.modules.candidates.service import create_assignment
+    from app.modules.candidates.schemas import AssignmentCreateRequest
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    ctx = _make_ctx(user)
+    candidate = Candidate(
+        tenant_id=tenant.id, name="D", email="d@example.com",
+        source="manual", created_by=user.id,
+    )
+    db.add(candidate)
+    await db.flush()
+
+    job, _stages = await _make_job_with_stages(db, tenant.id, user.id)
+    # Build a stage in a DIFFERENT job's pipeline
+    other_job, other_stages = await _make_job_with_stages(db, tenant.id, user.id)
+
+    with pytest.raises(StageNotInPipelineError):
+        await create_assignment(
+            db,
+            candidate.id,
+            AssignmentCreateRequest(job_posting_id=job.id, target_stage_id=other_stages[0].id),
+            ctx,
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_duplicate_assignment_raises(db):
+    from app.modules.candidates.errors import AssignmentAlreadyExistsError
+    from app.modules.candidates.service import create_assignment
+    from app.modules.candidates.schemas import AssignmentCreateRequest
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    ctx = _make_ctx(user)
+    candidate = Candidate(
+        tenant_id=tenant.id, name="Dup", email="dup-assign@example.com",
+        source="manual", created_by=user.id,
+    )
+    db.add(candidate)
+    await db.flush()
+    job, _ = await _make_job_with_stages(db, tenant.id, user.id)
+
+    await create_assignment(
+        db, candidate.id, AssignmentCreateRequest(job_posting_id=job.id), ctx
+    )
+    with pytest.raises(AssignmentAlreadyExistsError):
+        await create_assignment(
+            db, candidate.id, AssignmentCreateRequest(job_posting_id=job.id), ctx
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_assignment_raises_when_no_pipeline(db):
+    """JD has no pipeline instance at all."""
+    from app.modules.candidates.errors import StageNotInPipelineError
+    from app.modules.candidates.service import create_assignment
+    from app.modules.candidates.schemas import AssignmentCreateRequest
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    ctx = _make_ctx(user)
+    org_unit = await create_test_org_unit(db, tenant.id)
+    candidate = Candidate(
+        tenant_id=tenant.id, name="NoJob", email="nojob@example.com",
+        source="manual", created_by=user.id,
+    )
+    db.add(candidate)
+    job = JobPosting(
+        tenant_id=tenant.id, org_unit_id=org_unit.id, title="T",
+        description_raw="R" * 60, created_by=user.id, status="draft",
+    )
+    db.add(job)
+    await db.flush()
+
+    with pytest.raises(StageNotInPipelineError):
+        await create_assignment(
+            db, candidate.id, AssignmentCreateRequest(job_posting_id=job.id), ctx
+        )

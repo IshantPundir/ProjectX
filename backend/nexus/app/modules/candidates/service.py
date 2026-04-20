@@ -20,14 +20,23 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Candidate, CandidateJobAssignment
+from app.models import (
+    Candidate,
+    CandidateJobAssignment,
+    CandidateStageProgress,
+    JobPipelineInstance,
+    JobPipelineStage,
+)
 from app.modules.audit.service import log_event
 from app.modules.auth.context import UserContext
 from app.modules.candidates.errors import (
+    AssignmentAlreadyExistsError,
     CandidateNotFoundError,
     DuplicateEmailError,
+    StageNotInPipelineError,
 )
 from app.modules.candidates.schemas import (
+    AssignmentCreateRequest,
     CandidateCreateRequest,
     CandidateUpdateRequest,
 )
@@ -192,3 +201,91 @@ async def list_candidates(
     )
     items = list(page_result.scalars().unique().all())
     return CandidateListPage(items=items, total=total, offset=offset, limit=limit)
+
+
+async def create_assignment(
+    db: AsyncSession,
+    candidate_id: UUID,
+    request: AssignmentCreateRequest,
+    user: UserContext,
+) -> CandidateJobAssignment:
+    """Assign a candidate to a JD at the first stage (or `request.target_stage_id`).
+
+    Writes the assignment row + the initial stage_progress row + the
+    `candidate.assigned` audit event, all in one flush.
+
+    Raises:
+        CandidateNotFoundError: candidate_id does not exist.
+        StageNotInPipelineError: the JD has no pipeline, no stages, or the
+            requested target_stage_id does not belong to the pipeline.
+        AssignmentAlreadyExistsError: (candidate_id, job_posting_id) already
+            exists (partial unique constraint).
+    """
+    candidate = await get_candidate(db, candidate_id)
+
+    pipeline = (await db.execute(
+        select(JobPipelineInstance).where(
+            JobPipelineInstance.job_posting_id == request.job_posting_id
+        )
+    )).scalar_one_or_none()
+    if pipeline is None:
+        raise StageNotInPipelineError(str(request.target_stage_id or "<default>"))
+
+    stages = list((await db.execute(
+        select(JobPipelineStage)
+        .where(JobPipelineStage.instance_id == pipeline.id)
+        .order_by(JobPipelineStage.position.asc())
+    )).scalars().all())
+    if not stages:
+        raise StageNotInPipelineError("pipeline has no stages")
+
+    if request.target_stage_id is not None:
+        target_stage = next(
+            (s for s in stages if s.id == request.target_stage_id), None
+        )
+        if target_stage is None:
+            raise StageNotInPipelineError(str(request.target_stage_id))
+    else:
+        target_stage = stages[0]
+
+    assignment = CandidateJobAssignment(
+        tenant_id=candidate.tenant_id,
+        candidate_id=candidate_id,
+        job_posting_id=request.job_posting_id,
+        current_stage_id=target_stage.id,
+        status="active",
+        assigned_by=user.user.id,
+    )
+    db.add(assignment)
+    try:
+        await db.flush()
+    except IntegrityError as e:
+        await db.rollback()
+        if "candidate_job_assignments_unique_candidate_job" in str(e.orig):
+            raise AssignmentAlreadyExistsError() from e
+        raise
+
+    progress = CandidateStageProgress(
+        tenant_id=candidate.tenant_id,
+        assignment_id=assignment.id,
+        stage_id=target_stage.id,
+        moved_by=user.user.id,
+    )
+    db.add(progress)
+    await db.flush()
+
+    await log_event(
+        db,
+        tenant_id=candidate.tenant_id,
+        actor_id=user.user.id,
+        actor_email=user.user.email,
+        action="candidate.assigned",
+        resource="candidate",
+        resource_id=candidate.id,
+        payload={
+            "job_posting_id": str(request.job_posting_id),
+            "target_stage_id": str(target_stage.id),
+            "assignment_id": str(assignment.id),
+        },
+    )
+    return assignment
