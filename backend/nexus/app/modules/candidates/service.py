@@ -27,6 +27,7 @@ from app.models import (
     CandidateStageProgress,
     JobPipelineInstance,
     JobPipelineStage,
+    JobPosting,
 )
 from app.modules.audit.service import log_event
 from app.modules.auth.context import UserContext
@@ -38,6 +39,7 @@ from app.modules.candidates.errors import (
 )
 from app.modules.candidates.schemas import (
     AssignmentCreateRequest,
+    AssignmentResponse,
     AssignmentUpdateRequest,
     CandidateCreateRequest,
     CandidateUpdateRequest,
@@ -538,4 +540,32 @@ async def redact_pii(
         resource="candidate",
         resource_id=candidate.id,
         payload={},
+    )
+
+
+async def assignment_response(
+    db: AsyncSession, assignment: CandidateJobAssignment
+) -> AssignmentResponse:
+    """Enrich an assignment row into the AssignmentResponse shape.
+
+    Adds `job_title` and `current_stage_name` via two targeted lookups.
+    Callers that need these can avoid re-loading by using this helper right
+    after create/update/transition.
+    """
+    job_title = (await db.execute(
+        select(JobPosting.title).where(JobPosting.id == assignment.job_posting_id)
+    )).scalar_one()
+    stage_name = (await db.execute(
+        select(JobPipelineStage.name).where(JobPipelineStage.id == assignment.current_stage_id)
+    )).scalar_one()
+    return AssignmentResponse(
+        id=assignment.id,
+        candidate_id=assignment.candidate_id,
+        job_posting_id=assignment.job_posting_id,
+        job_title=job_title,
+        current_stage_id=assignment.current_stage_id,
+        current_stage_name=stage_name,
+        status=assignment.status,
+        status_changed_at=assignment.status_changed_at,
+        assigned_at=assignment.assigned_at,
     )
