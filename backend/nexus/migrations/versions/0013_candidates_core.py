@@ -59,8 +59,8 @@ def upgrade() -> None:
         CREATE TABLE public.candidates (
             id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             tenant_id       UUID NOT NULL REFERENCES public.clients(id) ON DELETE CASCADE,
-            name            TEXT NOT NULL,
-            email           TEXT NOT NULL,
+            name            TEXT,
+            email           TEXT,
             phone           TEXT,
             location        TEXT,
             current_title   TEXT,

@@ -477,8 +477,11 @@ class Candidate(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("clients.id", ondelete="CASCADE"), nullable=False
     )
-    name: Mapped[str] = mapped_column(Text, nullable=False)
-    email: Mapped[str] = mapped_column(Text, nullable=False)
+    # name/email are nullable so `redact_pii` can wipe them while preserving
+    # the row for audit-trail linkage. Active-candidate uniqueness is guarded
+    # by the partial unique index on (tenant_id, email) WHERE pii_redacted_at IS NULL.
+    name: Mapped[str | None] = mapped_column(Text)
+    email: Mapped[str | None] = mapped_column(Text)
     phone: Mapped[str | None] = mapped_column(Text)
     location: Mapped[str | None] = mapped_column(Text)
     current_title: Mapped[str | None] = mapped_column(Text)

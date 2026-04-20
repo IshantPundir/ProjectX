@@ -491,3 +491,51 @@ async def get_kanban_board(
             for s in stages
         ],
     )
+
+
+async def redact_pii(
+    db: AsyncSession, candidate_id: UUID, user: UserContext
+) -> None:
+    """GDPR hard-delete of PII columns. Audit row persists for compliance.
+
+    Phase 3B: placeholder — sessions table lands in 3C. Once sessions exist,
+    add an active-session guard here that raises CandidateHasActiveSessionError
+    when any assignment has a session in the `active` state:
+
+        active_count = (await db.execute(
+            select(func.count()).select_from(Session).where(
+                Session.candidate_id == candidate_id,
+                Session.state == "active",
+            )
+        )).scalar_one()
+        if active_count > 0:
+            raise CandidateHasActiveSessionError()
+
+    For Phase 3B this check is a no-op.
+    """
+    candidate = await get_candidate(db, candidate_id)
+
+    candidate.name = None
+    candidate.email = None
+    candidate.phone = None
+    candidate.location = None
+    candidate.current_title = None
+    candidate.linkedin_url = None
+    candidate.resume_s3_key = None
+    candidate.resume_uploaded_at = None
+    candidate.notes = None
+    candidate.source_metadata = None
+    candidate.pii_redacted_at = datetime.now(UTC)
+    candidate.pii_redacted_by = user.user.id
+    await db.flush()
+
+    await log_event(
+        db,
+        tenant_id=candidate.tenant_id,
+        actor_id=user.user.id,
+        actor_email=user.user.email,
+        action="candidate.pii_redacted",
+        resource="candidate",
+        resource_id=candidate.id,
+        payload={},
+    )

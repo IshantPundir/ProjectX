@@ -616,3 +616,110 @@ async def test_kanban_board_excludes_non_active_assignments(db):
     card_candidate_ids = {c.candidate_id for c in all_cards}
     assert active_cand.id in card_candidate_ids
     assert archived_cand.id not in card_candidate_ids
+
+
+@pytest.mark.asyncio
+async def test_redact_pii_nulls_personal_fields_and_stamps_audit(db):
+    from app.models import AuditLog
+    from app.modules.candidates.service import redact_pii
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    ctx = _make_ctx(user, is_super=True)
+
+    candidate = Candidate(
+        tenant_id=tenant.id,
+        name="Alice Redact",
+        email="alice-redact@example.com",
+        phone="+1-555-0100",
+        location="Berlin",
+        current_title="SRE",
+        linkedin_url="https://linkedin.com/in/alice",
+        notes="sensitive notes",
+        source="manual",
+        external_id="keep-me",
+        source_metadata={"pii": "wipe"},
+        created_by=user.id,
+    )
+    db.add(candidate)
+    await db.flush()
+
+    await redact_pii(db, candidate.id, ctx)
+    await db.refresh(candidate)
+
+    # Nulled:
+    assert candidate.name is None
+    assert candidate.email is None
+    assert candidate.phone is None
+    assert candidate.location is None
+    assert candidate.current_title is None
+    assert candidate.linkedin_url is None
+    assert candidate.notes is None
+    assert candidate.source_metadata is None
+    assert candidate.resume_s3_key is None
+    assert candidate.resume_uploaded_at is None
+
+    # Preserved (audit trail):
+    assert candidate.id is not None
+    assert candidate.tenant_id == tenant.id
+    assert candidate.source == "manual"
+    assert candidate.external_id == "keep-me"
+    assert candidate.created_by == user.id
+
+    # Stamped:
+    assert candidate.pii_redacted_at is not None
+    assert candidate.pii_redacted_by == user.id
+
+    # Audit event written:
+    audit_rows = (await db.execute(
+        select(AuditLog).where(
+            AuditLog.action == "candidate.pii_redacted",
+            AuditLog.resource_id == candidate.id,
+        )
+    )).scalars().all()
+    assert len(audit_rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_redact_pii_succeeds_when_no_sessions_exist(db):
+    """Phase 3B has no sessions module — redact always succeeds until 3C adds the guard."""
+    from app.modules.candidates.service import redact_pii
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    ctx = _make_ctx(user, is_super=True)
+    candidate = Candidate(
+        tenant_id=tenant.id, name="X", email="x@example.com",
+        source="manual", created_by=user.id,
+    )
+    db.add(candidate)
+    await db.flush()
+
+    await redact_pii(db, candidate.id, ctx)  # does not raise
+
+
+@pytest.mark.asyncio
+async def test_redact_pii_allows_reusing_email_after_redaction(db):
+    """Partial unique index on (tenant, email) WHERE pii_redacted_at IS NULL —
+    so after redaction, a new candidate can claim that email."""
+    from app.modules.candidates.service import create_candidate, redact_pii
+    from app.modules.candidates.schemas import CandidateCreateRequest
+    from app.modules.candidates.sources import ManualSource
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    ctx = _make_ctx(user, is_super=True)
+
+    req = CandidateCreateRequest(name="Alice 1", email="reclaim@example.com")
+    first = await create_candidate(db, req, ManualSource(), ctx, tenant.id)
+    await redact_pii(db, first.id, ctx)
+
+    # Second create with same email should succeed now
+    second = await create_candidate(
+        db,
+        CandidateCreateRequest(name="Alice 2", email="reclaim@example.com"),
+        ManualSource(),
+        ctx,
+        tenant.id,
+    )
+    assert second.id != first.id
