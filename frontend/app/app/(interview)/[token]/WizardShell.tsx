@@ -5,6 +5,7 @@ import { useMemo } from 'react'
 import { useCandidateSession } from '@/lib/hooks/use-candidate-session'
 
 import { ConsentStep } from './ConsentStep'
+import { OtpStep } from './OtpStep'
 
 type WizardStepKey =
   | 'consent'
@@ -65,7 +66,7 @@ export function WizardShell({ token }: { token: string }) {
       {currentStep === 'consent' && (
         <ConsentStep token={token} consentText={data.consent_text} />
       )}
-      {currentStep === 'otp' && <OtpStepPlaceholder token={token} />}
+      {currentStep === 'otp' && <OtpStep token={token} />}
       {currentStep === 'cam-mic' && <CameraMicStepPlaceholder token={token} />}
       {currentStep === 'start' && <StartStepPlaceholder token={token} />}
       {currentStep === 'already-started' && <AlreadyStartedPanel />}
@@ -104,9 +105,6 @@ function StepIndicator({
   )
 }
 
-function OtpStepPlaceholder({ token: _t }: { token: string }) {
-  return <p>OTP step (Task 3C.2.5)</p>
-}
 function CameraMicStepPlaceholder({ token: _t }: { token: string }) {
   return <p>Camera/mic step (Task 3C.2.6)</p>
 }
