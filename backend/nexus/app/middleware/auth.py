@@ -1,8 +1,10 @@
+import sqlalchemy
 import structlog
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from app.database import get_bypass_session
 from app.modules.auth.service import verify_access_token, verify_candidate_token
 
 logger = structlog.get_logger()
@@ -49,17 +51,30 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     Candidate flow (Phase 3 wiring):
       For /api/candidate-session/{token}/... the middleware extracts
-      {token} from the URL path segment and calls verify_candidate_token().
-      On success the candidate payload is attached to
-      request.state.candidate_token_payload so downstream handlers never
-      have to re-verify manually — classic "forgot to check auth" bug
-      class is eliminated at the layer.
+      {token} from the URL path segment and calls verify_candidate_token()
+      (sig + exp + HS256 algo pinning). On success it then looks up the
+      JTI in the `candidate_session_tokens` table to enforce:
 
-      Note: single-use / replay-prevention markers are a Phase 3 TODO —
-      currently verify_candidate_token() only checks signature + expiry +
-      hardcoded HS256 algorithm. The stubs under
-      /api/candidate-session/{token}/start and /consent still return
-      not_implemented, but now do so after authentication is enforced.
+        - TOKEN_UNKNOWN  — JWT signature valid but no matching row (forged
+                           claim with guessable JTI or a revoked-via-DELETE
+                           scenario).
+        - TOKEN_SUPERSEDED — resend_invite minted a newer JWT and flipped
+                           `superseded_at` on this row. Old token must stop
+                           working immediately.
+
+      It does NOT consume `used_at`. `used_at` is exclusively written by
+      the `/start` endpoint via an atomic
+      `UPDATE … WHERE used_at IS NULL RETURNING` — doing it in middleware
+      would race with concurrent requests and break legitimate multi-
+      endpoint flows (pre-check / consent / request-otp / verify-otp all
+      run before `/start`, and rejoin scenarios in Phase 3D also rely on
+      a still-usable token post-start).
+
+      On success the candidate payload is attached to
+      request.state.candidate_token_payload and request.state.tenant_id is
+      set from the DB row (defense in depth — the JWT tenant_id claim is
+      signed, but we trust the DB as the source of truth for what
+      tenant/session this JTI belongs to).
     """
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
@@ -85,7 +100,50 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     status_code=401,
                     content={"detail": "Invalid or expired candidate session token"},
                 )
+
+            # DB-side gate: look up the JTI and reject if unknown or
+            # superseded. We do NOT consume `used_at` here — that is the
+            # sole responsibility of the /start endpoint via its atomic
+            # UPDATE (see class docstring for the race/rejoin rationale).
+            async with get_bypass_session() as db:
+                row = (
+                    await db.execute(
+                        sqlalchemy.text(
+                            "SELECT jti, tenant_id, session_id, superseded_at "
+                            "FROM candidate_session_tokens WHERE jti = :jti"
+                        ),
+                        {"jti": str(candidate_payload.jti)},
+                    )
+                ).mappings().first()
+
+            if row is None:
+                logger.warning(
+                    "auth.candidate_token_unknown",
+                    jti=str(candidate_payload.jti),
+                )
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Token unknown", "code": "TOKEN_UNKNOWN"},
+                )
+            if row["superseded_at"] is not None:
+                logger.warning(
+                    "auth.candidate_token_superseded",
+                    jti=str(candidate_payload.jti),
+                )
+                return JSONResponse(
+                    status_code=401,
+                    content={
+                        "detail": "Token has been superseded",
+                        "code": "TOKEN_SUPERSEDED",
+                    },
+                )
+
             request.state.candidate_token_payload = candidate_payload
+            # Prefer DB-side tenant_id as the source of truth for RLS
+            # downstream. The JWT claim is signed, but the DB row is what
+            # scheduler/session services will reconcile against when the
+            # candidate endpoints read rows under tenant RLS.
+            request.state.tenant_id = str(row["tenant_id"])
             # Do NOT fall through to the dashboard JWT check — candidate
             # sessions never carry a Bearer header.
             return await call_next(request)
