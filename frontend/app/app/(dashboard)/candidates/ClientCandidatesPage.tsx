@@ -3,9 +3,11 @@
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useCallback, useMemo, useState } from 'react'
 
+import { JdPicker } from '@/components/dashboard/candidates/JdPicker'
 import { Button } from '@/components/ui/button'
 
 import AddCandidateDialog from './AddCandidateDialog'
+import CandidateKanbanView from './CandidateKanbanView'
 import CandidateListView from './CandidateListView'
 
 type CandidatesView = 'list' | 'kanban'
@@ -80,7 +82,6 @@ export default function ClientCandidatesPage() {
       />
 
       <div className="flex flex-wrap items-center gap-3 mb-6">
-        {/* Placeholder JD picker — real combobox lands in Task 23. */}
         <div className="flex items-center gap-2">
           <label
             htmlFor="candidates-jd-picker"
@@ -88,21 +89,14 @@ export default function ClientCandidatesPage() {
           >
             Job:
           </label>
-          <select
-            id="candidates-jd-picker"
-            disabled
-            value={jd ?? ''}
-            onChange={(e) => {
-              const next = e.target.value
-              // When JD changes, the kanban view's semantics break, so reset
-              // view to list. Real wiring lands in Task 23.
-              updateParams({ jd: next || null, view: null })
+          <JdPicker
+            value={jd}
+            onChange={(next) => {
+              // When JD changes, kanban semantics break (kanban is per-JD);
+              // reset the view so we land on list until the user opts back in.
+              updateParams({ jd: next, view: null })
             }}
-            className="h-8 rounded-lg border border-zinc-200 bg-white px-2 text-sm text-zinc-600 disabled:opacity-50"
-            aria-label="Select a job description"
-          >
-            <option value="">Select a JD…</option>
-          </select>
+          />
         </div>
 
         <div
@@ -139,12 +133,8 @@ export default function ClientCandidatesPage() {
         </div>
       </div>
 
-      {view === 'kanban' ? (
-        <div className="bg-white border border-zinc-200 rounded-lg p-12 text-center">
-          <p className="text-sm text-zinc-500">
-            Kanban view coming in Task 22
-          </p>
-        </div>
+      {view === 'kanban' && jd ? (
+        <CandidateKanbanView jobId={jd} />
       ) : (
         <CandidateListView
           filters={listFilters}
