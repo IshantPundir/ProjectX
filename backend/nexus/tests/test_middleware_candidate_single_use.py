@@ -105,21 +105,34 @@ def _patch_bypass_session_to(db: AsyncSession):
 async def test_fresh_token_is_accepted_by_middleware(db: AsyncSession):
     """Valid JWT + live DB row, not superseded → middleware does NOT 401.
 
-    The candidate-session endpoint isn't wired yet (stubbed router has no
-    routes), so call_next returns 404. We just assert that the response
-    did not come from the middleware — i.e., it's not a 401 carrying a
-    middleware-owned error code.
+    As of Task 3C.1.17 the candidate-session router has a real GET
+    /pre-check handler, so we additionally override `get_tenant_db` to
+    yield the same rolled-back test session — otherwise the handler's
+    session-row SELECT runs on a fresh connection that can't see the
+    seeded rows and raises SessionNotFoundError. We still only assert
+    that the middleware did NOT return a 401 with a middleware-owned
+    code; the exact 200/404/422 behavior is tested in
+    test_session_router.py.
     """
+    from app.database import get_tenant_db
+
     _jti, token = await _make_session_and_token_row(db, superseded=False)
 
-    with _patch_bypass_session_to(db):
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as ac:
-            r = await ac.get(f"/api/candidate-session/{token}/pre-check")
+    async def _override_db():
+        yield db
 
-    # Must not be a middleware-authored 401. Any other status (404 for
-    # unregistered route, 405, 200 once the router lands) is fine.
+    app.dependency_overrides[get_tenant_db] = _override_db
+    try:
+        with _patch_bypass_session_to(db):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as ac:
+                r = await ac.get(f"/api/candidate-session/{token}/pre-check")
+    finally:
+        app.dependency_overrides.pop(get_tenant_db, None)
+
+    # Must not be a middleware-authored 401. Any other status (200, 404,
+    # 422, etc.) is fine — the middleware is the unit under test here.
     assert r.status_code != 401, r.text
     body = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
     assert body.get("code") not in {"TOKEN_UNKNOWN", "TOKEN_SUPERSEDED"}
