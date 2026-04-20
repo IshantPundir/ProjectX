@@ -1,24 +1,88 @@
-from enum import StrEnum
+"""Candidate-facing session schemas.
 
-from pydantic import BaseModel
+Request/response models for the /api/candidate-session/{token}/* surface
+plus the shared SessionState enum used on both candidate-side and
+recruiter-side responses.
+"""
+from __future__ import annotations
+
+from datetime import datetime
+from enum import StrEnum
+from typing import Literal
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SessionState(StrEnum):
     CREATED = "created"
-    WAITING = "waiting"
     PRE_CHECK = "pre_check"
-    CONSENT = "consent"
+    CONSENTED = "consented"
     ACTIVE = "active"
-    PAUSED = "paused"
     COMPLETED = "completed"
     CANCELLED = "cancelled"
     ERROR = "error"
 
 
-class SessionResponse(BaseModel):
-    id: str
+class PreCheckResponse(BaseModel):
+    """Returned by GET /api/candidate-session/{token}/pre-check — describes
+    the session context + where the wizard should resume."""
+    model_config = ConfigDict(from_attributes=True)
+    session_id: UUID
+    company_name: str
+    job_title: str
+    stage_name: str
+    duration_minutes: int
+    consent_text: str
     state: SessionState
-    job_id: str
-    candidate_id: str
-    current_question_index: int = 0
-    total_questions: int = 0
+    otp_required: bool
+    otp_verified_at: datetime | None
+
+
+class ConsentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    consented: Literal[True]
+    user_agent: str = Field(..., min_length=1, max_length=500)
+
+
+class VerifyOtpRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    code: str = Field(..., pattern=r"^\d{6}$")
+
+
+class VerifyOtpErrorResponse(BaseModel):
+    """Shape for 422 responses when OTP verification fails but retries remain."""
+    code: Literal["INVALID_OTP", "OTP_EXPIRED", "OTP_MAX_ATTEMPTS_REACHED"]
+    detail: str
+    attempts_remaining: int
+
+
+class StartSessionPendingResponse(BaseModel):
+    """Shape for the 501 LIVEKIT_INTEGRATION_PENDING sentinel."""
+    code: Literal["LIVEKIT_INTEGRATION_PENDING"] = "LIVEKIT_INTEGRATION_PENDING"
+    detail: str
+    session_id: UUID
+
+
+class SessionDetailResponse(BaseModel):
+    """Recruiter-side session detail view."""
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    assignment_id: UUID
+    stage_id: UUID
+    stage_name: str
+    state: SessionState
+    state_changed_at: datetime
+    otp_required: bool
+    consent_recorded_at: datetime | None
+    scheduled_for: datetime | None
+    started_at: datetime | None
+    completed_at: datetime | None
+    created_at: datetime
+
+
+class SessionListPage(BaseModel):
+    items: list[SessionDetailResponse]
+    total: int
+    offset: int
+    limit: int
