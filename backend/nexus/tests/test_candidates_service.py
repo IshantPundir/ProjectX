@@ -494,3 +494,125 @@ async def test_create_assignment_raises_when_no_pipeline(db):
         await create_assignment(
             db, candidate.id, AssignmentCreateRequest(job_posting_id=job.id), ctx
         )
+
+
+@pytest.mark.asyncio
+async def test_kanban_board_empty_when_job_has_no_pipeline(db):
+    from app.modules.candidates.service import get_kanban_board
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    org_unit = await create_test_org_unit(db, tenant.id)
+    job = JobPosting(
+        tenant_id=tenant.id, org_unit_id=org_unit.id, title="T",
+        description_raw="R" * 60, created_by=user.id, status="draft",
+    )
+    db.add(job)
+    await db.flush()
+
+    board = await get_kanban_board(db, job.id)
+    assert board.job_posting_id == job.id
+    assert board.stages == []
+
+
+@pytest.mark.asyncio
+async def test_kanban_board_returns_all_stages_even_empty(db):
+    from app.modules.candidates.service import get_kanban_board
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    job, stages = await _make_job_with_stages(
+        db, tenant.id, user.id, stage_names=("A", "B", "C")
+    )
+
+    board = await get_kanban_board(db, job.id)
+    assert len(board.stages) == 3
+    assert [s.position for s in board.stages] == [0, 1, 2]
+    assert all(s.candidates == [] for s in board.stages)
+
+
+@pytest.mark.asyncio
+async def test_kanban_board_places_candidate_in_current_stage(db):
+    from app.modules.candidates.service import create_assignment, get_kanban_board
+    from app.modules.candidates.schemas import AssignmentCreateRequest
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    ctx = _make_ctx(user)
+
+    candidate = Candidate(
+        tenant_id=tenant.id, name="Ada", email="ada@example.com",
+        source="manual", created_by=user.id,
+    )
+    db.add(candidate)
+    await db.flush()
+
+    job, stages = await _make_job_with_stages(db, tenant.id, user.id)
+    assignment = await create_assignment(
+        db, candidate.id,
+        AssignmentCreateRequest(job_posting_id=job.id), ctx,
+    )
+
+    board = await get_kanban_board(db, job.id)
+    stage_0 = next(s for s in board.stages if s.position == 0)
+    assert len(stage_0.candidates) == 1
+    card = stage_0.candidates[0]
+    assert card.candidate_id == candidate.id
+    assert card.assignment_id == assignment.id
+    assert card.name == "Ada"
+    assert card.email == "ada@example.com"
+    assert card.latest_session_state is None  # Phase 3C stub
+
+
+@pytest.mark.asyncio
+async def test_kanban_board_excludes_non_active_assignments(db):
+    from app.modules.candidates.service import (
+        create_assignment,
+        get_kanban_board,
+        update_assignment_status,
+    )
+    from app.modules.candidates.schemas import (
+        AssignmentCreateRequest,
+        AssignmentStatus,
+        AssignmentUpdateRequest,
+    )
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    ctx = _make_ctx(user)
+
+    job, _stages = await _make_job_with_stages(db, tenant.id, user.id)
+
+    # Active
+    active_cand = Candidate(
+        tenant_id=tenant.id, name="Active", email="act@example.com",
+        source="manual", created_by=user.id,
+    )
+    db.add(active_cand)
+    await db.flush()
+    await create_assignment(
+        db, active_cand.id,
+        AssignmentCreateRequest(job_posting_id=job.id), ctx,
+    )
+
+    # Archived
+    archived_cand = Candidate(
+        tenant_id=tenant.id, name="Arch", email="arch@example.com",
+        source="manual", created_by=user.id,
+    )
+    db.add(archived_cand)
+    await db.flush()
+    archived_assign = await create_assignment(
+        db, archived_cand.id,
+        AssignmentCreateRequest(job_posting_id=job.id), ctx,
+    )
+    await update_assignment_status(
+        db, archived_assign.id,
+        AssignmentUpdateRequest(status=AssignmentStatus.ARCHIVED), ctx,
+    )
+
+    board = await get_kanban_board(db, job.id)
+    all_cards = [c for s in board.stages for c in s.candidates]
+    card_candidate_ids = {c.candidate_id for c in all_cards}
+    assert active_cand.id in card_candidate_ids
+    assert archived_cand.id not in card_candidate_ids

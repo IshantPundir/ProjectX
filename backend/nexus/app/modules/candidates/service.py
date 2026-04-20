@@ -41,6 +41,9 @@ from app.modules.candidates.schemas import (
     AssignmentUpdateRequest,
     CandidateCreateRequest,
     CandidateUpdateRequest,
+    KanbanBoardResponse,
+    KanbanCandidateCard,
+    KanbanColumnResponse,
     StageTransitionRequest,
 )
 from app.modules.candidates.sources import CandidateSource
@@ -415,3 +418,76 @@ async def transition_stage(
         },
     )
     return assignment
+
+
+async def get_kanban_board(
+    db: AsyncSession,
+    job_posting_id: UUID,
+) -> KanbanBoardResponse:
+    """Fetch the kanban board for a JD in four queries.
+
+    Mirrors the bulk-load pattern used by question_bank.get_banks_for_pipeline:
+    the kanban is the hottest read in the recruiter workflow, so we deliberately
+    keep the query count constant regardless of candidate volume.
+
+    Callers (router) are responsible for authz — this returns raw structured data.
+    Returns an empty board (stages=[]) if the JD has no pipeline yet.
+    """
+    pipeline = (await db.execute(
+        select(JobPipelineInstance).where(
+            JobPipelineInstance.job_posting_id == job_posting_id
+        )
+    )).scalar_one_or_none()
+    if pipeline is None:
+        return KanbanBoardResponse(job_posting_id=job_posting_id, stages=[])
+
+    stages = list((await db.execute(
+        select(JobPipelineStage)
+        .where(JobPipelineStage.instance_id == pipeline.id)
+        .order_by(JobPipelineStage.position.asc())
+    )).scalars().all())
+
+    assignments = list((await db.execute(
+        select(CandidateJobAssignment).where(
+            CandidateJobAssignment.job_posting_id == job_posting_id,
+            CandidateJobAssignment.status == "active",
+        )
+    )).scalars().all())
+
+    candidate_ids = {a.candidate_id for a in assignments}
+    candidates_by_id: dict[UUID, Candidate] = {}
+    if candidate_ids:
+        rows = (await db.execute(
+            select(Candidate).where(Candidate.id.in_(candidate_ids))
+        )).scalars().all()
+        candidates_by_id = {c.id: c for c in rows}
+
+    cards_by_stage: dict[UUID, list[KanbanCandidateCard]] = {}
+    for a in assignments:
+        c = candidates_by_id.get(a.candidate_id)
+        if c is None:
+            continue  # defensive: RLS could hide a candidate we can see the assignment for
+        cards_by_stage.setdefault(a.current_stage_id, []).append(
+            KanbanCandidateCard(
+                candidate_id=c.id,
+                assignment_id=a.id,
+                name=c.name,
+                email=c.email,
+                status=a.status,
+                current_stage_id=a.current_stage_id,
+                latest_session_state=None,  # Populated in Phase 3C.
+            )
+        )
+
+    return KanbanBoardResponse(
+        job_posting_id=job_posting_id,
+        stages=[
+            KanbanColumnResponse(
+                stage_id=s.id,
+                stage_name=s.name,
+                position=s.position,
+                candidates=cards_by_stage.get(s.id, []),
+            )
+            for s in stages
+        ],
+    )
