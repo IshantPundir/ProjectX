@@ -10,12 +10,14 @@ interface Props {
   stage: KanbanColumn
   stages: KanbanColumn[]
   jobPostingId: string
+  jobTitle: string
 }
 
 export default function CandidateKanbanColumn({
   stage,
   stages,
   jobPostingId,
+  jobTitle,
 }: Props) {
   const { setNodeRef, isOver } = useDroppable({
     id: stage.stage_id,
@@ -53,6 +55,8 @@ export default function CandidateKanbanColumn({
               card={card}
               jobPostingId={jobPostingId}
               stages={stages}
+              jobTitle={jobTitle}
+              stageName={stage.stage_name}
             />
           ))
         )}

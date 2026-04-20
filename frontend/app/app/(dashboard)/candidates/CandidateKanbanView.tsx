@@ -13,6 +13,7 @@ import {
 } from '@dnd-kit/core'
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable'
 
+import { useJob } from '@/lib/hooks/use-job'
 import { useKanbanBoard } from '@/lib/hooks/use-kanban-board'
 import { useTransitionCandidate } from '@/lib/hooks/use-transition-candidate'
 
@@ -33,6 +34,11 @@ interface DroppableColumnData {
 
 export default function CandidateKanbanView({ jobId }: Props) {
   const { data, isLoading, error } = useKanbanBoard(jobId)
+  // The kanban board response doesn't carry the job title — fetch it so we
+  // can surface it in the Send Invite dialog. `useJob` is already shared
+  // with the review page so this usually returns a cached hit.
+  const jobQuery = useJob(jobId)
+  const jobTitle = jobQuery.data?.title ?? ''
   const transition = useTransitionCandidate(jobId)
 
   // Surface fetch errors via toast (once per error instance).
@@ -110,6 +116,7 @@ export default function CandidateKanbanView({ jobId }: Props) {
             stage={stage}
             stages={data.stages}
             jobPostingId={jobId}
+            jobTitle={jobTitle}
           />
         ))}
       </div>

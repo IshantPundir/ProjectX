@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { useState } from 'react'
 import { useDraggable } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
 
@@ -12,17 +13,24 @@ import type {
   KanbanColumn,
 } from '@/lib/api/candidates'
 
+import { SendInviteDialog } from './SendInviteDialog'
+
 interface Props {
   card: KanbanCandidateCard
   jobPostingId: string
   stages: KanbanColumn[]
+  jobTitle: string
+  stageName: string
 }
 
 export default function CandidateKanbanCard({
   card,
   jobPostingId,
   stages,
+  jobTitle,
+  stageName,
 }: Props) {
+  const [inviteOpen, setInviteOpen] = useState(false)
   const { setNodeRef, attributes, listeners, transform, isDragging } =
     useDraggable({
       id: card.assignment_id,
@@ -73,7 +81,18 @@ export default function CandidateKanbanCard({
         <SessionStatusBadge state={card.latest_session_state} />
       </div>
 
-      <div className="mt-2 flex justify-end">
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            setInviteOpen(true)
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+        >
+          Send invite
+        </button>
         <StageTransitionDropdown
           candidateId={card.candidate_id}
           assignmentId={card.assignment_id}
@@ -83,6 +102,18 @@ export default function CandidateKanbanCard({
           jobPostingId={jobPostingId}
         />
       </div>
+
+      {inviteOpen && (
+        <SendInviteDialog
+          open={inviteOpen}
+          onOpenChange={setInviteOpen}
+          candidateId={card.candidate_id}
+          assignmentId={card.assignment_id}
+          candidateName={card.name}
+          jobTitle={jobTitle}
+          stageName={stageName}
+        />
+      )}
     </div>
   )
 }

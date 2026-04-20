@@ -19,9 +19,12 @@ import type {
   AssignmentResponse,
   AssignmentStatus,
 } from '@/lib/api/candidates'
+import { useCandidate } from '@/lib/hooks/use-candidate'
 import { useCandidateAssignments } from '@/lib/hooks/use-candidate-assignments'
 import { useCreateAssignment } from '@/lib/hooks/use-create-assignment'
 import { useUpdateAssignmentStatus } from '@/lib/hooks/use-update-assignment-status'
+
+import { SendInviteDialog } from '../SendInviteDialog'
 
 interface Props {
   candidateId: string
@@ -40,6 +43,10 @@ export default function CandidateAssignmentsTab({ candidateId }: Props) {
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
   const createAssignment = useCreateAssignment(candidateId)
   const assignmentsQuery = useCandidateAssignments(candidateId)
+  // `useCandidate` is already populated at the page level — this reuses the
+  // same cache entry so no additional fetch is triggered.
+  const candidateQuery = useCandidate(candidateId)
+  const candidateName = candidateQuery.data?.name ?? null
 
   const handleClose = (next: boolean) => {
     if (!next && createAssignment.isPending) return
@@ -75,6 +82,7 @@ export default function CandidateAssignmentsTab({ candidateId }: Props) {
 
       <AssignmentsTable
         candidateId={candidateId}
+        candidateName={candidateName}
         assignments={assignmentsQuery.data}
         isLoading={assignmentsQuery.isLoading}
         error={assignmentsQuery.error}
@@ -127,6 +135,7 @@ export default function CandidateAssignmentsTab({ candidateId }: Props) {
 
 interface AssignmentsTableProps {
   candidateId: string
+  candidateName: string | null
   assignments: AssignmentResponse[] | undefined
   isLoading: boolean
   error: Error | null
@@ -134,6 +143,7 @@ interface AssignmentsTableProps {
 
 function AssignmentsTable({
   candidateId,
+  candidateName,
   assignments,
   isLoading,
   error,
@@ -199,6 +209,12 @@ function AssignmentsTable({
             >
               Assigned
             </th>
+            <th
+              scope="col"
+              className="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-zinc-600"
+            >
+              Actions
+            </th>
           </tr>
         </thead>
         <tbody className="divide-y divide-zinc-100">
@@ -206,6 +222,7 @@ function AssignmentsTable({
             <AssignmentRow
               key={a.id}
               candidateId={candidateId}
+              candidateName={candidateName}
               assignment={a}
             />
           ))}
@@ -217,11 +234,18 @@ function AssignmentsTable({
 
 interface AssignmentRowProps {
   candidateId: string
+  candidateName: string | null
   assignment: AssignmentResponse
 }
 
-function AssignmentRow({ candidateId, assignment }: AssignmentRowProps) {
+function AssignmentRow({
+  candidateId,
+  candidateName,
+  assignment,
+}: AssignmentRowProps) {
+  const [inviteOpen, setInviteOpen] = useState(false)
   const updateStatus = useUpdateAssignmentStatus(candidateId)
+  const canInvite = assignment.status === 'active'
 
   const handleStatusChange = (next: AssignmentStatus) => {
     if (next === assignment.status) return
@@ -277,6 +301,28 @@ function AssignmentRow({ candidateId, assignment }: AssignmentRowProps) {
       </td>
       <td className="px-4 py-2 text-sm text-zinc-700">
         {new Date(assignment.assigned_at).toLocaleDateString()}
+      </td>
+      <td className="px-4 py-2 text-right text-sm">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={!canInvite}
+          onClick={() => setInviteOpen(true)}
+        >
+          Send invite
+        </Button>
+        {inviteOpen && (
+          <SendInviteDialog
+            open={inviteOpen}
+            onOpenChange={setInviteOpen}
+            candidateId={candidateId}
+            assignmentId={assignment.id}
+            candidateName={candidateName}
+            jobTitle={assignment.job_title}
+            stageName={assignment.current_stage_name}
+          />
+        )}
       </td>
     </tr>
   )
