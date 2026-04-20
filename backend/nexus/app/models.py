@@ -7,7 +7,7 @@ Tables: clients, users, organizational_units, roles,
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, text, UniqueConstraint
 from sqlalchemy import text as sql_text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -457,6 +457,19 @@ class Candidate(Base):
     nulled out on redaction."""
 
     __tablename__ = "candidates"
+    __table_args__ = (
+        # Partial unique index — matches migration 0013_candidates_core.
+        # Declared on the ORM so Base.metadata.create_all builds it in the
+        # test DB too (tests don't run alembic), keeping the duplicate-email
+        # constraint enforceable in unit tests.
+        Index(
+            "candidates_tenant_email_active_idx",
+            "tenant_id",
+            "email",
+            unique=True,
+            postgresql_where=sql_text("pii_redacted_at IS NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, server_default=sql_text("gen_random_uuid()")
