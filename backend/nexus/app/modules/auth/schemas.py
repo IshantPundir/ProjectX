@@ -1,5 +1,7 @@
 """Auth schemas — JWT payload, invite/me responses."""
 
+import uuid
+
 from pydantic import BaseModel
 
 
@@ -19,11 +21,18 @@ class TokenPayload(BaseModel):
 
 
 class CandidateTokenPayload(BaseModel):
-    """Decoded JWT for single-use candidate session tokens (HS256)."""
+    """Decoded JWT for single-use candidate session tokens (HS256).
 
-    sub: str = ""
-    session_id: str = ""
-    tenant_id: str = ""
+    All UUID-shaped claims are parsed into `uuid.UUID` so downstream code
+    (middleware single-use check, session service authz) can compare and
+    query against the `candidate_session_tokens` PK without re-parsing.
+    `jti` is the PK of the row in `candidate_session_tokens`.
+    """
+
+    jti: uuid.UUID
+    sub: uuid.UUID  # candidate_id
+    session_id: uuid.UUID
+    tenant_id: uuid.UUID
     exp: int = 0
     iat: int = 0
 

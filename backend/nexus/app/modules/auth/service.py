@@ -4,6 +4,9 @@ Dashboard tokens are verified via JWKS (ES256) — no shared secret required.
 Candidate tokens still use HS256 with a separate signing key.
 """
 
+import uuid
+from datetime import UTC, datetime, timedelta
+
 import structlog
 import jwt
 from jwt import PyJWKClient
@@ -103,9 +106,10 @@ def verify_candidate_token(token: str) -> CandidateTokenPayload | None:
             options={"verify_exp": True},
         )
         return CandidateTokenPayload(
-            sub=payload.get("sub", ""),
-            session_id=payload.get("session_id", ""),
-            tenant_id=payload.get("tenant_id", ""),
+            jti=payload["jti"],
+            sub=payload["sub"],
+            session_id=payload["session_id"],
+            tenant_id=payload["tenant_id"],
             exp=payload.get("exp", 0),
             iat=payload.get("iat", 0),
         )
@@ -115,6 +119,34 @@ def verify_candidate_token(token: str) -> CandidateTokenPayload | None:
     except jwt.InvalidTokenError as exc:
         logger.warning("auth.candidate_token_invalid", error=str(exc))
         return None
+
+
+def create_candidate_token(
+    *,
+    jti: uuid.UUID,
+    candidate_id: uuid.UUID,
+    session_id: uuid.UUID,
+    tenant_id: uuid.UUID,
+) -> tuple[str, datetime]:
+    """Mint a single-use candidate JWT.
+
+    Returns (token, expires_at). The caller is responsible for inserting a
+    matching row into candidate_session_tokens with the same `jti`.
+
+    TTL controlled by settings.candidate_jwt_ttl_hours (default 72).
+    """
+    iat = datetime.now(UTC)
+    exp = iat + timedelta(hours=settings.candidate_jwt_ttl_hours)
+    claims = {
+        "jti": str(jti),
+        "sub": str(candidate_id),
+        "session_id": str(session_id),
+        "tenant_id": str(tenant_id),
+        "iat": int(iat.timestamp()),
+        "exp": int(exp.timestamp()),
+    }
+    token = jwt.encode(claims, settings.candidate_jwt_secret, algorithm="HS256")
+    return token, exp
 
 
 def require_projectx_admin():

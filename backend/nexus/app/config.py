@@ -72,6 +72,11 @@ class Settings(BaseSettings):
     # to HS256 in app/modules/auth/service.py; it is NOT a deployment setting.
     candidate_jwt_secret: str = ""
 
+    # TTL for minted candidate session JWTs (hours). 72h default covers a
+    # standard 3-day invite window. Consumed by
+    # app/modules/auth/service.py::create_candidate_token().
+    candidate_jwt_ttl_hours: int = 72
+
     @field_validator("candidate_jwt_secret")
     @classmethod
     def _candidate_secret_required(cls, v: str, info) -> str:
