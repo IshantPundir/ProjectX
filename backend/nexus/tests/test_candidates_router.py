@@ -295,6 +295,120 @@ async def test_redact_pii_requires_super_admin(db: AsyncSession):
 
 
 @pytest.mark.asyncio
+async def test_get_candidate_assignments_empty_when_none(db: AsyncSession):
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    candidate = Candidate(
+        tenant_id=tenant.id,
+        name="Solo",
+        email="solo@example.com",
+        source="manual",
+        created_by=user.id,
+    )
+    db.add(candidate)
+    await db.flush()
+
+    headers, restore = _setup_test_context(db, user, tenant.id, is_super=True)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            r = await ac.get(
+                f"/api/candidates/{candidate.id}/assignments", headers=headers
+            )
+    finally:
+        restore()
+
+    assert r.status_code == 200, r.text
+    assert r.json() == []
+
+
+@pytest.mark.asyncio
+async def test_get_candidate_assignments_lists_enriched(db: AsyncSession):
+    from app.models import (
+        CandidateJobAssignment,
+        JobPipelineInstance,
+        JobPipelineStage,
+        JobPosting,
+    )
+    from tests.conftest import create_test_org_unit
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    org_unit = await create_test_org_unit(db, tenant.id)
+
+    candidate = Candidate(
+        tenant_id=tenant.id,
+        name="Assigned",
+        email="assigned@example.com",
+        source="manual",
+        created_by=user.id,
+    )
+    db.add(candidate)
+    job = JobPosting(
+        tenant_id=tenant.id,
+        org_unit_id=org_unit.id,
+        title="Staff Engineer",
+        description_raw="R" * 60,
+        created_by=user.id,
+        status="draft",
+    )
+    db.add(job)
+    await db.flush()
+
+    pipeline = JobPipelineInstance(tenant_id=tenant.id, job_posting_id=job.id)
+    db.add(pipeline)
+    await db.flush()
+    stage = JobPipelineStage(
+        tenant_id=tenant.id,
+        instance_id=pipeline.id,
+        position=0,
+        name="Screening",
+        stage_type="ai_interview",
+        duration_minutes=30,
+        difficulty="medium",
+        signal_filter={},
+        pass_criteria={},
+        advance_behavior="manual",
+    )
+    db.add(stage)
+    await db.flush()
+
+    assignment = CandidateJobAssignment(
+        tenant_id=tenant.id,
+        candidate_id=candidate.id,
+        job_posting_id=job.id,
+        current_stage_id=stage.id,
+        status="active",
+        assigned_by=user.id,
+    )
+    db.add(assignment)
+    await db.flush()
+
+    headers, restore = _setup_test_context(db, user, tenant.id, is_super=True)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            r = await ac.get(
+                f"/api/candidates/{candidate.id}/assignments", headers=headers
+            )
+    finally:
+        restore()
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert len(body) == 1
+    row = body[0]
+    assert row["id"] == str(assignment.id)
+    assert row["job_posting_id"] == str(job.id)
+    assert row["job_title"] == "Staff Engineer"
+    assert row["current_stage_id"] == str(stage.id)
+    assert row["current_stage_name"] == "Screening"
+    assert row["status"] == "active"
+
+
+@pytest.mark.asyncio
 async def test_redact_pii_super_admin_succeeds(db: AsyncSession):
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)

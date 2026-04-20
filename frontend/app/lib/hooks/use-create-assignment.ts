@@ -22,6 +22,9 @@ export function useCreateAssignment(candidateId: string) {
         queryKey: ['candidates', candidateId],
       })
       void queryClient.invalidateQueries({
+        queryKey: ['candidates', candidateId, 'assignments'],
+      })
+      void queryClient.invalidateQueries({
         queryKey: ['candidates-kanban', body.job_posting_id],
       })
       void queryClient.invalidateQueries({ queryKey: ['candidates-list'] })

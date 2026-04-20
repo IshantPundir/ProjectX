@@ -1,9 +1,11 @@
 'use client'
 
+import Link from 'next/link'
 import { useState } from 'react'
 import { toast } from 'sonner'
 
 import { JdPicker } from '@/components/dashboard/candidates/JdPicker'
+import { StatusBadge } from '@/components/dashboard/candidates/StatusBadge'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -13,16 +15,31 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import type {
+  AssignmentResponse,
+  AssignmentStatus,
+} from '@/lib/api/candidates'
+import { useCandidateAssignments } from '@/lib/hooks/use-candidate-assignments'
 import { useCreateAssignment } from '@/lib/hooks/use-create-assignment'
+import { useUpdateAssignmentStatus } from '@/lib/hooks/use-update-assignment-status'
 
 interface Props {
   candidateId: string
 }
 
+const STATUS_OPTIONS: { value: AssignmentStatus; label: string }[] = [
+  { value: 'active', label: 'Active' },
+  { value: 'archived', label: 'Archived' },
+  { value: 'hired', label: 'Hired' },
+  { value: 'rejected', label: 'Rejected' },
+  { value: 'withdrawn', label: 'Withdrawn' },
+]
+
 export default function CandidateAssignmentsTab({ candidateId }: Props) {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
   const createAssignment = useCreateAssignment(candidateId)
+  const assignmentsQuery = useCandidateAssignments(candidateId)
 
   const handleClose = (next: boolean) => {
     if (!next && createAssignment.isPending) return
@@ -56,21 +73,12 @@ export default function CandidateAssignmentsTab({ candidateId }: Props) {
         </Button>
       </div>
 
-      {/*
-        TODO(phase-3b-followup): Render this candidate's assignments here once
-        the backend exposes `GET /api/candidates/{id}/assignments` (or the
-        detail endpoint is expanded to include them). Task 14 intentionally
-        did not add that route, so for 3B we link users back to the JD-level
-        Kanban boards to see stage progress.
-      */}
-      <div className="bg-white border border-zinc-200 rounded-lg p-8 text-center">
-        <p className="text-sm text-zinc-600">
-          Assignments for this candidate will be listed here.
-        </p>
-        <p className="text-xs text-zinc-500 mt-1">
-          For now, use the JD Kanban boards to see stage progress for each job.
-        </p>
-      </div>
+      <AssignmentsTable
+        candidateId={candidateId}
+        assignments={assignmentsQuery.data}
+        isLoading={assignmentsQuery.isLoading}
+        error={assignmentsQuery.error}
+      />
 
       <Dialog open={dialogOpen} onOpenChange={handleClose}>
         <DialogContent className="sm:max-w-md">
@@ -114,5 +122,162 @@ export default function CandidateAssignmentsTab({ candidateId }: Props) {
         </DialogContent>
       </Dialog>
     </div>
+  )
+}
+
+interface AssignmentsTableProps {
+  candidateId: string
+  assignments: AssignmentResponse[] | undefined
+  isLoading: boolean
+  error: Error | null
+}
+
+function AssignmentsTable({
+  candidateId,
+  assignments,
+  isLoading,
+  error,
+}: AssignmentsTableProps) {
+  if (isLoading) {
+    return (
+      <div className="bg-white border border-zinc-200 rounded-lg p-8 text-center">
+        <p className="text-sm text-zinc-600">Loading assignments…</p>
+      </div>
+    )
+  }
+
+  if (error) {
+    // Surface once; TanStack Query won't re-fire this render path on mount,
+    // but a retry will replace `error` with undefined.
+    toast.error(error.message)
+    return (
+      <div className="bg-white border border-zinc-200 rounded-lg p-8 text-center">
+        <p className="text-sm text-zinc-600">Failed to load assignments.</p>
+      </div>
+    )
+  }
+
+  if (!assignments || assignments.length === 0) {
+    return (
+      <div className="bg-white border border-zinc-200 rounded-lg p-8 text-center">
+        <p className="text-sm text-zinc-600">
+          Assignments for this candidate will be listed here.
+        </p>
+        <p className="text-xs text-zinc-500 mt-1">
+          For now, use the JD Kanban boards to see stage progress for each job.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="bg-white border border-zinc-200 rounded-lg overflow-hidden">
+      <table className="min-w-full divide-y divide-zinc-200">
+        <thead className="bg-zinc-50">
+          <tr>
+            <th
+              scope="col"
+              className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-zinc-600"
+            >
+              Job title
+            </th>
+            <th
+              scope="col"
+              className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-zinc-600"
+            >
+              Current stage
+            </th>
+            <th
+              scope="col"
+              className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-zinc-600"
+            >
+              Status
+            </th>
+            <th
+              scope="col"
+              className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-zinc-600"
+            >
+              Assigned
+            </th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-zinc-100">
+          {assignments.map((a) => (
+            <AssignmentRow
+              key={a.id}
+              candidateId={candidateId}
+              assignment={a}
+            />
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+interface AssignmentRowProps {
+  candidateId: string
+  assignment: AssignmentResponse
+}
+
+function AssignmentRow({ candidateId, assignment }: AssignmentRowProps) {
+  const updateStatus = useUpdateAssignmentStatus(candidateId)
+
+  const handleStatusChange = (next: AssignmentStatus) => {
+    if (next === assignment.status) return
+    updateStatus.mutate(
+      {
+        assignmentId: assignment.id,
+        status: next,
+        jobPostingId: assignment.job_posting_id,
+      },
+      {
+        onSuccess: () => {
+          toast.success(`Status changed to ${next}`)
+        },
+        onError: (err) => {
+          toast.error(err.message || 'Failed to update status')
+        },
+      },
+    )
+  }
+
+  return (
+    <tr className="hover:bg-zinc-50">
+      <td className="px-4 py-2 text-sm text-zinc-900">
+        <Link
+          href={`/candidates?jd=${assignment.job_posting_id}&view=kanban`}
+          className="text-zinc-900 hover:text-zinc-700 hover:underline"
+        >
+          {assignment.job_title || 'Untitled job'}
+        </Link>
+      </td>
+      <td className="px-4 py-2 text-sm text-zinc-700">
+        {assignment.current_stage_name || '—'}
+      </td>
+      <td className="px-4 py-2 text-sm text-zinc-700">
+        <div className="flex items-center gap-2">
+          <StatusBadge status={assignment.status} />
+          <select
+            aria-label="Change assignment status"
+            value={assignment.status}
+            disabled={updateStatus.isPending}
+            onChange={(e) =>
+              handleStatusChange(e.target.value as AssignmentStatus)
+            }
+            className="h-7 rounded-md border border-zinc-200 bg-white px-1.5 text-xs text-zinc-700 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400"
+          >
+            {STATUS_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </td>
+      <td className="px-4 py-2 text-sm text-zinc-700">
+        {new Date(assignment.assigned_at).toLocaleDateString()}
+      </td>
+    </tr>
   )
 }

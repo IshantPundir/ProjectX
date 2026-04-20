@@ -73,9 +73,12 @@ export function useTransitionCandidate(jobId: string) {
         )
       }
     },
-    onSettled: () => {
+    onSettled: (_data, _err, vars) => {
       void queryClient.invalidateQueries({
         queryKey: ['candidates-kanban', jobId],
+      })
+      void queryClient.invalidateQueries({
+        queryKey: ['candidates', vars.candidateId, 'assignments'],
       })
     },
   })

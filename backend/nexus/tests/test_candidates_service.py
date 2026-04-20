@@ -723,3 +723,112 @@ async def test_redact_pii_allows_reusing_email_after_redaction(db):
         tenant.id,
     )
     assert second.id != first.id
+
+
+@pytest.mark.asyncio
+async def test_list_assignments_returns_all_statuses_newest_first(db):
+    from datetime import UTC, datetime, timedelta
+
+    from app.modules.candidates.service import (
+        create_assignment,
+        list_assignments,
+        update_assignment_status,
+    )
+    from app.modules.candidates.schemas import (
+        AssignmentCreateRequest,
+        AssignmentStatus,
+        AssignmentUpdateRequest,
+    )
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    ctx = _make_ctx(user)
+
+    candidate = Candidate(
+        tenant_id=tenant.id,
+        name="Pat",
+        email="pat@example.com",
+        source="manual",
+        created_by=user.id,
+    )
+    db.add(candidate)
+    await db.flush()
+
+    job_a, _ = await _make_job_with_stages(db, tenant.id, user.id)
+    job_b, _ = await _make_job_with_stages(db, tenant.id, user.id)
+
+    a1 = await create_assignment(
+        db, candidate.id, AssignmentCreateRequest(job_posting_id=job_a.id), ctx,
+    )
+    a2 = await create_assignment(
+        db, candidate.id, AssignmentCreateRequest(job_posting_id=job_b.id), ctx,
+    )
+
+    # Postgres NOW() returns the same value within a single transaction, so
+    # both assignments share an `assigned_at`. Stamp explicit values to pin
+    # the newest-first ordering contract.
+    now = datetime.now(UTC)
+    a1.assigned_at = now - timedelta(seconds=10)
+    a2.assigned_at = now
+    await db.flush()
+
+    # Archive the first one — list should still surface it.
+    await update_assignment_status(
+        db, a1.id, AssignmentUpdateRequest(status=AssignmentStatus.ARCHIVED), ctx,
+    )
+
+    rows = await list_assignments(db, candidate.id)
+    assert len(rows) == 2
+    # Newest first (a2 was assigned last)
+    assert rows[0].id == a2.id
+    assert rows[1].id == a1.id
+    assert rows[0].job_title == job_b.title
+    assert rows[1].status == AssignmentStatus.ARCHIVED
+
+
+@pytest.mark.asyncio
+async def test_list_assignments_empty_for_unassigned_candidate(db):
+    from app.modules.candidates.service import list_assignments
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    candidate = Candidate(
+        tenant_id=tenant.id, name="Lone", email="lone@example.com",
+        source="manual", created_by=user.id,
+    )
+    db.add(candidate)
+    await db.flush()
+
+    rows = await list_assignments(db, candidate.id)
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_list_assignments_populates_job_title_and_stage_name(db):
+    from app.modules.candidates.service import create_assignment, list_assignments
+    from app.modules.candidates.schemas import AssignmentCreateRequest
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    ctx = _make_ctx(user)
+
+    candidate = Candidate(
+        tenant_id=tenant.id, name="X", email="x@example.com",
+        source="manual", created_by=user.id,
+    )
+    db.add(candidate)
+    await db.flush()
+
+    job, stages = await _make_job_with_stages(
+        db, tenant.id, user.id, stage_names=("Screening", "Interview"),
+    )
+    await create_assignment(
+        db, candidate.id,
+        AssignmentCreateRequest(job_posting_id=job.id, target_stage_id=stages[1].id),
+        ctx,
+    )
+
+    rows = await list_assignments(db, candidate.id)
+    assert len(rows) == 1
+    assert rows[0].job_title == job.title
+    assert rows[0].current_stage_name == "Interview"

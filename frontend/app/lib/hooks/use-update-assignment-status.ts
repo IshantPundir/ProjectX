@@ -32,6 +32,9 @@ export function useUpdateAssignmentStatus(candidateId: string) {
       void queryClient.invalidateQueries({
         queryKey: ['candidates', candidateId],
       })
+      void queryClient.invalidateQueries({
+        queryKey: ['candidates', candidateId, 'assignments'],
+      })
       void queryClient.invalidateQueries({ queryKey: ['candidates-list'] })
       if (vars.jobPostingId) {
         void queryClient.invalidateQueries({

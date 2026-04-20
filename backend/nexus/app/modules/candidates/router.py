@@ -95,6 +95,25 @@ async def get_candidate_endpoint(
     return CandidateResponse.model_validate(candidate)
 
 
+@router.get(
+    "/{candidate_id}/assignments",
+    response_model=list[AssignmentResponse],
+)
+async def list_candidate_assignments_endpoint(
+    candidate_id: UUID,
+    db: AsyncSession = Depends(get_tenant_db),
+    user: UserContext = Depends(get_current_user_roles),
+) -> list[AssignmentResponse]:
+    """List every assignment (any status) for a candidate.
+
+    Authz: view access on the candidate. Per-assignment job visibility is
+    implicit — any assignment the caller can see the candidate through is
+    surfaced; the underlying job rows already filtered by RLS at DB level.
+    """
+    await require_candidate_access(db, candidate_id, user, "view")
+    return await service.list_assignments(db, candidate_id)
+
+
 @router.patch("/{candidate_id}", response_model=CandidateResponse)
 async def update_candidate_endpoint(
     candidate_id: UUID,

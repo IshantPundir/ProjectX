@@ -211,6 +211,58 @@ async def list_candidates(
     return CandidateListPage(items=items, total=total, offset=offset, limit=limit)
 
 
+async def list_assignments(
+    db: AsyncSession,
+    candidate_id: UUID,
+) -> list[AssignmentResponse]:
+    """Return every assignment (any status) for a candidate, enriched with
+    job_title and current_stage_name.
+
+    Ordered by assigned_at descending so the most recent assignment is first.
+    Three queries: assignments → job titles in one IN clause → stage names
+    in one IN clause. Callers (router) are responsible for authz.
+    """
+    assignments = list((await db.execute(
+        select(CandidateJobAssignment)
+        .where(CandidateJobAssignment.candidate_id == candidate_id)
+        .order_by(CandidateJobAssignment.assigned_at.desc())
+    )).scalars().all())
+
+    if not assignments:
+        return []
+
+    job_ids = {a.job_posting_id for a in assignments}
+    stage_ids = {a.current_stage_id for a in assignments}
+
+    job_titles: dict[UUID, str] = dict(
+        (await db.execute(
+            select(JobPosting.id, JobPosting.title)
+            .where(JobPosting.id.in_(job_ids))
+        )).all()
+    )
+    stage_names: dict[UUID, str] = dict(
+        (await db.execute(
+            select(JobPipelineStage.id, JobPipelineStage.name)
+            .where(JobPipelineStage.id.in_(stage_ids))
+        )).all()
+    )
+
+    return [
+        AssignmentResponse(
+            id=a.id,
+            candidate_id=a.candidate_id,
+            job_posting_id=a.job_posting_id,
+            job_title=job_titles.get(a.job_posting_id, ""),
+            current_stage_id=a.current_stage_id,
+            current_stage_name=stage_names.get(a.current_stage_id, ""),
+            status=a.status,
+            status_changed_at=a.status_changed_at,
+            assigned_at=a.assigned_at,
+        )
+        for a in assignments
+    ]
+
+
 async def create_assignment(
     db: AsyncSession,
     candidate_id: UUID,

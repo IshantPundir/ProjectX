@@ -159,6 +159,15 @@ export const candidatesApi = {
   get: (token: string, id: string): Promise<CandidateResponse> =>
     apiFetch<CandidateResponse>(`/api/candidates/${id}`, { token }),
 
+  listAssignments: (
+    token: string,
+    candidateId: string,
+  ): Promise<AssignmentResponse[]> =>
+    apiFetch<AssignmentResponse[]>(
+      `/api/candidates/${candidateId}/assignments`,
+      { token },
+    ),
+
   create: (token: string, body: CandidateCreate): Promise<CandidateResponse> =>
     apiFetch<CandidateResponse>('/api/candidates', {
       token,
