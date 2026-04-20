@@ -1,9 +1,10 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 
 import { useCandidateSession } from '@/lib/hooks/use-candidate-session'
 
+import { CameraMicStep } from './CameraMicStep'
 import { ConsentStep } from './ConsentStep'
 import { OtpStep } from './OtpStep'
 
@@ -17,6 +18,7 @@ type WizardStepKey =
 
 export function WizardShell({ token }: { token: string }) {
   const { data, isLoading, error } = useCandidateSession(token)
+  const [camMicPassed, setCamMicPassed] = useState(false)
 
   const currentStep = useMemo<WizardStepKey>(() => {
     if (!data) return 'error'
@@ -67,7 +69,12 @@ export function WizardShell({ token }: { token: string }) {
         <ConsentStep token={token} consentText={data.consent_text} />
       )}
       {currentStep === 'otp' && <OtpStep token={token} />}
-      {currentStep === 'cam-mic' && <CameraMicStepPlaceholder token={token} />}
+      {currentStep === 'cam-mic' && !camMicPassed && (
+        <CameraMicStep onPass={() => setCamMicPassed(true)} />
+      )}
+      {currentStep === 'cam-mic' && camMicPassed && (
+        <StartStepPlaceholder token={token} />
+      )}
       {currentStep === 'start' && <StartStepPlaceholder token={token} />}
       {currentStep === 'already-started' && <AlreadyStartedPanel />}
     </div>
@@ -105,9 +112,6 @@ function StepIndicator({
   )
 }
 
-function CameraMicStepPlaceholder({ token: _t }: { token: string }) {
-  return <p>Camera/mic step (Task 3C.2.6)</p>
-}
 function StartStepPlaceholder({ token: _t }: { token: string }) {
   return <p>Start step (Task 3C.2.7)</p>
 }
