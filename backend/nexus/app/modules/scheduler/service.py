@@ -21,8 +21,10 @@ from app.config import settings
 from app.models import (
     Candidate,
     CandidateJobAssignment,
+    CandidateSessionToken,
     JobPipelineStage,
     JobPosting,
+    Session,
 )
 from app.modules.audit.service import log_event
 from app.modules.auth.context import UserContext
@@ -32,8 +34,11 @@ from app.modules.scheduler.authz import (
     assert_assignment_active,
     assert_stage_is_ai_interview,
 )
+from app.modules.scheduler.errors import SessionAlreadyStartedError
 from app.modules.scheduler.schemas import InviteCreateRequest, InviteResponse
 from app.modules.session import service as session_service
+from app.modules.session.schemas import SessionState
+from app.modules.session.state_machine import transition
 
 
 async def send_invite(
@@ -122,3 +127,154 @@ async def send_invite(
     )
 
     return InviteResponse(session_id=sess.id, token_expires_at=token_row.expires_at)
+
+
+async def resend_invite(
+    db: AsyncSession,
+    *,
+    session_id: UUID,
+    user: UserContext,
+) -> InviteResponse:
+    """Supersede live token + reset OTP state + dispatch a new email.
+
+    Rejected when session.state ∈ {active, completed, cancelled, error}.
+    Preserves consent_recorded_at (AIVIA record stays with the session,
+    not the token). Leaves session.state unchanged.
+    """
+    sess = (await db.execute(
+        select(Session).where(Session.id == session_id)
+    )).scalar_one_or_none()
+    if sess is None:
+        from app.modules.session.errors import SessionNotFoundError
+        raise SessionNotFoundError()
+    if sess.state in {"active", "completed", "cancelled", "error"}:
+        raise SessionAlreadyStartedError()
+
+    # Find live token (unused + not superseded)
+    prior = (await db.execute(
+        select(CandidateSessionToken)
+        .where(
+            CandidateSessionToken.session_id == session_id,
+            CandidateSessionToken.used_at.is_(None),
+            CandidateSessionToken.superseded_at.is_(None),
+        )
+        .order_by(CandidateSessionToken.issued_at.desc())
+        .limit(1)
+    )).scalar_one_or_none()
+
+    # Mint new token
+    assignment = (await db.execute(
+        select(CandidateJobAssignment)
+        .where(CandidateJobAssignment.id == sess.assignment_id)
+    )).scalar_one()
+    token_str, new_token = await session_service.mint_token(
+        db, session=sess, candidate_id=assignment.candidate_id,
+    )
+
+    # Supersede prior
+    if prior is not None:
+        await session_service.supersede_token(db, prior=prior, successor=new_token)
+
+    # Reset OTP state; preserve consent_recorded_at
+    sess.otp_hash = None
+    sess.otp_issued_at = None
+    sess.otp_attempts = 0
+    sess.otp_verified_at = None
+    await db.flush()
+
+    # Resend email
+    candidate = (await db.execute(
+        select(Candidate).where(Candidate.id == assignment.candidate_id)
+    )).scalar_one()
+    stage = (await db.execute(
+        select(JobPipelineStage).where(JobPipelineStage.id == sess.stage_id)
+    )).scalar_one()
+    job = (await db.execute(
+        select(JobPosting).where(JobPosting.id == assignment.job_posting_id)
+    )).scalar_one()
+    company_profile = await find_company_profile_in_ancestry(db, job.org_unit_id)
+    company_name = (company_profile or {}).get("name") or "the hiring team"
+
+    html = render_template(
+        "interview_invite.html",
+        candidate_name=candidate.name or "there",
+        company_name=company_name,
+        job_title=job.title,
+        stage_name=stage.name,
+        duration_minutes=stage.duration_minutes,
+        invite_url=f"{settings.frontend_base_url}/interview/{token_str}",
+        expires_at_pretty=f"in {settings.candidate_jwt_ttl_hours} hours",
+    )
+    await send_email(
+        to=candidate.email or "",
+        subject=f"Interview invitation (resent) — {job.title}",
+        html=html,
+    )
+
+    await log_event(
+        db,
+        tenant_id=sess.tenant_id,
+        actor_id=user.user.id,
+        actor_email=user.user.email,
+        action="session.invite_resent",
+        resource="session",
+        resource_id=sess.id,
+        payload={
+            "prior_token_jti": str(prior.jti) if prior else None,
+            "new_token_jti": str(new_token.jti),
+        },
+    )
+    return InviteResponse(session_id=sess.id, token_expires_at=new_token.expires_at)
+
+
+async def revoke_invite(
+    db: AsyncSession,
+    *,
+    session_id: UUID,
+    user: UserContext,
+) -> None:
+    """Mark session state → cancelled + supersede live token.
+
+    Idempotent from already-terminal states (completed/cancelled/error): no-op.
+    """
+    sess = (await db.execute(
+        select(Session).where(Session.id == session_id)
+    )).scalar_one_or_none()
+    if sess is None:
+        from app.modules.session.errors import SessionNotFoundError
+        raise SessionNotFoundError()
+
+    # Find + supersede live token (no successor — this is a revoke, not a replacement)
+    prior = (await db.execute(
+        select(CandidateSessionToken)
+        .where(
+            CandidateSessionToken.session_id == session_id,
+            CandidateSessionToken.used_at.is_(None),
+            CandidateSessionToken.superseded_at.is_(None),
+        )
+    )).scalar_one_or_none()
+    if prior is not None:
+        prior.superseded_at = datetime.now(UTC)
+        await db.flush()
+
+    # Transition to cancelled (allowed from created/pre_check/consented)
+    current_state = SessionState(sess.state)
+    try:
+        new_state = transition(current_state, SessionState.CANCELLED).value
+    except Exception:
+        # Already terminal (completed/cancelled/error) — idempotent no-op.
+        return
+    sess.state = new_state
+    sess.state_changed_at = datetime.now(UTC)
+    await db.flush()
+
+    await log_event(
+        db,
+        tenant_id=sess.tenant_id,
+        actor_id=user.user.id,
+        actor_email=user.user.email,
+        action="session.invite_revoked",
+        resource="session",
+        resource_id=sess.id,
+        payload={"revoked_token_jti": str(prior.jti) if prior else None},
+    )

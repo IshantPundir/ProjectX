@@ -105,10 +105,15 @@ async def mint_token(
         session_id=session.id,
         tenant_id=session.tenant_id,
     )
+    # Use Python-side wall-clock timestamp so consecutive mints within the
+    # same transaction get strictly increasing `issued_at` values. PG's
+    # `NOW()` (server_default) returns transaction start time and would tie
+    # a resend's new token with the prior — breaking ordered-history reads.
     row = CandidateSessionToken(
         jti=jti,
         tenant_id=session.tenant_id,
         session_id=session.id,
+        issued_at=datetime.now(UTC),
         expires_at=expires_at,
     )
     db.add(row)

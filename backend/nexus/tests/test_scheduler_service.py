@@ -122,3 +122,82 @@ async def test_send_invite_rejects_non_active_assignment(db):
             await service.send_invite(
                 db, InviteCreateRequest(assignment_id=assignment.id), ctx,
             )
+
+
+@pytest.mark.asyncio
+async def test_resend_invite_supersedes_prior_and_resets_otp(db):
+    from datetime import timedelta
+    tenant, user, _stage, _cand, assignment = await _seed(db, otp_default=True)
+    ctx = _make_ctx(user)
+    with patch("app.modules.scheduler.service.send_email", new=AsyncMock()):
+        first = await service.send_invite(
+            db, InviteCreateRequest(assignment_id=assignment.id), ctx,
+        )
+        # Simulate candidate partial-progress: verify OTP
+        sess = (await db.execute(
+            select(Session).where(Session.id == first.session_id)
+        )).scalar_one()
+        sess.otp_verified_at = datetime.now(UTC)
+        sess.otp_hash = "leftover-hash"
+        sess.otp_issued_at = datetime.now(UTC)
+        await db.flush()
+
+        resp = await service.resend_invite(db, session_id=first.session_id, user=ctx)
+
+    assert resp.session_id == first.session_id  # same session
+    # Prior token marked superseded
+    tokens = (await db.execute(
+        select(CandidateSessionToken)
+        .where(CandidateSessionToken.session_id == first.session_id)
+        .order_by(CandidateSessionToken.issued_at)
+    )).scalars().all()
+    assert len(tokens) == 2
+    assert tokens[0].superseded_at is not None
+    assert tokens[1].superseded_at is None
+    # OTP state reset
+    await db.refresh(sess)
+    assert sess.otp_hash is None
+    assert sess.otp_issued_at is None
+    assert sess.otp_attempts == 0
+    assert sess.otp_verified_at is None
+
+
+@pytest.mark.asyncio
+async def test_resend_rejects_when_session_already_started(db):
+    from app.modules.scheduler.errors import SessionAlreadyStartedError
+    tenant, user, _stage, _cand, assignment = await _seed(db)
+    ctx = _make_ctx(user)
+    with patch("app.modules.scheduler.service.send_email", new=AsyncMock()):
+        resp = await service.send_invite(
+            db, InviteCreateRequest(assignment_id=assignment.id), ctx,
+        )
+    sess = (await db.execute(
+        select(Session).where(Session.id == resp.session_id)
+    )).scalar_one()
+    sess.state = "active"
+    await db.flush()
+
+    with patch("app.modules.scheduler.service.send_email", new=AsyncMock()):
+        with pytest.raises(SessionAlreadyStartedError):
+            await service.resend_invite(db, session_id=resp.session_id, user=ctx)
+
+
+@pytest.mark.asyncio
+async def test_revoke_invite_cancels_session_and_supersedes_token(db):
+    tenant, user, _stage, _cand, assignment = await _seed(db)
+    ctx = _make_ctx(user)
+    with patch("app.modules.scheduler.service.send_email", new=AsyncMock()):
+        resp = await service.send_invite(
+            db, InviteCreateRequest(assignment_id=assignment.id), ctx,
+        )
+
+    await service.revoke_invite(db, session_id=resp.session_id, user=ctx)
+
+    sess = (await db.execute(
+        select(Session).where(Session.id == resp.session_id)
+    )).scalar_one()
+    assert sess.state == "cancelled"
+    token = (await db.execute(
+        select(CandidateSessionToken).where(CandidateSessionToken.session_id == resp.session_id)
+    )).scalar_one()
+    assert token.superseded_at is not None
