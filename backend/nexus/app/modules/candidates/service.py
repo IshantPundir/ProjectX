@@ -13,13 +13,14 @@ Service functions flush; the surrounding session factory commits.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Candidate
+from app.models import Candidate, CandidateJobAssignment
 from app.modules.audit.service import log_event
 from app.modules.auth.context import UserContext
 from app.modules.candidates.errors import (
@@ -119,3 +120,75 @@ async def update_candidate(
         payload={"fields": list(changes.keys())},
     )
     return candidate
+
+
+@dataclass
+class CandidateListPage:
+    items: list[Candidate]
+    total: int
+    offset: int
+    limit: int
+
+
+async def list_candidates(
+    db: AsyncSession,
+    user: UserContext,
+    tenant_id: UUID,
+    filters: dict,
+    offset: int = 0,
+    limit: int = 50,
+) -> CandidateListPage:
+    """List candidates with ancestry-filtered visibility.
+
+    filters:
+      q          — substring match on name/email (ILIKE)
+      job_id     — restrict to candidates assigned to this JD
+      stage_id   — restrict to candidates currently in this stage
+      status     — restrict to this assignment status
+
+    MVP simplification: if the user has `candidates.view` anywhere in their
+    role assignments, they see all tenant candidates. A tighter ancestry-filtered
+    SQL form is a known future refinement target once real Fortune-500 tenant
+    ancestries surface perf issues — tracked in the plan's `Known gaps`.
+    """
+    q = filters.get("q")
+    job_id = filters.get("job_id")
+    stage_id = filters.get("stage_id")
+    status = filters.get("status")
+
+    base = select(Candidate).where(
+        Candidate.tenant_id == tenant_id,
+        Candidate.pii_redacted_at.is_(None),
+    )
+
+    if q:
+        like = f"%{q}%"
+        base = base.where(
+            or_(Candidate.name.ilike(like), Candidate.email.ilike(like))
+        )
+
+    if job_id or stage_id or status:
+        base = base.join(
+            CandidateJobAssignment,
+            CandidateJobAssignment.candidate_id == Candidate.id,
+        )
+        if job_id:
+            base = base.where(CandidateJobAssignment.job_posting_id == job_id)
+        if stage_id:
+            base = base.where(CandidateJobAssignment.current_stage_id == stage_id)
+        if status:
+            base = base.where(CandidateJobAssignment.status == status)
+
+    if not user.is_super_admin and "candidates.view" not in user.all_permissions():
+        base = base.where(False)
+
+    total_result = await db.execute(
+        select(func.count()).select_from(base.subquery())
+    )
+    total = total_result.scalar_one()
+
+    page_result = await db.execute(
+        base.order_by(Candidate.created_at.desc()).offset(offset).limit(limit)
+    )
+    items = list(page_result.scalars().unique().all())
+    return CandidateListPage(items=items, total=total, offset=offset, limit=limit)
