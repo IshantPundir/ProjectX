@@ -155,7 +155,9 @@ export default function CandidateDetailPage() {
         {activeTab === 'assignments' && (
           <CandidateAssignmentsTab candidateId={candidateId} />
         )}
-        {activeTab === 'sessions' && <CandidateSessionsTab />}
+        {activeTab === 'sessions' && (
+          <CandidateSessionsTab candidateId={candidateId} />
+        )}
       </div>
     </div>
   )
