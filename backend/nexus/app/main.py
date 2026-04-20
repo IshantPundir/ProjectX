@@ -43,6 +43,10 @@ _TENANT_SCOPED_TABLES: tuple[str, ...] = (
     "job_pipeline_stages",
     "stage_question_banks",
     "stage_questions",
+    # Phase 3B — candidates module
+    "candidates",
+    "candidate_job_assignments",
+    "candidate_stage_progress",
 )
 
 
@@ -224,6 +228,10 @@ def create_app() -> FastAPI:
     from app.modules.org_units.router import router as org_units_router
     from app.modules.roles.router import router as roles_router
     from app.modules.pipelines.router import router as pipelines_router
+    from app.modules.candidates.router import (
+        kanban_router as candidates_kanban_router,
+        router as candidates_router,
+    )
 
     application.include_router(auth_router)
     application.include_router(ats_router)
@@ -241,6 +249,8 @@ def create_app() -> FastAPI:
     application.include_router(org_units_router)
     application.include_router(roles_router)
     application.include_router(pipelines_router)
+    application.include_router(candidates_router)
+    application.include_router(candidates_kanban_router)
 
     # --- Exception handlers (Phase 2A — JD module) ---
     from fastapi import Request
@@ -353,6 +363,102 @@ def create_app() -> FastAPI:
         request: Request, exc: QB_ReorderDuplicateError
     ) -> JSONResponse:
         return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+    # --- Exception handlers (Phase 3B — candidates module) ---
+    from app.modules.candidates.errors import (
+        AssignmentAlreadyExistsError,
+        CandidateHasActiveSessionError,
+        CandidateNotFoundError,
+        DuplicateEmailError,
+        InvalidResumeContentTypeError,
+        InvalidStageTransitionError,
+        ResumeNotFoundInS3Error,
+        StageNotInPipelineError,
+    )
+
+    @application.exception_handler(CandidateNotFoundError)
+    async def _candidate_not_found(
+        request: Request, exc: CandidateNotFoundError
+    ) -> JSONResponse:
+        return JSONResponse(status_code=404, content={"detail": "Candidate not found"})
+
+    @application.exception_handler(DuplicateEmailError)
+    async def _duplicate_email(
+        request: Request, exc: DuplicateEmailError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={"detail": str(exc), "code": "DUPLICATE_EMAIL"},
+        )
+
+    @application.exception_handler(AssignmentAlreadyExistsError)
+    async def _assignment_exists(
+        request: Request, exc: AssignmentAlreadyExistsError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": "Candidate already assigned to this job",
+                "code": "ASSIGNMENT_ALREADY_EXISTS",
+            },
+        )
+
+    @application.exception_handler(StageNotInPipelineError)
+    async def _stage_not_in_pipeline(
+        request: Request, exc: StageNotInPipelineError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content={"detail": str(exc), "code": "STAGE_NOT_IN_PIPELINE"},
+        )
+
+    @application.exception_handler(InvalidStageTransitionError)
+    async def _invalid_stage_transition(
+        request: Request, exc: InvalidStageTransitionError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": str(exc) or "Invalid stage transition",
+                "code": "INVALID_STAGE_TRANSITION",
+            },
+        )
+
+    @application.exception_handler(CandidateHasActiveSessionError)
+    async def _active_session(
+        request: Request, exc: CandidateHasActiveSessionError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": "Candidate has an active session — cannot redact PII",
+                "code": "CANDIDATE_HAS_ACTIVE_SESSION",
+            },
+        )
+
+    @application.exception_handler(ResumeNotFoundInS3Error)
+    async def _resume_not_found(
+        request: Request, exc: ResumeNotFoundInS3Error
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": "Resume upload not found in S3",
+                "code": "RESUME_NOT_FOUND",
+            },
+        )
+
+    @application.exception_handler(InvalidResumeContentTypeError)
+    async def _invalid_resume_type(
+        request: Request, exc: InvalidResumeContentTypeError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": "Resume must be a PDF (content-type application/pdf)",
+                "code": "INVALID_RESUME_CONTENT_TYPE",
+            },
+        )
 
     # --- Health check ---
     @application.get("/health", tags=["infra"])

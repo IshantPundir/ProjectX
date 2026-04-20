@@ -16,3 +16,23 @@ async def test_factory_helpers_create_rows(db):
     assert unit.client_id == client.id
     assert user.email == "alice@acme.com"
     assert unit.name == "Engineering"
+
+
+def test_tenant_scoped_tables_includes_candidate_tables():
+    from app.main import _TENANT_SCOPED_TABLES
+    assert "candidates" in _TENANT_SCOPED_TABLES
+    assert "candidate_job_assignments" in _TENANT_SCOPED_TABLES
+    assert "candidate_stage_progress" in _TENANT_SCOPED_TABLES
+
+
+def test_candidates_router_registered_under_candidates_prefix():
+    """Sanity: /api/candidates is reachable as a route prefix in the app."""
+    from app.main import app
+    paths = {getattr(r, "path", "") for r in app.routes}
+    assert any(p.startswith("/api/candidates") for p in paths)
+
+
+def test_kanban_router_registered_under_jobs_prefix():
+    from app.main import app
+    paths = {getattr(r, "path", "") for r in app.routes}
+    assert any("/candidates/kanban" in p for p in paths)
