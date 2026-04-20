@@ -66,6 +66,7 @@ def upgrade() -> None:
           ADD COLUMN stage_id          UUID,
           ADD COLUMN state             TEXT NOT NULL DEFAULT 'created',
           ADD COLUMN state_changed_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+          ADD COLUMN updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
           ADD COLUMN consent_recorded_at TIMESTAMPTZ,
           ADD COLUMN otp_required      BOOLEAN NOT NULL DEFAULT FALSE,
           ADD COLUMN otp_hash          TEXT,
@@ -167,6 +168,7 @@ def downgrade() -> None:
           DROP COLUMN IF EXISTS otp_required,
           DROP COLUMN IF EXISTS consent_recorded_at,
           DROP COLUMN IF EXISTS state_changed_at,
+          DROP COLUMN IF EXISTS updated_at,
           DROP COLUMN IF EXISTS state,
           DROP COLUMN IF EXISTS stage_id,
           DROP COLUMN IF EXISTS assignment_id
