@@ -35,7 +35,7 @@ LiveKit wiring is explicitly deferred to Phase 3D.
 2. The candidate receives a single email containing a link (`/interview/<token>`) + company / role / duration context.
 3. Clicking the link loads the pre-check page idempotently as many times as needed; the backend state and the wizard step resume correctly across reloads.
 4. The wizard presents four sequential steps — Consent, OTP (if required), Camera + microphone, Start — with server-verified state gating each transition.
-5. A candidate can request a fresh OTP via a `[Send code]` button (rate-limited 1 req / 60 s, 5 req / hour). The code is a 6-digit numeric, valid for 10 minutes, with a 3-attempt cap before requiring re-issue.
+5. A candidate can request a fresh OTP via a `[Send code]` button (rate-limited 1 req / 60 s). The code is a 6-digit numeric, valid for 10 minutes, with a 3-attempt cap before requiring re-issue.
 6. Clicking "Start Interview" fires the atomic single-use token check. First success returns `501 LIVEKIT_INTEGRATION_PENDING`; replay returns `409 TOKEN_ALREADY_USED` and writes an audit event.
 7. Revoke invalidates the outstanding token and moves the session to `cancelled`. Resend supersedes the prior token (mints a fresh JWT + new `candidate_session_tokens` row, resets OTP state, invalidates the prior token atomically).
 8. Every state transition, consent event, OTP issuance, and OTP verification writes to `audit_log`. GDPR-compliant audit trail preserved through PII redaction of the linked candidate.
@@ -73,7 +73,7 @@ Both sub-phases merge back-to-back; there is no intermediate "released at 3C.1 o
 ### Selected approach: OTP as session-level flag + dedicated request/verify endpoints
 
 - `sessions.otp_required` is copied from `job_pipeline_stages.otp_required_default` at invite dispatch; recruiters may override per invite.
-- `POST /api/candidate-session/{token}/request-otp` mints a fresh 6-digit code, bcrypt-hashes it, writes `otp_hash` + `otp_issued_at` + resets `otp_attempts = 0`, and dispatches an email through the existing notifications module. Rate-limited.
+- `POST /api/candidate-session/{token}/request-otp` mints a fresh 6-digit code, hashes it with a cryptographic function appropriate for short codes (SHA-256 HMAC with a server-side secret is sufficient; bcrypt is acceptable but overkill given a 10⁶ search space and hash-wipe-on-verify), writes `otp_hash` + `otp_issued_at` + resets `otp_attempts = 0`, and dispatches an email through the existing notifications module. Rate-limited.
 - `POST /api/candidate-session/{token}/verify-otp` validates the code against the hash, increments `otp_attempts` on miss, caps at 3 attempts before forcing re-issue, wipes the hash on success and stamps `otp_verified_at`.
 - `/start` requires `state == consented` AND (if `otp_required`) `otp_verified_at IS NOT NULL` before the atomic single-use UPDATE.
 
@@ -86,7 +86,7 @@ OTP verification is a *flag* on the session row, not a new state in the state ma
 | OTP posted inline with `/start` body | No "code verified ✓" feedback before the candidate commits — failed OTP during the critical single-use call is hostile UX. |
 | OTP emailed alongside the invite link in the same message | Candidate would have the code upfront but the code's expiry window is fuzzy (tied to token TTL, ~72h) — weaker attack story and no way to re-issue. User confirmed "Send code" button model. |
 | JD-level `otp_required_default` | Less granular than stage-level. Some pipelines mix casual phone screens with formal panels; stage-level gives the right control knob. |
-| Per-candidate OTP column (instead of hashing + wiping) | Storing plaintext codes expands blast radius on DB compromise. Bcrypt + wipe-on-verify gives us audit presence without replay surface. |
+| Per-candidate OTP column (instead of hashing + wiping) | Storing plaintext codes expands blast radius on DB compromise. Hashing + wipe-on-verify gives us audit presence without replay surface. |
 
 ---
 
@@ -152,8 +152,9 @@ Two sub-phases with a strict one-way code dependency: 3C.2 imports from 3C.1 onl
 └──────────────────┘
 ```
 
-- `session` never imports `scheduler`. `scheduler` calls into `session.create_session(...)` and `session.supersede_token(...)`.
-- The middleware single-use UPDATE lives in `session/service.py`, invoked from `middleware/auth.py` for candidate-session token paths only.
+- `session` never imports `scheduler`. `scheduler` calls into `session.create_session(...)`, `session.mint_token(...)`, and `session.supersede_token(...)`.
+- `middleware/auth.py` performs JWT *verification* only: signature, expiry, JTI exists in `candidate_session_tokens`, and `superseded_at IS NULL`. It never touches `used_at`.
+- The atomic single-use UPDATE (`used_at = now() WHERE used_at IS NULL`) lives in `session/service.py` and is invoked exclusively from the `/start` endpoint service path. Other candidate-session endpoints (pre-check, consent, request-otp, verify-otp) pass JWT verification without consuming the token.
 
 ### State machines
 
@@ -265,7 +266,7 @@ Post-migration shape:
 | `state_changed_at` | TIMESTAMPTZ NOT NULL DEFAULT now() | |
 | `consent_recorded_at` | TIMESTAMPTZ NULL | AIVIA compliance marker |
 | `otp_required` | BOOLEAN NOT NULL DEFAULT FALSE | Copied from stage default at invite; recruiter can override |
-| `otp_hash` | TEXT NULL | bcrypt-hashed current OTP; NULL when none issued or already verified |
+| `otp_hash` | TEXT NULL | Cryptographic hash of current OTP (SHA-256 HMAC recommended); NULL when none issued or already verified |
 | `otp_issued_at` | TIMESTAMPTZ NULL | For 10-minute lifetime check |
 | `otp_attempts` | INTEGER NOT NULL DEFAULT 0 | 3 max before re-issue required |
 | `otp_verified_at` | TIMESTAMPTZ NULL | Set on verify success; wipes `otp_hash` |
@@ -316,8 +317,8 @@ Prefix: `/api/scheduler` for invite lifecycle; `/api/sessions` for read-side lis
 
 | Method | Path | Perm | Purpose |
 |---|---|---|---|
-| `POST` | `/api/scheduler/invites` | `candidates.manage` + `jobs.manage` | Body `{assignment_id, stage_id, otp_required?}`. Creates session row + token row, validates `stage.stage_type == 'ai_interview'` (422 `INVALID_STAGE_TYPE_FOR_INVITE`), dispatches email. Returns `{session_id, token_expires_at}`. |
-| `POST` | `/api/scheduler/invites/{session_id}/resend` | `candidates.manage` + `jobs.manage` | Supersedes live token for the session (atomic UPDATE on prior row setting `superseded_at = now()`), mints fresh token, resets OTP state (`otp_hash = NULL, otp_issued_at = NULL, otp_attempts = 0, otp_verified_at = NULL`), resends email. |
+| `POST` | `/api/scheduler/invites` | `candidates.manage` + `jobs.manage` | Body `{assignment_id, otp_required?}`. Server derives `stage_id` from `assignment.current_stage_id` — the invite always targets the candidate's current kanban position. Validates `stage.stage_type == 'ai_interview'` (422 `INVALID_STAGE_TYPE_FOR_INVITE`), creates session row + token row, dispatches email. Returns `{session_id, token_expires_at}`. |
+| `POST` | `/api/scheduler/invites/{session_id}/resend` | `candidates.manage` + `jobs.manage` | Rejected with 409 `SESSION_ALREADY_STARTED` if state ∈ {`active`, `completed`, `cancelled`, `error`}. Otherwise: supersedes live token (atomic UPDATE on prior row setting `superseded_at = now(), superseded_by = <new jti>`), mints fresh token, resets OTP state (`otp_hash = NULL, otp_issued_at = NULL, otp_attempts = 0, otp_verified_at = NULL`), resends email. **Preserves** `consent_recorded_at` (AIVIA record is session-lifetime, not token-lifetime) and leaves `state` unchanged — a candidate who already consented does not re-consent after resend. |
 | `POST` | `/api/scheduler/invites/{session_id}/revoke` | `candidates.manage` + `jobs.manage` | Marks session state → `cancelled`, supersedes token. |
 | `GET` | `/api/sessions/{id}` | `jobs.view` on ancestry | Session detail. |
 | `GET` | `/api/sessions` | `jobs.view` | Filters: `assignment_id`, `state`, date range. Pagination. |
@@ -328,9 +329,9 @@ Prefix: `/api/candidate-session/{token}`.
 
 | Method | Path | Pre-conditions | Behavior |
 |---|---|---|---|
-| `GET` | `/pre-check` | Token valid (sig + exp + not superseded) | Returns session context + `otp_required` + current `state` + `otp_verified_at`. Idempotent. Sets state → `pre_check` on first call. Token NOT marked used. |
+| `GET` | `/pre-check` | Token valid (sig + exp + not superseded) | Returns session context + `otp_required` + current `state` + `otp_verified_at`. Idempotent. Advances state `created → pre_check` on first call **only**; at any later state (`consented`, `active`, etc.) the state is not mutated — the call is a pure read. Token never marked used. |
 | `POST` | `/consent` | state ∈ `{pre_check, consented}` | Body `{consented: true, user_agent}`. Stamps `consent_recorded_at`, sets state → `consented`. Idempotent — re-posting refreshes `user_agent` but not the timestamp. |
-| `POST` | `/request-otp` | state ≥ `consented` AND `otp_required` AND rate-limit allows | Generates new 6-digit code, bcrypt-hashes, stores. Email via notifications module. Rate limit: 1 request per 60 seconds per session (check `now() - otp_issued_at < 60s` on the session row itself — no separate store). Returns 204. |
+| `POST` | `/request-otp` | state ≥ `consented` AND `otp_required` AND rate-limit allows | Generates new 6-digit code, hashes it (see OTP section), stores. Email via notifications module. Rate limit: 1 request per 60 seconds per session (check `now() - otp_issued_at < 60s` on the session row itself — no separate store). Returns 204. |
 | `POST` | `/verify-otp` | state ≥ `consented` AND `otp_required` AND `otp_hash IS NOT NULL` | Body `{code}`. On match: wipes `otp_hash`, stamps `otp_verified_at`, returns 204. On mismatch: increments `otp_attempts`, returns 422 `INVALID_OTP` with `{attempts_remaining}`. At 3 attempts wipes hash (forces re-issue) and returns 422 `OTP_MAX_ATTEMPTS_REACHED`. On expired (>10 min since `otp_issued_at`): wipes hash, returns 422 `OTP_EXPIRED`. |
 | `POST` | `/start` | state == `consented` AND (if `otp_required`) `otp_verified_at IS NOT NULL` | Atomic single-use UPDATE (see JWT section). On first success: state → `active`, `started_at = now()`, returns **501** with `{code: "LIVEKIT_INTEGRATION_PENDING", detail: "..."}`. On replay: 409 `TOKEN_ALREADY_USED` + audit event. |
 
@@ -339,9 +340,11 @@ Prefix: `/api/candidate-session/{token}`.
 | Code | HTTP | Endpoint |
 |---|---|---|
 | `INVALID_STAGE_TYPE_FOR_INVITE` | 422 | `POST /api/scheduler/invites` (stage isn't `ai_interview`) |
+| `ASSIGNMENT_NOT_ACTIVE` | 422 | `POST /api/scheduler/invites` (assignment in archived/rejected/hired/withdrawn) |
+| `SESSION_ALREADY_STARTED` | 409 | `POST /api/scheduler/invites/{id}/resend` after the candidate has hit `/start` |
 | `INVALID_SESSION_STATE` | 409 | Any candidate-side endpoint called out of order |
 | `OTP_REQUIRED` | 422 | `POST /start` when `otp_required=true` but not verified |
-| `OTP_RATE_LIMITED` | 429 | `POST /request-otp` exceeded 1/60s or 5/hour |
+| `OTP_RATE_LIMITED` | 429 | `POST /request-otp` within 60 s of last issuance |
 | `OTP_EXPIRED` | 422 | `POST /verify-otp` when `>10min` since `otp_issued_at` |
 | `OTP_MAX_ATTEMPTS_REACHED` | 422 | `POST /verify-otp` on the 3rd miss |
 | `INVALID_OTP` | 422 | `POST /verify-otp` on miss (attempts remaining > 0) |
@@ -366,6 +369,10 @@ Prefix: `/api/candidate-session/{token}`.
 ### Assignment status guard
 
 Dispatch rejects if `assignment.status != 'active'` with 422 `ASSIGNMENT_NOT_ACTIVE`. Archived/rejected candidates shouldn't receive invites.
+
+### Stage snapshot at dispatch time
+
+The session's `stage_id` is a *snapshot* of `assignment.current_stage_id` at dispatch time. If the recruiter later drags the candidate to a different stage on the kanban, the already-dispatched invite still targets the original stage — this is intentional. The candidate interviews for the stage they were invited to. If the recruiter wants the invite to reflect the new stage, they revoke and re-dispatch.
 
 ### Rate-limiting scope
 
@@ -539,12 +546,27 @@ Mirror the Phase 3B structure. New files:
 |---|---|
 | OTP email deliverability — candidate stuck waiting for the code | 10-min expiry + easy re-request + dry-run provider for local dev. Resend retries handled by Resend itself. |
 | Concurrent `/start` on the same token (browser double-click, eager reload) | Atomic single-use UPDATE with `WHERE used_at IS NULL` — exactly one succeeds at the DB level. |
-| Bcrypt cost blocking the event loop during OTP verify | Verify is sync-bound; wrap in `asyncio.to_thread`. Cost factor tuned to 10-12 (sub-100ms per check). |
+| Hash cost blocking the event loop during OTP verify | SHA-256 HMAC is microseconds — no wrapping needed. If bcrypt is chosen instead, wrap in `asyncio.to_thread` and tune cost factor to 10-12 (sub-100 ms per check). |
 | Candidate abandons mid-wizard, token expires, resend path mints a new token — old token kept usable? | Resend sets `superseded_at = now()` on the prior token atomically. Prior token fails the `superseded_at IS NULL` guard in the single-use UPDATE. |
 | `sessions` stub data loss during migration 0014 | Migration explicitly truncates stub rows; stub is confirmed empty in non-local envs. Local-dev truncation is acceptable and documented. |
 | Rate-limit bypass via new session creation | `request-otp` rate-limit is per-session, not per-tenant. A recruiter would need to dispatch multiple invites to "reset" OTP attempts — audit trail makes this visible. Acceptable for 3C. |
 | Clock skew between app and DB affecting OTP expiry check | Expiry checked in SQL (`now() - otp_issued_at`), not in Python. Both compared against the DB clock. |
 | GDPR redaction while invite is live | Redact endpoint already checks for active sessions (3B's `CandidateHasActiveSessionError`). Extends naturally to 3C sessions in `active` state. |
+
+---
+
+## Edge cases
+
+| Scenario | Behavior |
+|---|---|
+| Candidate clicks an already-revoked link | Middleware rejects with 401 `TOKEN_SUPERSEDED`. Error page renders a "this invite has been cancelled" panel with support-contact copy. |
+| Candidate clicks a replaced link (recruiter resent) | Same 401 `TOKEN_SUPERSEDED` — the prior token's `superseded_at` is set. Candidate is told to use the latest email. |
+| Candidate's browser lacks camera/mic (mobile browser, permission denied, headless) | `CameraMicStep` detects the `getUserMedia` rejection and renders a blocking error with retry. Start button stays disabled. No server state change — the test is purely client-side. |
+| Candidate hits `/start` successfully, then reloads the invite link | `/pre-check` returns `state = active`. Wizard renders a "session already started" panel with guidance for Phase 3D rejoin (not a redirect yet). |
+| Email client strips or re-wraps the invite URL | Token lives in the URL path, not the query string, so standard email URL rewriters (Outlook SafeLinks, Gmail AMP) wrap the whole link rather than corrupting it. Tested path only — no server-side mitigation needed. |
+| Recruiter tries to resend a session in `active`/`completed`/`cancelled`/`error` | 409 `SESSION_ALREADY_STARTED`. Recruiter's only path is a fresh invite off a new assignment (or after the candidate is moved back to the stage — 3B drag-drop path). |
+| Candidate refreshes during the 10-minute OTP window after exhausting attempts | `otp_hash` is NULL (wiped at attempt 3). Wizard shows "Request a new code" with `[Send code]` primary CTA. |
+| Two candidates received the same invite (forwarded email) | Single-use on `/start` guarantees only the first click succeeds. The second gets 409 `TOKEN_ALREADY_USED`. OTP adds further friction: a forwarded email contains the link but not the on-demand OTP (delivered to the original inbox only). |
 
 ---
 
