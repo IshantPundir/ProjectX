@@ -1,17 +1,20 @@
 'use client'
 
-// Phase 3C will populate real session states
-// (created/pre_check/consented/active/completed/cancelled/error). In Phase 3B
-// `state` is always `null` on the kanban/list payloads, so we render a neutral
-// "Not invited" pill to signal the absence of a session.
+// Renders a session-state pill for candidate cards and tables.
+// The set of states mirrors the backend session state machine
+// (created / pre_check / consented / active / completed / cancelled / error).
+// `null` means no session has been created yet for the assignment — we render
+// a neutral "Not invited" pill to signal the absence of a session.
+
+import type { SessionState } from '@/lib/api/scheduler'
 
 interface Props {
-  state: string | null
+  state: SessionState | string | null
 }
 
-const STATE_STYLES: Record<string, { label: string; className: string }> = {
+const STATE_STYLES: Record<SessionState, { label: string; className: string }> = {
   created: {
-    label: 'Created',
+    label: 'Invited',
     className: 'bg-zinc-100 text-zinc-700 ring-1 ring-inset ring-zinc-500/20',
   },
   pre_check: {
@@ -49,7 +52,9 @@ const NOT_INVITED_STYLE = {
 }
 
 export function SessionStatusBadge({ state }: Props) {
-  const entry = state ? STATE_STYLES[state] ?? NOT_INVITED_STYLE : NOT_INVITED_STYLE
+  const entry = state
+    ? STATE_STYLES[state as SessionState] ?? NOT_INVITED_STYLE
+    : NOT_INVITED_STYLE
   return (
     <span
       className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${entry.className}`}
