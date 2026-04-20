@@ -1,10 +1,11 @@
 'use client'
 
 import { useRouter, useSearchParams } from 'next/navigation'
-import { useCallback, useMemo } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 
+import AddCandidateDialog from './AddCandidateDialog'
 import CandidateListView from './CandidateListView'
 
 type CandidatesView = 'list' | 'kanban'
@@ -54,17 +55,29 @@ export default function ClientCandidatesPage() {
 
   const kanbanDisabled = !jd
 
+  const [showAddDialog, setShowAddDialog] = useState(false)
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-semibold text-zinc-900">Candidates</h1>
         <div className="flex items-center gap-3">
-          {/* Placeholder — real dialog lands in Task 20. */}
-          <Button disabled title="Coming in Task 20">
+          <Button onClick={() => setShowAddDialog(true)}>
             + Add Candidate
           </Button>
         </div>
       </div>
+
+      {/*
+        The detail page lands in Task 24. Until then we intentionally don't
+        navigate on create — the list view refetches via TanStack Query
+        invalidation and the new candidate appears inline. Once Task 24 ships,
+        wire `onCreated={(created) => router.push(`/candidates/${created.id}`)}`.
+      */}
+      <AddCandidateDialog
+        open={showAddDialog}
+        onOpenChange={setShowAddDialog}
+      />
 
       <div className="flex flex-wrap items-center gap-3 mb-6">
         {/* Placeholder JD picker — real combobox lands in Task 23. */}
