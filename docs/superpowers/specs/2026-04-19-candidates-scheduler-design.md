@@ -135,14 +135,33 @@ One row per entry into a stage. `entered_at` required, `exited_at` nullable (nul
 
 **Session lifecycle:**
 ```
-created → waiting → pre_check → consented → active → completed
-                                                  └→ cancelled
-                                                  └→ error
+created → pre_check → consented → active → completed
+                                        └→ cancelled
+                                        └→ error
 ```
+- `created` — invite dispatched, email sent, candidate has not interacted
+- `pre_check` — candidate loaded the pre-check page (first `GET /pre-check` call)
+- `consented` — consent recorded via `POST /consent`
+- `active` — `POST /start` succeeded, LiveKit room live (Phase 3D)
+- `completed` — interview finished normally (Phase 3D)
+- `cancelled` — recruiter revoked before start
+- `error` — unrecoverable runtime error (Phase 3D)
+
 Transitions driven by candidate actions (pre-check load, consent, start) or recruiter actions (revoke). Each transition writes `state_changed_at` + audit row.
 
-**Candidate JWT lifecycle:**
-Token minted on invite dispatch. `used_at` atomically set on `/start` endpoint success. Single-use semantics: replay returns 409. Rejoin of in-progress session (Phase 3D) uses the same JWT to fetch a fresh LiveKit room token without a second single-use consumption.
+**Candidate JWT structure:**
+
+Token minted on invite dispatch via new `create_candidate_token()` helper in `app/modules/auth/service.py`, matching the existing `verify_candidate_token()` pattern. Signed with `CANDIDATE_JWT_SECRET` (existing env var) using HS256.
+
+Claims:
+- `jti` — UUID, used as PK in `candidate_session_tokens` table
+- `sub` — candidate_id (for identity binding)
+- `session_id` — links to `sessions.id`
+- `tenant_id` — for RLS context
+- `iat` — issued-at timestamp
+- `exp` — expiry (default 72 hours from issuance; configurable via `CANDIDATE_JWT_TTL_HOURS` env var)
+
+`used_at` is atomically set on `/start` endpoint success. Single-use semantics: replay returns 409. Rejoin of in-progress session (Phase 3D) uses the same JWT to fetch a fresh LiveKit room token without a second single-use consumption.
 
 ---
 
@@ -221,7 +240,7 @@ Two Alembic migrations. All tables follow the canonical RLS pattern established 
 | `tenant_id` | UUID NOT NULL | |
 | `assignment_id` | UUID NOT NULL | FK `candidate_job_assignments` |
 | `stage_id` | UUID NOT NULL | FK `job_pipeline_stages` — which stage this session is for |
-| `state` | TEXT NOT NULL | `created` \| `waiting` \| `pre_check` \| `consented` \| `active` \| `completed` \| `cancelled` \| `error` |
+| `state` | TEXT NOT NULL | `created` \| `pre_check` \| `consented` \| `active` \| `completed` \| `cancelled` \| `error` |
 | `state_changed_at` | TIMESTAMPTZ NOT NULL | |
 | `consent_recorded_at` | TIMESTAMPTZ NULL | AIVIA audit marker |
 | `otp_required` | BOOLEAN NOT NULL DEFAULT FALSE | Schema ready in 3C; UX wired in Phase 3D |
@@ -244,6 +263,8 @@ Two Alembic migrations. All tables follow the canonical RLS pattern established 
 | `issued_at`, `expires_at` | TIMESTAMPTZ NOT NULL | |
 | `used_at` | TIMESTAMPTZ NULL | First successful `/start` call timestamp |
 | `used_ip`, `used_user_agent` | TEXT NULL | Audit trail |
+
+**Indexes:** `(tenant_id, session_id)` for "list all tokens for this session" lookups (resend flow invalidates the prior token row by session_id).
 
 **Single-use query:**
 ```sql
@@ -372,6 +393,7 @@ Every state-changing operation writes to `audit_log` via `log_event()`:
 | Candidate created | `candidate.created` | candidate_id |
 | PII redacted | `candidate.pii_redacted` | candidate_id |
 | Assignment created | `candidate.assigned` | candidate_id |
+| Assignment status changed | `candidate.assignment_status_changed` | assignment_id (metadata: `{from_status, to_status}`) |
 | Stage transition | `candidate.stage_transitioned` | assignment_id |
 | Invite dispatched | `session.invite_sent` | session_id |
 | Invite revoked | `session.invite_revoked` | session_id |
