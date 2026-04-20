@@ -126,6 +126,11 @@ class Settings(BaseSettings):
     twilio_auth_token: str = ""
     twilio_phone_number: str = ""
 
+    # AWS — S3 (candidate resumes at MVP; future Egress recordings at enterprise)
+    aws_s3_bucket_candidate_resumes: str = ""
+    aws_region: str = "us-east-1"
+    resume_upload_url_ttl_seconds: int = 300
+
     # Observability
     sentry_dsn: str = ""
     langfuse_host: str = ""           # Legacy — prefer LANGFUSE_BASE_URL

@@ -29,6 +29,9 @@ dependencies = [
     # HTTP client (ATS adapters, external APIs)
     "httpx>=0.28,<1",
 
+    # AWS (S3 — candidate resumes, future Egress recordings)
+    "boto3>=1.35,<2",
+
     # Email (MVP provider)
     "resend>=2.0,<3",
 
