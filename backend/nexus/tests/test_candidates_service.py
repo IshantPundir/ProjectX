@@ -565,6 +565,42 @@ async def test_kanban_board_places_candidate_in_current_stage(db):
 
 
 @pytest.mark.asyncio
+async def test_kanban_board_surfaces_latest_session_state(db):
+    from app.models import Session
+    from app.modules.candidates.service import (
+        create_assignment, get_kanban_board,
+    )
+    from app.modules.candidates.schemas import AssignmentCreateRequest
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    ctx = _make_ctx(user)
+    candidate = Candidate(
+        tenant_id=tenant.id, name="Alice", email="alice@example.com",
+        source="manual", created_by=user.id,
+    )
+    db.add(candidate)
+    await db.flush()
+
+    job, stages = await _make_job_with_stages(db, tenant.id, user.id)
+    assignment = await create_assignment(
+        db, candidate.id, AssignmentCreateRequest(job_posting_id=job.id), ctx,
+    )
+    # Seed a session at pre_check state
+    sess = Session(
+        tenant_id=tenant.id, assignment_id=assignment.id, stage_id=stages[0].id,
+        created_by=user.id, state="pre_check",
+    )
+    db.add(sess)
+    await db.flush()
+
+    board = await get_kanban_board(db, job.id)
+    stage_0 = next(s for s in board.stages if s.position == 0)
+    card = stage_0.candidates[0]
+    assert card.latest_session_state == "pre_check"
+
+
+@pytest.mark.asyncio
 async def test_kanban_board_excludes_non_active_assignments(db):
     from app.modules.candidates.service import (
         create_assignment,

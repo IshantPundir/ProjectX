@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +28,7 @@ from app.models import (
     JobPipelineInstance,
     JobPipelineStage,
     JobPosting,
+    Session,
 )
 from app.modules.audit.service import log_event
 from app.modules.auth.context import UserContext
@@ -516,6 +517,33 @@ async def get_kanban_board(
         )).scalars().all()
         candidates_by_id = {c.id: c for c in rows}
 
+    # Phase 3C: resolve latest_session_state per assignment in one extra query.
+    # Subquery gets MAX(created_at) per assignment_id; outer join retrieves the
+    # matching state column. Keeps the kanban constant-query-count budget intact.
+    assignment_ids = {a.id for a in assignments}
+    latest_state_by_assignment: dict[UUID, str] = {}
+    if assignment_ids:
+        max_created = (
+            select(
+                Session.assignment_id.label("aid"),
+                func.max(Session.created_at).label("max_ts"),
+            )
+            .where(Session.assignment_id.in_(assignment_ids))
+            .group_by(Session.assignment_id)
+            .subquery()
+        )
+        rows = (await db.execute(
+            select(Session.assignment_id, Session.state)
+            .join(
+                max_created,
+                and_(
+                    Session.assignment_id == max_created.c.aid,
+                    Session.created_at == max_created.c.max_ts,
+                ),
+            )
+        )).all()
+        latest_state_by_assignment = {aid: state for aid, state in rows}
+
     cards_by_stage: dict[UUID, list[KanbanCandidateCard]] = {}
     for a in assignments:
         c = candidates_by_id.get(a.candidate_id)
@@ -529,7 +557,7 @@ async def get_kanban_board(
                 email=c.email,
                 status=a.status,
                 current_stage_id=a.current_stage_id,
-                latest_session_state=None,  # Populated in Phase 3C.
+                latest_session_state=latest_state_by_assignment.get(a.id),
             )
         )
 
