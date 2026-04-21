@@ -301,6 +301,10 @@ async def verify_otp(db: AsyncSession, *, session_id: UUID, code: str) -> None:
         sess.otp_hash = None
         await db.flush()
         await _log_otp_failure(db, sess, reason="expired", attempts=sess.otp_attempts)
+        # Commit the hash wipe BEFORE raising — the surrounding session.begin()
+        # context rolls back on exception, which would otherwise discard the
+        # side-effect we need to persist.
+        await db.commit()
         raise OtpExpiredError()
 
     if verify_code(code, sess.otp_hash):
@@ -319,16 +323,21 @@ async def verify_otp(db: AsyncSession, *, session_id: UUID, code: str) -> None:
         )
         return
 
-    # Mismatch
+    # Mismatch — commit the increment (and hash wipe on max-attempts) BEFORE
+    # raising. The surrounding session.begin() context rolls back on exception,
+    # which would otherwise lose the otp_attempts increment and make every
+    # failed attempt look like the first.
     sess.otp_attempts = (sess.otp_attempts or 0) + 1
     if sess.otp_attempts >= OTP_MAX_ATTEMPTS:
         sess.otp_hash = None
         await db.flush()
         await _log_otp_failure(db, sess, reason="max_attempts", attempts=sess.otp_attempts)
+        await db.commit()
         raise OtpMaxAttemptsReachedError()
 
     await db.flush()
     await _log_otp_failure(db, sess, reason="invalid", attempts=sess.otp_attempts)
+    await db.commit()
     raise InvalidOtpError(attempts_remaining=OTP_MAX_ATTEMPTS - sess.otp_attempts)
 
 
@@ -388,6 +397,10 @@ async def start_session(
                 resource_id=sess.id,
                 payload={"jti": str(jti), "ip": ip_address, "ua": user_agent},
             )
+            # Commit the audit row before raising — the outer session.begin()
+            # rolls back on exception, which would otherwise discard the
+            # audit trail of the replay attempt.
+            await db.commit()
             raise TokenAlreadyUsedError()
         raise IllegalStartStateError()
 
@@ -422,6 +435,8 @@ async def start_session(
             resource_id=sess.id,
             payload={"jti": str(jti), "ua": user_agent, "ip": ip_address},
         )
+        # Commit the audit row before raising — see rationale above.
+        await db.commit()
         raise TokenAlreadyUsedError()
 
     # Transition → active
