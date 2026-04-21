@@ -57,7 +57,10 @@ async def test_request_resume_upload_returns_presigned_url(db):
 
 @pytest.mark.asyncio
 async def test_confirm_resume_upload_persists_on_valid_pdf(db):
-    from app.modules.candidates.resume_service import confirm_resume_upload
+    from app.modules.candidates.resume_service import (
+        _resume_key,
+        confirm_resume_upload,
+    )
 
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
@@ -69,11 +72,14 @@ async def test_confirm_resume_upload_persists_on_valid_pdf(db):
         "app.modules.candidates.resume_service._s3_client",
         return_value=fake_client,
     ):
-        await confirm_resume_upload(db, candidate.id, "some-key", _make_ctx(user))
+        await confirm_resume_upload(db, candidate.id, _make_ctx(user))
 
     await db.refresh(candidate)
-    assert candidate.resume_s3_key == "some-key"
+    assert candidate.resume_s3_key == _resume_key(candidate.id)
     assert candidate.resume_uploaded_at is not None
+    # HEAD must target the server-derived key, never a client-supplied value.
+    head_kwargs = fake_client.head_object.call_args.kwargs
+    assert head_kwargs["Key"] == _resume_key(candidate.id)
 
 
 @pytest.mark.asyncio
@@ -93,7 +99,7 @@ async def test_confirm_resume_upload_rejects_missing_object(db):
         return_value=fake_client,
     ):
         with pytest.raises(ResumeNotFoundInS3Error):
-            await confirm_resume_upload(db, candidate.id, "ghost-key", _make_ctx(user))
+            await confirm_resume_upload(db, candidate.id, _make_ctx(user))
 
 
 @pytest.mark.asyncio
@@ -111,7 +117,51 @@ async def test_confirm_resume_upload_rejects_non_pdf(db):
         return_value=fake_client,
     ):
         with pytest.raises(InvalidResumeContentTypeError):
-            await confirm_resume_upload(db, candidate.id, "jpeg-key", _make_ctx(user))
+            await confirm_resume_upload(db, candidate.id, _make_ctx(user))
+
+
+@pytest.mark.asyncio
+async def test_confirm_resume_upload_ignores_client_supplied_key(db):
+    """Regression test for CRIT-1: the service must not trust client-supplied s3_key.
+
+    Previously `confirm_resume_upload(s3_key=attacker_key)` would HEAD the
+    attacker-chosen key and persist it onto the candidate row, enabling
+    cross-tenant resume pointer pivoting + arbitrary S3 object deletion
+    through the delete_resume chain. The server now derives the canonical
+    per-candidate key and the client input is gone entirely.
+    """
+    from uuid import uuid4
+
+    from app.modules.candidates.resume_service import (
+        _resume_key,
+        confirm_resume_upload,
+    )
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    candidate = await _make_candidate(db, tenant.id, user.id)
+
+    # Another candidate, whose canonical key a malicious caller might try to
+    # point their own candidate row at.
+    other_candidate_id = uuid4()
+    attacker_key = _resume_key(other_candidate_id)
+
+    fake_client = MagicMock()
+    fake_client.head_object.return_value = {"ContentType": "application/pdf"}
+    with patch(
+        "app.modules.candidates.resume_service._s3_client",
+        return_value=fake_client,
+    ):
+        # Function signature no longer accepts s3_key — the caller has no way
+        # to influence it. This call must succeed and persist the *own*
+        # candidate's key, not the other candidate's key.
+        await confirm_resume_upload(db, candidate.id, _make_ctx(user))
+
+    await db.refresh(candidate)
+    assert candidate.resume_s3_key == _resume_key(candidate.id)
+    assert candidate.resume_s3_key != attacker_key
+    head_kwargs = fake_client.head_object.call_args.kwargs
+    assert head_kwargs["Key"] == _resume_key(candidate.id)
 
 
 @pytest.mark.asyncio

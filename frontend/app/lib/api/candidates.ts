@@ -205,15 +205,11 @@ export const candidatesApi = {
       body: JSON.stringify({}),
     }),
 
-  confirmResumeUpload: (
-    token: string,
-    id: string,
-    s3_key: string,
-  ): Promise<void> =>
+  confirmResumeUpload: (token: string, id: string): Promise<void> =>
     apiFetch<void>(`/api/candidates/${id}/resume/confirm`, {
       token,
       method: 'POST',
-      body: JSON.stringify({ s3_key }),
+      body: JSON.stringify({}),
     }),
 
   deleteResume: (token: string, id: string): Promise<void> =>

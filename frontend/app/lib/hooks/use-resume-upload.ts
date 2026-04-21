@@ -22,7 +22,7 @@ export function useResumeUpload(candidateId: string) {
       if (!putResp.ok) {
         throw new Error(`S3 upload failed (${putResp.status})`)
       }
-      await candidatesApi.confirmResumeUpload(token, candidateId, pre.s3_key)
+      await candidatesApi.confirmResumeUpload(token, candidateId)
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({

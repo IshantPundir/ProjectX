@@ -127,8 +127,15 @@ class ResumeUploadUrlResponse(BaseModel):
 
 
 class ResumeConfirmRequest(BaseModel):
+    # The s3_key is derived server-side from candidate_id and ignored here.
+    # Kept optional for backward compatibility with frontends still sending it;
+    # remove once all clients have been updated.
     model_config = ConfigDict(extra="forbid")
-    s3_key: str
+    s3_key: str | None = Field(
+        default=None,
+        deprecated=True,
+        description="Ignored — the backend derives the canonical key from candidate_id.",
+    )
 
 
 class RedactPIIRequest(BaseModel):

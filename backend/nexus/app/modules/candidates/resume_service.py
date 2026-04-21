@@ -4,10 +4,13 @@
    per-candidate S3 key. Backend touches no file bytes. Frontend uploads
    directly to S3, under the bucket policy that only accepts PDFs of the
    expected size.
-2. confirm_resume_upload(s3_key) — frontend reports success. Backend HEADs
-   the object: must exist AND content-type must be `application/pdf`. On
-   success, commit `resume_s3_key` + `resume_uploaded_at` to the candidate
-   row, writing a `candidate.resume_uploaded` audit event.
+2. confirm_resume_upload() — frontend reports success. Backend HEADs the
+   canonical per-candidate key (`_resume_key(candidate_id)`): must exist
+   AND content-type must be `application/pdf`. On success, commit
+   `resume_s3_key` + `resume_uploaded_at` to the candidate row and write a
+   `candidate.resume_uploaded` audit event. The S3 key is derived entirely
+   server-side; any key the client includes in the request body is ignored
+   (prevents cross-tenant / cross-candidate key pivoting).
 3. delete_resume() — idempotent delete of the S3 object and clearing of the
    column pair. Logs `candidate.resume_deleted` regardless of whether an
    S3 object actually existed (column clear is the source of truth for UI).
@@ -70,9 +73,17 @@ async def request_resume_upload(
 
 
 async def confirm_resume_upload(
-    db: AsyncSession, candidate_id: UUID, s3_key: str, user: UserContext
+    db: AsyncSession, candidate_id: UUID, user: UserContext
 ) -> None:
-    """HEAD the uploaded object; require PDF content-type; persist resume_s3_key.
+    """HEAD the uploaded object at the canonical per-candidate key; require
+    PDF content-type; persist resume_s3_key.
+
+    The S3 key is derived from `candidate_id` — we never trust a client-supplied
+    key. Before this hardening, the router forwarded `body.s3_key` into this
+    function and it was written directly onto the candidate row, which allowed
+    a caller with candidates.manage to repoint a candidate's resume pointer at
+    any other tenant's candidate_id-derived key (shared bucket) and later
+    delete that object via the delete_resume chain.
 
     Raises:
         CandidateNotFoundError: candidate doesn't exist.
@@ -80,6 +91,7 @@ async def confirm_resume_upload(
         InvalidResumeContentTypeError: object exists but isn't PDF.
     """
     candidate = await get_candidate(db, candidate_id)
+    s3_key = _resume_key(candidate_id)
 
     client = _s3_client()
     try:

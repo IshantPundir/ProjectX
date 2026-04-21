@@ -154,12 +154,12 @@ async def request_resume_upload_endpoint(
 @router.post("/{candidate_id}/resume/confirm", status_code=status.HTTP_204_NO_CONTENT)
 async def confirm_resume_upload_endpoint(
     candidate_id: UUID,
-    body: ResumeConfirmRequest,
+    body: ResumeConfirmRequest,  # noqa: ARG001 — body schema kept for API compat; s3_key is ignored
     db: AsyncSession = Depends(get_tenant_db),
     user: UserContext = Depends(get_current_user_roles),
 ) -> None:
     await require_candidate_access(db, candidate_id, user, "manage")
-    await resume_service.confirm_resume_upload(db, candidate_id, body.s3_key, user)
+    await resume_service.confirm_resume_upload(db, candidate_id, user)
 
 
 @router.delete("/{candidate_id}/resume", status_code=status.HTTP_204_NO_CONTENT)
