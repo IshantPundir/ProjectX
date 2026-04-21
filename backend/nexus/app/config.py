@@ -94,6 +94,27 @@ class Settings(BaseSettings):
     # Notifications
     notifications_dry_run: bool = True  # True = log emails to stdout, False = send via Resend
 
+    @field_validator("notifications_dry_run")
+    @classmethod
+    def _dry_run_forbidden_in_prod(cls, v: bool, info) -> bool:
+        # DryRunProvider logs the full invite URL (which contains the signed
+        # single-use candidate JWT) and the OTP code to stdout as first-class
+        # structured-log fields. That's intentional for local development —
+        # engineers grab the values from the terminal to test the candidate
+        # flow without Resend credentials. It is NEVER safe outside
+        # development, where logs typically flow into Sentry, log aggregators,
+        # or shared observability infra and would leak session-bypass
+        # credentials to anyone with log-reader access.
+        env = info.data.get("environment", "development")
+        if v and env in {"production", "staging"}:
+            raise ValueError(
+                f"NOTIFICATIONS_DRY_RUN=true is unsafe in environment={env!r}: "
+                "the dry-run provider logs candidate JWT invite URLs and OTP "
+                "codes to stdout. Set NOTIFICATIONS_DRY_RUN=false and configure "
+                "RESEND_API_KEY for this environment."
+            )
+        return v
+
     # LiveKit
     livekit_url: str = ""
     livekit_api_key: str = ""
