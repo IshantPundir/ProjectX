@@ -9,7 +9,7 @@ from datetime import date, datetime
 
 from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, text, UniqueConstraint
 from sqlalchemy import text as sql_text
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, INET, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -655,7 +655,7 @@ class CandidateSessionToken(Base):
         DateTime(timezone=True), nullable=False
     )
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    used_ip: Mapped[str | None] = mapped_column(Text)  # INET in DB; mapped as Text for asyncpg compat
+    used_ip: Mapped[str | None] = mapped_column(INET)
     used_user_agent: Mapped[str | None] = mapped_column(Text)
     superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     superseded_by: Mapped[uuid.UUID | None] = mapped_column(
