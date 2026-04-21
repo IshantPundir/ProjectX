@@ -27,6 +27,7 @@ export interface PreCheckResponse {
   state: SessionState
   otp_required: boolean
   otp_verified_at: string | null
+  otp_issued_at: string | null
 }
 
 export interface ConsentBody {
@@ -58,6 +59,12 @@ async function _call<T>(
 ): Promise<T> {
   const r = await fetch(`${API_BASE}${path}`, {
     method,
+    // Candidate-session responses change on every state transition (pre_check
+    // → consented → active, otp_verified_at stamp, etc). Disable every layer
+    // of HTTP caching so a post-mutation invalidateQueries refetch always
+    // hits the server. Without this, browser heuristic caching can serve a
+    // stale /pre-check body and the wizard never advances.
+    cache: 'no-store',
     headers: body ? { 'Content-Type': 'application/json' } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   })

@@ -11,6 +11,12 @@ import { useVerifyOtp } from '@/lib/hooks/use-verify-otp'
 
 interface Props {
   token: string
+  /**
+   * Timestamp of the last OTP issuance from GET /pre-check.
+   * Used to restore the 60s [Send code] cooldown on page reload so the
+   * visible timer matches the server-side rate limit.
+   */
+  otpIssuedAt: string | null
 }
 
 function asCandidateError(err: Error): CandidateSessionError | null {
@@ -20,9 +26,17 @@ function asCandidateError(err: Error): CandidateSessionError | null {
   return null
 }
 
-export function OtpStep({ token }: Props) {
+function initialCooldown(otpIssuedAt: string | null): number {
+  if (!otpIssuedAt) return 0
+  const elapsed = Math.floor(
+    (Date.now() - new Date(otpIssuedAt).getTime()) / 1000,
+  )
+  return Math.max(0, 60 - elapsed)
+}
+
+export function OtpStep({ token, otpIssuedAt }: Props) {
   const [code, setCode] = useState('')
-  const [cooldown, setCooldown] = useState(0)
+  const [cooldown, setCooldown] = useState(() => initialCooldown(otpIssuedAt))
   const [attemptsRemaining, setAttemptsRemaining] = useState<number | null>(
     null,
   )

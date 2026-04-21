@@ -69,7 +69,9 @@ export function WizardShell({ token }: { token: string }) {
       {currentStep === 'consent' && (
         <ConsentStep token={token} consentText={data.consent_text} />
       )}
-      {currentStep === 'otp' && <OtpStep token={token} />}
+      {currentStep === 'otp' && (
+        <OtpStep token={token} otpIssuedAt={data.otp_issued_at} />
+      )}
       {currentStep === 'cam-mic' && !camMicPassed && (
         <CameraMicStep onPass={() => setCamMicPassed(true)} />
       )}

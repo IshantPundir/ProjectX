@@ -37,6 +37,9 @@ class PreCheckResponse(BaseModel):
     state: SessionState
     otp_required: bool
     otp_verified_at: datetime | None
+    # Timestamp of the most recent OTP issuance. Frontend uses this to restore
+    # the 60s [Send code] cooldown after a page reload.
+    otp_issued_at: datetime | None
 
 
 class ConsentRequest(BaseModel):

@@ -14,7 +14,7 @@ function renderWithClient(ui: React.ReactElement) {
 
 describe('OtpStep', () => {
   it('renders Send code button in idle state', () => {
-    renderWithClient(<OtpStep token="t" />)
+    renderWithClient(<OtpStep token="t" otpIssuedAt={null} />)
     expect(
       screen.getByRole('button', { name: /Send code/i }),
     ).toBeInTheDocument()
@@ -22,7 +22,7 @@ describe('OtpStep', () => {
 
   it('Verify button is disabled until 6 digits entered', async () => {
     const user = userEvent.setup()
-    renderWithClient(<OtpStep token="t" />)
+    renderWithClient(<OtpStep token="t" otpIssuedAt={null} />)
     const verifyBtn = screen.getByRole('button', { name: /Verify/i })
     expect(verifyBtn).toBeDisabled()
     const input = screen.getByRole('textbox')

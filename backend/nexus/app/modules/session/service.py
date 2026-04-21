@@ -198,6 +198,7 @@ async def get_pre_check_context(
         state=SessionState(sess.state),
         otp_required=sess.otp_required,
         otp_verified_at=sess.otp_verified_at,
+        otp_issued_at=sess.otp_issued_at,
     )
 
 
