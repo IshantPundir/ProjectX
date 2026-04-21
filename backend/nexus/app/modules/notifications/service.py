@@ -8,6 +8,7 @@ When NOTIFICATIONS_DRY_RUN=false: sends via Resend API.
 """
 
 import asyncio
+import re
 from pathlib import Path
 from typing import Protocol
 
@@ -22,6 +23,14 @@ logger = structlog.get_logger()
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
 _jinja_env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=True)
 
+# DryRun helpers — extract the bits of an email that an engineer actually
+# wants to copy (invite link, OTP code) so they stand out in the log stream
+# instead of being buried in the HTML body.
+_INVITE_URL_RE = re.compile(
+    r'href=["\'](?P<url>https?://[^"\'<>\s]+/interview/[^"\'<>\s]+)["\']'
+)
+_OTP_CODE_RE = re.compile(r'>\s*(?P<code>\d{6})\s*<')
+
 
 def render_template(template_name: str, **kwargs: object) -> str:
     """Render a Jinja2 email template."""
@@ -35,14 +44,27 @@ class EmailProvider(Protocol):
 
 
 class DryRunProvider:
-    """Logs emails to stdout instead of sending. For local development."""
+    """Logs emails to stdout instead of sending. For local development.
+
+    Extracts the invite link and OTP code from the HTML body and surfaces
+    them as first-class log fields so engineers don't have to scan the full
+    HTML in the terminal to pull the URL / code for manual testing.
+    """
     async def send(self, *, to: str, subject: str, html: str) -> None:
+        invite_url = None
+        if match := _INVITE_URL_RE.search(html):
+            invite_url = match.group("url")
+        otp_code = None
+        if match := _OTP_CODE_RE.search(html):
+            otp_code = match.group("code")
+
         logger.info(
             "email.dry_run",
             to=to,
             subject=subject,
+            invite_url=invite_url,
+            otp_code=otp_code,
             html_length=len(html),
-            html_body=html,
         )
 
 
