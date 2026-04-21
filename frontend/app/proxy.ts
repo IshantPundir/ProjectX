@@ -35,6 +35,13 @@ export async function proxy(request: NextRequest) {
     return supabaseResponse;
   }
 
+  // Candidate interview pages are always public — candidates are NOT
+  // Supabase users. Their JWT lives in the URL path and is verified
+  // server-side by Nexus on every /api/candidate-session/{token}/* call.
+  if (path.startsWith("/interview")) {
+    return supabaseResponse;
+  }
+
   // Validate session
   const {
     data: { user },
