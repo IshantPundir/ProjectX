@@ -520,7 +520,7 @@ async def test_get_banks_overview_does_not_create_draft_rows(
         db, job=job, name="Phone Screen", position=0,
     )
     _instance, stage_b = await _make_pipeline_and_stage(
-        db, job=job, name="AI Interview", stage_type="ai_interview",
+        db, job=job, name="AI Screening", stage_type="ai_screening",
         position=1, instance=instance,
     )
     _instance, stage_c = await _make_pipeline_and_stage(

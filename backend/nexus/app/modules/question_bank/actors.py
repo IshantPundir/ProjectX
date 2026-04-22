@@ -58,11 +58,10 @@ logger = structlog.get_logger()
 # ---------------------------------------------------------------------------
 
 STAGE_TYPE_TO_PROMPT = {
-    "phone_screen": "question_bank_phone_screen",
-    "ai_interview": "question_bank_ai_interview",
+    "phone_screen":    "question_bank_phone_screen",
+    "ai_screening":    "question_bank_ai_screening",
     "human_interview": "question_bank_human_interview",
-    "panel_interview": "question_bank_panel_interview",
-    "take_home": "question_bank_take_home",
+    "take_home":       "question_bank_take_home",
 }
 
 

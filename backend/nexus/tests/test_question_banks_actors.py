@@ -460,7 +460,7 @@ async def test_generate_pipeline_sequentially_sees_prior_stages(
         db, job=job, position=0, name="Phone Screen", stage_type="phone_screen",
     )
     _instance, stage2 = await _make_pipeline_and_stage(
-        db, job=job, position=1, name="AI Interview", stage_type="ai_interview",
+        db, job=job, position=1, name="AI Screening", stage_type="ai_screening",
         instance=instance,
     )
 
@@ -523,7 +523,7 @@ async def test_generate_pipeline_continues_on_stage_failure(db, monkeypatch):
         db, job=job, position=0, name="Phone Screen", stage_type="phone_screen",
     )
     _instance, stage2 = await _make_pipeline_and_stage(
-        db, job=job, position=1, name="AI Interview", stage_type="ai_interview",
+        db, job=job, position=1, name="AI Screening", stage_type="ai_screening",
         instance=instance,
     )
 
@@ -810,7 +810,7 @@ async def test_pipeline_context_section_contains_prior_questions(db):
         db, job=job, position=0, name="Phone Screen", stage_type="phone_screen",
     )
     _instance, stage2 = await _make_pipeline_and_stage(
-        db, job=job, position=1, name="AI Interview", stage_type="ai_interview",
+        db, job=job, position=1, name="AI Screening", stage_type="ai_screening",
         instance=instance,
     )
 
