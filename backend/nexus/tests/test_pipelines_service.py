@@ -125,7 +125,7 @@ async def test_create_template_from_scratch_persists_stages(db):
         is_default=False,
         stages=[
             _make_stage(0, "Phone Screen", "phone_screen"),
-            _make_stage(1, "AI Interview", "ai_interview"),
+            _make_stage(1, "AI Interview", "ai_screening"),
         ],
     )
 
@@ -140,7 +140,7 @@ async def test_create_template_from_scratch_persists_stages(db):
     assert stages[0].name == "Phone Screen"
     assert stages[1].position == 1
     assert stages[1].name == "AI Interview"
-    assert stages[1].stage_type == "ai_interview"
+    assert stages[1].stage_type == "ai_screening"
 
 
 @pytest.mark.asyncio
@@ -165,8 +165,8 @@ async def test_create_template_from_starter_uses_standard_technical(db):
     assert tpl.name == "My Standard"
     assert len(stages) == 3
     assert stages[0].stage_type == "phone_screen"
-    assert stages[1].stage_type == "ai_interview"
-    assert stages[2].stage_type == "panel_interview"
+    assert stages[1].stage_type == "ai_screening"
+    assert stages[2].stage_type == "human_interview"
 
 
 @pytest.mark.asyncio
@@ -286,7 +286,7 @@ async def test_delete_non_default_template_succeeds_and_cascades_stages(db):
         name="Disposable",
         description=None,
         is_default=False,
-        stages=[_make_stage(0), _make_stage(1, "Stage 1", "ai_interview")],
+        stages=[_make_stage(0), _make_stage(1, "Stage 1", "ai_screening")],
     )
     template_id = template.id
 
@@ -322,8 +322,8 @@ async def test_update_template_replaces_stages_atomically(db):
         is_default=False,
         stages=[
             _make_stage(0, "Stage A", "phone_screen"),
-            _make_stage(1, "Stage B", "ai_interview"),
-            _make_stage(2, "Stage C", "panel_interview"),
+            _make_stage(1, "Stage B", "ai_screening"),
+            _make_stage(2, "Stage C", "human_interview"),
         ],
     )
 
@@ -334,7 +334,7 @@ async def test_update_template_replaces_stages_atomically(db):
         description=None,
         stages=[
             _make_stage(0, "New Stage 1", "phone_screen"),
-            _make_stage(1, "New Stage 2", "ai_interview"),
+            _make_stage(1, "New Stage 2", "ai_screening"),
         ],
         actor_id=user.id,
     )
@@ -361,7 +361,7 @@ async def test_update_template_name_without_stages_preserves_stages(db):
         is_default=False,
         stages=[
             _make_stage(0, "Original A", "phone_screen"),
-            _make_stage(1, "Original B", "ai_interview"),
+            _make_stage(1, "Original B", "ai_screening"),
         ],
     )
 
@@ -403,7 +403,7 @@ async def test_create_job_pipeline_from_template_copies_stages(db):
         is_default=False,
         stages=[
             _make_stage(0, "S1", "phone_screen"),
-            _make_stage(1, "S2", "ai_interview"),
+            _make_stage(1, "S2", "ai_screening"),
         ],
     )
 
@@ -451,7 +451,7 @@ async def test_create_job_pipeline_from_scratch_has_null_source_template_id(db):
     instance = await pipelines_service.create_job_pipeline_from_scratch(
         db,
         job=job,
-        stages=[_make_stage(0), _make_stage(1, "AI", "ai_interview")],
+        stages=[_make_stage(0), _make_stage(1, "AI", "ai_screening")],
     )
 
     assert instance.source_template_id is None
@@ -532,7 +532,7 @@ async def test_reset_job_pipeline_restores_from_source_template(db):
         is_default=False,
         stages=[
             _make_stage(0, "TplA", "phone_screen"),
-            _make_stage(1, "TplB", "ai_interview"),
+            _make_stage(1, "TplB", "ai_screening"),
         ],
     )
 
@@ -586,7 +586,7 @@ async def test_save_job_pipeline_as_template_creates_library_entry(db):
         job=job,
         stages=[
             _make_stage(0, "Custom A", "phone_screen"),
-            _make_stage(1, "Custom B", "ai_interview"),
+            _make_stage(1, "Custom B", "ai_screening"),
         ],
     )
 
@@ -635,7 +635,7 @@ async def test_update_source_template_writes_back_stages(db):
         instance=instance,
         stages=[
             _make_stage(0, "Edited A", "phone_screen"),
-            _make_stage(1, "New B", "ai_interview"),
+            _make_stage(1, "New B", "ai_screening"),
         ],
     )
 

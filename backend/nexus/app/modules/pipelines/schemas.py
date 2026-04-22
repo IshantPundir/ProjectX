@@ -11,20 +11,31 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # --- Enums ---
 
+# Stage type v5 — see migration 0016_stage_v5_participants and
+# docs/superpowers/specs/2026-04-22-pipeline-stage-types-design.md.
 StageType = Literal[
-    # Phase 2C.1 set — interview-oriented
-    "phone_screen",
-    "ai_interview",
-    "human_interview",
-    "panel_interview",
-    "take_home",
-    # Phase 4 additions — bookend + role-specific stages from the v4 design.
-    # The DB CHECK in migration 0015_pipeline_stage_v4 covers these.
     "intake",
-    "recruiter",
+    "phone_screen",
+    "ai_screening",
+    "human_interview",
     "debrief",
-    "offer",
+    "take_home",
 ]
+
+ParticipantRole = Literal["interviewer", "observer", "reviewer"]
+
+
+class StageParticipantInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    user_id: UUID
+    role: ParticipantRole
+
+
+class StageParticipantResponse(StageParticipantInput):
+    """Adds display fields so the UI doesn't round-trip separately."""
+    full_name: str
+    email: str
+
 
 StageDifficulty = Literal["easy", "medium", "hard"]
 AdvanceBehavior = Literal["auto_advance", "manual_review"]
@@ -74,6 +85,46 @@ class PassCriteriaManual(BaseModel):
 PassCriteria = PassCriteriaKnockout | PassCriteriaThreshold | PassCriteriaManual
 
 
+# Per-type participant role gate. The backend is authoritative; the
+# frontend categories helper mirrors this table.
+_PARTICIPANT_ROLE_FOR_TYPE: dict[StageType, ParticipantRole | None] = {
+    "intake":          None,
+    "take_home":       None,
+    "phone_screen":    "interviewer",
+    "human_interview": "interviewer",
+    "ai_screening":    "observer",
+    "debrief":         "reviewer",
+}
+
+
+def _validate_participants_role_for_type(
+    stage_type: StageType,
+    participants: list[StageParticipantInput] | None,
+) -> None:
+    """Enforce the stage-type / participant-role contract.
+
+    `participants=None` is the "don't touch" sentinel used by the PATCH
+    auto-save path on PipelineStageUpdateInput — callers supply it when
+    they want to update other fields without replacing the staffing.
+    The validator treats None as a no-op.
+    """
+    if participants is None:
+        return
+    allowed = _PARTICIPANT_ROLE_FOR_TYPE[stage_type]
+    if allowed is None:
+        if participants:
+            raise ValueError(
+                f"stage_type={stage_type!r} cannot carry participants"
+            )
+        return
+    for p in participants:
+        if p.role != allowed:
+            raise ValueError(
+                f"stage_type={stage_type!r} only accepts role={allowed!r}, "
+                f"got {p.role!r} for user_id={p.user_id}"
+            )
+
+
 # --- Stage schemas ---
 
 
@@ -96,6 +147,12 @@ class PipelineStageInput(PipelineStageBase):
     """Stage as sent by the frontend when creating/updating."""
 
     model_config = ConfigDict(extra="forbid")
+    participants: list[StageParticipantInput] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_participants_for_stage_type(self) -> "PipelineStageInput":
+        _validate_participants_role_for_type(self.stage_type, self.participants)
+        return self
 
 
 class PipelineStageUpdateInput(PipelineStageInput):
@@ -104,16 +161,29 @@ class PipelineStageUpdateInput(PipelineStageInput):
     Existing stages pass their id; new stages (added via the UI "+ Add stage"
     button) omit it. The service's diff-and-sync update matches incoming items
     by id to existing rows.
+
+    `participants=None` means "don't touch participants for this stage" —
+    used by auto-save to update unrelated fields without replacing staffing.
+    `participants=[]` is an explicit "clear all participants".
     """
 
     model_config = ConfigDict(extra="forbid")
     id: UUID | None = None
+    # Override the parent's `list[...]` default with an Optional to encode
+    # the "don't touch" sentinel. The inherited @model_validator (via the
+    # None-tolerant helper) handles both None and non-None correctly.
+    participants: list[StageParticipantInput] | None = None  # type: ignore[assignment]
 
 
 class PipelineStageResponse(PipelineStageBase):
-    """Stage as returned by the API."""
+    """Stage as returned by the API.
+
+    Templates always return `participants=[]` (templates are staffing-agnostic);
+    instance stages may carry real participants.
+    """
 
     id: UUID
+    participants: list[StageParticipantResponse] = Field(default_factory=list)
 
 
 # --- Template schemas ---

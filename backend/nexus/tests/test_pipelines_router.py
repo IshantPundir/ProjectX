@@ -274,7 +274,7 @@ async def test_create_template_from_scratch_returns_201(db: AsyncSession):
                     "is_default": False,
                     "stages": [
                         _stage_dict(0, "Phone Screen", "phone_screen"),
-                        _stage_dict(1, "AI Interview", "ai_interview"),
+                        _stage_dict(1, "AI Interview", "ai_screening"),
                     ],
                 },
                 headers=headers,
@@ -312,7 +312,7 @@ async def test_create_template_rejects_non_sequential_positions(db: AsyncSession
                     "is_default": False,
                     "stages": [
                         _stage_dict(0, "S0", "phone_screen"),
-                        _stage_dict(2, "S2", "ai_interview"),  # gap
+                        _stage_dict(2, "S2", "ai_screening"),  # gap
                     ],
                 },
                 headers=headers,
@@ -535,7 +535,7 @@ async def test_update_job_pipeline_replaces_stages(db: AsyncSession):
     ))
     db.add(JobPipelineStage(
         tenant_id=tenant.id, instance_id=instance.id, position=1, name="OldB",
-        stage_type="ai_interview", duration_minutes=30, difficulty="medium",
+        stage_type="ai_screening", duration_minutes=30, difficulty="medium",
         signal_filter={"include_types": ["competency"]},
         pass_criteria={"type": "score_threshold", "threshold": 70},
         advance_behavior="auto_advance",

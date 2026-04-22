@@ -49,7 +49,7 @@ def test_stage_positions_are_sequential():
 
 
 def test_stage_types_are_valid():
-    valid = {"phone_screen", "ai_interview", "human_interview", "panel_interview", "take_home"}
+    valid = {"intake", "phone_screen", "ai_screening", "human_interview", "debrief", "take_home"}
     for key, tpl in STARTER_TEMPLATES.items():
         for stage in tpl["stages"]:
             assert stage["stage_type"] in valid, f"{key} has invalid stage_type: {stage['stage_type']}"
