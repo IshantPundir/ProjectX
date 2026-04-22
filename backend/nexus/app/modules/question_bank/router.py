@@ -24,6 +24,7 @@ from app.models import (
 )
 from app.modules.auth.context import UserContext, get_current_user_roles
 from app.modules.question_bank import actors as bank_actors
+from app.modules.question_bank.actors import STAGE_TYPE_TO_PROMPT
 from app.modules.question_bank.authz import (
     require_bank_access_by_stage,
     require_pipeline_access,
@@ -290,6 +291,9 @@ async def list_banks(
 
     banks: list[BankResponse | PlaceholderBankResponse] = []
     for stage in stages:
+        if stage.stage_type not in STAGE_TYPE_TO_PROMPT:
+            # intake / debrief — no question bank for these stage types.
+            continue
         row = banks_by_stage.get(stage.id)
         if row is None:
             banks.append(PlaceholderBankResponse(stage_id=stage.id))
@@ -320,6 +324,11 @@ async def get_bank(
     bank, stage, job = await require_bank_access_by_stage(
         db, job_id, stage_id, user, "view"
     )
+    if stage.stage_type not in STAGE_TYPE_TO_PROMPT:
+        raise HTTPException(
+            status_code=409,
+            detail="Stage type does not support question banks",
+        )
     if bank is None:
         # Create an empty draft bank so the frontend can show "generate" button
         bank = await ensure_bank_exists(db, stage=stage, job=job)

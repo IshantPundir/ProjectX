@@ -1136,3 +1136,112 @@ async def test_post_confirm_uncovered_knockout_returns_409(
     assert resp.status_code == 409, resp.text
     detail = resp.json()["detail"]
     assert "knockout" in detail.lower()
+
+
+# ---------------------------------------------------------------------------
+# 19. GET banks overview — intake + debrief stages are excluded
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_banks_excludes_intake_and_debrief(
+    db: AsyncSession, monkeypatch
+):
+    """Intake + debrief stages should NOT appear in the banks overview.
+
+    They have no prompt mapping in STAGE_TYPE_TO_PROMPT, so no
+    question-bank row (or placeholder) is generated for them.
+    """
+    _stub_actor_sends(monkeypatch)
+
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    signals = [_signal(value="Python")]
+    job, _snapshot = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id, signals=signals,
+    )
+
+    # Build a pipeline with 3 stages: intake (pos 0), phone_screen (pos 1), debrief (pos 2).
+    instance, _intake_stage = await _make_pipeline_and_stage(
+        db,
+        job=job,
+        name="Intake",
+        stage_type="intake",
+        position=0,
+    )
+    _instance, phone_screen_stage = await _make_pipeline_and_stage(
+        db,
+        job=job,
+        name="Phone Screen",
+        stage_type="phone_screen",
+        position=1,
+        instance=instance,
+    )
+    _instance, _debrief_stage = await _make_pipeline_and_stage(
+        db,
+        job=job,
+        name="Debrief",
+        stage_type="debrief",
+        position=2,
+        instance=instance,
+    )
+    # No bank rows created — we are testing the filter, not bank existence.
+
+    headers, restore = _setup_test_context(db, user, tenant.id)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            resp = await ac.get(
+                f"/api/jobs/{job.id}/pipeline/questions",
+                headers=headers,
+            )
+    finally:
+        restore()
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    # Only phone_screen should appear — intake and debrief are excluded.
+    assert len(data["banks"]) == 1
+    assert data["banks"][0]["stage_id"] == str(phone_screen_stage.id)
+    assert data["banks"][0]["status"] == "not_generated"
+
+
+# ---------------------------------------------------------------------------
+# 20. GET bank detail on an intake stage — 409
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_bank_detail_on_intake_stage_returns_409(
+    db: AsyncSession, monkeypatch
+):
+    """GET /stages/{id}/questions on an intake stage must return 409."""
+    _stub_actor_sends(monkeypatch)
+
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    signals = [_signal(value="Python")]
+    job, _snapshot = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id, signals=signals,
+    )
+    _instance, intake_stage = await _make_pipeline_and_stage(
+        db,
+        job=job,
+        name="Intake",
+        stage_type="intake",
+        position=0,
+    )
+
+    headers, restore = _setup_test_context(db, user, tenant.id)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            resp = await ac.get(
+                f"/api/jobs/{job.id}/pipeline/stages/{intake_stage.id}/questions",
+                headers=headers,
+            )
+    finally:
+        restore()
+
+    assert resp.status_code == 409, resp.text
+    assert "does not support question banks" in resp.json()["detail"]
