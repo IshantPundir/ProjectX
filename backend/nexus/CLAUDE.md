@@ -309,7 +309,7 @@ from openai import AsyncOpenAI
 
 | Module | What It Owns |
 |---|---|
-| `pipelines` | Pipeline template library scoped by org unit, per-job pipeline instance, stage CRUD (name/type/duration/difficulty/signal filter/pass criteria/advance behavior), drag-to-reorder, template swap, reset-to-source. Auto-apply on signal confirmation via `auto_apply_pipeline_on_confirmation`. Ancestry-walking authz via `require_template_access`. |
+| `pipelines` | Pipeline template library scoped by org unit, per-job pipeline instance, stage CRUD (name/type/duration/difficulty/signal filter/pass criteria/advance behavior), drag-to-reorder, template swap, reset-to-source. Auto-apply on signal confirmation via `auto_apply_pipeline_on_confirmation`. Ancestry-walking authz via `require_template_access`. **Stage type v5 (migration 0016):** types collapsed from 9 → 6 (`intake`, `phone_screen`, `ai_screening`, `human_interview`, `debrief`, `take_home`); `recruiter`, `panel_interview`, `offer`, `ai_interview` hard-removed with no aliases. Instance stages carry participants (interviewers / observers / reviewers) via `pipeline_stage_participants`, gated by system-role lookup at the job's org unit ancestry; `pipeline_stage_participants` is in `_TENANT_SCOPED_TABLES` and covered by the startup RLS check. Templates remain staffing-agnostic (no participants). |
 
 ### Phase 2C.2 — Implemented
 
@@ -429,7 +429,7 @@ Outbound emails (company admin invite, team invite, invite resend) build links p
 ## Database Migrations
 
 ### Current State
-The initial schema (6 tables, first-cut RLS policies, system role seeds, and the Supabase auth hook) lives in `backend/supabase/migrations/20260405000000_initial_schema.sql`. Every incremental change since Phase 2A has been an Alembic migration in `migrations/versions/`. Current head: `0012_rename_service_role_bypass`.
+The initial schema (6 tables, first-cut RLS policies, system role seeds, and the Supabase auth hook) lives in `backend/supabase/migrations/20260405000000_initial_schema.sql`. Every incremental change since Phase 2A has been an Alembic migration in `migrations/versions/`. Current head: `0016_stage_v5_participants`.
 
 Migrations so far:
 - `0001_phase_2b_columns` — signal editing + version columns
@@ -444,6 +444,7 @@ Migrations so far:
 - `0010_create_nexus_app_role` — **RLS hardening**: dedicated `nexus_app` role with `NOBYPASSRLS` + grants; without this every policy is a runtime no-op because `postgres` has `rolbypassrls=true`
 - `0011_rls_nullif_tenant` — **RLS hardening**: wraps `current_setting('app.current_tenant', true)::uuid` in `NULLIF(..., '')::uuid` everywhere. Fixes a PG quirk where `SET LOCAL` reverts a custom GUC to empty-string rather than NULL on transaction end, making the cast crash on the next pooled request.
 - `0012_rename_service_role_bypass` — **cleanup**: rename `service_role_bypass` → `service_bypass` on Phase 2A/2C tables for consistency with the canonical name used elsewhere. Makes future policy-lint tooling sound.
+- `0016_stage_v5_participants` — stage type enum collapsed to 6 values; adds `pipeline_stage_participants` table (tenant-scoped, full RLS policy pair) for instance-stage staffing (interviewers / observers / reviewers). `pipeline_stage_participants` is registered in `_TENANT_SCOPED_TABLES` in `app/main.py`.
 
 ### Going Forward
 - Future schema changes should use Alembic migrations in `migrations/versions/`.
