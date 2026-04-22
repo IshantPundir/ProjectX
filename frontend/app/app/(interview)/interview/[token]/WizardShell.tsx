@@ -34,37 +34,63 @@ export function WizardShell({ token }: { token: string }) {
   }, [data])
 
   if (isLoading) {
-    return <p className="text-zinc-500">Loading…</p>
+    return (
+      <WizardFrame companyName="" jobTitle="" stageName="">
+        <p className="text-center text-sm" style={{ color: 'var(--px-fg-3)' }}>
+          Loading…
+        </p>
+      </WizardFrame>
+    )
   }
 
   if (error) {
     return (
-      <div className="text-center py-12">
-        <h1 className="text-xl font-semibold">This link isn&apos;t valid</h1>
-        <p className="mt-3 text-sm text-zinc-600">
-          The invite may have been revoked, replaced, or expired. Please contact
-          the recruiter who sent it.
-        </p>
-      </div>
+      <WizardFrame companyName="" jobTitle="" stageName="">
+        <div className="mx-auto max-w-[600px] py-16 text-center">
+          <h1
+            className="px-serif m-0 text-[40px] font-normal"
+            style={{ letterSpacing: '-1px', color: 'var(--px-fg)' }}
+          >
+            This link isn&apos;t valid
+          </h1>
+          <p
+            className="mx-auto mt-4 max-w-md text-[15px]"
+            style={{ color: 'var(--px-fg-2)', lineHeight: 1.7 }}
+          >
+            The invite may have been revoked, replaced, or expired. Please
+            contact the recruiter who sent it.
+          </p>
+        </div>
+      </WizardFrame>
     )
   }
 
   if (!data) return null
 
   return (
-    <div>
-      <header className="mb-8">
-        <div className="text-xs uppercase tracking-wider text-zinc-500">
-          Pre-interview check
-        </div>
-        <h1 className="mt-1 text-2xl font-semibold">
-          {data.job_title} · {data.stage_name}
-        </h1>
-        <p className="mt-1 text-sm text-zinc-600">
-          {data.company_name} · {data.duration_minutes} minutes
-        </p>
-        <StepIndicator current={currentStep} otpRequired={data.otp_required} />
-      </header>
+    <WizardFrame
+      companyName={data.company_name}
+      jobTitle={data.job_title}
+      stageName={data.stage_name}
+    >
+      <StepProgress current={currentStep} otpRequired={data.otp_required} />
+
+      <div className="mb-2 text-[11px] font-semibold uppercase" style={{ letterSpacing: '1.1px', color: 'var(--px-fg-4)' }}>
+        {data.stage_name} · {data.duration_minutes} minutes
+      </div>
+      <h1
+        className="px-serif m-0 mb-4 text-[44px] font-normal"
+        style={{ letterSpacing: '-1.1px', lineHeight: 1.08, color: 'var(--px-fg)' }}
+      >
+        Pre-interview check
+      </h1>
+      <p
+        className="mb-8 text-[15px]"
+        style={{ color: 'var(--px-fg-2)', lineHeight: 1.7 }}
+      >
+        A few quick steps so we know you&apos;re ready and your setup works.
+        Take your time — you can only move forward once each step is complete.
+      </p>
 
       {currentStep === 'consent' && (
         <ConsentStep token={token} consentText={data.consent_text} />
@@ -80,11 +106,57 @@ export function WizardShell({ token }: { token: string }) {
       )}
       {currentStep === 'start' && <StartStep token={token} />}
       {currentStep === 'already-started' && <AlreadyStartedPanel />}
+    </WizardFrame>
+  )
+}
+
+function WizardFrame({
+  companyName,
+  jobTitle,
+  stageName: _stageName,
+  children,
+}: {
+  companyName: string
+  jobTitle: string
+  stageName: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className="flex min-h-screen flex-col">
+      {/* Top bar — minimal, candidate-facing */}
+      <div
+        className="flex h-14 flex-shrink-0 items-center gap-3 border-b px-8"
+        style={{
+          background: 'var(--px-surface)',
+          borderColor: 'var(--px-hairline)',
+        }}
+      >
+        <div
+          className="flex h-6 w-6 items-center justify-center rounded-[5px]"
+          style={{ background: 'var(--px-accent)' }}
+          aria-hidden="true"
+        >
+          <svg width="11" height="11" viewBox="0 0 12 12">
+            <path d="M3 2v8l5-4z" fill="#fff" />
+          </svg>
+        </div>
+        <div className="text-[13px]" style={{ color: 'var(--px-fg)' }}>
+          <b style={{ fontWeight: 600 }}>{companyName || 'ProjectX'}</b>
+          {jobTitle && (
+            <span style={{ color: 'var(--px-fg-4)' }}> · {jobTitle}</span>
+          )}
+        </div>
+        <div className="flex-1" />
+      </div>
+
+      <div className="flex-1 overflow-auto px-8 py-12">
+        <div className="mx-auto max-w-[640px]">{children}</div>
+      </div>
     </div>
   )
 }
 
-function StepIndicator({
+function StepProgress({
   current,
   otpRequired,
 }: {
@@ -93,33 +165,61 @@ function StepIndicator({
 }) {
   const steps: { key: WizardStepKey; label: string }[] = [
     { key: 'consent', label: 'Consent' },
-    ...(otpRequired ? [{ key: 'otp' as const, label: 'Verify identity' }] : []),
+    ...(otpRequired ? [{ key: 'otp' as const, label: 'Verify' }] : []),
     { key: 'cam-mic', label: 'Camera & mic' },
     { key: 'start', label: 'Start' },
   ]
   const currentIdx = steps.findIndex((s) => s.key === current)
+
   return (
-    <ol className="mt-4 flex gap-2 text-xs text-zinc-500">
-      {steps.map((s, i) => (
-        <li
-          key={s.key}
-          className={i <= currentIdx ? 'text-zinc-900 font-medium' : ''}
-        >
-          {i + 1}. {s.label}
-          {i < steps.length - 1 && (
-            <span className="mx-1 text-zinc-300">→</span>
-          )}
-        </li>
-      ))}
-    </ol>
+    <div className="mb-12 flex gap-2">
+      {steps.map((s, i) => {
+        const done = i < currentIdx
+        const active = i === currentIdx
+        return (
+          <div key={s.key} className="flex-1">
+            <div
+              className="h-[3px] rounded-[2px]"
+              style={{
+                background: done
+                  ? 'var(--px-ok)'
+                  : active
+                    ? 'var(--px-accent)'
+                    : 'var(--px-surface-3)',
+              }}
+            />
+            <div
+              className="mt-2 text-[11.5px]"
+              style={{
+                color: active ? 'var(--px-fg)' : 'var(--px-fg-4)',
+                fontWeight: active ? 500 : 400,
+              }}
+            >
+              {s.label}
+            </div>
+          </div>
+        )
+      })}
+    </div>
   )
 }
 
 function AlreadyStartedPanel() {
   return (
-    <div className="rounded-lg bg-zinc-100 p-6 text-center">
-      <h2 className="text-lg font-semibold">Your session has already started</h2>
-      <p className="mt-2 text-sm text-zinc-600">
+    <div
+      className="rounded-[12px] border p-8 text-center"
+      style={{
+        background: 'var(--px-surface)',
+        borderColor: 'var(--px-hairline)',
+      }}
+    >
+      <h2
+        className="px-serif m-0 mb-3 text-[26px] font-normal"
+        style={{ color: 'var(--px-fg)' }}
+      >
+        Your session has already started
+      </h2>
+      <p className="text-sm" style={{ color: 'var(--px-fg-2)' }}>
         If you were disconnected, the rejoin flow will be available in the next
         release.
       </p>

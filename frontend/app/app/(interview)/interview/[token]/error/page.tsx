@@ -43,12 +43,23 @@ export default async function InterviewErrorPage({
   const resolved: ErrorCode = isErrorCode(code) ? code : 'UNKNOWN'
   const m = MESSAGES[resolved]
   return (
-    <div className="text-center py-12">
-      <h1 className="text-2xl font-semibold">{m.title}</h1>
-      <p className="mt-4 text-zinc-600">{m.body}</p>
+    <div className="mx-auto max-w-[640px] px-8 py-24 text-center">
+      <h1
+        className="px-serif m-0 text-[40px] font-normal"
+        style={{ letterSpacing: '-1px', color: 'var(--px-fg)' }}
+      >
+        {m.title}
+      </h1>
+      <p
+        className="mx-auto mt-4 max-w-md text-[15px]"
+        style={{ color: 'var(--px-fg-2)', lineHeight: 1.7 }}
+      >
+        {m.body}
+      </p>
       <Link
         href="/"
-        className="mt-8 inline-block text-sm text-zinc-500 underline"
+        className="mt-8 inline-block text-sm underline"
+        style={{ color: 'var(--px-fg-3)' }}
       >
         Go to homepage
       </Link>

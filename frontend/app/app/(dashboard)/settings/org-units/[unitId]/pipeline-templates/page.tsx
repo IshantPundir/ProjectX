@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 
-import { Button } from '@/components/ui/button'
+import { Button } from '@/components/px'
 import { TemplateLibraryCard } from '@/components/dashboard/pipeline/TemplateLibraryCard'
 import { StarterPackBrowser } from '@/components/dashboard/pipeline/StarterPackBrowser'
 import { usePipelineTemplates } from '@/lib/hooks/use-pipeline-templates'

@@ -3,7 +3,7 @@
 import { toast } from 'sonner'
 
 import { SessionStatusBadge } from '@/components/dashboard/candidates/SessionStatusBadge'
-import { Button } from '@/components/ui/button'
+import { Button } from '@/components/px'
 import type { AssignmentResponse } from '@/lib/api/candidates'
 import type { SessionDetail, SessionState } from '@/lib/api/scheduler'
 import { useAssignmentSessions } from '@/lib/hooks/use-assignment-sessions'

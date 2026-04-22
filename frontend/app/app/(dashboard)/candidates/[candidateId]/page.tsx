@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { useCallback } from 'react'
 
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Alert, AlertDescription, AlertTitle } from '@/components/px'
 import { useCandidate } from '@/lib/hooks/use-candidate'
 
 import CandidateAssignmentsTab from './CandidateAssignmentsTab'
@@ -50,21 +50,27 @@ export default function CandidateDetailPage() {
 
   if (isLoading) {
     return (
-      <div>
-        <div className="mb-4 text-sm text-zinc-500">
+      <div className="mx-auto max-w-[1100px] px-8 pb-10 pt-5">
+        <div
+          className="mb-4 text-[12px]"
+          style={{ color: 'var(--px-fg-3)' }}
+        >
           <Link href="/candidates" className="hover:underline">
-            Candidates
+            ← Candidates
           </Link>
         </div>
-        <div className="text-sm text-zinc-500">Loading…</div>
+        <div className="text-sm" style={{ color: 'var(--px-fg-3)' }}>Loading…</div>
       </div>
     )
   }
 
   if (error || !candidate) {
     return (
-      <div>
-        <div className="mb-4 text-sm text-zinc-500">
+      <div className="mx-auto max-w-[1100px] px-8 pb-10 pt-5">
+        <div
+          className="mb-4 text-[12px]"
+          style={{ color: 'var(--px-fg-3)' }}
+        >
           <Link href="/candidates" className="hover:underline">
             ← Candidates
           </Link>
@@ -85,22 +91,28 @@ export default function CandidateDetailPage() {
   const displayName = candidate.name ?? '(redacted)'
 
   return (
-    <div>
+    <div className="mx-auto max-w-[1100px] px-8 pb-10 pt-5">
       {/* Breadcrumb */}
-      <div className="mb-4 text-sm text-zinc-500">
+      <div
+        className="mb-3 text-[12px]"
+        style={{ color: 'var(--px-fg-3)' }}
+      >
         <Link href="/candidates" className="hover:underline">
           ← Candidates
         </Link>
-        <span className="mx-1.5">/</span>
-        <span className="text-zinc-700">{displayName}</span>
       </div>
 
       {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-zinc-900">{displayName}</h1>
-        <p className="mt-1 text-sm text-zinc-500">
+      <div className="mb-5">
+        <h1
+          className="px-serif m-0 text-[30px] font-normal"
+          style={{ letterSpacing: '-0.6px', color: 'var(--px-fg)' }}
+        >
+          {displayName}
+        </h1>
+        <p className="mt-1 text-[12.5px]" style={{ color: 'var(--px-fg-3)' }}>
           <span>{candidate.email ?? '—'}</span>
-          <span className="mx-2 text-zinc-300">·</span>
+          <span className="mx-2" style={{ color: 'var(--px-fg-5)' }}>·</span>
           <span>
             Created {new Date(candidate.created_at).toLocaleDateString()}
           </span>
@@ -109,8 +121,8 @@ export default function CandidateDetailPage() {
 
       {/* Redaction notice */}
       {isRedacted && (
-        <div className="mb-6">
-          <Alert>
+        <div className="mb-5">
+          <Alert variant="caution">
             <AlertTitle>PII redacted</AlertTitle>
             <AlertDescription>
               This candidate&apos;s PII has been removed via GDPR redaction.
@@ -120,31 +132,36 @@ export default function CandidateDetailPage() {
         </div>
       )}
 
-      {/* Tab switcher */}
+      {/* Tab bar */}
       <div
-        className="mb-6 inline-flex items-center rounded-lg border border-zinc-200 bg-white p-0.5"
-        role="tablist"
-        aria-label="Candidate detail sections"
+        className="mb-5 border-b"
+        style={{ borderColor: 'var(--px-hairline)' }}
       >
-        {TABS.map((tab) => {
-          const active = activeTab === tab.key
-          return (
-            <button
-              key={tab.key}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              onClick={() => updateTab(tab.key)}
-              className={`px-4 py-1.5 text-sm rounded-md transition-colors ${
-                active
-                  ? 'bg-zinc-100 text-zinc-900 font-medium'
-                  : 'text-zinc-600 hover:text-zinc-900'
-              }`}
-            >
-              {tab.label}
-            </button>
-          )
-        })}
+        <nav
+          className="-mb-px flex gap-0"
+          role="tablist"
+          aria-label="Candidate detail sections"
+        >
+          {TABS.map((tab) => {
+            const active = activeTab === tab.key
+            return (
+              <button
+                key={tab.key}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => updateTab(tab.key)}
+                className="inline-flex items-center border-b-2 px-4 py-2.5 text-[13px] font-medium transition-colors"
+                style={{
+                  color: active ? 'var(--px-fg)' : 'var(--px-fg-3)',
+                  borderColor: active ? 'var(--px-accent)' : 'transparent',
+                }}
+              >
+                {tab.label}
+              </button>
+            )
+          })}
+        </nav>
       </div>
 
       {/* Tab content */}

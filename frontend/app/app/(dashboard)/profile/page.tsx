@@ -137,28 +137,59 @@ export default function ProfilePage() {
     : me.email[0].toUpperCase();
 
   return (
-    <div className="max-w-2xl">
-      <h1 className="text-lg font-semibold text-zinc-900 mb-6">Profile</h1>
+    <div className="mx-auto max-w-[800px] px-8 pb-10 pt-5">
+      <h1
+        className="px-serif m-0 mb-6 text-[30px] font-normal"
+        style={{ letterSpacing: "-0.6px", color: "var(--px-fg)" }}
+      >
+        Profile
+      </h1>
 
       {/* ─── User card ─── */}
-      <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden mb-6">
+      <div
+        className="mb-6 overflow-hidden rounded-[10px] border"
+        style={{
+          background: "var(--px-surface)",
+          borderColor: "var(--px-hairline)",
+        }}
+      >
         {/* Header with avatar */}
-        <div className="bg-gradient-to-r from-green-600 to-green-500 px-6 py-8">
+        <div
+          className="px-6 py-8"
+          style={{
+            background:
+              "linear-gradient(135deg, var(--px-accent) 0%, var(--px-accent-2) 100%)",
+          }}
+        >
           <div className="flex items-center gap-4">
-            <div className="w-16 h-16 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center text-white text-xl font-semibold shrink-0">
+            <div
+              className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full text-xl font-semibold text-white backdrop-blur-sm"
+              style={{ background: "rgba(255,255,255,0.18)" }}
+            >
               {initials}
             </div>
             <div className="min-w-0">
-              <h2 className="text-lg font-semibold text-white truncate">
+              <h2
+                className="px-serif truncate text-[22px] font-normal text-white"
+                style={{ letterSpacing: "-0.4px" }}
+              >
                 {me.full_name || me.email}
               </h2>
               {me.full_name && (
-                <p className="text-sm text-green-100 truncate">{me.email}</p>
+                <p
+                  className="truncate text-[13px]"
+                  style={{ color: "rgba(255,255,255,0.75)" }}
+                >
+                  {me.email}
+                </p>
               )}
-              <div className="flex items-center gap-2 mt-1.5">
+              <div className="mt-1.5 flex items-center gap-2">
                 {me.is_super_admin && (
-                  <span className="inline-flex items-center gap-1 bg-white/20 text-white px-2 py-0.5 rounded-full text-xs font-medium">
-                    <IconShield className="w-3 h-3" />
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium text-white"
+                    style={{ background: "rgba(255,255,255,0.18)" }}
+                  >
+                    <IconShield className="h-3 w-3" />
                     Super Admin
                   </span>
                 )}
@@ -170,86 +201,98 @@ export default function ProfilePage() {
         {/* Details */}
         <div className="px-6 py-5">
           <div className="grid grid-cols-2 gap-6">
-            <div className="flex items-start gap-3">
-              <div className="w-8 h-8 rounded-lg bg-zinc-100 flex items-center justify-center shrink-0 mt-0.5">
-                <IconMail className="w-4 h-4 text-zinc-500" />
+            {[
+              { icon: IconMail, label: "Email", value: me.email },
+              { icon: IconBuilding, label: "Organization", value: me.client_name },
+              { icon: IconUser, label: "Full name", value: me.full_name || "Not set" },
+              {
+                icon: IconShield,
+                label: "Account type",
+                value: me.is_super_admin ? "Super Admin" : "Team Member",
+              },
+            ].map(({ icon: Icon, label, value }) => (
+              <div key={label} className="flex items-start gap-3">
+                <div
+                  className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md"
+                  style={{ background: "var(--px-surface-2)" }}
+                >
+                  <Icon className="h-4 w-4" />
+                </div>
+                <div className="min-w-0">
+                  <p
+                    className="text-[10.5px] font-semibold uppercase"
+                    style={{ letterSpacing: "1.1px", color: "var(--px-fg-4)" }}
+                  >
+                    {label}
+                  </p>
+                  <p
+                    className="truncate text-[13px]"
+                    style={{ color: "var(--px-fg)" }}
+                  >
+                    {value}
+                  </p>
+                </div>
               </div>
-              <div className="min-w-0">
-                <p className="text-xs font-medium text-zinc-400">Email</p>
-                <p className="text-sm text-zinc-900 truncate">{me.email}</p>
-              </div>
-            </div>
-            <div className="flex items-start gap-3">
-              <div className="w-8 h-8 rounded-lg bg-zinc-100 flex items-center justify-center shrink-0 mt-0.5">
-                <IconBuilding className="w-4 h-4 text-zinc-500" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-xs font-medium text-zinc-400">Organization</p>
-                <p className="text-sm text-zinc-900 truncate">{me.client_name}</p>
-              </div>
-            </div>
-            <div className="flex items-start gap-3">
-              <div className="w-8 h-8 rounded-lg bg-zinc-100 flex items-center justify-center shrink-0 mt-0.5">
-                <IconUser className="w-4 h-4 text-zinc-500" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-xs font-medium text-zinc-400">Full Name</p>
-                <p className="text-sm text-zinc-900">{me.full_name || "Not set"}</p>
-              </div>
-            </div>
-            <div className="flex items-start gap-3">
-              <div className="w-8 h-8 rounded-lg bg-zinc-100 flex items-center justify-center shrink-0 mt-0.5">
-                <IconShield className="w-4 h-4 text-zinc-500" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-xs font-medium text-zinc-400">Account Type</p>
-                <p className="text-sm text-zinc-900">
-                  {me.is_super_admin ? "Super Admin" : "Team Member"}
-                </p>
-              </div>
-            </div>
+            ))}
           </div>
         </div>
       </div>
 
       {/* ─── Assignments ─── */}
       {Object.keys(byUnit).length > 0 && (
-        <div className="bg-white border border-zinc-200 rounded-xl p-6 mb-6">
-          <h2 className="text-sm font-semibold text-zinc-900 mb-4">
-            Role Assignments
-            <span className="text-zinc-400 font-normal ml-1.5">
+        <div
+          className="mb-6 rounded-[10px] border p-6"
+          style={{
+            background: "var(--px-surface)",
+            borderColor: "var(--px-hairline)",
+          }}
+        >
+          <h2
+            className="mb-4 text-[11px] font-semibold uppercase"
+            style={{ letterSpacing: "1.1px", color: "var(--px-fg-4)" }}
+          >
+            Role assignments
+            <span
+              className="ml-1.5 font-normal normal-case"
+              style={{ letterSpacing: 0, color: "var(--px-fg-4)" }}
+            >
               ({me.assignments.length} role{me.assignments.length !== 1 ? "s" : ""} across{" "}
               {Object.keys(byUnit).length} unit{Object.keys(byUnit).length !== 1 ? "s" : ""})
             </span>
           </h2>
-          <div className="space-y-3">
+          <div className="space-y-2">
             {Object.entries(byUnit).map(([unitId, { name, roles }]) => (
               <div
                 key={unitId}
-                className="flex items-center justify-between border border-zinc-100 rounded-lg px-4 py-3 hover:border-zinc-200 transition-colors duration-100"
+                className="flex items-center justify-between rounded-lg border px-4 py-3 transition-colors"
+                style={{ borderColor: "var(--px-hairline)" }}
               >
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-zinc-900">{name}</p>
+                  <p
+                    className="text-[13px] font-medium"
+                    style={{ color: "var(--px-fg)" }}
+                  >
+                    {name}
+                  </p>
                 </div>
-                <div className="flex flex-wrap gap-1.5 shrink-0 ml-4">
-                  {roles.map((role) => (
-                    <span
-                      key={role}
-                      className={`px-2 py-0.5 rounded text-xs font-medium ${
-                        role === "Admin"
-                          ? "bg-blue-50 text-blue-700"
-                          : role === "Recruiter"
-                            ? "bg-green-50 text-green-700"
-                            : role === "Hiring Manager"
-                              ? "bg-amber-50 text-amber-700"
-                              : role === "Interviewer"
-                                ? "bg-purple-50 text-purple-700"
-                                : "bg-zinc-100 text-zinc-600"
-                      }`}
-                    >
-                      {role}
-                    </span>
-                  ))}
+                <div className="ml-4 flex shrink-0 flex-wrap gap-1.5">
+                  {roles.map((role) => {
+                    const chipClass =
+                      role === "Admin"
+                        ? "px-chip ai"
+                        : role === "Recruiter"
+                          ? "px-chip ok"
+                          : role === "Hiring Manager"
+                            ? "px-chip caution"
+                            : role === "Interviewer"
+                              ? "px-chip human"
+                              : "px-chip soft";
+                    return (
+                      <span key={role} className={chipClass}>
+                        {role}
+                      </span>
+                    );
+                  })}
                 </div>
               </div>
             ))}
@@ -259,26 +302,35 @@ export default function ProfilePage() {
 
       {/* No assignments message */}
       {!me.is_super_admin && me.assignments.length === 0 && (
-        <div className="bg-white border border-dashed border-zinc-200 rounded-xl p-8 text-center mb-6">
-          <div className="w-10 h-10 rounded-full bg-zinc-100 flex items-center justify-center mx-auto mb-3">
-            <IconShield className="w-5 h-5 text-zinc-400" />
+        <div
+          className="mb-6 rounded-[10px] border border-dashed p-8 text-center"
+          style={{ borderColor: "var(--px-hairline-strong)" }}
+        >
+          <div
+            className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full"
+            style={{ background: "var(--px-surface-2)" }}
+          >
+            <IconShield className="h-5 w-5 opacity-60" />
           </div>
-          <p className="text-sm text-zinc-500 mb-1">No roles assigned yet</p>
-          <p className="text-xs text-zinc-400">
+          <p className="mb-1 text-sm" style={{ color: "var(--px-fg-3)" }}>
+            No roles assigned yet
+          </p>
+          <p className="text-[12px]" style={{ color: "var(--px-fg-4)" }}>
             Contact your administrator to get assigned to an organizational unit.
           </p>
         </div>
       )}
 
       {/* ─── Sign out ─── */}
-      <div className="border-t border-zinc-200 pt-6">
+      <div className="border-t pt-6" style={{ borderColor: "var(--px-hairline)" }}>
         <button
           onClick={handleSignOut}
           disabled={signingOut}
-          className="inline-flex items-center gap-2 text-sm text-red-600 hover:text-red-700 cursor-pointer transition-colors duration-150 disabled:opacity-50"
+          className="inline-flex cursor-pointer items-center gap-2 text-sm transition-colors disabled:opacity-50"
+          style={{ color: "var(--px-danger)" }}
         >
-          <IconLogout className="w-4 h-4" />
-          {signingOut ? "Signing out..." : "Sign out"}
+          <IconLogout className="h-4 w-4" />
+          {signingOut ? "Signing out…" : "Sign out"}
         </button>
       </div>
     </div>

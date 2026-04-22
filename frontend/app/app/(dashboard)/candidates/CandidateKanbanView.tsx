@@ -82,17 +82,31 @@ export default function CandidateKanbanView({ jobId }: Props) {
 
   if (isLoading) {
     return (
-      <div className="rounded-lg border border-zinc-200 bg-white p-12 text-center">
-        <p className="text-sm text-zinc-500">Loading board…</p>
+      <div
+        className="rounded-[10px] border p-12 text-center"
+        style={{
+          background: 'var(--px-surface)',
+          borderColor: 'var(--px-hairline)',
+        }}
+      >
+        <p className="text-sm" style={{ color: 'var(--px-fg-3)' }}>
+          Loading board…
+        </p>
       </div>
     )
   }
 
   if (!data || data.stages.length === 0) {
     return (
-      <div className="rounded-lg border border-zinc-200 bg-white p-12 text-center">
-        <p className="text-sm text-zinc-500">
-          This JD has no pipeline stages. Add stages in the JD pipeline editor
+      <div
+        className="rounded-[10px] border p-12 text-center"
+        style={{
+          background: 'var(--px-surface)',
+          borderColor: 'var(--px-hairline)',
+        }}
+      >
+        <p className="text-sm" style={{ color: 'var(--px-fg-3)' }}>
+          This role has no pipeline stages. Add stages in the pipeline editor
           first.
         </p>
       </div>
@@ -106,7 +120,7 @@ export default function CandidateKanbanView({ jobId }: Props) {
       onDragEnd={handleDragEnd}
     >
       <div
-        className="flex gap-4 overflow-x-auto pb-4"
+        className="flex gap-2.5 overflow-x-auto pb-4"
         role="list"
         aria-label="Candidate kanban board"
       >

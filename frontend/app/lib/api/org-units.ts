@@ -1,6 +1,22 @@
 import { apiFetch } from './client'
 import type { CompanyProfile } from '@/components/dashboard/company-profile-form'
 
+/**
+ * Rich per-unit-type metadata. Shape is intentionally loose — each unit_type
+ * uses its own subset of keys. Unknown keys are preserved by the backend.
+ *
+ * Company/Client extras: legal_name, short_name, website, sector, hq, size,
+ *   description, interview_style, panel_size, takehome_policy, time_to_decision,
+ *   values, base_philosophy, equity, bonus, locations[], remote_policy, visa,
+ *   contract_start, renews, fee_model, guarantee_period, exclusive_roles,
+ *   account_manager.
+ * Region: code, primary_city, timezone, currency, locale, offices[], notes.
+ * Division: code, lead_name, cost_center, hiring_budget, description,
+ *   default_panel, default_takehome, default_tech_screen, bar_raiser_pool.
+ * Team: slug, lead_name, focus.
+ */
+export type OrgUnitMetadata = Record<string, unknown>
+
 export interface OrgUnit {
   id: string
   client_id: string
@@ -18,6 +34,7 @@ export interface OrgUnit {
   admin_emails: string[]
   is_root: boolean
   company_profile: CompanyProfile | null
+  metadata: OrgUnitMetadata | null
 }
 
 export interface MeData {
@@ -35,6 +52,9 @@ export const orgUnitsApi = {
   list: (token: string): Promise<OrgUnit[]> =>
     apiFetch<OrgUnit[]>('/api/org-units', { token }),
 
+  get: (token: string, unitId: string): Promise<OrgUnit> =>
+    apiFetch<OrgUnit>(`/api/org-units/${unitId}`, { token }),
+
   me: (token: string): Promise<MeData> =>
     apiFetch<MeData>('/api/auth/me', { token }),
 
@@ -45,10 +65,28 @@ export const orgUnitsApi = {
       unit_type: string
       parent_unit_id: string | null
       company_profile: CompanyProfile | null
+      metadata?: OrgUnitMetadata | null
     },
   ): Promise<OrgUnit> =>
     apiFetch<OrgUnit>('/api/org-units', {
       method: 'POST',
+      token,
+      body: JSON.stringify(body),
+    }),
+
+  update: (
+    token: string,
+    unitId: string,
+    body: {
+      name?: string
+      company_profile?: CompanyProfile | null
+      set_company_profile?: boolean
+      metadata?: OrgUnitMetadata | null
+      set_metadata?: boolean
+    },
+  ): Promise<OrgUnit> =>
+    apiFetch<OrgUnit>(`/api/org-units/${unitId}`, {
+      method: 'PUT',
       token,
       body: JSON.stringify(body),
     }),

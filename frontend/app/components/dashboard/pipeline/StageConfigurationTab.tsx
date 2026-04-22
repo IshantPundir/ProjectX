@@ -19,11 +19,15 @@ type Props = {
 }
 
 const STAGE_TYPES: { value: StageType; label: string }[] = [
+  { value: 'intake', label: 'Intake' },
+  { value: 'recruiter', label: 'Recruiter Screen' },
   { value: 'phone_screen', label: 'Phone Screen' },
   { value: 'ai_interview', label: 'AI Interview' },
   { value: 'human_interview', label: 'Human Interview' },
   { value: 'panel_interview', label: 'Panel Interview' },
   { value: 'take_home', label: 'Take-home' },
+  { value: 'debrief', label: 'Debrief' },
+  { value: 'offer', label: 'Offer' },
 ]
 
 const ADVANCE_BEHAVIORS: { value: AdvanceBehavior; label: string }[] = [

@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 
 import { JdPicker } from '@/components/dashboard/candidates/JdPicker'
 import { StatusBadge } from '@/components/dashboard/candidates/StatusBadge'
-import { Button } from '@/components/ui/button'
+import { Button } from '@/components/px'
 import {
   Dialog,
   DialogContent,
@@ -14,7 +14,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog'
+} from '@/components/px'
 import type {
   AssignmentResponse,
   AssignmentStatus,

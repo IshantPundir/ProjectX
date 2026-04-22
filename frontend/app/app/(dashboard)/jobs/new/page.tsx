@@ -4,21 +4,12 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { useMemo, useState } from 'react'
 import { useForm, useWatch, type Resolver } from 'react-hook-form'
 import { toast } from 'sonner'
 import { z } from 'zod'
 
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import { Textarea } from '@/components/ui/textarea'
+import { Button, Input, Label, Textarea } from '@/components/px'
 import { apiFetch } from '@/lib/api/client'
 import { jobsApi } from '@/lib/api/jobs'
 import type {
@@ -31,10 +22,10 @@ import type {
 import { getFreshSupabaseToken } from '@/lib/auth/tokens'
 
 const EMPLOYMENT_TYPE_OPTIONS: { value: EmploymentType; label: string }[] = [
-  { value: 'full_time', label: 'Full Time' },
-  { value: 'part_time', label: 'Part Time' },
+  { value: 'full_time', label: 'Full time' },
+  { value: 'part_time', label: 'Part time' },
   { value: 'contract', label: 'Contract' },
-  { value: 'contract_to_hire', label: 'Contract to Hire' },
+  { value: 'contract_to_hire', label: 'Contract to hire' },
   { value: 'internship', label: 'Internship' },
 ]
 
@@ -70,24 +61,17 @@ const START_DATE_OPTIONS: { value: StartDatePref; label: string }[] = [
 const createJobSchema = z.object({
   org_unit_id: z.string().uuid('Select an org unit'),
   title: z.string().min(1, 'Title is required').max(300),
-  description_raw: z
-    .string()
-    .min(50, 'JD must be at least 50 characters')
-    .max(50_000),
+  description_raw: z.string().min(50, 'JD must be at least 50 characters').max(50_000),
   project_scope_raw: z.string().max(20_000).optional().nullable(),
   target_headcount: z.preprocess(
     (v) => (v === '' || v === null || v === undefined ? null : Number(v)),
     z.number().int().min(1).max(10_000).nullable().optional(),
   ),
-  // Metadata fields — all optional
   employment_type: z
     .enum(['full_time', 'part_time', 'contract', 'contract_to_hire', 'internship'])
     .nullable()
     .optional(),
-  work_arrangement: z
-    .enum(['onsite', 'remote', 'hybrid'])
-    .nullable()
-    .optional(),
+  work_arrangement: z.enum(['onsite', 'remote', 'hybrid']).nullable().optional(),
   location: z.string().max(500).optional().nullable(),
   salary_range_min: z.preprocess(
     (v) => (v === '' || v === null || v === undefined ? null : Number(v)),
@@ -97,14 +81,8 @@ const createJobSchema = z.object({
     (v) => (v === '' || v === null || v === undefined ? null : Number(v)),
     z.number().min(0).nullable().optional(),
   ),
-  salary_currency: z
-    .enum(['USD', 'EUR', 'GBP', 'INR', 'CAD', 'AUD'])
-    .nullable()
-    .optional(),
-  travel_required: z
-    .enum(['none', 'occasional', 'moderate', 'extensive'])
-    .nullable()
-    .optional(),
+  salary_currency: z.enum(['USD', 'EUR', 'GBP', 'INR', 'CAD', 'AUD']).nullable().optional(),
+  travel_required: z.enum(['none', 'occasional', 'moderate', 'extensive']).nullable().optional(),
   start_date_pref: z
     .enum(['immediate', 'within_30_days', 'within_60_days', 'flexible'])
     .nullable()
@@ -120,13 +98,103 @@ type OrgUnit = {
   parent_unit_id: string | null
 }
 
+/* ─── Wizard progress strip — matches v4 design (filled bars + padded 0N prefix) ─── */
+
+const STEPS = [
+  { n: 1, label: 'Basics' },
+  { n: 2, label: 'Job description' },
+  { n: 3, label: 'Review & publish' },
+] as const
+
+function WizardProgress({
+  current,
+  onPick,
+}: {
+  current: 1 | 2 | 3
+  onPick: (n: 1 | 2 | 3) => void
+}) {
+  return (
+    <div className="mb-7 flex gap-0.5">
+      {STEPS.map((s) => {
+        const filled = current >= s.n
+        const active = current === s.n
+        return (
+          <div
+            key={s.n}
+            className="flex-1 cursor-pointer"
+            onClick={() => onPick(s.n as 1 | 2 | 3)}
+          >
+            <div
+              className="mb-2 h-[3px] rounded-sm"
+              style={{
+                background: filled ? 'var(--px-accent)' : 'var(--px-surface-3)',
+              }}
+            />
+            <div className="flex items-center gap-1.5">
+              <span
+                className="px-mono text-[10px] font-semibold"
+                style={{
+                  color: filled ? 'var(--px-accent)' : 'var(--px-fg-4)',
+                }}
+              >
+                0{s.n}
+              </span>
+              <span
+                className="text-[12px]"
+                style={{
+                  color: active ? 'var(--px-fg)' : 'var(--px-fg-3)',
+                  fontWeight: active ? 600 : 400,
+                }}
+              >
+                {s.label}
+              </span>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/* ─── Field wrapper ──────────────────────────────────────── */
+
+function Field({
+  label,
+  hint,
+  error,
+  children,
+}: {
+  label: string
+  hint?: string
+  error?: string
+  children: React.ReactNode
+}) {
+  return (
+    <div>
+      <Label className="px-label">{label}</Label>
+      {children}
+      {error ? (
+        <p className="px-hint" style={{ color: 'var(--px-danger)' }}>
+          {error}
+        </p>
+      ) : hint ? (
+        <p className="px-hint">{hint}</p>
+      ) : null}
+    </div>
+  )
+}
+
+/* ─── Page ───────────────────────────────────────────────── */
+
 export default function NewJobPage() {
   const router = useRouter()
+  const [step, setStep] = useState<1 | 2 | 3>(1)
 
-  // Fetch all org units the user can see. Backend filters by permission;
-  // the 422 CompanyProfileIncompleteError handler catches units without
-  // a completed profile in ancestry.
-  const { data: units, isLoading: unitsLoading, error: unitsError } = useQuery<OrgUnit[]>({
+  const {
+    data: units,
+    isLoading: unitsLoading,
+    error: unitsError,
+  } = useQuery<OrgUnit[]>({
     queryKey: ['org-units'],
     queryFn: async () => {
       const token = await getFreshSupabaseToken()
@@ -154,7 +222,7 @@ export default function NewJobPage() {
     mode: 'onChange',
   })
 
-  const workArrangement = useWatch({ control: form.control, name: 'work_arrangement' })
+  const values = useWatch({ control: form.control })
 
   const createMutation = useMutation({
     mutationFn: async (data: CreateJobForm) => {
@@ -177,7 +245,7 @@ export default function NewJobPage() {
       })
     },
     onSuccess: (job) => {
-      toast.success('Job created — running extraction')
+      toast.success('Role created — running signal extraction')
       router.push(`/jobs/${job.id}`)
     },
     onError: (err: Error) => {
@@ -185,15 +253,49 @@ export default function NewJobPage() {
     },
   })
 
-  const eligibleUnits = units || []
+  const eligibleUnits = units ?? []
+  const unitById = useMemo(
+    () => new Map(eligibleUnits.map((u) => [u.id, u])),
+    [eligibleUnits],
+  )
+
+  async function goNext() {
+    let ok = true
+    if (step === 1) {
+      ok = await form.trigger(['org_unit_id', 'title'])
+    } else if (step === 2) {
+      ok = await form.trigger(['description_raw'])
+    }
+    if (!ok) {
+      const errs = form.formState.errors
+      const first = Object.values(errs)[0]
+      if (first?.message) toast.error(`${first.message}`)
+      return
+    }
+    setStep((s) => (s === 3 ? s : ((s + 1) as 1 | 2 | 3)))
+  }
+
+  function goBack() {
+    setStep((s) => (s === 1 ? s : ((s - 1) as 1 | 2 | 3)))
+  }
 
   if (unitsLoading) {
-    return <div className="text-sm text-zinc-500">Loading org units...</div>
+    return (
+      <div
+        className="mx-auto max-w-[820px] px-8 pt-7 text-sm"
+        style={{ color: 'var(--px-fg-3)' }}
+      >
+        Loading org units…
+      </div>
+    )
   }
 
   if (unitsError) {
     return (
-      <div className="text-sm text-red-500">
+      <div
+        className="mx-auto max-w-[820px] px-8 pt-7 text-sm"
+        style={{ color: 'var(--px-danger)' }}
+      >
         Failed to load org units: {(unitsError as Error).message}
       </div>
     )
@@ -201,269 +303,431 @@ export default function NewJobPage() {
 
   if (eligibleUnits.length === 0) {
     return (
-      <div className="max-w-xl bg-white border border-zinc-200 rounded-lg p-8">
-        <h1 className="text-xl font-semibold text-zinc-900 mb-3">
-          No org units available
-        </h1>
-        <p className="text-sm text-zinc-600 mb-5">
-          You need access to at least one org unit with a completed company
-          profile before creating a job description. Visit Settings &rarr; Org Units
-          to set up your company profile.
-        </p>
-        <Link href="/settings/org-units">
-          <Button>Go to Org Units</Button>
-        </Link>
+      <div className="mx-auto max-w-[820px] px-8 pt-7">
+        <div
+          className="rounded-[14px] border p-8"
+          style={{ background: 'var(--px-surface)', borderColor: 'var(--px-hairline)' }}
+        >
+          <h1
+            className="px-serif m-0 mb-3 text-2xl"
+            style={{ color: 'var(--px-fg)' }}
+          >
+            No org units available
+          </h1>
+          <p className="mb-5 text-sm" style={{ color: 'var(--px-fg-3)' }}>
+            You need access to at least one org unit with a completed company
+            profile before creating a role. Visit Settings → Org units to set up
+            your company profile.
+          </p>
+          <Link href="/settings/org-units">
+            <Button size="sm">Go to Org units</Button>
+          </Link>
+        </div>
       </div>
     )
   }
 
+  const maxWidth = step === 2 ? 1180 : 820
+
   return (
-    <div className="max-w-2xl">
-      <h1 className="text-2xl font-semibold text-zinc-900 mb-6">
-        New Job Description
-      </h1>
+    <div
+      className="mx-auto px-8 pb-14 pt-7"
+      style={{ maxWidth }}
+    >
+      {/* Wizard header */}
+      <div className="mb-7">
+        <h1
+          className="px-serif m-0 text-[30px] font-normal"
+          style={{ letterSpacing: '-0.5px', color: 'var(--px-fg)' }}
+        >
+          New role
+        </h1>
+        <div
+          className="mt-1 text-[13px]"
+          style={{ color: 'var(--px-fg-3)' }}
+        >
+          Draft it, let Copilot extract signals, publish when it&apos;s right.
+        </div>
+      </div>
+
+      <WizardProgress current={step} onPick={setStep} />
+
       <form
         onSubmit={form.handleSubmit(
           (data) => createMutation.mutate(data),
           (errors) => {
-            const firstError = Object.values(errors)[0]
-            if (firstError?.message) {
-              toast.error(`Validation: ${firstError.message}`)
-            }
+            const first = Object.values(errors)[0]
+            if (first?.message) toast.error(`Validation: ${first.message}`)
           },
         )}
-        className="space-y-6"
       >
-        <div>
-          <Label htmlFor="org_unit_id">Org Unit</Label>
-          {/* Base UI Select.Root uses onValueChange((value, eventDetails) => void).
-              value is typed as unknown — cast to string; UUID format validated by Zod. */}
-          <Select
-            onValueChange={(v) =>
-              form.setValue('org_unit_id', v as string, { shouldValidate: true })
-            }
-          >
-            <SelectTrigger id="org_unit_id" className="mt-2 w-full">
-              <SelectValue placeholder="Select org unit" />
-            </SelectTrigger>
-            <SelectContent>
-              {eligibleUnits.map((u) => (
-                <SelectItem key={u.id} value={u.id}>
-                  {u.name} ({u.unit_type})
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {form.formState.errors.org_unit_id && (
-            <p className="text-xs text-red-500 mt-1">
-              {form.formState.errors.org_unit_id.message}
-            </p>
-          )}
-        </div>
-
-        <div>
-          <Label htmlFor="title">Title</Label>
-          <Input id="title" {...form.register('title')} className="mt-2" />
-          {form.formState.errors.title && (
-            <p className="text-xs text-red-500 mt-1">
-              {form.formState.errors.title.message}
-            </p>
-          )}
-        </div>
-
-        <div>
-          <Label htmlFor="description_raw">Job Description</Label>
-          <p className="text-xs text-zinc-500 mt-1 mb-2">
-            Paste the full raw JD. The AI will enrich it and extract
-            structured signals.
-          </p>
-          <Textarea
-            id="description_raw"
-            {...form.register('description_raw')}
-            rows={14}
-            className="font-mono text-sm"
-          />
-          {form.formState.errors.description_raw && (
-            <p className="text-xs text-red-500 mt-1">
-              {form.formState.errors.description_raw.message}
-            </p>
-          )}
-        </div>
-
-        <div>
-          <Label htmlFor="project_scope_raw">Project Scope (optional)</Label>
-          <p className="text-xs text-zinc-500 mt-1 mb-2">
-            What will this hire build in their first 90 days? Significantly
-            improves question specificity.
-          </p>
-          <Textarea
-            id="project_scope_raw"
-            {...form.register('project_scope_raw')}
-            rows={5}
-          />
-        </div>
-
-        {/* --- Additional Details --- */}
-        <div className="border-t border-zinc-200 pt-6">
-          <h2 className="text-sm font-medium text-zinc-500 mb-4">
-            Additional Details
-          </h2>
-
-          <div className="grid grid-cols-2 gap-4">
-            {/* Employment Type */}
-            <div>
-              <Label htmlFor="employment_type">Employment Type</Label>
-              <Select
-                onValueChange={(v) =>
-                  form.setValue('employment_type', (v || null) as EmploymentType | null, {
-                    shouldValidate: true,
-                  })
-                }
-              >
-                <SelectTrigger id="employment_type" className="mt-2 w-full">
-                  <SelectValue placeholder="Select type" />
-                </SelectTrigger>
-                <SelectContent>
-                  {EMPLOYMENT_TYPE_OPTIONS.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Work Arrangement */}
-            <div>
-              <Label htmlFor="work_arrangement">Work Arrangement</Label>
-              <Select
-                onValueChange={(v) =>
-                  form.setValue('work_arrangement', (v || null) as WorkArrangement | null, {
-                    shouldValidate: true,
-                  })
-                }
-              >
-                <SelectTrigger id="work_arrangement" className="mt-2 w-full">
-                  <SelectValue placeholder="Select arrangement" />
-                </SelectTrigger>
-                <SelectContent>
-                  {WORK_ARRANGEMENT_OPTIONS.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          {/* Location — shown when hybrid or onsite */}
-          {(workArrangement === 'onsite' || workArrangement === 'hybrid') && (
-            <div className="mt-4">
-              <Label htmlFor="location">Location</Label>
+        {/* Step 1 — Basics */}
+        {step === 1 && (
+          <div className="space-y-[22px]">
+            <Field label="Role title" hint="The title candidates will see." error={form.formState.errors.title?.message}>
               <Input
-                id="location"
-                {...form.register('location')}
-                placeholder="e.g. San Francisco, CA"
-                className="mt-2"
+                {...form.register('title')}
+                placeholder="e.g. Staff Backend Engineer"
               />
-            </div>
-          )}
+            </Field>
 
-          {/* Salary Range */}
-          <div className="mt-4">
-            <Label>Salary Range (Annual, for internal screening only)</Label>
-            <div className="grid grid-cols-3 gap-3 mt-2">
-              <div>
-                <Input
-                  type="number"
-                  placeholder="Min (annual)"
-                  {...form.register('salary_range_min')}
-                />
-              </div>
-              <div>
-                <Input
-                  type="number"
-                  placeholder="Max (annual)"
-                  {...form.register('salary_range_max')}
-                />
-              </div>
-              <div>
-                <Select
-                  onValueChange={(v) =>
-                    form.setValue('salary_currency', (v || null) as SalaryCurrency | null, {
-                      shouldValidate: true,
-                    })
+            <Field label="Org unit" error={form.formState.errors.org_unit_id?.message}>
+              <select
+                className="px-input"
+                value={form.watch('org_unit_id')}
+                onChange={(e) =>
+                  form.setValue('org_unit_id', e.target.value, { shouldValidate: true })
+                }
+              >
+                <option value="" disabled>
+                  Select org unit
+                </option>
+                {eligibleUnits.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.name} ({u.unit_type})
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Employment type">
+                <select
+                  className="px-input"
+                  value={form.watch('employment_type') ?? ''}
+                  onChange={(e) =>
+                    form.setValue(
+                      'employment_type',
+                      (e.target.value || null) as EmploymentType | null,
+                    )
                   }
                 >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Currency" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {SALARY_CURRENCY_OPTIONS.map((opt) => (
-                      <SelectItem key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  <option value="">Select type</option>
+                  {EMPLOYMENT_TYPE_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Work arrangement">
+                <select
+                  className="px-input"
+                  value={form.watch('work_arrangement') ?? ''}
+                  onChange={(e) =>
+                    form.setValue(
+                      'work_arrangement',
+                      (e.target.value || null) as WorkArrangement | null,
+                    )
+                  }
+                >
+                  <option value="">Select arrangement</option>
+                  {WORK_ARRANGEMENT_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+
+            {(form.watch('work_arrangement') === 'onsite' ||
+              form.watch('work_arrangement') === 'hybrid') && (
+              <Field label="Location" hint="Primary location or city.">
+                <Input {...form.register('location')} placeholder="e.g. San Francisco · hybrid" />
+              </Field>
+            )}
+
+            <Field
+              label="Salary range"
+              hint="Internal — candidates do not see this."
+            >
+              <div className="grid grid-cols-3 gap-3">
+                <Input type="number" placeholder="Min" {...form.register('salary_range_min')} />
+                <Input type="number" placeholder="Max" {...form.register('salary_range_max')} />
+                <select
+                  className="px-input"
+                  value={form.watch('salary_currency') ?? ''}
+                  onChange={(e) =>
+                    form.setValue(
+                      'salary_currency',
+                      (e.target.value || null) as SalaryCurrency | null,
+                    )
+                  }
+                >
+                  <option value="">Currency</option>
+                  {SALARY_CURRENCY_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </Field>
+
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Travel required">
+                <select
+                  className="px-input"
+                  value={form.watch('travel_required') ?? ''}
+                  onChange={(e) =>
+                    form.setValue(
+                      'travel_required',
+                      (e.target.value || null) as TravelRequired | null,
+                    )
+                  }
+                >
+                  <option value="">Select</option>
+                  {TRAVEL_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Preferred start date">
+                <select
+                  className="px-input"
+                  value={form.watch('start_date_pref') ?? ''}
+                  onChange={(e) =>
+                    form.setValue(
+                      'start_date_pref',
+                      (e.target.value || null) as StartDatePref | null,
+                    )
+                  }
+                >
+                  <option value="">Select</option>
+                  {START_DATE_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+
+            <Field
+              label="Target headcount"
+              hint="Optional — how many hires are you planning for this role?"
+            >
+              <Input
+                type="number"
+                min={1}
+                placeholder="e.g. 3"
+                {...form.register('target_headcount')}
+              />
+            </Field>
+          </div>
+        )}
+
+        {/* Step 2 — JD + scope — presented as a review surface */}
+        {step === 2 && (
+          <div
+            className="rounded-[14px] border p-7"
+            style={{ background: 'var(--px-surface)', borderColor: 'var(--px-hairline)' }}
+          >
+            <div className="mb-6 max-w-[720px]">
+              <h2
+                className="px-serif m-0 mb-3 text-[24px] font-normal"
+                style={{ letterSpacing: '-0.3px', color: 'var(--px-fg)' }}
+              >
+                Paste the job description, or describe the scope.
+              </h2>
+              <p className="text-[13.5px]" style={{ color: 'var(--px-fg-3)', lineHeight: 1.6 }}>
+                Copilot will pull out must-haves, nice-to-haves, and interview
+                questions after you publish. You&apos;ll see exactly where each
+                one came from, and you can adjust anything before it ships.
+              </p>
+            </div>
+
+            <div className="space-y-[22px]">
+              <Field
+                label="Job description"
+                error={form.formState.errors.description_raw?.message}
+              >
+                <Textarea
+                  {...form.register('description_raw')}
+                  rows={14}
+                  className="font-mono text-[13px]"
+                  placeholder="Paste the job description here…"
+                />
+              </Field>
+
+              <Field
+                label="Project scope"
+                hint="What will this hire build in their first 90 days? Significantly improves question specificity."
+              >
+                <Textarea {...form.register('project_scope_raw')} rows={5} />
+              </Field>
+            </div>
+          </div>
+        )}
+
+        {/* Step 3 — Review */}
+        {step === 3 && (
+          <div className="space-y-[22px]">
+            <div
+              className="rounded-[14px] border p-6"
+              style={{ background: 'var(--px-surface)', borderColor: 'var(--px-hairline)' }}
+            >
+              <h3
+                className="px-eyebrow mb-4"
+                style={{ margin: 0, marginBottom: 14 }}
+              >
+                Summary
+              </h3>
+              <div className="space-y-3">
+                <Summary label="Org unit" value={unitById.get(values.org_unit_id ?? '')?.name ?? '—'} />
+                <Summary label="Role title" value={values.title || '—'} />
+                <Summary
+                  label="Employment"
+                  value={
+                    [
+                      EMPLOYMENT_TYPE_OPTIONS.find((o) => o.value === values.employment_type)?.label,
+                      WORK_ARRANGEMENT_OPTIONS.find((o) => o.value === values.work_arrangement)?.label,
+                      values.location,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ') || '—'
+                  }
+                />
+                <Summary
+                  label="Compensation"
+                  value={
+                    values.salary_range_min && values.salary_range_max
+                      ? `${values.salary_currency ?? ''} ${values.salary_range_min.toLocaleString()}–${values.salary_range_max.toLocaleString()}`
+                      : '—'
+                  }
+                />
+                <Summary
+                  label="Target headcount"
+                  value={values.target_headcount ? String(values.target_headcount) : '—'}
+                />
+                <Summary
+                  label="JD length"
+                  value={`${(values.description_raw ?? '').length.toLocaleString()} characters`}
+                />
+                <Summary
+                  label="Project scope"
+                  value={
+                    values.project_scope_raw
+                      ? `${values.project_scope_raw.length.toLocaleString()} characters`
+                      : 'not provided'
+                  }
+                />
+              </div>
+            </div>
+
+            <div
+              className="flex items-start gap-2.5 rounded-md border p-3.5 text-[12.5px]"
+              style={{
+                background: 'var(--px-accent-tint)',
+                borderColor: 'var(--px-accent-line)',
+                color: 'var(--px-accent-2)',
+              }}
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={1.8}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.5 5.5l2.8 2.8M15.7 15.7l2.8 2.8M5.5 18.5l2.8-2.8M15.7 8.3l2.8-2.8" />
+              </svg>
+              <div>
+                <b>Next:</b> After you publish, Copilot will extract signals in
+                the background. You&apos;ll land on the review page where you
+                can confirm or edit them.
               </div>
             </div>
           </div>
+        )}
 
-          <div className="grid grid-cols-2 gap-4 mt-4">
-            {/* Travel Required */}
-            <div>
-              <Label htmlFor="travel_required">Travel Required</Label>
-              <Select
-                onValueChange={(v) =>
-                  form.setValue('travel_required', (v || null) as TravelRequired | null, {
-                    shouldValidate: true,
-                  })
-                }
+        {/* Footer actions */}
+        <div
+          className="mt-7 flex items-center gap-2.5 border-t pt-5"
+          style={{ borderColor: 'var(--px-hairline)' }}
+        >
+          {step > 1 ? (
+            <button type="button" className="px-btn outline sm" onClick={goBack}>
+              ← Back
+            </button>
+          ) : (
+            <Link href="/jobs">
+              <button type="button" className="px-btn ghost sm">
+                Cancel
+              </button>
+            </Link>
+          )}
+          <div className="flex-1" />
+          {step === 1 && (
+            <button type="button" className="px-btn primary sm" onClick={goNext}>
+              Next: Job description →
+            </button>
+          )}
+          {step === 2 && (
+            <>
+              <button type="button" className="px-btn ghost sm" onClick={goNext}>
+                Skip for now →
+              </button>
+              <button type="button" className="px-btn primary sm" onClick={goNext}>
+                Next: Review →
+              </button>
+            </>
+          )}
+          {step === 3 && (
+            <>
+              <span className="px-copilot-strip">
+                <svg
+                  width="11"
+                  height="11"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={1.8}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.5 5.5l2.8 2.8M15.7 15.7l2.8 2.8M5.5 18.5l2.8-2.8M15.7 8.3l2.8-2.8" />
+                </svg>
+                Copilot extracts signals after save
+              </span>
+              <button
+                type="submit"
+                className="px-btn primary sm"
+                disabled={createMutation.isPending}
               >
-                <SelectTrigger id="travel_required" className="mt-2 w-full">
-                  <SelectValue placeholder="Select" />
-                </SelectTrigger>
-                <SelectContent>
-                  {TRAVEL_OPTIONS.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Start Date Preference */}
-            <div>
-              <Label htmlFor="start_date_pref">Preferred Start Date</Label>
-              <Select
-                onValueChange={(v) =>
-                  form.setValue('start_date_pref', (v || null) as StartDatePref | null, {
-                    shouldValidate: true,
-                  })
-                }
-              >
-                <SelectTrigger id="start_date_pref" className="mt-2 w-full">
-                  <SelectValue placeholder="Select" />
-                </SelectTrigger>
-                <SelectContent>
-                  {START_DATE_OPTIONS.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
+                {createMutation.isPending ? 'Creating…' : 'Publish role'}
+              </button>
+            </>
+          )}
         </div>
-
-        <Button type="submit" disabled={createMutation.isPending}>
-          {createMutation.isPending ? 'Creating...' : 'Create and enhance'}
-        </Button>
       </form>
+    </div>
+  )
+}
+
+function Summary({ label, value }: { label: string; value: string }) {
+  return (
+    <div
+      className="grid items-center gap-4"
+      style={{ gridTemplateColumns: '150px 1fr' }}
+    >
+      <div
+        className="px-eyebrow"
+        style={{ margin: 0 }}
+      >
+        {label}
+      </div>
+      <div className="text-[13.5px]" style={{ color: 'var(--px-fg)' }}>
+        {value}
+      </div>
     </div>
   )
 }

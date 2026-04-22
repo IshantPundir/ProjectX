@@ -22,7 +22,7 @@ import {
   restrictToParentElement,
 } from '@dnd-kit/modifiers'
 
-import { Button } from '@/components/ui/button'
+import { Button } from '@/components/px'
 import { SortableStageCard } from './SortableStageCard'
 import type { PipelineStageUpdateInput } from '@/lib/api/pipelines'
 import type { BankResponse } from '@/lib/api/question-banks'

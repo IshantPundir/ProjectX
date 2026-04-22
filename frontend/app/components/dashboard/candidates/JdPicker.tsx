@@ -8,7 +8,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
+} from '@/components/px'
 import { jobsApi, type JobPostingSummary } from '@/lib/api/jobs'
 import { getFreshSupabaseToken } from '@/lib/auth/tokens'
 
@@ -54,24 +54,21 @@ export function JdPicker({ value, onChange }: Props) {
         <SelectValue placeholder={isLoading ? 'Loading jobs…' : 'Select a JD…'} />
       </SelectTrigger>
       <SelectContent>
+        {/*
+          Native <select><option> can only contain plain text, so we flatten
+          the previous two-line rich layout to "Title · org unit". The
+          px Select primitive walks children looking for SelectItem nodes and
+          renders their `children` prop as the option label — keeping it a
+          string keeps hydration valid.
+        */}
         <SelectItem value={ALL_JDS_SENTINEL}>
-          <span className="flex flex-col">
-            <span className="text-sm">All JDs (cross-JD view)</span>
-            <span className="text-[11px] text-zinc-500">
-              Show candidates across every job
-            </span>
-          </span>
+          All JDs · show candidates across every role
         </SelectItem>
         {(jobs ?? []).map((job) => (
           <SelectItem key={job.id} value={job.id}>
-            <span className="flex flex-col">
-              <span className="text-sm">{job.title}</span>
-              {job.org_unit_name && (
-                <span className="text-[11px] text-zinc-500">
-                  {job.org_unit_name}
-                </span>
-              )}
-            </span>
+            {job.org_unit_name
+              ? `${job.title} · ${job.org_unit_name}`
+              : job.title}
           </SelectItem>
         ))}
       </SelectContent>

@@ -7,7 +7,7 @@ import { useForm } from 'react-hook-form'
 import { toast } from 'sonner'
 import { z } from 'zod'
 
-import { Button } from '@/components/ui/button'
+import { Button } from '@/components/px'
 import {
   Dialog,
   DialogContent,
@@ -15,10 +15,10 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
+} from '@/components/px'
+import { Input } from '@/components/px'
+import { Label } from '@/components/px'
+import { Textarea } from '@/components/px'
 import {
   candidatesApi,
   type CandidateResponse,
@@ -152,9 +152,18 @@ export default function CandidateProfileTab({ candidate }: Props) {
   })
 
   return (
-    <div className="space-y-8">
-      <section className="bg-white border border-zinc-200 rounded-lg p-6">
-        <h2 className="text-base font-semibold text-zinc-900 mb-4">
+    <div className="space-y-6">
+      <section
+        className="rounded-[10px] border p-6"
+        style={{
+          background: 'var(--px-surface)',
+          borderColor: 'var(--px-hairline)',
+        }}
+      >
+        <h2
+          className="mb-4 text-[11px] font-semibold uppercase"
+          style={{ letterSpacing: '1.1px', color: 'var(--px-fg-4)' }}
+        >
           Profile
         </h2>
 
@@ -165,7 +174,7 @@ export default function CandidateProfileTab({ candidate }: Props) {
                 htmlFor="profile-name"
                 className="text-sm font-semibold"
               >
-                Name <span className="text-red-500">*</span>
+                Name <span style={{ color: 'var(--px-danger)' }}>*</span>
               </Label>
               <Input
                 id="profile-name"
@@ -175,7 +184,7 @@ export default function CandidateProfileTab({ candidate }: Props) {
                 aria-invalid={!!form.formState.errors.name || undefined}
               />
               {form.formState.errors.name && (
-                <p className="text-xs text-red-500 mt-1">
+                <p className="mt-1 text-[11.5px]" style={{ color: 'var(--px-danger)' }}>
                   {form.formState.errors.name.message}
                 </p>
               )}
@@ -196,7 +205,7 @@ export default function CandidateProfileTab({ candidate }: Props) {
                 readOnly
                 className="mt-2"
               />
-              <p className="text-xs text-zinc-500 mt-1">
+              <p className="mt-1 text-[11.5px]" style={{ color: 'var(--px-fg-4)' }}>
                 Email is the candidate&apos;s identity key and cannot be
                 edited here.
               </p>
@@ -218,7 +227,7 @@ export default function CandidateProfileTab({ candidate }: Props) {
                 aria-invalid={!!form.formState.errors.phone || undefined}
               />
               {form.formState.errors.phone && (
-                <p className="text-xs text-red-500 mt-1">
+                <p className="mt-1 text-[11.5px]" style={{ color: 'var(--px-danger)' }}>
                   {form.formState.errors.phone.message}
                 </p>
               )}
@@ -239,7 +248,7 @@ export default function CandidateProfileTab({ candidate }: Props) {
                 aria-invalid={!!form.formState.errors.location || undefined}
               />
               {form.formState.errors.location && (
-                <p className="text-xs text-red-500 mt-1">
+                <p className="mt-1 text-[11.5px]" style={{ color: 'var(--px-danger)' }}>
                   {form.formState.errors.location.message}
                 </p>
               )}
@@ -262,7 +271,7 @@ export default function CandidateProfileTab({ candidate }: Props) {
                 }
               />
               {form.formState.errors.current_title && (
-                <p className="text-xs text-red-500 mt-1">
+                <p className="mt-1 text-[11.5px]" style={{ color: 'var(--px-danger)' }}>
                   {form.formState.errors.current_title.message}
                 </p>
               )}
@@ -287,7 +296,7 @@ export default function CandidateProfileTab({ candidate }: Props) {
                 }
               />
               {form.formState.errors.linkedin_url && (
-                <p className="text-xs text-red-500 mt-1">
+                <p className="mt-1 text-[11.5px]" style={{ color: 'var(--px-danger)' }}>
                   {form.formState.errors.linkedin_url.message}
                 </p>
               )}
@@ -343,12 +352,21 @@ export default function CandidateProfileTab({ candidate }: Props) {
         </form>
       </section>
 
-      <section className="bg-white border border-zinc-200 rounded-lg p-6">
-        <h2 className="text-base font-semibold text-zinc-900 mb-4">
+      <section
+        className="rounded-[10px] border p-6"
+        style={{
+          background: 'var(--px-surface)',
+          borderColor: 'var(--px-hairline)',
+        }}
+      >
+        <h2
+          className="mb-4 text-[11px] font-semibold uppercase"
+          style={{ letterSpacing: '1.1px', color: 'var(--px-fg-4)' }}
+        >
           Resume
         </h2>
         {isRedacted ? (
-          <p className="text-sm text-zinc-500">
+          <p className="text-sm" style={{ color: 'var(--px-fg-3)' }}>
             Resume unavailable — candidate PII has been redacted.
           </p>
         ) : (
@@ -360,11 +378,20 @@ export default function CandidateProfileTab({ candidate }: Props) {
       </section>
 
       {!isRedacted && (
-        <section className="bg-white border border-red-200 rounded-lg p-6">
-          <h2 className="text-base font-semibold text-red-700 mb-1">
+        <section
+          className="rounded-[10px] border p-6"
+          style={{
+            background: 'var(--px-danger-bg)',
+            borderColor: 'var(--px-danger-line)',
+          }}
+        >
+          <h2
+            className="mb-1 text-[11px] font-semibold uppercase"
+            style={{ letterSpacing: '1.1px', color: 'var(--px-danger)' }}
+          >
             Danger zone
           </h2>
-          <p className="text-sm text-zinc-600 mb-4">
+          <p className="mb-4 text-sm" style={{ color: 'var(--px-fg-2)' }}>
             Permanently remove this candidate&apos;s personal information.
             Only super admins can perform this action. Audit trail is
             preserved.

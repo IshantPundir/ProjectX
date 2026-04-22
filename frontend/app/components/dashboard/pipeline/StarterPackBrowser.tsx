@@ -1,7 +1,7 @@
 'use client'
 
 import type { StarterTemplate } from '@/lib/api/pipelines'
-import { Button } from '@/components/ui/button'
+import { Button } from '@/components/px'
 import { useStarterPack } from '@/lib/hooks/use-starter-pack'
 
 type Props = {

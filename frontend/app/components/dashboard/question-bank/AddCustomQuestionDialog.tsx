@@ -5,7 +5,7 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import type { BankWithQuestionsResponse } from '@/lib/api/question-banks'
-import { Button } from '@/components/ui/button'
+import { Button } from '@/components/px'
 import { useCreateQuestion } from '@/lib/hooks/use-save-question'
 
 const schema = z.object({

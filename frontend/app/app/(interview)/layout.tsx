@@ -5,8 +5,14 @@ import { InterviewProviders } from '@/components/interview/providers'
 export default function InterviewLayout({ children }: { children: ReactNode }) {
   return (
     <InterviewProviders>
-      <div className="min-h-screen bg-zinc-50 text-zinc-900">
-        <div className="max-w-2xl mx-auto px-4 py-12">{children}</div>
+      <div
+        className="min-h-screen w-full"
+        style={{
+          background: 'var(--px-bg)',
+          color: 'var(--px-fg)',
+        }}
+      >
+        {children}
       </div>
     </InterviewProviders>
   )

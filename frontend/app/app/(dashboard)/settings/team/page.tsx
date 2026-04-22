@@ -242,46 +242,80 @@ export default function TeamPage() {
         />
       )}
 
-      <h1 className="text-lg font-semibold text-zinc-900 mb-6">Team Management</h1>
+      <div className="mx-auto max-w-[1400px] px-8 pb-10 pt-5">
+        <h1
+          className="px-serif m-0 mb-6 text-[30px] font-normal"
+          style={{ letterSpacing: '-0.6px', color: 'var(--px-fg)' }}
+        >
+          Team & access
+        </h1>
 
-      {error && (
-        <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3 mb-4">{error}</p>
-      )}
-      {inviteSuccess && (
-        <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg p-3 mb-4">
-          {inviteSuccess}
-        </div>
-      )}
-
-      {/* Invite form — only visible to Super Admin, email only */}
-      {isSuperAdmin && (
-        <form onSubmit={handleInvite} className="bg-white border border-zinc-200 rounded-lg p-5 mb-6">
-          <h2 className="text-sm font-medium text-zinc-900 mb-3">Invite Team Member</h2>
-          <div className="flex gap-3 items-end">
-            <div className="flex-1">
-              <label className="block text-xs font-medium text-zinc-600 mb-1">Email</label>
-              <input
-                type="email"
-                required
-                value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)}
-                className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-600"
-                placeholder="colleague@company.com"
-              />
-            </div>
-            <button
-              type="submit"
-              disabled={inviteLoading}
-              className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50 cursor-pointer transition-colors duration-150"
-            >
-              {inviteLoading ? "Sending..." : "Send Invite"}
-            </button>
-          </div>
-          <p className="text-xs text-zinc-400 mt-2">
-            Roles and org unit assignments can be configured after the user joins.
+        {error && (
+          <p
+            className="mb-4 rounded-md border p-3 text-sm"
+            style={{
+              color: 'var(--px-danger)',
+              background: 'var(--px-danger-bg)',
+              borderColor: 'var(--px-danger-line)',
+            }}
+          >
+            {error}
           </p>
-        </form>
-      )}
+        )}
+        {inviteSuccess && (
+          <div
+            className="mb-4 rounded-md border p-3 text-sm"
+            style={{
+              color: 'var(--px-ok)',
+              background: 'var(--px-ok-bg)',
+              borderColor: 'var(--px-ok-line)',
+            }}
+          >
+            {inviteSuccess}
+          </div>
+        )}
+
+        {/* Invite form — only visible to Super Admin, email only */}
+        {isSuperAdmin && (
+          <form
+            onSubmit={handleInvite}
+            className="mb-6 rounded-[10px] border p-5"
+            style={{
+              background: 'var(--px-surface)',
+              borderColor: 'var(--px-hairline)',
+            }}
+          >
+            <h2
+              className="mb-3 text-[11px] font-semibold uppercase"
+              style={{ letterSpacing: '1.1px', color: 'var(--px-fg-4)' }}
+            >
+              Invite team member
+            </h2>
+            <div className="flex items-end gap-3">
+              <div className="flex-1">
+                <label className="px-label">Email</label>
+                <input
+                  type="email"
+                  required
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  className="px-input"
+                  placeholder="colleague@company.com"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={inviteLoading}
+                className="px-btn primary sm"
+              >
+                {inviteLoading ? "Sending…" : "Send invite"}
+              </button>
+            </div>
+            <p className="px-hint">
+              Roles and org unit assignments can be configured after the user joins.
+            </p>
+          </form>
+        )}
 
       {loading ? (
         <>
@@ -438,6 +472,7 @@ export default function TeamPage() {
           )}
         </>
       )}
+      </div>
     </>
   );
 }

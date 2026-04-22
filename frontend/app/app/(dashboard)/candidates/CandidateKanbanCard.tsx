@@ -23,6 +23,32 @@ interface Props {
   stageName: string
 }
 
+// Stable avatar color derived from the candidate's display name.
+const AVATAR_COLORS = [
+  '#C97B5E',
+  '#7A8DB8',
+  '#8B9E7E',
+  '#B89064',
+  '#9B7AB0',
+  '#6FA3A1',
+]
+function avatarColor(name: string | null | undefined): string {
+  const n = (name || '?').trim()
+  const hash = n.charCodeAt(0) + (n.charCodeAt(1) || 0)
+  return AVATAR_COLORS[hash % AVATAR_COLORS.length]
+}
+
+function initials(name: string | null | undefined): string {
+  if (!name) return '?'
+  return name
+    .trim()
+    .split(/\s+/)
+    .map((w) => w[0])
+    .slice(0, 2)
+    .join('')
+    .toUpperCase()
+}
+
 export default function CandidateKanbanCard({
   card,
   jobPostingId,
@@ -31,6 +57,7 @@ export default function CandidateKanbanCard({
   stageName,
 }: Props) {
   const [inviteOpen, setInviteOpen] = useState(false)
+  const [hover, setHover] = useState(false)
   const { setNodeRef, attributes, listeners, transform, isDragging } =
     useDraggable({
       id: card.assignment_id,
@@ -42,11 +69,25 @@ export default function CandidateKanbanCard({
 
   const style: React.CSSProperties = {
     transform: CSS.Translate.toString(transform),
-    // While dragging lift the card above its column's hover ring and drop
-    // shadow so the cursor preview is always on top.
     zIndex: isDragging ? 50 : undefined,
     opacity: isDragging ? 0.85 : undefined,
+    padding: 10,
+    background: 'var(--px-surface)',
+    border: `1px solid ${
+      isDragging ? 'var(--px-accent-line)' : 'var(--px-hairline)'
+    }`,
+    borderRadius: 7,
+    cursor: isDragging ? 'grabbing' : 'grab',
+    boxShadow: isDragging
+      ? 'var(--px-shadow-md)'
+      : hover
+        ? '0 2px 6px rgba(0,0,0,0.05)'
+        : 'none',
+    transition: 'box-shadow 120ms, border-color 120ms',
+    position: 'relative',
   }
+
+  const bg = avatarColor(card.name)
 
   return (
     <div
@@ -54,34 +95,48 @@ export default function CandidateKanbanCard({
       style={style}
       {...attributes}
       {...listeners}
-      className={`rounded-lg border bg-white p-3 shadow-sm transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 ${
-        isDragging
-          ? 'border-blue-300 shadow-lg cursor-grabbing'
-          : 'border-zinc-200 cursor-grab'
-      }`}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
     >
-      <div className="flex items-start justify-between gap-2">
+      {/* Header: avatar + name + email */}
+      <div className="mb-1.5 flex items-center gap-2">
+        <div
+          className="flex shrink-0 items-center justify-center rounded-full font-semibold text-white"
+          style={{ width: 22, height: 22, background: bg, fontSize: 9.5 }}
+          aria-hidden="true"
+        >
+          {initials(card.name)}
+        </div>
         <div className="min-w-0 flex-1">
           <Link
             href={`/candidates/${card.candidate_id}`}
             onClick={(e) => e.stopPropagation()}
             onPointerDown={(e) => e.stopPropagation()}
-            className="block truncate text-sm font-medium text-zinc-900 hover:text-blue-600 hover:underline"
+            className="block truncate text-[12.5px] font-medium hover:underline"
+            style={{ color: 'var(--px-fg)' }}
           >
             {card.name ?? 'Unnamed candidate'}
           </Link>
-          <p className="mt-0.5 truncate text-xs text-zinc-500">
+          <p
+            className="mt-0.5 truncate text-[10.5px]"
+            style={{ color: 'var(--px-fg-4)' }}
+          >
             {card.email ?? 'No email'}
           </p>
         </div>
       </div>
 
-      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+      {/* Status chips */}
+      <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
         <StatusBadge status={card.status} />
         <SessionStatusBadge state={card.latest_session_state} />
       </div>
 
-      <div className="mt-2 flex items-center justify-between gap-2">
+      {/* Footer: invite + transition */}
+      <div
+        className="mt-2 flex items-center justify-between gap-2 border-t pt-2"
+        style={{ borderColor: 'var(--px-hairline)' }}
+      >
         <button
           type="button"
           onClick={(e) => {
@@ -89,7 +144,7 @@ export default function CandidateKanbanCard({
             setInviteOpen(true)
           }}
           onPointerDown={(e) => e.stopPropagation()}
-          className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+          className="px-btn outline xs"
         >
           Send invite
         </button>

@@ -3,8 +3,8 @@
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { Button } from '@/components/px'
+import { Input } from '@/components/px'
 import type { CandidateSessionError } from '@/lib/api/candidate-session'
 import { useRequestOtp } from '@/lib/hooks/use-request-otp'
 import { useVerifyOtp } from '@/lib/hooks/use-verify-otp'
@@ -87,13 +87,33 @@ export function OtpStep({ token, otpIssuedAt }: Props) {
 
   return (
     <section className="space-y-6">
-      <div className="rounded-lg border border-zinc-200 bg-white p-6">
-        <h2 className="text-lg font-semibold">Enter your access code</h2>
-        <p className="mt-2 text-sm text-zinc-600">
+      <div
+        className="rounded-[12px] border p-6"
+        style={{
+          background: 'var(--px-surface)',
+          borderColor: 'var(--px-hairline)',
+        }}
+      >
+        <div
+          className="mb-2 text-[10.5px] font-semibold uppercase"
+          style={{ letterSpacing: '1.1px', color: 'var(--px-fg-4)' }}
+        >
+          Verify identity
+        </div>
+        <h2
+          className="px-serif m-0 mb-2 text-[24px] font-normal"
+          style={{ letterSpacing: '-0.4px', color: 'var(--px-fg)' }}
+        >
+          Enter your access code
+        </h2>
+        <p
+          className="mb-4 text-[14px]"
+          style={{ color: 'var(--px-fg-2)', lineHeight: 1.6 }}
+        >
           Click <strong>Send code</strong> to receive a 6-digit code at your
           email. The code is valid for 10 minutes.
         </p>
-        <div className="mt-4 flex items-center gap-3">
+        <div className="mb-4 flex items-center gap-3">
           <Button
             variant="outline"
             onClick={onSendCode}
@@ -102,7 +122,7 @@ export function OtpStep({ token, otpIssuedAt }: Props) {
             {cooldown > 0 ? `Resend in ${cooldown}s` : 'Send code'}
           </Button>
         </div>
-        <div className="mt-4 flex items-center gap-3">
+        <div className="flex items-center gap-3">
           <Input
             type="text"
             inputMode="numeric"
@@ -113,7 +133,7 @@ export function OtpStep({ token, otpIssuedAt }: Props) {
             onChange={(e) =>
               setCode(e.target.value.replace(/\D/g, '').slice(0, 6))
             }
-            className="w-32 text-center tracking-widest"
+            className="px-input mono w-36 text-center tracking-widest"
           />
           <Button
             onClick={onVerify}
@@ -123,7 +143,7 @@ export function OtpStep({ token, otpIssuedAt }: Props) {
           </Button>
         </div>
         {attemptsRemaining !== null && (
-          <p className="mt-2 text-sm text-red-600">
+          <p className="mt-2 text-sm" style={{ color: 'var(--px-danger)' }}>
             {attemptsRemaining === 0
               ? 'No attempts remaining — please request a new code.'
               : `Invalid code. ${attemptsRemaining} attempt${attemptsRemaining === 1 ? '' : 's'} remaining.`}

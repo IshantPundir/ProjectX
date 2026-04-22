@@ -4,7 +4,7 @@ import { useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
-import { Button } from '@/components/ui/button'
+import { Button } from '@/components/px'
 import { candidatesApi } from '@/lib/api/candidates'
 import { getFreshSupabaseToken } from '@/lib/auth/tokens'
 import { useResumeUpload } from '@/lib/hooks/use-resume-upload'

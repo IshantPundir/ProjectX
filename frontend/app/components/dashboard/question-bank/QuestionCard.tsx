@@ -36,12 +36,22 @@ export function QuestionCard({
         : null
 
   return (
-    <div className="bg-white border border-zinc-200 rounded-xl shadow-sm overflow-visible">
-      <div className="p-4 cursor-pointer" onClick={onToggleExpand}>
+    <div
+      className="overflow-visible rounded-[10px] border"
+      style={{
+        background: 'var(--px-surface)',
+        borderColor: 'var(--px-hairline)',
+        boxShadow: 'var(--px-shadow-sm)',
+      }}
+    >
+      <div className="cursor-pointer p-4" onClick={onToggleExpand}>
         <div className="flex items-start justify-between gap-3">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-2 flex-wrap">
-              <span className="text-xs font-semibold text-zinc-500">
+          <div className="min-w-0 flex-1">
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <span
+                className="px-mono text-[11px] font-semibold"
+                style={{ color: 'var(--px-fg-4)' }}
+              >
                 Q{question.position + 1}
               </span>
               {question.is_mandatory && (
@@ -69,9 +79,17 @@ export function QuestionCard({
                 · {question.estimated_minutes} min
               </span>
             </div>
-            <div className="text-sm text-zinc-900">{question.text}</div>
+            <div
+              className="text-[13.5px]"
+              style={{ color: 'var(--px-fg)', lineHeight: 1.55 }}
+            >
+              {question.text}
+            </div>
             {!expanded && (
-              <div className="text-xs text-zinc-500 mt-2 italic">
+              <div
+                className="mt-2 text-[11.5px] italic"
+                style={{ color: 'var(--px-fg-3)' }}
+              >
                 {question.evaluation_hint}
               </div>
             )}
@@ -149,7 +167,13 @@ export function QuestionCard({
       </div>
 
       {expanded && (
-        <div className="border-t border-zinc-100 p-4 bg-zinc-50 space-y-4">
+        <div
+          className="space-y-4 border-t p-4"
+          style={{
+            background: 'var(--px-bg-2)',
+            borderColor: 'var(--px-hairline)',
+          }}
+        >
           {/*
             Force remount on question identity change (e.g. after regeneration
             returns a new question.id). Without this, QuestionEditForm's

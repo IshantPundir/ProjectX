@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { AlertCircle, Check, Loader2 } from 'lucide-react'
 
-import { Button } from '@/components/ui/button'
+import { Button } from '@/components/px'
 import { PipelineFlowColumn } from './PipelineFlowColumn'
 import { StageInspectorPanel } from './StageInspectorPanel'
 import { StageConnectorOverlay } from './StageConnectorOverlay'
@@ -35,6 +35,7 @@ function makeBlankStage(position: number): PipelineStageUpdateInput {
     },
     pass_criteria: { type: 'all_knockouts_pass' },
     advance_behavior: 'auto_advance',
+    sla_days: null,
   }
 }
 
@@ -365,52 +366,76 @@ export function UnifiedPipelineView({ job, pipeline, jobId }: Props) {
   const totalBanks = overview?.banks.length ?? 0
 
   return (
-    <div className="flex flex-col h-[calc(100vh-6rem)] min-h-[640px]">
+    <div className="flex h-[calc(100vh-6rem)] min-h-[640px] flex-col">
       {/* Pipeline meta + actions */}
-      <div className="flex items-center justify-between gap-4 mb-4">
-        <p className="text-sm text-zinc-500">
-          Pipeline
-          {pipeline.source_template_name &&
-            ` · from "${pipeline.source_template_name}"`}
-        </p>
-        <div className="flex items-center gap-3 flex-shrink-0">
+      <div className="mb-4 flex items-center justify-between gap-4">
+        <div>
           <div
-            className="flex items-center gap-1.5 text-xs"
+            className="text-[10.5px] font-semibold uppercase"
+            style={{ letterSpacing: '1.1px', color: 'var(--px-fg-4)' }}
+          >
+            Pipeline
+          </div>
+          <div className="text-[13px]" style={{ color: 'var(--px-fg-2)' }}>
+            {pipeline.source_template_name
+              ? `Based on "${pipeline.source_template_name}"`
+              : 'Custom — not based on a template'}
+          </div>
+        </div>
+        <div className="flex flex-shrink-0 items-center gap-3">
+          <div
+            className="flex items-center gap-1.5 text-[11.5px]"
             aria-live="polite"
           >
             {saveFailed ? (
               <>
                 <AlertCircle
-                  className="w-3.5 h-3.5 text-red-500"
+                  className="h-3.5 w-3.5"
+                  style={{ color: 'var(--px-danger)' }}
                   aria-hidden="true"
                 />
-                <span className="text-red-600">Failed to save</span>
+                <span style={{ color: 'var(--px-danger)' }}>
+                  Failed to save
+                </span>
               </>
             ) : isSaving ? (
               <>
                 <Loader2
-                  className="w-3.5 h-3.5 animate-spin text-zinc-400"
+                  className="h-3.5 w-3.5 animate-spin"
+                  style={{ color: 'var(--px-fg-4)' }}
                   aria-hidden="true"
                 />
-                <span className="text-zinc-500">Saving…</span>
+                <span style={{ color: 'var(--px-fg-3)' }}>Saving…</span>
               </>
             ) : (
               <>
                 <Check
-                  className="w-3.5 h-3.5 text-emerald-500"
+                  className="h-3.5 w-3.5"
+                  style={{ color: 'var(--px-ok)' }}
                   aria-hidden="true"
                 />
-                <span className="text-zinc-500">All changes saved</span>
+                <span style={{ color: 'var(--px-fg-3)' }}>
+                  All changes saved
+                </span>
               </>
             )}
           </div>
           {totalBanks > 0 && (
             <span
-              className={`text-[10px] font-bold px-2 py-1 rounded ${
+              className="rounded-full border px-2 py-0.5 text-[10.5px] font-semibold"
+              style={
                 confirmedCount === totalBanks
-                  ? 'bg-emerald-100 text-emerald-700'
-                  : 'bg-zinc-100 text-zinc-600'
-              }`}
+                  ? {
+                      background: 'var(--px-ok-bg)',
+                      borderColor: 'var(--px-ok-line)',
+                      color: 'var(--px-ok)',
+                    }
+                  : {
+                      background: 'var(--px-surface-2)',
+                      borderColor: 'var(--px-hairline)',
+                      color: 'var(--px-fg-3)',
+                    }
+              }
             >
               {confirmedCount} of {totalBanks} confirmed
             </span>
@@ -438,7 +463,11 @@ export function UnifiedPipelineView({ job, pipeline, jobId }: Props) {
 
       {/* Split view */}
       <div
-        className="flex-1 flex gap-0 relative min-h-0 border border-zinc-200 rounded-xl overflow-hidden"
+        className="relative flex min-h-0 flex-1 gap-0 overflow-hidden rounded-[10px] border"
+        style={{
+          background: 'var(--px-surface)',
+          borderColor: 'var(--px-hairline)',
+        }}
         data-pipeline-container="true"
       >
         <PipelineFlowColumn

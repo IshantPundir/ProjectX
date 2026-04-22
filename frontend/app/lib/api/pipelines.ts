@@ -3,11 +3,17 @@ import { apiFetch, ApiError } from './client'
 // --- Enum types ---
 
 export type StageType =
+  // Phase 2C.1 — interview-oriented
   | 'phone_screen'
   | 'ai_interview'
   | 'human_interview'
   | 'panel_interview'
   | 'take_home'
+  // Phase 4 additions from the v4 design
+  | 'intake'
+  | 'recruiter'
+  | 'debrief'
+  | 'offer'
 
 export type StageDifficulty = 'easy' | 'medium' | 'hard'
 export type AdvanceBehavior = 'auto_advance' | 'manual_review'
@@ -36,6 +42,8 @@ export type PipelineStageInput = {
   signal_filter: SignalFilter
   pass_criteria: PassCriteria
   advance_behavior: AdvanceBehavior
+  /** Per-stage dwell SLA in days. Null = no SLA configured. */
+  sla_days?: number | null
 }
 
 // Stage update shape — existing stages pass their id, new stages omit it.

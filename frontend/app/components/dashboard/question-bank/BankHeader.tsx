@@ -2,7 +2,7 @@
 
 import { AlertCircle, Check, Loader2, RefreshCcw } from 'lucide-react'
 import type { BankWithQuestionsResponse } from '@/lib/api/question-banks'
-import { Button } from '@/components/ui/button'
+import { Button } from '@/components/px'
 import { BankStatusBadge } from './BankStatusBadge'
 
 type Props = {
@@ -28,10 +28,16 @@ export function BankHeader({
   const canConfirm = bank.status === 'reviewing'
 
   return (
-    <div className="flex items-start justify-between gap-4 pb-4 border-b border-zinc-200">
+    <div
+      className="flex items-start justify-between gap-4 border-b pb-4"
+      style={{ borderColor: 'var(--px-hairline)' }}
+    >
       <div>
-        <div className="flex items-center gap-2 mb-1">
-          <h2 className="text-base font-semibold text-zinc-900">
+        <div className="mb-1 flex items-center gap-2">
+          <h2
+            className="px-serif m-0 text-[22px] font-normal"
+            style={{ letterSpacing: '-0.4px', color: 'var(--px-fg)' }}
+          >
             {bank.questions.length > 0
               ? `${bank.questions.length} questions · ${bank.total_minutes.toFixed(0)} min`
               : 'No questions yet'}
@@ -39,31 +45,56 @@ export function BankHeader({
           <BankStatusBadge status={bank.status} />
         </div>
         {bank.generation_error && (
-          <div className="text-xs text-red-600 mt-1">{bank.generation_error}</div>
+          <div
+            className="mt-1 text-[11.5px]"
+            style={{ color: 'var(--px-danger)' }}
+          >
+            {bank.generation_error}
+          </div>
         )}
         {bank.is_stale && (
-          <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mt-2">
-            Signals have changed since this bank was generated. Click Regenerate to pick up the latest.
+          <div
+            className="mt-2 rounded-md border px-2 py-1 text-[11.5px]"
+            style={{
+              color: 'var(--px-caution)',
+              background: 'var(--px-caution-bg)',
+              borderColor: 'var(--px-caution-line)',
+            }}
+          >
+            Signals have changed since this bank was generated. Click
+            Regenerate to pick up the latest.
           </div>
         )}
       </div>
 
       <div className="flex items-center gap-3">
-        <div className="flex items-center gap-1.5 text-xs" aria-live="polite">
+        <div className="flex items-center gap-1.5 text-[11.5px]" aria-live="polite">
           {saveFailed ? (
             <>
-              <AlertCircle className="w-3.5 h-3.5 text-red-500" aria-hidden="true" />
-              <span className="text-red-600">Save failed</span>
+              <AlertCircle
+                className="h-3.5 w-3.5"
+                style={{ color: 'var(--px-danger)' }}
+                aria-hidden="true"
+              />
+              <span style={{ color: 'var(--px-danger)' }}>Save failed</span>
             </>
           ) : isSaving ? (
             <>
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-zinc-400" aria-hidden="true" />
-              <span className="text-zinc-500">Saving…</span>
+              <Loader2
+                className="h-3.5 w-3.5 animate-spin"
+                style={{ color: 'var(--px-fg-4)' }}
+                aria-hidden="true"
+              />
+              <span style={{ color: 'var(--px-fg-3)' }}>Saving…</span>
             </>
           ) : hasQuestions ? (
             <>
-              <Check className="w-3.5 h-3.5 text-emerald-500" aria-hidden="true" />
-              <span className="text-zinc-500">All changes saved</span>
+              <Check
+                className="h-3.5 w-3.5"
+                style={{ color: 'var(--px-ok)' }}
+                aria-hidden="true"
+              />
+              <span style={{ color: 'var(--px-fg-3)' }}>All changes saved</span>
             </>
           ) : null}
         </div>

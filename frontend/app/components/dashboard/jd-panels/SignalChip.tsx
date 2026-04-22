@@ -5,7 +5,7 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from '@/components/ui/tooltip'
+} from '@/components/px'
 import type { SignalItem } from '@/lib/api/jobs'
 
 const WEIGHT_DOTS: Record<1 | 2 | 3, string> = {

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 
-import { Button } from '@/components/ui/button'
+import { Button } from '@/components/px'
 
 interface Props {
   onPass: () => void
@@ -52,19 +52,42 @@ export function CameraMicStep({ onPass }: Props) {
 
   return (
     <section className="space-y-6">
-      <div className="rounded-lg border border-zinc-200 bg-white p-6">
-        <h2 className="text-lg font-semibold">Camera &amp; microphone check</h2>
-        <p className="mt-2 text-sm text-zinc-600">
+      <div
+        className="rounded-[12px] border p-6"
+        style={{
+          background: 'var(--px-surface)',
+          borderColor: 'var(--px-hairline)',
+        }}
+      >
+        <div
+          className="mb-2 text-[10.5px] font-semibold uppercase"
+          style={{ letterSpacing: '1.1px', color: 'var(--px-fg-4)' }}
+        >
+          Camera & microphone
+        </div>
+        <h2
+          className="px-serif m-0 mb-2 text-[24px] font-normal"
+          style={{ letterSpacing: '-0.4px', color: 'var(--px-fg)' }}
+        >
+          Let&apos;s check your setup
+        </h2>
+        <p
+          className="mb-4 text-[14px]"
+          style={{ color: 'var(--px-fg-2)', lineHeight: 1.6 }}
+        >
           We&apos;ll access your camera and microphone during the interview.
           Test them now:
         </p>
-        <div className="mt-4 aspect-video w-full bg-zinc-900 rounded overflow-hidden">
+        <div
+          className="aspect-video w-full overflow-hidden rounded-[10px]"
+          style={{ background: '#16140F' }}
+        >
           <video
             ref={videoRef}
             autoPlay
             muted
             playsInline
-            className="w-full h-full object-cover"
+            className="h-full w-full object-cover"
           />
         </div>
         <div className="mt-4 flex items-center gap-3">
@@ -72,19 +95,26 @@ export function CameraMicStep({ onPass }: Props) {
             <Button onClick={start}>Test camera &amp; mic</Button>
           )}
           {status === 'prompting' && (
-            <p className="text-sm text-zinc-500">Waiting for permission…</p>
+            <p className="text-sm" style={{ color: 'var(--px-fg-3)' }}>
+              Waiting for permission…
+            </p>
           )}
           {status === 'ready' && (
             <>
-              <span className="text-sm text-green-700">
+              <span
+                className="text-sm font-medium"
+                style={{ color: 'var(--px-ok)' }}
+              >
                 Camera and mic are working ✓
               </span>
-              <Button onClick={onPass}>Continue</Button>
+              <Button onClick={onPass}>Continue →</Button>
             </>
           )}
           {status === 'denied' && (
             <>
-              <span className="text-sm text-red-600">{error}</span>
+              <span className="text-sm" style={{ color: 'var(--px-danger)' }}>
+                {error}
+              </span>
               <Button variant="outline" onClick={start}>
                 Retry
               </Button>

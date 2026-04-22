@@ -30,19 +30,45 @@ export function OriginalJdPanel({ descriptionRaw, projectScopeRaw }: Props) {
   return (
     <>
       {/* Full column — visible at 3xl and above */}
-      <aside className="hidden 3xl:flex 3xl:col-span-1 flex-col bg-white rounded-lg border border-zinc-200 p-5 overflow-auto">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 mb-3 pb-2 border-b border-zinc-100">
+      <aside
+        className="hidden flex-col overflow-auto rounded-[10px] border p-5 3xl:col-span-1 3xl:flex"
+        style={{
+          background: 'var(--px-surface)',
+          borderColor: 'var(--px-hairline)',
+        }}
+      >
+        <h3
+          className="mb-3 border-b pb-2 text-[11px] font-semibold uppercase"
+          style={{
+            letterSpacing: '1.1px',
+            color: 'var(--px-fg-4)',
+            borderColor: 'var(--px-hairline)',
+          }}
+        >
           Original JD
         </h3>
-        <pre className="whitespace-pre-wrap text-xs text-zinc-700 font-mono leading-relaxed">
+        <pre
+          className="px-mono whitespace-pre-wrap text-[12px] leading-relaxed"
+          style={{ color: 'var(--px-fg-2)' }}
+        >
           {descriptionRaw}
         </pre>
         {projectScopeRaw && (
           <>
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 mt-6 mb-3 pb-2 border-b border-zinc-100">
-              Project Scope
+            <h3
+              className="mb-3 mt-6 border-b pb-2 text-[11px] font-semibold uppercase"
+              style={{
+                letterSpacing: '1.1px',
+                color: 'var(--px-fg-4)',
+                borderColor: 'var(--px-hairline)',
+              }}
+            >
+              Project scope
             </h3>
-            <pre className="whitespace-pre-wrap text-xs text-zinc-700 font-mono leading-relaxed">
+            <pre
+              className="px-mono whitespace-pre-wrap text-[12px] leading-relaxed"
+              style={{ color: 'var(--px-fg-2)' }}
+            >
               {projectScopeRaw}
             </pre>
           </>
@@ -53,12 +79,20 @@ export function OriginalJdPanel({ descriptionRaw, projectScopeRaw }: Props) {
       <button
         type="button"
         onClick={() => setExpanded(true)}
-        className="3xl:hidden w-8 flex items-center justify-center bg-white border border-zinc-200 rounded-lg hover:bg-zinc-50"
+        className="flex w-8 items-center justify-center rounded-[10px] border 3xl:hidden"
+        style={{
+          background: 'var(--px-surface)',
+          borderColor: 'var(--px-hairline)',
+        }}
         aria-label="View raw JD"
       >
         <span
-          className="text-xs text-zinc-500 font-medium whitespace-nowrap"
-          style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
+          className="whitespace-nowrap text-[11.5px] font-medium"
+          style={{
+            writingMode: 'vertical-rl',
+            transform: 'rotate(180deg)',
+            color: 'var(--px-fg-3)',
+          }}
         >
           View raw JD
         </span>

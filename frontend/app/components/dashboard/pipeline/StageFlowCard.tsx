@@ -1,6 +1,17 @@
 'use client'
 
-import { Bot, FileText, Phone, Trash2, User, Users } from 'lucide-react'
+import {
+  Briefcase,
+  CheckCircle2,
+  Gift,
+  MessageSquare,
+  Bot,
+  FileText,
+  Phone,
+  Trash2,
+  User,
+  Users,
+} from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type {
   PipelineStageUpdateInput,
@@ -24,6 +35,11 @@ const STAGE_TYPE_LABELS: Record<StageType, string> = {
   human_interview: 'Human Interview',
   panel_interview: 'Panel',
   take_home: 'Take-home',
+  // v4 additions
+  intake: 'Intake',
+  recruiter: 'Recruiter Screen',
+  debrief: 'Debrief',
+  offer: 'Offer',
 }
 
 const STAGE_TYPE_ICONS: Record<StageType, LucideIcon> = {
@@ -32,6 +48,10 @@ const STAGE_TYPE_ICONS: Record<StageType, LucideIcon> = {
   human_interview: User,
   panel_interview: Users,
   take_home: FileText,
+  intake: Briefcase,
+  recruiter: MessageSquare,
+  debrief: CheckCircle2,
+  offer: Gift,
 }
 
 const STAGE_TYPE_ACCENT: Record<StageType, string> = {
@@ -40,6 +60,10 @@ const STAGE_TYPE_ACCENT: Record<StageType, string> = {
   human_interview: 'bg-amber-500',
   panel_interview: 'bg-orange-500',
   take_home: 'bg-emerald-500',
+  intake: 'bg-zinc-500',
+  recruiter: 'bg-blue-500',
+  debrief: 'bg-emerald-500',
+  offer: 'bg-amber-500',
 }
 
 const STAGE_TYPE_TEXT: Record<StageType, string> = {
@@ -48,6 +72,10 @@ const STAGE_TYPE_TEXT: Record<StageType, string> = {
   human_interview: 'text-amber-600',
   panel_interview: 'text-orange-600',
   take_home: 'text-emerald-600',
+  intake: 'text-zinc-600',
+  recruiter: 'text-blue-600',
+  debrief: 'text-emerald-600',
+  offer: 'text-amber-600',
 }
 
 const DIFFICULTY_CHIP: Record<StageDifficulty, string> = {

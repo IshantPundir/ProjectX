@@ -114,11 +114,11 @@ beforeEach(() => {
 })
 
 // ---------------------------------------------------------------------------
-// Test 1: renders view mode by default with Edit Signals button
+// Test 1: renders view mode by default with Edit signals button
 // ---------------------------------------------------------------------------
 
 describe('SignalsPanelWrapper', () => {
-  it('renders view mode by default with Edit Signals and Confirm Signals buttons', () => {
+  it('renders view mode by default with Edit signals and Confirm Signals buttons', () => {
     render(
       <Wrapper>
         <SignalsPanelWrapper
@@ -130,7 +130,7 @@ describe('SignalsPanelWrapper', () => {
       </Wrapper>,
     )
 
-    expect(screen.getByText('Edit Signals')).toBeInTheDocument()
+    expect(screen.getByText('Edit signals')).toBeInTheDocument()
     expect(screen.getByText('Confirm Signals')).toBeInTheDocument()
   })
 
@@ -152,17 +152,17 @@ describe('SignalsPanelWrapper', () => {
       </Wrapper>,
     )
 
-    await user.click(screen.getByText('Edit Signals'))
+    await user.click(screen.getByText('Edit signals'))
 
-    expect(screen.getByText('Done Editing')).toBeInTheDocument()
+    expect(screen.getByText('Done editing')).toBeInTheDocument()
     expect(screen.getByText('Save Signals')).toBeInTheDocument()
   })
 
   // -------------------------------------------------------------------------
-  // Test 5: hides Edit Signals when canManage is false
+  // Test 5: hides Edit signals when canManage is false
   // -------------------------------------------------------------------------
 
-  it('hides Edit Signals when canManage is false', () => {
+  it('hides Edit signals when canManage is false', () => {
     render(
       <Wrapper>
         <SignalsPanelWrapper
@@ -174,7 +174,7 @@ describe('SignalsPanelWrapper', () => {
       </Wrapper>,
     )
 
-    expect(screen.queryByText('Edit Signals')).not.toBeInTheDocument()
+    expect(screen.queryByText('Edit signals')).not.toBeInTheDocument()
     expect(screen.queryByText('Confirm Signals')).not.toBeInTheDocument()
   })
 })

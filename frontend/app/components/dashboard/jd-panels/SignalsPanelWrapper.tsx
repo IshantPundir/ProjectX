@@ -7,7 +7,7 @@ import { useConfirmSignals } from '@/lib/hooks/use-confirm-signals'
 import { useSaveSignals } from '@/lib/hooks/use-save-signals'
 import { useJobEditStore } from '@/stores/job-edit'
 
-import { Button } from '@/components/ui/button'
+import { Button } from '@/components/px'
 import { ConfirmBar } from './ConfirmBar'
 import { EditableSignalsPanel } from './EditableSignalsPanel'
 import { SignalsPanel } from './SignalsPanel'
@@ -78,9 +78,21 @@ export function SignalsPanelWrapper({
   }
 
   return (
-    <aside className="col-span-1 bg-white rounded-lg border border-zinc-200 p-5 space-y-5 overflow-auto flex flex-col sticky top-4 self-start max-h-[calc(100vh-6rem)]">
-      <div className="flex items-center justify-between pb-2 border-b border-zinc-100">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+    <aside
+      className="sticky top-4 col-span-1 flex max-h-[calc(100vh-6rem)] flex-col self-start overflow-auto rounded-[10px] border"
+      style={{
+        background: 'var(--px-bg-2)',
+        borderColor: 'var(--px-hairline)',
+      }}
+    >
+      <div
+        className="flex items-center justify-between border-b px-4 py-3"
+        style={{ borderColor: 'var(--px-hairline)' }}
+      >
+        <h3
+          className="m-0 text-[11px] font-semibold uppercase"
+          style={{ letterSpacing: '1.1px', color: 'var(--px-fg-4)' }}
+        >
           Signals
         </h3>
         {canManage && (
@@ -90,12 +102,12 @@ export function SignalsPanelWrapper({
             size="xs"
             onClick={handleToggleEdit}
           >
-            {isEditing ? 'Done Editing' : 'Edit Signals'}
+            {isEditing ? 'Done editing' : 'Edit signals'}
           </Button>
         )}
       </div>
 
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto p-4">
         {isEditing ? (
           <EditableSignalsPanel />
         ) : (
@@ -104,14 +116,19 @@ export function SignalsPanelWrapper({
       </div>
 
       {canManage && (
-        <ConfirmBar
-          isEditing={isEditing}
-          isConfirmed={isConfirmed}
-          isSaving={saveSignals.isPending}
-          isConfirming={confirmSignals.isPending}
-          onSave={handleSave}
-          onConfirm={handleConfirm}
-        />
+        <div
+          className="border-t px-4 py-3"
+          style={{ borderColor: 'var(--px-hairline)' }}
+        >
+          <ConfirmBar
+            isEditing={isEditing}
+            isConfirmed={isConfirmed}
+            isSaving={saveSignals.isPending}
+            isConfirming={confirmSignals.isPending}
+            onSave={handleSave}
+            onConfirm={handleConfirm}
+          />
+        </div>
       )}
     </aside>
   )

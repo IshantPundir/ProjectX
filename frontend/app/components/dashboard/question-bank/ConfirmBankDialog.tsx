@@ -3,7 +3,7 @@
 import { useEffect } from 'react'
 import { Check } from 'lucide-react'
 import type { BankWithQuestionsResponse } from '@/lib/api/question-banks'
-import { Button } from '@/components/ui/button'
+import { Button } from '@/components/px'
 
 type Props = {
   bank: BankWithQuestionsResponse

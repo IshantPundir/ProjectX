@@ -4,16 +4,16 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 
-import { Button } from '@/components/ui/button'
-import { Label } from '@/components/ui/label'
+import { Button } from '@/components/px'
+import { Label } from '@/components/px'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
-import { Textarea } from '@/components/ui/textarea'
+} from '@/components/px'
+import { Textarea } from '@/components/px'
 
 // These enums MUST match backend/nexus/tests/fixtures/company_profile_enums.json
 // A backend unit test enforces parity (test_company_profile_schema.py::

@@ -1,6 +1,6 @@
 'use client'
 
-import { Skeleton } from '@/components/ui/skeleton'
+import { Skeleton } from '@/components/px'
 import type { JobStatusEvent } from '@/lib/api/jobs'
 
 type Props = {

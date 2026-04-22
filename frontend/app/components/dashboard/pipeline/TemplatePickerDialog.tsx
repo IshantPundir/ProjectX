@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import type { PipelineTemplate, StarterTemplate } from '@/lib/api/pipelines'
-import { Button } from '@/components/ui/button'
+import { Button } from '@/components/px'
 import { StarterPackBrowser } from './StarterPackBrowser'
 import { usePipelineTemplates } from '@/lib/hooks/use-pipeline-templates'
 

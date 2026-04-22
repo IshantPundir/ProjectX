@@ -2,16 +2,16 @@
 
 import { useState } from 'react'
 
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { Button } from '@/components/px'
+import { Input } from '@/components/px'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
-import { Textarea } from '@/components/ui/textarea'
+} from '@/components/px'
+import { Textarea } from '@/components/px'
 import type {
   SignalItem,
   SignalType,

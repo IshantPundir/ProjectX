@@ -2,8 +2,8 @@
 
 import Link from 'next/link'
 import type { PipelineTemplate } from '@/lib/api/pipelines'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/px'
+import { Badge } from '@/components/px'
 
 type Props = {
   template: PipelineTemplate

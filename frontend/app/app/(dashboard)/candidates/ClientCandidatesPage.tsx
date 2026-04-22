@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { useCallback, useMemo, useState } from 'react'
 
 import { JdPicker } from '@/components/dashboard/candidates/JdPicker'
-import { Button } from '@/components/ui/button'
+import { Button } from '@/components/px'
 
 import AddCandidateDialog from './AddCandidateDialog'
 import CandidateKanbanView from './CandidateKanbanView'
@@ -60,58 +60,71 @@ export default function ClientCandidatesPage() {
   const [showAddDialog, setShowAddDialog] = useState(false)
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-semibold text-zinc-900">Candidates</h1>
-        <div className="flex items-center gap-3">
-          <Button onClick={() => setShowAddDialog(true)}>
-            + Add Candidate
-          </Button>
+    <div className="mx-auto max-w-[1600px] px-8 pb-10 pt-5">
+      <div className="mb-5 flex items-end justify-between">
+        <div>
+          <h1
+            className="px-serif m-0 text-[30px] font-normal"
+            style={{ letterSpacing: '-0.6px', color: 'var(--px-fg)' }}
+          >
+            Candidates
+          </h1>
+          <p
+            className="mt-1 text-[12.5px]"
+            style={{ color: 'var(--px-fg-3)' }}
+          >
+            Track applicants through the pipeline. Signal-match kanban per role.
+          </p>
         </div>
+        <Button size="sm" onClick={() => setShowAddDialog(true)}>
+          + Add candidate
+        </Button>
       </div>
 
-      {/*
-        The detail page lands in Task 24. Until then we intentionally don't
-        navigate on create — the list view refetches via TanStack Query
-        invalidation and the new candidate appears inline. Once Task 24 ships,
-        wire `onCreated={(created) => router.push(`/candidates/${created.id}`)}`.
-      */}
       <AddCandidateDialog
         open={showAddDialog}
         onOpenChange={setShowAddDialog}
       />
 
-      <div className="flex flex-wrap items-center gap-3 mb-6">
+      <div className="mb-5 flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2">
           <label
             htmlFor="candidates-jd-picker"
-            className="text-sm font-medium text-zinc-700"
+            className="text-[12px] font-medium"
+            style={{ color: 'var(--px-fg-2)' }}
           >
-            Job:
+            Role:
           </label>
           <JdPicker
             value={jd}
             onChange={(next) => {
-              // When JD changes, kanban semantics break (kanban is per-JD);
-              // reset the view so we land on list until the user opts back in.
               updateParams({ jd: next, view: null })
             }}
           />
         </div>
 
         <div
-          className="inline-flex items-center rounded-lg border border-zinc-200 bg-white p-0.5"
+          className="inline-flex items-center rounded-md border p-0.5"
           role="group"
           aria-label="View toggle"
+          style={{
+            background: 'var(--px-surface-2)',
+            borderColor: 'var(--px-hairline)',
+            height: 30,
+          }}
         >
           <button
             type="button"
             onClick={() => updateParams({ view: null })}
-            className={`px-3 py-1 text-sm rounded-md transition-colors ${
-              view === 'list'
-                ? 'bg-zinc-100 text-zinc-900 font-medium'
-                : 'text-zinc-600 hover:text-zinc-900'
-            }`}
+            className="rounded-sm px-3 text-[12px] font-medium transition-colors"
+            style={{
+              height: 24,
+              background:
+                view === 'list' ? 'var(--px-surface)' : 'transparent',
+              color: view === 'list' ? 'var(--px-fg)' : 'var(--px-fg-3)',
+              boxShadow:
+                view === 'list' ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+            }}
             aria-pressed={view === 'list'}
           >
             List
@@ -120,12 +133,16 @@ export default function ClientCandidatesPage() {
             type="button"
             onClick={() => updateParams({ view: 'kanban' })}
             disabled={kanbanDisabled}
-            title={kanbanDisabled ? 'Select a JD to enable Kanban' : undefined}
-            className={`px-3 py-1 text-sm rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-              view === 'kanban'
-                ? 'bg-zinc-100 text-zinc-900 font-medium'
-                : 'text-zinc-600 hover:text-zinc-900'
-            }`}
+            title={kanbanDisabled ? 'Select a role to enable Kanban' : undefined}
+            className="rounded-sm px-3 text-[12px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+            style={{
+              height: 24,
+              background:
+                view === 'kanban' ? 'var(--px-surface)' : 'transparent',
+              color: view === 'kanban' ? 'var(--px-fg)' : 'var(--px-fg-3)',
+              boxShadow:
+                view === 'kanban' ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+            }}
             aria-pressed={view === 'kanban'}
           >
             Kanban

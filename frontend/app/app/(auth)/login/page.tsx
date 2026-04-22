@@ -105,12 +105,15 @@ export default function LoginPage() {
 
   return (
     <>
-      <div className="text-center mb-8">
-        <div className="w-12 h-12 rounded-full bg-green-600 flex items-center justify-center mx-auto mb-4">
+      <div className="mb-8 text-center">
+        <div
+          className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full"
+          style={{ background: 'var(--px-accent)' }}
+        >
           <svg
             xmlns="http://www.w3.org/2000/svg"
-            width="22"
-            height="22"
+            width="20"
+            height="20"
             viewBox="0 0 24 24"
             fill="white"
             stroke="white"
@@ -121,36 +124,51 @@ export default function LoginPage() {
             <polygon points="5 3 19 12 5 21 5 3" />
           </svg>
         </div>
-        <h1 className="text-2xl font-bold text-zinc-900">ProjectX</h1>
-        <p className="text-sm text-zinc-500 mt-1">Sign in to your recruiting dashboard</p>
+        <h1
+          className="px-serif m-0 text-[32px] font-normal"
+          style={{ letterSpacing: '-0.6px', color: 'var(--px-fg)' }}
+        >
+          ProjectX
+        </h1>
+        <p className="mt-1 text-[13px]" style={{ color: 'var(--px-fg-3)' }}>
+          Sign in to your recruiting dashboard
+        </p>
       </div>
       <form
         onSubmit={handleSubmit}
-        className="bg-white border border-zinc-200 rounded-xl p-7 space-y-4"
+        className="space-y-4 rounded-[12px] border p-7"
+        style={{
+          background: 'var(--px-surface)',
+          borderColor: 'var(--px-hairline)',
+          boxShadow: 'var(--px-shadow-sm)',
+        }}
       >
         {error && (
-          <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3">
+          <p
+            className="rounded-md border p-3 text-[13px]"
+            style={{
+              color: 'var(--px-danger)',
+              background: 'var(--px-danger-bg)',
+              borderColor: 'var(--px-danger-line)',
+            }}
+          >
             {error}
           </p>
         )}
         <div>
-          <label className="block text-xs font-medium text-zinc-600 mb-1.5">
-            Email
-          </label>
+          <label className="px-label">Email</label>
           <input
             type="email"
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             autoComplete="email"
-            className="w-full border border-zinc-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-600 focus:border-transparent"
+            className="px-input"
             placeholder="you@company.com"
           />
         </div>
         <div>
-          <label className="block text-xs font-medium text-zinc-600 mb-1.5">
-            Password
-          </label>
+          <label className="px-label">Password</label>
           <div className="relative">
             <input
               type={showPassword ? "text" : "password"}
@@ -158,12 +176,13 @@ export default function LoginPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="current-password"
-              className="w-full border border-zinc-300 rounded-lg px-3 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-green-600 focus:border-transparent"
+              className="px-input pr-10"
             />
             <button
               type="button"
               onClick={() => setShowPassword((v) => !v)}
-              className="absolute inset-y-0 right-0 flex items-center px-3 text-zinc-400 hover:text-zinc-600"
+              className="absolute inset-y-0 right-0 flex cursor-pointer items-center px-3"
+              style={{ color: 'var(--px-fg-4)' }}
               aria-label={showPassword ? "Hide password" : "Show password"}
             >
               {showPassword ? <EyeOffIcon /> : <EyeIcon />}
@@ -173,13 +192,23 @@ export default function LoginPage() {
         <button
           type="submit"
           disabled={loading}
-          className="w-full bg-green-600 text-white rounded-lg py-2.5 text-sm font-medium hover:bg-green-700 disabled:opacity-50 transition-colors duration-150"
+          className="px-btn primary lg w-full"
         >
-          {loading ? "Signing in..." : "Sign in"}
+          {loading ? "Signing in…" : "Sign in"}
         </button>
       </form>
-      <p className="text-center text-sm text-zinc-400 mt-4">
-        Don&apos;t have an account? Contact your <strong className="text-zinc-500 font-semibold">Company Admin</strong> for an invite.
+      <p
+        className="mt-4 text-center text-[12.5px]"
+        style={{ color: 'var(--px-fg-4)' }}
+      >
+        Don&apos;t have an account? Contact your{' '}
+        <strong
+          className="font-semibold"
+          style={{ color: 'var(--px-fg-3)' }}
+        >
+          Company Admin
+        </strong>{' '}
+        for an invite.
       </p>
     </>
   );

@@ -4,8 +4,8 @@ import Link from 'next/link'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { Button } from '@/components/px'
+import { Input } from '@/components/px'
 import type {
   AssignmentStatus,
   CandidatesListFilters,
@@ -140,9 +140,13 @@ export default function CandidateListView({
           />
         </div>
         <div
-          className="inline-flex flex-wrap items-center gap-1 rounded-lg border border-zinc-200 bg-white p-0.5"
+          className="inline-flex flex-wrap items-center gap-1 rounded-md border p-0.5"
           role="group"
           aria-label="Filter by assignment status"
+          style={{
+            background: 'var(--px-surface-2)',
+            borderColor: 'var(--px-hairline)',
+          }}
         >
           {STATUS_CHIPS.map((chip) => {
             const active = (filters.status || '') === chip.value
@@ -156,11 +160,13 @@ export default function CandidateListView({
                     offset: null,
                   })
                 }
-                className={`px-3 py-1 text-sm rounded-md transition-colors ${
-                  active
-                    ? 'bg-zinc-100 text-zinc-900 font-medium'
-                    : 'text-zinc-600 hover:text-zinc-900'
-                }`}
+                className="rounded-sm px-3 py-1 text-[12px] transition-colors"
+                style={{
+                  background: active ? 'var(--px-surface)' : 'transparent',
+                  color: active ? 'var(--px-fg)' : 'var(--px-fg-3)',
+                  fontWeight: active ? 500 : 400,
+                  boxShadow: active ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+                }}
                 aria-pressed={active}
               >
                 {chip.label}
@@ -172,69 +178,92 @@ export default function CandidateListView({
 
       {/* Body: loading / empty / table */}
       {isLoading ? (
-        <div className="text-sm text-zinc-500">Loading…</div>
+        <div className="text-sm" style={{ color: 'var(--px-fg-3)' }}>Loading…</div>
       ) : !data || data.items.length === 0 ? (
-        <div className="bg-white border border-zinc-200 rounded-lg p-12 text-center">
-          <p className="text-sm text-zinc-500">
+        <div
+          className="rounded-[10px] border p-12 text-center"
+          style={{
+            background: 'var(--px-surface)',
+            borderColor: 'var(--px-hairline)',
+          }}
+        >
+          <p className="text-sm" style={{ color: 'var(--px-fg-3)' }}>
             {anyFilterApplied
               ? 'No candidates match your filters.'
               : 'No candidates yet. Click Add Candidate to create one.'}
           </p>
         </div>
       ) : (
-        <div className="bg-white border border-zinc-200 rounded-lg overflow-hidden">
+        <div
+          className="overflow-hidden rounded-[10px] border"
+          style={{
+            background: 'var(--px-surface)',
+            borderColor: 'var(--px-hairline)',
+          }}
+        >
           <table className="w-full">
-            <thead className="bg-zinc-50 border-b border-zinc-200">
+            <thead
+              style={{
+                background: 'var(--px-bg-2)',
+                borderBottom: '1px solid var(--px-hairline)',
+              }}
+            >
               <tr>
-                <th className="text-left text-xs font-semibold uppercase tracking-wide text-zinc-500 px-4 py-3">
-                  Name
-                </th>
-                <th className="text-left text-xs font-semibold uppercase tracking-wide text-zinc-500 px-4 py-3">
-                  Email
-                </th>
-                <th className="text-left text-xs font-semibold uppercase tracking-wide text-zinc-500 px-4 py-3">
-                  Current Title
-                </th>
-                <th className="text-left text-xs font-semibold uppercase tracking-wide text-zinc-500 px-4 py-3">
-                  Location
-                </th>
-                <th className="text-left text-xs font-semibold uppercase tracking-wide text-zinc-500 px-4 py-3">
-                  Created
-                </th>
-                <th className="text-left text-xs font-semibold uppercase tracking-wide text-zinc-500 px-4 py-3">
-                  Assignments
-                </th>
+                {['Name', 'Email', 'Current title', 'Location', 'Created', 'Assignments'].map(
+                  (h) => (
+                    <th
+                      key={h}
+                      className="px-4 py-2.5 text-left text-[10px] font-semibold uppercase"
+                      style={{
+                        letterSpacing: '0.8px',
+                        color: 'var(--px-fg-4)',
+                      }}
+                    >
+                      {h}
+                    </th>
+                  ),
+                )}
               </tr>
             </thead>
             <tbody>
-              {data.items.map((c) => (
+              {data.items.map((c, i) => (
                 <tr
                   key={c.id}
-                  className="border-b border-zinc-100 hover:bg-zinc-50"
+                  style={{
+                    borderBottom:
+                      i < data.items.length - 1
+                        ? '1px solid var(--px-hairline)'
+                        : 'none',
+                  }}
                 >
                   <td className="px-4 py-3">
                     <Link
                       href={`/candidates/${c.id}`}
-                      className="text-sm font-medium text-blue-600 hover:underline"
+                      className="text-[13px] font-medium hover:underline"
+                      style={{ color: 'var(--px-fg)' }}
                     >
                       {c.name ?? '—'}
                     </Link>
                   </td>
-                  <td className="px-4 py-3 text-sm text-zinc-600">
+                  <td className="px-4 py-3 text-[12.5px]" style={{ color: 'var(--px-fg-2)' }}>
                     {c.email ?? '—'}
                   </td>
-                  <td className="px-4 py-3 text-sm text-zinc-600">
+                  <td className="px-4 py-3 text-[12.5px]" style={{ color: 'var(--px-fg-2)' }}>
                     {c.current_title ?? '—'}
                   </td>
-                  <td className="px-4 py-3 text-sm text-zinc-600">
+                  <td className="px-4 py-3 text-[12.5px]" style={{ color: 'var(--px-fg-2)' }}>
                     {c.location ?? '—'}
                   </td>
-                  <td className="px-4 py-3 text-xs text-zinc-500 whitespace-nowrap">
+                  <td
+                    className="whitespace-nowrap px-4 py-3 text-[11.5px]"
+                    style={{ color: 'var(--px-fg-4)' }}
+                  >
                     {new Date(c.created_at).toLocaleDateString()}
                   </td>
-                  <td className="px-4 py-3 text-sm text-zinc-500">
-                    {/* TODO: surface assignment count once the list response
-                        carries it (see follow-up to Task 8). */}
+                  <td
+                    className="px-4 py-3 text-[12.5px]"
+                    style={{ color: 'var(--px-fg-4)' }}
+                  >
                     —
                   </td>
                 </tr>
@@ -246,8 +275,8 @@ export default function CandidateListView({
 
       {/* Pagination footer */}
       {data && data.items.length > 0 && (
-        <div className="flex items-center justify-between mt-4">
-          <p className="text-xs text-zinc-500">
+        <div className="mt-4 flex items-center justify-between">
+          <p className="text-[11.5px]" style={{ color: 'var(--px-fg-4)' }}>
             Showing {pageStart}–{pageEnd} of {total}
           </p>
           <div className="flex items-center gap-2">

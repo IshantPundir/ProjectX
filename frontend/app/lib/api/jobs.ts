@@ -67,6 +67,17 @@ export type JobPostingSummary = {
   status_error: string | null
   created_at: string
   updated_at: string
+  /**
+   * Total signals on the latest snapshot. 0 if no snapshot yet
+   * (draft / extracting / failed status).
+   */
+  signal_count: number
+  /**
+   * Number of AI-inferred signals flagged for human review
+   * (same heuristic the JD Review page applies for the
+   * "double-check" chip: source === 'ai_inferred' AND weight < 2).
+   */
+  needs_review_count: number
 }
 
 export type EnrichmentStatus = 'idle' | 'streaming' | 'completed' | 'failed'

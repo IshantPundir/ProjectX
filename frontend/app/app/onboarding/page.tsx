@@ -203,18 +203,31 @@ export default function OnboardingPage() {
       {/* Step 1: Workspace Type */}
       {step === "workspace" && (
         <div>
-          <div className="text-center mb-8">
-            <h1 className="text-2xl font-semibold text-zinc-900">
+          <div className="mb-8 text-center">
+            <h1
+              className="px-serif m-0 text-[34px] font-normal"
+              style={{ letterSpacing: '-0.8px', color: 'var(--px-fg)' }}
+            >
               How will you use ProjectX?
             </h1>
-            <p className="text-sm text-zinc-500 mt-2 leading-relaxed max-w-md mx-auto">
+            <p
+              className="mx-auto mt-2 max-w-md text-sm leading-relaxed"
+              style={{ color: 'var(--px-fg-3)' }}
+            >
               This helps us tailor your workspace to your hiring workflow.
               You can change this later in settings.
             </p>
           </div>
 
           {workspaceError && (
-            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3 mb-6 text-center">
+            <p
+              className="mb-6 rounded-md border p-3 text-center text-sm"
+              style={{
+                color: 'var(--px-danger)',
+                background: 'var(--px-danger-bg)',
+                borderColor: 'var(--px-danger-line)',
+              }}
+            >
               {workspaceError}
             </p>
           )}
@@ -358,11 +371,17 @@ export default function OnboardingPage() {
       {/* Step 2: Company Profile */}
       {step === "company-profile" && (
         <div>
-          <div className="text-center mb-8">
-            <h1 className="text-2xl font-semibold text-zinc-900">
+          <div className="mb-8 text-center">
+            <h1
+              className="px-serif m-0 text-[34px] font-normal"
+              style={{ letterSpacing: '-0.8px', color: 'var(--px-fg)' }}
+            >
               Tell us about your company
             </h1>
-            <p className="text-sm text-zinc-500 mt-2 leading-relaxed max-w-md mx-auto">
+            <p
+              className="mx-auto mt-2 max-w-md text-sm leading-relaxed"
+              style={{ color: 'var(--px-fg-3)' }}
+            >
               Four questions about your company. This takes about 2 minutes and
               significantly improves the quality of your AI-generated interview
               questions and rubrics.
@@ -396,9 +415,23 @@ export default function OnboardingPage() {
               </span>
             </div>
           ) : (
-            <div className="bg-white border border-zinc-200 rounded-xl p-7">
+            <div
+              className="rounded-[12px] border p-7"
+              style={{
+                background: 'var(--px-surface)',
+                borderColor: 'var(--px-hairline)',
+                boxShadow: 'var(--px-shadow-sm)',
+              }}
+            >
               {profileError && (
-                <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3 mb-6">
+                <p
+                  className="mb-6 rounded-md border p-3 text-sm"
+                  style={{
+                    color: 'var(--px-danger)',
+                    background: 'var(--px-danger-bg)',
+                    borderColor: 'var(--px-danger-line)',
+                  }}
+                >
                   {profileError}
                 </p>
               )}

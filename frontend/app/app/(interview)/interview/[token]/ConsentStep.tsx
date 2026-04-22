@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
 
-import { Button } from '@/components/ui/button'
+import { Button } from '@/components/px'
 import { useConsent } from '@/lib/hooks/use-consent'
 
 interface Props {
@@ -26,24 +26,45 @@ export function ConsentStep({ token, consentText }: Props) {
 
   return (
     <section className="space-y-6">
-      <div className="rounded-lg border border-zinc-200 bg-white p-6">
-        <h2 className="text-lg font-semibold">Consent to interview</h2>
-        <p className="mt-3 text-sm leading-relaxed text-zinc-700 whitespace-pre-wrap">
+      <div
+        className="rounded-[12px] border p-6"
+        style={{
+          background: 'var(--px-surface)',
+          borderColor: 'var(--px-hairline)',
+        }}
+      >
+        <div
+          className="mb-2 text-[10.5px] font-semibold uppercase"
+          style={{ letterSpacing: '1.1px', color: 'var(--px-fg-4)' }}
+        >
+          Consent
+        </div>
+        <p
+          className="text-[14px] whitespace-pre-wrap"
+          style={{ color: 'var(--px-fg-2)', lineHeight: 1.7 }}
+        >
           {consentText}
         </p>
       </div>
-      <label className="flex items-start gap-3 text-sm text-zinc-700">
+      <label
+        className="flex items-start gap-3 text-[13.5px]"
+        style={{ color: 'var(--px-fg-2)' }}
+      >
         <input
           type="checkbox"
-          className="mt-0.5 h-4 w-4"
+          className="px-check mt-0.5"
           checked={checked}
           onChange={(e) => setChecked(e.target.checked)}
         />
         I have read and understood the above. I consent to proceeding with this
         interview.
       </label>
-      <Button disabled={!checked || consent.isPending} onClick={onContinue}>
-        {consent.isPending ? 'Saving…' : 'Continue'}
+      <Button
+        size="lg"
+        disabled={!checked || consent.isPending}
+        onClick={onContinue}
+      >
+        {consent.isPending ? 'Saving…' : 'Continue →'}
       </Button>
     </section>
   )

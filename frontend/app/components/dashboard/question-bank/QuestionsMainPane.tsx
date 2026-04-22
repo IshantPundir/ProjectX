@@ -23,11 +23,18 @@ export function QuestionsMainPane({ jobId, stageId }: Props) {
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false)
 
   if (isLoading || !bank) {
-    return <div className="p-8 text-sm text-zinc-500">Loading bank…</div>
+    return (
+      <div
+        className="p-8 text-sm"
+        style={{ color: 'var(--px-fg-3)' }}
+      >
+        Loading bank…
+      </div>
+    )
   }
 
   return (
-    <div className="p-6">
+    <div className="mx-auto max-w-[1100px] px-6 pb-10 pt-4">
       <BankHeader
         bank={bank}
         isSaving={generateMutation.isPending}

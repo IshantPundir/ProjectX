@@ -4,8 +4,8 @@ import { useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 
-import { Button } from '@/components/ui/button'
-import { UnifiedPipelineView } from '@/components/dashboard/pipeline/UnifiedPipelineView'
+import { Button } from '@/components/px'
+import { JobPipelineFunnel } from '@/components/dashboard/pipeline/JobPipelineFunnel'
 import { TemplatePickerDialog } from '@/components/dashboard/pipeline/TemplatePickerDialog'
 import { useJob } from '@/lib/hooks/use-job'
 import { useJobPipeline } from '@/lib/hooks/use-job-pipeline'
@@ -22,21 +22,26 @@ export default function JobPipelinePage() {
   const [pickerOpen, setPickerOpen] = useState(false)
 
   if (jobLoading || pipelineLoading || !job) {
-    return <div className="text-sm text-zinc-500">Loading pipeline…</div>
+    return (
+      <div className="text-sm" style={{ color: 'var(--px-fg-3)' }}>
+        Loading pipeline…
+      </div>
+    )
   }
 
   if (!job.can_manage || job.status !== 'signals_confirmed') {
     return (
       <div className="max-w-4xl">
-        <Link
-          href={`/jobs/${jobId}`}
-          className="text-sm text-zinc-500 hover:text-zinc-900 mb-1 inline-block"
-        >
-          ← Back to job
-        </Link>
-        <p className="text-sm text-zinc-500 mt-4">
-          This pipeline is not available for editing.
+        <p className="mt-4 text-sm" style={{ color: 'var(--px-fg-3)' }}>
+          This pipeline is not available for editing.{' '}
+          {job.status !== 'signals_confirmed' &&
+            'Confirm the role signals first to unlock pipeline editing.'}
         </p>
+        <Link href={`/jobs/${jobId}?tab=jd`}>
+          <Button size="sm" variant="outline" className="mt-3">
+            ← Back to JD review
+          </Button>
+        </Link>
       </div>
     )
   }
@@ -44,16 +49,13 @@ export default function JobPipelinePage() {
   if (!pipeline) {
     return (
       <div className="max-w-4xl">
-        <Link
-          href={`/jobs/${jobId}`}
-          className="text-sm text-zinc-500 hover:text-zinc-900 mb-1 inline-block"
+        <h2
+          className="px-serif m-0 mb-2 text-[24px] font-normal"
+          style={{ letterSpacing: '-0.5px', color: 'var(--px-fg)' }}
         >
-          ← Back to job
-        </Link>
-        <h1 className="text-2xl font-semibold text-zinc-900 mb-2">
           No pipeline yet
-        </h1>
-        <p className="text-sm text-zinc-500 mb-6">
+        </h2>
+        <p className="mb-6 text-sm" style={{ color: 'var(--px-fg-3)' }}>
           Pick a template from your library, the starter pack, or build from
           scratch.
         </p>
@@ -86,12 +88,5 @@ export default function JobPipelinePage() {
     )
   }
 
-  return (
-    <UnifiedPipelineView
-      key={pipeline.id}
-      job={job}
-      pipeline={pipeline}
-      jobId={jobId}
-    />
-  )
+  return <JobPipelineFunnel key={pipeline.id} job={job} pipeline={pipeline} jobId={jobId} />
 }
