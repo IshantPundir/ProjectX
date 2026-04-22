@@ -62,27 +62,22 @@ function PlusIcon({ size = 10 }: { size?: number }) {
 /* ─── Stage presentation helpers ──────────────────────────── */
 
 const STAGE_TYPE_LABEL: Record<StageType, string> = {
-  phone_screen: 'phone_screen',
-  ai_interview: 'ai_interview',
-  human_interview: 'human_interview',
-  panel_interview: 'panel_interview',
-  take_home: 'take_home',
-  intake: 'intake',
-  recruiter: 'recruiter',
-  debrief: 'debrief',
-  offer: 'offer',
+  intake: 'Intake',
+  phone_screen: 'Phone Screen',
+  ai_screening: 'AI Screening',
+  human_interview: 'Human Interview',
+  debrief: 'Debrief',
+  take_home: 'Take-home',
 }
 
 function stageGate(stageType: StageType, advance: AdvanceBehavior): string {
   if (advance === 'auto_advance') {
-    if (stageType === 'ai_interview') return 'auto — Copilot'
+    if (stageType === 'ai_screening') return 'auto — Copilot'
     if (stageType === 'intake') return 'auto — recruiter inbox'
     return 'auto-scored'
   }
-  if (stageType === 'panel_interview') return 'panel'
-  if (stageType === 'debrief') return 'panel + HM'
-  if (stageType === 'offer') return 'HM + recruiter'
-  if (stageType === 'human_interview') return 'interviewer'
+  if (stageType === 'human_interview') return 'human-led'
+  if (stageType === 'debrief') return 'HM + recruiter'
   return 'manual review'
 }
 
@@ -772,16 +767,13 @@ function StageDetailEditor({
     { k: 'auto_advance', label: 'Auto-advance' },
     { k: 'manual_review', label: 'Manual review' },
   ]
-  const stageTypeOptions: { value: StageType; label: string }[] = [
-    { value: 'intake', label: 'Intake' },
-    { value: 'recruiter', label: 'Recruiter screen' },
-    { value: 'phone_screen', label: 'Phone screen' },
-    { value: 'take_home', label: 'Takehome' },
-    { value: 'ai_interview', label: 'AI interview' },
-    { value: 'human_interview', label: 'Human interview' },
-    { value: 'panel_interview', label: 'Panel interview' },
-    { value: 'debrief', label: 'Debrief' },
-    { value: 'offer', label: 'Offer' },
+  const stageTypeOptions: { value: StageType; label: string; disabled?: boolean }[] = [
+    { value: 'intake',          label: 'Intake' },
+    { value: 'phone_screen',    label: 'Phone Screen' },
+    { value: 'ai_screening',    label: 'AI Screening' },
+    { value: 'human_interview', label: 'Human Interview' },
+    { value: 'debrief',         label: 'Debrief' },
+    { value: 'take_home',       label: 'Take-home (Coming soon)', disabled: true },
   ]
 
   return (
@@ -824,7 +816,7 @@ function StageDetailEditor({
             }
           >
             {stageTypeOptions.map((o) => (
-              <option key={o.value} value={o.value}>
+              <option key={o.value} value={o.value} disabled={o.disabled}>
                 {o.label}
               </option>
             ))}
@@ -924,7 +916,7 @@ function StageDetailEditor({
 /* ─── Interviewer slots panel (decorative/placeholder — backend wiring not in Phase 2C.1) ─── */
 
 function InterviewersPanel({ stage }: { stage: PipelineStageUpdateInput }) {
-  const lead = stage.stage_type === 'panel_interview' || stage.stage_type === 'human_interview'
+  const lead = stage.stage_type === 'human_interview'
   const slots = lead
     ? [
         { who: 'Assign an interviewer', slot: 'Systems Design', lead: true },
