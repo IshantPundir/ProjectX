@@ -41,6 +41,7 @@ _TENANT_SCOPED_TABLES: tuple[str, ...] = (
     "pipeline_template_stages",
     "job_pipeline_instances",
     "job_pipeline_stages",
+    "pipeline_stage_participants",
     "stage_question_banks",
     "stage_questions",
     # Phase 3B — candidates module

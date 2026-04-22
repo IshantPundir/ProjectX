@@ -341,6 +341,41 @@ class JobPipelineStage(Base):
     )
 
 
+class PipelineStageParticipant(Base):
+    """Instance-level staffing for a pipeline stage.
+
+    Only attached to job_pipeline_stages (instance rows) — templates are
+    staffing-agnostic. Cascades on stage delete and user delete.
+    """
+
+    __tablename__ = "pipeline_stage_participants"
+    __table_args__ = (
+        UniqueConstraint("stage_id", "user_id", "role", name="uq_stage_user_role"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("clients.id", ondelete="CASCADE"), nullable=False
+    )
+    stage_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("job_pipeline_stages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    role: Mapped[str] = mapped_column(Text, nullable=False)  # CHECK enforced at DB (ck_stage_participants_role)
+    assigned_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    assigned_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("NOW()")
+    )
+
+
 class StageQuestionBank(Base):
     """Phase 2C.2 — per-stage question bank.
 
