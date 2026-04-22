@@ -1,16 +1,13 @@
 'use client'
 
 import {
-  Briefcase,
-  CheckCircle2,
-  Gift,
-  MessageSquare,
-  Bot,
-  FileText,
+  Inbox,
   Phone,
-  Trash2,
-  User,
+  Bot,
   Users,
+  Gavel,
+  FileText,
+  Trash2,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type {
@@ -30,52 +27,39 @@ type Props = {
 }
 
 const STAGE_TYPE_LABELS: Record<StageType, string> = {
-  phone_screen: 'Phone Screen',
-  ai_interview: 'AI Interview',
-  human_interview: 'Human Interview',
-  panel_interview: 'Panel',
-  take_home: 'Take-home',
-  // v4 additions
   intake: 'Intake',
-  recruiter: 'Recruiter Screen',
+  phone_screen: 'Phone Screen',
+  ai_screening: 'AI Screening',
+  human_interview: 'Human Interview',
   debrief: 'Debrief',
-  offer: 'Offer',
+  take_home: 'Take-home',
 }
 
 const STAGE_TYPE_ICONS: Record<StageType, LucideIcon> = {
+  intake: Inbox,
   phone_screen: Phone,
-  ai_interview: Bot,
-  human_interview: User,
-  panel_interview: Users,
+  ai_screening: Bot,
+  human_interview: Users,
+  debrief: Gavel,
   take_home: FileText,
-  intake: Briefcase,
-  recruiter: MessageSquare,
-  debrief: CheckCircle2,
-  offer: Gift,
 }
 
 const STAGE_TYPE_ACCENT: Record<StageType, string> = {
+  intake: 'bg-zinc-400',
   phone_screen: 'bg-blue-500',
-  ai_interview: 'bg-violet-500',
-  human_interview: 'bg-amber-500',
-  panel_interview: 'bg-orange-500',
-  take_home: 'bg-emerald-500',
-  intake: 'bg-zinc-500',
-  recruiter: 'bg-blue-500',
-  debrief: 'bg-emerald-500',
-  offer: 'bg-amber-500',
+  ai_screening: 'bg-violet-500',
+  human_interview: 'bg-emerald-500',
+  debrief: 'bg-amber-500',
+  take_home: 'bg-zinc-300',
 }
 
 const STAGE_TYPE_TEXT: Record<StageType, string> = {
-  phone_screen: 'text-blue-600',
-  ai_interview: 'text-violet-600',
-  human_interview: 'text-amber-600',
-  panel_interview: 'text-orange-600',
-  take_home: 'text-emerald-600',
   intake: 'text-zinc-600',
-  recruiter: 'text-blue-600',
-  debrief: 'text-emerald-600',
-  offer: 'text-amber-600',
+  phone_screen: 'text-blue-600',
+  ai_screening: 'text-violet-600',
+  human_interview: 'text-emerald-600',
+  debrief: 'text-amber-600',
+  take_home: 'text-zinc-500',
 }
 
 const DIFFICULTY_CHIP: Record<StageDifficulty, string> = {
