@@ -417,7 +417,7 @@ async def test_create_job_pipeline_from_template_copies_stages(db):
 
     result = await pipelines_service.get_job_pipeline_with_stages(db, job.id)
     assert result is not None
-    inst, stages, src = result
+    inst, stages, src, _pbs = result
     assert src is not None
     assert src.id == template.id
     assert len(stages) == 2
@@ -438,7 +438,7 @@ async def test_create_job_pipeline_from_starter_has_null_source_template_id(db):
 
     result = await pipelines_service.get_job_pipeline_with_stages(db, job.id)
     assert result is not None
-    _inst, stages, src = result
+    _inst, stages, src, _pbs = result
     assert src is None
     assert len(stages) == 3
 
@@ -458,7 +458,7 @@ async def test_create_job_pipeline_from_scratch_has_null_source_template_id(db):
 
     result = await pipelines_service.get_job_pipeline_with_stages(db, job.id)
     assert result is not None
-    _inst, stages, src = result
+    _inst, stages, src, _pbs = result
     assert src is None
     assert len(stages) == 2
 
@@ -509,11 +509,12 @@ async def test_update_job_pipeline_replaces_stages(db):
         db,
         instance=instance,
         stages=[_make_stage(0, "Only Stage", "phone_screen")],
+        actor_id=user.id,
     )
 
     result = await pipelines_service.get_job_pipeline_with_stages(db, job.id)
     assert result is not None
-    _inst, stages, _src = result
+    _inst, stages, _src, _pbs = result
     assert len(stages) == 1
     assert stages[0].name == "Only Stage"
 
@@ -546,6 +547,7 @@ async def test_reset_job_pipeline_restores_from_source_template(db):
         db,
         instance=instance,
         stages=[_make_stage(0, "Local Edit", "phone_screen")],
+        actor_id=user.id,
     )
     pre = await pipelines_service.get_job_pipeline_with_stages(db, job.id)
     assert pre is not None
@@ -555,7 +557,7 @@ async def test_reset_job_pipeline_restores_from_source_template(db):
 
     post = await pipelines_service.get_job_pipeline_with_stages(db, job.id)
     assert post is not None
-    _inst, stages, _src = post
+    _inst, stages, _src, _pbs = post
     assert len(stages) == 2
     assert stages[0].name == "TplA"
     assert stages[1].name == "TplB"
@@ -637,6 +639,7 @@ async def test_update_source_template_writes_back_stages(db):
             _make_stage(0, "Edited A", "phone_screen"),
             _make_stage(1, "New B", "ai_screening"),
         ],
+        actor_id=user.id,
     )
 
     await pipelines_service.update_source_template_from_job(

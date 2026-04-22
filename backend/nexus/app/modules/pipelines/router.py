@@ -323,7 +323,7 @@ async def get_job_pipeline(
     result = await get_job_pipeline_with_stages(db, job_id)
     if result is None:
         raise HTTPException(status_code=404, detail="No pipeline for this job")
-    instance, stages, source_template = result
+    instance, stages, source_template, _participants_by_stage = result
     return _instance_to_response(instance, stages, source_template)
 
 
@@ -364,7 +364,7 @@ async def create_job_pipeline(
     result = await get_job_pipeline_with_stages(db, job_id)
     if result is None:
         raise HTTPException(status_code=500, detail="Instance created but reload failed")
-    instance, stages, source_template = result
+    instance, stages, source_template, _participants_by_stage = result
     return _instance_to_response(instance, stages, source_template)
 
 
@@ -381,11 +381,11 @@ async def update_job_pipeline(
     _job, instance = await require_instance_access(db, job_id, user, "manage")
     if instance is None:
         raise HTTPException(status_code=404, detail="No pipeline for this job")
-    await update_job_pipeline_stages(db, instance=instance, stages=body.stages)
+    await update_job_pipeline_stages(db, instance=instance, stages=body.stages, actor_id=user.user.id)
     result = await get_job_pipeline_with_stages(db, job_id)
     if result is None:
         raise HTTPException(status_code=500, detail="Reload failed")
-    new_instance, stages, source_template = result
+    new_instance, stages, source_template, _participants_by_stage = result
     return _instance_to_response(new_instance, stages, source_template)
 
 
@@ -410,7 +410,7 @@ async def swap_job_pipeline_endpoint(
     result = await get_job_pipeline_with_stages(db, job_id)
     if result is None:
         raise HTTPException(status_code=500, detail="Swap succeeded but reload failed")
-    new_instance, stages, source_template = result
+    new_instance, stages, source_template, _participants_by_stage = result
     return _instance_to_response(new_instance, stages, source_template)
 
 
@@ -433,7 +433,7 @@ async def reset_job_pipeline(
     result = await get_job_pipeline_with_stages(db, job_id)
     if result is None:
         raise HTTPException(status_code=500, detail="Reload failed")
-    new_instance, stages, source_template = result
+    new_instance, stages, source_template, _participants_by_stage = result
     return _instance_to_response(new_instance, stages, source_template)
 
 

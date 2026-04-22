@@ -216,7 +216,7 @@ async def test_auto_apply_falls_back_to_system_starter_when_no_templates_exist(d
 
     pair = await pipelines_service.get_job_pipeline_with_stages(db, job.id)
     assert pair is not None
-    _inst, stages, _src = pair
+    _inst, stages, _src, _pbs = pair
     # standard_technical has 3 stages
     assert len(stages) == 3
     # Sanity check: the first stage matches the starter (phone screen)

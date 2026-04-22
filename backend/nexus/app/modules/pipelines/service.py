@@ -34,6 +34,11 @@ from app.modules.pipelines.schemas import (
     CreateJobPipelineRequest,
     PipelineStageInput,
     PipelineStageUpdateInput,
+    StageParticipantInput,
+)
+from app.modules.pipelines.participants import (
+    replace_stage_participants,
+    validate_participants_eligible,
 )
 from app.modules.pipelines.starter_pack import (
     STARTER_TEMPLATES,
@@ -308,8 +313,14 @@ async def delete_template(db: AsyncSession, template: PipelineTemplate) -> None:
 
 async def get_job_pipeline_with_stages(
     db: AsyncSession, job_posting_id: UUID
-) -> tuple[JobPipelineInstance, list[JobPipelineStage], PipelineTemplate | None] | None:
-    """Load a job pipeline instance, its stages, and (if linked) the source template."""
+) -> tuple[
+    JobPipelineInstance,
+    list[JobPipelineStage],
+    PipelineTemplate | None,
+    dict[UUID, list[dict]],  # participants keyed by stage_id
+] | None:
+    """Load a job pipeline instance, its stages, source template (if linked),
+    and participants for each stage (empty list for stages with none)."""
     instance_result = await db.execute(
         select(JobPipelineInstance).where(
             JobPipelineInstance.job_posting_id == job_posting_id
@@ -335,7 +346,28 @@ async def get_job_pipeline_with_stages(
         )
         source_template = tpl_result.scalar_one_or_none()
 
-    return instance, stages, source_template
+    # Bulk-load participants joined with users for display fields.
+    participants_by_stage: dict[UUID, list[dict]] = {s.id: [] for s in stages}
+    if stages:
+        from app.models import PipelineStageParticipant, User
+
+        stage_ids = [s.id for s in stages]
+        part_result = await db.execute(
+            select(PipelineStageParticipant, User)
+            .join(User, User.id == PipelineStageParticipant.user_id)
+            .where(PipelineStageParticipant.stage_id.in_(stage_ids))
+        )
+        for part, user in part_result.all():
+            participants_by_stage[part.stage_id].append(
+                {
+                    "user_id": part.user_id,
+                    "role": part.role,
+                    "full_name": user.full_name or "",
+                    "email": user.email,
+                }
+            )
+
+    return instance, stages, source_template, participants_by_stage
 
 
 async def create_job_pipeline_from_template(
@@ -550,6 +582,7 @@ async def update_job_pipeline_stages(
     *,
     instance: JobPipelineInstance,
     stages: list[PipelineStageUpdateInput | PipelineStageInput],
+    actor_id: UUID,
 ) -> JobPipelineInstance:
     """Replace the stages on a job pipeline instance via diff-and-sync.
 
@@ -609,6 +642,49 @@ async def update_job_pipeline_stages(
                 )
             )
         )
+
+    # Sync participants per stage. participants=None means "don't touch".
+    # Only PipelineStageUpdateInput instances with a populated `id` can sync
+    # participants — new stages (id is None) cannot because their row ids
+    # were just assigned in this transaction, and callers pass participants
+    # via a separate create path.
+    updates_with_participants: list[PipelineStageUpdateInput] = [
+        s for s in stages
+        if isinstance(s, PipelineStageUpdateInput)
+        and s.id is not None
+        and s.participants is not None
+    ]
+    if updates_with_participants:
+        # Eligibility check (single batch across all supplied users).
+        job_result = await db.execute(
+            select(JobPosting).where(JobPosting.id == instance.job_posting_id)
+        )
+        job = job_result.scalar_one()
+
+        flat_participants: list[StageParticipantInput] = []
+        for s in updates_with_participants:
+            flat_participants.extend(s.participants or [])
+        await validate_participants_eligible(
+            db, job=job, participants=flat_participants
+        )
+
+        # Reload stage rows by id so we can diff participants against the
+        # latest state (the update loop above may have mutated them).
+        stage_id_list = [s.id for s in updates_with_participants if s.id is not None]
+        stages_reload = await db.execute(
+            select(JobPipelineStage).where(JobPipelineStage.id.in_(stage_id_list))
+        )
+        stage_by_id = {row.id: row for row in stages_reload.scalars().all()}
+        for incoming in updates_with_participants:
+            row = stage_by_id.get(incoming.id) if incoming.id is not None else None
+            if row is None:
+                continue  # defensive — should not happen
+            await replace_stage_participants(
+                db,
+                stage=row,
+                participants=incoming.participants or [],
+                assigned_by=actor_id,
+            )
 
     instance.updated_at = _now_utc()
     await db.flush()

@@ -86,6 +86,7 @@ async def test_update_preserves_ids_when_all_stages_pass_their_id(
         db,
         instance=instance,
         stages=[_to_update_input(s) for s in original_stages],
+        actor_id=user.id,
     )
     await db.flush()
 
@@ -148,7 +149,7 @@ async def test_update_inserts_new_stage_without_touching_existing(
         ),
     ]
 
-    await update_job_pipeline_stages(db, instance=instance, stages=updates)
+    await update_job_pipeline_stages(db, instance=instance, stages=updates, actor_id=user.id)
     await db.flush()
 
     final = list(
@@ -205,6 +206,7 @@ async def test_update_removes_stage_when_id_omitted(db):
         db,
         instance=instance,
         stages=[_to_update_input(existing[0]), _to_update_input(existing[1])],
+        actor_id=user.id,
     )
     await db.flush()
 
@@ -283,6 +285,7 @@ async def test_update_combines_add_and_remove_in_one_call(db):
         db,
         instance=instance,
         stages=[renamed_screen, new_interview, new_panel],
+        actor_id=user.id,
     )
     await db.flush()
 
