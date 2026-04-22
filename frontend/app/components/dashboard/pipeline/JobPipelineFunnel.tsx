@@ -20,7 +20,11 @@ import type {
 import type { JobPostingWithSnapshot } from '@/lib/api/jobs'
 import { TemplatePickerDialog } from './TemplatePickerDialog'
 import { StageParticipantsEditor } from './StageParticipantsEditor'
-import { participantSlotsFor } from '@/lib/pipelines/categories'
+import { participantSlotsFor, stageSupportsQuestionBank } from '@/lib/pipelines/categories'
+import {
+  useGenerateAllQuestions,
+  useGenerateStageQuestions,
+} from '@/lib/hooks/use-generate-questions'
 
 const AUTOSAVE_DEBOUNCE_MS = 800
 
@@ -246,6 +250,12 @@ export function JobPipelineFunnel({ job, pipeline, jobId }: Props) {
   const isSaving = isDirty || saveMutation.isPending
   const saveFailed = saveMutation.isError && !isSaving
 
+  // Top-level banks map — used both here (to pass activeStage's bank into
+  // the detail editor) and re-derived inside the inner Funnel component.
+  const banksByStage = new Map((overview?.banks ?? []).map((b) => [b.stage_id, b]))
+
+  const generateAllMutation = useGenerateAllQuestions(jobId)
+
   // Banks overview for per-stage counts
   const banks = overview?.banks ?? []
   const confirmedBanks = banks.filter((b) => b.status === 'confirmed').length
@@ -324,6 +334,16 @@ export function JobPipelineFunnel({ job, pipeline, jobId }: Props) {
           )}
 
           <button
+            className="px-btn sm"
+            type="button"
+            onClick={() => generateAllMutation.mutate()}
+            disabled={generateAllMutation.isPending || isSaving}
+            title="Generate question banks for every eligible stage"
+          >
+            {generateAllMutation.isPending ? 'Generating…' : 'Generate all questions'}
+          </button>
+
+          <button
             className="px-btn outline sm"
             type="button"
             onClick={() => setPickerOpen(true)}
@@ -370,6 +390,7 @@ export function JobPipelineFunnel({ job, pipeline, jobId }: Props) {
             key={activeStage.id ?? `pos-${activeStage.position}`}
             stage={activeStage}
             jobId={jobId}
+            bank={activeStage.id ? banksByStage.get(activeStage.id) ?? null : null}
             onChange={(patch) => {
               if (activeStage.id) updateStageById(activeStage.id, patch)
             }}
@@ -766,12 +787,20 @@ function Droplets({
 function StageDetailEditor({
   stage,
   jobId,
+  bank,
   onChange,
 }: {
   stage: PipelineStageUpdateInput
   jobId: string
+  bank: BankLite | null
   onChange: (patch: Partial<PipelineStageUpdateInput>) => void
 }) {
+  const generateMutation = useGenerateStageQuestions(jobId, stage.id ?? '')
+  const canGenerate = stage.id != null && stageSupportsQuestionBank(stage.stage_type)
+  const isGenerating = bank?.status === 'generating'
+  const generateLabel =
+    bank && bank.question_count > 0 ? 'Regenerate questions' : 'Generate questions'
+
   const difficulties: StageDifficulty[] = ['easy', 'medium', 'hard']
   const advanceOptions: { k: AdvanceBehavior; label: string }[] = [
     { k: 'auto_advance', label: 'Auto-advance' },
@@ -929,6 +958,35 @@ function StageDetailEditor({
           </span>
         </div>
       </div>
+
+      {canGenerate && (
+        <div
+          className="mt-4 flex items-center gap-2 border-t pt-4"
+          style={{ borderColor: 'var(--px-hairline)' }}
+        >
+          <button
+            type="button"
+            className="px-btn sm"
+            disabled={isGenerating || generateMutation.isPending}
+            onClick={() => generateMutation.mutate()}
+          >
+            {isGenerating || generateMutation.isPending
+              ? 'Generating…'
+              : generateLabel}
+          </button>
+          {bank && bank.question_count > 0 && (
+            <span className="text-[11px]" style={{ color: 'var(--px-fg-4)' }}>
+              {bank.question_count} question{bank.question_count === 1 ? '' : 's'}
+              {' · '}status: {bank.status}
+            </span>
+          )}
+          {!bank && (
+            <span className="text-[11px]" style={{ color: 'var(--px-fg-4)' }}>
+              No bank yet. Click to draft with Copilot.
+            </span>
+          )}
+        </div>
+      )}
     </div>
   )
 }

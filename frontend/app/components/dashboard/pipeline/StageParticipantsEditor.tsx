@@ -117,7 +117,13 @@ function ParticipantSlotSection({
         ))}
       </div>
 
-      {pickerOpen && (
+      {pickerOpen && (() => {
+        const selectable = (pool ?? []).filter((u) => !assignedIds.has(u.user_id))
+        const gateText =
+          slot.role === 'interviewer' ? '"Interviewer" or "Hiring Manager"'
+          : slot.role === 'observer' ? '"Observer", "Interviewer", "Hiring Manager", or "Recruiter"'
+          : '"Hiring Manager"'
+        return (
         <div className="mt-2 border border-zinc-200 rounded-md p-2 max-h-48 overflow-y-auto">
           {isLoading && <div className="text-xs text-zinc-400">Loading…</div>}
           {isError && (
@@ -125,9 +131,14 @@ function ParticipantSlotSection({
               Couldn&apos;t load the team roster.
             </div>
           )}
-          {(pool ?? [])
-            .filter((u) => !assignedIds.has(u.user_id))
-            .map((u) => (
+          {!isLoading && !isError && selectable.length === 0 && (
+            <div className="text-xs text-zinc-500 leading-relaxed">
+              No eligible users found. The {label.toLowerCase()} slot accepts
+              users with {gateText} role in this job&apos;s org unit (or an
+              ancestor). Assign the role in Settings → Org Units first.
+            </div>
+          )}
+          {selectable.map((u) => (
               <button
                 type="button"
                 key={u.user_id}
@@ -145,7 +156,8 @@ function ParticipantSlotSection({
               </button>
             ))}
         </div>
-      )}
+        )
+      })()}
     </div>
   )
 }

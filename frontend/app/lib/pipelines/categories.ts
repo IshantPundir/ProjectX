@@ -38,6 +38,17 @@ export function participantSlotsFor(type: StageType): ParticipantSlotSpec[] {
 
 // Only reads `.role` on each participant — accepts any shape carrying that
 // (StageParticipantInput, StageParticipantResponse, or a minimal pick).
+// Stage types that generate a question bank. Intake and debrief don't.
+// Mirrors the backend STAGE_TYPE_TO_PROMPT map in question_bank/actors.py.
+export function stageSupportsQuestionBank(type: StageType): boolean {
+  return (
+    type === 'phone_screen' ||
+    type === 'ai_screening' ||
+    type === 'human_interview' ||
+    type === 'take_home'
+  )
+}
+
 export function isStageUnstaffed(stage: {
   stage_type: StageType
   participants?: readonly { role: ParticipantRole }[] | null
