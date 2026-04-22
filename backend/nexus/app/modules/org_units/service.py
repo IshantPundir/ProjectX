@@ -45,6 +45,7 @@ async def create_org_unit(
     ip_address: str | None = None,
     workspace_mode: str = "enterprise",
     company_profile: dict | None = None,
+    metadata: dict | None = None,
 ) -> OrganizationalUnit:
     if unit_type not in VALID_UNIT_TYPES:
         raise ValueError(f"Invalid unit_type. Must be one of: {sorted(VALID_UNIT_TYPES)}")
@@ -101,6 +102,7 @@ async def create_org_unit(
         deletable_by=created_by,
         is_root=(unit_type == "company"),
         company_profile=validated_profile,
+        unit_metadata=metadata,
     )
     db.add(unit)
     await db.flush()
@@ -299,6 +301,7 @@ async def get_org_unit(
             if unit.company_profile_completed_at
             else None
         ),
+        "metadata": unit.unit_metadata,
         "created_at": unit.created_at.isoformat(),
         "created_by": str(unit.created_by) if unit.created_by else None,
         "created_by_email": email_map.get(unit.created_by) if unit.created_by else None,
@@ -434,6 +437,7 @@ async def list_org_units(
                 if u.company_profile_completed_at
                 else None
             ),
+            "metadata": u.unit_metadata,
             "created_at": u.created_at.isoformat(),
             "created_by": str(u.created_by) if u.created_by else None,
             "created_by_email": email_map.get(u.created_by) if u.created_by else None,
@@ -460,6 +464,8 @@ async def update_org_unit(
     ip_address: str | None = None,
     company_profile: dict | None = None,
     set_company_profile: bool = False,
+    metadata: dict | None = None,
+    set_metadata: bool = False,
 ) -> OrganizationalUnit:
     before = {
         "name": unit.name,
@@ -467,6 +473,7 @@ async def update_org_unit(
         "deletable_by": str(unit.deletable_by) if unit.deletable_by else None,
         "admin_delete_disabled": unit.admin_delete_disabled,
         "company_profile": str(unit.company_profile) if unit.company_profile else None,
+        "metadata": str(unit.unit_metadata) if unit.unit_metadata else None,
     }
 
     if unit_type is not None and unit_type not in VALID_UNIT_TYPES:
@@ -514,12 +521,20 @@ async def update_org_unit(
             unit.company_profile_completed_at = datetime.now(UTC)
             unit.company_profile_completed_by = actor_id
 
+    # Update metadata if explicitly requested. Opaque dict validated at the
+    # application layer — the DB keeps it as JSONB so the shape can evolve
+    # per unit_type without migrations. None clears the field; {} is a
+    # valid empty object.
+    if set_metadata:
+        unit.unit_metadata = metadata
+
     after = {
         "name": unit.name,
         "unit_type": unit.unit_type,
         "deletable_by": str(unit.deletable_by) if unit.deletable_by else None,
         "admin_delete_disabled": unit.admin_delete_disabled,
         "company_profile": str(unit.company_profile) if unit.company_profile else None,
+        "metadata": str(unit.unit_metadata) if unit.unit_metadata else None,
     }
     changed = {k: {"from": before[k], "to": after[k]} for k in before if before[k] != after[k]}
     if changed:

@@ -12,11 +12,18 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 # --- Enums ---
 
 StageType = Literal[
+    # Phase 2C.1 set — interview-oriented
     "phone_screen",
     "ai_interview",
     "human_interview",
     "panel_interview",
     "take_home",
+    # Phase 4 additions — bookend + role-specific stages from the v4 design.
+    # The DB CHECK in migration 0015_pipeline_stage_v4 covers these.
+    "intake",
+    "recruiter",
+    "debrief",
+    "offer",
 ]
 
 StageDifficulty = Literal["easy", "medium", "hard"]
@@ -79,6 +86,10 @@ class PipelineStageBase(BaseModel):
     signal_filter: SignalFilter
     pass_criteria: PassCriteria
     advance_behavior: AdvanceBehavior
+    # Stage SLA in days — how long a candidate can sit here before being
+    # flagged stalled. Distinct from ``duration_minutes`` (the interview's
+    # own length). NULL = no SLA configured.
+    sla_days: int | None = Field(default=None, gt=0)
 
 
 class PipelineStageInput(PipelineStageBase):

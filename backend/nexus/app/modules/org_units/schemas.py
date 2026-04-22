@@ -6,6 +6,7 @@ class CreateOrgUnitRequest(BaseModel):
     unit_type: str
     parent_unit_id: str | None = None
     company_profile: dict | None = None
+    metadata: dict | None = None
 
 
 class UpdateOrgUnitRequest(BaseModel):
@@ -15,6 +16,12 @@ class UpdateOrgUnitRequest(BaseModel):
     admin_delete_disabled: bool | None = None
     company_profile: dict | None = None
     set_company_profile: bool = False
+    # `metadata` is absent (None) for "don't touch"; present dict (possibly
+    # empty {}) for "replace". A sentinel flag would work too but keeping
+    # parity with other optional fields is simpler. Backend treats {} as
+    # "clear all keys" — callers that want to merge should read then write.
+    metadata: dict | None = None
+    set_metadata: bool = False
 
 
 class OrgUnitResponse(BaseModel):
@@ -27,6 +34,7 @@ class OrgUnitResponse(BaseModel):
     is_root: bool
     company_profile: dict | None
     company_profile_completed_at: str | None = None
+    metadata: dict | None = None
     created_at: str
     created_by: str | None
     created_by_email: str | None

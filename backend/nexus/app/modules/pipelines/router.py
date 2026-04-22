@@ -98,6 +98,7 @@ def _stage_row_to_response(
         signal_filter=SignalFilter(**row.signal_filter),
         pass_criteria=row.pass_criteria,  # type: ignore[arg-type]
         advance_behavior=row.advance_behavior,  # type: ignore[arg-type]
+        sla_days=row.sla_days,
     )
 
 

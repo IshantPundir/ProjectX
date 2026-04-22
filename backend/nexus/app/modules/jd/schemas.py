@@ -178,6 +178,15 @@ class JobPostingSummary(BaseModel):
     status_error: str | None = None
     created_at: datetime
     updated_at: datetime
+    # Aggregate fields derived from the latest signal snapshot. Both default
+    # to 0 for jobs that don't have a snapshot yet (draft / extracting).
+    # `needs_review_count` mirrors the UI's needs-review heuristic on the
+    # JD Review page: AI-inferred signals with weight < 2 are flagged as
+    # "double-check". Exposing it on the list row lets the jobs index
+    # surface the design's "2 signals to double-check" inline hint without
+    # fetching per-row details.
+    signal_count: int = 0
+    needs_review_count: int = 0
 
 
 class JobPostingWithSnapshot(BaseModel):

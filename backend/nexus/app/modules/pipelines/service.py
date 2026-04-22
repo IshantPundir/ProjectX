@@ -64,6 +64,7 @@ def _stage_input_to_row_dict(
         "signal_filter": stage.signal_filter.model_dump(),
         "pass_criteria": stage.pass_criteria.model_dump(),
         "advance_behavior": stage.advance_behavior,
+        "sla_days": stage.sla_days,
     }
     if template_id is not None:
         base["template_id"] = template_id
@@ -226,6 +227,7 @@ async def create_template_from_starter(
             signal_filter=stage["signal_filter"],
             pass_criteria=stage["pass_criteria"],
             advance_behavior=stage["advance_behavior"],
+            sla_days=stage.get("sla_days"),
         )
         db.add(row)
 
@@ -387,6 +389,7 @@ async def create_job_pipeline_from_template(
                 signal_filter=src_stage.signal_filter,
                 pass_criteria=src_stage.pass_criteria,
                 advance_behavior=src_stage.advance_behavior,
+                sla_days=src_stage.sla_days,
             )
         )
     await db.flush()
@@ -444,6 +447,7 @@ async def create_job_pipeline_from_starter(
                 signal_filter=stage["signal_filter"],
                 pass_criteria=stage["pass_criteria"],
                 advance_behavior=stage["advance_behavior"],
+                sla_days=stage.get("sla_days"),
             )
         )
     await db.flush()
@@ -585,6 +589,7 @@ async def update_job_pipeline_stages(
             existing.signal_filter = update.signal_filter.model_dump()
             existing.pass_criteria = update.pass_criteria.model_dump()
             existing.advance_behavior = update.advance_behavior
+            existing.sla_days = update.sla_days
         else:
             # Existing row that the recruiter removed
             await db.delete(existing)
@@ -655,6 +660,7 @@ async def reset_job_pipeline_to_source(
                 signal_filter=src.signal_filter,
                 pass_criteria=src.pass_criteria,
                 advance_behavior=src.advance_behavior,
+                sla_days=src.sla_days,
             )
         )
     instance.updated_at = _now_utc()
@@ -711,6 +717,7 @@ async def save_job_pipeline_as_template(
                 signal_filter=js.signal_filter,
                 pass_criteria=js.pass_criteria,
                 advance_behavior=js.advance_behavior,
+                sla_days=js.sla_days,
             )
         )
     await db.flush()
@@ -768,6 +775,7 @@ async def update_source_template_from_job(
                 signal_filter=js.signal_filter,
                 pass_criteria=js.pass_criteria,
                 advance_behavior=js.advance_behavior,
+                sla_days=js.sla_days,
             )
         )
     template.updated_by = actor_id

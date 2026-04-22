@@ -61,6 +61,11 @@ class OrganizationalUnit(Base):
     company_profile: Mapped[dict | None] = mapped_column(JSONB)
     company_profile_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     company_profile_completed_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    # Per-unit-type metadata (region offices, division description, team focus,
+    # etc). Mapped to DB column "metadata" but exposed on the ORM as
+    # `unit_metadata` because SQLAlchemy reserves `metadata` on Base for the
+    # MetaData registry. API layer re-aliases to `metadata` for clients.
+    unit_metadata: Mapped[dict | None] = mapped_column("metadata", JSONB)
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
     deletable_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
     admin_delete_disabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
@@ -259,6 +264,7 @@ class PipelineTemplateStage(Base):
     signal_filter: Mapped[dict] = mapped_column(JSONB, nullable=False)
     pass_criteria: Mapped[dict] = mapped_column(JSONB, nullable=False)
     advance_behavior: Mapped[str] = mapped_column(String, nullable=False)
+    sla_days: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("NOW()")
     )
@@ -326,6 +332,7 @@ class JobPipelineStage(Base):
     signal_filter: Mapped[dict] = mapped_column(JSONB, nullable=False)
     pass_criteria: Mapped[dict] = mapped_column(JSONB, nullable=False)
     advance_behavior: Mapped[str] = mapped_column(String, nullable=False)
+    sla_days: Mapped[int | None] = mapped_column(Integer)
     otp_required_default: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=sql_text("false")
     )

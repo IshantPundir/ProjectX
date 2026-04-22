@@ -54,6 +54,7 @@ def _build_response(
             if unit.company_profile_completed_at
             else None
         ),
+        metadata=unit.unit_metadata,
         created_at=unit.created_at.isoformat(),
         created_by=str(unit.created_by) if unit.created_by else None,
         created_by_email=email_map.get(unit.created_by) if unit.created_by else None,
@@ -111,6 +112,7 @@ async def create_unit(
             ip_address=request.client.host if request.client else None,
             workspace_mode=client.workspace_mode,
             company_profile=data.company_profile,
+            metadata=data.metadata,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -196,6 +198,8 @@ async def update_unit(
             ip_address=request.client.host if request.client else None,
             company_profile=data.company_profile,
             set_company_profile=data.set_company_profile,
+            metadata=data.metadata,
+            set_metadata=data.set_metadata,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
