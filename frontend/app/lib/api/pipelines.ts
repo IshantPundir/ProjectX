@@ -2,18 +2,27 @@ import { apiFetch, ApiError } from './client'
 
 // --- Enum types ---
 
+// Stage type v5 — matches backend literal in
+// app/modules/pipelines/schemas.py and migration 0016.
 export type StageType =
-  // Phase 2C.1 — interview-oriented
-  | 'phone_screen'
-  | 'ai_interview'
-  | 'human_interview'
-  | 'panel_interview'
-  | 'take_home'
-  // Phase 4 additions from the v4 design
   | 'intake'
-  | 'recruiter'
+  | 'phone_screen'
+  | 'ai_screening'
+  | 'human_interview'
   | 'debrief'
-  | 'offer'
+  | 'take_home'
+
+export type ParticipantRole = 'interviewer' | 'observer' | 'reviewer'
+
+export type StageParticipantInput = {
+  user_id: string
+  role: ParticipantRole
+}
+
+export type StageParticipantResponse = StageParticipantInput & {
+  full_name: string
+  email: string
+}
 
 export type StageDifficulty = 'easy' | 'medium' | 'hard'
 export type AdvanceBehavior = 'auto_advance' | 'manual_review'
@@ -44,17 +53,27 @@ export type PipelineStageInput = {
   advance_behavior: AdvanceBehavior
   /** Per-stage dwell SLA in days. Null = no SLA configured. */
   sla_days?: number | null
+  /** Initial participants when creating from scratch. Empty by default. */
+  participants?: StageParticipantInput[]
 }
 
 // Stage update shape — existing stages pass their id, new stages omit it.
 // The backend's diff-and-sync uses id to preserve row UUIDs through edits
 // so question banks FK'd to stage_id survive pipeline auto-save.
-export type PipelineStageUpdateInput = PipelineStageInput & {
+// For participants:
+//   undefined/null → do not touch existing staffing for this stage
+//   []             → explicitly clear all participants
+//   [...]          → replace the staffing set
+export type PipelineStageUpdateInput = Omit<PipelineStageInput, 'participants'> & {
   id?: string
+  participants?: StageParticipantInput[] | null
 }
 
-export type PipelineStageResponse = PipelineStageInput & {
+// Server response — templates always carry `participants: []` (staffing-agnostic);
+// instance stages may carry real participants with full_name + email.
+export type PipelineStageResponse = Omit<PipelineStageInput, 'participants'> & {
   id: string
+  participants: StageParticipantResponse[]
 }
 
 // --- Template ---
@@ -129,6 +148,14 @@ export type SaveAsTemplateBody = {
   name: string
   description: string | null
   is_default: boolean
+}
+
+export type AssignableUser = {
+  user_id: string
+  full_name: string
+  email: string
+  role_labels: string[]
+  org_unit_name: string
 }
 
 // --- API methods ---
@@ -251,4 +278,14 @@ export const pipelinesApi = {
       token,
       body: JSON.stringify(body),
     }),
+
+  getAssignableUsers: (
+    token: string,
+    jobId: string,
+    role: ParticipantRole,
+  ): Promise<AssignableUser[]> =>
+    apiFetch<AssignableUser[]>(
+      `/api/jobs/${jobId}/pipeline/assignable-users?role=${role}`,
+      { token },
+    ),
 }
