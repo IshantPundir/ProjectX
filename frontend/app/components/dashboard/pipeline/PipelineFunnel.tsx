@@ -5,9 +5,10 @@ import type { PipelineStageInput } from '@/lib/api/pipelines'
 import { StageSlab } from './StageSlab'
 
 // Accept either PipelineStageInput (scratch stages with no backend id yet)
-// or the saved variant with a stable UUID. `id` is only used for React keys
-// below — the render code doesn't depend on it.
-type FunnelStage = PipelineStageInput & { id?: string }
+// or PipelineStageUpdateInput (saved variant with a stable UUID and the
+// nullable-participants Update shape). Render code doesn't look at
+// participants here.
+type FunnelStage = Omit<PipelineStageInput, 'participants'> & { id?: string }
 
 type Props = {
   stages: FunnelStage[]

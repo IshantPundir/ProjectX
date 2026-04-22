@@ -73,15 +73,12 @@ function PlusIcon({ size = 10 }: { size?: number }) {
 /* ─── Stage-type display ─────────────────────────────────── */
 
 const STAGE_TYPE_LABEL: Record<StageType, string> = {
-  phone_screen: 'phone screen',
-  ai_interview: 'AI interview',
-  human_interview: 'human interview',
-  panel_interview: 'panel interview',
-  take_home: 'take home',
   intake: 'intake',
-  recruiter: 'recruiter',
+  phone_screen: 'phone screen',
+  ai_screening: 'AI screening',
+  human_interview: 'human interview',
   debrief: 'debrief',
-  offer: 'offer',
+  take_home: 'take home',
 }
 
 type Mode = 'review' | 'interviewer'

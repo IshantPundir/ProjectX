@@ -61,12 +61,13 @@ export type PipelineStageInput = {
 // The backend's diff-and-sync uses id to preserve row UUIDs through edits
 // so question banks FK'd to stage_id survive pipeline auto-save.
 // For participants:
-//   undefined/null → do not touch existing staffing for this stage
-//   []             → explicitly clear all participants
-//   [...]          → replace the staffing set
-export type PipelineStageUpdateInput = Omit<PipelineStageInput, 'participants'> & {
+//   undefined/omitted → do not touch existing staffing for this stage
+//   []                → explicitly clear all participants
+//   [...]             → replace the staffing set
+// (undefined is chosen over null so the shape widens from PipelineStageInput
+// cleanly — Pydantic on the server treats missing field and null the same.)
+export type PipelineStageUpdateInput = PipelineStageInput & {
   id?: string
-  participants?: StageParticipantInput[] | null
 }
 
 // Server response — templates always carry `participants: []` (staffing-agnostic);

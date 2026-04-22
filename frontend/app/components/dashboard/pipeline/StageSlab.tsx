@@ -12,8 +12,13 @@ import type { LucideIcon } from 'lucide-react'
 import type { PipelineStageInput, StageType, StageDifficulty } from '@/lib/api/pipelines'
 import { StageActionsMenu } from './StageActionsMenu'
 
+// StageSlab reads stage metadata for display only — never touches
+// participants — so accept the non-participants slice of both Input
+// and UpdateInput shapes.
+type SlabStage = Omit<PipelineStageInput, 'participants'> & { id?: string }
+
 type Props = {
-  stage: PipelineStageInput
+  stage: SlabStage
   position: number
   selected?: boolean
   onClick?: () => void
