@@ -112,15 +112,28 @@ Runs in a single transaction, in this order:
 1. Create `pipeline_stage_participants` table + indexes.
 2. Enable RLS + add `tenant_isolation` and `service_bypass` policies.
 3. Grant permissions to `nexus_app`.
-4. Update legacy stage rows:
-   - `recruiter` → `human_interview` (both tables).
-   - `panel_interview` → `human_interview` (both tables).
-   - `ai_interview` → `ai_screening` (both tables).
-5. Delete `offer` rows (both tables).
-6. Drop old CHECK constraints on both tables.
-7. Create new CHECK constraints with the 6-value allowlist.
+4. **Drop** old CHECK constraints `ck_template_stages_stage_type` and `ck_job_pipeline_stages_stage_type` (from migration `0015_pipeline_stage_v4`). This must happen before the `UPDATE` step — otherwise renaming to `ai_screening` violates the old allowlist.
+5. Update legacy stage rows (both tables):
+   - `recruiter` → `human_interview`.
+   - `panel_interview` → `human_interview`.
+   - `ai_interview` → `ai_screening`.
+6. Delete `offer` rows from both tables.
+7. **Re-sequence positions** per pipeline instance / per template so remaining rows are `0..N-1`. Required because `UpdateJobPipelineRequest.check_positions_sequential` rejects gaps, and any pipeline that previously had an `offer` stage would 422 on the next auto-save PATCH otherwise:
+   ```sql
+   WITH renumbered AS (
+       SELECT id,
+              ROW_NUMBER() OVER (PARTITION BY instance_id ORDER BY position) - 1 AS new_pos
+       FROM job_pipeline_stages
+   )
+   UPDATE job_pipeline_stages s
+      SET position = r.new_pos
+     FROM renumbered r
+    WHERE s.id = r.id AND s.position <> r.new_pos;
+   -- repeat with PARTITION BY template_id for pipeline_template_stages
+   ```
+8. Re-create CHECK constraints on both tables with the 6-value allowlist, reusing the same constraint names (`ck_template_stages_stage_type`, `ck_job_pipeline_stages_stage_type`).
 
-Downgrade is lossy: deleted `offer` rows are not restored; rename-reverted rows keep their new UUID identities. Documented in the migration header. A rollback script lives alongside per the root CLAUDE.md policy.
+Downgrade is lossy: deleted `offer` rows are not restored; rename-reverted rows keep their new UUID identities; re-sequenced positions stay re-sequenced. Documented in the migration header. A rollback script lives alongside per the root CLAUDE.md policy.
 
 ## 5. API surface
 
