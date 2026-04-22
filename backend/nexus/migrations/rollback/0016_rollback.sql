@@ -1,6 +1,6 @@
--- Rollback for 0016_stage_type_v5_and_participants.
--- LOSSY: deleted offer rows are not restored; ai_screening -> ai_interview
--- only works if no rows carry the new value.
+-- Rollback for 0016_stage_v5_participants.
+-- Auto-renames ai_screening -> ai_interview rows back to v4, then swaps the
+-- CHECK constraint back. LOSSY: deleted 'offer' rows are not restored.
 
 BEGIN;
 

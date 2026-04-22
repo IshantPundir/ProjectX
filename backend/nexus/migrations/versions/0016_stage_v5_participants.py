@@ -20,7 +20,6 @@ Create Date: 2026-04-22
 """
 
 from alembic import op
-import sqlalchemy as sa
 
 
 revision = "0016_stage_v5_participants"
@@ -65,6 +64,7 @@ def upgrade() -> None:
             stage_id    uuid NOT NULL REFERENCES job_pipeline_stages(id) ON DELETE CASCADE,
             user_id     uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             role        text NOT NULL
+                          CONSTRAINT ck_stage_participants_role
                           CHECK (role IN ('interviewer', 'observer', 'reviewer')),
             assigned_by uuid REFERENCES users(id) ON DELETE SET NULL,
             assigned_at timestamptz NOT NULL DEFAULT now(),
@@ -129,7 +129,11 @@ def upgrade() -> None:
 
     # 6. Re-sequence positions per pipeline / per template. Required because
     #    UpdateJobPipelineRequest.check_positions_sequential rejects gaps on
-    #    the next PATCH.
+    #    the next PATCH. Two-phase UPDATE: offset first so the UNIQUE
+    #    (instance_id, position) / (template_id, position) constraints can't
+    #    collide mid-statement when rows shift left. (Constraints are NOT
+    #    DEFERRABLE; PG checks per-row during UPDATE.)
+    op.execute("UPDATE job_pipeline_stages SET position = position + 1000000")
     op.execute(
         """
         WITH renumbered AS (
@@ -140,9 +144,10 @@ def upgrade() -> None:
         UPDATE job_pipeline_stages s
            SET position = r.new_pos
           FROM renumbered r
-         WHERE s.id = r.id AND s.position <> r.new_pos
+         WHERE s.id = r.id
         """
     )
+    op.execute("UPDATE pipeline_template_stages SET position = position + 1000000")
     op.execute(
         """
         WITH renumbered AS (
@@ -153,7 +158,7 @@ def upgrade() -> None:
         UPDATE pipeline_template_stages s
            SET position = r.new_pos
           FROM renumbered r
-         WHERE s.id = r.id AND s.position <> r.new_pos
+         WHERE s.id = r.id
         """
     )
 
