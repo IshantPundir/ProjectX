@@ -12,6 +12,7 @@ import {
   SubUnitsList,
   SmallStats,
 } from "./shared";
+import { MembersSection } from "./MembersSection";
 
 interface Office {
   city: string;
@@ -292,6 +293,8 @@ export function RegionDetail({
               placeholder="e.g. We sponsor TN and H-1B from the US offices. Pay bands posted on all job descriptions in NY, CA, CO, WA."
             />
           </Section>
+
+          <MembersSection unitId={unit.id} />
         </div>
 
         <aside className="flex flex-col gap-3.5">

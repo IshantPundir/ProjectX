@@ -12,6 +12,7 @@ import {
   Field,
   SmallStats,
 } from "./shared";
+import { MembersSection } from "./MembersSection";
 
 interface DivisionMetadata {
   code?: string;
@@ -321,6 +322,8 @@ export function DivisionDetail({
               </Field>
             </div>
           </Section>
+
+          <MembersSection unitId={unit.id} />
         </div>
 
         <aside className="flex flex-col gap-3.5">

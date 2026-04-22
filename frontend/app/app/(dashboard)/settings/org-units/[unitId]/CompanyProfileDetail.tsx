@@ -17,6 +17,7 @@ import {
   SubUnitsList,
   TagChip,
 } from "./shared";
+import { MembersSection } from "./MembersSection";
 
 interface CompanyMetadata {
   legal_name?: string;
@@ -553,6 +554,8 @@ export function CompanyProfileDetail({
               </div>
             </Section>
           )}
+
+          <MembersSection unitId={unit.id} />
         </div>
 
         <aside className="flex flex-col gap-3.5">

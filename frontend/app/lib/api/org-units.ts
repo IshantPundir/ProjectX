@@ -48,9 +48,52 @@ export interface MeData {
   }[]
 }
 
+export interface OrgUnitMember {
+  user_id: string
+  email: string
+  full_name: string | null
+  roles: { role_id: string; role_name: string; assigned_at: string }[]
+}
+
+export interface RoleOption {
+  id: string
+  name: string
+  description: string
+  permissions: string[]
+  is_system: boolean
+}
+
 export const orgUnitsApi = {
   list: (token: string): Promise<OrgUnit[]> =>
     apiFetch<OrgUnit[]>('/api/org-units', { token }),
+
+  listMembers: (token: string, unitId: string): Promise<OrgUnitMember[]> =>
+    apiFetch<OrgUnitMember[]>(`/api/org-units/${unitId}/members`, { token }),
+
+  assignRole: (
+    token: string,
+    unitId: string,
+    body: { user_id: string; role_id: string },
+  ): Promise<{ status: string }> =>
+    apiFetch(`/api/org-units/${unitId}/members`, {
+      method: 'POST',
+      token,
+      body: JSON.stringify(body),
+    }),
+
+  removeRole: (
+    token: string,
+    unitId: string,
+    userId: string,
+    roleId: string,
+  ): Promise<{ status: string }> =>
+    apiFetch(`/api/org-units/${unitId}/members/${userId}/roles/${roleId}`, {
+      method: 'DELETE',
+      token,
+    }),
+
+  listRoles: (token: string): Promise<RoleOption[]> =>
+    apiFetch<RoleOption[]>('/api/roles', { token }),
 
   get: (token: string, unitId: string): Promise<OrgUnit> =>
     apiFetch<OrgUnit>(`/api/org-units/${unitId}`, { token }),

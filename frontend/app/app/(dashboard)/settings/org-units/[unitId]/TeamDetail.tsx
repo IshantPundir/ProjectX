@@ -12,6 +12,7 @@ import {
   Field,
   SmallStats,
 } from "./shared";
+import { MembersSection } from "./MembersSection";
 
 interface TeamMetadata {
   slug?: string;
@@ -186,8 +187,10 @@ export function TeamDetail({
             </div>
           </Section>
 
+          <MembersSection unitId={unit.id} />
+
           <Section
-            title="Members"
+            title="Roster summary"
             sub={`${members.length} ${members.length === 1 ? "person" : "people"} · ${interviewerCount} with interview permission`}
           >
             <div
