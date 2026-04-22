@@ -138,7 +138,7 @@ async def test_update_inserts_new_stage_without_touching_existing(
             id=None,
             position=2,
             name="Panel",
-            stage_type="panel_interview",
+            stage_type="human_interview",
             duration_minutes=60,
             difficulty="hard",
             signal_filter=SignalFilter(
@@ -260,7 +260,7 @@ async def test_update_combines_add_and_remove_in_one_call(db):
         id=None,
         position=1,
         name="Interview",
-        stage_type="ai_interview",
+        stage_type="ai_screening",
         duration_minutes=45,
         difficulty="hard",
         signal_filter=SignalFilter(include_types=["competency", "experience"]),
@@ -271,7 +271,7 @@ async def test_update_combines_add_and_remove_in_one_call(db):
         id=None,
         position=2,
         name="Panel",
-        stage_type="panel_interview",
+        stage_type="human_interview",
         duration_minutes=60,
         difficulty="hard",
         signal_filter=SignalFilter(
