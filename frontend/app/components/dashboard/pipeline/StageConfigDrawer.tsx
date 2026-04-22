@@ -6,23 +6,25 @@ import type { PipelineStageInput, PipelineStageUpdateInput, StageType, StageDiff
 import { DifficultySlider } from './DifficultySlider'
 import { SignalFilterEditor } from './SignalFilterEditor'
 import { PassCriteriaEditor } from './PassCriteriaEditor'
+import { StageParticipantsEditor } from './StageParticipantsEditor'
+import { participantSlotsFor } from '@/lib/pipelines/categories'
+import type { StageParticipantInput } from '@/lib/api/pipelines'
 
 type Props = {
   stage: PipelineStageUpdateInput
+  /** When set, enables the participants editor. Omit for template editing. */
+  jobId?: string
   onChange: (stage: PipelineStageUpdateInput) => void
   onClose: () => void
 }
 
-const STAGE_TYPES: { value: StageType; label: string }[] = [
-  { value: 'intake', label: 'Intake' },
-  { value: 'recruiter', label: 'Recruiter Screen' },
-  { value: 'phone_screen', label: 'Phone Screen' },
-  { value: 'ai_interview', label: 'AI Interview' },
+const STAGE_TYPES: { value: StageType; label: string; disabled?: boolean }[] = [
+  { value: 'intake',          label: 'Intake' },
+  { value: 'phone_screen',    label: 'Phone Screen' },
+  { value: 'ai_screening',    label: 'AI Screening' },
   { value: 'human_interview', label: 'Human Interview' },
-  { value: 'panel_interview', label: 'Panel Interview' },
-  { value: 'take_home', label: 'Take-home' },
-  { value: 'debrief', label: 'Debrief' },
-  { value: 'offer', label: 'Offer' },
+  { value: 'debrief',         label: 'Debrief' },
+  { value: 'take_home',       label: 'Take-home (Coming soon)', disabled: true },
 ]
 
 const ADVANCE_BEHAVIORS: { value: AdvanceBehavior; label: string }[] = [
@@ -30,7 +32,7 @@ const ADVANCE_BEHAVIORS: { value: AdvanceBehavior; label: string }[] = [
   { value: 'manual_review', label: 'Manual review' },
 ]
 
-export function StageConfigDrawer({ stage, onChange, onClose }: Props) {
+export function StageConfigDrawer({ stage, jobId, onChange, onClose }: Props) {
   const [advancedOpen, setAdvancedOpen] = useState(false)
   // WCAG 2.4.3: when the modal mounts (parent renders it conditionally
   // when a stage is selected), move focus to the first interactive
@@ -52,6 +54,15 @@ export function StageConfigDrawer({ stage, onChange, onClose }: Props) {
 
   function update<K extends keyof PipelineStageInput>(key: K, value: PipelineStageInput[K]) {
     onChange({ ...stage, [key]: value })
+  }
+
+  function handleTypeChange(next: StageType) {
+    const newSlot = participantSlotsFor(next)[0]?.role ?? null
+    const currentParticipants = stage.participants ?? []
+    const filtered = newSlot === null
+      ? []
+      : currentParticipants.filter((p) => p.role === newSlot)
+    onChange({ ...stage, stage_type: next, participants: filtered })
   }
 
   return (
@@ -108,11 +119,11 @@ export function StageConfigDrawer({ stage, onChange, onClose }: Props) {
               <select
                 id="stage-type"
                 value={stage.stage_type}
-                onChange={(e) => update('stage_type', e.target.value as StageType)}
+                onChange={(e) => handleTypeChange(e.target.value as StageType)}
                 className="w-full text-sm border border-zinc-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
               >
                 {STAGE_TYPES.map((t) => (
-                  <option key={t.value} value={t.value}>{t.label}</option>
+                  <option key={t.value} value={t.value} disabled={t.disabled}>{t.label}</option>
                 ))}
               </select>
             </div>
@@ -150,6 +161,29 @@ export function StageConfigDrawer({ stage, onChange, onClose }: Props) {
               />
             </div>
           </div>
+
+          {/* --- Participants editor --- */}
+          {jobId !== undefined && participantSlotsFor(stage.stage_type).length > 0 && (
+            <div className="border-t border-zinc-100 pt-4">
+              <StageParticipantsEditor
+                jobId={jobId}
+                stage={{
+                  stage_type: stage.stage_type,
+                  // Drawer's stage is PipelineStageUpdateInput (input shape).
+                  // For display we synthesize participant-response-shape using what
+                  // the drawer has. Parent components that have richer data may pass
+                  // enhanced stage objects; for now we fall back to empty display
+                  // fields — the combobox populates new adds with real names.
+                  participants: (stage.participants ?? []).map((p) => ({
+                    ...p,
+                    full_name: '',
+                    email: '',
+                  })),
+                }}
+                onChange={(next) => onChange({ ...stage, participants: next })}
+              />
+            </div>
+          )}
 
           {/* --- Advanced section --- */}
           <div className="border-t border-zinc-100 pt-4">
