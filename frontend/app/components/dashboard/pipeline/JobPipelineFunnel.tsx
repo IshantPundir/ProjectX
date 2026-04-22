@@ -12,12 +12,15 @@ import { useBanksOverview } from '@/lib/hooks/use-banks-overview'
 import type {
   JobPipelineInstance,
   PipelineStageUpdateInput,
+  StageParticipantInput,
   StageType,
   AdvanceBehavior,
   StageDifficulty,
 } from '@/lib/api/pipelines'
 import type { JobPostingWithSnapshot } from '@/lib/api/jobs'
 import { TemplatePickerDialog } from './TemplatePickerDialog'
+import { StageParticipantsEditor } from './StageParticipantsEditor'
+import { participantSlotsFor } from '@/lib/pipelines/categories'
 
 const AUTOSAVE_DEBOUNCE_MS = 800
 
@@ -371,7 +374,14 @@ export function JobPipelineFunnel({ job, pipeline, jobId }: Props) {
               if (activeStage.id) updateStageById(activeStage.id, patch)
             }}
           />
-          <InterviewersPanel stage={activeStage} />
+          <ParticipantsPanel
+            stage={activeStage}
+            jobId={jobId}
+            onChange={(next) => {
+              if (activeStage.id)
+                updateStageById(activeStage.id, { participants: next })
+            }}
+          />
         </div>
       )}
 
@@ -811,9 +821,19 @@ function StageDetailEditor({
           <select
             className="px-input"
             value={stage.stage_type}
-            onChange={(e) =>
-              onChange({ stage_type: e.target.value as StageType })
-            }
+            onChange={(e) => {
+              const next = e.target.value as StageType
+              // Strip participants whose role doesn't belong under the new
+              // type's category (e.g. switching human_interview -> debrief
+              // drops interviewer assignments since debrief expects reviewers).
+              const newSlot = participantSlotsFor(next)[0]?.role ?? null
+              const current = stage.participants ?? []
+              const filtered =
+                newSlot === null
+                  ? []
+                  : current.filter((p) => p.role === newSlot)
+              onChange({ stage_type: next, participants: filtered })
+            }}
           >
             {stageTypeOptions.map((o) => (
               <option key={o.value} value={o.value} disabled={o.disabled}>
@@ -913,17 +933,18 @@ function StageDetailEditor({
   )
 }
 
-/* ─── Interviewer slots panel (decorative/placeholder — backend wiring not in Phase 2C.1) ─── */
+/* ─── Participants panel — wraps the real StageParticipantsEditor ─── */
 
-function InterviewersPanel({ stage }: { stage: PipelineStageUpdateInput }) {
-  const lead = stage.stage_type === 'human_interview'
-  const slots = lead
-    ? [
-        { who: 'Assign an interviewer', slot: 'Systems Design', lead: true },
-        { who: 'Assign an interviewer', slot: 'Coding' },
-        { who: 'Assign an interviewer', slot: 'Values' },
-      ]
-    : [{ who: '—', slot: stage.stage_type.replace('_', ' ') }]
+function ParticipantsPanel({
+  stage,
+  jobId,
+  onChange,
+}: {
+  stage: PipelineStageUpdateInput
+  jobId: string
+  onChange: (next: StageParticipantInput[]) => void
+}) {
+  const hasSlots = participantSlotsFor(stage.stage_type).length > 0
 
   return (
     <div
@@ -932,65 +953,36 @@ function InterviewersPanel({ stage }: { stage: PipelineStageUpdateInput }) {
     >
       <div className="mb-4 flex items-center">
         <h3 className="px-eyebrow" style={{ margin: 0 }}>
-          Interviewers
+          {stage.stage_type === 'debrief'
+            ? 'Reviewers'
+            : stage.stage_type === 'ai_screening'
+              ? 'Observers'
+              : 'Interviewers'}
         </h3>
-        <div className="flex-1" />
-        <span className="text-[11px]" style={{ color: 'var(--px-fg-4)' }}>
-          {slots.length} slots
-        </span>
       </div>
 
-      <div className="flex flex-col gap-1.5">
-        {slots.map((r, i) => (
-          <div
-            key={i}
-            className="flex items-center gap-2.5 rounded-md border px-3 py-2"
-            style={{
-              background: 'var(--px-bg-2)',
-              borderColor: 'var(--px-hairline)',
-            }}
-          >
-            <div
-              className="flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-semibold"
-              style={{
-                background: 'var(--px-accent-tint)',
-                color: 'var(--px-accent)',
-              }}
-            >
-              {r.who === '—'
-                ? '—'
-                : r.who
-                    .split(' ')
-                    .slice(0, 2)
-                    .map((n) => n[0]?.toUpperCase() ?? '')
-                    .join('')}
-            </div>
-            <div className="flex-1">
-              <div
-                className="text-[12.5px] font-medium"
-                style={{ color: 'var(--px-fg)' }}
-              >
-                {r.who}
-              </div>
-              <div className="text-[11px]" style={{ color: 'var(--px-fg-4)' }}>
-                {r.slot}
-                {r.lead && ' · lead'}
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <button type="button" className="px-btn ghost xs mt-2.5">
-        <PlusIcon size={10} /> Add interviewer
-      </button>
-
-      <p
-        className="mt-3 text-[10.5px]"
-        style={{ color: 'var(--px-fg-4)', fontStyle: 'italic' }}
-      >
-        Interviewer rostering ships with Phase 3 session scheduling.
-      </p>
+      {hasSlots ? (
+        <StageParticipantsEditor
+          jobId={jobId}
+          stage={{
+            stage_type: stage.stage_type,
+            participants: (stage.participants ?? []).map((p) => ({
+              ...p,
+              full_name: '',
+              email: '',
+            })),
+          }}
+          onChange={onChange}
+        />
+      ) : (
+        <p className="text-[11.5px]" style={{ color: 'var(--px-fg-4)' }}>
+          {stage.stage_type === 'intake'
+            ? 'Intake is an entry point — no interviewers needed.'
+            : stage.stage_type === 'take_home'
+              ? 'Take-home is coming soon.'
+              : 'No staffing required for this stage type.'}
+        </p>
+      )}
     </div>
   )
 }
