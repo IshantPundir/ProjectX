@@ -28,7 +28,7 @@ STARTER_TEMPLATES: Final[dict[str, dict[str, Any]]] = {
             {
                 "position": 1,
                 "name": "AI Technical Interview",
-                "stage_type": "ai_interview",
+                "stage_type": "ai_screening",
                 "duration_minutes": 45,
                 "difficulty": "hard",
                 "signal_filter": {
@@ -40,7 +40,7 @@ STARTER_TEMPLATES: Final[dict[str, dict[str, Any]]] = {
             {
                 "position": 2,
                 "name": "Hiring Manager Panel",
-                "stage_type": "panel_interview",
+                "stage_type": "human_interview",
                 "duration_minutes": 60,
                 "difficulty": "medium",
                 "signal_filter": {
@@ -70,7 +70,7 @@ STARTER_TEMPLATES: Final[dict[str, dict[str, Any]]] = {
             {
                 "position": 1,
                 "name": "AI Interview",
-                "stage_type": "ai_interview",
+                "stage_type": "ai_screening",
                 "duration_minutes": 30,
                 "difficulty": "medium",
                 "signal_filter": {
@@ -118,7 +118,7 @@ STARTER_TEMPLATES: Final[dict[str, dict[str, Any]]] = {
             {
                 "position": 1,
                 "name": "AI Technical Interview",
-                "stage_type": "ai_interview",
+                "stage_type": "ai_screening",
                 "duration_minutes": 60,
                 "difficulty": "hard",
                 "signal_filter": {
@@ -130,7 +130,7 @@ STARTER_TEMPLATES: Final[dict[str, dict[str, Any]]] = {
             {
                 "position": 2,
                 "name": "Hiring Manager Panel",
-                "stage_type": "panel_interview",
+                "stage_type": "human_interview",
                 "duration_minutes": 60,
                 "difficulty": "medium",
                 "signal_filter": {

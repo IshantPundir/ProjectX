@@ -14,6 +14,7 @@ Route groups:
   - POST /api/jobs/{job_id}/pipeline/save-as-template            (save as new template)
   - POST /api/jobs/{job_id}/pipeline/update-source-template      (write back to source)"""
 
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -53,6 +54,7 @@ from app.modules.pipelines.schemas import (
     PipelineTemplateResponse,
     SaveAsTemplateRequest,
     SignalFilter,
+    StageParticipantResponse,
     StarterTemplate,
     UpdateJobPipelineRequest,
     UpdateTemplateRequest,
@@ -87,6 +89,7 @@ router = APIRouter(tags=["pipelines"])
 
 def _stage_row_to_response(
     row: PipelineTemplateStage | JobPipelineStage,
+    participants: list[dict] | None = None,
 ) -> PipelineStageResponse:
     return PipelineStageResponse(
         id=row.id,
@@ -99,6 +102,9 @@ def _stage_row_to_response(
         pass_criteria=row.pass_criteria,  # type: ignore[arg-type]
         advance_behavior=row.advance_behavior,  # type: ignore[arg-type]
         sla_days=row.sla_days,
+        participants=[
+            StageParticipantResponse(**p) for p in (participants or [])
+        ],
     )
 
 
@@ -122,13 +128,18 @@ def _instance_to_response(
     instance: JobPipelineInstance,
     stages: list[JobPipelineStage],
     source_template: PipelineTemplate | None,
+    participants_by_stage: dict[UUID, list[dict]] | None = None,
 ) -> JobPipelineInstanceResponse:
+    participants_by_stage = participants_by_stage or {}
     return JobPipelineInstanceResponse(
         id=instance.id,
         job_posting_id=instance.job_posting_id,
         source_template_id=instance.source_template_id,
         source_template_name=source_template.name if source_template else None,
-        stages=[_stage_row_to_response(s) for s in stages],
+        stages=[
+            _stage_row_to_response(s, participants_by_stage.get(s.id, []))
+            for s in stages
+        ],
         created_at=instance.created_at,
         updated_at=instance.updated_at,
     )
@@ -323,8 +334,8 @@ async def get_job_pipeline(
     result = await get_job_pipeline_with_stages(db, job_id)
     if result is None:
         raise HTTPException(status_code=404, detail="No pipeline for this job")
-    instance, stages, source_template, _participants_by_stage = result
-    return _instance_to_response(instance, stages, source_template)
+    instance, stages, source_template, participants_by_stage = result
+    return _instance_to_response(instance, stages, source_template, participants_by_stage)
 
 
 @router.post(
@@ -364,8 +375,8 @@ async def create_job_pipeline(
     result = await get_job_pipeline_with_stages(db, job_id)
     if result is None:
         raise HTTPException(status_code=500, detail="Instance created but reload failed")
-    instance, stages, source_template, _participants_by_stage = result
-    return _instance_to_response(instance, stages, source_template)
+    instance, stages, source_template, participants_by_stage = result
+    return _instance_to_response(instance, stages, source_template, participants_by_stage)
 
 
 @router.patch(
@@ -385,8 +396,8 @@ async def update_job_pipeline(
     result = await get_job_pipeline_with_stages(db, job_id)
     if result is None:
         raise HTTPException(status_code=500, detail="Reload failed")
-    new_instance, stages, source_template, _participants_by_stage = result
-    return _instance_to_response(new_instance, stages, source_template)
+    new_instance, stages, source_template, participants_by_stage = result
+    return _instance_to_response(new_instance, stages, source_template, participants_by_stage)
 
 
 @router.post(
@@ -410,8 +421,8 @@ async def swap_job_pipeline_endpoint(
     result = await get_job_pipeline_with_stages(db, job_id)
     if result is None:
         raise HTTPException(status_code=500, detail="Swap succeeded but reload failed")
-    new_instance, stages, source_template, _participants_by_stage = result
-    return _instance_to_response(new_instance, stages, source_template)
+    new_instance, stages, source_template, participants_by_stage = result
+    return _instance_to_response(new_instance, stages, source_template, participants_by_stage)
 
 
 @router.post(
@@ -433,8 +444,8 @@ async def reset_job_pipeline(
     result = await get_job_pipeline_with_stages(db, job_id)
     if result is None:
         raise HTTPException(status_code=500, detail="Reload failed")
-    new_instance, stages, source_template, _participants_by_stage = result
-    return _instance_to_response(new_instance, stages, source_template)
+    new_instance, stages, source_template, participants_by_stage = result
+    return _instance_to_response(new_instance, stages, source_template, participants_by_stage)
 
 
 @router.post(
@@ -493,3 +504,23 @@ async def update_source_template_endpoint(
     if pair is None:
         raise HTTPException(status_code=500, detail="Reload failed")
     return _template_to_response(pair[0], pair[1])
+
+
+@router.get("/api/jobs/{job_id}/pipeline/assignable-users")
+async def get_assignable_users(
+    job_id: UUID,
+    role: Literal["interviewer", "observer", "reviewer"],
+    db: AsyncSession = Depends(get_tenant_db),
+    user: UserContext = Depends(get_current_user_roles),
+) -> list[dict]:
+    """Return users eligible for a participant slot on this job's pipeline.
+
+    Role gating:
+      interviewer → users with Interviewer or Hiring Manager role
+      observer    → users with Observer, Interviewer, Hiring Manager, or Recruiter role
+      reviewer    → users with Hiring Manager role
+    Scoped to the job's org unit ancestry.
+    """
+    job, _instance = await require_instance_access(db, job_id, user, "view")
+    from app.modules.pipelines.participants import list_assignable_users
+    return await list_assignable_users(db, job=job, role=role)
