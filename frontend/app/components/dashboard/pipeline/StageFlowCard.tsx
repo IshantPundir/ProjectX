@@ -16,6 +16,7 @@ import type {
   StageType,
 } from '@/lib/api/pipelines'
 import type { BankStatus } from '@/lib/api/question-banks'
+import { isStageUnstaffed } from '@/lib/pipelines/categories'
 
 type Props = {
   stage: PipelineStageUpdateInput
@@ -186,6 +187,17 @@ export function StageFlowCard({
             >
               {stage.difficulty}
             </span>
+            {isStageUnstaffed(stage) && (
+              <>
+                <span className="text-zinc-300">·</span>
+                <span
+                  title="No interviewers/reviewers assigned"
+                  className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-100 text-amber-700"
+                >
+                  Unstaffed
+                </span>
+              </>
+            )}
           </div>
           {!hasId && (
             <div className="text-[10px] text-zinc-400 mt-1 italic">Saving…</div>

@@ -1,4 +1,4 @@
-import type { StageType, StageParticipantResponse } from '@/lib/api/pipelines'
+import type { ParticipantRole, StageType } from '@/lib/api/pipelines'
 
 export type StageCategory = 'entry' | 'human_led' | 'ai_led' | 'review' | 'disabled'
 
@@ -36,14 +36,17 @@ export function participantSlotsFor(type: StageType): ParticipantSlotSpec[] {
   }
 }
 
+// Only reads `.role` on each participant — accepts any shape carrying that
+// (StageParticipantInput, StageParticipantResponse, or a minimal pick).
 export function isStageUnstaffed(stage: {
   stage_type: StageType
-  participants: StageParticipantResponse[]
+  participants?: readonly { role: ParticipantRole }[] | null
 }): boolean {
   const required = participantSlotsFor(stage.stage_type).filter(
     (s): s is Extract<ParticipantSlotSpec, { required: true }> => s.required,
   )
+  const participants = stage.participants ?? []
   return required.some(
-    (slot) => stage.participants.filter((p) => p.role === slot.role).length === 0,
+    (slot) => participants.filter((p) => p.role === slot.role).length === 0,
   )
 }

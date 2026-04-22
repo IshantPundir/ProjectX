@@ -11,6 +11,7 @@ import {
 import type { LucideIcon } from 'lucide-react'
 import type { PipelineStageInput, StageType, StageDifficulty } from '@/lib/api/pipelines'
 import { StageActionsMenu } from './StageActionsMenu'
+import { isStageUnstaffed } from '@/lib/pipelines/categories'
 
 // StageSlab reads stage metadata for display only — never touches
 // participants — so accept the non-participants slice of both Input
@@ -111,6 +112,17 @@ export function StageSlab({ stage, position, selected, onClick, onDelete }: Prop
             >
               {stage.difficulty}
             </span>
+            {isStageUnstaffed(stage) && (
+              <>
+                <span className="text-zinc-300">·</span>
+                <span
+                  title="No interviewers/reviewers assigned"
+                  className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-100 text-amber-700"
+                >
+                  Unstaffed
+                </span>
+              </>
+            )}
           </div>
         </div>
 
