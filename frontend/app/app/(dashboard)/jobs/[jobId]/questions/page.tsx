@@ -1,8 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
+import gsap from 'gsap'
+import { ScrollTrigger } from 'gsap/ScrollTrigger'
+import { useGSAP } from '@gsap/react'
 
 import { Button } from '@/components/px'
 import { useJob } from '@/lib/hooks/use-job'
@@ -13,6 +16,8 @@ import { useConfirmBank } from '@/lib/hooks/use-confirm-bank'
 import { useRegenerateQuestion } from '@/lib/hooks/use-regenerate-question'
 import type { BankResponse, QuestionResponse } from '@/lib/api/question-banks'
 import type { PipelineStageResponse, StageType } from '@/lib/api/pipelines'
+
+gsap.registerPlugin(useGSAP, ScrollTrigger)
 
 /* ─── Small icons ────────────────────────────────────────── */
 
@@ -190,7 +195,15 @@ export default function QuestionBankPage() {
           Pick a stage above.
         </div>
       ) : mode === 'review' ? (
+        // `key` forces a full unmount/remount on stage change so
+        // useGSAP's cleanup (gsap.context().revert()) tears down
+        // pin-spacers before React reconciles. Without this, GSAP's
+        // `pinSpacing: true` wrap of <main> leaves React expecting
+        // <main> as a direct grid child while the browser has it
+        // nested inside a .pin-spacer — the next stage switch then
+        // throws NotFoundError on removeChild.
         <QBReview
+          key={currentStage.id}
           jobId={jobId}
           stage={currentStage}
           bank={currentBank}
@@ -312,6 +325,11 @@ function QBReview({
   const confirmMutation = useConfirmBank(jobId, stage.id)
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
+  const containerRef = useRef<HTMLDivElement>(null)
+  const pinWrapRef = useRef<HTMLDivElement>(null)
+  const asideRef = useRef<HTMLElement>(null)
+  const mainRef = useRef<HTMLElement>(null)
+
   const questions = bankDetail?.questions ?? []
   const mandatoryCount = questions.filter((q) => q.is_mandatory).length
   const totalMinutes = questions.reduce((s, q) => s + q.estimated_minutes, 0)
@@ -319,6 +337,192 @@ function QBReview({
   // hasn't picked one yet. Avoids a setState-in-effect cascade.
   const selected =
     questions.find((q) => q.id === selectedId) ?? questions[0] ?? null
+
+  /*
+    ScrollTrigger-driven pin.
+
+    Why GSAP here instead of `position: sticky`: sticky's pin/unpin is a
+    binary state flip with no way to ease the boundary. ScrollTrigger
+    gives us:
+      • `anticipatePin: 1` — avoids the 1-frame jitter at engagement
+      • a scrubbed shadow tween on the lead-in — visually smooths the
+        transition into and out of the pinned state
+      • a deterministic scroll range keyed off the grid container
+
+    The pin trigger is the grid wrapper. It engages when the grid's top
+    reaches the bottom of the AppShell top bar and releases when the
+    grid's bottom reaches the viewport bottom — matching the natural
+    "stick while container is visible" behavior, but with explicit
+    control over the edges. We read the top bar height from the same
+    --px-topbar-h CSS token the rest of the app uses, so one token
+    still drives everything.
+
+    Dependencies force a revert + re-run when the stage or the number
+    of questions changes, which is when the detail column's total
+    height shifts and ScrollTrigger's cached measurements would go
+    stale.
+  */
+  useGSAP(
+    () => {
+      if (
+        !containerRef.current ||
+        !pinWrapRef.current ||
+        !asideRef.current ||
+        !mainRef.current
+      ) {
+        return
+      }
+
+      const topbarH =
+        parseFloat(
+          getComputedStyle(document.documentElement)
+            .getPropertyValue('--px-topbar-h')
+            .trim(),
+        ) || 48
+
+      // Compute the horizontal gap between the grid's natural left
+      // edge and the AppShell rail's right edge. When pinned, the
+      // aside uses this as a CSS variable to shift leftward + widen +
+      // add compensating padding so the aside visually reaches the
+      // rail while the content inside stays stationary.
+      //
+      // Recomputed on rail collapse/expand (via the transitionend
+      // listener below) so the pinned aside tracks the new gap
+      // without needing a GSAP refresh.
+      const syncPinShift = () => {
+        if (!containerRef.current || !pinWrapRef.current) return
+        const rail = document.querySelector<HTMLElement>(
+          '[data-appshell-rail]',
+        )
+        const railRight = rail?.getBoundingClientRect().right ?? 0
+        const gridLeft = containerRef.current.getBoundingClientRect().left
+        const shift = Math.max(0, gridLeft - railRight)
+        pinWrapRef.current.style.setProperty('--qb-pin-shift', `${shift}px`)
+      }
+      syncPinShift()
+
+      // pinType defaults to 'fixed' — the browser-native path,
+      // zero-jitter at any scroll speed. We deliberately do NOT use
+      // 'transform' because its per-frame JS-driven translate lags
+      // browser scroll by a frame, which users perceive as the pin
+      // unpinning and re-pinning during fast scroll.
+      //
+      // The rail-collapse issue that 'transform' was trying to solve
+      // (captured `left` goes stale when AppShell's nav rail width
+      // transitions) is instead fixed by the `transitionend` listener
+      // at the bottom of this callback, combined with
+      // `invalidateOnRefresh: true` so refresh() re-captures `left`
+      // against the new layout.
+      //
+      // ORDER still matters: main's pin uses pinSpacing:true which
+      // grows the document by 240px. That layout change must land
+      // BEFORE the aside's pin captures its `bottom bottom` end, or
+      // the aside releases 240px too early.
+      //
+      // 240px symmetric hold window: at pin engagement we freeze main
+      // for +=240 of scroll (pinSpacing consumes real scroll distance
+      // — the user has to keep scrolling to advance through it). After
+      // the hold, main unpins and scrolls normally while the aside
+      // stays pinned. Symmetric by construction.
+      ScrollTrigger.create({
+        trigger: containerRef.current,
+        start: `top ${topbarH}`,
+        end: '+=240',
+        pin: mainRef.current,
+        pinSpacing: true,
+        anticipatePin: 1,
+        invalidateOnRefresh: true,
+        id: 'qb-main-hold',
+      })
+
+      ScrollTrigger.create({
+        trigger: containerRef.current,
+        start: `top ${topbarH}`,
+        // End past the document's max scroll so the pin never
+        // releases within reachable scroll. Why: `bottom bottom`
+        // ends the pin when the grid's bottom hits the viewport
+        // bottom — but at that scroll, grid_top is far above the
+        // viewport (grid is taller than the viewport), so the
+        // aside's natural-flow position ends well above the viewport
+        // bottom, producing a visible "shrunken panel" effect. By
+        // extending end unreachable, the aside remains pinned at
+        // top:48 with its full 100dvh-topbarH height all the way to
+        // the end of the document. `+1000` is a safety buffer
+        // against layout jitter between refresh and actual scroll.
+        end: () => `+=${ScrollTrigger.maxScroll(window) + 1000}`,
+        pin: pinWrapRef.current,
+        pinSpacing: false,
+        anticipatePin: 1,
+        invalidateOnRefresh: true,
+        // Pin the wrapper rather than the aside itself. GSAP sets
+        // inline width/height on the pinned element; keeping the
+        // wrapper as GSAP's target leaves the aside inside free to
+        // grow leftward via CSS (margin + width + padding-left) when
+        // .is-pinned is present on the wrapper. Zero !important,
+        // zero style collisions with GSAP.
+        toggleClass: {
+          targets: pinWrapRef.current,
+          className: 'is-pinned',
+        },
+        id: 'qb-aside-pin',
+      })
+
+      // Scrub a soft right-edge shadow in over the 120px leading up to
+      // pin engagement, and back out on scroll-up. Pure transform /
+      // shadow work — composited, no layout.
+      gsap.fromTo(
+        asideRef.current,
+        { boxShadow: '0 0 0 0 rgba(58, 45, 28, 0)' },
+        {
+          boxShadow: '8px 0 22px -14px rgba(58, 45, 28, 0.18)',
+          ease: 'none',
+          scrollTrigger: {
+            trigger: containerRef.current,
+            start: `top ${topbarH + 120}`,
+            end: `top ${topbarH}`,
+            scrub: true,
+            id: 'qb-aside-shadow',
+          },
+        },
+      )
+
+      // Safety net: recompute all trigger positions once the initial
+      // layout (including pin-spacer injection) has settled. Cheap and
+      // idempotent.
+      ScrollTrigger.refresh()
+
+      // Catch CSS width transitions that invalidate pinned `left`
+      // coordinates. The specific case this solves: AppShell's nav
+      // rail has a 180ms width transition on collapse/expand. Its
+      // width change shifts JobLayout's centered position (max-w:1400
+      // centered in a wider parent), which moves the grid container
+      // horizontally. With pinType:'fixed' the aside's captured `left`
+      // goes stale; `invalidateOnRefresh: true` + a refresh here makes
+      // it re-measure against the post-transition layout.
+      //
+      // Filtered to `width` only so we don't thrash refresh() on
+      // unrelated transitions (hover tints, color fades, etc.) — those
+      // would add unnecessary work every time a user hovers any
+      // button. Capture phase so we see every transition regardless
+      // of which descendant fires it.
+      const onTransitionEnd = (e: TransitionEvent) => {
+        if (e.propertyName === 'width') {
+          syncPinShift()
+          ScrollTrigger.refresh()
+        }
+      }
+      document.addEventListener('transitionend', onTransitionEnd, true)
+
+      return () => {
+        document.removeEventListener('transitionend', onTransitionEnd, true)
+      }
+    },
+    {
+      scope: containerRef,
+      dependencies: [stage.id, questions.length],
+      revertOnUpdate: true,
+    },
+  )
 
   if (isLoading) {
     return (
@@ -346,17 +550,34 @@ function QBReview({
 
   return (
     <div
-      className="grid"
-      style={{ gridTemplateColumns: '380px 1fr', minHeight: 'calc(100vh - 14rem)' }}
+      ref={containerRef}
+      className="grid items-start -mb-10"
+      style={{ gridTemplateColumns: '380px 1fr' }}
     >
-      {/* Master list */}
-      <aside
-        className="flex flex-col overflow-hidden border-r"
-        style={{
-          background: 'var(--px-bg-2)',
-          borderColor: 'var(--px-hairline)',
-        }}
+      {/*
+        Pin wrapper — this is what GSAP ScrollTrigger pins. We keep it
+        at the grid column's native 380px so the grid layout stays
+        untouched, and `overflow: visible` (default) is what lets the
+        aside inside spill leftward when .is-pinned is active.
+
+        The aside is a block child filling the wrapper at rest. When
+        .is-pinned is added (by ScrollTrigger.toggleClass), CSS
+        transitions its margin-left, width, and padding-left together
+        so the box slides left + grows leftward + compensates the
+        content's x-position in one motion.
+      */}
+      <div
+        ref={pinWrapRef}
+        className="qb-pin-wrap h-[calc(100dvh-var(--px-topbar-h,48px))]"
       >
+        <aside
+          ref={asideRef}
+          className="qb-aside flex h-full flex-col overflow-hidden border-r"
+          style={{
+            background: 'var(--px-bg-2)',
+            borderColor: 'var(--px-hairline)',
+          }}
+        >
         <div
           className="border-b p-[18px]"
           style={{ borderColor: 'var(--px-hairline)' }}
@@ -431,10 +652,11 @@ function QBReview({
             </button>
           )}
         </div>
-      </aside>
+        </aside>
+      </div>
 
       {/* Detail pane */}
-      <main className="overflow-y-auto">
+      <main ref={mainRef} className="overflow-y-auto">
         {selected ? (
           <QBDetail jobId={jobId} stage={stage} q={selected} />
         ) : (
@@ -446,6 +668,31 @@ function QBReview({
           </div>
         )}
       </main>
+
+      {/*
+        Left-extension transition. When .is-pinned lands on the pin
+        wrapper, the aside's box grows leftward to meet the nav rail:
+          • margin-left: 0    → -shift      (box slides left)
+          • width:       100% → 100%+shift  (box expands leftward
+                                            since the right edge stays
+                                            pegged by the grid column)
+        Content inside flows naturally into the widened panel — the
+        header, list, and footer each pick up the extra horizontal
+        space on their left side, matching the Claude.ai reference.
+        --qb-pin-shift is set per-layout by syncPinShift() in useGSAP,
+        recomputed whenever the rail's width transition ends.
+      */}
+      <style>{`
+        .qb-aside {
+          transition:
+            margin-left 260ms cubic-bezier(0.2, 0.8, 0.3, 1),
+            width       260ms cubic-bezier(0.2, 0.8, 0.3, 1);
+        }
+        .qb-pin-wrap.is-pinned .qb-aside {
+          margin-left: calc(-1 * var(--qb-pin-shift, 0px));
+          width:       calc(100% + var(--qb-pin-shift, 0px));
+        }
+      `}</style>
     </div>
   )
 }

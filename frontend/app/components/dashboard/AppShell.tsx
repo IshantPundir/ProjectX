@@ -265,6 +265,11 @@ export function AppShell({
         // No right border — the rounded top-left corner on the content area
         // provides the visible seam, letting the rail + top bar read as one
         // continuous chrome surface.
+        //
+        // `data-appshell-rail` is a stable query hook so pages with pinned
+        // master-detail layouts (e.g. /jobs/[id]/questions) can measure
+        // the rail's right edge and extend their aside flush to it.
+        data-appshell-rail=""
         className="sticky top-0 self-start flex h-screen flex-shrink-0 flex-col overflow-hidden"
         style={{
           width: railWidth,
@@ -417,9 +422,8 @@ export function AppShell({
             top-left + top/left hairlines that trace the chrome/content seam
             into a single smooth L-shape. */}
         <header
-          className="sticky top-0 flex flex-shrink-0 items-center gap-3 px-4"
+          className="sticky top-0 flex h-[var(--px-topbar-h,48px)] flex-shrink-0 items-center gap-3 px-4"
           style={{
-            height: 48,
             background: "var(--px-bg-2)",
             zIndex: 9,
           }}

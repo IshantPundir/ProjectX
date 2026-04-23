@@ -302,6 +302,10 @@
   --px-row-py: 10px;
   --px-group-gap: 14px;
 
+  /* Chrome dimensions — consumed by AppShell + any page that needs to
+     stick elements flush below the top bar (e.g. master-detail asides). */
+  --px-topbar-h: 48px;
+
   /* Radii (px) */
   --px-r-xs: 4px;
   --px-r-sm: 6px;
