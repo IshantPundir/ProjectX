@@ -1,13 +1,20 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 
 import type { SignalSnapshot } from '@/lib/api/jobs'
 import { useConfirmSignals } from '@/lib/hooks/use-confirm-signals'
 import { useSaveSignals } from '@/lib/hooks/use-save-signals'
 import { useJobEditStore } from '@/stores/job-edit'
 
-import { Button } from '@/components/px'
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogTitle,
+} from '@/components/px'
 import { ConfirmBar } from './ConfirmBar'
 import { EditableSignalsPanel } from './EditableSignalsPanel'
 import { SignalsPanel } from './SignalsPanel'
@@ -42,18 +49,23 @@ export function SignalsPanelWrapper({
   const saveSignals = useSaveSignals(jobId)
   const confirmSignals = useConfirmSignals(jobId)
 
+  const [discardOpen, setDiscardOpen] = useState(false)
+
   function handleToggleEdit() {
     if (isEditing) {
       if (isDirty) {
-        const confirmed = window.confirm(
-          'You have unsaved changes. Discard them?',
-        )
-        if (!confirmed) return
+        setDiscardOpen(true)
+        return
       }
       stopEditing()
     } else {
       startEditing(snapshot)
     }
+  }
+
+  function confirmDiscard() {
+    setDiscardOpen(false)
+    stopEditing()
   }
 
   function handleSave() {
@@ -130,6 +142,23 @@ export function SignalsPanelWrapper({
           />
         </div>
       )}
+
+      <Dialog open={discardOpen} onOpenChange={setDiscardOpen}>
+        <DialogContent>
+          <DialogTitle>Discard unsaved changes?</DialogTitle>
+          <DialogDescription>
+            Your edits to the signals will be lost. This cannot be undone.
+          </DialogDescription>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDiscardOpen(false)}>
+              Keep editing
+            </Button>
+            <Button variant="destructive" onClick={confirmDiscard}>
+              Discard
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </aside>
   )
 }
