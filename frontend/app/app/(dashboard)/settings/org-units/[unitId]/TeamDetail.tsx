@@ -137,7 +137,7 @@ export function TeamDetail({
   }
 
   return (
-    <form onSubmit={form.handleSubmit(onSubmit)}>
+    <div>
       <UnitPageHeader
         type="team"
         name={unit.name}
@@ -154,7 +154,12 @@ export function TeamDetail({
             <Button variant="outline" size="sm" type="button">
               Copy link
             </Button>
-            <Button size="sm" type="submit" disabled={updateMutation.isPending}>
+            <Button
+              size="sm"
+              type="button"
+              onClick={form.handleSubmit(onSubmit)}
+              disabled={updateMutation.isPending}
+            >
               {updateMutation.isPending ? "Saving…" : "Save changes"}
             </Button>
           </>
@@ -352,6 +357,6 @@ export function TeamDetail({
           />
         </aside>
       </div>
-    </form>
+    </div>
   );
 }

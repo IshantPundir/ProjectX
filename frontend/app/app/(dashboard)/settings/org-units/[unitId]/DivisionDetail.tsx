@@ -117,7 +117,7 @@ export function DivisionDetail({
   const teams = subUnits.filter((u) => u.unit_type === "team");
 
   return (
-    <form onSubmit={form.handleSubmit(onSubmit)}>
+    <div>
       <UnitPageHeader
         type="division"
         name={unit.name}
@@ -134,7 +134,12 @@ export function DivisionDetail({
             <Button variant="outline" size="sm" type="button">
               Copy link
             </Button>
-            <Button size="sm" type="submit" disabled={updateMutation.isPending}>
+            <Button
+              size="sm"
+              type="button"
+              onClick={form.handleSubmit(onSubmit)}
+              disabled={updateMutation.isPending}
+            >
               {updateMutation.isPending ? "Saving…" : "Save changes"}
             </Button>
           </>
@@ -349,6 +354,6 @@ export function DivisionDetail({
           />
         </aside>
       </div>
-    </form>
+    </div>
   );
 }
