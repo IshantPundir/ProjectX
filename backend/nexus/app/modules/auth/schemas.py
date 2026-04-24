@@ -2,7 +2,7 @@
 
 import uuid
 
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 
 
 class TokenPayload(BaseModel):
@@ -68,6 +68,32 @@ class AcceptInviteResponse(BaseModel):
     `expires_in` is seconds until the access_token expires.
     `redirect_to` is a same-origin relative path (validated client-side
     to avoid open-redirect).
+    """
+
+    access_token: str
+    refresh_token: str
+    expires_in: int
+    redirect_to: str
+
+
+class LoginRequest(BaseModel):
+    """Request body for POST /api/auth/login.
+
+    `email` uses `EmailStr` so the 422 path catches malformed addresses
+    before the handler touches the AuthProvider — no user enumeration
+    surface for syntax errors.
+    """
+
+    email: EmailStr
+    password: str
+
+
+class LoginResponse(BaseModel):
+    """Response body for POST /api/auth/login.
+
+    `redirect_to` is computed server-side from `users.onboarding_complete`
+    so the frontend never has to decode the access_token to pick a
+    post-login route.
     """
 
     access_token: str

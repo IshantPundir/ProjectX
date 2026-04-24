@@ -9,7 +9,7 @@ dependencies = [
     "uvicorn[standard]>=0.34,<1",
 
     # Data validation & settings
-    "pydantic>=2.10,<3",
+    "pydantic[email]>=2.10,<3",
     "pydantic-settings>=2.7,<3",
 
     # Database
