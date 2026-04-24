@@ -54,6 +54,13 @@ Reasoning for ordering:
 
 ## 5. Batch 1 — Critical Mechanical Fixes
 
+> **Status:** ✅ Completed 2026-04-24 on branch `cleanup/batch-1-mechanical-fixes` (worktree `.worktrees/cleanup-batch-1/`). 18 commits `f36aec9..70b19fc`. Final gates: tsc clean, lint 0 errors, 54/54 tests, build clean. Per-task spec + code-quality review passed; whole-batch reviewer recommended landing.
+>
+> **Deferred follow-ups** (surfaced by the final reviewer, out of scope for B1):
+> - `useJobStatusStream.isStreaming` initializes to `true` before SSE connects, suppressing polling for the initial-failure window. Consider initializing to `false` and flipping to `true` only after `onopen` succeeds.
+> - `jobsApi.delete` and `orgUnitsApi.assignRole`/`removeRole` declare `Promise<{status: string}>` returns but the backend likely returns 204 → with Task 2's `apiFetch` change, callers reading `.status` will get `undefined`. Either change return types to `void` or document the actual backend response shape.
+> - Five remaining `window.confirm` callsites (QuestionCard, JobPipelineFunnel, UnifiedPipelineView:298, [jobId]/page:1412, MembersSection, pipeline-templates/page) — same Dialog conversion pattern Task 12 established.
+
 ### 5.1 Scope
 
 | ID | Issue | File(s) |
