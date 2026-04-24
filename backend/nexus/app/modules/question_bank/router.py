@@ -6,10 +6,11 @@ triggers, bank confirmation, and the SSE status stream.
 
 from __future__ import annotations
 
+import uuid
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -65,9 +66,30 @@ from app.modules.question_bank.service import (
 )
 from app.modules.question_bank.sse import stream_question_bank_status
 from app.modules.question_bank.state_machine import transition_to_failed
+from app import pubsub
 
 router = APIRouter(prefix="/api", tags=["question_bank"])
 _log = structlog.get_logger()
+
+# Max length for an inbound x-correlation-id header. 128 is generous — uuid4
+# is 36 chars — but caps log-field growth and blocks pathological values.
+_MAX_CORRELATION_ID_LEN = 128
+
+
+def _get_correlation_id(request: Request) -> str:
+    """Extract x-correlation-id or mint a fresh uuid4.
+
+    The header is untrusted input, so we validate before propagating it to
+    logs and pubsub envelopes:
+      - must be non-empty and <= 128 chars
+      - must be printable ASCII (no control chars, no unicode)
+    Invalid values are discarded and replaced with a fresh uuid4 so a
+    forensic trail is still preserved per-request.
+    """
+    raw = request.headers.get("x-correlation-id")
+    if raw and 0 < len(raw) <= _MAX_CORRELATION_ID_LEN and raw.isascii() and raw.isprintable():
+        return raw
+    return str(uuid.uuid4())
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +186,7 @@ async def _safe_dispatch_regenerate_question(
     tenant_id: UUID,
     user_id: UUID,
     replace_signal_values: list[str] | None,
+    correlation_id: str = "",
 ) -> None:
     """Enqueue regenerate_question. Single-question regen does not
     pre-transition the bank, so there is nothing to roll back. Log loudly
@@ -174,6 +197,7 @@ async def _safe_dispatch_regenerate_question(
             str(tenant_id),
             str(user_id),
             replace_signal_values,
+            correlation_id,
         )
     except Exception as exc:
         _log.error(
@@ -438,10 +462,12 @@ async def regenerate_one_question(
     stage_id: UUID,
     question_id: UUID,
     body: RegenerateQuestionBody,
+    request: Request,
     db: AsyncSession = Depends(get_tenant_db),
     user: UserContext = Depends(get_current_user_roles),
 ) -> GenerateResponse:
     """Regenerate one question slot."""
+    correlation_id = _get_correlation_id(request)
     question, bank, _stage, _job = await require_question_access(
         db, question_id, user, "manage"
     )
@@ -457,6 +483,7 @@ async def regenerate_one_question(
         tenant_id=bank_tenant_id,
         user_id=user.user.id,
         replace_signal_values=body.replace_signal_values,
+        correlation_id=correlation_id,
     )
     return GenerateResponse(bank_id=bank_id, status="generating")
 
@@ -474,10 +501,13 @@ async def create_question(
     job_id: UUID,
     stage_id: UUID,
     body: CreateQuestionBody,
+    request: Request,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_tenant_db),
     user: UserContext = Depends(get_current_user_roles),
 ) -> QuestionResponse:
     """Add a hand-written recruiter question to a bank."""
+    correlation_id = _get_correlation_id(request)
     bank, stage, job = await require_bank_access_by_stage(
         db, job_id, stage_id, user, "manage"
     )
@@ -506,7 +536,26 @@ async def create_question(
     except SignalTypeNotAllowedError as exc:
         raise HTTPException(400, detail=str(exc))
 
+    # Capture IDs before commit — post-commit attribute access is unsafe under RLS.
+    bank_id = bank.id
+    stage_id_val = stage.id
+    question_id = question.id
+
     await db.commit()
+
+    background_tasks.add_task(
+        pubsub.publish,
+        pubsub.job_channel(job_id),
+        pubsub.Events.BANK_QUESTION_UPDATED,
+        {
+            "job_id": str(job_id),
+            "bank_id": str(bank_id),
+            "stage_id": str(stage_id_val),
+            "question_id": str(question_id),
+            "mutation": "create",
+        },
+        correlation_id=correlation_id,
+    )
     return _question_to_response(question)
 
 
@@ -522,10 +571,13 @@ async def reorder_questions_endpoint(
     job_id: UUID,
     stage_id: UUID,
     body: ReorderBody,
+    request: Request,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_tenant_db),
     user: UserContext = Depends(get_current_user_roles),
 ) -> BankWithQuestionsResponse:
     """Reorder questions in a bank."""
+    correlation_id = _get_correlation_id(request)
     bank, stage, _job = await require_bank_access_by_stage(
         db, job_id, stage_id, user, "manage"
     )
@@ -564,7 +616,24 @@ async def reorder_questions_endpoint(
         questions=[_question_to_response(q) for q in questions],
     )
 
+    # Capture bank_id before commit — post-commit attribute access is unsafe under RLS.
+    bank_id = bank.id
+
     await db.commit()
+
+    background_tasks.add_task(
+        pubsub.publish,
+        pubsub.job_channel(job_id),
+        pubsub.Events.BANK_QUESTION_UPDATED,
+        {
+            "job_id": str(job_id),
+            "bank_id": str(bank_id),
+            "stage_id": str(stage_id),
+            "question_id": None,
+            "mutation": "reorder",
+        },
+        correlation_id=correlation_id,
+    )
     return response
 
 
@@ -577,10 +646,13 @@ async def patch_question(
     stage_id: UUID,
     question_id: UUID,
     body: UpdateQuestionBody,
+    request: Request,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_tenant_db),
     user: UserContext = Depends(get_current_user_roles),
 ) -> QuestionResponse:
     """Edit a question in place. Auto-reverts bank confirmed → reviewing."""
+    correlation_id = _get_correlation_id(request)
     question, bank, stage, _job = await require_question_access(
         db, question_id, user, "manage"
     )
@@ -607,7 +679,26 @@ async def patch_question(
     except SignalTypeNotAllowedError as exc:
         raise HTTPException(400, detail=str(exc))
 
+    # Capture IDs before commit — post-commit attribute access is unsafe under RLS.
+    bank_id = bank.id
+    stage_id_val = stage.id
+    question_id_val = updated.id
+
     await db.commit()
+
+    background_tasks.add_task(
+        pubsub.publish,
+        pubsub.job_channel(job_id),
+        pubsub.Events.BANK_QUESTION_UPDATED,
+        {
+            "job_id": str(job_id),
+            "bank_id": str(bank_id),
+            "stage_id": str(stage_id_val),
+            "question_id": str(question_id_val),
+            "mutation": "update",
+        },
+        correlation_id=correlation_id,
+    )
     return _question_to_response(updated)
 
 
@@ -619,13 +710,21 @@ async def delete_question_endpoint(
     job_id: UUID,
     stage_id: UUID,
     question_id: UUID,
+    request: Request,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_tenant_db),
     user: UserContext = Depends(get_current_user_roles),
 ) -> None:
     """Delete a question and re-pack positions."""
+    correlation_id = _get_correlation_id(request)
     question, bank, _stage, _job = await require_question_access(
         db, question_id, user, "manage"
     )
+
+    # Capture IDs before deletion — the question row will be gone after the call.
+    bank_id = bank.id
+    question_id_val = question.id
+
     await delete_question(
         db,
         question=question,
@@ -634,6 +733,20 @@ async def delete_question_endpoint(
         user_email=user.user.email,
     )
     await db.commit()
+
+    background_tasks.add_task(
+        pubsub.publish,
+        pubsub.job_channel(job_id),
+        pubsub.Events.BANK_QUESTION_UPDATED,
+        {
+            "job_id": str(job_id),
+            "bank_id": str(bank_id),
+            "stage_id": str(stage_id),
+            "question_id": str(question_id_val),
+            "mutation": "delete",
+        },
+        correlation_id=correlation_id,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -647,10 +760,13 @@ async def delete_question_endpoint(
 async def confirm_bank_endpoint(
     job_id: UUID,
     stage_id: UUID,
+    request: Request,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_tenant_db),
     user: UserContext = Depends(get_current_user_roles),
 ) -> BankResponse:
     """Confirm a bank after running knockout + budget validators."""
+    correlation_id = _get_correlation_id(request)
     bank, _stage, _job = await require_bank_access_by_stage(
         db, job_id, stage_id, user, "manage"
     )
@@ -687,7 +803,24 @@ async def confirm_bank_endpoint(
         is_stale=is_stale,
     )
 
+    # Capture IDs and new status before commit.
+    bank_id = bank.id
+    new_status = bank.status
+
     await db.commit()
+
+    background_tasks.add_task(
+        pubsub.publish,
+        pubsub.job_channel(job_id),
+        pubsub.Events.BANK_STATUS_CHANGED,
+        {
+            "job_id": str(job_id),
+            "bank_id": str(bank_id),
+            "stage_id": str(stage_id),
+            "new_status": new_status,
+        },
+        correlation_id=correlation_id,
+    )
     return response
 
 

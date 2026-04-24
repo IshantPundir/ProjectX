@@ -34,6 +34,7 @@ export interface OrgUnit {
   admin_emails: string[]
   is_root: boolean
   company_profile: CompanyProfile | null
+  company_profile_completed_at: string | null
   metadata: OrgUnitMetadata | null
 }
 

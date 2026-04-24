@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 # API process fail with "Connection refused" because Redis is a sibling
 # container, not on localhost inside the nexus container.
 from app import brokers  # noqa: F401
+from app import pubsub
 
 from app.config import settings
 
@@ -164,9 +165,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # clause.
     await _assert_rls_completeness()
 
+    # Pub/sub: verify connectivity before accepting traffic.
+    # Runs after RLS assertion so a broken DB schema fails first.
+    await pubsub.startup()
+
     yield
 
-    # Shutdown
+    # Shutdown — reverse order of startup.
+    await pubsub.shutdown()
+
     from app.ai.client import shutdown_langfuse
     from app.database import engine
 
@@ -644,8 +651,21 @@ def create_app() -> FastAPI:
 
     # --- Health check ---
     @application.get("/health", tags=["infra"])
-    async def health() -> dict[str, str]:
-        return {"status": "ok"}
+    async def health() -> dict:
+        import asyncio
+
+        result: dict = {"status": "ok", "checks": {}}
+
+        # Pub/sub ping — 2s timeout.
+        try:
+            client = pubsub._get_client()
+            await asyncio.wait_for(client.ping(), timeout=2.0)
+            result["checks"]["pubsub"] = "ok"
+        except Exception as exc:  # noqa: BLE001
+            result["checks"]["pubsub"] = f"failed: {exc}"
+            result["status"] = "degraded"
+
+        return result
 
     return application
 

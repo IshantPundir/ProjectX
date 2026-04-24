@@ -23,6 +23,9 @@ dependencies = [
     # Redis (session state, cache)
     "redis>=5.2,<6",
 
+    # Fast JSON serialization (pub/sub envelopes)
+    "orjson>=3.10,<4",
+
     # Auth
     "PyJWT[crypto]>=2.10,<3",
 
