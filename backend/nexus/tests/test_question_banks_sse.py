@@ -1,4 +1,4 @@
-"""SSE generator tests — pub/sub fast path (T17) and backstop poll (T18).
+"""SSE generator tests — pub/sub fast path (T17), backstop poll (T18), E2E (T19).
 
 T17: An envelope published to job:{id} is yielded by the SSE generator
      within 3 seconds via the pub/sub fast path.
@@ -9,10 +9,14 @@ T18: With the fast path broken (subscribe replaced with an infinite sleeper),
      per-test DB session so the flushed data is visible within the same
      connection-level transaction.
 
-Both tests call _sse_generator directly (no FastAPI Request object needed)
+T19: Full end-to-end — HTTP PATCH fires BackgroundTasks which publishes to real
+     Redis; the SSE subscriber receives the event within fast-path latency.
+     No pubsub monkeypatching; exercises every seam introduced in Batch 2.
+
+Both T17/T18 call _sse_generator directly (no FastAPI Request object needed)
 so they exercise the inner fan-in logic in isolation.
 
-Prerequisites for T17:
+Prerequisites for T17/T19:
   - Redis must be reachable (docker-compose ensures this).
 """
 from __future__ import annotations
@@ -22,9 +26,14 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 import pytest
+import sqlalchemy
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
+from unittest.mock import patch
 
 from app import pubsub
+from app.database import get_tenant_db
+from app.main import app
 from app.models import (
     JobPipelineInstance,
     JobPipelineStage,
@@ -32,6 +41,8 @@ from app.models import (
     JobPostingSignalSnapshot,
     StageQuestionBank,
 )
+from app.modules.auth.context import UserContext, get_current_user_roles
+from app.modules.auth.schemas import TokenPayload
 from app.modules.question_bank import sse
 from tests.conftest import create_test_client, create_test_org_unit, create_test_user
 
@@ -302,4 +313,177 @@ async def test_sse_backstop_emits_when_pubsub_unavailable(db: AsyncSession, monk
     )
     assert any(pubsub.Events.BANK_QUESTION_UPDATED in f for f in received), (
         f"Expected bank.question_updated, got: {received}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T19: End-to-end — HTTP PATCH → BackgroundTasks → publish → subscribe → SSE
+# ---------------------------------------------------------------------------
+
+_T19_BEARER = "test-sse-e2e-token"
+
+
+async def test_e2e_mutation_to_sse_happy_path(db: AsyncSession, monkeypatch):
+    """HTTP PATCH → background task publishes → SSE subscribe emits → client sees frame.
+
+    No pubsub monkeypatching — exercises the real pub/sub transport end to end.
+
+    The test seeds a bank + question via the shared _build_seed_bank helper,
+    then installs a raw-SQL question row (same pattern as T18) so the PATCH
+    handler finds a question to update.  Auth + DB dependency overrides mirror
+    test_question_banks_events.py so the HTTP handler uses the test session.
+    The SSE generator's backstop poll is slowed to 60 s so the fast path is
+    the only realistic delivery path within the 5 s timeout.
+
+    Prerequisites:
+      - Redis is reachable (docker-compose provides it).
+    """
+    from sqlalchemy import text
+
+    # ── Seed ─────────────────────────────────────────────────────────────────
+    bank = await _build_seed_bank(db)
+    # _build_seed_bank sets status="generating"; set it to "reviewing" so
+    # update_question / auto_revert_on_edit works without raising.
+    bank.status = "reviewing"
+    await db.flush()
+
+    # Insert one stage_questions row (the PATCH needs an existing question).
+    # rubric must satisfy the QuestionRubric schema (excellent/meets_bar/below_bar).
+    # The rubric is a static inline JSON literal — safe to embed as a SQL literal
+    # because this is test-only hardcoded data with no user input.
+    import uuid as _uuid
+    _question_id = _uuid.uuid4()
+    await db.execute(
+        text("""
+            INSERT INTO stage_questions (
+                id, tenant_id, bank_id, position, source, text,
+                signal_values, estimated_minutes, is_mandatory,
+                follow_ups, positive_evidence, red_flags, rubric,
+                evaluation_hint, edited_by_recruiter
+            )
+            VALUES (
+                :qid, :tid, :bid, 1, 'recruiter',
+                'Original E2E test question text',
+                ARRAY[]::text[], 3.0, false,
+                '[]'::jsonb, '[]'::jsonb, '[]'::jsonb,
+                '{"excellent": "A strong answer names specific tools and describes structured approaches.", "meets_bar": "An acceptable answer mentions at least one tool or technique.", "below_bar": "A weak answer is vague with no concrete examples."}'::jsonb,
+                'hint for e2e test', false
+            )
+        """),
+        {
+            "qid": _question_id,
+            "tid": bank.tenant_id,
+            "bid": bank.id,
+        },
+    )
+    await db.flush()
+
+    question_id = _question_id
+
+    job_id = bank.job_posting_id
+    stage_id = bank.stage_id
+    tenant_id = bank.tenant_id
+
+    # ── Auth + DB overrides (mirrors test_question_banks_events.py) ───────────
+    # We need a User row so UserContext.user is populated.  Re-use
+    # create_test_user from conftest helpers already imported at module level.
+    user = await create_test_user(db, tenant_id)
+
+    fake_payload = TokenPayload(
+        sub=str(user.auth_user_id),
+        tenant_id=str(tenant_id),
+        email=user.email,
+        is_projectx_admin=False,
+        exp=9999999999,
+    )
+    ctx = UserContext(
+        user=user,
+        is_super_admin=True,   # super-admin bypasses all permission checks
+        workspace_mode="enterprise",
+        assignments=[],
+    )
+
+    async def _user_override() -> UserContext:
+        return ctx
+
+    async def _db_override():
+        await db.execute(
+            sqlalchemy.text(f"SET LOCAL app.current_tenant = '{tenant_id}'")
+        )
+        yield db
+
+    def _fake_verify(token: str):
+        if token == _T19_BEARER:
+            return fake_payload
+        return None
+
+    app.dependency_overrides[get_current_user_roles] = _user_override
+    app.dependency_overrides[get_tenant_db] = _db_override
+    verify_patch = patch(
+        "app.middleware.auth.verify_access_token", side_effect=_fake_verify
+    )
+    verify_patch.start()
+
+    # ── SSE generator configuration ───────────────────────────────────────────
+    # Slow backstop so the fast path is the only realistic delivery route.
+    monkeypatch.setattr(sse, "POLL_INTERVAL_SEC", 60.0)
+
+    # Route the backstop's DB access through the test session so it doesn't
+    # open a real tenant session (which would need a committed tenant row).
+    @asynccontextmanager
+    async def _fake_tenant_session(_tid: str):
+        yield db
+
+    monkeypatch.setattr(sse, "get_tenant_session", _fake_tenant_session)
+
+    # ── Consume SSE frames ────────────────────────────────────────────────────
+    received: list[str] = []
+
+    async def consume():
+        async for frame in sse._sse_generator(
+            tenant_id=str(tenant_id),
+            job_id=job_id,
+        ):
+            received.append(frame)
+            if pubsub.Events.BANK_QUESTION_UPDATED in frame:
+                break
+
+    consumer = asyncio.create_task(consume())
+    # Give the subscribe coroutine time to connect to Redis before PATCHing.
+    await asyncio.sleep(0.2)
+
+    # ── Real HTTP PATCH — goes through handler, commits, fires BackgroundTask ─
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            resp = await ac.patch(
+                f"/api/jobs/{job_id}/pipeline/stages/{stage_id}/questions/{question_id}",
+                json={"text": "E2E test update — new question text"},
+                headers={"Authorization": f"Bearer {_T19_BEARER}"},
+            )
+        assert resp.status_code == 200, f"PATCH failed: {resp.status_code} {resp.text}"
+    finally:
+        verify_patch.stop()
+        app.dependency_overrides.pop(get_current_user_roles, None)
+        app.dependency_overrides.pop(get_tenant_db, None)
+
+    # ── Wait for the SSE frame ────────────────────────────────────────────────
+    try:
+        await asyncio.wait_for(consumer, timeout=5.0)
+    except asyncio.TimeoutError:
+        consumer.cancel()
+        pytest.fail(
+            f"SSE did not receive the mutation event end-to-end within 5s. "
+            f"Frames received so far: {received}"
+        )
+    finally:
+        consumer.cancel()
+        await asyncio.gather(consumer, return_exceptions=True)
+
+    assert any(pubsub.Events.BANK_QUESTION_UPDATED in f for f in received), (
+        f"bank.question_updated not in received frames: {received}"
+    )
+    assert any("correlation_id" in f for f in received), (
+        f"correlation_id not preserved in SSE frames: {received}"
     )
