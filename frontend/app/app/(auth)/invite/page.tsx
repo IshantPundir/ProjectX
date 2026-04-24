@@ -2,9 +2,15 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+
 import { createClient } from "@/lib/supabase/client";
 import { apiFetch } from "@/lib/api/client";
 import { authApi } from "@/lib/api/auth";
+import { applyApiErrorToForm } from "@/lib/api/errors";
+
+import { inviteSchema, type InviteFormValues } from "./schema";
 
 function EyeIcon() {
   return (
@@ -55,21 +61,21 @@ function InviteContent() {
   const router = useRouter();
   const rawToken = searchParams.get("token") || "";
 
-  const [state, setState] = useState<
-    "loading" | "invalid" | "ready" | "submitting"
-  >("loading");
+  const [state, setState] = useState<"loading" | "invalid" | "ready">(
+    rawToken ? "loading" : "invalid",
+  );
   const [invite, setInvite] = useState<InviteDetails | null>(null);
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [error, setError] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
+  const form = useForm<InviteFormValues>({
+    resolver: zodResolver(inviteSchema),
+    defaultValues: { password: "", confirmPassword: "" },
+    mode: "onBlur",
+  });
+
   useEffect(() => {
-    if (!rawToken) {
-      setState("invalid");
-      return;
-    }
+    if (!rawToken) return;
     apiFetch<InviteDetails>(
       `/api/auth/verify-invite?token=${encodeURIComponent(rawToken)}`,
     )
@@ -80,25 +86,11 @@ function InviteContent() {
       .catch(() => setState("invalid"));
   }, [rawToken]);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError("");
-
-    if (password !== confirmPassword) {
-      setError("Passwords do not match");
-      return;
-    }
-    if (password.length < 8) {
-      setError("Password must be at least 8 characters");
-      return;
-    }
-
-    setState("submitting");
-
+  async function onSubmit(values: InviteFormValues) {
     try {
       const result = await authApi.acceptInvite({
         raw_token: rawToken,
-        password,
+        password: values.password,
       });
 
       // Install the session cookie client-side so middleware / server
@@ -109,7 +101,8 @@ function InviteContent() {
         refresh_token: result.refresh_token,
       });
       if (sessionError) {
-        throw new Error(sessionError.message);
+        form.setError("root", { message: sessionError.message });
+        return;
       }
 
       // Open-redirect guard — the backend is trusted, but defense in
@@ -122,10 +115,10 @@ function InviteContent() {
       router.push(safeRedirect);
       router.refresh();
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Failed to create account",
-      );
-      setState("ready");
+      if (applyApiErrorToForm(err, form, { fallbackFieldKey: "password" })) return;
+      form.setError("root", {
+        message: err instanceof Error ? err.message : "Failed to create account",
+      });
     }
   }
 
@@ -180,6 +173,8 @@ function InviteContent() {
     );
   }
 
+  const rootError = form.formState.errors.root?.message;
+
   return (
     <>
       <div className="mb-6 text-center">
@@ -225,7 +220,7 @@ function InviteContent() {
       </div>
 
       <form
-        onSubmit={handleSubmit}
+        onSubmit={form.handleSubmit(onSubmit)}
         className="space-y-4 rounded-[12px] border p-7"
         style={{
           background: 'var(--px-surface)',
@@ -233,7 +228,7 @@ function InviteContent() {
           boxShadow: 'var(--px-shadow-sm)',
         }}
       >
-        {error && (
+        {rootError && (
           <p
             className="rounded-md border p-3 text-[13px]"
             style={{
@@ -242,7 +237,7 @@ function InviteContent() {
               borderColor: 'var(--px-danger-line)',
             }}
           >
-            {error}
+            {rootError}
           </p>
         )}
         <div>
@@ -262,18 +257,15 @@ function InviteContent() {
           </div>
         </div>
         <div>
-          <label className="px-label" htmlFor="invite-password">Set password</label>
+          <label htmlFor="invite-password" className="px-label">Set password</label>
           <div className="relative">
             <input
               id="invite-password"
               type={showPassword ? "text" : "password"}
-              required
-              minLength={8}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
               autoComplete="new-password"
               className="px-input pr-10"
               placeholder="Enter a password"
+              {...form.register("password")}
             />
             <button
               type="button"
@@ -285,20 +277,23 @@ function InviteContent() {
               {showPassword ? <EyeOffIcon /> : <EyeIcon />}
             </button>
           </div>
-          <p className="px-hint">Minimum 8 characters</p>
+          {form.formState.errors.password ? (
+            <p className="px-hint" style={{ color: 'var(--px-danger)' }}>
+              {form.formState.errors.password.message}
+            </p>
+          ) : (
+            <p className="px-hint">Minimum 8 characters</p>
+          )}
         </div>
         <div>
-          <label className="px-label" htmlFor="invite-confirm-password">Confirm password</label>
+          <label htmlFor="invite-confirm-password" className="px-label">Confirm password</label>
           <div className="relative">
             <input
               id="invite-confirm-password"
               type={showConfirmPassword ? "text" : "password"}
-              required
-              minLength={8}
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
               autoComplete="new-password"
               className="px-input pr-10"
+              {...form.register("confirmPassword")}
             />
             <button
               type="button"
@@ -310,13 +305,18 @@ function InviteContent() {
               {showConfirmPassword ? <EyeOffIcon /> : <EyeIcon />}
             </button>
           </div>
+          {form.formState.errors.confirmPassword && (
+            <p className="px-hint" style={{ color: 'var(--px-danger)' }}>
+              {form.formState.errors.confirmPassword.message}
+            </p>
+          )}
         </div>
         <button
           type="submit"
-          disabled={state === "submitting"}
+          disabled={form.formState.isSubmitting}
           className="px-btn primary lg w-full"
         >
-          {state === "submitting"
+          {form.formState.isSubmitting
             ? "Creating account…"
             : "Create account & continue →"}
         </button>
