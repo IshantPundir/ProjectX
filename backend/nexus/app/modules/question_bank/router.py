@@ -755,10 +755,13 @@ async def delete_question_endpoint(
 async def confirm_bank_endpoint(
     job_id: UUID,
     stage_id: UUID,
+    request: Request,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_tenant_db),
     user: UserContext = Depends(get_current_user_roles),
 ) -> BankResponse:
     """Confirm a bank after running knockout + budget validators."""
+    correlation_id = _get_correlation_id(request)
     bank, _stage, _job = await require_bank_access_by_stage(
         db, job_id, stage_id, user, "manage"
     )
@@ -795,7 +798,24 @@ async def confirm_bank_endpoint(
         is_stale=is_stale,
     )
 
+    # Capture IDs and new status before commit.
+    bank_id = bank.id
+    new_status = bank.status
+
     await db.commit()
+
+    background_tasks.add_task(
+        pubsub.publish,
+        pubsub.job_channel(job_id),
+        pubsub.Events.BANK_STATUS_CHANGED,
+        {
+            "job_id": str(job_id),
+            "bank_id": str(bank_id),
+            "stage_id": str(stage_id),
+            "new_status": new_status,
+        },
+        correlation_id=correlation_id,
+    )
     return response
 
 
