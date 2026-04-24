@@ -21,8 +21,6 @@ from app.modules.auth.context import UserContext, get_current_user_roles
 from app.modules.auth.schemas import (
     AcceptInviteRequest,
     AcceptInviteResponse,
-    CompleteInviteRequest,
-    CompleteInviteResponse,
     MeResponse,
     RoleAssignmentResponse,
     VerifyInviteResponse,
@@ -67,7 +65,7 @@ async def accept_invite(
 ) -> AcceptInviteResponse:
     """Backend-owned invite acceptance.
 
-    Replaces the legacy 2-call frontend flow (signUp + complete-invite).
+    Replaces the legacy 2-call frontend flow (frontend signUp + backend claim).
     Public endpoint: the raw invite token is proof of possession; no
     bearer JWT required (see middleware _PUBLIC_PREFIXES).
 
@@ -280,113 +278,6 @@ async def _safe_delete_auth_user(
             auth_user_id=auth_user_id,
             error=str(comp_err),
         )
-
-
-@router.post("/complete-invite", response_model=CompleteInviteResponse)
-async def complete_invite(
-    data: CompleteInviteRequest,
-    request: Request,
-    db: AsyncSession = Depends(get_bypass_db),
-) -> CompleteInviteResponse:
-    """Claim an invite token and create the user row.
-
-    If invited by projectx_admin → sets clients.super_admin_id.
-    No role assignment — roles are assigned later via org units.
-    """
-    token_payload = request.state.token_payload
-    oauth_email = token_payload.email
-    auth_user_id = uuid_mod.UUID(token_payload.sub)
-
-    token_hash = hashlib.sha256(data.raw_token.encode()).hexdigest()
-
-    # Atomic single-use claim
-    result = await db.execute(
-        sqlalchemy.text("""
-            UPDATE public.user_invites
-               SET status = 'accepted', accepted_at = NOW()
-             WHERE token_hash  = :token_hash
-               AND status      = 'pending'
-               AND expires_at  > NOW()
-            RETURNING id, tenant_id, email, invited_by, projectx_admin_id
-        """),
-        {"token_hash": token_hash},
-    )
-    claimed_row = result.first()
-
-    if not claimed_row:
-        raise HTTPException(status_code=401, detail="Invalid or expired invite")
-
-    if claimed_row.email != oauth_email:
-        raise HTTPException(
-            status_code=401, detail="Email mismatch — invite was for a different address"
-        )
-
-    # Create user (identity only)
-    user = User(
-        auth_user_id=auth_user_id,
-        tenant_id=uuid_mod.UUID(str(claimed_row.tenant_id)),
-        email=oauth_email,
-    )
-    db.add(user)
-    await db.flush()
-
-    # If invited by projectx admin → this is the super admin
-    is_super_admin = claimed_row.projectx_admin_id is not None
-    root_unit_id = ""
-    if is_super_admin:
-        await db.execute(
-            sqlalchemy.text(
-                "UPDATE public.clients SET super_admin_id = :user_id WHERE id = :tenant_id"
-            ),
-            {"user_id": str(user.id), "tenant_id": str(claimed_row.tenant_id)},
-        )
-
-        # Auto-create root company unit WITHOUT a profile. The onboarding
-        # wizard's step 2 collects the 4-field profile and PATCHes it onto
-        # this unit. Phase 2A removed the "profile required on create" rule
-        # precisely to unblock this invite → onboarding transition.
-        from app.modules.org_units.service import create_org_unit as _create_root_unit
-
-        root_unit = await _create_root_unit(
-            db=db,
-            client_id=uuid_mod.UUID(str(claimed_row.tenant_id)),
-            name="Company",
-            unit_type="company",
-            parent_unit_id=None,
-            created_by=user.id,
-            actor_email=oauth_email,
-            workspace_mode="enterprise",
-            company_profile=None,
-        )
-        root_unit_id = str(root_unit.id)
-
-    redirect_to = "/onboarding" if is_super_admin else "/"
-
-    logger.info(
-        "auth.invite_completed",
-        user_id=str(user.id),
-        tenant_id=str(claimed_row.tenant_id),
-        is_super_admin=is_super_admin,
-    )
-
-    await log_event(
-        db,
-        tenant_id=uuid_mod.UUID(str(claimed_row.tenant_id)),
-        actor_id=user.id,
-        actor_email=oauth_email,
-        action=audit_actions.USER_INVITE_CLAIMED,
-        resource="user",
-        resource_id=user.id,
-        payload={"email": oauth_email, "is_super_admin": is_super_admin},
-        ip_address=request.client.host if request.client else None,
-    )
-
-    return CompleteInviteResponse(
-        redirect_to=redirect_to,
-        user_id=str(user.id),
-        tenant_id=str(claimed_row.tenant_id),
-        root_unit_id=root_unit_id,
-    )
 
 
 @router.get("/me", response_model=MeResponse)

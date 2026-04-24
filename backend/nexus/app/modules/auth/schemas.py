@@ -42,17 +42,6 @@ class VerifyInviteResponse(BaseModel):
     client_name: str
 
 
-class CompleteInviteRequest(BaseModel):
-    raw_token: str
-
-
-class CompleteInviteResponse(BaseModel):
-    redirect_to: str  # "/onboarding" or "/"
-    user_id: str
-    tenant_id: str
-    root_unit_id: str
-
-
 class RoleAssignmentResponse(BaseModel):
     org_unit_id: str
     org_unit_name: str
