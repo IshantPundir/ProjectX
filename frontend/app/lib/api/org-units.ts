@@ -120,4 +120,23 @@ export const orgUnitsApi = {
       token,
       body: JSON.stringify(body),
     }),
+
+  delete: (
+    token: string,
+    unitId: string,
+  ): Promise<{ status: string }> =>
+    apiFetch<{ status: string }>(`/api/org-units/${unitId}`, {
+      method: 'DELETE',
+      token,
+    }),
+
+  removeMember: (
+    token: string,
+    unitId: string,
+    userId: string,
+  ): Promise<{ status: string; count: string }> =>
+    apiFetch<{ status: string; count: string }>(
+      `/api/org-units/${unitId}/members/${userId}`,
+      { method: 'DELETE', token },
+    ),
 }
