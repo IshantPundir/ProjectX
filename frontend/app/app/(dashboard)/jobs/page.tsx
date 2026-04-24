@@ -326,11 +326,12 @@ export default function JobsListPage() {
           Filter
         </button>
 
-        <Link href="/jobs/new">
-          <button className="px-btn primary sm" type="button">
-            <PlusIcon size={12} />
-            New role
-          </button>
+        <Link
+          href="/jobs/new"
+          className="px-btn primary sm"
+        >
+          <PlusIcon size={12} />
+          New role
         </Link>
       </div>
 
@@ -731,8 +732,11 @@ function EmptyState() {
       >
         Paste a job description and Copilot will extract structured interview signals for you.
       </p>
-      <Link href="/jobs/new">
-        <Button size="sm">Create your first role</Button>
+      <Link
+        href="/jobs/new"
+        className="px-btn primary sm inline-block"
+      >
+        Create your first role
       </Link>
     </div>
   )
