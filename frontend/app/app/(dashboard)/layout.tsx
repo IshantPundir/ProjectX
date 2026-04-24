@@ -3,19 +3,14 @@ import { createClient } from "@/lib/supabase/server";
 import { cache } from "react";
 import { AppShell } from "@/components/dashboard/AppShell";
 import { DashboardProviders } from "@/components/dashboard/providers";
+import { authApi, type MeResponse } from "@/lib/api/auth";
 
-const getMe = cache(async (token: string, apiUrl: string) => {
-  const res = await fetch(`${apiUrl}/api/auth/me`, {
-    headers: { Authorization: `Bearer ${token}` },
-    cache: "no-store",
-  });
-  if (!res.ok) return null;
-  return res.json() as Promise<{
-    is_super_admin: boolean;
-    onboarding_complete: boolean;
-    has_org_units: boolean;
-    workspace_mode: string;
-  }>;
+const getMe = cache(async (token: string): Promise<MeResponse | null> => {
+  try {
+    return await authApi.me(token);
+  } catch {
+    return null;
+  }
 });
 
 export default async function DashboardLayout({
@@ -44,8 +39,7 @@ export default async function DashboardLayout({
     redirect("/login");
   }
 
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-  const me = await getMe(session.access_token, apiUrl);
+  const me = await getMe(session.access_token);
 
   if (me && me.is_super_admin && !me.onboarding_complete) {
     redirect("/onboarding");

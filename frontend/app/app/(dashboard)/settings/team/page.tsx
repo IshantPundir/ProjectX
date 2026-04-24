@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api/client";
 import { getFreshSupabaseToken } from "@/lib/auth/tokens";
+import { authApi, type MeResponse } from "@/lib/api/auth";
 
 interface TeamMemberAssignment {
   org_unit_id: string;
@@ -20,10 +21,6 @@ interface TeamMember {
   source: "user" | "invite";
   status: string;
   created_at: string;
-}
-
-interface MeData {
-  is_super_admin: boolean;
 }
 
 /* ─── Icons ─── */
@@ -127,7 +124,7 @@ export default function TeamPage() {
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [me, setMe] = useState<MeData | null>(null);
+  const [me, setMe] = useState<MeResponse | null>(null);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
 
   // Invite form — email only
@@ -150,7 +147,7 @@ export default function TeamPage() {
       if (!token) return;
       const [memberData, meData] = await Promise.all([
         apiFetch<TeamMember[]>("/api/settings/team/members", { token }),
-        apiFetch<MeData>("/api/auth/me", { token }),
+        authApi.me(token),
       ]);
       setMembers(memberData);
       setMe(meData);

@@ -37,17 +37,6 @@ export interface OrgUnit {
   metadata: OrgUnitMetadata | null
 }
 
-export interface MeData {
-  is_super_admin: boolean
-  workspace_mode: string
-  assignments: {
-    org_unit_id: string
-    org_unit_name: string
-    role_name: string
-    permissions: string[]
-  }[]
-}
-
 export interface OrgUnitMember {
   user_id: string
   email: string
@@ -97,9 +86,6 @@ export const orgUnitsApi = {
 
   get: (token: string, unitId: string): Promise<OrgUnit> =>
     apiFetch<OrgUnit>(`/api/org-units/${unitId}`, { token }),
-
-  me: (token: string): Promise<MeData> =>
-    apiFetch<MeData>('/api/auth/me', { token }),
 
   create: (
     token: string,

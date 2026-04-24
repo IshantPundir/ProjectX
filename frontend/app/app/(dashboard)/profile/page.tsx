@@ -3,24 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { apiFetch } from "@/lib/api/client";
-
-interface RoleAssignment {
-  org_unit_id: string;
-  org_unit_name: string;
-  role_name: string;
-  permissions: string[];
-}
-
-interface MeData {
-  user_id: string;
-  email: string;
-  full_name: string | null;
-  tenant_id: string;
-  client_name: string;
-  is_super_admin: boolean;
-  assignments: RoleAssignment[];
-}
+import { authApi, type MeResponse } from "@/lib/api/auth";
 
 /* ─── Icons ─── */
 
@@ -68,7 +51,7 @@ function IconLogout({ className = "w-4 h-4" }: { className?: string }) {
 
 export default function ProfilePage() {
   const router = useRouter();
-  const [me, setMe] = useState<MeData | null>(null);
+  const [me, setMe] = useState<MeResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [signingOut, setSigningOut] = useState(false);
 
@@ -80,9 +63,7 @@ export default function ProfilePage() {
           data: { session },
         } = await supabase.auth.getSession();
         if (!session?.access_token) return;
-        const data = await apiFetch<MeData>("/api/auth/me", {
-          token: session.access_token,
-        });
+        const data = await authApi.me(session.access_token);
         setMe(data);
       } finally {
         setLoading(false);

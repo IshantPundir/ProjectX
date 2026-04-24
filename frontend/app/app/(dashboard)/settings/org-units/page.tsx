@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 
 import { getFreshSupabaseToken } from "@/lib/auth/tokens";
 import { jobsApi, type JobPostingSummary } from "@/lib/api/jobs";
-import { orgUnitsApi, type MeData, type OrgUnit } from "@/lib/api/org-units";
+import { orgUnitsApi, type OrgUnit } from "@/lib/api/org-units";
+import { authApi, type MeResponse } from "@/lib/api/auth";
 import {
   CompanyProfileForm,
   type CompanyProfile,
@@ -111,7 +112,7 @@ export default function OrgUnitsPage() {
   const [jobs, setJobs] = useState<JobPostingSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [me, setMe] = useState<MeData | null>(null);
+  const [me, setMe] = useState<MeResponse | null>(null);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
@@ -139,7 +140,7 @@ export default function OrgUnitsPage() {
       if (!token) return;
       const [unitsData, meData, jobsData] = await Promise.all([
         orgUnitsApi.list(token),
-        orgUnitsApi.me(token),
+        authApi.me(token),
         jobsApi.list(token).catch(() => [] as JobPostingSummary[]),
       ]);
       setUnits(unitsData);
