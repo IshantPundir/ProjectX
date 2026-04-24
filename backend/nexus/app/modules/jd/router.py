@@ -464,6 +464,7 @@ async def update_signals(
     job_id: UUID,
     body: SaveSignalsRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_tenant_db),
     user: UserContext = Depends(get_current_user_roles),
 ) -> SignalSnapshotResponse:
@@ -481,6 +482,20 @@ async def update_signals(
         actor_id=user.user.id,
         correlation_id=correlation_id,
     )
+
+    # Publish so SSE subscribers see the new snapshot version without waiting
+    # for the backstop poll. This was previously silent for SSE — only
+    # status/enrichment_status diffs emitted. New behavior: every save emits.
+    status_event = await get_job_status(db, job_id)
+    if status_event is not None:
+        background_tasks.add_task(
+            pubsub.publish,
+            pubsub.job_channel(job_id),
+            pubsub.Events.JD_STATUS_CHANGED,
+            status_event.model_dump(mode="json"),
+            correlation_id=correlation_id,
+        )
+
     return _snapshot_to_response(snapshot)  # type: ignore[return-value]
 
 
