@@ -27,6 +27,18 @@ export interface MeResponse {
   }[]
 }
 
+export interface AcceptInviteRequest {
+  raw_token: string
+  password: string
+}
+
+export interface AcceptInviteResponse {
+  access_token: string
+  refresh_token: string
+  expires_in: number
+  redirect_to: string
+}
+
 export const authApi = {
   me: (
     token: string,
@@ -34,6 +46,16 @@ export const authApi = {
   ): Promise<MeResponse> =>
     apiFetch<MeResponse>('/api/auth/me', {
       token,
+      signal: opts?.signal,
+    }),
+
+  acceptInvite: (
+    body: AcceptInviteRequest,
+    opts?: { signal?: AbortSignal },
+  ): Promise<AcceptInviteResponse> =>
+    apiFetch<AcceptInviteResponse>('/api/auth/accept-invite', {
+      method: 'POST',
+      body: JSON.stringify(body),
       signal: opts?.signal,
     }),
 }
