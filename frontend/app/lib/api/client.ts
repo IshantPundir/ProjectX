@@ -21,9 +21,9 @@ export class ApiError extends Error {
 
 export async function apiFetch<T>(
   path: string,
-  options: RequestInit & { token?: string } = {},
+  options: RequestInit & { token?: string; signal?: AbortSignal } = {},
 ): Promise<T> {
-  const { token, ...fetchOptions } = options;
+  const { token, signal, ...fetchOptions } = options;
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -37,6 +37,7 @@ export async function apiFetch<T>(
   const res = await fetch(`${API_URL}${path}`, {
     ...fetchOptions,
     headers,
+    signal,
   });
 
   if (!res.ok) {
@@ -51,6 +52,9 @@ export async function apiFetch<T>(
         : `API error: ${res.status}`;
     throw new ApiError(message, res.status);
   }
+
+  // 204 No Content has an empty body — calling res.json() would throw.
+  if (res.status === 204) return undefined as T;
 
   return res.json();
 }
