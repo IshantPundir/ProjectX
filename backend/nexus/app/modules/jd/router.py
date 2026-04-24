@@ -488,6 +488,7 @@ async def update_signals(
 async def confirm_signals_endpoint(
     job_id: UUID,
     request: Request,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_tenant_db),
     user: UserContext = Depends(get_current_user_roles),
 ) -> JobPostingSummary:
@@ -507,6 +508,17 @@ async def confirm_signals_endpoint(
         )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
+
+    status_event = await get_job_status(db, job_id)
+    if status_event is not None:
+        background_tasks.add_task(
+            pubsub.publish,
+            pubsub.job_channel(job_id),
+            pubsub.Events.JD_STATUS_CHANGED,
+            status_event.model_dump(mode="json"),
+            correlation_id=correlation_id,
+        )
+
     return _job_to_summary(job)
 
 
