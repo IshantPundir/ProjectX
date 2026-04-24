@@ -472,8 +472,14 @@ class StageQuestion(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=sql_text("NOW()")
     )
+    # onupdate uses clock_timestamp() — NOT NOW() — so updated_at reflects
+    # the wall-clock moment of the UPDATE rather than the transaction start.
+    # Matches the Postgres trigger in migration 0017 (defense-in-depth pair).
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=sql_text("NOW()")
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=sql_text("NOW()"),
+        onupdate=sql_text("clock_timestamp()"),
     )
 
 
