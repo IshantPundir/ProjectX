@@ -155,7 +155,7 @@ async def publish(
         logger.info(
             "pubsub.publish.ok",
             channel=channel,
-            event=event,
+            event_name=event,
             correlation_id=correlation_id,
             metric_name="pubsub.publish.ok",
         )
@@ -163,7 +163,7 @@ async def publish(
         logger.warning(
             "pubsub.publish.failed",
             channel=channel,
-            event=event,
+            event_name=event,
             correlation_id=correlation_id,
             error=str(exc),
             metric_name="pubsub.publish.failed",
