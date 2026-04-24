@@ -469,3 +469,97 @@ async def test_enrich_job_publishes_status_changed(
     assert pub.channel == f"job:{job.id}"
     assert pub.event == pubsub.Events.JD_STATUS_CHANGED
     assert pub.payload["enrichment_status"] == "streaming"
+
+
+# ---------------------------------------------------------------------------
+# J7: extract_and_enhance_jd actor publishes post-commit
+# ---------------------------------------------------------------------------
+
+async def test_extract_actor_publishes_on_success(
+    db: AsyncSession, capture_publishes, monkeypatch
+):
+    """The extract actor publishes jd.status_changed after its commit.
+
+    Actors don't have FastAPI BackgroundTasks — publish fires inline after
+    the bypass_session context exits (post-commit). The test monkeypatches
+    get_bypass_session to reuse the per-test rollback transaction and mocks
+    the LLM call so nothing hits the network.
+    """
+    from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.ai.schemas import ExtractedSignals, ExtractionOutput, SignalItemV2
+    from app.modules.jd import actors
+
+    # ---- Seed data -----------------------------------------------------------
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    company = await create_test_org_unit(
+        db, tenant.id, unit_type="company", company_profile=_VALID_PROFILE,
+    )
+    job = JobPosting(
+        tenant_id=tenant.id,
+        org_unit_id=company.id,
+        title="Sr Engineer",
+        description_raw="A" * 200,
+        status="signals_extracting",
+        created_by=user.id,
+    )
+    db.add(job)
+    await db.flush()
+
+    # ---- Mock get_bypass_session to return the test db session ---------------
+    # The actor calls get_bypass_session() twice: once for the main session and
+    # once for the post-commit read. Both yield the same test db so everything
+    # stays inside the per-test rollback transaction.
+    @asynccontextmanager
+    async def _fake_bypass_session():
+        yield db
+
+    monkeypatch.setattr(
+        "app.modules.jd.actors.get_bypass_session",
+        _fake_bypass_session,
+    )
+
+    # ---- Mock the LLM call ---------------------------------------------------
+    # ExtractedSignals requires at least 5 signals — mirror test_jd_actor.py.
+    fake_output = ExtractionOutput(
+        enriched_jd="A" * 80,
+        signals=ExtractedSignals(
+            signals=[
+                SignalItemV2(value="Python", type="competency", priority="required", weight=2, knockout=False, stage="interview", source="ai_extracted", inference_basis=None),
+                SignalItemV2(value="5+ years backend", type="experience", priority="required", weight=2, knockout=True, stage="screen", source="ai_extracted", inference_basis=None),
+                SignalItemV2(value="CS degree", type="credential", priority="preferred", weight=1, knockout=False, stage="screen", source="ai_extracted", inference_basis=None),
+                SignalItemV2(value="System Design", type="competency", priority="required", weight=3, knockout=False, stage="interview", source="ai_inferred", inference_basis="Senior role implies architectural ownership"),
+                SignalItemV2(value="Mentoring", type="behavioral", priority="preferred", weight=1, knockout=False, stage="interview", source="ai_inferred", inference_basis="Senior role at growth-stage company"),
+            ],
+            seniority_level="senior",
+            role_summary="A senior backend engineer.",
+        ),
+    )
+    fake_client = MagicMock()
+    fake_client.chat.completions.create = AsyncMock(return_value=fake_output)
+    monkeypatch.setattr(
+        "app.modules.jd.actors.get_openai_client",
+        lambda: fake_client,
+    )
+
+    # ---- Invoke the actor directly (bypass Dramatiq broker/middleware) -------
+    # .fn.__wrapped__ is the actual async coroutine under Dramatiq's AsyncIO
+    # wrapper — calling it directly lets us await it in the test event loop.
+    await actors.extract_and_enhance_jd.fn.__wrapped__(
+        job_posting_id=str(job.id),
+        tenant_id=str(tenant.id),
+        correlation_id="test-corr-extract",
+    )
+
+    # ---- Assert publish -------------------------------------------------------
+    jd_events = [
+        p for p in capture_publishes if p.event == pubsub.Events.JD_STATUS_CHANGED
+    ]
+    assert len(jd_events) == 1, f"expected 1 publish, got {len(jd_events)}"
+    pub = jd_events[0]
+    assert pub.channel == f"job:{job.id}"
+    assert pub.payload["status"] == "signals_extracted"
+    assert pub.correlation_id == "test-corr-extract"
+

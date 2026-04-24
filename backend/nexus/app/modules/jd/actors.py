@@ -31,9 +31,11 @@ from app.ai.client import flush_langfuse, get_openai_client, langfuse_enabled
 from app.ai.config import ai_config
 from app.ai.prompts import prompt_loader
 from app.ai.schemas import ExtractionOutput, ReEnrichmentOutput
+from app import pubsub
 from app.database import get_bypass_session
 from app.models import JobPosting, JobPostingSignalSnapshot
 from app.modules.jd.errors import sanitize_error_for_user
+from app.modules.jd.service import get_job_status
 from app.modules.jd.state_machine import transition
 from app.modules.org_units.service import find_company_profile_in_ancestry
 
@@ -262,6 +264,13 @@ async def extract_and_enhance_jd(
     current = CurrentMessage.get_current_message()
     retries_so_far = current.options.get("retries", 0) if current else 0
 
+    # Track whether a commit landed so we know to publish post-commit.
+    # Non-final retries roll back and re-raise — no publish should fire.
+    # We capture the exception rather than re-raising inside the `async with`
+    # block so that code after the block can publish before Dramatiq retries.
+    _committed = False
+    _exc_to_reraise: BaseException | None = None
+
     async with get_bypass_session() as db:
         # SET LOCAL does NOT accept bind parameters in PostgreSQL — the
         # value must be a literal. asyncpg translates :t → $1 which
@@ -283,15 +292,18 @@ async def extract_and_enhance_jd(
                 retries_so_far=retries_so_far,
             )
             await db.commit()
-        except Exception:
+            _committed = True
+        except Exception as exc:
             # _run_extraction already transitioned to _failed on final retry
             # and staged the changes; commit them so the user sees the failed
             # state. Intermediate retries rollback silently (state unchanged).
             if retries_so_far >= 2:
                 await db.commit()
+                _committed = True
             else:
                 await db.rollback()
-            raise
+            # Store and defer the re-raise so post-commit publish can run.
+            _exc_to_reraise = exc
         finally:
             # Flush Langfuse traces after each actor invocation so they
             # reach the server promptly. The worker process may not shut
@@ -300,6 +312,39 @@ async def extract_and_enhance_jd(
             # thread pool to avoid blocking the async event loop.
             if langfuse_enabled():
                 await asyncio.to_thread(flush_langfuse)
+
+    # Post-commit publish — runs AFTER the bypass session has closed (and
+    # therefore after the commit is visible to other connections). Open a
+    # fresh session to read the committed state so the event reflects the
+    # actual DB row, not the in-memory ORM object.
+    if _committed:
+        try:
+            async with get_bypass_session() as pub_db:
+                safe_tenant_id = str(UUID(tenant_id))
+                await pub_db.execute(
+                    text(f"SET LOCAL app.current_tenant = '{safe_tenant_id}'")
+                )
+                status_event = await get_job_status(pub_db, UUID(job_posting_id))
+        except Exception as exc:
+            # If we can't read post-commit state, skip publish — the
+            # 5-second backstop SSE poll will deliver the update shortly.
+            logger.warning(
+                "actors.extract_and_enhance_jd.publish_read_failed",
+                job_posting_id=job_posting_id,
+                error=str(exc),
+            )
+            status_event = None
+
+        if status_event is not None:
+            await pubsub.publish(
+                pubsub.job_channel(job_posting_id),
+                pubsub.Events.JD_STATUS_CHANGED,
+                status_event.model_dump(mode="json"),
+                correlation_id=correlation_id,
+            )
+
+    if _exc_to_reraise is not None:
+        raise _exc_to_reraise
 
 
 # --- Call 2: Re-enrichment after recruiter signal edits -----------------------
