@@ -140,7 +140,6 @@ async def complete_invite(
         is_super_admin=is_super_admin,
     )
 
-    # TODO: refactor complete_invite logic into auth/service.py so audit call moves to service layer
     await log_event(
         db,
         tenant_id=uuid_mod.UUID(str(claimed_row.tenant_id)),
