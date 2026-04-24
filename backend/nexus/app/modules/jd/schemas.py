@@ -195,6 +195,13 @@ class JobPostingWithSnapshot(BaseModel):
     id: UUID
     title: str
     org_unit_id: UUID
+    # Enrichment fields — shared with JobPostingSummary so list and detail
+    # responses are field-complete and identical in shape for these columns.
+    org_unit_name: str | None = None
+    created_by_email: str | None = None
+    updated_by_email: str | None = None
+    signal_count: int = 0
+    needs_review_count: int = 0
     description_raw: str
     project_scope_raw: str | None = None
     description_enriched: str | None = None

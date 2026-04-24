@@ -37,7 +37,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.main import app
-from app.models import JobPosting, User
+from app.models import JobPosting, JobPostingSignalSnapshot, User
 from app.modules.auth.context import UserContext, get_current_user_roles
 from app.modules.auth.schemas import TokenPayload
 from tests.conftest import (
@@ -403,3 +403,133 @@ async def test_list_jobs_super_admin_sees_all(db: AsyncSession, monkeypatch):
     assert response.status_code == 200, response.text
     data = response.json()
     assert len(data) >= 2
+
+
+# ---------------------------------------------------------------------------
+# T7 — get_job populates enrichment fields
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_get_job_populates_enrichment_fields(db: AsyncSession):
+    """GET /api/jobs/{id} includes org_unit_name, emails, signal_count,
+    needs_review_count — not null/0 when data exists."""
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    company = await create_test_org_unit(
+        db,
+        tenant.id,
+        unit_type="company",
+        company_profile=_VALID_PROFILE,
+    )
+    tenant.super_admin_id = user.id
+    await db.flush()
+
+    # Insert a job in signals_extracted state
+    job = JobPosting(
+        tenant_id=tenant.id,
+        org_unit_id=company.id,
+        title="Enrichment Test Job",
+        description_raw="A" * 200,
+        status="signals_extracted",
+        source="native",
+        created_by=user.id,
+    )
+    db.add(job)
+    await db.flush()
+
+    # Attach a snapshot with one signal so signal_count > 0
+    snap = JobPostingSignalSnapshot(
+        tenant_id=tenant.id,
+        job_posting_id=job.id,
+        version=1,
+        signals=[
+            {
+                "value": "Python",
+                "type": "competency",
+                "priority": "required",
+                "weight": 2,
+                "knockout": False,
+                "stage": "screen",
+                "evaluation_method": "verbal_response",
+                "source": "ai_extracted",
+            }
+        ],
+        seniority_level="mid",
+        role_summary="A role summary long enough to pass validation.",
+    )
+    db.add(snap)
+    await db.commit()
+
+    headers, restore = _setup_test_context(db, user, tenant.id, is_super_admin=True)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.get(f"/api/jobs/{job.id}", headers=headers)
+    finally:
+        restore()
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+
+    assert data["org_unit_name"] == company.name
+    assert data["created_by_email"] == user.email
+    assert data["signal_count"] == 1
+    assert isinstance(data["needs_review_count"], int)
+    # Sanity: snapshot-specific field still present.
+    assert "latest_snapshot" in data
+
+
+# ---------------------------------------------------------------------------
+# T8 — retry response populates enrichment fields
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_retry_returns_enriched_summary(db: AsyncSession, monkeypatch):
+    """POST /api/jobs/{id}/retry response includes enrichment fields."""
+    monkeypatch.setattr(
+        "app.modules.jd.actors.extract_and_enhance_jd.send",
+        lambda *a, **k: None,
+    )
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    company = await create_test_org_unit(
+        db,
+        tenant.id,
+        unit_type="company",
+        company_profile=_VALID_PROFILE,
+    )
+    tenant.super_admin_id = user.id
+    await db.flush()
+
+    # Insert a job in signals_extraction_failed state (the only retry-eligible state)
+    job = JobPosting(
+        tenant_id=tenant.id,
+        org_unit_id=company.id,
+        title="Retry Test Job",
+        description_raw="A" * 200,
+        status="signals_extraction_failed",
+        source="native",
+        created_by=user.id,
+        status_error="Some extraction error",
+    )
+    db.add(job)
+    await db.commit()
+
+    headers, restore = _setup_test_context(db, user, tenant.id, is_super_admin=True)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.post(f"/api/jobs/{job.id}/retry", headers=headers)
+    finally:
+        restore()
+
+    assert response.status_code == 202, response.text
+    data = response.json()
+
+    assert data["org_unit_name"] == company.name
+    assert data["created_by_email"] == user.email
+    assert isinstance(data["signal_count"], int)
+    assert isinstance(data["needs_review_count"], int)

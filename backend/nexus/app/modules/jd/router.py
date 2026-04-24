@@ -104,12 +104,21 @@ def _snapshot_to_response(
 
 
 def _job_with_snapshot_to_response(
-    job, snap, *, can_manage: bool = False,
+    job,
+    snap,
+    *,
+    can_manage: bool = False,
+    enriched: "JobPostingSummary | None" = None,
 ) -> JobPostingWithSnapshot:
     return JobPostingWithSnapshot(
         id=job.id,
         title=job.title,
         org_unit_id=job.org_unit_id,
+        org_unit_name=enriched.org_unit_name if enriched else None,
+        created_by_email=enriched.created_by_email if enriched else None,
+        updated_by_email=enriched.updated_by_email if enriched else None,
+        signal_count=enriched.signal_count if enriched else 0,
+        needs_review_count=enriched.needs_review_count if enriched else 0,
         description_raw=job.description_raw,
         project_scope_raw=job.project_scope_raw,
         description_enriched=job.description_enriched,
@@ -381,7 +390,9 @@ async def get_job(
             user.has_permission_in_unit(u.id, "jobs.manage") for u in ancestry
         )
 
-    return _job_with_snapshot_to_response(job, snap, can_manage=can_manage)
+    summaries = await enrich_job_summaries([job], db)
+    enriched = summaries[0]
+    return _job_with_snapshot_to_response(job, snap, can_manage=can_manage, enriched=enriched)
 
 
 @router.get("/{job_id}/status/stream")
