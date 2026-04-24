@@ -19,6 +19,19 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Typed `fetch` wrapper for talking to Nexus.
+ *
+ * - Auto-injects `Authorization: Bearer <token>` when `token` is provided.
+ * - Threads the optional `signal` into the underlying `fetch` so TanStack
+ *   Query (or any caller) can cancel in-flight requests.
+ * - Throws `ApiError` (with HTTP `status`) on non-OK responses; parses the
+ *   FastAPI `{detail: string}` shape and the 422 validation-array shape.
+ * - Returns `undefined` for 204 No Content responses. **Type the call as
+ *   `apiFetch<void>('/api/...')` for endpoints that return 204** —
+ *   otherwise the asserted `T` will silently be `undefined` at runtime
+ *   and any property access on the result will throw.
+ */
 export async function apiFetch<T>(
   path: string,
   options: RequestInit & { token?: string; signal?: AbortSignal } = {},
