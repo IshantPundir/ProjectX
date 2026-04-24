@@ -55,8 +55,6 @@ async def _seed_client_and_invite(
     - projectx_admin_id is a Text column (not UUID FK) — a non-None string
       triggers the super-admin path inside the handler.
     """
-    from sqlalchemy.ext.asyncio import AsyncSession as _AS  # noqa: F401
-
     client_obj = Client(name="Test Co", workspace_mode="enterprise")
     db.add(client_obj)
     await db.flush()
