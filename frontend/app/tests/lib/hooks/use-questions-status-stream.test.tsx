@@ -10,7 +10,11 @@ vi.mock('@microsoft/fetch-event-source', () => ({
   EventStreamContentType: 'text/event-stream',
   fetchEventSource: vi.fn(async (_url: string, opts: Record<string, unknown>) => {
     const onopen = opts.onopen as (r: Response) => Promise<void>
-    // Simulate a 401 from the server.
+    const onerror = opts.onerror as (e: unknown) => void
+    // Mirror @microsoft/fetch-event-source's real flow:
+    // if onopen throws, the library forwards the error to onerror.
+    // The hook's onerror is expected to rethrow AuthSSEError; only then
+    // does the outer promise reject and the hook's catch run.
     try {
       await onopen({
         ok: false,
@@ -18,8 +22,8 @@ vi.mock('@microsoft/fetch-event-source', () => ({
         headers: new Headers(),
       } as Response)
     } catch (err) {
-      // The hook should catch this and reconnect.
-      throw err
+      onerror(err) // production library does this
+      throw err   // production library only re-throws if onerror also throws
     }
   }),
 }))
