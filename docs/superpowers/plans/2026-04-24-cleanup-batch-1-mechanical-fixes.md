@@ -4,7 +4,7 @@
 
 **Goal:** Land every CRITICAL and HIGH-severity mechanical fix from section 5 of the 2026-04-24 cleanup spec — surgical changes only, no schema or contract changes (those are in Batch 2).
 
-**Architecture:** Frontend-only batch. No backend changes. Each task is one logical commit; tests cover the behaviour-changing tasks (SSE retry, apiFetch, cache invalidation, beforeunload). Pure deletions, type-only edits, and wiring changes ship without new tests but are guarded by `npm run type-check` and the existing test suite.
+**Architecture:** Frontend-only batch. No backend changes. Each task is one logical commit; tests cover the behaviour-changing tasks (SSE retry, apiFetch, cache invalidation, beforeunload). Pure deletions, type-only edits, and wiring changes ship without new tests but are guarded by `npx tsc --noEmit` and the existing test suite.
 
 **Tech Stack:** Next.js 16 (App Router), React 19, TypeScript strict, TanStack Query v5, @microsoft/fetch-event-source, Vitest + Testing Library + jsdom.
 
@@ -43,7 +43,7 @@
 
   Run, in `/home/ishant/Projects/ProjectX/frontend/app`:
   ```bash
-  npm run type-check && npm run lint && npm run test && npm run build
+  npx tsc --noEmit && npm run lint && npm run test && npm run build
   ```
   Expected: all four pass with zero errors. If any fails, stop and surface the failure to the user before proceeding — Batch 1 must not start on a red baseline.
 
@@ -303,7 +303,7 @@
 
   Run:
   ```bash
-  npm run test && npm run type-check
+  npm run test && npx tsc --noEmit
   ```
   Expected: all pass.
 
@@ -474,7 +474,7 @@
 
   Run:
   ```bash
-  npm run type-check && npm run test
+  npx tsc --noEmit && npm run test
   ```
   Expected: all pass. The new `signal` field is optional, so callers that omit it still type-check.
 
@@ -553,7 +553,7 @@
 
   Run:
   ```bash
-  npm run type-check
+  npx tsc --noEmit
   ```
   Expected: PASS. If a hook is missed, TS won't error (signal is optional) but you should still verify hooks visually.
 
@@ -696,7 +696,7 @@
 - [ ] **Step 4.5: Verify whole suite green**
 
   ```bash
-  npm run type-check && npm run test
+  npx tsc --noEmit && npm run test
   ```
 
 - [ ] **Step 4.6: Commit**
@@ -912,7 +912,7 @@
 - [ ] **Step 6.3: Verify type-check and tests**
 
   ```bash
-  npm run type-check && npm run test
+  npx tsc --noEmit && npm run test
   ```
   Expected: PASS.
 
@@ -995,7 +995,7 @@
 - [ ] **Step 7.3: Verify type-check, lint, build**
 
   ```bash
-  npm run type-check && npm run lint && npm run build
+  npx tsc --noEmit && npm run lint && npm run build
   ```
   Expected: PASS. The build step is what catches the static-rendering opt-out warning if the loading.tsx is missing.
 
@@ -1066,7 +1066,7 @@
 - [ ] **Step 8.3: Verify type-check, lint, build**
 
   ```bash
-  npm run type-check && npm run lint && npm run build
+  npx tsc --noEmit && npm run lint && npm run build
   ```
   Expected: PASS.
 
@@ -1121,7 +1121,7 @@
 - [ ] **Step 9.2: Verify type-check + tests pass**
 
   ```bash
-  npm run type-check && npm run test
+  npx tsc --noEmit && npm run test
   ```
   Expected: PASS.
 
@@ -1207,7 +1207,7 @@
 - [ ] **Step 10.5: Verify type-check, lint, build**
 
   ```bash
-  npm run type-check && npm run lint && npm run build
+  npx tsc --noEmit && npm run lint && npm run build
   ```
   Expected: PASS.
 
@@ -1280,7 +1280,7 @@
 - [ ] **Step 11.2: Verify type-check passes**
 
   ```bash
-  npm run type-check
+  npx tsc --noEmit
   ```
   Expected: PASS. Existing callers were already typing the result via the declared return type, so no call-site updates needed.
 
@@ -1398,7 +1398,7 @@
 - [ ] **Step 12.4: Verify type-check, lint, build, tests**
 
   ```bash
-  npm run type-check && npm run lint && npm run test && npm run build
+  npx tsc --noEmit && npm run lint && npm run test && npm run build
   ```
   Expected: PASS.
 
@@ -1635,7 +1635,7 @@
 - [ ] **Step 13.9: Verify type-check, lint, build, tests**
 
   ```bash
-  npm run type-check && npm run lint && npm run test && npm run build
+  npx tsc --noEmit && npm run lint && npm run test && npm run build
   ```
   Expected: PASS. If a caller was missed, type-check will catch it via the deleted `MeData` symbol.
 
@@ -1676,7 +1676,7 @@
 
   ```bash
   cd /home/ishant/Projects/ProjectX/frontend/app
-  npm run type-check && npm run lint && npm run test && npm run build
+  npx tsc --noEmit && npm run lint && npm run test && npm run build
   ```
   Expected: every command exits 0.
 
