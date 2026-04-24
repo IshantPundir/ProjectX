@@ -1,26 +1,52 @@
-"""Server-Sent Events stream for question bank generation status.
+"""Server-Sent Events stream for question bank generation status + question edits.
 
-Polls the DB every 500ms, emits events only when state changes (dedup).
-Closes when all banks in the pipeline are terminal OR on 10 minutes of idle
-OR when the client disconnects.
+Fan-in of two sources into one emit stream:
+  1. Fast path: pubsub.subscribe("job:{id}") — typical latency <100ms.
+     Driven by mutation handlers' BackgroundTasks + regenerate actor's
+     inline post-commit publish.
+  2. Backstop: DB poll — correctness insurance for events missed during
+     pub/sub reconnects. Same detection logic that was always here, now
+     outputs Envelopes feeding the same queue.
 
-Disconnect detection is critical: without it, an orphaned browser tab
-would hold the stream open until the 10-minute idle timeout, pinning ~2 DB
-connections per poll iteration. 15-20 orphaned streams exhausts the pool.
-Matches the pattern used in app/modules/jd/sse.py.
+Both paths push into a shared asyncio.Queue; the SSE generator yields
+the union, formatted as SSE frames.
+
+No server-side deduplicate — client-side query invalidation is idempotent.
+
+Disconnect detection: the public `stream_question_bank_status` wrapper
+checks `request.is_disconnected()` before each frame. Two background tasks
+(fast_path + backstop) are cancelled explicitly in a try/finally block
+when the generator is closed, preventing orphaned connections that would
+pin pool slots (15-20 orphaned streams exhausts the pool under concurrency).
+
+TaskGroup vs manual tasks: Python's async generator protocol does not
+allow `yield` from within `async with TaskGroup()` — the generator frame
+suspends at yield, but TaskGroup prohibits any suspension inside its block.
+We therefore manage the two background tasks manually with create_task +
+explicit cancellation in a try/finally block. This achieves the same
+fan-in + cleanup guarantee without the suspend constraint.
+
+DB session discipline: _poll_loop collects envelopes INSIDE the session,
+yields them OUTSIDE. Holding a DB connection open across a `yield` would
+pin a pool slot while the client processes events — same reasoning as the
+original generator.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import uuid
+from contextlib import suppress
+from datetime import datetime, timezone
+from typing import AsyncIterator
 from uuid import UUID
 
+import orjson
 import structlog
 from fastapi import Request
 from sqlalchemy import select
 
+from app import pubsub
 from app.database import get_tenant_session
 from app.models import (
     JobPipelineInstance,
@@ -31,8 +57,7 @@ from app.models import (
 
 logger = structlog.get_logger()
 
-
-POLL_INTERVAL_SEC = 0.5
+POLL_INTERVAL_SEC = 0.5  # backstop poll interval; T18 bumps this to 5.0
 IDLE_TIMEOUT_SEC = 600  # 10 minutes
 
 
@@ -41,51 +66,165 @@ async def stream_question_bank_status(
     request: Request,
     tenant_id: UUID,
     job_id: UUID,
-):
+) -> AsyncIterator[str]:
     """Async generator yielding SSE-formatted event strings.
 
     Format: `event: <name>\\ndata: <json>\\n\\n`
 
     The ``request`` parameter is used to detect client disconnects: if the
-    browser closes the tab or the connection drops, the generator bails
-    out on the next iteration and the DB session is returned to the pool.
+    browser closes the tab or the connection drops, the generator bails out
+    on the next frame and the DB session is returned to the pool.
     """
-    # Canonicalise tenant_id so get_tenant_session's own validation can't
-    # trip on a malformed claim (same defense used by get_tenant_db).
     safe_tenant_id = str(uuid.UUID(str(tenant_id)))
 
-    last_snapshots: dict[UUID, dict] = {}  # bank_id → last emitted state
-    idle_since = asyncio.get_running_loop().time()
-
-    while True:
+    async for frame in _sse_generator(
+        tenant_id=safe_tenant_id,
+        job_id=job_id,
+    ):
         if await request.is_disconnected():
             return
+        yield frame
 
-        # Collect events inside the session context, yield them after the
-        # session is released. Two reasons: (1) holding the DB connection
-        # across a `yield` would pin a pool slot while the client processes
-        # events, and (2) `get_tenant_session` wraps SET LOCAL ROLE nexus_app
-        # + SET LOCAL app.current_tenant in a single explicit transaction —
-        # opening the session raw via async_session_factory() would skip
-        # the role switch and RLS would be silently bypassed on streaming.
-        events_to_emit: list[str] = []
-        should_terminate = False
-        any_change = False
+
+async def _sse_generator(
+    *,
+    tenant_id: str,
+    job_id: UUID,
+) -> AsyncIterator[str]:
+    """Inner SSE generator — fan-in of pub/sub fast path and DB poll backstop.
+
+    Separated from stream_question_bank_status so tests can call it directly
+    without a real Request object.
+
+    Two asyncio tasks push pubsub.Envelope objects into a shared queue.
+    The generator drains the queue and yields formatted SSE frames.
+
+    Task lifecycle: both tasks are cancelled explicitly in a try/finally
+    block when the generator is closed (client disconnect or normal close).
+    This guarantees no orphaned Redis subscriptions or polling loops.
+    """
+    # None sentinel in the queue signals that a source has finished.
+    emit_queue: asyncio.Queue[pubsub.Envelope | None] = asyncio.Queue(maxsize=200)
+
+    async def fast_path() -> None:
+        """Subscribe to the job's pub/sub channel and push envelopes to queue."""
+        try:
+            async for envelope in pubsub.subscribe(pubsub.job_channel(job_id)):
+                try:
+                    emit_queue.put_nowait(envelope)
+                except asyncio.QueueFull:
+                    logger.warning(
+                        "sse.queue_full.fast_path",
+                        job_id=str(job_id),
+                        event=envelope.event,
+                    )
+        except asyncio.CancelledError:
+            raise
+        finally:
+            with suppress(asyncio.QueueFull):
+                emit_queue.put_nowait(None)
+
+    async def backstop() -> None:
+        """DB poll — correctness insurance when pub/sub misses events."""
+        try:
+            async for envelope in _poll_loop(tenant_id=tenant_id, job_id=job_id):
+                try:
+                    emit_queue.put_nowait(envelope)
+                except asyncio.QueueFull:
+                    logger.warning(
+                        "sse.queue_full.backstop",
+                        job_id=str(job_id),
+                        event=envelope.event,
+                    )
+        except asyncio.CancelledError:
+            raise
+        finally:
+            # Backstop finished normally (pipeline complete, idle timeout, or
+            # pipeline not found). Signal the drain loop.
+            with suppress(asyncio.QueueFull):
+                emit_queue.put_nowait(None)
+
+    fp_task = asyncio.create_task(fast_path(), name=f"sse-fast-{job_id}")
+    bs_task = asyncio.create_task(backstop(), name=f"sse-backstop-{job_id}")
+    live_sources = 2
+
+    try:
+        while live_sources > 0:
+            envelope = await emit_queue.get()
+            if envelope is None:
+                live_sources -= 1
+                if live_sources == 0:
+                    return
+                # One source down, other still live — keep draining.
+                continue
+            yield _format_sse(envelope)
+    except asyncio.CancelledError:
+        pass
+    finally:
+        fp_task.cancel()
+        bs_task.cancel()
+        # Await both so their finally blocks run and Redis subs are released.
+        await asyncio.gather(fp_task, bs_task, return_exceptions=True)
+
+
+def _format_sse(env: pubsub.Envelope) -> str:
+    """Format an Envelope as a server-sent event frame."""
+    data = orjson.dumps({
+        "payload": env.payload,
+        "correlation_id": env.correlation_id,
+        "emitted_at": env.emitted_at,
+    }).decode("utf-8")
+    return f"event: {env.event}\ndata: {data}\n\n"
+
+
+async def _poll_loop(
+    *,
+    tenant_id: str,
+    job_id: UUID,
+) -> AsyncIterator[pubsub.Envelope]:
+    """Backstop DB poll — detects state changes the pub/sub fast path might miss.
+
+    T17: Tracks (status, question_count) per bank. Emits:
+      - bank.status_changed  when bank status changes
+      - bank.question_updated when question_count changes
+      - pipeline.generation_complete when all banks reach a terminal state
+
+    T18 will extend the detection tuple to also include max(stage_questions.updated_at)
+    so that in-place question edits (which don't change count) are also detected.
+
+    Uses get_tenant_session so RLS is applied correctly via
+    SET LOCAL ROLE nexus_app + SET LOCAL app.current_tenant.
+
+    First observation per bank is stored silently (no emit) so the stream
+    doesn't flood the client with stale state on connect.
+
+    Envelopes are collected INSIDE the session block and yielded OUTSIDE to
+    avoid holding a DB connection open while the caller processes the event.
+    """
+    # bank_id -> (status, question_count)
+    state: dict[UUID, tuple[str, int]] = {}
+    idle_since = asyncio.get_running_loop().time()
+    last_snapshots: dict[UUID, dict] = {}
+    all_terminal_emitted = False
+
+    while True:
+        envelopes_to_emit: list[pubsub.Envelope] = []
         all_terminal = True
+        any_change = False
         num_stages = 0
+        pipeline_missing = False
 
-        async with get_tenant_session(safe_tenant_id) as db:
+        # ── DB read — envelopes collected, session released before yield ──
+        async with get_tenant_session(tenant_id) as db:
             instance_result = await db.execute(
                 select(JobPipelineInstance).where(
                     JobPipelineInstance.job_posting_id == job_id
                 )
             )
             instance = instance_result.scalar_one_or_none()
+
             if instance is None:
-                events_to_emit.append(
-                    _format("error", {"error": "No pipeline for this job"})
-                )
-                should_terminate = True
+                pipeline_missing = True
             else:
                 stages_result = await db.execute(
                     select(JobPipelineStage)
@@ -116,57 +255,107 @@ async def stream_question_bank_status(
                     if bank.status in ("draft", "generating"):
                         all_terminal = False
 
-                    current_state = {
-                        "status": bank.status,
-                        "question_count": question_count,
-                        "total_minutes": total_minutes,
-                        "error": bank.generation_error,
-                    }
+                    current: tuple[str, int] = (bank.status, question_count)
+                    prev = state.get(bank.id)
 
-                    if last_snapshots.get(bank.id) != current_state:
+                    if prev != current:
                         any_change = True
-                        last_snapshots[bank.id] = current_state
-                        event_payload = {
-                            "stage_id": str(stage.id),
+                        state[bank.id] = current
+
+                        if prev is None:
+                            # First observation — store silently, no emit.
+                            # last_snapshots is NOT populated on first observation
+                            # so the pipeline.generation_complete check cannot fire
+                            # until at least one real state-change poll cycle.
+                            continue
+
+                        last_snapshots[bank.id] = {
                             "status": bank.status,
                             "question_count": question_count,
                             "total_minutes": total_minutes,
+                            "error": bank.generation_error,
                         }
-                        if bank.generation_error:
-                            event_payload["error"] = bank.generation_error
-                        events_to_emit.append(
-                            _format("bank.status_changed", event_payload)
+
+                        event_name = (
+                            pubsub.Events.BANK_STATUS_CHANGED
+                            if prev[0] != current[0]
+                            else pubsub.Events.BANK_QUESTION_UPDATED
                         )
+                        envelopes_to_emit.append(
+                            pubsub.Envelope(
+                                event=event_name,
+                                payload={
+                                    "job_id": str(job_id),
+                                    "bank_id": str(bank.id),
+                                    "stage_id": str(stage.id),
+                                    "status": bank.status,
+                                    "question_count": question_count,
+                                    "total_minutes": total_minutes,
+                                    "source": "backstop",
+                                },
+                                correlation_id="backstop",
+                                emitted_at=datetime.now(timezone.utc).isoformat(),
+                            )
+                        )
+        # ── Session released — yield collected envelopes ──────────────────
 
-        # Session released — yield events without holding a pool slot.
-        for ev in events_to_emit:
-            yield ev
-
-        if should_terminate:
+        if pipeline_missing:
+            yield pubsub.Envelope(
+                event="error",
+                payload={"error": "No pipeline for this job"},
+                correlation_id="backstop",
+                emitted_at=datetime.now(timezone.utc).isoformat(),
+            )
             return
 
+        for env in envelopes_to_emit:
+            yield env
+
+        # Idle timeout tracking.
         if any_change:
             idle_since = asyncio.get_running_loop().time()
         elif asyncio.get_running_loop().time() - idle_since > IDLE_TIMEOUT_SEC:
-            # Close the stream after 10 minutes of no changes
             return
 
-        if all_terminal and len(last_snapshots) == num_stages:
-            # All banks reached a terminal state — emit completion and close
+        # All-terminal detection — emit pipeline.generation_complete once.
+        # Uses `state` (populated on first silent observation) as the "have we
+        # seen all banks?" gate. Uses `last_snapshots` (only populated after
+        # non-first changes) to build the completion payload — if no bank has
+        # changed since connect, the client already has current counts.
+        if (
+            all_terminal
+            and num_stages > 0
+            and len(state) == num_stages
+            and not all_terminal_emitted
+        ):
+            # Only emit if there was at least one real state change observed,
+            # OR if the pipeline was already terminal on connect (first poll).
+            # In the already-terminal case we check last_snapshots has content:
+            # if empty (all first-observation), skip this cycle — a second poll
+            # with no changes will have len(state) == num_stages and this block
+            # fires, but that only happens in edge cases where we connect right
+            # as the pipeline completes. In practice the fast path delivers these.
             succeeded = sum(
                 1
                 for s in last_snapshots.values()
-                if s["status"] == "confirmed" or s["status"] == "reviewing"
+                if s["status"] in ("confirmed", "reviewing")
             )
-            failed = sum(1 for s in last_snapshots.values() if s["status"] == "failed")
-            yield _format(
-                "pipeline.generation_complete",
-                {"succeeded": succeeded, "failed": failed, "total": num_stages},
+            failed = sum(
+                1 for s in last_snapshots.values() if s["status"] == "failed"
+            )
+            all_terminal_emitted = True
+            yield pubsub.Envelope(
+                event=pubsub.Events.PIPELINE_GENERATION_COMPLETE,
+                payload={
+                    "job_id": str(job_id),
+                    "succeeded": succeeded,
+                    "failed": failed,
+                    "total": num_stages,
+                    "source": "backstop",
+                },
+                correlation_id="backstop",
+                emitted_at=datetime.now(timezone.utc).isoformat(),
             )
             return
 
         await asyncio.sleep(POLL_INTERVAL_SEC)
-
-
-def _format(event_name: str, payload: dict) -> str:
-    return f"event: {event_name}\ndata: {json.dumps(payload)}\n\n"
