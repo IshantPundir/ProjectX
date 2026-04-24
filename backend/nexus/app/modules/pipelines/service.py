@@ -609,8 +609,33 @@ async def update_job_pipeline_stages(
         else:
             incoming_new.append(s)
 
-    # Update-in-place for matched existing stages; delete unmatched ones
-    has_deletions = False
+    # Park matched existing stages in unique negative positions so the main
+    # update loop can shuffle freely without tripping
+    # UNIQUE(instance_id, position). Postgres checks that constraint row-by-
+    # row inside an executemany batch, so a reorder like A:0→1, B:1→2
+    # would otherwise violate the constraint mid-batch when A's UPDATE
+    # lands on B's current slot. Mapping old→-(old+1) guarantees the parked
+    # values are all distinct and disjoint from any non-negative target.
+    matched_existing = [e for e in existing_list if e.id in incoming_by_id]
+    if matched_existing:
+        for e in matched_existing:
+            e.position = -(e.position + 1)
+        await db.flush()
+
+    # Delete unmatched rows next — before the main update loop assigns final
+    # positions. SQLAlchemy's default flush order is UPDATE → DELETE, so if
+    # we left the delete pending until the big flush below, a matched row
+    # whose final position equals the to-be-deleted row's current position
+    # would trip the unique constraint mid-UPDATE (the DELETE hasn't fired
+    # yet to vacate the slot). Doing the deletes in their own flush now
+    # clears those slots before finals are written.
+    unmatched_existing = [e for e in existing_list if e.id not in incoming_by_id]
+    if unmatched_existing:
+        for e in unmatched_existing:
+            await db.delete(e)
+        await db.flush()
+
+    # Update-in-place for matched existing stages.
     for existing in existing_list:
         if existing.id in incoming_by_id:
             update = incoming_by_id[existing.id]
@@ -623,15 +648,6 @@ async def update_job_pipeline_stages(
             existing.pass_criteria = update.pass_criteria.model_dump()
             existing.advance_behavior = update.advance_behavior
             existing.sla_days = update.sla_days
-        else:
-            # Existing row that the recruiter removed
-            await db.delete(existing)
-            has_deletions = True
-
-    # Flush deletions first to avoid unique constraint violations when new
-    # stages are inserted at positions that were just freed up.
-    if has_deletions:
-        await db.flush()
 
     # Insert new stages (id=None or plain PipelineStageInput)
     for new_stage in incoming_new:
