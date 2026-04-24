@@ -315,29 +315,20 @@ async def deactivate_team_user(
 
 
 async def _delete_auth_user(auth_user_id: str) -> None:
-    """Delete a user from Supabase Auth via the Admin API."""
-    import httpx
+    """Delete a user from the configured auth provider.
 
-    from app.config import settings
+    Kept as a thin shim so existing BackgroundTask call sites in
+    settings/router.py stay one-line. New code should call
+    `get_auth_provider().delete_user(...)` directly.
+    """
+    from app.modules.auth.admin import AuthProviderError, get_auth_provider
 
-    if not settings.supabase_url or not settings.supabase_service_role_key:
-        logger.warning(
-            "settings.auth_delete_skipped", reason="supabase_url or service_role_key not configured"
-        )
-        return
-
-    url = f"{settings.supabase_url}/auth/v1/admin/users/{auth_user_id}"
-    async with httpx.AsyncClient() as client:
-        resp = await client.delete(
-            url,
-            headers={
-                "apikey": settings.supabase_service_role_key,
-                "Authorization": f"Bearer {settings.supabase_service_role_key}",
-            },
-        )
-    if resp.status_code not in (200, 204):
+    provider = get_auth_provider()
+    try:
+        await provider.delete_user(auth_user_id)
+    except AuthProviderError as err:
         logger.error(
-            "settings.auth_delete_failed", auth_user_id=auth_user_id, status=resp.status_code
+            "settings.auth_delete_failed",
+            auth_user_id=auth_user_id,
+            error=str(err),
         )
-    else:
-        logger.info("settings.auth_user_deleted", auth_user_id=auth_user_id)
