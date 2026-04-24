@@ -85,6 +85,13 @@ class AuthProvider(Protocol):
         ...
 
     async def delete_user(self, user_id: str) -> None:
-        """Delete an auth user. Idempotent — returns normally if the user
-        is already absent. Raises `AuthProviderError` on transport failure."""
+        """Delete an auth user.
+
+        Idempotent on absence — returns normally if the user is already
+        gone. May also return normally (logging a warning) if the provider
+        is not configured at runtime, so callsite code paths that optimistically
+        attempt cleanup (e.g. BackgroundTasks after user deactivation) do
+        not crash in unconfigured environments. All other error modes raise
+        `AuthProviderError`.
+        """
         ...

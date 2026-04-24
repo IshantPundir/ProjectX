@@ -199,10 +199,15 @@ class SupabaseAuthProvider:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.delete(url, headers=_admin_headers())
         if resp.status_code in (200, 204, 404):
-            # 404 means the user is already gone — idempotent success.
             if resp.status_code == 404:
+                # Idempotent — already absent.
                 logger.info(
                     "auth.admin.delete_user.already_absent",
+                    user_id=user_id,
+                )
+            else:
+                logger.info(
+                    "auth.admin.delete_user.ok",
                     user_id=user_id,
                 )
             return
