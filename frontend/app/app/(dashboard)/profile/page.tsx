@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { getFreshSupabaseToken } from "@/lib/auth/tokens";
 import { authApi, type MeResponse } from "@/lib/api/auth";
 
 /* ─── Icons ─── */
@@ -58,13 +59,12 @@ export default function ProfilePage() {
   useEffect(() => {
     async function load() {
       try {
-        const supabase = createClient();
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        if (!session?.access_token) return;
-        const data = await authApi.me(session.access_token);
+        const token = await getFreshSupabaseToken();
+        const data = await authApi.me(token);
         setMe(data);
+      } catch {
+        // SessionGuard + handleAuthError will handle 401 globally;
+        // swallowing here prevents a double-redirect.
       } finally {
         setLoading(false);
       }
