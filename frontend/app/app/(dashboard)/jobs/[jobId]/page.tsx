@@ -178,9 +178,9 @@ export default function JobReviewPage() {
   const searchParams = useSearchParams()
   const router = useRouter()
 
-  const { data: job, isLoading } = useJob(jobId)
+  const { status, error: sseError, isStreaming } = useJobStatusStream(jobId)
+  const { data: job, isLoading } = useJob(jobId, isStreaming)
   const { data: pipeline } = useJobPipeline(jobId)
-  const { status, error: sseError } = useJobStatusStream(jobId)
   const triggerEnrich = useTriggerEnrich(jobId)
 
   // Preserve the prior redirect: once the pipeline exists AND the user
