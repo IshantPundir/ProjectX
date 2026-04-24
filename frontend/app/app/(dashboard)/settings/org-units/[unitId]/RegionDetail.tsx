@@ -1,10 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { toast } from "sonner";
 import { Button } from "@/components/px";
-import { getFreshSupabaseToken } from "@/lib/auth/tokens";
-import { orgUnitsApi, type OrgUnit } from "@/lib/api/org-units";
+import { type OrgUnit } from "@/lib/api/org-units";
+import { useUpdateOrgUnit } from "@/lib/hooks/use-update-org-unit";
+import { applyApiErrorToForm } from "@/lib/api/errors";
 import {
   UnitPageHeader,
   Section,
@@ -32,6 +35,27 @@ interface RegionMetadata {
   lead_name?: string;
 }
 
+const officeSchema = z.object({
+  city: z.string(),
+  addr: z.string(),
+  seats: z.number(),
+  status: z.string(),
+});
+
+const regionDetailSchema = z.object({
+  name: z.string().min(1, "Name is required").max(100),
+  code: z.string(),
+  primary_city: z.string(),
+  timezone: z.string(),
+  currency: z.string(),
+  locale: z.string(),
+  notes: z.string(),
+  lead_name: z.string(),
+  offices: z.array(officeSchema),
+});
+
+type RegionDetailFormValues = z.infer<typeof regionDetailSchema>;
+
 export function RegionDetail({
   unit,
   parentPath,
@@ -48,59 +72,82 @@ export function RegionDetail({
   openRolesCount: number;
 }) {
   const initial = (unit.metadata ?? {}) as RegionMetadata;
-  const [name, setName] = useState(unit.name);
-  const [code, setCode] = useState(initial.code ?? "");
-  const [primaryCity, setPrimaryCity] = useState(initial.primary_city ?? "");
-  const [timezone, setTimezone] = useState(initial.timezone ?? "");
-  const [currency, setCurrency] = useState(initial.currency ?? "");
-  const [locale, setLocale] = useState(initial.locale ?? "");
-  const [notes, setNotes] = useState(initial.notes ?? "");
-  const [leadName, setLeadName] = useState(initial.lead_name ?? "");
-  const [offices, setOffices] = useState<Office[]>(initial.offices ?? []);
-  const [saving, setSaving] = useState(false);
 
-  async function handleSave() {
-    setSaving(true);
+  const form = useForm<RegionDetailFormValues>({
+    resolver: zodResolver(regionDetailSchema),
+    defaultValues: {
+      name: unit.name,
+      code: initial.code ?? "",
+      primary_city: initial.primary_city ?? "",
+      timezone: initial.timezone ?? "",
+      currency: initial.currency ?? "",
+      locale: initial.locale ?? "",
+      notes: initial.notes ?? "",
+      lead_name: initial.lead_name ?? "",
+      offices: initial.offices ?? [],
+    },
+  });
+
+  const updateMutation = useUpdateOrgUnit();
+
+  // Reactive values used in the render chrome.
+  const leadName = form.watch("lead_name");
+  const offices = form.watch("offices");
+
+  async function onSubmit(values: RegionDetailFormValues) {
     try {
-      const token = await getFreshSupabaseToken();
-      const updated = await orgUnitsApi.update(token, unit.id, {
-        name: name.trim() || unit.name,
-        metadata: {
-          code,
-          primary_city: primaryCity,
-          timezone,
-          currency,
-          locale,
-          offices,
-          notes,
-          lead_name: leadName,
+      const updated = await updateMutation.mutateAsync({
+        unitId: unit.id,
+        body: {
+          name: values.name.trim() || unit.name,
+          metadata: {
+            code: values.code,
+            primary_city: values.primary_city,
+            timezone: values.timezone,
+            currency: values.currency,
+            locale: values.locale,
+            offices: values.offices,
+            notes: values.notes,
+            lead_name: values.lead_name,
+          },
+          set_metadata: true,
         },
-        set_metadata: true,
       });
       onSaved(updated);
       toast.success("Region saved");
     } catch (err) {
+      if (applyApiErrorToForm(err, form)) return;
       toast.error(err instanceof Error ? err.message : "Failed to save region");
-    } finally {
-      setSaving(false);
     }
   }
 
   function updateOffice(i: number, patch: Partial<Office>) {
-    setOffices((prev) => prev.map((o, idx) => (idx === i ? { ...o, ...patch } : o)));
+    const current = form.getValues("offices");
+    form.setValue(
+      "offices",
+      current.map((o, idx) => (idx === i ? { ...o, ...patch } : o)),
+      { shouldDirty: true },
+    );
   }
   function addOffice() {
-    setOffices((prev) => [
-      ...prev,
-      { city: "", addr: "", seats: 0, status: "Active" },
-    ]);
+    const current = form.getValues("offices");
+    form.setValue(
+      "offices",
+      [...current, { city: "", addr: "", seats: 0, status: "Active" }],
+      { shouldDirty: true },
+    );
   }
   function removeOffice(i: number) {
-    setOffices((prev) => prev.filter((_, idx) => idx !== i));
+    const current = form.getValues("offices");
+    form.setValue(
+      "offices",
+      current.filter((_, idx) => idx !== i),
+      { shouldDirty: true },
+    );
   }
 
   return (
-    <>
+    <form onSubmit={form.handleSubmit(onSubmit)}>
       <UnitPageHeader
         type="region"
         name={unit.name}
@@ -111,14 +158,14 @@ export function RegionDetail({
         onBack={onBack}
         right={
           <>
-            <Button variant="ghost" size="sm">
+            <Button variant="ghost" size="sm" type="button">
               Archive
             </Button>
-            <Button variant="outline" size="sm">
+            <Button variant="outline" size="sm" type="button">
               Copy link
             </Button>
-            <Button size="sm" onClick={handleSave} disabled={saving}>
-              {saving ? "Saving…" : "Save changes"}
+            <Button size="sm" type="submit" disabled={updateMutation.isPending}>
+              {updateMutation.isPending ? "Saving…" : "Save changes"}
             </Button>
           </>
         }
@@ -135,57 +182,50 @@ export function RegionDetail({
           >
             <div className="grid grid-cols-2 gap-3.5">
               <Field label="Region name">
-                <input
-                  className="px-input"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                />
+                <input className="px-input" {...form.register("name")} />
               </Field>
               <Field label="Code" hint="Used in role IDs and payroll exports.">
                 <input
                   className="px-input mono"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value.toUpperCase())}
+                  {...form.register("code", {
+                    setValueAs: (v: unknown) =>
+                      typeof v === "string" ? v.toUpperCase() : "",
+                  })}
                   placeholder="AMER"
                 />
               </Field>
               <Field label="Primary city">
                 <input
                   className="px-input"
-                  value={primaryCity}
-                  onChange={(e) => setPrimaryCity(e.target.value)}
+                  {...form.register("primary_city")}
                   placeholder="San Francisco, CA"
                 />
               </Field>
               <Field label="Timezone base">
                 <input
                   className="px-input"
-                  value={timezone}
-                  onChange={(e) => setTimezone(e.target.value)}
+                  {...form.register("timezone")}
                   placeholder="America/Los_Angeles"
                 />
               </Field>
               <Field label="Currency">
                 <input
                   className="px-input"
-                  value={currency}
-                  onChange={(e) => setCurrency(e.target.value)}
+                  {...form.register("currency")}
                   placeholder="USD"
                 />
               </Field>
               <Field label="Locale">
                 <input
                   className="px-input mono"
-                  value={locale}
-                  onChange={(e) => setLocale(e.target.value)}
+                  {...form.register("locale")}
                   placeholder="en-US"
                 />
               </Field>
               <Field label="Region lead" span={2}>
                 <input
                   className="px-input"
-                  value={leadName}
-                  onChange={(e) => setLeadName(e.target.value)}
+                  {...form.register("lead_name")}
                   placeholder="Sam Rivera · VP"
                 />
               </Field>
@@ -195,7 +235,12 @@ export function RegionDetail({
           <Section
             title="Offices in this region"
             right={
-              <Button variant="outline" size="xs" onClick={addOffice}>
+              <Button
+                variant="outline"
+                size="xs"
+                type="button"
+                onClick={addOffice}
+              >
                 + Add office
               </Button>
             }
@@ -288,8 +333,7 @@ export function RegionDetail({
             <textarea
               className="px-input"
               rows={3}
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
+              {...form.register("notes")}
               placeholder="e.g. We sponsor TN and H-1B from the US offices. Pay bands posted on all job descriptions in NY, CA, CO, WA."
             />
           </Section>
@@ -313,6 +357,6 @@ export function RegionDetail({
           <SubUnitsList subUnits={subUnits} />
         </aside>
       </div>
-    </>
+    </form>
   );
 }
