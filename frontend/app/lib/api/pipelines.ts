@@ -163,12 +163,25 @@ export type AssignableUser = {
 
 export const pipelinesApi = {
   // Starter pack
-  getStarterPack: (token: string): Promise<StarterTemplate[]> =>
-    apiFetch<StarterTemplate[]>('/api/pipeline-templates/starter-pack', { token }),
+  getStarterPack: (
+    token: string,
+    opts?: { signal?: AbortSignal },
+  ): Promise<StarterTemplate[]> =>
+    apiFetch<StarterTemplate[]>('/api/pipeline-templates/starter-pack', {
+      token,
+      signal: opts?.signal,
+    }),
 
   // Template library
-  listTemplates: (token: string, unitId: string): Promise<PipelineTemplate[]> =>
-    apiFetch<PipelineTemplate[]>(`/api/org-units/${unitId}/pipeline-templates`, { token }),
+  listTemplates: (
+    token: string,
+    unitId: string,
+    opts?: { signal?: AbortSignal },
+  ): Promise<PipelineTemplate[]> =>
+    apiFetch<PipelineTemplate[]>(`/api/org-units/${unitId}/pipeline-templates`, {
+      token,
+      signal: opts?.signal,
+    }),
 
   createTemplate: (
     token: string,
@@ -208,11 +221,12 @@ export const pipelinesApi = {
   getJobPipeline: async (
     token: string,
     jobId: string,
+    opts?: { signal?: AbortSignal },
   ): Promise<JobPipelineInstance | null> => {
     try {
       return await apiFetch<JobPipelineInstance>(
         `/api/jobs/${jobId}/pipeline`,
-        { token },
+        { token, signal: opts?.signal },
       )
     } catch (err) {
       // Backend returns 404 when no pipeline has been created yet.
@@ -284,9 +298,10 @@ export const pipelinesApi = {
     token: string,
     jobId: string,
     role: ParticipantRole,
+    opts?: { signal?: AbortSignal },
   ): Promise<AssignableUser[]> =>
     apiFetch<AssignableUser[]>(
       `/api/jobs/${jobId}/pipeline/assignable-users?role=${role}`,
-      { token },
+      { token, signal: opts?.signal },
     ),
 }

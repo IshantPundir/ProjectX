@@ -148,8 +148,15 @@ export const jobsApi = {
       { token },
     ),
 
-  get: (token: string, id: string): Promise<JobPostingWithSnapshot> =>
-    apiFetch<JobPostingWithSnapshot>(`/api/jobs/${id}`, { token }),
+  get: (
+    token: string,
+    id: string,
+    opts?: { signal?: AbortSignal },
+  ): Promise<JobPostingWithSnapshot> =>
+    apiFetch<JobPostingWithSnapshot>(`/api/jobs/${id}`, {
+      token,
+      signal: opts?.signal,
+    }),
 
   create: (token: string, body: CreateJobBody): Promise<JobPostingWithSnapshot> =>
     apiFetch<JobPostingWithSnapshot>('/api/jobs', {

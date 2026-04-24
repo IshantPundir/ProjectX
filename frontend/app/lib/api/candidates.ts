@@ -141,6 +141,7 @@ export const candidatesApi = {
   list: (
     token: string,
     filters: CandidatesListFilters = {},
+    opts?: { signal?: AbortSignal },
   ): Promise<CandidateListPage> => {
     const params = new URLSearchParams()
     if (filters.q) params.set('q', filters.q)
@@ -152,20 +153,28 @@ export const candidatesApi = {
     const qs = params.toString()
     return apiFetch<CandidateListPage>(
       `/api/candidates${qs ? `?${qs}` : ''}`,
-      { token },
+      { token, signal: opts?.signal },
     )
   },
 
-  get: (token: string, id: string): Promise<CandidateResponse> =>
-    apiFetch<CandidateResponse>(`/api/candidates/${id}`, { token }),
+  get: (
+    token: string,
+    id: string,
+    opts?: { signal?: AbortSignal },
+  ): Promise<CandidateResponse> =>
+    apiFetch<CandidateResponse>(`/api/candidates/${id}`, {
+      token,
+      signal: opts?.signal,
+    }),
 
   listAssignments: (
     token: string,
     candidateId: string,
+    opts?: { signal?: AbortSignal },
   ): Promise<AssignmentResponse[]> =>
     apiFetch<AssignmentResponse[]>(
       `/api/candidates/${candidateId}/assignments`,
-      { token },
+      { token, signal: opts?.signal },
     ),
 
   create: (token: string, body: CandidateCreate): Promise<CandidateResponse> =>
@@ -262,9 +271,13 @@ export const candidatesApi = {
       },
     ),
 
-  kanban: (token: string, jobId: string): Promise<KanbanBoardResponse> =>
+  kanban: (
+    token: string,
+    jobId: string,
+    opts?: { signal?: AbortSignal },
+  ): Promise<KanbanBoardResponse> =>
     apiFetch<KanbanBoardResponse>(
       `/api/jobs/${jobId}/candidates/kanban`,
-      { token },
+      { token, signal: opts?.signal },
     ),
 }

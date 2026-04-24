@@ -62,6 +62,7 @@ export const schedulerApi = {
   listSessions: (
     token: string,
     filters: { assignment_id?: string; state?: string } = {},
+    opts?: { signal?: AbortSignal },
   ) => {
     const params = new URLSearchParams()
     if (filters.assignment_id) params.set('assignment_id', filters.assignment_id)
@@ -69,7 +70,7 @@ export const schedulerApi = {
     const qs = params.toString()
     return apiFetch<SessionListPage>(
       `/api/sessions${qs ? `?${qs}` : ''}`,
-      { token },
+      { token, signal: opts?.signal },
     )
   },
 }

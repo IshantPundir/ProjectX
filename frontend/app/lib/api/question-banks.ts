@@ -106,19 +106,25 @@ export type RegenerateQuestionBody = {
 // --- API client methods ---
 
 export const questionBanksApi = {
-  listBanks: (token: string, jobId: string): Promise<BanksOverviewResponse> =>
+  listBanks: (
+    token: string,
+    jobId: string,
+    opts?: { signal?: AbortSignal },
+  ): Promise<BanksOverviewResponse> =>
     apiFetch<BanksOverviewResponse>(`/api/jobs/${jobId}/pipeline/questions`, {
       token,
+      signal: opts?.signal,
     }),
 
   getBank: (
     token: string,
     jobId: string,
     stageId: string,
+    opts?: { signal?: AbortSignal },
   ): Promise<BankWithQuestionsResponse> =>
     apiFetch<BankWithQuestionsResponse>(
       `/api/jobs/${jobId}/pipeline/stages/${stageId}/questions`,
-      { token },
+      { token, signal: opts?.signal },
     ),
 
   generateStage: (

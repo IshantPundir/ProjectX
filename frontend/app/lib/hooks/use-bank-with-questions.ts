@@ -11,9 +11,9 @@ import { getFreshSupabaseToken } from '@/lib/auth/tokens'
 export function useBankWithQuestions(jobId: string, stageId: string | null) {
   return useQuery<BankWithQuestionsResponse>({
     queryKey: ['bank', jobId, stageId],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const token = await getFreshSupabaseToken()
-      return questionBanksApi.getBank(token, jobId, stageId!)
+      return questionBanksApi.getBank(token, jobId, stageId!, { signal })
     },
     enabled: !!jobId && !!stageId,
     staleTime: 0,

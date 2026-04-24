@@ -11,9 +11,9 @@ import { getFreshSupabaseToken } from '@/lib/auth/tokens'
 export function useCandidateAssignments(candidateId: string) {
   return useQuery<AssignmentResponse[]>({
     queryKey: ['candidates', candidateId, 'assignments'],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const token = await getFreshSupabaseToken()
-      return candidatesApi.listAssignments(token, candidateId)
+      return candidatesApi.listAssignments(token, candidateId, { signal })
     },
     enabled: !!candidateId,
   })

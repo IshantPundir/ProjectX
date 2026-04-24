@@ -8,9 +8,9 @@ import { schedulerApi, type SessionListPage } from '@/lib/api/scheduler'
 export function useAssignmentSessions(assignmentId: string) {
   return useQuery<SessionListPage>({
     queryKey: ['assignment-sessions', assignmentId],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const token = await getFreshSupabaseToken()
-      return schedulerApi.listSessions(token, { assignment_id: assignmentId })
+      return schedulerApi.listSessions(token, { assignment_id: assignmentId }, { signal })
     },
     enabled: !!assignmentId,
   })

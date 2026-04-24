@@ -12,9 +12,9 @@ import { getFreshSupabaseToken } from '@/lib/auth/tokens'
 export function useCandidatesList(filters: CandidatesListFilters = {}) {
   return useQuery<CandidateListPage>({
     queryKey: ['candidates-list', filters],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const token = await getFreshSupabaseToken()
-      return candidatesApi.list(token, filters)
+      return candidatesApi.list(token, filters, { signal })
     },
   })
 }

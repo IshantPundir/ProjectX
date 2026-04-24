@@ -8,9 +8,9 @@ import { getFreshSupabaseToken } from '@/lib/auth/tokens'
 export function useJob(jobId: string) {
   const query = useQuery<JobPostingWithSnapshot>({
     queryKey: ['jobs', jobId],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const token = await getFreshSupabaseToken()
-      return jobsApi.get(token, jobId)
+      return jobsApi.get(token, jobId, { signal })
     },
     enabled: !!jobId,
     staleTime: 5_000,

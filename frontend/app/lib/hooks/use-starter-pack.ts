@@ -7,9 +7,9 @@ import { getFreshSupabaseToken } from '@/lib/auth/tokens'
 export function useStarterPack() {
   return useQuery<StarterTemplate[]>({
     queryKey: ['pipeline-starter-pack'],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const token = await getFreshSupabaseToken()
-      return pipelinesApi.getStarterPack(token)
+      return pipelinesApi.getStarterPack(token, { signal })
     },
     staleTime: Infinity, // starter pack is static
   })

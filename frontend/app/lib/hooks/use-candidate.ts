@@ -11,9 +11,9 @@ import { getFreshSupabaseToken } from '@/lib/auth/tokens'
 export function useCandidate(id: string) {
   return useQuery<CandidateResponse>({
     queryKey: ['candidates', id],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const token = await getFreshSupabaseToken()
-      return candidatesApi.get(token, id)
+      return candidatesApi.get(token, id, { signal })
     },
     enabled: !!id,
   })

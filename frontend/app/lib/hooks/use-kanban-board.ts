@@ -11,9 +11,9 @@ import { getFreshSupabaseToken } from '@/lib/auth/tokens'
 export function useKanbanBoard(jobId: string | null) {
   return useQuery<KanbanBoardResponse>({
     queryKey: ['candidates-kanban', jobId],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const token = await getFreshSupabaseToken()
-      return candidatesApi.kanban(token, jobId as string)
+      return candidatesApi.kanban(token, jobId as string, { signal })
     },
     enabled: !!jobId,
   })

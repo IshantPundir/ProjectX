@@ -9,9 +9,9 @@ export function useAssignableUsers(jobId: string, role: ParticipantRole | null) 
     queryKey: ['jobs', jobId, 'assignable-users', role],
     enabled: role !== null,
     staleTime: 60_000,
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const token = await getFreshSupabaseToken()
-      return pipelinesApi.getAssignableUsers(token, jobId, role as ParticipantRole)
+      return pipelinesApi.getAssignableUsers(token, jobId, role as ParticipantRole, { signal })
     },
   })
 }

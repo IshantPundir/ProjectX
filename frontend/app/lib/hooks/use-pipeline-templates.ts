@@ -7,9 +7,9 @@ import { getFreshSupabaseToken } from '@/lib/auth/tokens'
 export function usePipelineTemplates(unitId: string, options?: { enabled?: boolean }) {
   return useQuery<PipelineTemplate[]>({
     queryKey: ['pipeline-templates', unitId],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const token = await getFreshSupabaseToken()
-      return pipelinesApi.listTemplates(token, unitId)
+      return pipelinesApi.listTemplates(token, unitId, { signal })
     },
     enabled: !!unitId && (options?.enabled ?? true),
   })
