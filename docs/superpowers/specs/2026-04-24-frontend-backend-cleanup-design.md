@@ -342,6 +342,21 @@ Per CLAUDE.md "module boundaries must be correct from day 1," these must have ex
 
 ## 7. Batch 3 — Auth Hardening + Invite Flow
 
+> **Status:** ✅ Completed 2026-04-25 on branch `cleanup/batch-3-auth-hardening` (worktree `.worktrees/cleanup-batch-3/`). 19 feature commits `306dd73..c879c36` + 1 plan commit, merged as `3fd277f` (no-ff). Final gates: backend 490 passed (4 pre-existing deselects), tsc 0 errors, lint 0 errors, 63/63 vitest, `next build` clean. Per-cluster subagent implementation + spec/quality review per cluster; whole-batch human review per CLAUDE.md "Human Review Required" list. Manual browser smokes confirmed: invite flow end-to-end, deactivation → `AuthProvider.delete_user` (test user could not log in again — proves provider boundary hit Supabase Admin API), single-use invite enforcement.
+>
+> **Design deviation from spec:**
+> - Spec's `app/modules/auth/admin_client.py` became a package `app/modules/auth/admin/` with `base.py` (protocol + types), `supabase.py` (concrete impl), `_factory.py` (singleton), `__init__.py` (public API). Maps cleanly to user's vendor-lock-in rule — adding Cognito/Keycloak is a new file + `settings.auth_provider = "cognito"`.
+> - `lib/auth/tokens.ts` received a comment-only change documenting the SessionGuard invariant; hot-path `getSession()` read preserved. Architectural fix for B3.1 lives in SessionGuard (Task 13), not the token helper.
+> - `AcceptInviteResponse` shape trimmed to `{access_token, refresh_token, expires_in, redirect_to}` — legacy `user_id`/`tenant_id`/`root_unit_id` fields dropped (frontend never used them).
+>
+> **Critical race bug caught + fixed in code review:** Initial handler compensation would have deleted a legitimately-created auth user on the 409 race-claim path. Fix: `auth_user_created_here: bool` flag threaded through `_safe_delete_auth_user`; compensation skipped with a `compensation_skipped` warning log when the auth user was reused via `find_user_by_email`. Regression-tested in `test_accept_invite.py::test_accept_invite_already_existing_auth_user_updates_password` (explicit `delete_user NOT called` assertion).
+>
+> **Deferred follow-ups** (out of scope for B3):
+> - `frontend/app/app/(auth)/login/page.tsx` still uses `supabase.auth.signInWithPassword` directly — migrated during B4's form/state sweep.
+> - `frontend/app/proxy.ts` + `frontend/app/app/(dashboard)/layout.tsx` use server-side `supabase.auth.getSession()` in the SSR flow — intentionally out of scope (B3 migrated only the two client-page callsites from B3.2).
+> - `frontend/app/package.json` has no `type-check` script (CLAUDE.md documents one); `npx tsc --noEmit` works directly. Low-priority cleanup for a future batch.
+> - Three B1 deferred follow-ups (sections 5's completion note) remain open. Unchanged.
+
 ### 7.1 Scope
 
 | ID | Issue | File(s) |
