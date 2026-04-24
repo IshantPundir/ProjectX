@@ -46,6 +46,7 @@ class Events:
     BANK_QUESTION_UPDATED = "bank.question_updated"
     BANK_STATUS_CHANGED = "bank.status_changed"
     PIPELINE_GENERATION_COMPLETE = "pipeline.generation_complete"
+    JD_STATUS_CHANGED = "jd.status_changed"
 
 
 # --- Channel helpers ------------------------------------------------------
