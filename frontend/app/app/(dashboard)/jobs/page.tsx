@@ -204,9 +204,9 @@ export default function JobsListPage() {
 
   const { data, isLoading, error } = useQuery<JobPostingSummary[]>({
     queryKey: ['jobs-list'],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const token = await getFreshSupabaseToken()
-      return jobsApi.list(token)
+      return jobsApi.list(token, undefined, { signal })
     },
   })
 

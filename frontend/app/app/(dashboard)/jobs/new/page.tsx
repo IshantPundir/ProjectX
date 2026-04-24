@@ -196,9 +196,9 @@ export default function NewJobPage() {
     error: unitsError,
   } = useQuery<OrgUnit[]>({
     queryKey: ['org-units'],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const token = await getFreshSupabaseToken()
-      return apiFetch<OrgUnit[]>('/api/org-units', { token })
+      return apiFetch<OrgUnit[]>('/api/org-units', { token, signal })
     },
   })
 

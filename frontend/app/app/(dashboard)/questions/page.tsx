@@ -33,9 +33,9 @@ export default function QuestionsIndexPage() {
 
   const { data: jobs, isLoading: jobsLoading } = useQuery<JobPostingSummary[]>({
     queryKey: ['jobs-list'],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const token = await getFreshSupabaseToken()
-      return jobsApi.list(token)
+      return jobsApi.list(token, undefined, { signal })
     },
   })
 

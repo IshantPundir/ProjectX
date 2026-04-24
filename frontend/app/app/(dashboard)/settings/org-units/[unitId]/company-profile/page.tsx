@@ -26,9 +26,9 @@ export default function CompanyProfilePage() {
 
   const { data: unit, isLoading } = useQuery<OrgUnit>({
     queryKey: ['org-unit', unitId],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const token = await getFreshSupabaseToken()
-      return apiFetch<OrgUnit>(`/api/org-units/${unitId}`, { token })
+      return apiFetch<OrgUnit>(`/api/org-units/${unitId}`, { token, signal })
     },
   })
 

@@ -142,10 +142,14 @@ export type SaveSignalsBody = {
 // merge in apiFetch picks up any call-site overrides.
 
 export const jobsApi = {
-  list: (token: string, orgUnitId?: string): Promise<JobPostingSummary[]> =>
+  list: (
+    token: string,
+    orgUnitId?: string,
+    opts?: { signal?: AbortSignal },
+  ): Promise<JobPostingSummary[]> =>
     apiFetch<JobPostingSummary[]>(
       `/api/jobs${orgUnitId ? `?org_unit_id=${orgUnitId}` : ''}`,
-      { token },
+      { token, signal: opts?.signal },
     ),
 
   get: (

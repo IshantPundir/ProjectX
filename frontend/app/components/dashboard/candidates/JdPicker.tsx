@@ -26,9 +26,9 @@ interface Props {
 export function JdPicker({ value, onChange }: Props) {
   const { data: jobs, isLoading } = useQuery<JobPostingSummary[]>({
     queryKey: ['jobs-list'],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const token = await getFreshSupabaseToken()
-      return jobsApi.list(token)
+      return jobsApi.list(token, undefined, { signal })
     },
   })
 
