@@ -119,6 +119,13 @@ Behavior: 204 responses return `undefined as T`. Caller is responsible for typin
 
 ## 6. Batch 2 — Schema + Event Delivery Alignment
 
+> **Status:** ✅ Completed 2026-04-24 on branch `cleanup/batch-2-schema-events` (worktree `.worktrees/cleanup-batch-2/`). 22 commits `fb716a4..a678d81`, merged as `4f68638` (no-ff). Final gates: alembic at head 0017, 462/462 backend tests (+ 4 pre-existing failures unrelated to B2), tsc clean, lint 0 errors, 54/54 vitest, `next build` clean. Clustered subagent implementation + combined spec/quality reviews per task + final whole-batch review by opus reviewer (recommendation: APPROVE FOR MERGE).
+>
+> **Deferred follow-ups** (surfaced during smoke verification, out of scope for B2):
+> - Question-editor UI is not wired on `/jobs/[jobId]/questions`: "+ Add question" button has no `onClick` handler; inline text editing for individual questions is missing. Backend endpoints (`create_question`, `update_question`, `delete_question`, `reorder_questions`) are fully functional and tested — just no UI surface yet. Blocks two-tab browser smoke of T11/T12/T13/T14. (T15 confirm + T16 regenerate DO have working UI paths.)
+> - Pipeline-tab stage add/remove requires a manual refresh in other tabs. B2 wired pub/sub only for the question-bank SSE stream; the pipeline has no SSE. Extending the pub/sub + backstop pattern to the pipeline module is the natural next step — `app/pubsub.py` is designed to absorb it without changes.
+> - Three B1 deferred items from section 5 also remain open (`useJobStatusStream.isStreaming` init, 204-response return types, five `window.confirm` callsites). Still out-of-scope; fine to fold into a later cleanup batch.
+
 ### 6.1 Scope
 
 | ID | Issue | File(s) |
