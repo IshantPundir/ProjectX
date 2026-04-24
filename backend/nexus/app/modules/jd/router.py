@@ -438,7 +438,8 @@ async def retry_extraction(
         correlation_id=correlation_id,
     )
 
-    return _job_to_summary(job)
+    enriched = await enrich_job_summaries([job], db)
+    return enriched[0]
 
 
 @router.patch("/{job_id}/signals", response_model=SignalSnapshotResponse)
