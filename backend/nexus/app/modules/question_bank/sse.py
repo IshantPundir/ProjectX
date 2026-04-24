@@ -212,6 +212,10 @@ async def _poll_loop(
     all_terminal_emitted = False
 
     while True:
+        # Fresh correlation ID per poll cycle so backstop-emitted envelopes
+        # are still traceable end-to-end (CLAUDE.md: every session carries a
+        # correlation ID end-to-end).
+        cycle_correlation_id = f"backstop-{uuid.uuid4()}"
         envelopes_to_emit: list[pubsub.Envelope] = []
         all_terminal = True
         any_change = False
@@ -309,7 +313,7 @@ async def _poll_loop(
                                     "total_minutes": total_minutes,
                                     "source": "backstop",
                                 },
-                                correlation_id="backstop",
+                                correlation_id=cycle_correlation_id,
                                 emitted_at=datetime.now(timezone.utc).isoformat(),
                             )
                         )
@@ -319,7 +323,7 @@ async def _poll_loop(
             yield pubsub.Envelope(
                 event="error",
                 payload={"error": "No pipeline for this job"},
-                correlation_id="backstop",
+                correlation_id=cycle_correlation_id,
                 emitted_at=datetime.now(timezone.utc).isoformat(),
             )
             return
@@ -369,7 +373,7 @@ async def _poll_loop(
                     "total": num_stages,
                     "source": "backstop",
                 },
-                correlation_id="backstop",
+                correlation_id=cycle_correlation_id,
                 emitted_at=datetime.now(timezone.utc).isoformat(),
             )
             return
