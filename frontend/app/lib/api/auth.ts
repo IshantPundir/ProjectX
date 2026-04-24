@@ -1,14 +1,5 @@
 import { apiFetch } from './client'
 
-/**
- * Response shape of GET /api/auth/me.
- *
- * Mirrors backend `app/modules/auth/schemas.py::MeResponse` exactly.
- * Roles/permissions live in `assignments`; the JWT only carries
- * `is_super_admin` and `tenant_id`. Any conditional UI based on roles
- * MUST go through the per-request `assignments` data — never trust
- * a JWT claim alone.
- */
 export interface MeResponse {
   user_id: string
   email: string
@@ -39,15 +30,30 @@ export interface AcceptInviteResponse {
   redirect_to: string
 }
 
+export interface LoginRequest {
+  email: string
+  password: string
+}
+
+export interface LoginResponse {
+  access_token: string
+  refresh_token: string
+  expires_in: number
+  redirect_to: string
+}
+
+export interface SetWorkspaceModeRequest {
+  workspace_mode: 'enterprise' | 'agency'
+}
+
+export interface SetWorkspaceModeResponse {
+  status: string
+  workspace_mode: string
+}
+
 export const authApi = {
-  me: (
-    token: string,
-    opts?: { signal?: AbortSignal },
-  ): Promise<MeResponse> =>
-    apiFetch<MeResponse>('/api/auth/me', {
-      token,
-      signal: opts?.signal,
-    }),
+  me: (token: string, opts?: { signal?: AbortSignal }): Promise<MeResponse> =>
+    apiFetch<MeResponse>('/api/auth/me', { token, signal: opts?.signal }),
 
   acceptInvite: (
     body: AcceptInviteRequest,
@@ -55,6 +61,38 @@ export const authApi = {
   ): Promise<AcceptInviteResponse> =>
     apiFetch<AcceptInviteResponse>('/api/auth/accept-invite', {
       method: 'POST',
+      body: JSON.stringify(body),
+      signal: opts?.signal,
+    }),
+
+  login: (
+    body: LoginRequest,
+    opts?: { signal?: AbortSignal },
+  ): Promise<LoginResponse> =>
+    apiFetch<LoginResponse>('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(body),
+      signal: opts?.signal,
+    }),
+
+  completeOnboarding: (
+    token: string,
+    opts?: { signal?: AbortSignal },
+  ): Promise<{ status: string }> =>
+    apiFetch<{ status: string }>('/api/auth/onboarding/complete', {
+      method: 'POST',
+      token,
+      signal: opts?.signal,
+    }),
+
+  setWorkspaceMode: (
+    token: string,
+    body: SetWorkspaceModeRequest,
+    opts?: { signal?: AbortSignal },
+  ): Promise<SetWorkspaceModeResponse> =>
+    apiFetch<SetWorkspaceModeResponse>('/api/settings/workspace', {
+      method: 'PATCH',
+      token,
       body: JSON.stringify(body),
       signal: opts?.signal,
     }),
