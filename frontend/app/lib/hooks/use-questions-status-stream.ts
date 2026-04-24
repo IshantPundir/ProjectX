@@ -1,6 +1,9 @@
 'use client'
 
-import { fetchEventSource } from '@microsoft/fetch-event-source'
+import {
+  EventStreamContentType,
+  fetchEventSource,
+} from '@microsoft/fetch-event-source'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef } from 'react'
 
@@ -8,19 +11,26 @@ import { getFreshSupabaseToken } from '@/lib/auth/tokens'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
 
+/** Max times we'll re-fetch a token and reconnect on auth failure. */
+const MAX_AUTH_RETRIES = 2
+/** Absolute reconnection ceiling — protects against runaway loops. */
+const MAX_TOTAL_RETRIES = 20
+
+class AuthSSEError extends Error {}
+class FatalSSEError extends Error {}
+
 /**
  * Opens an SSE connection to /api/jobs/{id}/pipeline/questions/status-stream
- * and invalidates the relevant TanStack Query caches on every event.
+ * and invalidates TanStack Query caches on every event.
  *
- * All events invalidate the per-job banks overview. Bank-level events
- * (`bank.status_changed`, `bank.question_updated`) additionally invalidate
- * the detail cache for the currently-selected stage, if any.
- *
- * Note: this hook intentionally uses a lightweight handler and relies on
- * fetch-event-source's built-in auto-retry for transient failures. A more
- * elaborate reconnect-with-fresh-token flow (see useJobStatusStream) can be
- * added if token expiry during long-lived streams becomes a problem in
- * practice.
+ * Token lifecycle mirrors useJobStatusStream:
+ *  - Fresh token fetched before each connection attempt.
+ *  - On 401 → break out of fetch-event-source's internal retry, refresh
+ *    via getFreshSupabaseToken (which uses the cookie refresh token),
+ *    reconnect.
+ *  - After MAX_AUTH_RETRIES the hook gives up.
+ *  - Every onerror counts against MAX_TOTAL_RETRIES — runaway transient
+ *    retry storms cannot occur.
  */
 export function useQuestionsStatusStream(
   jobId: string,
@@ -28,30 +38,29 @@ export function useQuestionsStatusStream(
 ) {
   const queryClient = useQueryClient()
 
-  // Mirror selectedStageId into a ref so the onmessage handler below reads
-  // the latest value without re-running the effect. Without this, every
-  // stage selection tears down + reopens the SSE connection (because
-  // selectedStageId would be in the dep array), which is wasteful and
-  // causes a brief gap in live updates each time the user clicks a stage.
   const selectedStageIdRef = useRef(selectedStageId)
   useEffect(() => {
     selectedStageIdRef.current = selectedStageId
-  })
+  }, [selectedStageId])
 
   useEffect(() => {
     if (!jobId) return
 
-    const controller = new AbortController()
+    const ctrl = new AbortController()
+    let authRetries = 0
+    let totalRetries = 0
 
-    const run = async () => {
+    async function connect(): Promise<void> {
+      if (ctrl.signal.aborted) return
+
       let token: string
       try {
         token = await getFreshSupabaseToken()
       } catch {
-        // No session — caller is probably redirecting to login.
+        // Caller is probably redirecting to login.
         return
       }
-      if (controller.signal.aborted) return
+      if (ctrl.signal.aborted) return
 
       try {
         await fetchEventSource(
@@ -59,16 +68,37 @@ export function useQuestionsStatusStream(
           {
             method: 'GET',
             headers: { Authorization: `Bearer ${token}` },
-            signal: controller.signal,
+            signal: ctrl.signal,
+
+            async onopen(response) {
+              if (
+                response.ok &&
+                response.headers
+                  .get('content-type')
+                  ?.includes(EventStreamContentType)
+              ) {
+                authRetries = 0
+                return
+              }
+              if (response.status === 401 || response.status === 403) {
+                throw new AuthSSEError()
+              }
+              if (
+                response.status >= 400 &&
+                response.status < 500 &&
+                response.status !== 429
+              ) {
+                throw new FatalSSEError(
+                  `SSE connection refused (${response.status}).`,
+                )
+              }
+              throw new Error(`SSE server error: ${response.status}`)
+            },
+
             onmessage(ev) {
-              // All events invalidate the per-job banks overview.
               void queryClient.invalidateQueries({
                 queryKey: ['banks', jobId],
               })
-              // Bank-level events also invalidate the selected bank detail.
-              // Read the current selected stage from the ref rather than
-              // closure-captured state so this handler stays stable for the
-              // lifetime of the stream.
               const currentStageId = selectedStageIdRef.current
               if (
                 (ev.event === 'bank.status_changed' ||
@@ -80,18 +110,49 @@ export function useQuestionsStatusStream(
                 })
               }
             },
+
             onerror(err) {
-              // Let fetch-event-source auto-retry on transient errors.
-              console.error('Questions SSE error:', err)
+              if (
+                err instanceof AuthSSEError ||
+                err instanceof FatalSSEError
+              ) {
+                throw err
+              }
+              totalRetries++
+              if (totalRetries > MAX_TOTAL_RETRIES) {
+                throw new FatalSSEError(
+                  'Live updates unavailable — reconnection limit reached.',
+                )
+              }
+              console.warn('Questions SSE transient error', err)
             },
           },
         )
-      } catch {
-        // Swallow — typically AbortError on unmount.
+      } catch (err) {
+        if (ctrl.signal.aborted) return
+
+        if (err instanceof AuthSSEError) {
+          authRetries++
+          totalRetries++
+          if (
+            authRetries <= MAX_AUTH_RETRIES &&
+            totalRetries <= MAX_TOTAL_RETRIES
+          ) {
+            return connect()
+          }
+          return
+        }
+
+        if (err instanceof FatalSSEError) {
+          console.warn('Questions SSE fatal:', err.message)
+          return
+        }
+
+        console.warn('Questions SSE connection failed', err)
       }
     }
 
-    void run()
-    return () => controller.abort()
+    void connect()
+    return () => ctrl.abort()
   }, [jobId, queryClient])
 }
