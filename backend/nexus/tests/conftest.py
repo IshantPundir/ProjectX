@@ -22,6 +22,7 @@ os.environ.setdefault("ENVIRONMENT", "test")
 os.environ["DB_RUNTIME_ROLE"] = ""
 
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import pytest
@@ -164,3 +165,41 @@ async def create_test_org_unit(
     db.add(unit)
     await db.flush()
     return unit
+
+
+# ---------------------------------------------------------------------------
+# pub/sub capture fixture — shared across all event-emission tests
+# ---------------------------------------------------------------------------
+
+@dataclass
+class CapturedPublish:
+    channel: str
+    event: str
+    payload: dict
+    correlation_id: str
+
+
+@pytest.fixture
+def capture_publishes(monkeypatch) -> list[CapturedPublish]:
+    """Replace pubsub.publish with a capturing stub.
+
+    Returns a list that accumulates every publish call made during the test.
+    The stub is installed BEFORE the request so that BackgroundTasks.add_task
+    captures the stubbed reference at enqueue time. FastAPI runs background
+    tasks after the response is sent, so by the time `await client.post(...)`
+    returns the list is already populated.
+    """
+    from app import pubsub
+
+    captured: list[CapturedPublish] = []
+
+    async def stub_publish(channel, event, payload, *, correlation_id):
+        captured.append(CapturedPublish(
+            channel=channel,
+            event=event,
+            payload=payload,
+            correlation_id=correlation_id,
+        ))
+
+    monkeypatch.setattr(pubsub, "publish", stub_publish)
+    return captured

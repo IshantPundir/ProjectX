@@ -6,10 +6,11 @@ triggers, bank confirmation, and the SSE status stream.
 
 from __future__ import annotations
 
+import uuid
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -65,9 +66,30 @@ from app.modules.question_bank.service import (
 )
 from app.modules.question_bank.sse import stream_question_bank_status
 from app.modules.question_bank.state_machine import transition_to_failed
+from app import pubsub
 
 router = APIRouter(prefix="/api", tags=["question_bank"])
 _log = structlog.get_logger()
+
+# Max length for an inbound x-correlation-id header. 128 is generous — uuid4
+# is 36 chars — but caps log-field growth and blocks pathological values.
+_MAX_CORRELATION_ID_LEN = 128
+
+
+def _get_correlation_id(request: Request) -> str:
+    """Extract x-correlation-id or mint a fresh uuid4.
+
+    The header is untrusted input, so we validate before propagating it to
+    logs and pubsub envelopes:
+      - must be non-empty and <= 128 chars
+      - must be printable ASCII (no control chars, no unicode)
+    Invalid values are discarded and replaced with a fresh uuid4 so a
+    forensic trail is still preserved per-request.
+    """
+    raw = request.headers.get("x-correlation-id")
+    if raw and 0 < len(raw) <= _MAX_CORRELATION_ID_LEN and raw.isascii() and raw.isprintable():
+        return raw
+    return str(uuid.uuid4())
 
 
 # ---------------------------------------------------------------------------
