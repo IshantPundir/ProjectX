@@ -1,28 +1,28 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useQuery } from "@tanstack/react-query";
+import { z } from "zod";
 import { toast } from "sonner";
-import { Button } from "@/components/px";
-import { apiFetch } from "@/lib/api/client";
-import { getFreshSupabaseToken } from "@/lib/auth/tokens";
-import {
-  orgUnitsApi,
-  type OrgUnitMember,
-  type RoleOption,
-} from "@/lib/api/org-units";
-import { Section } from "./shared";
 
-interface TeamMember {
-  id: string;
-  email: string;
-  full_name: string | null;
-  is_active: boolean;
-  is_super_admin: boolean;
-  source: string;
-  status: string;
-  assignments: { org_unit_id: string; org_unit_name: string; role_name: string }[];
-  created_at: string;
-}
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/px";
+import { applyApiErrorToForm } from "@/lib/api/errors";
+import { teamApi, type TeamMember } from "@/lib/api/team";
+import { getFreshSupabaseToken } from "@/lib/auth/tokens";
+import { useAssignRole } from "@/lib/hooks/use-assign-role";
+import { useOrgUnitMembers } from "@/lib/hooks/use-org-unit-members";
+import { useRemoveRole } from "@/lib/hooks/use-remove-role";
+import { useRoles } from "@/lib/hooks/use-roles";
+import { Section } from "./shared";
 
 function initials(s: string | null | undefined): string {
   if (!s) return "?";
@@ -37,90 +37,87 @@ function initials(s: string | null | undefined): string {
   );
 }
 
+const assignRoleSchema = z.object({
+  user_id: z.string().min(1, "Pick a user"),
+  role_id: z.string().min(1, "Pick a role"),
+});
+type AssignRoleFormValues = z.infer<typeof assignRoleSchema>;
+
 /** Role assignments on a given org unit. Reusable across every unit-type
  * detail page (Company, Division, Region, Team). Lists direct members and
  * exposes an inline "+ Assign role" form. */
 export function MembersSection({ unitId }: { unitId: string }) {
-  const [members, setMembers] = useState<OrgUnitMember[]>([]);
-  const [roles, setRoles] = useState<RoleOption[]>([]);
-  const [tenantUsers, setTenantUsers] = useState<TeamMember[]>([]);
-  const [loading, setLoading] = useState(true);
+  const membersQuery = useOrgUnitMembers(unitId);
+  const rolesQuery = useRoles();
+  const tenantUsersQuery = useQuery<TeamMember[]>({
+    queryKey: ["team", "members"],
+    queryFn: async () => teamApi.list(await getFreshSupabaseToken()),
+    staleTime: 10_000,
+  });
+
+  const members = useMemo(() => membersQuery.data ?? [], [membersQuery.data]);
+  const roles = rolesQuery.data ?? [];
+  const tenantUsers = useMemo(
+    () =>
+      (tenantUsersQuery.data ?? []).filter(
+        (x) => x.source === "user" && x.is_active,
+      ),
+    [tenantUsersQuery.data],
+  );
+  const loading = membersQuery.isLoading || rolesQuery.isLoading;
 
   const [formOpen, setFormOpen] = useState(false);
-  const [formUserId, setFormUserId] = useState("");
-  const [formRoleId, setFormRoleId] = useState("");
-  const [submitting, setSubmitting] = useState(false);
 
-  const refresh = useCallback(async () => {
+  const assignForm = useForm<AssignRoleFormValues>({
+    resolver: zodResolver(assignRoleSchema),
+    defaultValues: { user_id: "", role_id: "" },
+  });
+  const assignMutation = useAssignRole();
+
+  async function onAssignSubmit(values: AssignRoleFormValues) {
     try {
-      const token = await getFreshSupabaseToken();
-      const [m, r, u] = await Promise.all([
-        orgUnitsApi.listMembers(token, unitId),
-        orgUnitsApi.listRoles(token),
-        apiFetch<TeamMember[]>("/api/settings/team/members", { token }),
-      ]);
-      setMembers(m);
-      setRoles(r);
-      setTenantUsers(u.filter((x) => x.source === "user" && x.is_active));
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to load members");
-    } finally {
-      setLoading(false);
-    }
-  }, [unitId]);
-
-  useEffect(() => {
-    setLoading(true);
-    void refresh();
-  }, [refresh]);
-
-  async function handleSubmit() {
-    if (!formUserId || !formRoleId) {
-      toast.error("Pick a user and a role");
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const token = await getFreshSupabaseToken();
-      await orgUnitsApi.assignRole(token, unitId, {
-        user_id: formUserId,
-        role_id: formRoleId,
+      await assignMutation.mutateAsync({
+        unitId,
+        userId: values.user_id,
+        roleId: values.role_id,
       });
-      toast.success("Role assigned");
+      assignForm.reset();
       setFormOpen(false);
-      setFormUserId("");
-      setFormRoleId("");
-      await refresh();
+      toast.success("Role assigned");
     } catch (err) {
+      if (applyApiErrorToForm(err, assignForm)) return;
       toast.error(err instanceof Error ? err.message : "Failed to assign role");
-    } finally {
-      setSubmitting(false);
     }
   }
 
-  async function handleRemove(userId: string, roleId: string, roleName: string) {
-    if (!confirm(`Remove ${roleName} from this user on this unit?`)) return;
+  const [toRemove, setToRemove] = useState<{
+    userId: string;
+    roleId: string;
+    roleName: string;
+  } | null>(null);
+  const removeMutation = useRemoveRole();
+
+  async function handleConfirmRemove() {
+    if (!toRemove) return;
     try {
-      const token = await getFreshSupabaseToken();
-      await orgUnitsApi.removeRole(token, unitId, userId, roleId);
+      await removeMutation.mutateAsync({
+        unitId,
+        userId: toRemove.userId,
+        roleId: toRemove.roleId,
+      });
       toast.success("Role removed");
-      await refresh();
+      setToRemove(null);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to remove role");
+      // Keep dialog open so the user can retry or cancel explicitly.
     }
   }
 
-  const candidateUsers = useMemo(
-    () =>
-      tenantUsers.filter(
-        (u) =>
-          !members.some((m) => m.user_id === u.id && m.roles.length > 0) ||
-          // Still allow picking a user who has another role — useful for adding
-          // e.g. "Interviewer" to someone who already has "Hiring Manager".
-          true,
-      ),
-    [tenantUsers, members],
-  );
+  // Show every tenant user in the assign dropdown — including users with
+  // existing roles — so recruiters can add e.g. "Interviewer" to someone
+  // who already has "Hiring Manager". Filtering to unassigned users would
+  // block that flow.
+  const candidateUsers = tenantUsers;
 
   return (
     <Section title="Members & Roles" sub="Assign users to roles on this org unit. Assignments inherit to descendant units for access / pool gating.">
@@ -134,14 +131,21 @@ export function MembersSection({ unitId }: { unitId: string }) {
           <Button
             size="sm"
             variant={formOpen ? "outline" : "primary"}
-            onClick={() => setFormOpen((v) => !v)}
+            onClick={() => {
+              setFormOpen((v) => {
+                const next = !v;
+                if (!next) assignForm.reset();
+                return next;
+              });
+            }}
           >
             {formOpen ? "Cancel" : "+ Assign role"}
           </Button>
         </div>
 
         {formOpen && (
-          <div
+          <form
+            onSubmit={assignForm.handleSubmit(onAssignSubmit)}
             className="rounded-md border p-3"
             style={{
               background: "var(--px-surface-2)",
@@ -151,8 +155,8 @@ export function MembersSection({ unitId }: { unitId: string }) {
             <div className="grid gap-2.5" style={{ gridTemplateColumns: "1.6fr 1fr auto" }}>
               <select
                 className="px-input sm"
-                value={formUserId}
-                onChange={(e) => setFormUserId(e.target.value)}
+                aria-label="User"
+                {...assignForm.register("user_id")}
               >
                 <option value="">Pick a user…</option>
                 {candidateUsers.map((u) => (
@@ -163,8 +167,8 @@ export function MembersSection({ unitId }: { unitId: string }) {
               </select>
               <select
                 className="px-input sm"
-                value={formRoleId}
-                onChange={(e) => setFormRoleId(e.target.value)}
+                aria-label="Role"
+                {...assignForm.register("role_id")}
               >
                 <option value="">Pick a role…</option>
                 {roles.map((r) => (
@@ -173,15 +177,28 @@ export function MembersSection({ unitId }: { unitId: string }) {
                   </option>
                 ))}
               </select>
-              <Button size="sm" onClick={handleSubmit} disabled={submitting}>
-                {submitting ? "Assigning…" : "Assign"}
+              <Button
+                size="sm"
+                type="submit"
+                disabled={assignMutation.isPending || assignForm.formState.isSubmitting}
+              >
+                {assignMutation.isPending ? "Assigning…" : "Assign"}
               </Button>
             </div>
+            {(assignForm.formState.errors.user_id?.message ||
+              assignForm.formState.errors.role_id?.message ||
+              assignForm.formState.errors.root?.message) && (
+              <p className="mt-2 text-[11px]" style={{ color: "var(--px-danger, #b91c1c)" }}>
+                {assignForm.formState.errors.root?.message ||
+                  assignForm.formState.errors.user_id?.message ||
+                  assignForm.formState.errors.role_id?.message}
+              </p>
+            )}
             <p className="mt-2 text-[11px]" style={{ color: "var(--px-fg-4)" }}>
               Tip: assign &ldquo;Hiring Manager&rdquo; at the company or division level so the
               role covers every job under it via ancestry.
             </p>
-          </div>
+          </form>
         )}
 
         <div
@@ -263,7 +280,11 @@ export function MembersSection({ unitId }: { unitId: string }) {
                         type="button"
                         aria-label={`Remove ${r.role_name}`}
                         onClick={() =>
-                          handleRemove(m.user_id, r.role_id, r.role_name)
+                          setToRemove({
+                            userId: m.user_id,
+                            roleId: r.role_id,
+                            roleName: r.role_name,
+                          })
                         }
                         className="text-zinc-400 hover:text-red-600"
                         style={{ fontSize: 11, lineHeight: 1 }}
@@ -289,6 +310,40 @@ export function MembersSection({ unitId }: { unitId: string }) {
           )}
         </div>
       </div>
+
+      <Dialog
+        open={!!toRemove}
+        onOpenChange={(open) => {
+          if (!open) setToRemove(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove role</DialogTitle>
+            <DialogDescription>
+              Remove <strong>{toRemove?.roleName}</strong> from this user on this unit?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="mt-4 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setToRemove(null)}
+              className="px-btn ghost sm"
+              disabled={removeMutation.isPending}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmRemove}
+              disabled={removeMutation.isPending}
+              className="px-btn danger sm"
+            >
+              {removeMutation.isPending ? "Removing…" : "Remove role"}
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Section>
   );
 }
