@@ -2,12 +2,16 @@
 
 import hashlib
 import uuid as uuid_mod
+from typing import TYPE_CHECKING
 
 import sqlalchemy
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+if TYPE_CHECKING:
+    from app.modules.auth.admin import AuthProvider
 
 from app.database import get_bypass_db
 from app.models import Client, OrganizationalUnit, User, UserInvite
@@ -99,8 +103,10 @@ async def accept_invite(
     email = invite_row.email
 
     # Phase 2: provision the auth user.
+    auth_user_created_here = False
     try:
         identity = await provider.create_user(email, data.password)
+        auth_user_created_here = True
     except UserAlreadyExistsError:
         existing = await provider.find_user_by_email(email)
         if existing is None:
@@ -114,6 +120,11 @@ async def accept_invite(
             )
         await provider.update_user_password(existing.id, data.password)
         identity = existing
+        logger.info(
+            "auth.accept_invite.reused_existing_user",
+            auth_user_id=existing.id,
+            email=email,
+        )
     except AuthProviderError as err:
         logger.error("auth.accept_invite.provision_failed", error=str(err))
         raise HTTPException(
@@ -128,7 +139,7 @@ async def accept_invite(
         tokens = await provider.sign_in_with_password(email, data.password)
     except (InvalidCredentialsError, AuthProviderError) as err:
         logger.error("auth.accept_invite.sign_in_failed", error=str(err))
-        await _safe_delete_auth_user(provider, identity.id)
+        await _safe_delete_auth_user(provider, identity.id, created_by_this_request=auth_user_created_here)
         raise HTTPException(
             status_code=502,
             detail="Account created but sign-in failed; please try logging in.",
@@ -221,11 +232,11 @@ async def accept_invite(
             is_super_admin=is_super_admin,
         )
     except HTTPException:
-        await _safe_delete_auth_user(provider, identity.id)
+        await _safe_delete_auth_user(provider, identity.id, created_by_this_request=auth_user_created_here)
         raise
     except Exception:
         logger.exception("auth.accept_invite.db_write_failed")
-        await _safe_delete_auth_user(provider, identity.id)
+        await _safe_delete_auth_user(provider, identity.id, created_by_this_request=auth_user_created_here)
         raise HTTPException(
             status_code=500,
             detail="Could not finalize account creation",
@@ -239,10 +250,28 @@ async def accept_invite(
     )
 
 
-async def _safe_delete_auth_user(provider, auth_user_id: str) -> None:
-    """Best-effort compensation. Never raises — logs on failure and
-    leaves the auth user orphaned (next invite retry self-heals via
-    the already-exists fallback)."""
+async def _safe_delete_auth_user(
+    provider: "AuthProvider",
+    auth_user_id: str,
+    *,
+    created_by_this_request: bool,
+) -> None:
+    """Best-effort compensation. Only deletes when the auth user was
+    created by THIS request — critical for the race-claim path, where a
+    losing request reuses a pre-existing user via `find_user_by_email`
+    and must NOT delete it (that would break the winning request's
+    session).
+
+    Never raises — logs on failure and leaves the auth user orphaned
+    (next invite retry self-heals via the already-exists fallback).
+    """
+    if not created_by_this_request:
+        logger.warning(
+            "auth.accept_invite.compensation_skipped",
+            auth_user_id=auth_user_id,
+            reason="auth user was pre-existing; skipping deletion to avoid disrupting its owner",
+        )
+        return
     try:
         await provider.delete_user(auth_user_id)
     except Exception as comp_err:
