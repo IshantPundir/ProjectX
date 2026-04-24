@@ -5,7 +5,14 @@ import Link from 'next/link'
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
-import { Button } from '@/components/px'
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/px'
 import {
   jobsApi,
   type JobPostingSummary,
@@ -201,6 +208,7 @@ export default function JobsListPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [filter, setFilter] = useState<FilterId>('all')
   const [view, setView] = useState<ViewId>('table')
+  const [confirmOpen, setConfirmOpen] = useState(false)
 
   const { data, isLoading, error } = useQuery<JobPostingSummary[]>({
     queryKey: ['jobs-list'],
@@ -273,10 +281,11 @@ export default function JobsListPage() {
 
   function handleBulkDelete() {
     if (selected.size === 0) return
-    const confirmed = window.confirm(
-      `Delete ${selected.size} role${selected.size === 1 ? '' : 's'}? This cannot be undone.`,
-    )
-    if (!confirmed) return
+    setConfirmOpen(true)
+  }
+
+  function confirmBulkDelete() {
+    setConfirmOpen(false)
     deleteMutation.mutate([...selected])
   }
 
@@ -405,6 +414,31 @@ export default function JobsListPage() {
       ) : (
         <KanbanStub />
       )}
+
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent>
+          <DialogTitle>Delete {selected.size} role{selected.size === 1 ? '' : 's'}?</DialogTitle>
+          <DialogDescription>
+            This permanently removes the selected role{selected.size === 1 ? '' : 's'}. This cannot be undone.
+          </DialogDescription>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setConfirmOpen(false)}
+              disabled={deleteMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={confirmBulkDelete}
+              disabled={deleteMutation.isPending}
+            >
+              {deleteMutation.isPending ? 'Deleting…' : 'Delete'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
