@@ -685,13 +685,21 @@ async def delete_question_endpoint(
     job_id: UUID,
     stage_id: UUID,
     question_id: UUID,
+    request: Request,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_tenant_db),
     user: UserContext = Depends(get_current_user_roles),
 ) -> None:
     """Delete a question and re-pack positions."""
+    correlation_id = _get_correlation_id(request)
     question, bank, _stage, _job = await require_question_access(
         db, question_id, user, "manage"
     )
+
+    # Capture IDs before deletion — the question row will be gone after the call.
+    bank_id = bank.id
+    question_id_val = question.id
+
     await delete_question(
         db,
         question=question,
@@ -700,6 +708,20 @@ async def delete_question_endpoint(
         user_email=user.user.email,
     )
     await db.commit()
+
+    background_tasks.add_task(
+        pubsub.publish,
+        pubsub.job_channel(job_id),
+        pubsub.Events.BANK_QUESTION_UPDATED,
+        {
+            "job_id": str(job_id),
+            "bank_id": str(bank_id),
+            "stage_id": str(stage_id),
+            "question_id": str(question_id_val),
+            "mutation": "delete",
+        },
+        correlation_id=correlation_id,
+    )
 
 
 # ---------------------------------------------------------------------------
