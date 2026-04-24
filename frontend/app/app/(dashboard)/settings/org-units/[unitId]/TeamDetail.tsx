@@ -1,11 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { toast } from "sonner";
 import { Button } from "@/components/px";
 import { apiFetch } from "@/lib/api/client";
 import { getFreshSupabaseToken } from "@/lib/auth/tokens";
-import { orgUnitsApi, type OrgUnit } from "@/lib/api/org-units";
+import { type OrgUnit } from "@/lib/api/org-units";
+import { useUpdateOrgUnit } from "@/lib/hooks/use-update-org-unit";
+import { applyApiErrorToForm } from "@/lib/api/errors";
 import {
   UnitPageHeader,
   Section,
@@ -26,6 +31,15 @@ interface OrgUnitMember {
   full_name: string | null;
   roles: { role_id: string; role_name: string; assigned_at: string }[];
 }
+
+const teamDetailSchema = z.object({
+  name: z.string().min(1, "Name is required").max(100),
+  slug: z.string(),
+  lead_name: z.string(),
+  focus: z.string(),
+});
+
+type TeamDetailFormValues = z.infer<typeof teamDetailSchema>;
 
 function initials(s: string | null | undefined): string {
   if (!s) return "?";
@@ -53,12 +67,22 @@ export function TeamDetail({
 }) {
   const metadata = (unit.metadata ?? {}) as TeamMetadata;
 
-  const [name, setName] = useState(unit.name);
-  const [slug, setSlug] = useState(metadata.slug ?? "");
-  const [leadName, setLeadName] = useState(metadata.lead_name ?? "");
-  const [focus, setFocus] = useState(metadata.focus ?? "");
-  const [saving, setSaving] = useState(false);
+  const form = useForm<TeamDetailFormValues>({
+    resolver: zodResolver(teamDetailSchema),
+    defaultValues: {
+      name: unit.name,
+      slug: metadata.slug ?? "",
+      lead_name: metadata.lead_name ?? "",
+      focus: metadata.focus ?? "",
+    },
+  });
 
+  const updateMutation = useUpdateOrgUnit();
+
+  // Watch lead_name for header chrome.
+  const leadName = form.watch("lead_name");
+
+  // `members` is async data (not form state) — keep as-is.
   const [members, setMembers] = useState<OrgUnitMember[]>([]);
 
   useEffect(() => {
@@ -90,26 +114,30 @@ export function TeamDetail({
     [members],
   );
 
-  async function handleSave() {
-    setSaving(true);
+  async function onSubmit(values: TeamDetailFormValues) {
     try {
-      const token = await getFreshSupabaseToken();
-      const updated = await orgUnitsApi.update(token, unit.id, {
-        name: name.trim() || unit.name,
-        metadata: { slug, lead_name: leadName, focus },
-        set_metadata: true,
+      const updated = await updateMutation.mutateAsync({
+        unitId: unit.id,
+        body: {
+          name: values.name.trim() || unit.name,
+          metadata: {
+            slug: values.slug,
+            lead_name: values.lead_name,
+            focus: values.focus,
+          },
+          set_metadata: true,
+        },
       });
       onSaved(updated);
       toast.success("Team saved");
     } catch (err) {
+      if (applyApiErrorToForm(err, form)) return;
       toast.error(err instanceof Error ? err.message : "Failed to save team");
-    } finally {
-      setSaving(false);
     }
   }
 
   return (
-    <>
+    <div>
       <UnitPageHeader
         type="team"
         name={unit.name}
@@ -120,14 +148,19 @@ export function TeamDetail({
         onBack={onBack}
         right={
           <>
-            <Button variant="ghost" size="sm">
+            <Button variant="ghost" size="sm" type="button">
               Archive
             </Button>
-            <Button variant="outline" size="sm">
+            <Button variant="outline" size="sm" type="button">
               Copy link
             </Button>
-            <Button size="sm" onClick={handleSave} disabled={saving}>
-              {saving ? "Saving…" : "Save changes"}
+            <Button
+              size="sm"
+              type="button"
+              onClick={form.handleSubmit(onSubmit)}
+              disabled={updateMutation.isPending}
+            >
+              {updateMutation.isPending ? "Saving…" : "Save changes"}
             </Button>
           </>
         }
@@ -141,25 +174,19 @@ export function TeamDetail({
           <Section title="Team details">
             <div className="grid grid-cols-2 gap-3.5">
               <Field label="Team name">
-                <input
-                  className="px-input"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                />
+                <input className="px-input" {...form.register("name")} />
               </Field>
               <Field label="Slug" hint="Used in URLs and @mentions.">
                 <input
                   className="px-input mono"
-                  value={slug}
-                  onChange={(e) => setSlug(e.target.value)}
+                  {...form.register("slug")}
                   placeholder="platform"
                 />
               </Field>
               <Field label="Team lead">
                 <input
                   className="px-input"
-                  value={leadName}
-                  onChange={(e) => setLeadName(e.target.value)}
+                  {...form.register("lead_name")}
                   placeholder="Alex Chen · Staff Engineer"
                 />
               </Field>
@@ -179,8 +206,7 @@ export function TeamDetail({
                 <textarea
                   className="px-input"
                   rows={2}
-                  value={focus}
-                  onChange={(e) => setFocus(e.target.value)}
+                  {...form.register("focus")}
                   placeholder="Core libraries, build system, and developer tooling used by every other engineering team."
                 />
               </Field>
@@ -331,6 +357,6 @@ export function TeamDetail({
           />
         </aside>
       </div>
-    </>
+    </div>
   );
 }

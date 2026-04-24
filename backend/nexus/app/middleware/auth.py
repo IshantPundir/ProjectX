@@ -25,6 +25,7 @@ _CANDIDATE_PREFIX: str = "/api/candidate-session/"
 _PUBLIC_PREFIXES: tuple[str, ...] = (
     "/api/auth/verify-invite",  # Public — invite token verification
     "/api/auth/accept-invite",  # Public — raw invite token proves possession
+    "/api/auth/login",  # Public — credential exchange for session tokens
 )
 
 

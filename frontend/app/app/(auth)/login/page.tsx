@@ -1,107 +1,80 @@
-"use client";
+'use client'
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
+import { useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+
+import { authApi } from '@/lib/api/auth'
+import { ApiError } from '@/lib/api/client'
+import { applyApiErrorToForm } from '@/lib/api/errors'
+import { createClient } from '@/lib/supabase/client'
+
+import { loginSchema, type LoginFormValues } from './schema'
 
 function EyeIcon() {
   return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
       <circle cx="12" cy="12" r="3" />
     </svg>
-  );
+  )
 }
 
 function EyeOffIcon() {
   return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
       <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
       <line x1="1" y1="1" x2="23" y2="23" />
     </svg>
-  );
+  )
 }
 
 export default function LoginPage() {
-  const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
+  const router = useRouter()
+  const [showPassword, setShowPassword] = useState(false)
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError("");
-    setLoading(true);
+  const form = useForm<LoginFormValues>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: { email: '', password: '' },
+  })
 
+  async function onSubmit(values: LoginFormValues) {
     try {
-      const supabase = createClient();
-      const { data, error: authError } =
-        await supabase.auth.signInWithPassword({ email, password });
+      const result = await authApi.login(values)
 
-      if (authError) {
-        setError(authError.message);
-        setLoading(false);
-        return;
+      const supabase = createClient()
+      const { error: sessionError } = await supabase.auth.setSession({
+        access_token: result.access_token,
+        refresh_token: result.refresh_token,
+      })
+      if (sessionError) {
+        form.setError('root', { message: sessionError.message })
+        return
       }
 
-      // Read access token — signInWithPassword returns the session directly
-      const token = data.session?.access_token;
-      if (!token) {
-        setError("Sign-in succeeded but no session was returned. Please try again.");
-        setLoading(false);
-        return;
+      // Open-redirect guard: allow only same-origin relative paths.
+      const safeRedirect =
+        result.redirect_to.startsWith('/') &&
+        !result.redirect_to.startsWith('//')
+          ? result.redirect_to
+          : '/'
+      router.push(safeRedirect)
+      router.refresh()
+    } catch (err) {
+      if (applyApiErrorToForm(err, form)) return
+      if (err instanceof ApiError) {
+        form.setError('root', { message: err.message })
+        return
       }
-
-      // Decode JWT claims to check tenant_id/app_role
-      // Reject admin-only accounts that don't belong on the client dashboard
-      const base64 = token
-        .split(".")[1]
-        .replace(/-/g, "+")
-        .replace(/_/g, "/");
-      const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
-      const payload = JSON.parse(atob(padded));
-
-      // Only check tenant_id — app_role can be empty (unassigned user)
-      // This rejects admin-only accounts (no tenant) but allows unassigned users
-      if (!payload.tenant_id) {
-        await supabase.auth.signOut();
-        setError(
-          "This account does not have access to the client dashboard. Please use your invite link to set up your account.",
-        );
-        setLoading(false);
-        return;
-      }
-
-      router.push("/");
-      router.refresh();
-    } catch {
-      setError("An unexpected error occurred");
-      setLoading(false);
+      form.setError('root', {
+        message: err instanceof Error ? err.message : 'An unexpected error occurred',
+      })
     }
   }
+
+  const rootError = form.formState.errors.root?.message
 
   return (
     <>
@@ -110,17 +83,7 @@ export default function LoginPage() {
           className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full"
           style={{ background: 'var(--px-accent)' }}
         >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="white"
-            stroke="white"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="white" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
             <polygon points="5 3 19 12 5 21 5 3" />
           </svg>
         </div>
@@ -135,7 +98,7 @@ export default function LoginPage() {
         </p>
       </div>
       <form
-        onSubmit={handleSubmit}
+        onSubmit={form.handleSubmit(onSubmit)}
         className="space-y-4 rounded-[12px] border p-7"
         style={{
           background: 'var(--px-surface)',
@@ -143,7 +106,7 @@ export default function LoginPage() {
           boxShadow: 'var(--px-shadow-sm)',
         }}
       >
-        {error && (
+        {rootError && (
           <p
             className="rounded-md border p-3 text-[13px]"
             style={{
@@ -152,64 +115,66 @@ export default function LoginPage() {
               borderColor: 'var(--px-danger-line)',
             }}
           >
-            {error}
+            {rootError}
           </p>
         )}
         <div>
-          <label className="px-label">Email</label>
+          <label htmlFor="login-email" className="px-label">Email</label>
           <input
+            id="login-email"
             type="email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
             autoComplete="email"
             className="px-input"
             placeholder="you@company.com"
+            {...form.register('email')}
           />
+          {form.formState.errors.email && (
+            <p className="px-hint" style={{ color: 'var(--px-danger)' }}>
+              {form.formState.errors.email.message}
+            </p>
+          )}
         </div>
         <div>
-          <label className="px-label">Password</label>
+          <label htmlFor="login-password" className="px-label">Password</label>
           <div className="relative">
             <input
-              type={showPassword ? "text" : "password"}
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              id="login-password"
+              type={showPassword ? 'text' : 'password'}
               autoComplete="current-password"
               className="px-input pr-10"
+              {...form.register('password')}
             />
             <button
               type="button"
               onClick={() => setShowPassword((v) => !v)}
               className="absolute inset-y-0 right-0 flex cursor-pointer items-center px-3"
               style={{ color: 'var(--px-fg-4)' }}
-              aria-label={showPassword ? "Hide password" : "Show password"}
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
             >
               {showPassword ? <EyeOffIcon /> : <EyeIcon />}
             </button>
           </div>
+          {form.formState.errors.password && (
+            <p className="px-hint" style={{ color: 'var(--px-danger)' }}>
+              {form.formState.errors.password.message}
+            </p>
+          )}
         </div>
         <button
           type="submit"
-          disabled={loading}
+          disabled={form.formState.isSubmitting}
           className="px-btn primary lg w-full"
         >
-          {loading ? "Signing in…" : "Sign in"}
+          {form.formState.isSubmitting ? 'Signing in…' : 'Sign in'}
         </button>
       </form>
-      <p
-        className="mt-4 text-center text-[12.5px]"
-        style={{ color: 'var(--px-fg-4)' }}
-      >
+      <p className="mt-4 text-center text-[12.5px]" style={{ color: 'var(--px-fg-4)' }}>
         Don&apos;t have an account? Contact your{' '}
-        <strong
-          className="font-semibold"
-          style={{ color: 'var(--px-fg-3)' }}
-        >
+        <strong className="font-semibold" style={{ color: 'var(--px-fg-3)' }}>
           Company Admin
         </strong>{' '}
         for an invite.
       </p>
     </>
-  );
+  )
 }

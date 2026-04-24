@@ -1,11 +1,14 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { toast } from "sonner";
 import { Button } from "@/components/px";
-import { getFreshSupabaseToken } from "@/lib/auth/tokens";
-import { orgUnitsApi, type OrgUnit } from "@/lib/api/org-units";
+import { type OrgUnit } from "@/lib/api/org-units";
+import { useUpdateOrgUnit } from "@/lib/hooks/use-update-org-unit";
+import { applyApiErrorToForm } from "@/lib/api/errors";
 import {
   UnitPageHeader,
   Section,
@@ -26,6 +29,21 @@ interface DivisionMetadata {
   bar_raiser_pool?: string;
 }
 
+const divisionDetailSchema = z.object({
+  name: z.string().min(1, "Name is required").max(100),
+  code: z.string(),
+  lead_name: z.string(),
+  cost_center: z.string(),
+  hiring_budget: z.string(),
+  description: z.string(),
+  default_panel: z.string(),
+  default_takehome: z.string(),
+  default_tech_screen: z.string(),
+  bar_raiser_pool: z.string(),
+});
+
+type DivisionDetailFormValues = z.infer<typeof divisionDetailSchema>;
+
 export function DivisionDetail({
   unit,
   parentPath,
@@ -44,62 +62,62 @@ export function DivisionDetail({
   openRolesByChildId: Record<string, number>;
 }) {
   const initial = (unit.metadata ?? {}) as DivisionMetadata;
-  const [name, setName] = useState(unit.name);
-  const [code, setCode] = useState(initial.code ?? "");
-  const [leadName, setLeadName] = useState(initial.lead_name ?? "");
-  const [costCenter, setCostCenter] = useState(initial.cost_center ?? "");
-  const [hiringBudget, setHiringBudget] = useState(
-    initial.hiring_budget ?? "",
-  );
-  const [description, setDescription] = useState(initial.description ?? "");
-  const [defaultPanel, setDefaultPanel] = useState(
-    initial.default_panel ?? "",
-  );
-  const [defaultTakehome, setDefaultTakehome] = useState(
-    initial.default_takehome ?? "",
-  );
-  const [defaultTechScreen, setDefaultTechScreen] = useState(
-    initial.default_tech_screen ?? "",
-  );
-  const [barRaiserPool, setBarRaiserPool] = useState(
-    initial.bar_raiser_pool ?? "",
-  );
-  const [saving, setSaving] = useState(false);
 
-  async function handleSave() {
-    setSaving(true);
+  const form = useForm<DivisionDetailFormValues>({
+    resolver: zodResolver(divisionDetailSchema),
+    defaultValues: {
+      name: unit.name,
+      code: initial.code ?? "",
+      lead_name: initial.lead_name ?? "",
+      cost_center: initial.cost_center ?? "",
+      hiring_budget: initial.hiring_budget ?? "",
+      description: initial.description ?? "",
+      default_panel: initial.default_panel ?? "",
+      default_takehome: initial.default_takehome ?? "",
+      default_tech_screen: initial.default_tech_screen ?? "",
+      bar_raiser_pool: initial.bar_raiser_pool ?? "",
+    },
+  });
+
+  const updateMutation = useUpdateOrgUnit();
+
+  // Watch fields used in the render chrome (header lead name).
+  const leadName = form.watch("lead_name");
+
+  async function onSubmit(values: DivisionDetailFormValues) {
     try {
-      const token = await getFreshSupabaseToken();
-      const updated = await orgUnitsApi.update(token, unit.id, {
-        name: name.trim() || unit.name,
-        metadata: {
-          code,
-          lead_name: leadName,
-          cost_center: costCenter,
-          hiring_budget: hiringBudget,
-          description,
-          default_panel: defaultPanel,
-          default_takehome: defaultTakehome,
-          default_tech_screen: defaultTechScreen,
-          bar_raiser_pool: barRaiserPool,
+      const updated = await updateMutation.mutateAsync({
+        unitId: unit.id,
+        body: {
+          name: values.name.trim() || unit.name,
+          metadata: {
+            code: values.code,
+            lead_name: values.lead_name,
+            cost_center: values.cost_center,
+            hiring_budget: values.hiring_budget,
+            description: values.description,
+            default_panel: values.default_panel,
+            default_takehome: values.default_takehome,
+            default_tech_screen: values.default_tech_screen,
+            bar_raiser_pool: values.bar_raiser_pool,
+          },
+          set_metadata: true,
         },
-        set_metadata: true,
       });
       onSaved(updated);
       toast.success("Division saved");
     } catch (err) {
+      if (applyApiErrorToForm(err, form)) return;
       toast.error(
         err instanceof Error ? err.message : "Failed to save division",
       );
-    } finally {
-      setSaving(false);
     }
   }
 
   const teams = subUnits.filter((u) => u.unit_type === "team");
 
   return (
-    <>
+    <div>
       <UnitPageHeader
         type="division"
         name={unit.name}
@@ -110,14 +128,19 @@ export function DivisionDetail({
         onBack={onBack}
         right={
           <>
-            <Button variant="ghost" size="sm">
+            <Button variant="ghost" size="sm" type="button">
               Archive
             </Button>
-            <Button variant="outline" size="sm">
+            <Button variant="outline" size="sm" type="button">
               Copy link
             </Button>
-            <Button size="sm" onClick={handleSave} disabled={saving}>
-              {saving ? "Saving…" : "Save changes"}
+            <Button
+              size="sm"
+              type="button"
+              onClick={form.handleSubmit(onSubmit)}
+              disabled={updateMutation.isPending}
+            >
+              {updateMutation.isPending ? "Saving…" : "Save changes"}
             </Button>
           </>
         }
@@ -131,25 +154,22 @@ export function DivisionDetail({
           <Section title="Division details">
             <div className="grid grid-cols-2 gap-3.5">
               <Field label="Division name">
-                <input
-                  className="px-input"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                />
+                <input className="px-input" {...form.register("name")} />
               </Field>
               <Field label="Code">
                 <input
                   className="px-input mono"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value.toUpperCase())}
+                  {...form.register("code", {
+                    setValueAs: (v: unknown) =>
+                      typeof v === "string" ? v.toUpperCase() : "",
+                  })}
                   placeholder="ENG"
                 />
               </Field>
               <Field label="Division lead">
                 <input
                   className="px-input"
-                  value={leadName}
-                  onChange={(e) => setLeadName(e.target.value)}
+                  {...form.register("lead_name")}
                   placeholder="Sam Rivera · VP Engineering"
                 />
               </Field>
@@ -163,16 +183,14 @@ export function DivisionDetail({
               <Field label="Cost center">
                 <input
                   className="px-input mono"
-                  value={costCenter}
-                  onChange={(e) => setCostCenter(e.target.value)}
+                  {...form.register("cost_center")}
                   placeholder="CC-401-ENG"
                 />
               </Field>
               <Field label="Hiring budget">
                 <input
                   className="px-input mono"
-                  value={hiringBudget}
-                  onChange={(e) => setHiringBudget(e.target.value)}
+                  {...form.register("hiring_budget")}
                   placeholder="$14.2M"
                 />
               </Field>
@@ -186,8 +204,7 @@ export function DivisionDetail({
             <textarea
               className="px-input"
               rows={4}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              {...form.register("description")}
               placeholder="Engineering owns the platform, the product surface customers touch, and the infra that keeps both running…"
             />
           </Section>
@@ -195,7 +212,7 @@ export function DivisionDetail({
           <Section
             title={`Teams under ${unit.name}`}
             right={
-              <Button variant="outline" size="xs">
+              <Button variant="outline" size="xs" type="button">
                 + New team
               </Button>
             }
@@ -291,32 +308,28 @@ export function DivisionDetail({
               <Field label="Panel composition">
                 <input
                   className="px-input"
-                  value={defaultPanel}
-                  onChange={(e) => setDefaultPanel(e.target.value)}
+                  {...form.register("default_panel")}
                   placeholder="1 HM · 2 peers · 1 bar raiser"
                 />
               </Field>
               <Field label="Takehome">
                 <input
                   className="px-input"
-                  value={defaultTakehome}
-                  onChange={(e) => setDefaultTakehome(e.target.value)}
+                  {...form.register("default_takehome")}
                   placeholder="Off by default"
                 />
               </Field>
               <Field label="Technical screen">
                 <input
                   className="px-input"
-                  value={defaultTechScreen}
-                  onChange={(e) => setDefaultTechScreen(e.target.value)}
+                  {...form.register("default_tech_screen")}
                   placeholder="System-design (45 min)"
                 />
               </Field>
               <Field label="Bar raiser pool">
                 <input
                   className="px-input"
-                  value={barRaiserPool}
-                  onChange={(e) => setBarRaiserPool(e.target.value)}
+                  {...form.register("bar_raiser_pool")}
                   placeholder="Staff+ · cross-team · 18 people"
                 />
               </Field>
@@ -341,6 +354,6 @@ export function DivisionDetail({
           />
         </aside>
       </div>
-    </>
+    </div>
   );
 }

@@ -21,10 +21,13 @@ from app.modules.auth.context import UserContext, get_current_user_roles
 from app.modules.auth.schemas import (
     AcceptInviteRequest,
     AcceptInviteResponse,
+    LoginRequest,
+    LoginResponse,
     MeResponse,
     RoleAssignmentResponse,
     VerifyInviteResponse,
 )
+from app.modules.auth.service import verify_access_token
 
 logger = structlog.get_logger()
 
@@ -241,6 +244,124 @@ async def accept_invite(
         )
 
     return AcceptInviteResponse(
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
+        expires_in=tokens.expires_in,
+        redirect_to=redirect_to,
+    )
+
+
+@router.post("/login", response_model=LoginResponse)
+async def login(
+    data: LoginRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_bypass_db),
+) -> LoginResponse:
+    """Backend-owned login.
+
+    Moves the last `supabase.auth.signInWithPassword` call behind the
+    provider-agnostic AuthProvider boundary so a future Cognito/Keycloak
+    swap is a config change, not a code rewrite.
+
+    Error contract:
+    - 401 for invalid credentials / unknown user. Generic message,
+      no user enumeration.
+    - 403 for accounts missing tenant_id (ProjectX-admin-only).
+    - 403 for deactivated accounts (users.is_active = false).
+    - 422 for Pydantic validation failures (handled by FastAPI).
+
+    Public endpoint — no bearer token required (see middleware
+    _PUBLIC_PREFIXES).
+
+    RLS bypass justification:
+      Uses get_bypass_db because login is pre-tenant-context: we have
+      no verified tenant_id until after the provider signs the user in
+      and we decode their fresh access token. The handler only reads
+      the caller's own user + client row (lookup-by-email then
+      lookup-by-id) — no cross-tenant surface.
+    """
+    from app.modules.auth.admin import (
+        InvalidCredentialsError,
+        UserNotFoundError,
+        get_auth_provider,
+    )
+
+    provider = get_auth_provider()
+
+    # Phase 1: sign in. Generic 401 on any credential/user-not-found path
+    # so the handler never discloses whether an email is registered.
+    try:
+        tokens = await provider.sign_in_with_password(data.email, data.password)
+    except (InvalidCredentialsError, UserNotFoundError):
+        logger.info(
+            "auth.login.rejected",
+            email=data.email,
+            reason="invalid_credentials",
+        )
+        raise HTTPException(
+            status_code=401, detail="Invalid email or password."
+        )
+
+    # Phase 2: decode the access token to pull tenant_id. A token that
+    # fails verification at this point means the provider returned a
+    # token we cannot trust — treat as an auth failure.
+    payload = verify_access_token(tokens.access_token)
+    if payload is None:
+        logger.error("auth.login.token_verify_failed", email=data.email)
+        raise HTTPException(
+            status_code=401, detail="Invalid email or password."
+        )
+
+    tenant_id = payload.tenant_id or ""
+    if not tenant_id:
+        logger.info("auth.login.no_tenant", email=data.email)
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "This account does not have access to the client dashboard."
+            ),
+        )
+
+    # Phase 3: app user lookup. Reject deactivated accounts.
+    user_row = await db.execute(
+        select(User).where(User.email == data.email)
+    )
+    user = user_row.scalar_one_or_none()
+    if user is None:
+        logger.error("auth.login.no_app_user", email=data.email)
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "This account does not have access to the client dashboard."
+            ),
+        )
+    if not user.is_active:
+        logger.info("auth.login.deactivated", user_id=str(user.id))
+        raise HTTPException(
+            status_code=403,
+            detail="This account has been deactivated.",
+        )
+
+    # Phase 4: compute redirect_to.
+    client_row = await db.execute(
+        select(Client).where(Client.id == user.tenant_id)
+    )
+    client = client_row.scalar_one()
+    is_super_admin = client.super_admin_id == user.id
+    redirect_to = (
+        "/onboarding"
+        if is_super_admin and not client.onboarding_complete
+        else "/"
+    )
+
+    logger.info(
+        "auth.login.success",
+        user_id=str(user.id),
+        tenant_id=str(user.tenant_id),
+        redirect_to=redirect_to,
+    )
+
+    return LoginResponse(
         access_token=tokens.access_token,
         refresh_token=tokens.refresh_token,
         expires_in=tokens.expires_in,

@@ -1,15 +1,19 @@
 "use client";
 
 import { useState } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { toast } from "sonner";
 import { Button } from "@/components/px";
-import { getFreshSupabaseToken } from "@/lib/auth/tokens";
-import { orgUnitsApi, type OrgUnit } from "@/lib/api/org-units";
+import { type OrgUnit } from "@/lib/api/org-units";
 import {
   INDUSTRY_OPTIONS,
   COMPANY_STAGE_OPTIONS,
   type CompanyProfile,
 } from "@/components/dashboard/company-profile-form";
+import { useUpdateOrgUnit } from "@/lib/hooks/use-update-org-unit";
+import { applyApiErrorToForm } from "@/lib/api/errors";
 import {
   UnitPageHeader,
   Section,
@@ -45,6 +49,45 @@ interface CompanyMetadata {
   account_manager?: string;
 }
 
+const companyDetailSchema = z.object({
+  name: z.string().min(1, "Name is required").max(100),
+
+  // Core company_profile — validated against the same 30/20 char rules
+  // as CompanyProfileForm. Empty is allowed; save logic gates on all-or-nothing.
+  about: z.string(),
+  industry: z.string(),
+  company_stage: z.string(),
+  hiring_bar: z.string(),
+
+  // Extended metadata — all optional text fields
+  legal_name: z.string(),
+  short_name: z.string(),
+  website: z.string(),
+  hq: z.string(),
+  size: z.string(),
+  interview_style: z.string(),
+  panel_size: z.string(),
+  takehome_policy: z.string(),
+  time_to_decision: z.string(),
+  values: z.string(),
+  base_philosophy: z.string(),
+  equity: z.string(),
+  bonus: z.string(),
+  locations: z.array(z.string()),
+  remote_policy: z.string(),
+  visa: z.string(),
+
+  // Client-only
+  contract_start: z.string(),
+  renews: z.string(),
+  fee_model: z.string(),
+  guarantee_period: z.string(),
+  exclusive_roles: z.string(),
+  account_manager: z.string(),
+});
+
+type CompanyDetailFormValues = z.infer<typeof companyDetailSchema>;
+
 export function CompanyProfileDetail({
   unit,
   subUnits,
@@ -63,139 +106,149 @@ export function CompanyProfileDetail({
   const profile = unit.company_profile;
   const meta = (unit.metadata ?? {}) as CompanyMetadata;
 
-  const [name, setName] = useState(unit.name);
-  // Core company_profile (persisted via set_company_profile)
-  const [about, setAbout] = useState(profile?.about ?? "");
-  const [industry, setIndustry] = useState<string>(profile?.industry ?? "");
-  const [stage, setStage] = useState<string>(profile?.company_stage ?? "");
-  const [hiringBar, setHiringBar] = useState(profile?.hiring_bar ?? "");
+  const form = useForm<CompanyDetailFormValues>({
+    resolver: zodResolver(companyDetailSchema),
+    defaultValues: {
+      name: unit.name,
+      about: profile?.about ?? "",
+      industry: profile?.industry ?? "",
+      company_stage: profile?.company_stage ?? "",
+      hiring_bar: profile?.hiring_bar ?? "",
+      legal_name: meta.legal_name ?? "",
+      short_name: meta.short_name ?? "",
+      website: meta.website ?? "",
+      hq: meta.hq ?? "",
+      size: meta.size ?? "",
+      interview_style: meta.interview_style ?? "",
+      panel_size: meta.panel_size ?? "",
+      takehome_policy: meta.takehome_policy ?? "",
+      time_to_decision: meta.time_to_decision ?? "",
+      values: meta.values ?? "",
+      base_philosophy: meta.base_philosophy ?? "",
+      equity: meta.equity ?? "",
+      bonus: meta.bonus ?? "",
+      locations: meta.locations ?? [],
+      remote_policy: meta.remote_policy ?? "",
+      visa: meta.visa ?? "",
+      contract_start: meta.contract_start ?? "",
+      renews: meta.renews ?? "",
+      fee_model: meta.fee_model ?? "",
+      guarantee_period: meta.guarantee_period ?? "",
+      exclusive_roles: meta.exclusive_roles ?? "",
+      account_manager: meta.account_manager ?? "",
+    },
+  });
 
-  // Extended metadata
-  const [legalName, setLegalName] = useState(meta.legal_name ?? "");
-  const [shortName, setShortName] = useState(meta.short_name ?? "");
-  const [website, setWebsite] = useState(meta.website ?? "");
-  const [hq, setHq] = useState(meta.hq ?? "");
-  const [size, setSize] = useState(meta.size ?? "");
-  const [interviewStyle, setInterviewStyle] = useState(
-    meta.interview_style ?? "",
-  );
-  const [panelSize, setPanelSize] = useState(meta.panel_size ?? "");
-  const [takehomePolicy, setTakehomePolicy] = useState(
-    meta.takehome_policy ?? "",
-  );
-  const [timeToDecision, setTimeToDecision] = useState(
-    meta.time_to_decision ?? "",
-  );
-  const [values, setValues] = useState(meta.values ?? "");
-  const [basePhilosophy, setBasePhilosophy] = useState(
-    meta.base_philosophy ?? "",
-  );
-  const [equity, setEquity] = useState(meta.equity ?? "");
-  const [bonus, setBonus] = useState(meta.bonus ?? "");
-  const [locations, setLocations] = useState<string[]>(meta.locations ?? []);
+  const updateMutation = useUpdateOrgUnit();
+
+  // locationInput is pure UI state for the tag-chip input (not a form field)
   const [locationInput, setLocationInput] = useState("");
-  const [remotePolicy, setRemotePolicy] = useState(meta.remote_policy ?? "");
-  const [visa, setVisa] = useState(meta.visa ?? "");
 
-  // Client-only
-  const [contractStart, setContractStart] = useState(
-    meta.contract_start ?? "",
-  );
-  const [renews, setRenews] = useState(meta.renews ?? "");
-  const [feeModel, setFeeModel] = useState(meta.fee_model ?? "");
-  const [guaranteePeriod, setGuaranteePeriod] = useState(
-    meta.guarantee_period ?? "",
-  );
-  const [exclusiveRoles, setExclusiveRoles] = useState(
-    meta.exclusive_roles ?? "",
-  );
-  const [accountManager, setAccountManager] = useState(
-    meta.account_manager ?? "",
-  );
-
-  const [saving, setSaving] = useState(false);
+  // Watch reactive values used in the render (locations list + signals card)
+  const locations = form.watch("locations");
+  const about = form.watch("about");
+  const hiringBar = form.watch("hiring_bar");
+  const industry = form.watch("industry");
+  const stage = form.watch("company_stage");
+  const remotePolicy = form.watch("remote_policy");
+  const interviewStyle = form.watch("interview_style");
+  const accountManager = form.watch("account_manager");
 
   function addLocation() {
     const v = locationInput.trim();
     if (!v) return;
-    if (!locations.includes(v)) setLocations((prev) => [...prev, v]);
+    const current = form.getValues("locations");
+    if (!current.includes(v)) {
+      form.setValue("locations", [...current, v], { shouldDirty: true });
+    }
     setLocationInput("");
   }
 
-  async function handleSave() {
-    setSaving(true);
+  function removeLocation(loc: string) {
+    const current = form.getValues("locations");
+    form.setValue(
+      "locations",
+      current.filter((l) => l !== loc),
+      { shouldDirty: true },
+    );
+  }
+
+  async function onSubmit(values: CompanyDetailFormValues) {
+    // Persist the core 4-field company_profile only if all required
+    // fields validate — the backend enforces non-empty `about`/`industry`/
+    // `company_stage`/`hiring_bar` whenever set_company_profile is true.
+    // If any are missing, skip it; metadata still saves.
+    const canSaveProfile =
+      values.about.trim().length >= 30 &&
+      values.industry &&
+      values.company_stage &&
+      values.hiring_bar.trim().length >= 20;
+
     try {
-      const token = await getFreshSupabaseToken();
-
-      // Persist the core 4-field company_profile only if all required
-      // fields validate — the backend enforces non-empty `about`/`industry`/
-      // `company_stage`/`hiring_bar` whenever set_company_profile is true.
-      // If any are missing, skip it; metadata still saves.
-      const canSaveProfile =
-        about.trim().length >= 30 &&
-        industry &&
-        stage &&
-        hiringBar.trim().length >= 20;
-
-      const updated = await orgUnitsApi.update(token, unit.id, {
-        name: name.trim() || unit.name,
-        ...(canSaveProfile
-          ? {
-              company_profile: {
-                about: about.trim(),
-                industry,
-                company_stage: stage,
-                hiring_bar: hiringBar.trim(),
-              } as CompanyProfile,
-              set_company_profile: true,
-            }
-          : {}),
-        metadata: {
-          legal_name: legalName,
-          short_name: shortName,
-          website,
-          hq,
-          size,
-          interview_style: interviewStyle,
-          panel_size: panelSize,
-          takehome_policy: takehomePolicy,
-          time_to_decision: timeToDecision,
-          values,
-          base_philosophy: basePhilosophy,
-          equity,
-          bonus,
-          locations,
-          remote_policy: remotePolicy,
-          visa,
-          ...(isClient
+      const updated = await updateMutation.mutateAsync({
+        unitId: unit.id,
+        body: {
+          name: values.name.trim() || unit.name,
+          ...(canSaveProfile
             ? {
-                contract_start: contractStart,
-                renews,
-                fee_model: feeModel,
-                guarantee_period: guaranteePeriod,
-                exclusive_roles: exclusiveRoles,
-                account_manager: accountManager,
+                company_profile: {
+                  about: values.about.trim(),
+                  industry: values.industry,
+                  company_stage: values.company_stage,
+                  hiring_bar: values.hiring_bar.trim(),
+                } as CompanyProfile,
+                set_company_profile: true,
               }
             : {}),
+          metadata: {
+            legal_name: values.legal_name,
+            short_name: values.short_name,
+            website: values.website,
+            hq: values.hq,
+            size: values.size,
+            interview_style: values.interview_style,
+            panel_size: values.panel_size,
+            takehome_policy: values.takehome_policy,
+            time_to_decision: values.time_to_decision,
+            values: values.values,
+            base_philosophy: values.base_philosophy,
+            equity: values.equity,
+            bonus: values.bonus,
+            locations: values.locations,
+            remote_policy: values.remote_policy,
+            visa: values.visa,
+            ...(isClient
+              ? {
+                  contract_start: values.contract_start,
+                  renews: values.renews,
+                  fee_model: values.fee_model,
+                  guarantee_period: values.guarantee_period,
+                  exclusive_roles: values.exclusive_roles,
+                  account_manager: values.account_manager,
+                }
+              : {}),
+          },
+          set_metadata: true,
         },
-        set_metadata: true,
       });
       onSaved(updated);
       toast.success(isClient ? "Client saved" : "Company saved");
-      if (!canSaveProfile && (about || industry || stage || hiringBar)) {
+      if (
+        !canSaveProfile &&
+        (values.about || values.industry || values.company_stage || values.hiring_bar)
+      ) {
         toast.info(
           "Metadata saved. Fill all 4 core profile fields to save the company_profile.",
         );
       }
     } catch (err) {
+      if (applyApiErrorToForm(err, form)) return;
       toast.error(err instanceof Error ? err.message : "Failed to save");
-    } finally {
-      setSaving(false);
     }
   }
 
   return (
-    <>
+    <div>
       <UnitPageHeader
         type={unit.unit_type}
         name={unit.name}
@@ -206,14 +259,19 @@ export function CompanyProfileDetail({
         onBack={onBack}
         right={
           <>
-            <Button variant="ghost" size="sm">
+            <Button variant="ghost" size="sm" type="button">
               Archive
             </Button>
-            <Button variant="outline" size="sm">
+            <Button variant="outline" size="sm" type="button">
               Copy link
             </Button>
-            <Button size="sm" onClick={handleSave} disabled={saving}>
-              {saving ? "Saving…" : "Save changes"}
+            <Button
+              size="sm"
+              type="button"
+              onClick={form.handleSubmit(onSubmit)}
+              disabled={updateMutation.isPending}
+            >
+              {updateMutation.isPending ? "Saving…" : "Save changes"}
             </Button>
           </>
         }
@@ -227,44 +285,30 @@ export function CompanyProfileDetail({
           <Section title="Identity">
             <div className="grid grid-cols-2 gap-3.5">
               <Field label={isClient ? "Client name" : "Company name"}>
-                <input
-                  className="px-input"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                />
+                <input className="px-input" {...form.register("name")} />
               </Field>
               <Field
                 label="Short name"
                 hint="Appears in candidate-facing invites and interview chrome."
               >
-                <input
-                  className="px-input"
-                  value={shortName}
-                  onChange={(e) => setShortName(e.target.value)}
-                />
+                <input className="px-input" {...form.register("short_name")} />
               </Field>
               <Field label="Legal name">
                 <input
                   className="px-input"
-                  value={legalName}
-                  onChange={(e) => setLegalName(e.target.value)}
+                  {...form.register("legal_name")}
                   placeholder={isClient ? "Northwind Labs, Inc." : "Acme Technologies, Inc."}
                 />
               </Field>
               <Field label="Website">
                 <input
                   className="px-input mono"
-                  value={website}
-                  onChange={(e) => setWebsite(e.target.value)}
+                  {...form.register("website")}
                   placeholder="acme.com"
                 />
               </Field>
               <Field label="Industry">
-                <select
-                  className="px-input"
-                  value={industry}
-                  onChange={(e) => setIndustry(e.target.value)}
-                >
+                <select className="px-input" {...form.register("industry")}>
                   <option value="" disabled>
                     Select industry
                   </option>
@@ -278,16 +322,14 @@ export function CompanyProfileDetail({
               <Field label="Headquarters">
                 <input
                   className="px-input"
-                  value={hq}
-                  onChange={(e) => setHq(e.target.value)}
+                  {...form.register("hq")}
                   placeholder="San Francisco, CA"
                 />
               </Field>
               <Field label="Company stage">
                 <select
                   className="px-input"
-                  value={stage}
-                  onChange={(e) => setStage(e.target.value)}
+                  {...form.register("company_stage")}
                 >
                   <option value="" disabled>
                     Select stage
@@ -302,8 +344,7 @@ export function CompanyProfileDetail({
               <Field label="Size">
                 <input
                   className="px-input"
-                  value={size}
-                  onChange={(e) => setSize(e.target.value)}
+                  {...form.register("size")}
                   placeholder="501–1,000 employees"
                 />
               </Field>
@@ -317,8 +358,7 @@ export function CompanyProfileDetail({
             <textarea
               className="px-input"
               rows={5}
-              value={about}
-              onChange={(e) => setAbout(e.target.value)}
+              {...form.register("about")}
               placeholder="Describe the problems you solve, at what scale, for whom. Not your mission statement."
             />
             <div className="mt-1 flex items-center justify-between">
@@ -342,16 +382,14 @@ export function CompanyProfileDetail({
               <Field label="Interview style">
                 <input
                   className="px-input"
-                  value={interviewStyle}
-                  onChange={(e) => setInterviewStyle(e.target.value)}
+                  {...form.register("interview_style")}
                   placeholder="Structured · calibrated panels"
                 />
               </Field>
               <Field label="Default panel size">
                 <input
                   className="px-input"
-                  value={panelSize}
-                  onChange={(e) => setPanelSize(e.target.value)}
+                  {...form.register("panel_size")}
                   placeholder="4 interviewers (3 peers + 1 HM)"
                 />
               </Field>
@@ -361,16 +399,14 @@ export function CompanyProfileDetail({
               >
                 <input
                   className="px-input"
-                  value={takehomePolicy}
-                  onChange={(e) => setTakehomePolicy(e.target.value)}
+                  {...form.register("takehome_policy")}
                   placeholder="Rare — only for senior IC roles"
                 />
               </Field>
               <Field label="Typical time-to-decision">
                 <input
                   className="px-input"
-                  value={timeToDecision}
-                  onChange={(e) => setTimeToDecision(e.target.value)}
+                  {...form.register("time_to_decision")}
                   placeholder="10 business days"
                 />
               </Field>
@@ -383,8 +419,7 @@ export function CompanyProfileDetail({
                 <textarea
                   className="px-input"
                   rows={3}
-                  value={values}
-                  onChange={(e) => setValues(e.target.value)}
+                  {...form.register("values")}
                 />
               </Field>
             </div>
@@ -396,8 +431,7 @@ export function CompanyProfileDetail({
                 <textarea
                   className="px-input"
                   rows={3}
-                  value={hiringBar}
-                  onChange={(e) => setHiringBar(e.target.value)}
+                  {...form.register("hiring_bar")}
                   maxLength={280}
                 />
               </Field>
@@ -423,24 +457,21 @@ export function CompanyProfileDetail({
               <Field label="Base salary philosophy">
                 <input
                   className="px-input"
-                  value={basePhilosophy}
-                  onChange={(e) => setBasePhilosophy(e.target.value)}
+                  {...form.register("base_philosophy")}
                   placeholder="75th percentile, market-adjusted"
                 />
               </Field>
               <Field label="Equity grant">
                 <input
                   className="px-input"
-                  value={equity}
-                  onChange={(e) => setEquity(e.target.value)}
+                  {...form.register("equity")}
                   placeholder="Standard — 4yr / 1yr cliff"
                 />
               </Field>
               <Field label="Bonus">
                 <input
                   className="px-input"
-                  value={bonus}
-                  onChange={(e) => setBonus(e.target.value)}
+                  {...form.register("bonus")}
                   placeholder="None (equity-weighted)"
                 />
               </Field>
@@ -454,9 +485,7 @@ export function CompanyProfileDetail({
                   key={loc}
                   text={loc}
                   tone="soft"
-                  onRemove={() =>
-                    setLocations((prev) => prev.filter((l) => l !== loc))
-                  }
+                  onRemove={() => removeLocation(loc)}
                 />
               ))}
               <div className="flex items-center gap-2">
@@ -473,7 +502,12 @@ export function CompanyProfileDetail({
                   }}
                   placeholder="e.g. San Francisco, CA"
                 />
-                <Button variant="ghost" size="xs" onClick={addLocation}>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  type="button"
+                  onClick={addLocation}
+                >
                   + Add
                 </Button>
               </div>
@@ -482,16 +516,14 @@ export function CompanyProfileDetail({
               <Field label="Remote policy">
                 <input
                   className="px-input"
-                  value={remotePolicy}
-                  onChange={(e) => setRemotePolicy(e.target.value)}
+                  {...form.register("remote_policy")}
                   placeholder="Remote-friendly · HQ optional"
                 />
               </Field>
               <Field label="Visa sponsorship">
                 <input
                   className="px-input"
-                  value={visa}
-                  onChange={(e) => setVisa(e.target.value)}
+                  {...form.register("visa")}
                   placeholder="Yes — H-1B, O-1, EU Blue Card"
                 />
               </Field>
@@ -507,48 +539,42 @@ export function CompanyProfileDetail({
                 <Field label="Contract start">
                   <input
                     className="px-input mono"
-                    value={contractStart}
-                    onChange={(e) => setContractStart(e.target.value)}
+                    {...form.register("contract_start")}
                     placeholder="2025-02-03"
                   />
                 </Field>
                 <Field label="Renews">
                   <input
                     className="px-input mono"
-                    value={renews}
-                    onChange={(e) => setRenews(e.target.value)}
+                    {...form.register("renews")}
                     placeholder="2026-02-03"
                   />
                 </Field>
                 <Field label="Fee model">
                   <input
                     className="px-input"
-                    value={feeModel}
-                    onChange={(e) => setFeeModel(e.target.value)}
+                    {...form.register("fee_model")}
                     placeholder="22% placement fee"
                   />
                 </Field>
                 <Field label="Guarantee period">
                   <input
                     className="px-input"
-                    value={guaranteePeriod}
-                    onChange={(e) => setGuaranteePeriod(e.target.value)}
+                    {...form.register("guarantee_period")}
                     placeholder="90 days"
                   />
                 </Field>
                 <Field label="Exclusive roles">
                   <input
                     className="px-input"
-                    value={exclusiveRoles}
-                    onChange={(e) => setExclusiveRoles(e.target.value)}
+                    {...form.register("exclusive_roles")}
                     placeholder="Senior IC only"
                   />
                 </Field>
                 <Field label="Account manager">
                   <input
                     className="px-input"
-                    value={accountManager}
-                    onChange={(e) => setAccountManager(e.target.value)}
+                    {...form.register("account_manager")}
                   />
                 </Field>
               </div>
@@ -569,7 +595,7 @@ export function CompanyProfileDetail({
           <SubUnitsList subUnits={subUnits} />
         </aside>
       </div>
-    </>
+    </div>
   );
 }
 

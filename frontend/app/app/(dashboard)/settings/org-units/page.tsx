@@ -1,12 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useQuery } from "@tanstack/react-query";
 
 import { getFreshSupabaseToken } from "@/lib/auth/tokens";
 import { jobsApi, type JobPostingSummary } from "@/lib/api/jobs";
-import { orgUnitsApi, type OrgUnit } from "@/lib/api/org-units";
+import { type OrgUnit } from "@/lib/api/org-units";
 import { authApi, type MeResponse } from "@/lib/api/auth";
+import { useOrgUnits } from "@/lib/hooks/use-org-units";
+import { useCreateOrgUnit } from "@/lib/hooks/use-create-org-unit";
+import { applyApiErrorToForm } from "@/lib/api/errors";
 import {
   CompanyProfileForm,
   type CompanyProfile,
@@ -24,6 +30,11 @@ import {
   type GraphNodeData,
   type Pressure,
 } from "@/components/dashboard/org-units/OrgGraph";
+
+import {
+  createOrgUnitSchema,
+  type CreateOrgUnitFormValues,
+} from "./schema";
 
 const UNIT_TYPES = [
   { value: "division", label: "Division" },
@@ -108,57 +119,37 @@ function pressureFor(openRoles: number): Pressure {
 
 export default function OrgUnitsPage() {
   const router = useRouter();
-  const [units, setUnits] = useState<OrgUnit[]>([]);
-  const [jobs, setJobs] = useState<JobPostingSummary[]>([]);
-  const [loading, setLoading] = useState(true);
+
+  const unitsQuery = useOrgUnits();
+  const meQuery = useQuery<MeResponse>({
+    queryKey: ["me"],
+    queryFn: async () => authApi.me(await getFreshSupabaseToken()),
+    staleTime: 60_000,
+  });
+  const jobsQuery = useQuery<JobPostingSummary[]>({
+    queryKey: ["jobs-list"],
+    queryFn: async () => jobsApi.list(await getFreshSupabaseToken()),
+    staleTime: 10_000,
+  });
+
+  const units = useMemo(() => unitsQuery.data ?? [], [unitsQuery.data]);
+  const jobs = useMemo(() => jobsQuery.data ?? [], [jobsQuery.data]);
+  const me = meQuery.data ?? null;
+  const loading = unitsQuery.isLoading || meQuery.isLoading;
   const [error, setError] = useState("");
-  const [me, setMe] = useState<MeResponse | null>(null);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
 
   // Create form
   const [showCreate, setShowCreate] = useState(false);
-  const [createName, setCreateName] = useState("");
-  const [createType, setCreateType] = useState("division");
-  const [createParent, setCreateParent] = useState("");
-  const [creating, setCreating] = useState(false);
   const [showProfileDialog, setShowProfileDialog] = useState(false);
 
-  const getToken = useCallback(async () => {
-    try {
-      return await getFreshSupabaseToken();
-    } catch {
-      window.location.href = "/login";
-      return null;
-    }
-  }, []);
-
-  const load = useCallback(async () => {
-    try {
-      const token = await getToken();
-      if (!token) return;
-      const [unitsData, meData, jobsData] = await Promise.all([
-        orgUnitsApi.list(token),
-        authApi.me(token),
-        jobsApi.list(token).catch(() => [] as JobPostingSummary[]),
-      ]);
-      setUnits(unitsData);
-      setMe(meData);
-      setJobs(jobsData);
-      // Default selection: root, else first unit
-      const root = unitsData.find((u) => !u.parent_unit_id) ?? unitsData[0];
-      setSelectedId((prev) => prev ?? root?.id ?? null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load");
-    } finally {
-      setLoading(false);
-    }
-  }, [getToken]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const createForm = useForm<CreateOrgUnitFormValues>({
+    resolver: zodResolver(createOrgUnitSchema),
+    defaultValues: { name: "", unit_type: "division", parent_unit_id: "" },
+  });
+  const createMutation = useCreateOrgUnit();
 
   // Compute open-role count per unit (non-draft = active role)
   const openRolesByUnit = useMemo(() => {
@@ -215,19 +206,38 @@ export default function OrgUnitsPage() {
     return true;
   });
 
-  async function handleCreateSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (createType === "client_account") {
+  async function doCreate(companyProfile: CompanyProfile | null) {
+    const values = createForm.getValues();
+    try {
+      const newUnit = await createMutation.mutateAsync({
+        name: values.name.trim(),
+        unit_type: values.unit_type,
+        parent_unit_id: values.parent_unit_id || null,
+        company_profile: companyProfile,
+      });
+      createForm.reset({ name: "", unit_type: "division", parent_unit_id: "" });
+      setShowCreate(false);
+      setShowProfileDialog(false);
+      router.push(`/settings/org-units/${newUnit.id}`);
+    } catch (err) {
+      if (applyApiErrorToForm(err, createForm)) throw err;
+      setError(err instanceof Error ? err.message : "Failed to create unit");
+      throw err;
+    }
+  }
+
+  const onCreateSubmit = createForm.handleSubmit(async () => {
+    if (createForm.getValues("unit_type") === "client_account") {
       setError("");
       setShowProfileDialog(true);
       return;
     }
     try {
       await doCreate(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create unit");
+    } catch {
+      // error already surfaced via setError or form.setError
     }
-  }
+  });
 
   async function handleClientAccountProfileSubmit(profile: CompanyProfile) {
     try {
@@ -235,28 +245,6 @@ export default function OrgUnitsPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create unit");
       throw err;
-    }
-  }
-
-  async function doCreate(companyProfile: CompanyProfile | null) {
-    setCreating(true);
-    try {
-      const token = await getToken();
-      if (!token) return;
-      const newUnit = await orgUnitsApi.create(token, {
-        name: createName.trim(),
-        unit_type: createType,
-        parent_unit_id: createParent || null,
-        company_profile: companyProfile,
-      });
-      setCreateName("");
-      setCreateType("division");
-      setCreateParent("");
-      setShowCreate(false);
-      setShowProfileDialog(false);
-      router.push(`/settings/org-units/${newUnit.id}`);
-    } finally {
-      setCreating(false);
     }
   }
 
@@ -327,7 +315,7 @@ export default function OrgUnitsPage() {
       {/* Create form */}
       {showCreate && me?.is_super_admin && (
         <form
-          onSubmit={handleCreateSubmit}
+          onSubmit={onCreateSubmit}
           className="mx-8 mb-4 space-y-4 rounded-[10px] border p-5"
           style={{
             background: "var(--px-surface)",
@@ -348,12 +336,15 @@ export default function OrgUnitsPage() {
               <input
                 id="create-name"
                 type="text"
-                required
-                value={createName}
-                onChange={(e) => setCreateName(e.target.value)}
                 className="px-input"
                 placeholder="e.g., Engineering"
+                {...createForm.register("name")}
               />
+              {createForm.formState.errors.name && (
+                <p className="px-hint" style={{ color: "var(--px-danger)" }}>
+                  {createForm.formState.errors.name.message}
+                </p>
+              )}
             </div>
             <div>
               <label htmlFor="create-type" className="px-label">
@@ -361,9 +352,8 @@ export default function OrgUnitsPage() {
               </label>
               <select
                 id="create-type"
-                value={createType}
-                onChange={(e) => setCreateType(e.target.value)}
                 className="px-input"
+                {...createForm.register("unit_type")}
               >
                 {createableTypes.map((t) => (
                   <option key={t.value} value={t.value}>
@@ -386,14 +376,13 @@ export default function OrgUnitsPage() {
               </label>
               <select
                 id="create-parent"
-                value={createParent}
-                onChange={(e) => setCreateParent(e.target.value)}
                 className="px-input"
+                {...createForm.register("parent_unit_id")}
               >
                 <option value="">None (top-level)</option>
                 {selectOptions.map(({ unit: u, depth }) => (
                   <option key={u.id} value={u.id}>
-                    {"  ".repeat(depth)}
+                    {"  ".repeat(depth)}
                     {u.name}
                   </option>
                 ))}
@@ -403,10 +392,10 @@ export default function OrgUnitsPage() {
           <div className="flex justify-end">
             <button
               type="submit"
-              disabled={creating || !createName.trim()}
+              disabled={createMutation.isPending}
               className="px-btn primary sm"
             >
-              {creating ? "Creating…" : "Create unit"}
+              {createMutation.isPending ? "Creating…" : "Create unit"}
             </button>
           </div>
         </form>
@@ -480,7 +469,7 @@ export default function OrgUnitsPage() {
       <Dialog
         open={showProfileDialog}
         onOpenChange={(open) => {
-          if (creating) return;
+          if (createMutation.isPending) return;
           setShowProfileDialog(open);
         }}
       >
@@ -490,7 +479,7 @@ export default function OrgUnitsPage() {
             <DialogDescription>
               Set up the profile for{" "}
               <span className="font-medium" style={{ color: "var(--px-fg)" }}>
-                {createName.trim()}
+                {createForm.watch("name").trim()}
               </span>
               . This describes the end client — the company your recruiters are
               hiring <em>for</em>. It feeds the AI when generating JD

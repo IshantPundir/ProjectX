@@ -3,7 +3,8 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { getFreshSupabaseToken } from "@/lib/auth/tokens";
-import { apiFetch } from "@/lib/api/client";
+import { authApi } from "@/lib/api/auth";
+import { orgUnitsApi } from "@/lib/api/org-units";
 import {
   CompanyProfileForm,
   type CompanyProfile,
@@ -11,12 +12,6 @@ import {
 
 type Step = "workspace" | "company-profile";
 type WorkspaceMode = "enterprise" | "agency";
-
-interface OrgUnit {
-  id: string;
-  name: string;
-  is_root: boolean;
-}
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -50,11 +45,7 @@ export default function OnboardingPage() {
       const token = await getToken();
       if (!token) return;
 
-      await apiFetch("/api/settings/workspace", {
-        method: "PATCH",
-        token,
-        body: JSON.stringify({ workspace_mode: mode }),
-      });
+      await authApi.setWorkspaceMode(token, { workspace_mode: mode });
 
       setStep("company-profile");
     } catch (err) {
@@ -79,7 +70,7 @@ export default function OnboardingPage() {
         const token = await getToken();
         if (!token) return;
 
-        const units = await apiFetch<OrgUnit[]>("/api/org-units", { token });
+        const units = await orgUnitsApi.list(token);
         const root = units.find((u) => u.is_root);
         if (root && !cancelled) {
           setRootUnitId(root.id);
@@ -105,21 +96,14 @@ export default function OnboardingPage() {
     if (!token) return;
 
     if (rootUnitId) {
-      await apiFetch(`/api/org-units/${rootUnitId}`, {
-        method: "PUT",
-        token,
-        body: JSON.stringify({
-          set_company_profile: true,
-          company_profile: value,
-        }),
+      await orgUnitsApi.update(token, rootUnitId, {
+        set_company_profile: true,
+        company_profile: value,
       });
     }
 
     // Complete onboarding
-    await apiFetch("/api/auth/onboarding/complete", {
-      method: "POST",
-      token,
-    });
+    await authApi.completeOnboarding(token);
 
     router.push("/");
     router.refresh();
