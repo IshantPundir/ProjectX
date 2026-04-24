@@ -11,6 +11,7 @@ import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 
 import { Toaster } from '@/components/px'
+import { SessionGuard } from '@/components/dashboard/SessionGuard'
 import { handleAuthError, type AppRouter } from '@/lib/auth/handle-error'
 
 export function DashboardProviders({ children }: { children: React.ReactNode }) {
@@ -48,6 +49,7 @@ export function DashboardProviders({ children }: { children: React.ReactNode }) 
 
   return (
     <QueryClientProvider client={queryClient}>
+      <SessionGuard />
       {children}
       <Toaster />
       {process.env.NODE_ENV === 'development' && <ReactQueryDevtools />}
