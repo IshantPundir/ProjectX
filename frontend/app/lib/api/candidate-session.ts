@@ -6,7 +6,7 @@
  * attach a recruiter Supabase bearer to candidate-surface requests.
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || ''
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
 
 export type SessionState =
   | 'created'
@@ -77,10 +77,15 @@ async function _call<T>(
     }
     const message =
       typeof parsed.detail === 'string' ? parsed.detail : `HTTP ${r.status}`
-    const err: CandidateSessionError = Object.assign(new Error(message), {
-      status: r.status,
-      ...parsed,
-    })
+    const err = new Error(message) as CandidateSessionError
+    err.status = r.status
+    // Cherry-pick known fields rather than spreading attacker-influenced JSON
+    // (which could shadow Error.prototype.stack / .name / .message).
+    if (typeof parsed.code === 'string') err.code = parsed.code
+    if (typeof parsed.attempts_remaining === 'number')
+      err.attempts_remaining = parsed.attempts_remaining
+    if (typeof parsed.retry_after_seconds === 'number')
+      err.retry_after_seconds = parsed.retry_after_seconds
     throw err
   }
   if (r.status === 204) return undefined as T
