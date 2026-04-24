@@ -447,6 +447,22 @@ Per CLAUDE.md, this batch must have explicit human review before merge:
 
 ## 8. Batch 4 — Form + State Migration
 
+> **Status:** ✅ Completed 2026-04-25 on branch `cleanup/batch-4-form-migration` (worktree `.worktrees/cleanup-batch-4/`). 23 commits `2850424..6fd14d0`, merged as `a237956` (no-ff). Final gates: backend 498 passed (4 pre-existing deselects), tsc 0 errors, lint 0 errors, 87/87 vitest, `next build` clean. Per-cluster subagent implementation + spec/quality review per cluster (split for C2 backend auth, C8 team page, C9 org-units index, Task 20 CompanyProfileDetail, Task 22 MembersSection); whole-batch final review by Opus reviewer (verdict: APPROVE WITH CONCERNS — 8 non-blocking polish follow-ups, no security/correctness blockers). Manual browser smokes confirmed: login (incl. backend-owned authApi.login), invite, onboarding, team-invite, org-unit-create, unit-detail Save changes, MembersSection assign + Dialog-based remove.
+>
+> **Bug caught during smoke (fixed pre-merge):**
+> - Nested-form regression in the `[unitId]` detail tree — Tasks 20-21 wrapped each detail subcomponent's editable region in `<form onSubmit>` while also rendering MembersSection (which has its own `<form>`). Nested forms broke the assign-role submit. Fix at commit `6fd14d0`: unwrapped the outer form on all four detail subcomponents (CompanyProfileDetail, DivisionDetail, RegionDetail, TeamDetail), bound Save buttons to `onClick={form.handleSubmit(onSubmit)}`. Surfaced because `members-section-dialog.test.tsx` rendered MembersSection in isolation — composition test gap.
+>
+> **Deferred follow-ups** (surfaced during whole-batch review, out of scope for B4):
+> - `applyApiErrorToForm` doesn't map nested 422 `loc: [body, metadata, *]` paths — falls through to `root` instead of the nested form field. None of the B4 forms hit this in practice; affects future deeply-nested forms.
+> - `CompanyProfileDetail` uses 8 `form.watch()` calls causing full-component re-renders on each keystroke. Perf concern, not correctness. Use `useWatch` in leaf subcomponents (e.g. `<CharCount>`, `<CopilotSignalsCard>`).
+> - Backend `/api/auth/login` deactivated-user branch returns tokens minted by the AuthProvider before the 403. Tokens are not installed client-side, but they exist in Supabase's token log. Hardening: call `provider.sign_out(access_token)` in the deactivated branch.
+> - `LoginRequest.password` has no length bound. Could add `Field(min_length=1, max_length=128)` for crisper 422 surface.
+> - `MembersSection` reimplements `useTeamMembers` inline (different staleTime). Could just call the hook.
+> - `settings/team/page.tsx` uses a bespoke `ConfirmDialog` modal; harmonize with `px/Dialog` like MembersSection does.
+> - Onboarding page is the odd one out — doesn't use `applyApiErrorToForm` for its mutation error path. Acceptable because step 2 delegates to `CompanyProfileForm` which owns its own RHF instance, but worth tracking.
+> - Test gaps: MembersSection cancel-path test, org-units index `client_account` flow test, AND a composition-test that catches nested-form regressions (lesson from the bug above).
+> - Three B1 deferred items (`useJobStatusStream.isStreaming` init, 204-response return types, the pipeline-templates `confirm()` callsite) remain open. Pre-existing; not affected by B4.
+
 ### 8.1 Scope
 
 | ID | Page | Migration |
