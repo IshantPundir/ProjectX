@@ -1,27 +1,22 @@
-"use client";
+'use client'
 
-import { useEffect, useState } from "react";
-import { apiFetch } from "@/lib/api/client";
-import { getFreshSupabaseToken } from "@/lib/auth/tokens";
-import { authApi, type MeResponse } from "@/lib/api/auth";
+import { useState } from 'react'
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { useQuery } from '@tanstack/react-query'
+import { toast } from 'sonner'
 
-interface TeamMemberAssignment {
-  org_unit_id: string;
-  org_unit_name: string;
-  role_name: string;
-}
+import { authApi, type MeResponse } from '@/lib/api/auth'
+import { applyApiErrorToForm } from '@/lib/api/errors'
+import { getFreshSupabaseToken } from '@/lib/auth/tokens'
+import { useTeamMembers } from '@/lib/hooks/use-team-members'
+import { useInviteTeamMember } from '@/lib/hooks/use-invite-team-member'
+import { useResendTeamInvite } from '@/lib/hooks/use-resend-team-invite'
+import { useRevokeTeamInvite } from '@/lib/hooks/use-revoke-team-invite'
+import { useDeactivateUser } from '@/lib/hooks/use-deactivate-user'
+import type { TeamMember } from '@/lib/api/team'
 
-interface TeamMember {
-  id: string;
-  email: string;
-  full_name: string | null;
-  is_active: boolean;
-  is_super_admin: boolean;
-  assignments: TeamMemberAssignment[];
-  source: "user" | "invite";
-  status: string;
-  created_at: string;
-}
+import { inviteTeamMemberSchema, type InviteTeamMemberFormValues } from './schema'
 
 /* ─── Icons ─── */
 
@@ -121,113 +116,54 @@ function ConfirmDialog({
 /* ─── Page ─── */
 
 export default function TeamPage() {
-  const [members, setMembers] = useState<TeamMember[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [me, setMe] = useState<MeResponse | null>(null);
-  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null)
 
-  // Invite form — email only
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteLoading, setInviteLoading] = useState(false);
-  const [inviteSuccess, setInviteSuccess] = useState("");
+  const membersQuery = useTeamMembers()
+  const meQuery = useQuery<MeResponse>({
+    queryKey: ['me'],
+    queryFn: async () => authApi.me(await getFreshSupabaseToken()),
+    staleTime: 60_000,
+  })
 
-  async function getToken(): Promise<string | null> {
+  const inviteMutation = useInviteTeamMember()
+  const resendMutation = useResendTeamInvite()
+  const revokeMutation = useRevokeTeamInvite()
+  const deactivateMutation = useDeactivateUser()
+
+  const form = useForm<InviteTeamMemberFormValues>({
+    resolver: zodResolver(inviteTeamMemberSchema),
+    defaultValues: { email: '' },
+  })
+
+  async function onInvite(values: InviteTeamMemberFormValues) {
     try {
-      return await getFreshSupabaseToken();
-    } catch {
-      window.location.href = "/login";
-      return null;
-    }
-  }
-
-  async function loadData() {
-    try {
-      const token = await getToken();
-      if (!token) return;
-      const [memberData, meData] = await Promise.all([
-        apiFetch<TeamMember[]>("/api/settings/team/members", { token }),
-        authApi.me(token),
-      ]);
-      setMembers(memberData);
-      setMe(meData);
+      const result = await inviteMutation.mutateAsync({ email: values.email })
+      form.reset()
+      toast.success(
+        result.invite_url ? `Invite sent! URL: ${result.invite_url}` : 'Invite sent!',
+      )
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load team");
-    } finally {
-      setLoading(false);
+      if (applyApiErrorToForm(err, form, { fallbackFieldKey: 'email' })) return
+      toast.error(err instanceof Error ? err.message : 'Failed to send invite')
     }
   }
 
-  useEffect(() => { loadData(); }, []);
-
-  async function handleInvite(e: React.FormEvent) {
-    e.preventDefault();
-    setInviteLoading(true);
-    setError("");
-    setInviteSuccess("");
-
-    try {
-      const token = await getToken();
-      if (!token) return;
-      const result = await apiFetch<{ invite_url: string }>("/api/settings/team/invite", {
-        method: "POST",
-        token,
-        body: JSON.stringify({ email: inviteEmail }),
-      });
-      setInviteEmail("");
-      setInviteSuccess(result.invite_url
-        ? `Invite sent! URL: ${result.invite_url}`
-        : "Invite sent!");
-      await loadData();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to send invite");
-    } finally {
-      setInviteLoading(false);
-    }
-  }
-
-  async function handleResend(inviteId: string) {
-    try {
-      const token = await getToken();
-      if (!token) return;
-      await apiFetch("/api/settings/team/resend/" + inviteId, { method: "POST", token });
-      await loadData();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to resend");
-    }
-  }
-
-  async function handleRevoke(inviteId: string) {
-    try {
-      const token = await getToken();
-      if (!token) return;
-      await apiFetch("/api/settings/team/revoke/" + inviteId, { method: "POST", token });
-      await loadData();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to revoke");
-    }
-  }
-
-  async function handleDeactivate(userId: string) {
-    try {
-      const token = await getToken();
-      if (!token) return;
-      await apiFetch("/api/settings/team/deactivate/" + userId, { method: "POST", token });
-      await loadData();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to deactivate");
-    }
-  }
-
-  const isSuperAdmin = me?.is_super_admin ?? false;
-  const users = members.filter((m) => m.source === "user");
-  const invites = members.filter((m) => m.source === "invite");
+  const me = meQuery.data ?? null
+  const isSuperAdmin = me?.is_super_admin ?? false
+  // Only render after me-query resolves AND user is super admin —
+  // backend enforces permission too, but avoids showing a non-admin
+  // a form they can't submit.
+  const showInviteForm = !meQuery.isLoading && isSuperAdmin
+  const members: TeamMember[] = membersQuery.data ?? []
+  const users = members.filter((m) => m.source === 'user')
+  const invites = members.filter((m) => m.source === 'invite')
+  const loading = membersQuery.isLoading || meQuery.isLoading
 
   const statusColor: Record<string, string> = {
-    active: "bg-green-50 text-green-700",
-    inactive: "bg-zinc-100 text-zinc-500",
-    pending: "bg-amber-50 text-amber-700",
-  };
+    active: 'bg-green-50 text-green-700',
+    inactive: 'bg-zinc-100 text-zinc-500',
+    pending: 'bg-amber-50 text-amber-700',
+  }
 
   return (
     <>
@@ -247,35 +183,11 @@ export default function TeamPage() {
           Team & access
         </h1>
 
-        {error && (
-          <p
-            className="mb-4 rounded-md border p-3 text-sm"
-            style={{
-              color: 'var(--px-danger)',
-              background: 'var(--px-danger-bg)',
-              borderColor: 'var(--px-danger-line)',
-            }}
-          >
-            {error}
-          </p>
-        )}
-        {inviteSuccess && (
-          <div
-            className="mb-4 rounded-md border p-3 text-sm"
-            style={{
-              color: 'var(--px-ok)',
-              background: 'var(--px-ok-bg)',
-              borderColor: 'var(--px-ok-line)',
-            }}
-          >
-            {inviteSuccess}
-          </div>
-        )}
-
         {/* Invite form — only visible to Super Admin, email only */}
-        {isSuperAdmin && (
+        {showInviteForm && (
           <form
-            onSubmit={handleInvite}
+            onSubmit={form.handleSubmit(onInvite)}
+            noValidate
             className="mb-6 rounded-[10px] border p-5"
             style={{
               background: 'var(--px-surface)',
@@ -290,22 +202,26 @@ export default function TeamPage() {
             </h2>
             <div className="flex items-end gap-3">
               <div className="flex-1">
-                <label className="px-label">Email</label>
+                <label htmlFor="team-invite-email" className="px-label">Email</label>
                 <input
+                  id="team-invite-email"
                   type="email"
-                  required
-                  value={inviteEmail}
-                  onChange={(e) => setInviteEmail(e.target.value)}
                   className="px-input"
                   placeholder="colleague@company.com"
+                  {...form.register('email')}
                 />
+                {form.formState.errors.email && (
+                  <p className="px-hint" style={{ color: 'var(--px-danger)' }}>
+                    {form.formState.errors.email.message}
+                  </p>
+                )}
               </div>
               <button
                 type="submit"
-                disabled={inviteLoading}
+                disabled={form.formState.isSubmitting}
                 className="px-btn primary sm"
               >
-                {inviteLoading ? "Sending…" : "Send invite"}
+                {form.formState.isSubmitting ? 'Sending…' : 'Send invite'}
               </button>
             </div>
             <p className="px-hint">
@@ -385,7 +301,13 @@ export default function TeamPage() {
                                 onClick={() =>
                                   setConfirmAction({
                                     message: `Deactivate ${m.email}? They will lose access to ProjectX.`,
-                                    onConfirm: () => handleDeactivate(m.id),
+                                    onConfirm: async () => {
+                                      try {
+                                        await deactivateMutation.mutateAsync(m.id)
+                                      } catch (err) {
+                                        toast.error(err instanceof Error ? err.message : 'Failed to deactivate')
+                                      }
+                                    },
                                   })
                                 }
                                 className="text-xs text-red-600 hover:text-red-700 hover:underline cursor-pointer transition-colors duration-150"
@@ -431,7 +353,13 @@ export default function TeamPage() {
                             <td className="px-4 py-2.5">
                               <div className="flex items-center gap-2">
                                 <button
-                                  onClick={() => handleResend(m.id)}
+                                  onClick={async () => {
+                                    try {
+                                      await resendMutation.mutateAsync(m.id)
+                                    } catch (err) {
+                                      toast.error(err instanceof Error ? err.message : 'Failed to resend')
+                                    }
+                                  }}
                                   className="text-xs text-blue-600 hover:text-blue-700 hover:underline cursor-pointer transition-colors duration-150"
                                 >
                                   Resend
@@ -441,7 +369,13 @@ export default function TeamPage() {
                                   onClick={() =>
                                     setConfirmAction({
                                       message: `Revoke the invite for ${m.email}? This cannot be undone.`,
-                                      onConfirm: () => handleRevoke(m.id),
+                                      onConfirm: async () => {
+                                        try {
+                                          await revokeMutation.mutateAsync(m.id)
+                                        } catch (err) {
+                                          toast.error(err instanceof Error ? err.message : 'Failed to revoke')
+                                        }
+                                      },
                                     })
                                   }
                                   className="text-xs text-red-600 hover:text-red-700 hover:underline cursor-pointer transition-colors duration-150"
