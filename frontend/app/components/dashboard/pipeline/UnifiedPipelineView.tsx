@@ -240,6 +240,21 @@ export function UnifiedPipelineView({ job, pipeline, jobId }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Warn the user before they close the tab with unsaved edits. Browsers
+  // ignore the returned string but show a generic "leave site?" prompt.
+  // SPA navigation does NOT trigger beforeunload — the existing unmount
+  // flush above handles that case (TanStack Query mutations survive
+  // component unmount and complete in the background).
+  useEffect(() => {
+    function handler(e: BeforeUnloadEvent) {
+      if (!isDirty) return
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [isDirty])
+
   function updateStage(index: number, updated: PipelineStageUpdateInput) {
     setStages((prev) => {
       const next = prev.map((s, i) => (i === index ? updated : s))
