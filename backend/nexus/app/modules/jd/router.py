@@ -571,6 +571,16 @@ async def enrich_job(
         correlation_id=correlation_id,
     )
 
+    status_event = await get_job_status(db, job_id)
+    if status_event is not None:
+        background_tasks.add_task(
+            pubsub.publish,
+            pubsub.job_channel(job_id),
+            pubsub.Events.JD_STATUS_CHANGED,
+            status_event.model_dump(mode="json"),
+            correlation_id=correlation_id,
+        )
+
     return {"status": "accepted"}
 
 
