@@ -8,16 +8,132 @@ from datetime import UTC, date, datetime
 from uuid import UUID
 
 import structlog
-from sqlalchemy import desc, func, select
+from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import JobPosting, JobPostingSignalSnapshot
+from app.models import JobPosting, JobPostingSignalSnapshot, OrganizationalUnit, User
 from app.modules.jd.errors import CompanyProfileIncompleteError, IllegalTransitionError
-from app.modules.jd.schemas import JobStatusEvent, SaveSignalsRequest
+from app.modules.jd.schemas import (
+    JobPostingSummary,
+    JobStatusEvent,
+    SaveSignalsRequest,
+)
 from app.modules.jd.state_machine import transition
 from app.modules.org_units.service import find_company_profile_in_ancestry
 
 logger = structlog.get_logger()
+
+
+def _job_to_summary(
+    job: JobPosting,
+    org_unit_name: str | None = None,
+    created_by_email: str | None = None,
+    updated_by_email: str | None = None,
+    signal_count: int = 0,
+    needs_review_count: int = 0,
+) -> JobPostingSummary:
+    return JobPostingSummary(
+        id=job.id,
+        title=job.title,
+        org_unit_id=job.org_unit_id,
+        org_unit_name=org_unit_name,
+        created_by_email=created_by_email,
+        updated_by_email=updated_by_email,
+        status=job.status,
+        status_error=job.status_error,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+        signal_count=signal_count,
+        needs_review_count=needs_review_count,
+    )
+
+
+async def enrich_job_summaries(
+    jobs: list[JobPosting],
+    db: AsyncSession,
+) -> list[JobPostingSummary]:
+    """Enrich a list of JobPosting rows with org_unit_name, creator/updater
+    emails, signal_count, and needs_review_count.
+
+    Single query per enrichment dimension (org units, users, snapshots) —
+    no N+1. Safe to call from list, detail, and retry handlers alike.
+    """
+    if not jobs:
+        return []
+
+    # Collect unique lookup keys.
+    unit_ids = {j.org_unit_id for j in jobs}
+    user_ids = {j.created_by for j in jobs}
+    for j in jobs:
+        if j.updated_by:
+            user_ids.add(j.updated_by)
+    job_ids = [j.id for j in jobs]
+
+    # Batch-load org unit names.
+    unit_result = await db.execute(
+        select(OrganizationalUnit.id, OrganizationalUnit.name).where(
+            OrganizationalUnit.id.in_(unit_ids)
+        )
+    )
+    unit_names: dict[UUID, str] = {row[0]: row[1] for row in unit_result.all()}
+
+    # Batch-load user emails.
+    user_result = await db.execute(
+        select(User.id, User.email).where(User.id.in_(user_ids))
+    )
+    user_emails: dict[UUID, str] = {row[0]: row[1] for row in user_result.all()}
+
+    # Batch-load the latest signal snapshot per job for aggregate counts.
+    # We load full rows (not just the count) because the needs-review
+    # count requires inspecting each signal's source + weight — the same
+    # heuristic the frontend JD Review page uses for its "double-check"
+    # chip, centralized here so the list and detail views agree.
+    latest_version_subq = (
+        select(
+            JobPostingSignalSnapshot.job_posting_id,
+            func.max(JobPostingSignalSnapshot.version).label("max_version"),
+        )
+        .where(JobPostingSignalSnapshot.job_posting_id.in_(job_ids))
+        .group_by(JobPostingSignalSnapshot.job_posting_id)
+        .subquery()
+    )
+    snapshot_result = await db.execute(
+        select(JobPostingSignalSnapshot).join(
+            latest_version_subq,
+            and_(
+                JobPostingSignalSnapshot.job_posting_id
+                == latest_version_subq.c.job_posting_id,
+                JobPostingSignalSnapshot.version == latest_version_subq.c.max_version,
+            ),
+        )
+    )
+    counts_by_job: dict[UUID, tuple[int, int]] = {}
+    for snap in snapshot_result.scalars().all():
+        signals = snap.signals or []
+        needs = sum(
+            1
+            for s in signals
+            if (
+                isinstance(s, dict)
+                and s.get("source") == "ai_inferred"
+                and isinstance(s.get("weight"), (int, float))
+                and s["weight"] < 2
+            )
+        )
+        counts_by_job[snap.job_posting_id] = (len(signals), needs)
+
+    # Build enriched summaries.
+    return [
+        _job_to_summary(
+            j,
+            org_unit_name=unit_names.get(j.org_unit_id),
+            created_by_email=user_emails.get(j.created_by),
+            updated_by_email=user_emails.get(j.updated_by) if j.updated_by else None,
+            signal_count=counts_by_job.get(j.id, (0, 0))[0],
+            needs_review_count=counts_by_job.get(j.id, (0, 0))[1],
+        )
+        for j in jobs
+    ]
 
 
 async def create_job_posting(
