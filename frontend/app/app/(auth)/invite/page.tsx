@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { apiFetch } from "@/lib/api/client";
+import { authApi } from "@/lib/api/auth";
 
 function EyeIcon() {
   return (
@@ -95,55 +96,29 @@ function InviteContent() {
     setState("submitting");
 
     try {
+      const result = await authApi.acceptInvite({
+        raw_token: rawToken,
+        password,
+      });
+
+      // Install the session cookie client-side so middleware / server
+      // components see the new auth state on the next navigation.
       const supabase = createClient();
-
-      // Try signup first; fall back to signIn if user already exists
-      let session;
-      const { data: suData, error: signUpError } =
-        await supabase.auth.signUp({
-          email: invite!.email,
-          password,
-        });
-
-      if (signUpError) {
-        if (
-          signUpError.message.toLowerCase().includes("already registered")
-        ) {
-          const { data: signInData, error: signInError } =
-            await supabase.auth.signInWithPassword({
-              email: invite!.email,
-              password,
-            });
-          if (signInError) throw new Error(signInError.message);
-          session = signInData.session;
-        } else {
-          throw new Error(signUpError.message);
-        }
-      } else {
-        session = suData.session;
+      const { error: sessionError } = await supabase.auth.setSession({
+        access_token: result.access_token,
+        refresh_token: result.refresh_token,
+      });
+      if (sessionError) {
+        throw new Error(sessionError.message);
       }
 
-      const token = session?.access_token;
-      if (!token) throw new Error("No session after signup");
-
-      const result = await apiFetch<{ redirect_to: string }>(
-        "/api/auth/complete-invite",
-        {
-          method: "POST",
-          token,
-          body: JSON.stringify({ raw_token: rawToken }),
-        },
-      );
-
-      // Guard against open-redirect — the backend-returned `redirect_to`
-      // must be a same-origin relative path. The only legitimate values
-      // today are `/` and `/onboarding`; a malicious/MITM'd response
-      // sending `https://evil.com` or `//evil.com` would otherwise
-      // navigate a freshly-authenticated user off-site.
-      const safeRedirect = result.redirect_to?.startsWith("/") &&
+      // Open-redirect guard — the backend is trusted, but defense in
+      // depth: only same-origin relative paths.
+      const safeRedirect =
+        result.redirect_to?.startsWith("/") &&
         !result.redirect_to.startsWith("//")
-        ? result.redirect_to
-        : "/";
+          ? result.redirect_to
+          : "/";
       router.push(safeRedirect);
       router.refresh();
     } catch (err) {
@@ -287,9 +262,10 @@ function InviteContent() {
           </div>
         </div>
         <div>
-          <label className="px-label">Set password</label>
+          <label className="px-label" htmlFor="invite-password">Set password</label>
           <div className="relative">
             <input
+              id="invite-password"
               type={showPassword ? "text" : "password"}
               required
               minLength={8}
@@ -312,9 +288,10 @@ function InviteContent() {
           <p className="px-hint">Minimum 8 characters</p>
         </div>
         <div>
-          <label className="px-label">Confirm password</label>
+          <label className="px-label" htmlFor="invite-confirm-password">Confirm password</label>
           <div className="relative">
             <input
+              id="invite-confirm-password"
               type={showConfirmPassword ? "text" : "password"}
               required
               minLength={8}
