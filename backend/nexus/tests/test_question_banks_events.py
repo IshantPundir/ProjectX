@@ -476,3 +476,120 @@ async def test_confirm_bank_publishes_status_changed(
     assert pub.payload["bank_id"] == str(bank.id)
     assert pub.payload["new_status"] == "confirmed"
     assert pub.correlation_id
+
+
+# ---------------------------------------------------------------------------
+# T16: regenerate_question actor publishes bank.question_updated post-commit
+# ---------------------------------------------------------------------------
+
+async def test_regenerate_question_actor_publishes_event(
+    db: AsyncSession, capture_publishes, monkeypatch
+):
+    """The regenerate_question actor publishes bank.question_updated inline
+    after its own commit. Actors don't have FastAPI BackgroundTasks so publish
+    is called directly after the session.begin() context exits."""
+    from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app import pubsub
+    from app.modules.question_bank import actors
+    from app.modules.question_bank.schemas import (
+        GeneratedQuestion,
+        QuestionRubric,
+        SingleQuestionOutput,
+    )
+    from app.modules.question_bank.service import (
+        ensure_bank_exists,
+        write_generated_questions,
+    )
+
+    # ---- Seed data using the test DB session --------------------------------
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    job, snapshot = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id, signals=[_signal(value="Python")],
+    )
+    instance, stage = await _make_pipeline_and_stage(db, job=job)
+    bank = await ensure_bank_exists(db, stage=stage, job=job)
+    bank.status = "reviewing"
+    await db.flush()
+
+    # Insert one question so the actor has something to regenerate.
+    from app.modules.question_bank.schemas import CreateQuestionBody
+
+    question = await _make_recruiter_question(
+        db, bank=bank, snapshot=snapshot, user_id=user.id,
+        text="Original question text about Python development.",
+    )
+    await db.flush()
+
+    # ---- Mock get_bypass_session to return the test db session --------------
+    # The actor creates its own session via get_bypass_session. Monkeypatching
+    # it to yield the test session keeps everything in the per-test rollback
+    # transaction so nothing persists.
+    @asynccontextmanager
+    async def _fake_bypass_session():
+        yield db
+
+    monkeypatch.setattr(
+        "app.modules.question_bank.actors.get_bypass_session",
+        _fake_bypass_session,
+    )
+
+    # ---- Mock the LLM call in _regenerate_one_question ----------------------
+    regen_question = GeneratedQuestion(
+        position=0,
+        text="A brand-new Python question about async programming in production.",
+        signal_values=["Python"],
+        estimated_minutes=5.0,
+        is_mandatory=False,
+        follow_ups=["What was the biggest async challenge?"],
+        positive_evidence=[
+            "Names specific async libraries",
+            "Describes production usage",
+            "Mentions performance impact",
+        ],
+        red_flags=["No async experience", "Only toy-project experience"],
+        rubric=QuestionRubric(
+            excellent="Strong async experience in production with specific examples.",
+            meets_bar="Basic async usage in at least one production system.",
+            below_bar="Only tutorial-level async knowledge with no production use.",
+        ),
+        evaluation_hint="Strong answer names specific async patterns used in production.",
+    )
+    llm_output = SingleQuestionOutput(
+        question=regen_question,
+        reasoning="Replacing with a more targeted async-focused Python question.",
+    )
+    fake_client = MagicMock()
+    fake_client.chat.completions.create = AsyncMock(return_value=llm_output)
+    monkeypatch.setattr(
+        "app.modules.question_bank.actors.get_openai_client",
+        lambda: fake_client,
+    )
+
+    # ---- Invoke the actor function directly (bypass Dramatiq broker/middleware)
+    # actors.regenerate_question is a decorated Dramatiq Actor. Dramatiq's
+    # AsyncIO wrapper makes .fn(...) a sync wrapper — the actual async
+    # coroutine lives at .fn.__wrapped__. Calling __wrapped__ directly
+    # bypasses the event-loop-thread requirement and lets us await it normally.
+    await actors.regenerate_question.fn.__wrapped__(
+        str(question.id),
+        str(tenant.id),
+        str(user.id),
+        None,  # replace_signal_values
+        "test-corr-regen",  # correlation_id
+    )
+
+    # ---- Assert publish was called post-commit ------------------------------
+    assert len(capture_publishes) == 1, (
+        f"expected 1 publish, got {len(capture_publishes)}"
+    )
+    pub = capture_publishes[0]
+    assert pub.channel == f"job:{job.id}"
+    assert pub.event == pubsub.Events.BANK_QUESTION_UPDATED
+    assert pub.payload["mutation"] == "regenerate"
+    assert pub.payload["job_id"] == str(job.id)
+    assert pub.payload["bank_id"] == str(bank.id)
+    assert pub.payload["stage_id"] == str(stage.id)
+    assert pub.payload["question_id"] == str(question.id)
+    assert pub.correlation_id == "test-corr-regen"

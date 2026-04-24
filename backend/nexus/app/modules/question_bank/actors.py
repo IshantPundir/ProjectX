@@ -20,6 +20,7 @@ from langfuse.decorators import langfuse_context, observe
 from sqlalchemy import select
 from sqlalchemy.sql import text
 
+from app import pubsub
 from app.ai.client import get_openai_client
 from app.ai.config import ai_config
 from app.ai.prompts import prompt_loader
@@ -768,6 +769,7 @@ async def regenerate_question(
     tenant_id: str,
     started_by: str,
     replace_signal_values: list[str] | None = None,
+    correlation_id: str = "",
 ) -> None:
     """Regenerate a single question slot, preserving its UUID.
 
@@ -775,6 +777,10 @@ async def regenerate_question(
     as 'do not duplicate' context. Delegates the observable LLM + DB write
     path to `_regenerate_one_question` so @observe() wraps just that
     portion (matching jd/actors.py).
+
+    Publishes bank.question_updated post-commit. Actors don't have FastAPI
+    BackgroundTasks so publish is called inline after the session commits.
+    publish() is best-effort and never raises.
     """
     async with get_bypass_session() as db:
         safe_tenant_id = str(UUID(tenant_id))
@@ -815,6 +821,11 @@ async def regenerate_question(
         )
         snapshot = snap_result.scalar_one()
 
+        # Capture IDs needed for the publish BEFORE the session commits.
+        _job_id = job.id
+        _bank_id = bank.id
+        _stage_id = stage.id
+
         await _regenerate_one_question(
             db,
             question=question,
@@ -836,3 +847,18 @@ async def regenerate_question(
             payload={"bank_id": str(bank.id)},
         )
         await db.commit()
+        # session.begin() has exited (commit issued) — publish post-commit.
+        # publish() is fire-and-forget and never raises; a Redis outage here
+        # does not fail the regeneration.
+        await pubsub.publish(
+            pubsub.job_channel(_job_id),
+            pubsub.Events.BANK_QUESTION_UPDATED,
+            {
+                "job_id": str(_job_id),
+                "bank_id": str(_bank_id),
+                "stage_id": str(_stage_id),
+                "question_id": question_id,
+                "mutation": "regenerate",
+            },
+            correlation_id=correlation_id or str(UUID(question_id)),
+        )

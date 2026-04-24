@@ -186,6 +186,7 @@ async def _safe_dispatch_regenerate_question(
     tenant_id: UUID,
     user_id: UUID,
     replace_signal_values: list[str] | None,
+    correlation_id: str = "",
 ) -> None:
     """Enqueue regenerate_question. Single-question regen does not
     pre-transition the bank, so there is nothing to roll back. Log loudly
@@ -196,6 +197,7 @@ async def _safe_dispatch_regenerate_question(
             str(tenant_id),
             str(user_id),
             replace_signal_values,
+            correlation_id,
         )
     except Exception as exc:
         _log.error(
@@ -460,10 +462,12 @@ async def regenerate_one_question(
     stage_id: UUID,
     question_id: UUID,
     body: RegenerateQuestionBody,
+    request: Request,
     db: AsyncSession = Depends(get_tenant_db),
     user: UserContext = Depends(get_current_user_roles),
 ) -> GenerateResponse:
     """Regenerate one question slot."""
+    correlation_id = _get_correlation_id(request)
     question, bank, _stage, _job = await require_question_access(
         db, question_id, user, "manage"
     )
@@ -479,6 +483,7 @@ async def regenerate_one_question(
         tenant_id=bank_tenant_id,
         user_id=user.user.id,
         replace_signal_values=body.replace_signal_values,
+        correlation_id=correlation_id,
     )
     return GenerateResponse(bank_id=bank_id, status="generating")
 
