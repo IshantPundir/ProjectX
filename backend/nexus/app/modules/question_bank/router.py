@@ -566,10 +566,13 @@ async def reorder_questions_endpoint(
     job_id: UUID,
     stage_id: UUID,
     body: ReorderBody,
+    request: Request,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_tenant_db),
     user: UserContext = Depends(get_current_user_roles),
 ) -> BankWithQuestionsResponse:
     """Reorder questions in a bank."""
+    correlation_id = _get_correlation_id(request)
     bank, stage, _job = await require_bank_access_by_stage(
         db, job_id, stage_id, user, "manage"
     )
@@ -608,7 +611,24 @@ async def reorder_questions_endpoint(
         questions=[_question_to_response(q) for q in questions],
     )
 
+    # Capture bank_id before commit — post-commit attribute access is unsafe under RLS.
+    bank_id = bank.id
+
     await db.commit()
+
+    background_tasks.add_task(
+        pubsub.publish,
+        pubsub.job_channel(job_id),
+        pubsub.Events.BANK_QUESTION_UPDATED,
+        {
+            "job_id": str(job_id),
+            "bank_id": str(bank_id),
+            "stage_id": str(stage_id),
+            "question_id": None,
+            "mutation": "reorder",
+        },
+        correlation_id=correlation_id,
+    )
     return response
 
 
