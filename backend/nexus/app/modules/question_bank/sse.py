@@ -57,7 +57,7 @@ from app.models import (
 
 logger = structlog.get_logger()
 
-POLL_INTERVAL_SEC = 0.5  # backstop poll interval; T18 bumps this to 5.0
+POLL_INTERVAL_SEC = 5.0  # pub/sub is the fast path; backstop is correctness only
 IDLE_TIMEOUT_SEC = 600  # 10 minutes
 
 
@@ -184,13 +184,17 @@ async def _poll_loop(
 ) -> AsyncIterator[pubsub.Envelope]:
     """Backstop DB poll — detects state changes the pub/sub fast path might miss.
 
-    T17: Tracks (status, question_count) per bank. Emits:
+    Tracks (status, question_count, max_updated_at) per bank. Emits:
       - bank.status_changed  when bank status changes
-      - bank.question_updated when question_count changes
+      - bank.question_updated when question_count or max(stage_questions.updated_at) changes
       - pipeline.generation_complete when all banks reach a terminal state
 
-    T18 will extend the detection tuple to also include max(stage_questions.updated_at)
-    so that in-place question edits (which don't change count) are also detected.
+    max(stage_questions.updated_at) detects in-place question edits that do not
+    change question_count (e.g. PATCH text/signal_values). This works because:
+      - ORM onupdate on StageQuestion.updated_at (added in T2) fires on every
+        ORM-level UPDATE.
+      - The DB trigger touch_updated_at (migration 0017) fires on every raw-SQL
+        UPDATE, providing defense-in-depth for direct DB writes.
 
     Uses get_tenant_session so RLS is applied correctly via
     SET LOCAL ROLE nexus_app + SET LOCAL app.current_tenant.
@@ -201,8 +205,8 @@ async def _poll_loop(
     Envelopes are collected INSIDE the session block and yielded OUTSIDE to
     avoid holding a DB connection open while the caller processes the event.
     """
-    # bank_id -> (status, question_count)
-    state: dict[UUID, tuple[str, int]] = {}
+    # bank_id -> (status, question_count, max_updated_at)
+    state: dict[UUID, tuple[str, int, datetime | None]] = {}
     idle_since = asyncio.get_running_loop().time()
     last_snapshots: dict[UUID, dict] = {}
     all_terminal_emitted = False
@@ -250,13 +254,25 @@ async def _poll_loop(
                     )
                     questions = list(q_result.scalars().all())
                     question_count = len(questions)
+                    max_updated_at: datetime | None = (
+                        max((q.updated_at for q in questions), default=None)
+                        if questions
+                        else None
+                    )
                     total_minutes = float(sum(q.estimated_minutes for q in questions))
 
                     if bank.status in ("draft", "generating"):
                         all_terminal = False
 
-                    current: tuple[str, int] = (bank.status, question_count)
-                    prev = state.get(bank.id)
+                    # max_updated_at detects in-place edits (PATCH question text etc.)
+                    # that don't change question_count. Works because migration 0017
+                    # + ORM onupdate both guarantee updated_at bumps on every write.
+                    current: tuple[str, int, datetime | None] = (
+                        bank.status,
+                        question_count,
+                        max_updated_at,
+                    )
+                    prev: tuple[str, int, datetime | None] | None = state.get(bank.id)
 
                     if prev != current:
                         any_change = True

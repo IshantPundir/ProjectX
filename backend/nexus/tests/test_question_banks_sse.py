@@ -202,3 +202,104 @@ async def test_sse_forwards_pubsub_events(db: AsyncSession, monkeypatch):
     assert any("test-sse-t17" in f for f in received), (
         "correlation_id 'test-sse-t17' not preserved in SSE frames"
     )
+
+
+# ---------------------------------------------------------------------------
+# T18: backstop poll emits when pub/sub is unavailable
+# ---------------------------------------------------------------------------
+
+
+async def test_sse_backstop_emits_when_pubsub_unavailable(db: AsyncSession, monkeypatch):
+    """With the pub/sub fast path replaced by an infinite sleeper, the backstop
+    poll still emits a bank.question_updated event when a question is INSERTed
+    into stage_questions (bumping question_count AND max_updated_at, both of
+    which are now tracked in the detection tuple after the T18 interval bump).
+
+    get_tenant_session is monkeypatched to yield the per-test DB session so
+    the flushed INSERT data is visible to the backstop within the same
+    connection-level transaction that conftest wraps each test in.
+
+    POLL_INTERVAL_SEC is patched to 0.2s for speed (production: 5s).
+    """
+    from sqlalchemy import text
+
+    bank = await _build_seed_bank(db)
+    job_id = bank.job_posting_id
+    tenant_id = str(bank.tenant_id)
+
+    # Replace fast path with an async generator that sleeps forever.
+    async def _broken_subscribe(*_channels):
+        while True:
+            await asyncio.sleep(30.0)
+            yield  # unreachable; required for async-generator shape
+
+    monkeypatch.setattr(pubsub, "subscribe", _broken_subscribe)
+
+    # Speed up the backstop for the test (production default: 5s).
+    monkeypatch.setattr(sse, "POLL_INTERVAL_SEC", 0.2)
+
+    # Route the backstop's DB access through the test session so it can see
+    # flushed-but-not-committed data within the per-test connection transaction.
+    @asynccontextmanager
+    async def _fake_tenant_session(_tid: str):
+        yield db
+
+    monkeypatch.setattr(sse, "get_tenant_session", _fake_tenant_session)
+
+    received: list[str] = []
+
+    async def consume():
+        async for frame in sse._sse_generator(
+            tenant_id=tenant_id,
+            job_id=job_id,
+        ):
+            received.append(frame)
+            if "bank." in frame:
+                break
+
+    consumer = asyncio.create_task(consume())
+
+    # Let the backstop do one silent first-observation poll before mutating.
+    await asyncio.sleep(0.5)
+
+    # INSERT a stage_questions row. This bumps both question_count (0→1) and
+    # max_updated_at (None→timestamp), both tracked in the detection tuple.
+    # The backstop detects the change and emits bank.question_updated.
+    await db.execute(
+        text("""
+            INSERT INTO stage_questions (
+                id, tenant_id, bank_id, position, source, text,
+                signal_values, estimated_minutes, is_mandatory,
+                follow_ups, positive_evidence, red_flags, rubric,
+                evaluation_hint, edited_by_recruiter
+            )
+            VALUES (
+                gen_random_uuid(), :tid, :bid, 1, 'generated',
+                'SSE backstop test question',
+                ARRAY['signal_one']::text[], 3.0, false,
+                '[]'::jsonb, '[]'::jsonb, '[]'::jsonb,
+                '{}'::jsonb,
+                'hint for backstop test', false
+            )
+        """),
+        {"tid": bank.tenant_id, "bid": bank.id},
+    )
+    await db.flush()
+
+    try:
+        await asyncio.wait_for(consumer, timeout=5.0)
+    except asyncio.TimeoutError:
+        consumer.cancel()
+        pytest.fail(
+            "Backstop poll did not emit a bank.* event within 5s after INSERT"
+        )
+    finally:
+        consumer.cancel()
+        await asyncio.gather(consumer, return_exceptions=True)
+
+    assert any("bank." in f for f in received), (
+        f"No bank.* event in received frames: {received}"
+    )
+    assert any(pubsub.Events.BANK_QUESTION_UPDATED in f for f in received), (
+        f"Expected bank.question_updated, got: {received}"
+    )
