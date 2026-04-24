@@ -28,6 +28,7 @@
 |---|---|---|
 | D1 | `apiFetch` AbortSignal threading | A — explicit `signal` option, threaded from every queryFn |
 | D2 | When to emit `bank.question_updated` SSE | A — every successful question update, regardless of which fields changed |
+| D2b | Event delivery model (revised during B2 planning 2026-04-24) | **Pub/sub (Redis) + polling backstop at 5s.** Fast path: `app/core/pubsub.py` → Redis → SSE subscribe. Correctness path: existing DB poll, interval bumped 500ms → 5s. Both feed the same SSE stream; client dedupes via query invalidation. Mutation sites publish post-commit (FastAPI `BackgroundTasks` in handlers; inline post-commit in Dramatiq actors). Rationale: enterprise-grade real-time from day 1; Redis is already a critical dependency (Dramatiq broker) so adds zero new availability domain; polling is correctness insurance so Redis outages degrade gracefully to 5s latency rather than silent data loss. |
 | D3 | Invite acceptance Supabase auth flow | A — backend creates Supabase auth user via Admin API; frontend never calls `auth.signUp` |
 | D4 | Global 401 handling | A — `QueryClient` `onError` in `DashboardProviders` redirects to `/login` and toasts |
 | D5 | Token-fetch validation strategy | C — single `getUser()` validation on mount + `visibilitychange`; `getSession()` for token reads in between |
@@ -116,51 +117,219 @@ Behavior: 204 responses return `undefined as T`. Caller is responsible for typin
 
 ---
 
-## 6. Batch 2 — Schema + SSE Backend Alignment
+## 6. Batch 2 — Schema + Event Delivery Alignment
 
 ### 6.1 Scope
 
 | ID | Issue | File(s) |
 |---|---|---|
-| B2.1 | `JobPostingWithSnapshot` detail response missing `org_unit_name`, `created_by_email`, `updated_by_email`, `signal_count`, `needs_review_count` | `backend/nexus/app/modules/jd/schemas.py:192`, `backend/nexus/app/modules/jd/router.py` (get_job handler), frontend `lib/api/jobs.ts:85` |
+| B2.0 | No centralized pub/sub boundary; SSE is poll-only at 500ms; question mutations can't notify subscribers without a query round-trip | `backend/nexus/app/core/pubsub.py` (new), `backend/nexus/app/core/health.py` (extend) |
+| B2.1 | `JobPostingWithSnapshot` detail response missing `org_unit_name`, `created_by_email`, `updated_by_email`, `signal_count`, `needs_review_count` (inline enrichment logic exists only in `list_jobs`) | `backend/nexus/app/modules/jd/schemas.py:168-220`, `backend/nexus/app/modules/jd/router.py:364-485` (list_jobs + get_job), `backend/nexus/app/modules/jd/service.py` (extract helper), frontend `lib/api/jobs.ts:59-104` |
 | B2.2 | `POST /api/jobs/{id}/retry` returns a `JobPostingSummary` with all enrichment fields zero/null | `backend/nexus/app/modules/jd/router.py:506-531` |
-| B2.3 | Backend `OrgUnitResponse.company_profile_completed_at` not in frontend `OrgUnit` type | `frontend/app/lib/api/org-units.ts:20` |
-| B2.4 | SSE `bank.question_updated` event listened-for but never emitted | `backend/nexus/app/modules/question_bank/sse.py`, `backend/nexus/app/modules/question_bank/service.py` (update_question, regenerate_question, delete_question, reorder, confirm_bank, create_question) |
+| B2.3 | Backend `OrgUnitResponse.company_profile_completed_at` not in frontend `OrgUnit` type | `frontend/app/lib/api/org-units.ts:20-38` |
+| B2.4 | SSE `bank.question_updated` event listened-for but never emitted; poll-only detection doesn't work reliably for UPDATE-in-place | `backend/nexus/app/modules/question_bank/sse.py`, `backend/nexus/app/modules/question_bank/service.py` (update/delete/reorder/confirm_bank), `backend/nexus/app/modules/question_bank/router.py:473` (create_question), `backend/nexus/app/modules/question_bank/actors.py:766` (regenerate_question) |
+| B2.5 | `stage_questions.updated_at` has `server_default=NOW()` but no `onupdate` — column never refreshes on UPDATE, defeating any poll-based change detection | `backend/nexus/app/models.py:474-476`, new Alembic migration |
 
-### 6.2 Backend changes in B2
+### 6.2 Architecture — pub/sub + polling backstop
 
-**B2.1: `get_job` enrichment.** The handler currently returns `JobPostingWithSnapshot` directly. Refactor to share the enrichment helper used by `list_jobs` so both detail and list paths return the same shape. Pydantic schema `JobPostingWithSnapshot` extends `JobPostingSummary` so the new fields are inherited.
+**Design principle:** Build enterprise-grade event delivery from day 1. Pub/sub is the fast path; polling is the correctness backstop. Either alone is fragile — together, the system is self-degrading: if Redis drops an event, the poll catches it within 5s; if the poll misses (it won't with correct `updated_at`), pub/sub delivers in milliseconds.
 
-**B2.2: `retry` enrichment.** Same fix — the retry handler at line 506 must call the same enrichment path before returning.
+#### B2.0: `app/core/pubsub.py` — the module boundary
 
-**B2.4: SSE event emission.** Add a Redis pub/sub event publish in every question-bank mutation site:
-- `service.update_question` → `bank.question_updated`
-- `service.regenerate_question` → `bank.question_updated`
-- `service.delete_question` → `bank.question_updated`
-- `service.reorder_questions` → `bank.question_updated`
-- `service.create_question` → `bank.question_updated`
-- `service.confirm_bank` → already covered by `bank.status_changed`; emit both for safety
+This is the architecturally load-bearing piece. Whatever transport runs underneath (Redis today, possibly SNS/Cloud Pub/Sub at enterprise) stays invisible to callers.
 
-The event payload includes `bank_id`, `stage_id`, `question_id` (where applicable), `event_type` (the mutation kind for observability), and a `correlation_id`.
+**Public API:**
+```python
+async def publish(channel: str, event: str, payload: dict, *, correlation_id: str) -> None:
+    """Best-effort. Never raises. Logs structlog warning + metric on failure.
+    Fire this AFTER the DB transaction has committed."""
 
-The SSE generator in `sse.py` subscribes to the same Redis channel and forwards events tagged with the matching `job_id`.
+async def subscribe(*channels: str) -> AsyncIterator[Envelope]:
+    """Yields envelopes. Auto-reconnects with exponential backoff on drop.
+    Structured-logs each reconnect. Cancellable via standard asyncio cancellation."""
+```
 
-### 6.3 Frontend changes in B2
+**Envelope shape (JSON-serialized with `orjson`):**
+```python
+class Envelope(TypedDict):
+    event: str            # e.g. "bank.question_updated"
+    payload: dict         # event-specific fields
+    correlation_id: str   # end-to-end trace id
+    emitted_at: str       # ISO-8601 with UTC offset
+```
 
-- `lib/api/jobs.ts`: align `JobPostingWithSnapshot` and `JobPostingSummary` types with backend.
-- `lib/api/org-units.ts`: add `company_profile_completed_at?: string | null` to `OrgUnit`.
-- `lib/hooks/use-questions-status-stream.ts`: confirm the existing `bank.question_updated` listener still invalidates the right keys (`['bank', jobId, stageId]` and `['banks', jobId]`).
+**Implementation notes:**
+- Uses `redis.asyncio` with a **separate `Redis` client instance** from Dramatiq's broker. Pub/sub subscribe connections block while listening; sharing the Dramatiq pool would starve task workers.
+- URL from `settings.REDIS_URL`. Connection pool sized for expected concurrent SSE connections (init at 10, max 100).
+- `publish()` catches `redis.exceptions.RedisError` (any subclass), logs at WARN, emits a structlog event with `metric_name="pubsub.publish.failed"`. Never raises.
+- `subscribe()` handles disconnects by retrying with exponential backoff (1s → 2s → 4s → 8s → 16s → 30s cap). Structured-logs every reconnect attempt (WARN) and success (INFO). Does NOT re-deliver events missed during the disconnect window — the polling backstop covers that gap.
+- Cancellation: `subscribe()` is an async generator; standard `asyncio.CancelledError` propagates correctly, closes the pubsub connection on cleanup.
+- `publish()` uses `asyncio.shield()` internally on the Redis send so a cancelled caller doesn't abort a half-sent publish.
 
-### 6.4 Migration / data
+**Health probe (B2.0 extends `app/core/health.py`):**
+- Liveness: publish a `pubsub.health_check` event on channel `health:pubsub`, subscribe with 2s timeout, assert round-trip. Failure marks service unhealthy; Docker Compose / load balancer can recycle the pod.
+- This is already how Dramatiq broker health is checked — same module.
 
-User accepted data deletion. The SSE additions are additive. The schema response changes are response-only (no DB migration). No migration needed.
+#### B2.4: `bank.question_updated` event emission
 
-### 6.5 Acceptance criteria for B2
+**Critical ordering invariant:** Publish ALWAYS happens AFTER the DB commit. Publishing inside a service method fires before commit (because `get_tenant_db` commits on dependency cleanup, post-handler-return). Two enforcement patterns:
 
-- Backend tests pass (`pytest`). Existing tests for `list_jobs` shape extended to cover `get_job` and `retry`.
-- New backend tests assert `bank.question_updated` fires on each of the 5 mutation paths.
-- Frontend `npm run type-check` passes with the updated types — no `unknown`-narrowing required for the now-populated fields.
-- Manual smoke: open the question-bank UI in two tabs, edit a question's text in tab A, see the list refresh in tab B without a page reload.
+| Site type | Pattern |
+|---|---|
+| FastAPI handlers | `BackgroundTasks.add_task(pubsub.publish, ...)` — FastAPI runs background tasks after the response is sent, which is AFTER dependency cleanup (after commit) |
+| Dramatiq actors | Call `await pubsub.publish(...)` inline after the `async with session.begin():` block exits |
+
+Services **do not call publish directly.** They return an event descriptor (or the handler/actor constructs one from the service's return value), and the caller is responsible for enqueuing the publish.
+
+**Mutation sites:**
+
+| Site | File:line | Pattern |
+|---|---|---|
+| Create question | `router.create_question:473` | Handler adds BackgroundTask |
+| Update question | `router` → `service.update_question:520` | Handler adds BackgroundTask |
+| Delete question | `router` → `service.delete_question:595` | Handler adds BackgroundTask |
+| Reorder questions | `router` → `service.reorder_questions:627` | Handler adds BackgroundTask |
+| Confirm bank | `router` → `service.confirm_bank:675` | Handler adds BackgroundTask (emits `bank.status_changed`) |
+| Regenerate question | `actors.regenerate_question:766` | Inline post-commit publish |
+
+**Channel:** `job:{job_id}` — one subscription per SSE connection covers all banks of the job (banks span multiple stages within one job). Simpler than per-bank channels and scales the same.
+
+**Event payload:**
+```json
+{
+  "event": "bank.question_updated",
+  "payload": {
+    "job_id": "<uuid>",
+    "bank_id": "<uuid>",
+    "stage_id": "<uuid>",
+    "question_id": "<uuid|null>",
+    "mutation": "create|update|delete|reorder|regenerate"
+  },
+  "correlation_id": "<uuid>",
+  "emitted_at": "2026-04-24T12:34:56.789+00:00"
+}
+```
+
+`correlation_id` is read from the existing request-scoped helper (`jd/router.py:49` `_get_correlation_id` — mirrored in question_bank router) for handler sites; actors already receive it as an explicit parameter.
+
+`confirm_bank` emits `bank.status_changed` with payload `{job_id, bank_id, stage_id, new_status}` on the same channel. This is additive to the poll's existing detection — both fire, client dedupes implicitly via query invalidation.
+
+#### B2.4: SSE generator refactor (`question_bank/sse.py`)
+
+The generator now feeds from two sources into one emit stream:
+
+```python
+async def sse_generator(job_id: UUID) -> AsyncIterator[str]:
+    emit_queue: asyncio.Queue[Envelope] = asyncio.Queue()
+
+    async def fast_path():
+        async for envelope in pubsub.subscribe(f"job:{job_id}"):
+            await emit_queue.put(envelope)
+
+    async def backstop():
+        async for envelope in poll_loop(job_id, interval=5):
+            await emit_queue.put(envelope)
+
+    async with asyncio.TaskGroup() as tg:
+        tg.create_task(fast_path())
+        tg.create_task(backstop())
+        while True:
+            envelope = await emit_queue.get()
+            yield _format(envelope)
+```
+
+- **Backstop interval: 5s** (up from 500ms). Fast path handles the low-latency case; the backstop is now correctness insurance, not the primary delivery mechanism. 5s is imperceptible degradation during Redis outages.
+- **Poll detection** needs B2.5 (`stage_questions.updated_at` onupdate) to detect UPDATEs. Without it, poll can only catch INSERT/DELETE (via `bank.question_count`) and status changes. With it, poll watches `(bank.status, bank.question_count, max(stage_questions.updated_at) per bank)` — any change triggers `bank.question_updated`.
+- **No server-side dedupe.** Both paths may emit the same logical event. Client-side: `use-questions-status-stream` calls `queryClient.invalidateQueries(...)` on each event; TanStack Query dedupes in-flight refetches. Net effect: two events → one refetch.
+- **Cancellation:** `TaskGroup` guarantees both tasks are cancelled cleanly when the client disconnects. `pubsub.subscribe` honors cancellation; `poll_loop` checks the cancellation scope between iterations.
+
+#### B2.5: `stage_questions.updated_at` auto-refresh
+
+Two complementary fixes:
+
+1. **ORM-level:** Add `onupdate=sql_text("NOW()")` to `StageQuestion.updated_at` column in `app/models.py:474-476`. Catches all ORM-driven UPDATEs.
+2. **DB-level trigger (defense-in-depth):** Migration adds a `BEFORE UPDATE` trigger on `stage_questions` that sets `NEW.updated_at = NOW()`. Catches raw SQL paths and future codebase paths that bypass the ORM.
+
+```sql
+CREATE OR REPLACE FUNCTION touch_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER stage_questions_touch_updated_at
+    BEFORE UPDATE ON stage_questions
+    FOR EACH ROW
+    EXECUTE FUNCTION touch_updated_at();
+```
+
+The trigger function is named generically (`touch_updated_at`) so other tables can adopt the same pattern later without a rename.
+
+### 6.3 Backend changes in B2 — scoped
+
+- **B2.0:** New `app/core/pubsub.py` (~150 LOC + tests). New health probe. Separate Redis client wired into `app/lifespan.py` (or equivalent startup hook).
+- **B2.1:** Extract `enrich_job_summaries(jobs, db) -> list[JobPostingSummary]` into `jd/service.py`. Call from `list_jobs`, `get_job`, and `retry`. `_job_to_summary` keeps its current signature but the enrichment dict lookups move into the shared helper. `JobPostingWithSnapshot` already extends `JobPostingSummary`, so the `get_job` handler just needs to run the enrichment step before serializing.
+- **B2.2:** `retry` handler calls `enrich_job_summaries([job], db)[0]` before returning.
+- **B2.4:** Handlers take `BackgroundTasks: BackgroundTasks` as a parameter, enqueue publish after `await service.X(...)`. Actor adds inline publish post-commit. Services remain publish-free (single-responsibility boundary).
+- **B2.5:** Migration + ORM column update.
+
+### 6.4 Frontend changes in B2
+
+- `lib/api/jobs.ts:59-104`: align `JobPostingSummary` / `JobPostingWithSnapshot` types with backend. No new unknown-narrowing after this.
+- `lib/api/org-units.ts:20-38`: add `company_profile_completed_at?: string | null` to `OrgUnit`.
+- `lib/hooks/use-questions-status-stream.ts:99-111`: no changes needed — the existing handler invalidates `['banks', jobId]` and `['bank', jobId, stageId]` on both `bank.status_changed` and `bank.question_updated`. Already correct.
+
+### 6.5 Migration / data
+
+- **Schema changes:** One Alembic migration for the `updated_at` trigger on `stage_questions` (B2.5). Additive. Zero data impact.
+- **Response shape changes:** B2.1/B2.2/B2.3 are response-only Pydantic additions — no migration. Existing clients ignore new fields.
+- **Redis:** `REDIS_URL` already required for Dramatiq. Pub/sub reuses the same instance, different client pool. No new infra for MVP.
+
+### 6.6 Observability
+
+- **Structured log events (no new metrics library):**
+  - `metric_name="pubsub.publish.failed"` — incremented on each publish failure. Alert threshold: > 1% of publishes over 5min rolling window.
+  - `metric_name="pubsub.subscribe.reconnected"` — incremented on each reconnect attempt. Alert on sustained >3/min per connection.
+  - `metric_name="pubsub.publish.ok"` — baseline counter for ratio calculations.
+- **Correlation ID end-to-end:** handler/actor → service → DB → publish → subscribe → SSE emit → client. Every log line on the path carries the same correlation_id. Searchable in Langfuse/structlog output.
+
+### 6.7 Acceptance criteria for B2
+
+- `npm run type-check`, `npm run lint`, `npm run test`, `npm run build` all pass on the frontend.
+- `pytest` passes on the backend (including new tests below).
+- **New backend tests:**
+  - `pubsub.publish()` swallows `RedisError`, emits `pubsub.publish.failed` structlog event, returns without raising.
+  - `pubsub.subscribe()` reconnects when the underlying connection is forcibly closed mid-iteration; resumes yielding envelopes.
+  - Integration (with docker-compose Redis): each of the 5 mutation sites (`create_question` handler, `update_question` handler, `delete_question` handler, `reorder_questions` handler, `regenerate_question` actor) publishes a `bank.question_updated` envelope with matching `job_id`, `correlation_id`, and `mutation` values. Subscriber assertion within a 1s timeout.
+  - `confirm_bank` handler publishes `bank.status_changed` (in addition to the poll-based emission remaining intact).
+  - `enrich_job_summaries` helper called from `list_jobs`, `get_job`, and `retry` produces identical field sets for the same job.
+  - Migration test: after upgrade, an UPDATE on `stage_questions` bumps `updated_at`.
+- **Manual smoke tests:**
+  - Open question-bank UI in two tabs, edit a question's text in tab A → tab B refreshes within ~100ms (fast path).
+  - Kill Redis mid-session (docker-compose stop redis), edit a question → tab B refreshes within ~5s (backstop).
+  - Restart Redis → subscribe reconnects, structured log shows reconnect event, fast path resumes.
+  - Retry a failed job on `/jobs` → response includes populated `signal_count`, `needs_review_count`, `org_unit_name`, `created_by_email`, `updated_by_email` (not nulls/zeros).
+  - Open a job detail page → same enrichment fields present.
+
+### 6.8 Human review required
+
+Per CLAUDE.md "module boundaries must be correct from day 1," these must have explicit human review before merge:
+- `app/core/pubsub.py` — the module boundary itself
+- The `BackgroundTasks` + actor post-commit publishing pattern (sets the convention for future events)
+- The `stage_questions` migration and trigger
+
+### 6.9 Risk register (B2-specific)
+
+| Risk | Mitigation |
+|---|---|
+| Redis pub/sub drops events under network blip | Polling backstop at 5s is independent correctness path; no event loss possible in steady state |
+| Pub/sub client starves Dramatiq broker | Separate `Redis` client instance (different pool); verified under load in tests |
+| `BackgroundTasks` + response-first ordering: if server crashes between response send and task execution, event is lost | Backstop poll catches it within 5s; accepted tradeoff for simplicity |
+| Correlation ID missing in an actor code path | Explicit param in all actors today; code review enforces; test asserts presence in payload |
+| `onupdate` only fires for ORM UPDATEs | Postgres trigger catches raw-SQL paths too; migration is defense-in-depth |
+| SSE TaskGroup deadlock on cancellation | `TaskGroup` cancels child tasks on exit; `asyncio.Queue` is cancellable; test covers client-disconnect cleanup |
 
 ---
 
@@ -389,7 +558,8 @@ Visual verification: load each affected screen in the dev server, side-by-side c
 ### 10.2 Observability
 
 - B3's `accept-invite` endpoint logs the same correlation-id pattern as `complete-invite` did.
-- B2's SSE event emission includes `correlation_id` in the payload so a question edit can be traced from the request → service → Redis pub → SSE consumer.
+- B2's SSE event emission includes `correlation_id` in the payload (mint at request, thread through handler → service → BackgroundTask → `pubsub.publish` → Redis → `pubsub.subscribe` → SSE consumer → browser). A question edit traces end-to-end through a single search term across structlog/Langfuse.
+- B2 introduces three new metric-tagged structlog events: `pubsub.publish.ok`, `pubsub.publish.failed`, `pubsub.subscribe.reconnected`. These become the observability primitives every future pub/sub use site emits — the module boundary in `app/core/pubsub.py` is the enforcement point.
 
 ### 10.3 Backwards compatibility
 
@@ -403,7 +573,7 @@ Visual verification: load each affected screen in the dev server, side-by-side c
 | B3 auth changes break login | Land B1+B2 first; B3 lands as its own PR with manual smoke + human review |
 | B5 component decomposition breaks tests | Move tests with their components; vitest is fast — run after each extraction |
 | B4 form migrations introduce regression | Each page tested manually before commit; existing test suite is the safety net |
-| SSE Redis publishing failure | Wrap publish in try/except; failure logs but doesn't break the mutation |
+| B2 pub/sub or polling introduces regression | See batch-local risk register (section 6.9) for the full pub/sub + backstop matrix |
 
 ---
 
@@ -433,4 +603,4 @@ docs/superpowers/plans/2026-04-24-cleanup-batch-4-form-migration.md
 docs/superpowers/plans/2026-04-24-cleanup-batch-5-decomposition-a11y.md
 ```
 
-Each plan is executed in sequence. Per-batch acceptance criteria (sections 5.3, 6.5, 7.6, 8.4, 9.5) are the gate to move to the next batch.
+Each plan is executed in sequence. Per-batch acceptance criteria (sections 5.3, 6.7, 7.6, 8.4, 9.5) are the gate to move to the next batch.
