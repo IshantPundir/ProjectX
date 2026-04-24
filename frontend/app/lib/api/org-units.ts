@@ -75,7 +75,7 @@ export const orgUnitsApi = {
     unitId: string,
     body: { user_id: string; role_id: string },
   ): Promise<{ status: string }> =>
-    apiFetch(`/api/org-units/${unitId}/members`, {
+    apiFetch<{ status: string }>(`/api/org-units/${unitId}/members`, {
       method: 'POST',
       token,
       body: JSON.stringify(body),
@@ -87,10 +87,10 @@ export const orgUnitsApi = {
     userId: string,
     roleId: string,
   ): Promise<{ status: string }> =>
-    apiFetch(`/api/org-units/${unitId}/members/${userId}/roles/${roleId}`, {
-      method: 'DELETE',
-      token,
-    }),
+    apiFetch<{ status: string }>(
+      `/api/org-units/${unitId}/members/${userId}/roles/${roleId}`,
+      { method: 'DELETE', token },
+    ),
 
   listRoles: (token: string): Promise<RoleOption[]> =>
     apiFetch<RoleOption[]>('/api/roles', { token }),
