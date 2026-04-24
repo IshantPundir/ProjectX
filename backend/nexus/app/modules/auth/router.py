@@ -2,6 +2,7 @@
 
 import hashlib
 import uuid as uuid_mod
+from typing import TYPE_CHECKING
 
 import sqlalchemy
 import structlog
@@ -9,14 +10,17 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+if TYPE_CHECKING:
+    from app.modules.auth.admin import AuthProvider
+
 from app.database import get_bypass_db
 from app.models import Client, OrganizationalUnit, User, UserInvite
 from app.modules.audit import actions as audit_actions
 from app.modules.audit.service import log_event
 from app.modules.auth.context import UserContext, get_current_user_roles
 from app.modules.auth.schemas import (
-    CompleteInviteRequest,
-    CompleteInviteResponse,
+    AcceptInviteRequest,
+    AcceptInviteResponse,
     MeResponse,
     RoleAssignmentResponse,
     VerifyInviteResponse,
@@ -53,111 +57,227 @@ async def verify_invite(
     return VerifyInviteResponse(email=invite.email, client_name=client.name)
 
 
-@router.post("/complete-invite", response_model=CompleteInviteResponse)
-async def complete_invite(
-    data: CompleteInviteRequest,
+@router.post("/accept-invite", response_model=AcceptInviteResponse)
+async def accept_invite(
+    data: AcceptInviteRequest,
     request: Request,
     db: AsyncSession = Depends(get_bypass_db),
-) -> CompleteInviteResponse:
-    """Claim an invite token and create the user row.
+) -> AcceptInviteResponse:
+    """Backend-owned invite acceptance.
 
-    If invited by projectx_admin → sets clients.super_admin_id.
-    No role assignment — roles are assigned later via org units.
+    Replaces the legacy 2-call frontend flow (frontend signUp + backend claim).
+    Public endpoint: the raw invite token is proof of possession; no
+    bearer JWT required (see middleware _PUBLIC_PREFIXES).
+
+    Compensation on DB failure: any auth user created inside this
+    handler is deleted if the subsequent DB writes fail.
     """
-    token_payload = request.state.token_payload
-    oauth_email = token_payload.email
-    auth_user_id = uuid_mod.UUID(token_payload.sub)
+    from app.modules.auth.admin import (
+        AuthProviderError,
+        InvalidCredentialsError,
+        UserAlreadyExistsError,
+        get_auth_provider,
+    )
 
+    provider = get_auth_provider()
+
+    # Phase 1: verify the invite (read-only). We re-check inside the
+    # atomic-claim UPDATE below, but failing fast here gives a crisp
+    # 401 without touching the auth provider at all.
     token_hash = hashlib.sha256(data.raw_token.encode()).hexdigest()
-
-    # Atomic single-use claim
-    result = await db.execute(
-        sqlalchemy.text("""
-            UPDATE public.user_invites
-               SET status = 'accepted', accepted_at = NOW()
-             WHERE token_hash  = :token_hash
-               AND status      = 'pending'
-               AND expires_at  > NOW()
-            RETURNING id, tenant_id, email, invited_by, projectx_admin_id
-        """),
-        {"token_hash": token_hash},
+    verify_result = await db.execute(
+        select(UserInvite, Client)
+        .join(Client, UserInvite.tenant_id == Client.id)
+        .where(
+            UserInvite.token_hash == token_hash,
+            UserInvite.status == "pending",
+            UserInvite.expires_at > sqlalchemy.func.now(),
+        )
     )
-    claimed_row = result.first()
-
-    if not claimed_row:
+    verify_row = verify_result.first()
+    if not verify_row:
         raise HTTPException(status_code=401, detail="Invalid or expired invite")
+    invite_row, _client_row = verify_row
+    email = invite_row.email
 
-    if claimed_row.email != oauth_email:
+    # Phase 2: provision the auth user.
+    auth_user_created_here = False
+    try:
+        identity = await provider.create_user(email, data.password)
+        auth_user_created_here = True
+    except UserAlreadyExistsError:
+        existing = await provider.find_user_by_email(email)
+        if existing is None:
+            logger.error(
+                "auth.accept_invite.provider_inconsistent",
+                email=email,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="Auth provider is in an inconsistent state",
+            )
+        await provider.update_user_password(existing.id, data.password)
+        identity = existing
+        logger.info(
+            "auth.accept_invite.reused_existing_user",
+            auth_user_id=existing.id,
+            email=email,
+        )
+    except AuthProviderError as err:
+        logger.error("auth.accept_invite.provision_failed", error=str(err))
         raise HTTPException(
-            status_code=401, detail="Email mismatch — invite was for a different address"
+            status_code=502, detail="Could not create account"
         )
 
-    # Create user (identity only)
-    user = User(
-        auth_user_id=auth_user_id,
-        tenant_id=uuid_mod.UUID(str(claimed_row.tenant_id)),
-        email=oauth_email,
-    )
-    db.add(user)
-    await db.flush()
+    auth_user_id = uuid_mod.UUID(identity.id)
 
-    # If invited by projectx admin → this is the super admin
-    is_super_admin = claimed_row.projectx_admin_id is not None
-    root_unit_id = ""
-    if is_super_admin:
-        await db.execute(
-            sqlalchemy.text(
-                "UPDATE public.clients SET super_admin_id = :user_id WHERE id = :tenant_id"
-            ),
-            {"user_id": str(user.id), "tenant_id": str(claimed_row.tenant_id)},
+    # Phase 3: sign in (external). Password was just set, so failure here
+    # is a provider issue — compensate by deleting the just-created user.
+    try:
+        tokens = await provider.sign_in_with_password(email, data.password)
+    except (InvalidCredentialsError, AuthProviderError) as err:
+        logger.error("auth.accept_invite.sign_in_failed", error=str(err))
+        await _safe_delete_auth_user(provider, identity.id, created_by_this_request=auth_user_created_here)
+        raise HTTPException(
+            status_code=502,
+            detail="Account created but sign-in failed; please try logging in.",
         )
 
-        # Auto-create root company unit WITHOUT a profile. The onboarding
-        # wizard's step 2 collects the 4-field profile and PATCHes it onto
-        # this unit. Phase 2A removed the "profile required on create" rule
-        # precisely to unblock this invite → onboarding transition.
-        from app.modules.org_units.service import create_org_unit as _create_root_unit
-
-        root_unit = await _create_root_unit(
-            db=db,
-            client_id=uuid_mod.UUID(str(claimed_row.tenant_id)),
-            name="Company",
-            unit_type="company",
-            parent_unit_id=None,
-            created_by=user.id,
-            actor_email=oauth_email,
-            workspace_mode="enterprise",
-            company_profile=None,
+    # Phase 4: DB writes. On any exception, compensate by deleting the
+    # auth user (the DB transaction rolls back automatically via the
+    # get_bypass_db context manager).
+    try:
+        claimed_result = await db.execute(
+            sqlalchemy.text("""
+                UPDATE public.user_invites
+                   SET status = 'accepted', accepted_at = NOW()
+                 WHERE token_hash  = :token_hash
+                   AND status      = 'pending'
+                   AND expires_at  > NOW()
+                RETURNING id, tenant_id, email, invited_by, projectx_admin_id
+            """),
+            {"token_hash": token_hash},
         )
-        root_unit_id = str(root_unit.id)
+        claimed_row = claimed_result.first()
+        if not claimed_row:
+            # Race — between the verify read and this claim, another
+            # process accepted the same invite.
+            raise HTTPException(
+                status_code=409,
+                detail="Invite has already been accepted",
+            )
 
-    redirect_to = "/onboarding" if is_super_admin else "/"
+        user = User(
+            auth_user_id=auth_user_id,
+            tenant_id=uuid_mod.UUID(str(claimed_row.tenant_id)),
+            email=email,
+        )
+        db.add(user)
+        await db.flush()
 
-    logger.info(
-        "auth.invite_completed",
-        user_id=str(user.id),
-        tenant_id=str(claimed_row.tenant_id),
-        is_super_admin=is_super_admin,
-    )
+        is_super_admin = claimed_row.projectx_admin_id is not None
+        root_unit_id = ""
+        if is_super_admin:
+            await db.execute(
+                sqlalchemy.text(
+                    "UPDATE public.clients SET super_admin_id = :user_id "
+                    "WHERE id = :tenant_id"
+                ),
+                {
+                    "user_id": str(user.id),
+                    "tenant_id": str(claimed_row.tenant_id),
+                },
+            )
+            from app.modules.org_units.service import (
+                create_org_unit as _create_root_unit,
+            )
 
-    await log_event(
-        db,
-        tenant_id=uuid_mod.UUID(str(claimed_row.tenant_id)),
-        actor_id=user.id,
-        actor_email=oauth_email,
-        action=audit_actions.USER_INVITE_CLAIMED,
-        resource="user",
-        resource_id=user.id,
-        payload={"email": oauth_email, "is_super_admin": is_super_admin},
-        ip_address=request.client.host if request.client else None,
-    )
+            root_unit = await _create_root_unit(
+                db=db,
+                client_id=uuid_mod.UUID(str(claimed_row.tenant_id)),
+                name="Company",
+                unit_type="company",
+                parent_unit_id=None,
+                created_by=user.id,
+                actor_email=email,
+                workspace_mode="enterprise",
+                company_profile=None,
+            )
+            root_unit_id = str(root_unit.id)
 
-    return CompleteInviteResponse(
+        redirect_to = "/onboarding" if is_super_admin else "/"
+
+        await log_event(
+            db,
+            tenant_id=uuid_mod.UUID(str(claimed_row.tenant_id)),
+            actor_id=user.id,
+            actor_email=email,
+            action=audit_actions.USER_INVITE_CLAIMED,
+            resource="user",
+            resource_id=user.id,
+            payload={
+                "email": email,
+                "is_super_admin": is_super_admin,
+                "root_unit_id": root_unit_id,
+            },
+            ip_address=request.client.host if request.client else None,
+        )
+
+        logger.info(
+            "auth.invite_accepted",
+            user_id=str(user.id),
+            tenant_id=str(claimed_row.tenant_id),
+            is_super_admin=is_super_admin,
+        )
+    except HTTPException:
+        await _safe_delete_auth_user(provider, identity.id, created_by_this_request=auth_user_created_here)
+        raise
+    except Exception:
+        logger.exception("auth.accept_invite.db_write_failed")
+        await _safe_delete_auth_user(provider, identity.id, created_by_this_request=auth_user_created_here)
+        raise HTTPException(
+            status_code=500,
+            detail="Could not finalize account creation",
+        )
+
+    return AcceptInviteResponse(
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
+        expires_in=tokens.expires_in,
         redirect_to=redirect_to,
-        user_id=str(user.id),
-        tenant_id=str(claimed_row.tenant_id),
-        root_unit_id=root_unit_id,
     )
+
+
+async def _safe_delete_auth_user(
+    provider: "AuthProvider",
+    auth_user_id: str,
+    *,
+    created_by_this_request: bool,
+) -> None:
+    """Best-effort compensation. Only deletes when the auth user was
+    created by THIS request — critical for the race-claim path, where a
+    losing request reuses a pre-existing user via `find_user_by_email`
+    and must NOT delete it (that would break the winning request's
+    session).
+
+    Never raises — logs on failure and leaves the auth user orphaned
+    (next invite retry self-heals via the already-exists fallback).
+    """
+    if not created_by_this_request:
+        logger.warning(
+            "auth.accept_invite.compensation_skipped",
+            auth_user_id=auth_user_id,
+            reason="auth user was pre-existing; skipping deletion to avoid disrupting its owner",
+        )
+        return
+    try:
+        await provider.delete_user(auth_user_id)
+    except Exception as comp_err:
+        logger.error(
+            "auth.accept_invite.compensation_failed",
+            auth_user_id=auth_user_id,
+            error=str(comp_err),
+        )
 
 
 @router.get("/me", response_model=MeResponse)

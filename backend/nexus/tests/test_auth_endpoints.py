@@ -14,10 +14,21 @@ async def test_verify_invite_missing_token():
 
 
 @pytest.mark.asyncio
-async def test_complete_invite_no_auth():
+async def test_accept_invite_missing_body_fields():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/api/auth/complete-invite", json={"raw_token": "abc"})
+        resp = await client.post("/api/auth/accept-invite", json={})
+    assert resp.status_code == 422  # pydantic validation
+
+
+@pytest.mark.asyncio
+async def test_accept_invite_bad_token_returns_401():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/api/auth/accept-invite",
+            json={"raw_token": "does-not-exist", "password": "hunter2hunter2"},
+        )
     assert resp.status_code == 401
+    assert resp.json()["detail"] == "Invalid or expired invite"
 
 
 @pytest.mark.asyncio

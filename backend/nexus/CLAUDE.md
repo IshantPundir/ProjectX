@@ -58,7 +58,7 @@ backend/nexus/
 │       │   ├── context.py       ← UserContext dataclass, get_current_user_roles(), require_super_admin()
 │       │   ├── schemas.py       ← TokenPayload, MeResponse, CandidateTokenPayload
 │       │   ├── permissions.py   ← 16 canonical permission constants (frozenset)
-│       │   └── router.py        ← /api/auth/* (verify-invite, complete-invite, me, onboarding/complete)
+│       │   └── router.py        ← /api/auth/* (verify-invite, accept-invite, me, onboarding/complete)
 │       ├── admin/               ← ProjectX internal ops: provision-client, list clients
 │       │   ├── service.py       ← provision_client() — creates tenant + sends Company Admin invite
 │       │   ├── schemas.py

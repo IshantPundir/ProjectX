@@ -100,7 +100,7 @@ async def get_session() -> AsyncGenerator[AsyncSession]:
 async def get_bypass_session() -> AsyncGenerator[AsyncSession, None]:
     """Yield a session with RLS bypass enabled.
 
-    Used ONLY for: admin routes, complete-invite, and onboarding completion.
+    Used ONLY for: admin routes, accept-invite, and onboarding completion.
     Never use on endpoints reachable by regular client users.
     """
     async with async_session_factory() as session:
@@ -116,7 +116,7 @@ async def get_bypass_db() -> AsyncGenerator[AsyncSession, None]:
     """FastAPI dependency — yields a session with RLS bypass.
 
     Use with: Depends(get_bypass_db)
-    Only for: admin routes, complete-invite, onboarding completion.
+    Only for: admin routes, accept-invite, onboarding completion.
     """
     async with async_session_factory() as session:
         async with session.begin():

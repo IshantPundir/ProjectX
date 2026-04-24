@@ -173,7 +173,7 @@ async def _background_delete_auth_user(auth_user_id: str) -> None:
         await _delete_auth_user(auth_user_id)
     except Exception as exc:
         logger.error(
-            "settings.supabase_deletion_failed",
+            "settings.auth_deletion_failed",
             auth_user_id=auth_user_id,
             error=str(exc),
         )

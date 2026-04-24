@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
+import { getFreshSupabaseToken } from "@/lib/auth/tokens";
 import { apiFetch } from "@/lib/api/client";
 import {
   CompanyProfileForm,
@@ -33,15 +33,12 @@ export default function OnboardingPage() {
   const [fetchingOrg, setFetchingOrg] = useState(false);
 
   async function getToken(): Promise<string | null> {
-    const supabase = createClient();
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    if (!session?.access_token) {
+    try {
+      return await getFreshSupabaseToken();
+    } catch {
       router.push("/login");
       return null;
     }
-    return session.access_token;
   }
 
   async function handleSelectWorkspace(mode: WorkspaceMode) {

@@ -42,22 +42,38 @@ class VerifyInviteResponse(BaseModel):
     client_name: str
 
 
-class CompleteInviteRequest(BaseModel):
-    raw_token: str
-
-
-class CompleteInviteResponse(BaseModel):
-    redirect_to: str  # "/onboarding" or "/"
-    user_id: str
-    tenant_id: str
-    root_unit_id: str
-
-
 class RoleAssignmentResponse(BaseModel):
     org_unit_id: str
     org_unit_name: str
     role_name: str
     permissions: list[str]
+
+
+class AcceptInviteRequest(BaseModel):
+    """Body for POST /api/auth/accept-invite.
+
+    Public endpoint. `raw_token` is the single-use invite proof;
+    `password` is what the new auth user will be created with.
+    """
+
+    raw_token: str
+    password: str
+
+
+class AcceptInviteResponse(BaseModel):
+    """Success response for POST /api/auth/accept-invite.
+
+    `access_token` + `refresh_token` are what the browser client feeds
+    into `supabase.auth.setSession(...)` to install the cookie session.
+    `expires_in` is seconds until the access_token expires.
+    `redirect_to` is a same-origin relative path (validated client-side
+    to avoid open-redirect).
+    """
+
+    access_token: str
+    refresh_token: str
+    expires_in: int
+    redirect_to: str
 
 
 class MeResponse(BaseModel):

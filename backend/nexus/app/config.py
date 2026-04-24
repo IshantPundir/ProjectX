@@ -54,6 +54,11 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_service_role_key: str = ""
 
+    # Auth provider selector — controls which concrete AuthProvider
+    # implementation `get_auth_provider()` returns. Defaults to Supabase;
+    # swap to "cognito"/"keycloak"/etc. when adding a new provider class.
+    auth_provider: str = "supabase"
+
     # JWT issuer string the backend expects in dashboard tokens. Defaults to
     # `{supabase_url}/auth/v1` which matches Supabase Cloud, where the
     # backend's network-reachable URL and the issuer Supabase advertises in
