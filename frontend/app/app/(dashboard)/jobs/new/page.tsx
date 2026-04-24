@@ -222,7 +222,34 @@ export default function NewJobPage() {
     mode: 'onChange',
   })
 
-  const values = useWatch({ control: form.control })
+  const [
+    watchedOrgUnitId,
+    watchedTitle,
+    watchedEmploymentType,
+    watchedWorkArrangement,
+    watchedLocation,
+    watchedSalaryMin,
+    watchedSalaryMax,
+    watchedSalaryCurrency,
+    watchedTargetHeadcount,
+    watchedDescriptionRaw,
+    watchedProjectScopeRaw,
+  ] = useWatch({
+    control: form.control,
+    name: [
+      'org_unit_id',
+      'title',
+      'employment_type',
+      'work_arrangement',
+      'location',
+      'salary_range_min',
+      'salary_range_max',
+      'salary_currency',
+      'target_headcount',
+      'description_raw',
+      'project_scope_raw',
+    ] as const,
+  })
 
   const createMutation = useMutation({
     mutationFn: async (data: CreateJobForm) => {
@@ -577,15 +604,15 @@ export default function NewJobPage() {
                 Summary
               </h3>
               <div className="space-y-3">
-                <Summary label="Org unit" value={unitById.get(values.org_unit_id ?? '')?.name ?? '—'} />
-                <Summary label="Role title" value={values.title || '—'} />
+                <Summary label="Org unit" value={unitById.get(watchedOrgUnitId ?? '')?.name ?? '—'} />
+                <Summary label="Role title" value={watchedTitle || '—'} />
                 <Summary
                   label="Employment"
                   value={
                     [
-                      EMPLOYMENT_TYPE_OPTIONS.find((o) => o.value === values.employment_type)?.label,
-                      WORK_ARRANGEMENT_OPTIONS.find((o) => o.value === values.work_arrangement)?.label,
-                      values.location,
+                      EMPLOYMENT_TYPE_OPTIONS.find((o) => o.value === watchedEmploymentType)?.label,
+                      WORK_ARRANGEMENT_OPTIONS.find((o) => o.value === watchedWorkArrangement)?.label,
+                      watchedLocation,
                     ]
                       .filter(Boolean)
                       .join(' · ') || '—'
@@ -594,24 +621,24 @@ export default function NewJobPage() {
                 <Summary
                   label="Compensation"
                   value={
-                    values.salary_range_min && values.salary_range_max
-                      ? `${values.salary_currency ?? ''} ${values.salary_range_min.toLocaleString()}–${values.salary_range_max.toLocaleString()}`
+                    watchedSalaryMin && watchedSalaryMax
+                      ? `${watchedSalaryCurrency ?? ''} ${watchedSalaryMin.toLocaleString()}–${watchedSalaryMax.toLocaleString()}`
                       : '—'
                   }
                 />
                 <Summary
                   label="Target headcount"
-                  value={values.target_headcount ? String(values.target_headcount) : '—'}
+                  value={watchedTargetHeadcount ? String(watchedTargetHeadcount) : '—'}
                 />
                 <Summary
                   label="JD length"
-                  value={`${(values.description_raw ?? '').length.toLocaleString()} characters`}
+                  value={`${(watchedDescriptionRaw ?? '').length.toLocaleString()} characters`}
                 />
                 <Summary
                   label="Project scope"
                   value={
-                    values.project_scope_raw
-                      ? `${values.project_scope_raw.length.toLocaleString()} characters`
+                    watchedProjectScopeRaw
+                      ? `${watchedProjectScopeRaw.length.toLocaleString()} characters`
                       : 'not provided'
                   }
                 />
