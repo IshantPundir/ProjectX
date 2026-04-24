@@ -499,6 +499,200 @@ export function applyApiErrorToForm(err: unknown, form: UseFormReturn): boolean
 - Existing tests for these pages updated; new tests for the form 422 → field mapping.
 - Manual: submit each form with invalid data → field-level error message appears under the relevant input.
 
+### 8.5 Locked decisions — brainstorming 2026-04-25
+
+This subsection supersedes any earlier ambiguity in 8.1–8.4. Decisions here are binding for the B4 implementation plan.
+
+| ID | Decision | Lock |
+|---|---|---|
+| D4.1 | Login flow ownership | **Backend-owned.** New `POST /api/auth/login` endpoint using the B3 `AuthProvider` abstraction. Frontend page calls `authApi.login()` → `setSession()` → navigate. Driven by the user's vendor-lock-in rule — future AWS Cognito migration must be a provider swap, not a code rewrite. |
+| D4.2 | 422 error shape on the frontend | **`ApiValidationError extends ApiError` subclass** with required `fieldErrors: FastApiValidationError[]`. Thrown by `apiFetch` on 422 only. `ApiError` unchanged for all other statuses. Enterprise pattern: discriminated error hierarchy over optional-property soup. |
+| D4.3 | Schema colocation | **Separate `schema.ts` next to each page.** `app/.../<page>/schema.ts` exports the Zod schema and the inferred form-values type. Schemas do not live inline in `page.tsx`. |
+| D4.4 | Hook file organization | **One hook per file**, matching the existing `lib/hooks/` convention (35+ existing files). ~17 new files across team, org-units, and auth domains. |
+| D4.5 | B4.6 scope | **Full org-unit detail tree.** B4.6 migrates `[unitId]/page.tsx` plus `CompanyProfileDetail`, `DivisionDetail`, `RegionDetail`, `TeamDetail`, and `MembersSection`. Folds in MembersSection's `confirm()` → `Dialog` conversion (one of the five B1 deferred callsites). The page's subcomponents carry most of the raw `useState` + `fetch` — migrating only the router file would be technically-complete but user-visibly unchanged. |
+
+#### 8.5.1 Backend login endpoint (D4.1)
+
+**Route:** `POST /api/auth/login` (public — added to `_PUBLIC_PREFIXES` in `app/middleware/auth.py`).
+
+**Schemas** (`app/modules/auth/schemas.py`):
+```python
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+class LoginResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    expires_in: int
+    redirect_to: str  # "/" or "/onboarding" — backend decides from users.onboarding_complete
+```
+
+**Error contract:**
+| Status | Condition | Detail message |
+|---|---|---|
+| 401 | `InvalidCredentialsError` from `AuthProvider.sign_in_with_password` | `"Invalid email or password."` — no user enumeration |
+| 401 | `UserNotFoundError` | Same generic message as 401 above |
+| 403 | `tenant_id` claim missing from returned access_token | `"This account does not have access to the client dashboard."` |
+| 403 | `users.is_active == false` | `"This account has been deactivated."` |
+| 422 | Pydantic validation (empty email, malformed, missing password) | FastAPI default shape |
+
+**Handler flow:**
+1. Resolve `auth_provider = get_auth_provider()`.
+2. Call `await auth_provider.sign_in_with_password(email, password)` → `SessionTokens`.
+3. Decode the access_token (via existing `verify_access_token` — which already validates signature, audience, issuer, algorithm).
+4. If `tenant_id` is missing → sign-out-side effect not needed (the provider returned tokens but we don't install them), return 403.
+5. Look up the `users` row by `user_id`. If `is_active == false` → return 403.
+6. Compute `redirect_to` — `/onboarding` when `users.is_super_admin and not users.onboarding_complete`, else `/`.
+7. Return `LoginResponse`.
+
+**Frontend** (`lib/api/auth.ts` extension):
+```typescript
+login: (
+  body: { email: string; password: string },
+  opts?: { signal?: AbortSignal },
+): Promise<LoginResponse> =>
+  apiFetch<LoginResponse>('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify(body),
+    signal: opts?.signal,
+  }),
+```
+
+**Login page** (`app/(auth)/login/page.tsx`):
+- `useForm<LoginFormValues>({ resolver: zodResolver(loginSchema) })`.
+- On submit: `authApi.login({email, password})` → `supabase.auth.setSession(...)` → `router.push(safeRedirect)` (`redirect_to` must pass the existing `startsWith('/') && !startsWith('//')` open-redirect guard).
+- `applyApiErrorToForm` for 422; `form.setError('root', ...)` for 401/403.
+
+**Tests:**
+- Backend: `tests/test_auth_login.py` — happy path, invalid password (401 generic), missing tenant_id (403), deactivated user (403), malformed request body (422), `AuthProvider` wired via dependency override.
+- Frontend: `tests/auth/login-page.test.tsx` — valid submit calls `authApi.login` + `setSession`; 422 maps to `setError`; 401 surfaces as root error via toast + form-level message; zero references to `supabase.auth.signInWithPassword` in the page.
+
+#### 8.5.2 ApiValidationError (D4.2)
+
+`lib/api/client.ts` (modify):
+```typescript
+export interface FastApiValidationError {
+  loc: (string | number)[]
+  msg: string
+  type: string
+}
+
+export class ApiValidationError extends ApiError {
+  constructor(message: string, public fieldErrors: FastApiValidationError[]) {
+    super(message, 422)
+    this.name = 'ApiValidationError'
+  }
+}
+```
+
+`apiFetch` throws `ApiValidationError` when `res.status === 422 && Array.isArray(body.detail)`; throws `ApiError` on every other non-OK status. `instanceof ApiError` still matches `ApiValidationError` (subclass), so all 40+ existing narrowings continue working.
+
+`lib/api/errors.ts` (new):
+```typescript
+export function applyApiErrorToForm<T extends FieldValues>(
+  err: unknown,
+  form: UseFormReturn<T>,
+  opts?: { fallbackFieldKey?: Path<T> },
+): boolean
+```
+- Narrows on `err instanceof ApiValidationError`. Returns `false` for any other error shape.
+- For each entry in `fieldErrors`, strips a leading `"body"` segment from `loc` (FastAPI prepends it), then walks the remainder to produce a dotted path.
+- If the dotted path matches a form field, calls `form.setError(path, { message: entry.msg, type: 'server' })`.
+- If no field matches, falls back to `opts.fallbackFieldKey` (set on that field); if no fallback, sets `root` error.
+- Returns `true` if at least one `setError` call fired — caller suppresses the toast.
+
+`tests/api/apply-api-error-to-form.test.ts` (new) covers: non-ApiValidationError returns false; `loc: ["body", "email"]` maps to `email`; nested `loc: ["body", "company_profile", "about"]` maps to `company_profile.about`; unknown field falls back to `fallbackFieldKey`; unknown field with no fallback sets `root`.
+
+#### 8.5.3 File layout summary
+
+```
+frontend/app/
+├── lib/
+│   ├── api/
+│   │   ├── client.ts              (modify — add ApiValidationError + FastApiValidationError)
+│   │   ├── errors.ts              (new — applyApiErrorToForm)
+│   │   ├── auth.ts                (extend — add login, completeOnboarding, setWorkspaceMode)
+│   │   ├── team.ts                (new — teamApi namespace)
+│   │   └── org-units.ts           (extend — add delete, removeMember)
+│   └── hooks/                     (~17 new use-* files, one per hook)
+├── app/
+│   ├── (auth)/{login,invite}/{page.tsx, schema.ts}
+│   ├── onboarding/{page.tsx, schema.ts}
+│   └── (dashboard)/settings/
+│       ├── team/{page.tsx, schema.ts}
+│       └── org-units/
+│           ├── {page.tsx, schema.ts}
+│           └── [unitId]/
+│               ├── {page.tsx, schema.ts}
+│               ├── CompanyProfileDetail.tsx   (migrate)
+│               ├── DivisionDetail.tsx         (migrate)
+│               ├── RegionDetail.tsx           (migrate)
+│               ├── TeamDetail.tsx             (migrate)
+│               └── MembersSection.tsx         (migrate + confirm → Dialog)
+```
+
+Backend:
+```
+backend/nexus/app/
+├── modules/auth/
+│   ├── schemas.py                 (modify — add LoginRequest, LoginResponse)
+│   └── router.py                  (modify — add POST /api/auth/login)
+├── middleware/auth.py             (modify — add /api/auth/login to _PUBLIC_PREFIXES)
+└── tests/test_auth_login.py       (new)
+```
+
+#### 8.5.4 Cluster breakdown
+
+Ordered to preserve the dependency chain (shared utilities → API namespaces → hooks → pages):
+
+| # | Cluster | Scope |
+|---|---|---|
+| C1 | Shared utilities | `ApiValidationError` in `client.ts` + `applyApiErrorToForm` in `errors.ts` + tests. Unblocks every page migration below. |
+| C2 | Backend login endpoint | `LoginRequest`/`LoginResponse` schemas + router handler + public-prefix middleware + test suite. |
+| C3 | API namespaces | Extend `lib/api/auth.ts` (login, completeOnboarding, setWorkspaceMode); create `lib/api/team.ts`; extend `lib/api/org-units.ts` (delete, removeMember). |
+| C4 | Hooks — auth + onboarding | `useLogin`, `useCompleteOnboarding`, `useSetWorkspaceMode`. |
+| C5 | Hooks — team | `useTeamMembers`, `useInviteTeamMember`, `useResendInvite`, `useRevokeInvite`, `useDeactivateUser`. |
+| C6 | Hooks — org-units | `useOrgUnits`, `useOrgUnit`, `useCreateOrgUnit`, `useUpdateOrgUnit`, `useDeleteOrgUnit`, `useOrgUnitMembers`, `useRoles`, `useAssignRole`, `useRemoveRole`. |
+| C7 | Small pages | B4.1 login, B4.2 invite, B4.3 onboarding (each page + its `schema.ts` + migrated data layer via hooks from C4). |
+| C8 | Settings — team | B4.4 team page (RHF+Zod invite form, TanStack Query members list, dialog-based deactivate/revoke). |
+| C9 | Settings — org-units index | B4.5 `org-units/page.tsx` (the 721-LOC page). |
+| C10 | Settings — org-units detail tree | B4.6 `[unitId]/page.tsx` + CompanyProfileDetail + DivisionDetail + RegionDetail + TeamDetail + MembersSection. Folds in the `confirm()` → `Dialog` conversion in MembersSection. |
+
+C2 and C3 can run in parallel after C1. C4–C6 can parallelize after C3. C7–C10 are sequential (incremental complexity; C10 is the heaviest).
+
+Subagent review cadence (per `feedback_subagent_review_cadence`): combined spec+quality review for C4/C5/C6/C7 (small and mechanical); split review (spec + quality as two passes) for C1 (shared utility touching 40+ consumers), C2 (backend auth endpoint), C8, C9, and C10.
+
+#### 8.5.5 Human review required — updated
+
+Section 7.7 flagged B3 for CLAUDE.md human review on auth changes. The B4 prompt initially said "no CLAUDE.md human-review gate" — that assumed option (b) (Supabase SDK wrapper). Decision D4.1 reopens the gate: **C2 (backend login endpoint) is a change to `app/modules/auth/`**, which the backend CLAUDE.md explicitly lists under "Human Review Required For." The whole-batch final reviewer remains the gate of record; C2 specifically must surface to the human reviewer with the auth-module changes highlighted.
+
+Other B4 clusters touch only frontend files and do not trigger the CLAUDE.md gate. Standard subagent review applies.
+
+#### 8.5.6 Submission pattern by route group
+
+The `(auth)` route group and `/onboarding` have no `QueryClient` provider — TanStack Query is mounted only inside `DashboardProviders` via the dashboard layout. A 401 on the login page is a form-level error ("bad password"), not a session-expired error, so it must NOT flow through the global `handleAuthError` redirect logic that lives in `DashboardProviders`. Mixing them would redirect a user who mistyped their password to `/login` with a "Session expired" toast, which is wrong.
+
+Resolution — two distinct patterns:
+
+| Route group | Mutation pattern | Query pattern |
+|---|---|---|
+| `(auth)` — login, invite | Plain RHF `handleSubmit` + `await authApi.*` inside `onSubmit`. No `useMutation`. | N/A — auth pages don't fetch server state. Invite's `verify-invite` GET stays as the existing local `useEffect` or moves to a thin fetch-on-mount helper. |
+| `/onboarding` | Plain RHF `handleSubmit` + `await`. No `useMutation`. | Existing `fetchRootUnit` useEffect stays (scope-limited). |
+| `(dashboard)/settings/*` | `useMutation` with TanStack Query (already provider-wrapped). Global 401 handler is correct here — a 401 inside the dashboard genuinely means an expired session. | `useQuery`. |
+
+`applyApiErrorToForm` is error-shape-agnostic — it works identically whether the caller used `useMutation` or plain `await`. The login page catches the thrown `ApiError`/`ApiValidationError`, passes it to `applyApiErrorToForm`, and if that returns `false`, manually calls `form.setError('root', { message })` with the user-facing error string (for 401/403, use the backend's `detail` verbatim).
+
+This keeps the global 401 redirect logic scoped to the dashboard where it belongs, and avoids accidentally wiring up a second `QueryClient` in the (auth) tree just to satisfy a "use TanStack Query everywhere" rule that was never the spec's intent.
+
+#### 8.5.7 Acceptance criteria — updated
+
+Section 8.4 stands, with these additions:
+- Backend: `tests/test_auth_login.py` passes; existing deselect list from B3 applies unchanged.
+- Frontend: zero references to `supabase.auth.signInWithPassword` under `app/` and `components/` (grep-verified).
+- Frontend: zero `confirm(` calls under `app/(dashboard)/settings/org-units/[unitId]/` (grep-verified — MembersSection is now Dialog-based).
+- Browser smoke per page: invalid submit produces field-level error under the correct input; valid submit produces golden-path redirect/navigation.
+
 ---
 
 ## 9. Batch 5 — Component Decomposition + A11y + Design Tokens
