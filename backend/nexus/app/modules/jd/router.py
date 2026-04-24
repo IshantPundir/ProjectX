@@ -12,6 +12,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
+from app import pubsub
 from app.database import get_tenant_db, get_tenant_session
 from app.models import JobPostingSignalSnapshot
 from app.modules.auth.context import UserContext, get_current_user_roles
@@ -32,6 +33,7 @@ from app.modules.jd.service import (
     create_job_posting,
     enrich_job_summaries,
     get_job_posting_with_latest_snapshot,
+    get_job_status,
     list_job_postings,
     retry_failed_extraction,
     save_signals,
@@ -339,6 +341,21 @@ async def create_job(
         tenant_id=str(user.user.tenant_id),
         correlation_id=correlation_id,
     )
+
+    # Publish the initial state so SSE subscribers connecting immediately
+    # after creation see the status without waiting for the 5s backstop poll.
+    # get_job_status is called here (inside the handler, while the session is
+    # still alive) so its return value is captured into the closure at
+    # add_task time — safe to use after the session closes.
+    status_event = await get_job_status(db, job.id)
+    if status_event is not None:
+        background_tasks.add_task(
+            pubsub.publish,
+            pubsub.job_channel(job.id),
+            pubsub.Events.JD_STATUS_CHANGED,
+            status_event.model_dump(mode="json"),
+            correlation_id=correlation_id,
+        )
 
     # Build response directly from the in-memory job. latest_snapshot is
     # always None at creation time (the actor hasn't run yet). expire_on_commit
