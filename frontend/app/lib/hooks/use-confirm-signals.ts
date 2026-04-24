@@ -17,6 +17,7 @@ export function useConfirmSignals(jobId: string) {
     onSuccess: () => {
       toast.success('Signals confirmed')
       void queryClient.invalidateQueries({ queryKey: ['jobs', jobId] })
+      void queryClient.invalidateQueries({ queryKey: ['jobs-list'] })
     },
     onError: (error) => {
       toast.error(error.message || 'Failed to confirm signals')

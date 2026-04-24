@@ -17,6 +17,7 @@ export function useSaveSignals(jobId: string) {
     onSuccess: () => {
       toast.success('Signals saved')
       void queryClient.invalidateQueries({ queryKey: ['jobs', jobId] })
+      void queryClient.invalidateQueries({ queryKey: ['jobs-list'] })
     },
     onError: (error) => {
       toast.error(error.message || 'Failed to save signals')
