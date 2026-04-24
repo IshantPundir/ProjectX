@@ -496,10 +496,13 @@ async def create_question(
     job_id: UUID,
     stage_id: UUID,
     body: CreateQuestionBody,
+    request: Request,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_tenant_db),
     user: UserContext = Depends(get_current_user_roles),
 ) -> QuestionResponse:
     """Add a hand-written recruiter question to a bank."""
+    correlation_id = _get_correlation_id(request)
     bank, stage, job = await require_bank_access_by_stage(
         db, job_id, stage_id, user, "manage"
     )
@@ -528,7 +531,26 @@ async def create_question(
     except SignalTypeNotAllowedError as exc:
         raise HTTPException(400, detail=str(exc))
 
+    # Capture IDs before commit — post-commit attribute access is unsafe under RLS.
+    bank_id = bank.id
+    stage_id_val = stage.id
+    question_id = question.id
+
     await db.commit()
+
+    background_tasks.add_task(
+        pubsub.publish,
+        pubsub.job_channel(job_id),
+        pubsub.Events.BANK_QUESTION_UPDATED,
+        {
+            "job_id": str(job_id),
+            "bank_id": str(bank_id),
+            "stage_id": str(stage_id_val),
+            "question_id": str(question_id),
+            "mutation": "create",
+        },
+        correlation_id=correlation_id,
+    )
     return _question_to_response(question)
 
 
