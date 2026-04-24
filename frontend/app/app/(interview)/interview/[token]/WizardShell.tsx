@@ -104,7 +104,6 @@ export function WizardShell({ token }: { token: string }) {
       {currentStep === 'cam-mic' && camMicPassed && (
         <StartStep token={token} />
       )}
-      {currentStep === 'start' && <StartStep token={token} />}
       {currentStep === 'already-started' && <AlreadyStartedPanel />}
     </WizardFrame>
   )

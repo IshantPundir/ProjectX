@@ -34,7 +34,7 @@ function StatusPill({ status }: { status: JobStatus }) {
   }
   const m = map[kind]
   return (
-    <span className={`px-chip ${m.cls}`} style={{ height: 20, fontSize: 10.5, fontWeight: 500, letterSpacing: 0.2 }}>
+    <span className={`px-chip ${m.cls} h-5 text-[10.5px] font-medium tracking-wide`}>
       <span className="px-dot" />
       {m.label}
     </span>

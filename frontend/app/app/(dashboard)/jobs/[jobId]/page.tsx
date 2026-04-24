@@ -836,7 +836,7 @@ function CanvasHeader({
           style={{ color: 'var(--px-fg-3)' }}
         >
           {metaParts.map((p, i) => (
-            <span key={i} className="flex items-center gap-2">
+            <span key={`${i}-${p}`} className="flex items-center gap-2">
               {i > 0 && <span style={{ color: 'var(--px-fg-4)' }}>·</span>}
               <span>{p}</span>
             </span>
@@ -1367,7 +1367,6 @@ function SignalInspector({
         </div>
       </div>
 
-      {canManage && !signal && null}
       {canManage && (
         <div className="px-4 py-3.5">
           <div className="px-eyebrow mb-2.5">Actions</div>
