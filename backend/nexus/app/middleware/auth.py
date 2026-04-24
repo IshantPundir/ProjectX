@@ -24,6 +24,7 @@ _CANDIDATE_PREFIX: str = "/api/candidate-session/"
 # Path prefixes that skip auth entirely (public endpoints)
 _PUBLIC_PREFIXES: tuple[str, ...] = (
     "/api/auth/verify-invite",  # Public — invite token verification
+    "/api/auth/accept-invite",  # Public — raw invite token proves possession
 )
 
 
