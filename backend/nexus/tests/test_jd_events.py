@@ -563,3 +563,81 @@ async def test_extract_actor_publishes_on_success(
     assert pub.payload["status"] == "signals_extracted"
     assert pub.correlation_id == "test-corr-extract"
 
+
+# ---------------------------------------------------------------------------
+# J8: reenrich_jd actor publishes post-commit
+# ---------------------------------------------------------------------------
+
+async def test_reenrich_actor_publishes_on_success(
+    db: AsyncSession, capture_publishes, monkeypatch
+):
+    """The reenrich actor publishes jd.status_changed after its commit.
+
+    Seeds a job in signals_extracted state with enrichment_status='streaming'
+    and a confirmed snapshot (reenrich requires a prior snapshot), then
+    asserts the publish event reflects enrichment_status='completed'.
+    """
+    from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.ai.schemas import ReEnrichmentOutput
+    from app.modules.jd import actors
+
+    # ---- Seed data -----------------------------------------------------------
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    company = await create_test_org_unit(
+        db, tenant.id, unit_type="company", company_profile=_VALID_PROFILE,
+    )
+
+    # Job must be in signals_extracted with enrichment_status='streaming'
+    # so _run_reenrichment's precondition check passes.
+    job, snapshot = await _make_job_extracted(
+        db,
+        tenant.id,
+        company.id,
+        user.id,
+        status="signals_extracted",
+        enrichment_status="streaming",
+        confirmed=True,
+    )
+
+    # ---- Mock get_bypass_session to return the test db session ---------------
+    # The actor calls get_bypass_session() twice: once for the main session and
+    # once for the post-commit read. Both yield the same test db so everything
+    # stays inside the per-test rollback transaction.
+    @asynccontextmanager
+    async def _fake_bypass_session():
+        yield db
+
+    monkeypatch.setattr(
+        "app.modules.jd.actors.get_bypass_session",
+        _fake_bypass_session,
+    )
+
+    # ---- Mock the LLM call ---------------------------------------------------
+    fake_output = ReEnrichmentOutput(enriched_jd="Re-enriched JD content. " * 10)
+    fake_client = MagicMock()
+    fake_client.chat.completions.create = AsyncMock(return_value=fake_output)
+    monkeypatch.setattr(
+        "app.modules.jd.actors.get_openai_client",
+        lambda: fake_client,
+    )
+
+    # ---- Invoke the actor directly (bypass Dramatiq broker/middleware) -------
+    await actors.reenrich_jd.fn.__wrapped__(
+        job_posting_id=str(job.id),
+        tenant_id=str(tenant.id),
+        correlation_id="test-corr-reenrich",
+    )
+
+    # ---- Assert publish -------------------------------------------------------
+    jd_events = [
+        p for p in capture_publishes if p.event == pubsub.Events.JD_STATUS_CHANGED
+    ]
+    assert len(jd_events) == 1, f"expected 1 publish, got {len(jd_events)}"
+    pub = jd_events[0]
+    assert pub.channel == f"job:{job.id}"
+    assert pub.payload["enrichment_status"] == "completed"
+    assert pub.correlation_id == "test-corr-reenrich"
+
