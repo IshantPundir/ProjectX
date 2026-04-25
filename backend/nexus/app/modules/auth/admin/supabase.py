@@ -187,6 +187,35 @@ class SupabaseAuthProvider:
             f"Supabase sign_in_with_password failed ({resp.status_code})"
         )
 
+    async def sign_out(self, tokens: SessionTokens) -> None:
+        if _missing_config():
+            logger.warning(
+                "auth.admin.sign_out.skipped",
+                reason="supabase_url or service_role_key not configured",
+            )
+            return
+        url = f"{settings.supabase_url}/auth/v1/logout"
+        headers = {
+            **_anon_headers(),
+            "Authorization": f"Bearer {tokens.access_token}",
+        }
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, headers=headers)
+        if resp.status_code in (200, 204, 404):
+            if resp.status_code == 404:
+                logger.info("auth.admin.sign_out.already_revoked")
+            else:
+                logger.info("auth.admin.sign_out.ok")
+            return
+        logger.error(
+            "auth.admin.sign_out.failed",
+            status=resp.status_code,
+            body=_safe_json(resp),
+        )
+        raise AuthProviderError(
+            f"Supabase sign_out failed ({resp.status_code})"
+        )
+
     async def delete_user(self, user_id: str) -> None:
         if _missing_config():
             logger.warning(
