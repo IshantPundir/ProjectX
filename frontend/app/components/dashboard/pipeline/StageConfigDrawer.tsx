@@ -74,11 +74,16 @@ export function StageConfigDrawer({ stage, jobId, onChange, onClose }: Props) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="stage-config-heading"
-        className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col"
+        className="rounded-xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col"
+        style={{ background: 'var(--px-surface)' }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-200">
+        <div
+          className="flex items-center justify-between px-5 py-4 border-b"
+          style={{ borderColor: 'var(--px-hairline)' }}
+        >
+          {/* TODO(design-review): no px-token equivalent for text-zinc-900 heading */}
           <h3 id="stage-config-heading" className="text-base font-semibold text-zinc-900">
             Configure Stage
           </h3>
@@ -86,7 +91,9 @@ export function StageConfigDrawer({ stage, jobId, onChange, onClose }: Props) {
             type="button"
             onClick={onClose}
             aria-label="Close dialog"
-            className="text-zinc-400 hover:text-zinc-900 text-xl leading-none p-1 rounded hover:bg-zinc-100 transition"
+            // TODO(design-review): no px-token equivalent for hover:text-zinc-900 or hover:bg-zinc-100
+            className="hover:text-zinc-900 text-xl leading-none p-1 rounded hover:bg-zinc-100 transition"
+            style={{ color: 'var(--px-fg-4)' }}
           >
             ×
           </button>
@@ -98,7 +105,11 @@ export function StageConfigDrawer({ stage, jobId, onChange, onClose }: Props) {
           <div className="space-y-4">
             {/* Name */}
             <div>
-              <label htmlFor="stage-name" className="block text-xs font-medium text-zinc-700 mb-1.5">
+              <label
+                htmlFor="stage-name"
+                className="block text-xs font-medium mb-1.5"
+                style={{ color: 'var(--px-fg)' }}
+              >
                 Name
               </label>
               <input
@@ -107,20 +118,29 @@ export function StageConfigDrawer({ stage, jobId, onChange, onClose }: Props) {
                 type="text"
                 value={stage.name}
                 onChange={(e) => update('name', e.target.value)}
-                className="w-full text-sm border border-zinc-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
+                className="w-full text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
+                style={{ borderColor: 'var(--px-divider)' }}
               />
             </div>
 
             {/* Stage type */}
             <div>
-              <label htmlFor="stage-type" className="block text-xs font-medium text-zinc-700 mb-1.5">
+              <label
+                htmlFor="stage-type"
+                className="block text-xs font-medium mb-1.5"
+                style={{ color: 'var(--px-fg)' }}
+              >
                 Stage type
               </label>
               <select
                 id="stage-type"
                 value={stage.stage_type}
                 onChange={(e) => handleTypeChange(e.target.value as StageType)}
-                className="w-full text-sm border border-zinc-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
+                className="w-full text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
+                style={{
+                  background: 'var(--px-surface)',
+                  borderColor: 'var(--px-divider)',
+                }}
               >
                 {STAGE_TYPES.map((t) => (
                   <option key={t.value} value={t.value} disabled={t.disabled}>{t.label}</option>
@@ -130,7 +150,11 @@ export function StageConfigDrawer({ stage, jobId, onChange, onClose }: Props) {
 
             {/* Duration */}
             <div>
-              <label htmlFor="stage-duration" className="block text-xs font-medium text-zinc-700 mb-1.5">
+              <label
+                htmlFor="stage-duration"
+                className="block text-xs font-medium mb-1.5"
+                style={{ color: 'var(--px-fg)' }}
+              >
                 Duration
               </label>
               <div className="relative">
@@ -141,9 +165,13 @@ export function StageConfigDrawer({ stage, jobId, onChange, onClose }: Props) {
                   max={240}
                   value={stage.duration_minutes}
                   onChange={(e) => update('duration_minutes', parseInt(e.target.value) || 1)}
-                  className="w-full text-sm border border-zinc-300 rounded-lg px-3 py-2 pr-12 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
+                  className="w-full text-sm border rounded-lg px-3 py-2 pr-12 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
+                  style={{ borderColor: 'var(--px-divider)' }}
                 />
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-zinc-400 pointer-events-none">
+                <span
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-xs pointer-events-none"
+                  style={{ color: 'var(--px-fg-4)' }}
+                >
                   min
                 </span>
               </div>
@@ -151,7 +179,11 @@ export function StageConfigDrawer({ stage, jobId, onChange, onClose }: Props) {
 
             {/* Difficulty slider */}
             <div>
-              <label htmlFor="stage-difficulty" className="block text-xs font-medium text-zinc-700 mb-2">
+              <label
+                htmlFor="stage-difficulty"
+                className="block text-xs font-medium mb-2"
+                style={{ color: 'var(--px-fg)' }}
+              >
                 Difficulty
               </label>
               <DifficultySlider
@@ -164,7 +196,10 @@ export function StageConfigDrawer({ stage, jobId, onChange, onClose }: Props) {
 
           {/* --- Participants editor --- */}
           {jobId !== undefined && participantSlotsFor(stage.stage_type).length > 0 && (
-            <div className="border-t border-zinc-100 pt-4">
+            <div
+              className="border-t pt-4"
+              style={{ borderColor: 'var(--px-hairline)' }}
+            >
               <StageParticipantsEditor
                 jobId={jobId}
                 stage={{
@@ -186,13 +221,18 @@ export function StageConfigDrawer({ stage, jobId, onChange, onClose }: Props) {
           )}
 
           {/* --- Advanced section --- */}
-          <div className="border-t border-zinc-100 pt-4">
+          <div
+            className="border-t pt-4"
+            style={{ borderColor: 'var(--px-hairline)' }}
+          >
             <button
               type="button"
               onClick={() => setAdvancedOpen((v) => !v)}
               aria-expanded={advancedOpen}
               aria-controls="advanced-section"
-              className="w-full flex items-center justify-between text-xs font-medium text-zinc-700 hover:text-zinc-900 transition"
+              // TODO(design-review): no px-token equivalent for hover:text-zinc-900
+              className="w-full flex items-center justify-between text-xs font-medium hover:text-zinc-900 transition"
+              style={{ color: 'var(--px-fg)' }}
             >
               <span>Advanced settings</span>
               <ChevronDown
@@ -204,7 +244,11 @@ export function StageConfigDrawer({ stage, jobId, onChange, onClose }: Props) {
               <div id="advanced-section" className="mt-4 space-y-4">
                 {/* SLA days — per-stage candidate dwell limit */}
                 <div>
-                  <label htmlFor="stage-sla-days" className="block text-xs font-medium text-zinc-700 mb-1.5">
+                  <label
+                    htmlFor="stage-sla-days"
+                    className="block text-xs font-medium mb-1.5"
+                    style={{ color: 'var(--px-fg)' }}
+                  >
                     Stage SLA
                   </label>
                   <div className="relative">
@@ -221,13 +265,20 @@ export function StageConfigDrawer({ stage, jobId, onChange, onClose }: Props) {
                         )
                       }}
                       placeholder="No SLA"
-                      className="w-full text-sm border border-zinc-300 rounded-lg px-3 py-2 pr-14 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
+                      className="w-full text-sm border rounded-lg px-3 py-2 pr-14 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
+                      style={{ borderColor: 'var(--px-divider)' }}
                     />
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-zinc-400 pointer-events-none">
+                    <span
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-xs pointer-events-none"
+                      style={{ color: 'var(--px-fg-4)' }}
+                    >
                       days
                     </span>
                   </div>
-                  <p className="text-[11px] text-zinc-500 mt-1">
+                  <p
+                    className="text-[11px] mt-1"
+                    style={{ color: 'var(--px-fg-3)' }}
+                  >
                     Max days a candidate can sit in this stage before being
                     flagged stalled. Leave blank for no SLA.
                   </p>
@@ -235,14 +286,22 @@ export function StageConfigDrawer({ stage, jobId, onChange, onClose }: Props) {
 
                 {/* Advance behavior */}
                 <div>
-                  <label htmlFor="stage-advance" className="block text-xs font-medium text-zinc-700 mb-1.5">
+                  <label
+                    htmlFor="stage-advance"
+                    className="block text-xs font-medium mb-1.5"
+                    style={{ color: 'var(--px-fg)' }}
+                  >
                     Advance behavior
                   </label>
                   <select
                     id="stage-advance"
                     value={stage.advance_behavior}
                     onChange={(e) => update('advance_behavior', e.target.value as AdvanceBehavior)}
-                    className="w-full text-sm border border-zinc-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
+                    className="w-full text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
+                    style={{
+                      background: 'var(--px-surface)',
+                      borderColor: 'var(--px-divider)',
+                    }}
                   >
                     {ADVANCE_BEHAVIORS.map((a) => (
                       <option key={a.value} value={a.value}>{a.label}</option>
@@ -252,7 +311,12 @@ export function StageConfigDrawer({ stage, jobId, onChange, onClose }: Props) {
 
                 {/* Pass criteria */}
                 <div>
-                  <div className="block text-xs font-medium text-zinc-700 mb-1.5">Pass criteria</div>
+                  <div
+                    className="block text-xs font-medium mb-1.5"
+                    style={{ color: 'var(--px-fg)' }}
+                  >
+                    Pass criteria
+                  </div>
                   <PassCriteriaEditor
                     value={stage.pass_criteria}
                     onChange={(pc) => update('pass_criteria', pc)}
@@ -261,7 +325,12 @@ export function StageConfigDrawer({ stage, jobId, onChange, onClose }: Props) {
 
                 {/* Signal types */}
                 <div>
-                  <div className="block text-xs font-medium text-zinc-700 mb-1.5">Signal types</div>
+                  <div
+                    className="block text-xs font-medium mb-1.5"
+                    style={{ color: 'var(--px-fg)' }}
+                  >
+                    Signal types
+                  </div>
                   <SignalFilterEditor
                     value={stage.signal_filter}
                     onChange={(sf) => update('signal_filter', sf)}
