@@ -66,7 +66,7 @@ export function DangerConfirmDialog({
               void onConfirm();
             }}
             disabled={pending}
-            className="px-btn danger sm"
+            className="px-btn destructive sm"
           >
             {pending ? (pendingLabel ?? `${confirmLabel}…`) : confirmLabel}
           </button>
