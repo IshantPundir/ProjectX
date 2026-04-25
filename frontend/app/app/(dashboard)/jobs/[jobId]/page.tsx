@@ -5,6 +5,10 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation'
 
 import { LoadingSkeleton } from '@/components/dashboard/jd-panels/LoadingSkeleton'
 import { ErrorBanner } from '@/components/dashboard/jd-panels/ErrorBanner'
+import { Confidence } from '@/components/dashboard/jd-panels/components/Confidence'
+import { SourceBadge } from '@/components/dashboard/jd-panels/components/SourceBadge'
+import { Kbd } from '@/components/dashboard/jd-panels/components/Kbd'
+import { EmptyRow } from '@/components/dashboard/jd-panels/components/EmptyRow'
 import { groupSignals, type SignalWithIndex } from '@/components/dashboard/jd-panels/helpers/groupSignals'
 import { needsReview } from '@/components/dashboard/jd-panels/helpers/needsReview'
 import { weightToConfidence } from '@/components/dashboard/jd-panels/helpers/weightToConfidence'
@@ -60,93 +64,6 @@ const ICONS = {
   refresh: 'M21 12a9 9 0 11-3-6.7L21 8M21 3v5h-5',
   eye: 'M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8zM12 15a3 3 0 100-6 3 3 0 000 6z',
 } as const
-
-/* ─── Source/confidence helpers ──────────────────────────── */
-
-type SourceKind = 'ai_extracted' | 'ai_inferred' | 'recruiter'
-
-function SourceBadge({ kind }: { kind: SourceKind }) {
-  const map: Record<
-    SourceKind,
-    { label: string; cls: 'ai' | 'caution' | 'human'; tip: string }
-  > = {
-    ai_extracted: {
-      label: 'From JD',
-      cls: 'ai',
-      tip: 'Pulled directly from the job description.',
-    },
-    ai_inferred: {
-      label: 'Suggested',
-      cls: 'caution',
-      tip: "Copilot inferred this — worth a quick look.",
-    },
-    recruiter: {
-      label: 'You added',
-      cls: 'human',
-      tip: 'You added this manually.',
-    },
-  }
-  const m = map[kind]
-  return (
-    <span
-      className={`px-chip ${m.cls}`}
-      title={m.tip}
-      style={{ height: 20, padding: '0 7px', fontSize: 10.5, fontWeight: 600, letterSpacing: 0.2 }}
-    >
-      {m.label}
-    </span>
-  )
-}
-
-function Confidence({ value, inline = false }: { value: number; inline?: boolean }) {
-  const filled = Math.round(value * 10)
-  const color =
-    value >= 0.75
-      ? 'var(--px-ok)'
-      : value >= 0.5
-        ? 'var(--px-caution)'
-        : 'var(--px-danger)'
-  return (
-    <span className="inline-flex items-center gap-0.5">
-      <span className="px-conf-bar inline-flex h-3 items-center gap-[2px]">
-        {Array.from({ length: 10 }).map((_, i) => (
-          <span
-            key={i}
-            style={{
-              width: 3,
-              height: 3 + (i % 3),
-              background: i < filled ? color : 'var(--px-surface-3)',
-              borderRadius: 1,
-            }}
-          />
-        ))}
-      </span>
-      {!inline && (
-        <span
-          className="px-mono ml-1.5 text-[10.5px]"
-          style={{
-            color: 'var(--px-fg-3)',
-            fontVariantNumeric: 'tabular-nums',
-          }}
-        >
-          {Math.round(value * 100)}%
-        </span>
-      )}
-    </span>
-  )
-}
-
-function Kbd({ keys }: { keys: readonly string[] }) {
-  return (
-    <span className="inline-flex gap-0.5">
-      {keys.map((k, i) => (
-        <span key={i} className="px-kbd">
-          {k}
-        </span>
-      ))}
-    </span>
-  )
-}
 
 /* ─── Page ────────────────────────────────────────────────── */
 
@@ -968,17 +885,6 @@ function SignalGroup({
         {children}
       </div>
     </section>
-  )
-}
-
-function EmptyRow({ label }: { label: string }) {
-  return (
-    <div
-      className="px-3.5 py-3 text-[12px] italic"
-      style={{ color: 'var(--px-fg-4)' }}
-    >
-      {label}
-    </div>
   )
 }
 
