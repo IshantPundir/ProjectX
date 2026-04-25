@@ -1,7 +1,7 @@
 'use client'
 
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useForm } from 'react-hook-form'
+import { useForm, type UseFormReturn } from 'react-hook-form'
 import { z } from 'zod'
 
 import { Button } from '@/components/px'
@@ -62,12 +62,19 @@ export type CompanyProfile = z.infer<typeof companyProfileSchema>
 type Props = {
   initialValue?: Partial<CompanyProfile>
   onSubmit: (value: CompanyProfile) => Promise<void>
+  /**
+   * If provided, errors thrown by `onSubmit` are passed here with the
+   * form instance so the parent can call `applyApiErrorToForm(err, form)`.
+   * If absent, errors propagate as in prior behaviour.
+   */
+  onError?: (err: unknown, form: UseFormReturn<CompanyProfile>) => void
   submitLabel?: string
 }
 
 export function CompanyProfileForm({
   initialValue,
   onSubmit,
+  onError,
   submitLabel = 'Save Company Profile',
 }: Props) {
   const form = useForm<CompanyProfile>({
@@ -87,7 +94,17 @@ export function CompanyProfileForm({
 
   return (
     <form
-      onSubmit={form.handleSubmit(onSubmit)}
+      onSubmit={form.handleSubmit(async (values) => {
+        try {
+          await onSubmit(values)
+        } catch (err) {
+          if (onError) {
+            onError(err, form)
+            return
+          }
+          throw err
+        }
+      })}
       className="space-y-6 max-w-2xl"
     >
       <div>
