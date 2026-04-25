@@ -3,7 +3,6 @@
 import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useQuery } from "@tanstack/react-query";
 import { z } from "zod";
 import { toast } from "sonner";
 
@@ -16,12 +15,11 @@ import {
   DialogTitle,
 } from "@/components/px";
 import { applyApiErrorToForm } from "@/lib/api/errors";
-import { teamApi, type TeamMember } from "@/lib/api/team";
-import { getFreshSupabaseToken } from "@/lib/auth/tokens";
 import { useAssignRole } from "@/lib/hooks/use-assign-role";
 import { useOrgUnitMembers } from "@/lib/hooks/use-org-unit-members";
 import { useRemoveRole } from "@/lib/hooks/use-remove-role";
 import { useRoles } from "@/lib/hooks/use-roles";
+import { useTeamMembers } from "@/lib/hooks/use-team-members";
 import { Section } from "./shared";
 
 function initials(s: string | null | undefined): string {
@@ -49,11 +47,7 @@ type AssignRoleFormValues = z.infer<typeof assignRoleSchema>;
 export function MembersSection({ unitId }: { unitId: string }) {
   const membersQuery = useOrgUnitMembers(unitId);
   const rolesQuery = useRoles();
-  const tenantUsersQuery = useQuery<TeamMember[]>({
-    queryKey: ["team", "members"],
-    queryFn: async () => teamApi.list(await getFreshSupabaseToken()),
-    staleTime: 10_000,
-  });
+  const tenantUsersQuery = useTeamMembers();
 
   const members = useMemo(() => membersQuery.data ?? [], [membersQuery.data]);
   const roles = rolesQuery.data ?? [];
