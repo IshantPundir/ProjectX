@@ -69,11 +69,12 @@ export function SignalRow({
         minHeight: 'var(--px-row-h)',
         padding: 'var(--px-row-py) 14px',
         background: focused ? 'var(--px-accent-tint)' : 'transparent',
+        // Reset native button defaults so the visual matches the prior <div>
+        appearance: 'none',
+        border: 'none', // suppress UA default; per-side borders below win where needed
         borderBottom: '1px solid var(--px-hairline)',
         borderLeft: focused ? '2px solid var(--px-accent)' : '2px solid transparent',
         transition: 'background 120ms',
-        // Reset native button defaults so the visual matches the prior <div>
-        appearance: 'none',
         font: 'inherit',
         color: 'inherit',
         textAlign: 'left',
@@ -125,17 +126,9 @@ export function SignalRow({
         <Confidence value={confidence} />
       </div>
       <span
-        role="button"
-        tabIndex={0}
-        aria-label="More"
+        aria-hidden="true"
         className="px-btn ghost xs"
         style={{ width: 26, padding: 0, justifyContent: 'center' }}
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.stopPropagation()
-          }
-        }}
       >
         <I d={MORE_ICON} size={12} />
       </span>
