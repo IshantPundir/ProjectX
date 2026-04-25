@@ -713,6 +713,21 @@ Section 8.4 stands, with these additions:
 
 ## 9. Batch 5 — Component Decomposition + A11y + Design Tokens
 
+> **Status:** ✅ Completed 2026-04-25 on branch `cleanup/batch-5-6-final` (worktree `.worktrees/cleanup-batch-5-6/`). Combined Batch 5 + Batch 6: 35 commits `ff87d49..912d064`, merged as `22586bf` (no-ff). Final gates: backend 510 passed (4 pre-existing deselects), tsc 0 errors, lint 0 errors (21 pre-existing warnings), 104/104 vitest, `next build` clean. Per-cluster subagent implementation + review (combined for mechanical clusters C3/C4/C5/C8; split for behavioral C2/C6 and load-bearing C1/C7); whole-batch final review by Opus reviewer (verdict: APPROVE FOR MERGE; 5 minor follow-ups documented inline, no security/correctness blockers).
+>
+> **Combined Tier-2 polish folded into this batch** (the deferred B1-B4 items the prior reviews accumulated): MembersSection inline `useQuery` → real `useTeamMembers`; settings/team bespoke `ConfirmDialog` → shared `DangerConfirmDialog` primitive; `useJobStatusStream.isStreaming` initial-state fix; onboarding `onError` wiring with `applyApiErrorToForm({stripPrefixes:["body","metadata"]})`; backend `AuthProvider.sign_out(tokens)` + `_revoke_quietly` across all 4 minted-token auth-failure branches; `LoginRequest.password = Field(min_length=1, max_length=128)`; composition no-nested-form regression test; MembersSection cancel-path test; org-units `client_account` flow test.
+>
+> **Audit-discovered scope expansion:** the pre-spec deep audit found 2 additional auth-failure branches with the same token-leak surface (token-verify-fail and no-app-user) that the initial scan missed. C7 now revokes on all 4 minted-token paths, not 2. The InvalidCredentialsError branch is intentionally NOT instrumented — `sign_in_with_password` raises before returning tokens.
+>
+> **Decomposition outcome:** `jobs/[jobId]/page.tsx` reduced from 1658 → 71 LOC (96%). 22 focused files now live under `components/dashboard/jd-panels/` (5 helpers, 12 leaves, 5 stateful panels). `index.ts` re-exports `JDReviewShell` only (encapsulation boundary).
+>
+> **Documented follow-ups** (deliberately deferred, non-blocking — for future cleanup):
+> - `I` SVG helper duplicated 5x in jd-panels (consolidate into a shared `Icon` module)
+> - `TabStrip.tsx` is misnamed — it renders a single-tab toolbar with action buttons, not a tabset; rename
+> - 13 other pipeline files with raw `zinc-*` references still pending (this batch swept only the 4 named in §9.4)
+> - Hover pseudo-states in the 4 swept files still use Tailwind classes (px design system needs a documented `:hover`-variant convention before these can convert)
+> - SignalRow kebab is currently `aria-hidden` non-interactive; restructure when a real menu wires up (row stops being a `<button>`)
+
 ### 9.1 Scope
 
 | ID | Issue | File(s) |
