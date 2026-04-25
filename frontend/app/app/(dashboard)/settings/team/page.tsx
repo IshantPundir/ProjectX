@@ -15,6 +15,7 @@ import { useResendTeamInvite } from '@/lib/hooks/use-resend-team-invite'
 import { useRevokeTeamInvite } from '@/lib/hooks/use-revoke-team-invite'
 import { useDeactivateUser } from '@/lib/hooks/use-deactivate-user'
 import type { TeamMember } from '@/lib/api/team'
+import { DangerConfirmDialog } from '@/components/px'
 
 import { inviteTeamMemberSchema, type InviteTeamMemberFormValues } from './schema'
 
@@ -76,41 +77,11 @@ function TableSkeleton({ cols, rows = 3 }: { cols: number; rows?: number }) {
 /* ─── Confirmation dialog ─── */
 
 interface ConfirmAction {
+  title: string;
   message: string;
-  onConfirm: () => void;
-}
-
-function ConfirmDialog({
-  action,
-  onClose,
-}: {
-  action: ConfirmAction;
-  onClose: () => void;
-}) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-white rounded-xl p-6 max-w-sm w-full mx-4 shadow-lg">
-        <p className="text-sm text-zinc-700 mb-4">{action.message}</p>
-        <div className="flex justify-end gap-2">
-          <button
-            onClick={onClose}
-            className="px-3 py-1.5 text-sm text-zinc-600 hover:text-zinc-900 rounded-lg cursor-pointer transition-colors duration-150"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={() => {
-              action.onConfirm();
-              onClose();
-            }}
-            className="px-3 py-1.5 text-sm text-white bg-red-600 hover:bg-red-700 rounded-lg cursor-pointer transition-colors duration-150"
-          >
-            Confirm
-          </button>
-        </div>
-      </div>
-    </div>
-  );
+  confirmLabel: string;
+  pendingLabel: string;
+  onConfirm: () => Promise<void>;
 }
 
 /* ─── Page ─── */
@@ -165,15 +136,31 @@ export default function TeamPage() {
     pending: 'bg-amber-50 text-amber-700',
   }
 
+  const isConfirmPending =
+    deactivateMutation.isPending || revokeMutation.isPending
+
   return (
     <>
       {/* Confirmation dialog */}
-      {confirmAction && (
-        <ConfirmDialog
-          action={confirmAction}
-          onClose={() => setConfirmAction(null)}
-        />
-      )}
+      <DangerConfirmDialog
+        open={!!confirmAction}
+        title={confirmAction?.title ?? 'Confirm action'}
+        description={confirmAction?.message ?? ''}
+        confirmLabel={confirmAction?.confirmLabel ?? 'Confirm'}
+        pendingLabel={confirmAction?.pendingLabel}
+        pending={isConfirmPending}
+        onConfirm={() => {
+          void (async () => {
+            try {
+              await confirmAction?.onConfirm()
+            } catch (err) {
+              toast.error(err instanceof Error ? err.message : 'Action failed')
+              // keep dialog open so the user can retry or cancel
+            }
+          })()
+        }}
+        onClose={() => setConfirmAction(null)}
+      />
 
       <div className="mx-auto max-w-[1400px] px-8 pb-10 pt-5">
         <h1
@@ -300,13 +287,14 @@ export default function TeamPage() {
                               <button
                                 onClick={() =>
                                   setConfirmAction({
+                                    title: 'Deactivate user',
                                     message: `Deactivate ${m.email}? They will lose access to ProjectX.`,
+                                    confirmLabel: 'Deactivate',
+                                    pendingLabel: 'Deactivating…',
                                     onConfirm: async () => {
-                                      try {
-                                        await deactivateMutation.mutateAsync(m.id)
-                                      } catch (err) {
-                                        toast.error(err instanceof Error ? err.message : 'Failed to deactivate')
-                                      }
+                                      await deactivateMutation.mutateAsync(m.id)
+                                      setConfirmAction(null)
+                                      toast.success(`${m.email} deactivated`)
                                     },
                                   })
                                 }
@@ -368,13 +356,14 @@ export default function TeamPage() {
                                 <button
                                   onClick={() =>
                                     setConfirmAction({
+                                      title: 'Revoke invite',
                                       message: `Revoke the invite for ${m.email}? This cannot be undone.`,
+                                      confirmLabel: 'Revoke',
+                                      pendingLabel: 'Revoking…',
                                       onConfirm: async () => {
-                                        try {
-                                          await revokeMutation.mutateAsync(m.id)
-                                        } catch (err) {
-                                          toast.error(err instanceof Error ? err.message : 'Failed to revoke')
-                                        }
+                                        await revokeMutation.mutateAsync(m.id)
+                                        setConfirmAction(null)
+                                        toast.success(`Invite for ${m.email} revoked`)
                                       },
                                     })
                                   }
