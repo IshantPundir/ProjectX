@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import structlog
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -539,20 +540,27 @@ async def test_login_revoke_failure_does_not_unbreak_auth_failure() -> None:
         sign_in_return=minted,
         sign_out_side_effect=AuthProviderError("revocation transport error"),
     )
-    with patch(
-        "app.modules.auth.admin.get_auth_provider", return_value=provider
-    ), _patch_verify_token(""):
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
-            resp = await client.post(
-                "/api/auth/login",
-                json={"email": "admin@projectx.example", "password": "x"},
-            )
+    with structlog.testing.capture_logs() as captured:
+        with patch(
+            "app.modules.auth.admin.get_auth_provider", return_value=provider
+        ), _patch_verify_token(""):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.post(
+                    "/api/auth/login",
+                    json={"email": "admin@projectx.example", "password": "x"},
+                )
     # Revocation failure must not change the original 403.
     assert resp.status_code == 403
     # But sign_out WAS attempted.
     assert len(provider.sign_out_calls) == 1
+    # And the structured log line must have been emitted (spec §6.7).
+    assert any(
+        e.get("event") == "auth.login.sign_out_failed"
+        and e.get("log_level") in ("error", "exception")
+        for e in captured
+    ), f"Expected auth.login.sign_out_failed log; got: {captured}"
 
 
 # ---------------------------------------------------------------------------
