@@ -2,7 +2,7 @@
 
 import uuid
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 
 class TokenPayload(BaseModel):
@@ -82,10 +82,15 @@ class LoginRequest(BaseModel):
     `email` uses `EmailStr` so the 422 path catches malformed addresses
     before the handler touches the AuthProvider — no user enumeration
     surface for syntax errors.
+
+    `password` is bounded at 1..128 characters: enforces the user
+    actually typed something (`min_length=1`) and stops oversized
+    payloads at the validation layer (well below FastAPI's request
+    body size limit, well above any reasonable password length).
     """
 
     email: EmailStr
-    password: str
+    password: str = Field(min_length=1, max_length=128)
 
 
 class LoginResponse(BaseModel):

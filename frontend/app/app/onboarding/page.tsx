@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { getFreshSupabaseToken } from "@/lib/auth/tokens";
 import { authApi } from "@/lib/api/auth";
 import { orgUnitsApi } from "@/lib/api/org-units";
+import { applyApiErrorToForm } from "@/lib/api/errors";
 import {
   CompanyProfileForm,
   type CompanyProfile,
@@ -417,17 +418,20 @@ export default function OnboardingPage() {
                 </p>
               )}
               <CompanyProfileForm
-                onSubmit={async (value: CompanyProfile) => {
-                  try {
-                    await handleSubmitProfile(value);
-                  } catch (err) {
-                    setProfileError(
-                      err instanceof Error
-                        ? err.message
-                        : "Failed to save company profile"
-                    );
-                    throw err;
+                onSubmit={handleSubmitProfile}
+                onError={(err, form) => {
+                  if (
+                    applyApiErrorToForm(err, form, {
+                      stripPrefixes: ['body', 'metadata'],
+                    })
+                  ) {
+                    return
                   }
+                  setProfileError(
+                    err instanceof Error
+                      ? err.message
+                      : 'Failed to save company profile',
+                  )
                 }}
                 submitLabel="Finish Onboarding"
               />

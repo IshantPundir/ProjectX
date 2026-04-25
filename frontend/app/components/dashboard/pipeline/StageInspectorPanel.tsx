@@ -27,11 +27,15 @@ export function StageInspectorPanel({
 
   return (
     <div
-      className="flex-1 bg-white rounded-r-xl flex flex-col min-w-0"
+      className="flex-1 rounded-r-xl flex flex-col min-w-0"
+      style={{ background: 'var(--px-surface)' }}
       data-inspector-anchor="true"
     >
       {/* Tab bar */}
-      <div className="border-b border-zinc-200 flex items-center gap-0 px-5 flex-shrink-0">
+      <div
+        className="border-b flex items-center gap-0 px-5 flex-shrink-0"
+        style={{ borderColor: 'var(--px-hairline)' }}
+      >
         <TabButton
           label="Questions"
           icon={<FileQuestion className="w-4 h-4" />}
@@ -89,8 +93,8 @@ function TabButton({
         active
           ? 'text-blue-700 border-blue-600'
           : disabled
-            ? 'text-zinc-300 border-transparent cursor-not-allowed'
-            : 'text-zinc-500 border-transparent hover:text-zinc-900 hover:border-zinc-300'
+            ? 'text-zinc-300 border-transparent cursor-not-allowed' // TODO(design-review): no px-token equivalent for text-zinc-300 disabled state
+            : 'text-zinc-500 border-transparent hover:text-zinc-900 hover:border-zinc-300' // TODO(design-review): hover pseudo-states + text-zinc-900/border-zinc-300 have no px-token equivalent; text-zinc-500 kept for consistency with conditional branch
       }`}
     >
       {icon}

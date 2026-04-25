@@ -1,8 +1,14 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState } from 'react'
 import type { PipelineTemplate, StarterTemplate } from '@/lib/api/pipelines'
-import { Button } from '@/components/px'
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/px'
 import { StarterPackBrowser } from './StarterPackBrowser'
 import { usePipelineTemplates } from '@/lib/hooks/use-pipeline-templates'
 
@@ -24,67 +30,47 @@ export function TemplatePickerDialog({
   const [tab, setTab] = useState<'library' | 'starters'>('library')
   const { data: templates } = usePipelineTemplates(orgUnitId, { enabled: open })
 
-  // WCAG 2.4.3: focus the close button when the dialog opens. Templates
-  // load asynchronously so focusing a template card would be racy — the
-  // close button is always rendered, and arrow/tab keys let the user
-  // walk into the content from there.
-  const closeButtonRef = useRef<HTMLButtonElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    closeButtonRef.current?.focus()
-  }, [open])
-
-  useEffect(() => {
-    if (!open) return
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', handler)
-    return () => document.removeEventListener('keydown', handler)
-  }, [open, onClose])
-
-  if (!open) return null
-
   return (
-    <div
-      className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
-      onClick={onClose}
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose()
+      }}
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="template-picker-title"
-        className="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[80vh] flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-200">
-          <h2 id="template-picker-title" className="text-sm font-semibold">Pick a pipeline</h2>
-          <button
-            ref={closeButtonRef}
-            type="button"
-            onClick={onClose}
-            aria-label="Close dialog"
-            className="text-zinc-400 hover:text-zinc-900 text-xl leading-none"
-          >
-            ×
-          </button>
-        </div>
+      <DialogContent widthClass="sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>Pick a pipeline</DialogTitle>
+        </DialogHeader>
         <div className="px-5 pt-3">
-          <div className="flex gap-1 border-b border-zinc-200">
+          <div
+            role="tablist"
+            aria-label="Template source"
+            className="flex gap-1 border-b"
+            style={{ borderColor: 'var(--px-hairline)' }}
+          >
             <button
               type="button"
+              role="tab"
+              id="tpd-tab-library"
+              aria-selected={tab === 'library'}
+              aria-controls="tpd-panel-library"
+              tabIndex={tab === 'library' ? 0 : -1}
               onClick={() => setTab('library')}
-              aria-pressed={tab === 'library'}
-              className={`text-sm px-3 py-2 border-b-2 ${tab === 'library' ? 'border-blue-600 text-blue-600' : 'border-transparent text-zinc-500'}`}
+              className={`text-sm px-3 py-2 border-b-2 ${tab === 'library' ? 'border-blue-600 text-blue-600' : 'border-transparent'}`}
+              style={tab === 'library' ? undefined : { color: 'var(--px-fg-3)' }}
             >
               Your library
             </button>
             <button
               type="button"
+              role="tab"
+              id="tpd-tab-starters"
+              aria-selected={tab === 'starters'}
+              aria-controls="tpd-panel-starters"
+              tabIndex={tab === 'starters' ? 0 : -1}
               onClick={() => setTab('starters')}
-              aria-pressed={tab === 'starters'}
-              className={`text-sm px-3 py-2 border-b-2 ${tab === 'starters' ? 'border-blue-600 text-blue-600' : 'border-transparent text-zinc-500'}`}
+              className={`text-sm px-3 py-2 border-b-2 ${tab === 'starters' ? 'border-blue-600 text-blue-600' : 'border-transparent'}`}
+              style={tab === 'starters' ? undefined : { color: 'var(--px-fg-3)' }}
             >
               Starter pack
             </button>
@@ -92,16 +78,32 @@ export function TemplatePickerDialog({
         </div>
         <div className="px-5 py-4 overflow-y-auto flex-1">
           {tab === 'library' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div
+              role="tabpanel"
+              id="tpd-panel-library"
+              aria-labelledby="tpd-tab-library"
+              className="grid grid-cols-1 md:grid-cols-2 gap-4"
+            >
               {templates?.length === 0 && (
-                <div className="col-span-2 text-sm text-zinc-500">
+                <div
+                  className="col-span-2 text-sm"
+                  style={{ color: 'var(--px-fg-3)' }}
+                >
                   No templates in your library yet. Try the starter pack tab.
                 </div>
               )}
               {templates?.map((t) => (
-                <div key={t.id} className="bg-zinc-50 border border-zinc-200 rounded-lg p-4">
+                // TODO(design-review): no px-token equivalent for bg-zinc-50 card fill
+                <div
+                  key={t.id}
+                  className="bg-zinc-50 border rounded-lg p-4"
+                  style={{ borderColor: 'var(--px-hairline)' }}
+                >
                   <div className="text-sm font-semibold mb-1">{t.name}</div>
-                  <div className="text-xs text-zinc-500 mb-3">
+                  <div
+                    className="text-xs mb-3"
+                    style={{ color: 'var(--px-fg-3)' }}
+                  >
                     {t.stages.map((s) => s.name).join(' → ')}
                   </div>
                   <Button size="sm" onClick={() => onPickTemplate(t)}>
@@ -111,9 +113,17 @@ export function TemplatePickerDialog({
               ))}
             </div>
           )}
-          {tab === 'starters' && <StarterPackBrowser onUse={onPickStarter} />}
+          {tab === 'starters' && (
+            <div
+              role="tabpanel"
+              id="tpd-panel-starters"
+              aria-labelledby="tpd-tab-starters"
+            >
+              <StarterPackBrowser onUse={onPickStarter} />
+            </div>
+          )}
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   )
 }

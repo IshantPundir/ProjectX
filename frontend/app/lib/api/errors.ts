@@ -11,7 +11,13 @@ import { ApiValidationError } from './client'
  * or form-level error.
  *
  * Loc handling:
- * - FastAPI prepends `"body"` to every `loc`. We strip it.
+ * - FastAPI prepends `"body"` to every `loc`. Default `stripPrefixes`
+ *   is `["body"]` — that segment is dropped greedily from the front of
+ *   each loc.
+ * - Pass `stripPrefixes: ["body", "metadata"]` (or any other segments)
+ *   when the backend nests the request body under a key the frontend
+ *   form does NOT mirror. Stripping is greedy: consecutive segments
+ *   that match any string in the list are all removed.
  * - The remaining segments are joined with `.` to produce an RHF path
  *   (e.g. `["profile", "about"]` → `"profile.about"`).
  * - If the resulting path is not a known field on the form, the error
@@ -20,15 +26,16 @@ import { ApiValidationError } from './client'
 export function applyApiErrorToForm<T extends FieldValues>(
   err: unknown,
   form: UseFormReturn<T>,
-  opts: { fallbackFieldKey?: Path<T> } = {},
+  opts: { fallbackFieldKey?: Path<T>; stripPrefixes?: string[] } = {},
 ): boolean {
   if (!(err instanceof ApiValidationError)) return false
 
+  const stripPrefixes = opts.stripPrefixes ?? ['body']
   const knownFieldKeys = collectFieldKeys(form.getValues())
   let mappedAny = false
 
   for (const entry of err.fieldErrors) {
-    const path = locToPath(entry.loc)
+    const path = locToPath(entry.loc, stripPrefixes)
     if (path && knownFieldKeys.has(path)) {
       form.setError(path as Path<T>, { message: entry.msg, type: 'server' })
       mappedAny = true
@@ -50,12 +57,22 @@ export function applyApiErrorToForm<T extends FieldValues>(
 }
 
 /**
- * Drop the leading `"body"` segment (FastAPI always prepends it for
- * request-body validation errors), then join the rest with `.`.
- * Returns null for shapes we don't recognise (e.g. empty after strip).
+ * Greedily drop leading `stripPrefixes` segments, then join the rest
+ * with `.`. Returns null for shapes we don't recognise (e.g. empty
+ * after strip).
  */
-function locToPath(loc: (string | number)[]): string | null {
-  const stripped = loc[0] === 'body' ? loc.slice(1) : loc
+function locToPath(
+  loc: (string | number)[],
+  stripPrefixes: string[],
+): string | null {
+  let stripped = loc
+  while (
+    stripped.length > 0 &&
+    typeof stripped[0] === 'string' &&
+    stripPrefixes.includes(stripped[0] as string)
+  ) {
+    stripped = stripped.slice(1)
+  }
   if (stripped.length === 0) return null
   return stripped.map((seg) => String(seg)).join('.')
 }

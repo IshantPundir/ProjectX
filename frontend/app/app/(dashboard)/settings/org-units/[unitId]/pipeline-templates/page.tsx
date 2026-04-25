@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 
-import { Button } from '@/components/px'
+import { Button, DangerConfirmDialog } from '@/components/px'
 import { TemplateLibraryCard } from '@/components/dashboard/pipeline/TemplateLibraryCard'
 import { StarterPackBrowser } from '@/components/dashboard/pipeline/StarterPackBrowser'
 import { usePipelineTemplates } from '@/lib/hooks/use-pipeline-templates'
@@ -20,6 +20,9 @@ export default function PipelineTemplatesPage() {
   const unitId = params.unitId
 
   const [showStarters, setShowStarters] = useState(false)
+  const [confirmingDelete, setConfirmingDelete] = useState<{ id: string; name: string } | null>(
+    null,
+  )
   const { data: templates, isLoading } = usePipelineTemplates(unitId)
   const createMutation = useCreateTemplate(unitId)
   const setDefaultMutation = useSetDefault(unitId)
@@ -38,12 +41,6 @@ export default function PipelineTemplatesPage() {
         onSuccess: () => setShowStarters(false),
       },
     )
-  }
-
-  function handleDelete(templateId: string) {
-    if (confirm('Delete this template? This cannot be undone.')) {
-      deleteMutation.mutate(templateId)
-    }
   }
 
   return (
@@ -96,10 +93,33 @@ export default function PipelineTemplatesPage() {
             template={tpl}
             editHref={`/settings/org-units/${unitId}/pipeline-templates/${tpl.id}`}
             onSetDefault={() => setDefaultMutation.mutate(tpl.id)}
-            onDelete={() => handleDelete(tpl.id)}
+            onDelete={() => setConfirmingDelete({ id: tpl.id, name: tpl.name })}
           />
         ))}
       </div>
+
+      <DangerConfirmDialog
+        open={confirmingDelete !== null}
+        title="Delete template"
+        description={
+          <>
+            Delete <strong>{confirmingDelete?.name ?? ''}</strong>? This cannot be undone.
+          </>
+        }
+        confirmLabel="Delete"
+        pendingLabel="Deleting…"
+        pending={deleteMutation.isPending}
+        onConfirm={async () => {
+          if (!confirmingDelete) return
+          try {
+            await deleteMutation.mutateAsync(confirmingDelete.id)
+            setConfirmingDelete(null)
+          } catch {
+            // hook surfaces error via toast; keep dialog open
+          }
+        }}
+        onClose={() => setConfirmingDelete(null)}
+      />
     </div>
   )
 }

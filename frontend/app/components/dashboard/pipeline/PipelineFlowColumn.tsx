@@ -87,10 +87,21 @@ export function PipelineFlowColumn({
   return (
     <div
       ref={columnRef}
-      className="w-[400px] flex-shrink-0 border-r border-zinc-200 bg-white rounded-l-xl overflow-y-auto"
+      className="w-[400px] flex-shrink-0 border-r rounded-l-xl overflow-y-auto"
+      style={{
+        background: 'var(--px-surface)',
+        borderColor: 'var(--px-hairline)',
+      }}
     >
-      <div className="px-5 py-4 border-b border-zinc-100 sticky top-0 bg-white/95 backdrop-blur z-10">
-        <div className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+      {/* TODO(design-review): no px-token equivalent for bg-white/95 translucent sticky overlay */}
+      <div
+        className="px-5 py-4 border-b sticky top-0 bg-white/95 backdrop-blur z-10"
+        style={{ borderColor: 'var(--px-hairline)' }}
+      >
+        <div
+          className="text-[11px] font-semibold uppercase tracking-wider"
+          style={{ color: 'var(--px-fg-3)' }}
+        >
           Pipeline Flow
         </div>
       </div>
@@ -113,7 +124,7 @@ export function PipelineFlowColumn({
         </div>
 
         {stages.length > 0 && (
-          <ChevronDown className="w-4 h-4 text-zinc-300" aria-hidden="true" />
+          <ChevronDown className="w-4 h-4 text-zinc-300" aria-hidden="true" /> // TODO(design-review): no px-token equivalent for text-zinc-300
         )}
 
         {/* Stage cards — wrapped in DndContext for drag-to-reorder */}
@@ -154,6 +165,7 @@ export function PipelineFlowColumn({
                     draggable={!!stageId}
                   />
                   {i < stages.length - 1 && (
+                    // TODO(design-review): no px-token equivalent for text-zinc-300
                     <ChevronDown
                       className="w-4 h-4 text-zinc-300 my-1.5"
                       aria-hidden="true"
@@ -166,7 +178,7 @@ export function PipelineFlowColumn({
         </DndContext>
 
         {stages.length > 0 && (
-          <ChevronDown className="w-4 h-4 text-zinc-300" aria-hidden="true" />
+          <ChevronDown className="w-4 h-4 text-zinc-300" aria-hidden="true" /> // TODO(design-review): no px-token equivalent for text-zinc-300
         )}
 
         {/* Offers pill (bottom) */}

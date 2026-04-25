@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 if TYPE_CHECKING:
     from app.modules.auth.admin import AuthProvider
+    from app.modules.auth.admin.base import SessionTokens
 
 from app.database import get_bypass_db
 from app.models import Client, OrganizationalUnit, User, UserInvite
@@ -290,6 +291,10 @@ async def login(
 
     # Phase 1: sign in. Generic 401 on any credential/user-not-found path
     # so the handler never discloses whether an email is registered.
+    #
+    # Note: this branch raises BEFORE tokens are minted by the provider,
+    # so there is nothing to revoke here. _revoke_quietly is only used
+    # below, where sign_in_with_password has already returned tokens.
     try:
         tokens = await provider.sign_in_with_password(data.email, data.password)
     except (InvalidCredentialsError, UserNotFoundError):
@@ -308,6 +313,7 @@ async def login(
     payload = verify_access_token(tokens.access_token)
     if payload is None:
         logger.error("auth.login.token_verify_failed", email=data.email)
+        await _revoke_quietly(provider, tokens)
         raise HTTPException(
             status_code=401, detail="Invalid email or password."
         )
@@ -315,6 +321,7 @@ async def login(
     tenant_id = payload.tenant_id or ""
     if not tenant_id:
         logger.info("auth.login.no_tenant", email=data.email)
+        await _revoke_quietly(provider, tokens)
         raise HTTPException(
             status_code=403,
             detail=(
@@ -329,6 +336,7 @@ async def login(
     user = user_row.scalar_one_or_none()
     if user is None:
         logger.error("auth.login.no_app_user", email=data.email)
+        await _revoke_quietly(provider, tokens)
         raise HTTPException(
             status_code=403,
             detail=(
@@ -337,6 +345,7 @@ async def login(
         )
     if not user.is_active:
         logger.info("auth.login.deactivated", user_id=str(user.id))
+        await _revoke_quietly(provider, tokens)
         raise HTTPException(
             status_code=403,
             detail="This account has been deactivated.",
@@ -367,6 +376,25 @@ async def login(
         expires_in=tokens.expires_in,
         redirect_to=redirect_to,
     )
+
+
+async def _revoke_quietly(
+    provider: "AuthProvider", tokens: "SessionTokens"
+) -> None:
+    """Revoke a session, swallowing transport errors.
+
+    Used by the login handler when an auth failure happens AFTER the
+    provider has minted tokens. The user is already being told their
+    auth attempt failed; a revocation failure must not change that
+    response, but it MUST be surfaced in structured logs at error level
+    for ops.
+    """
+    from app.modules.auth.admin import AuthProviderError
+
+    try:
+        await provider.sign_out(tokens)
+    except AuthProviderError:
+        logger.exception("auth.login.sign_out_failed")
 
 
 async def _safe_delete_auth_user(

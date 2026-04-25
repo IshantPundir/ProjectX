@@ -55,7 +55,7 @@ type StreamResult = {
 export function useJobStatusStream(jobId: string): StreamResult {
   const [status, setStatus] = useState<JobStatusEvent | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [isStreaming, setIsStreaming] = useState(true)
+  const [isStreaming, setIsStreaming] = useState(false)
   const queryClient = useQueryClient()
 
   useEffect(() => {
