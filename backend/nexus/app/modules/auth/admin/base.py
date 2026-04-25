@@ -95,3 +95,16 @@ class AuthProvider(Protocol):
         `AuthProviderError`.
         """
         ...
+
+    async def sign_out(self, tokens: SessionTokens) -> None:
+        """Revoke a previously-issued session.
+
+        Idempotent on already-revoked tokens — returns normally if the
+        session is gone. Idempotent in unconfigured environments — logs
+        a warning and returns. Other transport errors raise
+        `AuthProviderError`.
+
+        Used by the login handler to revoke a token that was minted
+        before a downstream auth check rejected the user.
+        """
+        ...
