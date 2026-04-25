@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { AlertCircle, Check, Loader2 } from 'lucide-react'
 
-import { Button } from '@/components/px'
+import { Button, DangerConfirmDialog } from '@/components/px'
 import { PipelineFlowColumn } from './PipelineFlowColumn'
 import { StageInspectorPanel } from './StageInspectorPanel'
 import { StageConnectorOverlay } from './StageConnectorOverlay'
@@ -63,6 +63,7 @@ export function UnifiedPipelineView({ job, pipeline, jobId }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [isDirty, setIsDirty] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
+  const [confirmingReset, setConfirmingReset] = useState(false)
 
   // Autosave plumbing (preserved verbatim from legacy page)
   const saveTimerRef = useRef<number | null>(null)
@@ -295,18 +296,22 @@ export function UnifiedPipelineView({ job, pipeline, jobId }: Props) {
   }
 
   function handleReset() {
-    if (confirm('Discard your edits and reset to the source template?')) {
-      if (saveTimerRef.current !== null) {
-        window.clearTimeout(saveTimerRef.current)
-        saveTimerRef.current = null
-      }
-      setIsDirty(false)
-      resetMutation.mutate(undefined, {
-        onSuccess: (fresh) => {
-          setStages(fresh.stages.map((s) => ({ ...s })))
-          selectStage(null)
-        },
-      })
+    setConfirmingReset(true)
+  }
+
+  async function confirmReset() {
+    if (saveTimerRef.current !== null) {
+      window.clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = null
+    }
+    setIsDirty(false)
+    try {
+      const fresh = await resetMutation.mutateAsync()
+      setStages(fresh.stages.map((s) => ({ ...s })))
+      selectStage(null)
+      setConfirmingReset(false)
+    } catch {
+      // hook surfaces error via toast; keep dialog open
     }
   }
 
@@ -546,6 +551,17 @@ export function UnifiedPipelineView({ job, pipeline, jobId }: Props) {
           }
         />
       )}
+
+      <DangerConfirmDialog
+        open={confirmingReset}
+        title="Reset to source template"
+        description="Discard your edits and reset to the source template? This cannot be undone."
+        confirmLabel="Reset"
+        pendingLabel="Resetting…"
+        pending={resetMutation.isPending}
+        onConfirm={confirmReset}
+        onClose={() => setConfirmingReset(false)}
+      />
     </div>
   )
 }
