@@ -7,7 +7,6 @@ import { LoadingSkeleton } from '@/components/dashboard/jd-panels/LoadingSkeleto
 import { ErrorBanner } from '@/components/dashboard/jd-panels/ErrorBanner'
 import { Confidence } from '@/components/dashboard/jd-panels/components/Confidence'
 import { SourceBadge } from '@/components/dashboard/jd-panels/components/SourceBadge'
-import { Kbd } from '@/components/dashboard/jd-panels/components/Kbd'
 import { EmptyRow } from '@/components/dashboard/jd-panels/components/EmptyRow'
 import { SnippetHighlighted } from '@/components/dashboard/jd-panels/components/SnippetHighlighted'
 import { InspectorHint } from '@/components/dashboard/jd-panels/components/InspectorHint'
@@ -15,6 +14,8 @@ import { InspectorTips } from '@/components/dashboard/jd-panels/components/Inspe
 import { InspectorAction } from '@/components/dashboard/jd-panels/components/InspectorAction'
 import { CanvasHeader } from '@/components/dashboard/jd-panels/components/CanvasHeader'
 import { SignalRow } from '@/components/dashboard/jd-panels/components/SignalRow'
+import { SignalGroup } from '@/components/dashboard/jd-panels/components/SignalGroup'
+import { TabStrip } from '@/components/dashboard/jd-panels/components/TabStrip'
 import { groupSignals, type SignalWithIndex } from '@/components/dashboard/jd-panels/helpers/groupSignals'
 import { needsReview } from '@/components/dashboard/jd-panels/helpers/needsReview'
 import { weightToConfidence } from '@/components/dashboard/jd-panels/helpers/weightToConfidence'
@@ -665,152 +666,6 @@ function SignalsCanvas({
         <div className="h-6" />
       </div>
     </main>
-  )
-}
-
-function TabStrip({
-  totalCount,
-  isConfirmed,
-  canManage,
-  isDirty,
-  saving,
-  confirming,
-  onSave,
-  onSaveAndConfirm,
-  onReEnrich,
-}: {
-  totalCount: number
-  isConfirmed: boolean
-  canManage: boolean
-  isDirty: boolean
-  saving: boolean
-  confirming: boolean
-  onSave: () => void
-  onSaveAndConfirm: () => void
-  onReEnrich: () => void
-}) {
-  return (
-    <div
-      className="flex h-10 flex-shrink-0 items-end gap-0 border-b px-6"
-      style={{ background: 'var(--px-bg)', borderColor: 'var(--px-hairline)' }}
-    >
-      <div
-        className="flex h-[39px] items-center gap-1.5 px-3.5 text-[13px] font-semibold"
-        style={{
-          color: 'var(--px-fg)',
-          borderBottom: '2px solid var(--px-accent)',
-        }}
-      >
-        Signals
-        <span
-          className="px-mono text-[10.5px]"
-          style={{ color: 'var(--px-fg-4)', fontVariantNumeric: 'tabular-nums' }}
-        >
-          {totalCount}
-        </span>
-      </div>
-      <div className="flex-1" />
-      <div className="flex items-center gap-1.5 pb-1.5">
-        <button
-          type="button"
-          className="px-btn ghost sm"
-          onClick={onReEnrich}
-          disabled={isConfirmed}
-        >
-          <I d={ICONS.refresh} size={11} />
-          Ask Copilot again
-        </button>
-        {isConfirmed ? (
-          <button type="button" className="px-btn outline sm" disabled>
-            Locked · live
-          </button>
-        ) : canManage ? (
-          <>
-            {isDirty && (
-              <button
-                type="button"
-                className="px-btn outline sm"
-                onClick={onSave}
-                disabled={saving}
-              >
-                {saving ? 'Saving…' : 'Save edits'}
-              </button>
-            )}
-            <button
-              type="button"
-              className="px-btn primary sm"
-              onClick={onSaveAndConfirm}
-              disabled={saving || confirming}
-            >
-              <I d={ICONS.check} size={11} stroke={2.2} />
-              {confirming
-                ? 'Confirming…'
-                : isDirty
-                  ? 'Save & publish'
-                  : 'Approve & publish'}
-              <Kbd keys={['⌘', '↵']} />
-            </button>
-          </>
-        ) : (
-          <span className="text-[11.5px]" style={{ color: 'var(--px-fg-4)' }}>
-            Read-only
-          </span>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function SignalGroup({
-  id,
-  title,
-  count,
-  helper,
-  emphasis,
-  children,
-}: {
-  id?: string
-  title: string
-  count: number
-  helper?: string
-  emphasis?: boolean
-  children: React.ReactNode
-}) {
-  return (
-    <section id={id} className="mb-[var(--px-group-gap)] scroll-mt-4">
-      <div className="flex items-baseline gap-2.5 px-1 pb-2.5">
-        <h2
-          className="m-0 text-[14px] font-bold"
-          style={{ color: 'var(--px-fg)', letterSpacing: '-0.1px' }}
-        >
-          {title}
-        </h2>
-        <span
-          className="px-mono text-[11px]"
-          style={{ color: 'var(--px-fg-4)', fontVariantNumeric: 'tabular-nums' }}
-        >
-          {count}
-        </span>
-        {helper && (
-          <span
-            className="text-[11.5px] italic"
-            style={{ color: 'var(--px-fg-4)' }}
-          >
-            · {helper}
-          </span>
-        )}
-      </div>
-      <div
-        className="overflow-hidden rounded-[10px] border"
-        style={{
-          background: 'var(--px-surface)',
-          borderColor: emphasis ? 'var(--px-hairline-strong)' : 'var(--px-hairline)',
-          boxShadow: emphasis ? 'var(--px-shadow-sm)' : 'none',
-        }}
-      >
-        {children}
-      </div>
-    </section>
   )
 }
 
