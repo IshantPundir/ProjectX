@@ -14,6 +14,7 @@ import { InspectorHint } from '@/components/dashboard/jd-panels/components/Inspe
 import { InspectorTips } from '@/components/dashboard/jd-panels/components/InspectorTips'
 import { InspectorAction } from '@/components/dashboard/jd-panels/components/InspectorAction'
 import { CanvasHeader } from '@/components/dashboard/jd-panels/components/CanvasHeader'
+import { SignalRow } from '@/components/dashboard/jd-panels/components/SignalRow'
 import { groupSignals, type SignalWithIndex } from '@/components/dashboard/jd-panels/helpers/groupSignals'
 import { needsReview } from '@/components/dashboard/jd-panels/helpers/needsReview'
 import { weightToConfidence } from '@/components/dashboard/jd-panels/helpers/weightToConfidence'
@@ -810,92 +811,6 @@ function SignalGroup({
         {children}
       </div>
     </section>
-  )
-}
-
-function SignalRow({
-  s,
-  rowId,
-  focused,
-  onClick,
-}: {
-  s: SignalWithIndex
-  rowId?: string
-  focused: boolean
-  onClick: () => void
-}) {
-  const confidence = weightToConfidence(s.weight)
-  const flagReview = needsReview(s)
-  return (
-    <div
-      id={rowId}
-      onClick={onClick}
-      className="grid cursor-pointer scroll-mt-4 items-center gap-3"
-      style={{
-        gridTemplateColumns: '84px 58px 1fr 120px 30px',
-        minHeight: 'var(--px-row-h)',
-        padding: 'var(--px-row-py) 14px',
-        background: focused ? 'var(--px-accent-tint)' : 'transparent',
-        borderBottom: '1px solid var(--px-hairline)',
-        borderLeft: focused ? '2px solid var(--px-accent)' : '2px solid transparent',
-        transition: 'background 120ms',
-      }}
-    >
-      <SourceBadge kind={s.source} />
-      {s.knockout ? (
-        <span
-          className="px-chip danger"
-          style={{ height: 20, padding: '0 7px', fontSize: 10, fontWeight: 700, letterSpacing: 0.3 }}
-        >
-          MUST
-        </span>
-      ) : (
-        <span />
-      )}
-      <div className="flex min-w-0 flex-wrap items-center gap-2.5">
-        <span
-          className="text-[14px] font-medium"
-          style={{ color: 'var(--px-fg)' }}
-        >
-          {s.value}
-        </span>
-        {s.evaluation_hint && (
-          <span
-            className="truncate text-[11.5px] italic"
-            style={{
-              color: 'var(--px-fg-3)',
-              paddingLeft: 10,
-              marginLeft: 2,
-              borderLeft: '2px solid var(--px-surface-3)',
-              maxWidth: 280,
-            }}
-          >
-            {s.evaluation_hint}
-          </span>
-        )}
-        {flagReview && (
-          <span
-            className="px-chip caution"
-            style={{ height: 18, padding: '0 6px', fontSize: 10 }}
-          >
-            <I d={ICONS.warn} size={9} />
-            double-check
-          </span>
-        )}
-      </div>
-      <div className="flex justify-end">
-        <Confidence value={confidence} />
-      </div>
-      <button
-        type="button"
-        className="px-btn ghost xs"
-        aria-label="More"
-        style={{ width: 26, padding: 0, justifyContent: 'center' }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <I d={ICONS.more} size={12} />
-      </button>
-    </div>
   )
 }
 
