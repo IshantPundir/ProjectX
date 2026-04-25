@@ -116,4 +116,48 @@ describe('applyApiErrorToForm', () => {
     expect(applyInAct(err, form)).toBe(true)
     expect(form.formState.errors.email?.message).toBe('bad')
   })
+
+  it('strips a custom prefix list (greedy) when stripPrefixes is provided', () => {
+    const form = renderForm().current
+    const err = new ApiValidationError('invalid', [
+      { loc: ['body', 'metadata', 'email'], msg: 'invalid email', type: 'value_error' },
+    ])
+    const result = applyInAct(err, form, {
+      stripPrefixes: ['body', 'metadata'],
+    })
+    expect(result).toBe(true)
+    expect(form.formState.errors.email?.message).toBe('invalid email')
+  })
+
+  it('default behaviour (no stripPrefixes) only strips body — preserves dotted nested path', () => {
+    const form = renderForm().current
+    const err = new ApiValidationError('nested', [
+      { loc: ['body', 'profile', 'about'], msg: 'too short', type: 'value_error' },
+    ])
+    const result = applyInAct(err, form)
+    expect(result).toBe(true)
+    expect(form.formState.errors.profile?.about?.message).toBe('too short')
+  })
+
+  it('greedy strip — multiple consecutive matches are all removed', () => {
+    const form = renderForm().current
+    const err = new ApiValidationError('oops', [
+      { loc: ['body', 'body', 'email'], msg: 'oops', type: 'value_error' },
+    ])
+    const result = applyInAct(err, form, { stripPrefixes: ['body'] })
+    expect(result).toBe(true)
+    expect(form.formState.errors.email?.message).toBe('oops')
+  })
+
+  it('stops stripping at the first non-matching segment', () => {
+    const form = renderForm().current
+    const err = new ApiValidationError('oops', [
+      { loc: ['body', 'email'], msg: 'oops', type: 'value_error' },
+    ])
+    const result = applyInAct(err, form, {
+      stripPrefixes: ['body', 'metadata'],
+    })
+    expect(result).toBe(true)
+    expect(form.formState.errors.email?.message).toBe('oops')
+  })
 })
