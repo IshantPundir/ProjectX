@@ -2,6 +2,7 @@
 
 import { useRef, useState } from 'react'
 import { ChevronDown, MoreVertical, RefreshCcw, Trash2 } from 'lucide-react'
+import { DangerConfirmDialog } from '@/components/px'
 import type { QuestionResponse } from '@/lib/api/question-banks'
 import { useDeleteQuestion } from '@/lib/hooks/use-save-question'
 import { useRegenerateQuestion } from '@/lib/hooks/use-regenerate-question'
@@ -24,6 +25,8 @@ export function QuestionCard({
   onToggleExpand,
 }: Props) {
   const [menuOpen, setMenuOpen] = useState(false)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [confirmingRegenerate, setConfirmingRegenerate] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const deleteMutation = useDeleteQuestion(jobId, stageId)
   const regenMutation = useRegenerateQuestion(jobId, stageId, question.id)
@@ -121,13 +124,7 @@ export function QuestionCard({
                     type="button"
                     onClick={() => {
                       setMenuOpen(false)
-                      if (
-                        confirm(
-                          'Replace this question with a new AI-generated one? Your edits will be lost.',
-                        )
-                      ) {
-                        regenMutation.mutate({})
-                      }
+                      setConfirmingRegenerate(true)
                     }}
                     className="w-full flex items-center gap-2 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50 text-left"
                   >
@@ -139,9 +136,7 @@ export function QuestionCard({
                     type="button"
                     onClick={() => {
                       setMenuOpen(false)
-                      if (confirm('Delete this question? Cannot be undone.')) {
-                        deleteMutation.mutate(question.id)
-                      }
+                      setConfirmingDelete(true)
                     }}
                     className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 text-left"
                   >
@@ -190,6 +185,42 @@ export function QuestionCard({
           <QuestionRubricExpanded question={question} />
         </div>
       )}
+
+      <DangerConfirmDialog
+        open={confirmingRegenerate}
+        title="Regenerate question"
+        description="Replace this question with a new AI-generated one? Your edits will be lost."
+        confirmLabel="Regenerate"
+        pendingLabel="Regenerating…"
+        pending={regenMutation.isPending}
+        onConfirm={async () => {
+          try {
+            await regenMutation.mutateAsync({})
+            setConfirmingRegenerate(false)
+          } catch {
+            // hook surfaces error via toast; keep dialog open
+          }
+        }}
+        onClose={() => setConfirmingRegenerate(false)}
+      />
+
+      <DangerConfirmDialog
+        open={confirmingDelete}
+        title="Delete question"
+        description="Delete this question? This cannot be undone."
+        confirmLabel="Delete"
+        pendingLabel="Deleting…"
+        pending={deleteMutation.isPending}
+        onConfirm={async () => {
+          try {
+            await deleteMutation.mutateAsync(question.id)
+            setConfirmingDelete(false)
+          } catch {
+            // hook surfaces error via toast; keep dialog open
+          }
+        }}
+        onClose={() => setConfirmingDelete(false)}
+      />
     </div>
   )
 }
