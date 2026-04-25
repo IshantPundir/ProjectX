@@ -5,6 +5,11 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation'
 
 import { LoadingSkeleton } from '@/components/dashboard/jd-panels/LoadingSkeleton'
 import { ErrorBanner } from '@/components/dashboard/jd-panels/ErrorBanner'
+import { groupSignals, type SignalWithIndex } from '@/components/dashboard/jd-panels/helpers/groupSignals'
+import { needsReview } from '@/components/dashboard/jd-panels/helpers/needsReview'
+import { weightToConfidence } from '@/components/dashboard/jd-panels/helpers/weightToConfidence'
+import { findSnippet } from '@/components/dashboard/jd-panels/helpers/findSnippet'
+import { suggestQuestions } from '@/components/dashboard/jd-panels/helpers/suggestQuestions'
 import { useJob } from '@/lib/hooks/use-job'
 import { useJobPipeline } from '@/lib/hooks/use-job-pipeline'
 import { useJobStatusStream } from '@/lib/hooks/use-job-status-stream'
@@ -93,11 +98,6 @@ function SourceBadge({ kind }: { kind: SourceKind }) {
   )
 }
 
-// Signals use ordinal weight 1 | 2 | 3. Map to a visual 0–1 scale.
-function weightToConfidence(weight: 1 | 2 | 3): number {
-  return ({ 1: 0.52, 2: 0.74, 3: 0.92 } as const)[weight]
-}
-
 function Confidence({ value, inline = false }: { value: number; inline?: boolean }) {
   const filled = Math.round(value * 10)
   const color =
@@ -146,28 +146,6 @@ function Kbd({ keys }: { keys: readonly string[] }) {
       ))}
     </span>
   )
-}
-
-/* ─── Signal grouping ────────────────────────────────────── */
-
-type SignalWithIndex = SignalItem & { _i: number }
-
-function groupSignals(signals: SignalItem[]): {
-  must: SignalWithIndex[]
-  nice: SignalWithIndex[]
-} {
-  const must: SignalWithIndex[] = []
-  const nice: SignalWithIndex[] = []
-  signals.forEach((s, i) => {
-    const withIdx = { ...s, _i: i }
-    if (s.knockout || s.priority === 'required') must.push(withIdx)
-    else nice.push(withIdx)
-  })
-  return { must, nice }
-}
-
-function needsReview(s: SignalItem): boolean {
-  return s.source === 'ai_inferred' && s.weight < 2
 }
 
 /* ─── Page ────────────────────────────────────────────────── */
@@ -1583,25 +1561,6 @@ function InspectorTips() {
 
 /* ─── Snippet helpers ────────────────────────────────────── */
 
-function findSnippet(raw: string | null | undefined, needle: string): string | null {
-  if (!raw || !needle) return null
-  const idx = raw.toLowerCase().indexOf(needle.toLowerCase())
-  if (idx < 0) return null
-  // Pick the sentence containing the match.
-  const start = Math.max(
-    raw.lastIndexOf('. ', idx) + 1,
-    raw.lastIndexOf('\n', idx) + 1,
-    0,
-  )
-  let end = raw.length
-  for (const delim of ['. ', '\n']) {
-    const i = raw.indexOf(delim, idx + needle.length)
-    if (i > 0 && i < end) end = i + 1
-  }
-  const slice = raw.slice(start, end).trim()
-  return slice.length > 320 ? slice.slice(0, 320) + '…' : slice
-}
-
 function SnippetHighlighted({ text, needle }: { text: string; needle: string }) {
   const i = text.toLowerCase().indexOf(needle.toLowerCase())
   if (i < 0) return <span>{text}</span>
@@ -1627,32 +1586,3 @@ function SnippetHighlighted({ text, needle }: { text: string; needle: string }) 
   )
 }
 
-function suggestQuestions(s: SignalItem): string[] {
-  // Non-LLM fallback — three generic probes keyed off the signal type. Keeps
-  // the inspector useful until per-signal question drafting ships.
-  const v = s.value
-  if (s.type === 'competency') {
-    return [
-      `Walk me through a time you owned ${v} end-to-end.`,
-      `What's a decision you regret around ${v}?`,
-      `How do you know when you've gone deep enough on ${v}?`,
-    ]
-  }
-  if (s.type === 'experience') {
-    return [
-      `Tell me about your ${v} in the most technically demanding role you've held.`,
-      `What patterns repeat across ${v} that most people miss?`,
-      `Where did your mental model for ${v} break, and what replaced it?`,
-    ]
-  }
-  if (s.type === 'credential') {
-    return [
-      `How does your ${v} actually show up in day-to-day work?`,
-      `What's something your ${v} didn't prepare you for?`,
-    ]
-  }
-  return [
-    `Tell me a story about ${v} under real stakes.`,
-    `What would we see on Day 1 that tells us you have ${v}?`,
-  ]
-}
