@@ -6,14 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
 
-import {
-  Button,
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/px";
+import { Button, DangerConfirmDialog } from "@/components/px";
 import { applyApiErrorToForm } from "@/lib/api/errors";
 import { useAssignRole } from "@/lib/hooks/use-assign-role";
 import { useOrgUnitMembers } from "@/lib/hooks/use-org-unit-members";
@@ -305,39 +298,20 @@ export function MembersSection({ unitId }: { unitId: string }) {
         </div>
       </div>
 
-      <Dialog
+      <DangerConfirmDialog
         open={!!toRemove}
-        onOpenChange={(open) => {
-          if (!open) setToRemove(null);
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Remove role</DialogTitle>
-            <DialogDescription>
-              Remove <strong>{toRemove?.roleName}</strong> from this user on this unit?
-            </DialogDescription>
-          </DialogHeader>
-          <div className="mt-4 flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => setToRemove(null)}
-              className="px-btn ghost sm"
-              disabled={removeMutation.isPending}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={handleConfirmRemove}
-              disabled={removeMutation.isPending}
-              className="px-btn danger sm"
-            >
-              {removeMutation.isPending ? "Removing…" : "Remove role"}
-            </button>
-          </div>
-        </DialogContent>
-      </Dialog>
+        title="Remove role"
+        description={
+          <>
+            Remove <strong>{toRemove?.roleName}</strong> from this user on this unit?
+          </>
+        }
+        confirmLabel="Remove role"
+        pendingLabel="Removing…"
+        pending={removeMutation.isPending}
+        onConfirm={handleConfirmRemove}
+        onClose={() => setToRemove(null)}
+      />
     </Section>
   );
 }
