@@ -6,6 +6,7 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { LoadingSkeleton } from '@/components/dashboard/jd-panels/LoadingSkeleton'
 import { ErrorBanner } from '@/components/dashboard/jd-panels/ErrorBanner'
 import { SectionsRail } from '@/components/dashboard/jd-panels/SectionsRail'
+import { FullJdCanvas } from '@/components/dashboard/jd-panels/FullJdCanvas'
 import { Confidence } from '@/components/dashboard/jd-panels/components/Confidence'
 import { SourceBadge } from '@/components/dashboard/jd-panels/components/SourceBadge'
 import { EmptyRow } from '@/components/dashboard/jd-panels/components/EmptyRow'
@@ -499,123 +500,6 @@ function SignalsCanvas({
         </SignalGroup>
 
         <div className="h-6" />
-      </div>
-    </main>
-  )
-}
-
-/* ─── Center canvas — Full JD view ──────────────────────── */
-
-function FullJdCanvas({
-  job,
-  onReEnrich,
-}: {
-  job: JobPostingWithSnapshot
-  onReEnrich: () => void
-}) {
-  const [which, setWhich] = useState<'enriched' | 'raw'>(
-    job.description_enriched ? 'enriched' : 'raw',
-  )
-  const text = which === 'enriched' ? job.description_enriched : job.description_raw
-
-  return (
-    <main
-      className="flex min-w-0 flex-col overflow-hidden rounded-[10px] border"
-      style={{
-        background: 'var(--px-surface)',
-        borderColor: 'var(--px-hairline)',
-      }}
-    >
-      <div className="flex-shrink-0 px-6 pb-4 pt-5">
-        <h1
-          className="m-0 text-[22px] font-semibold"
-          style={{ color: 'var(--px-fg)', letterSpacing: '-0.4px' }}
-        >
-          Full JD
-        </h1>
-        <div className="mt-1 text-[12.5px]" style={{ color: 'var(--px-fg-3)' }}>
-          {which === 'enriched'
-            ? 'Rewritten by Copilot to match your company voice.'
-            : 'Original text you pasted.'}
-        </div>
-      </div>
-
-      <div
-        className="flex h-10 flex-shrink-0 items-center gap-1.5 border-b px-6"
-        style={{
-          background: 'var(--px-surface)',
-          borderColor: 'var(--px-hairline)',
-        }}
-      >
-        {job.description_enriched && (
-          <button
-            type="button"
-            className={`px-btn ${which === 'enriched' ? 'primary' : 'ghost'} xs`}
-            onClick={() => setWhich('enriched')}
-          >
-            Enriched
-          </button>
-        )}
-        <button
-          type="button"
-          className={`px-btn ${which === 'raw' ? 'primary' : 'ghost'} xs`}
-          onClick={() => setWhich('raw')}
-        >
-          Raw
-        </button>
-        <div className="flex-1" />
-        <button
-          type="button"
-          className="px-btn ghost xs"
-          onClick={onReEnrich}
-          disabled={job.is_confirmed}
-        >
-          <I d={ICONS.refresh} size={10} />
-          Re-enrich
-        </button>
-      </div>
-
-      <div className="px-6 pb-8 pt-5">
-        <article
-          className="rounded-[10px] border p-6"
-          style={{
-            background: 'var(--px-surface)',
-            borderColor: 'var(--px-hairline)',
-          }}
-        >
-          <pre
-            className="px-serif m-0 whitespace-pre-wrap text-[14px]"
-            style={{
-              color: 'var(--px-fg-2)',
-              lineHeight: 1.65,
-              fontFamily: 'var(--font-serif)',
-            }}
-          >
-            {text || 'No content.'}
-          </pre>
-        </article>
-
-        {job.project_scope_raw && (
-          <article
-            className="mt-4 rounded-[10px] border p-6"
-            style={{
-              background: 'var(--px-surface)',
-              borderColor: 'var(--px-hairline)',
-            }}
-          >
-            <div className="px-eyebrow mb-2">Project scope</div>
-            <pre
-              className="m-0 whitespace-pre-wrap text-[13px]"
-              style={{
-                color: 'var(--px-fg-2)',
-                lineHeight: 1.6,
-                fontFamily: 'var(--font-sans)',
-              }}
-            >
-              {job.project_scope_raw}
-            </pre>
-          </article>
-        )}
       </div>
     </main>
   )
