@@ -45,7 +45,8 @@ export function TemplatePickerDialog({
           <div
             role="tablist"
             aria-label="Template source"
-            className="flex gap-1 border-b border-zinc-200"
+            className="flex gap-1 border-b"
+            style={{ borderColor: 'var(--px-hairline)' }}
           >
             <button
               type="button"
@@ -55,7 +56,8 @@ export function TemplatePickerDialog({
               aria-controls="tpd-panel-library"
               tabIndex={tab === 'library' ? 0 : -1}
               onClick={() => setTab('library')}
-              className={`text-sm px-3 py-2 border-b-2 ${tab === 'library' ? 'border-blue-600 text-blue-600' : 'border-transparent text-zinc-500'}`}
+              className={`text-sm px-3 py-2 border-b-2 ${tab === 'library' ? 'border-blue-600 text-blue-600' : 'border-transparent'}`}
+              style={tab === 'library' ? undefined : { color: 'var(--px-fg-3)' }}
             >
               Your library
             </button>
@@ -67,7 +69,8 @@ export function TemplatePickerDialog({
               aria-controls="tpd-panel-starters"
               tabIndex={tab === 'starters' ? 0 : -1}
               onClick={() => setTab('starters')}
-              className={`text-sm px-3 py-2 border-b-2 ${tab === 'starters' ? 'border-blue-600 text-blue-600' : 'border-transparent text-zinc-500'}`}
+              className={`text-sm px-3 py-2 border-b-2 ${tab === 'starters' ? 'border-blue-600 text-blue-600' : 'border-transparent'}`}
+              style={tab === 'starters' ? undefined : { color: 'var(--px-fg-3)' }}
             >
               Starter pack
             </button>
@@ -82,14 +85,25 @@ export function TemplatePickerDialog({
               className="grid grid-cols-1 md:grid-cols-2 gap-4"
             >
               {templates?.length === 0 && (
-                <div className="col-span-2 text-sm text-zinc-500">
+                <div
+                  className="col-span-2 text-sm"
+                  style={{ color: 'var(--px-fg-3)' }}
+                >
                   No templates in your library yet. Try the starter pack tab.
                 </div>
               )}
               {templates?.map((t) => (
-                <div key={t.id} className="bg-zinc-50 border border-zinc-200 rounded-lg p-4">
+                // TODO(design-review): no px-token equivalent for bg-zinc-50 card fill
+                <div
+                  key={t.id}
+                  className="bg-zinc-50 border rounded-lg p-4"
+                  style={{ borderColor: 'var(--px-hairline)' }}
+                >
                   <div className="text-sm font-semibold mb-1">{t.name}</div>
-                  <div className="text-xs text-zinc-500 mb-3">
+                  <div
+                    className="text-xs mb-3"
+                    style={{ color: 'var(--px-fg-3)' }}
+                  >
                     {t.stages.map((s) => s.name).join(' → ')}
                   </div>
                   <Button size="sm" onClick={() => onPickTemplate(t)}>
