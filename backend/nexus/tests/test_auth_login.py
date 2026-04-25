@@ -27,6 +27,7 @@ from app.database import get_bypass_db
 from app.main import app
 from app.models import Client, User
 from app.modules.auth.admin.base import (
+    AuthProviderError,
     InvalidCredentialsError,
     SessionTokens,
     UserIdentity,
@@ -68,10 +69,13 @@ class _FakeProvider:
         *,
         sign_in_side_effect: Exception | None = None,
         sign_in_return: SessionTokens | None = None,
+        sign_out_side_effect: Exception | None = None,
     ) -> None:
         self._sign_in_side_effect = sign_in_side_effect
         self._sign_in_return = sign_in_return
+        self._sign_out_side_effect = sign_out_side_effect
         self.calls: list[tuple[str, tuple]] = []
+        self.sign_out_calls: list[SessionTokens] = []
 
     async def sign_in_with_password(
         self, email: str, password: str
@@ -81,6 +85,11 @@ class _FakeProvider:
             raise self._sign_in_side_effect
         assert self._sign_in_return is not None
         return self._sign_in_return
+
+    async def sign_out(self, tokens: SessionTokens) -> None:
+        self.sign_out_calls.append(tokens)
+        if self._sign_out_side_effect is not None:
+            raise self._sign_out_side_effect
 
     # Unused in these tests but present so the provider satisfies the
     # Protocol in case the handler grows to call other methods.
@@ -361,3 +370,220 @@ async def test_login_missing_tenant_id_returns_403() -> None:
                 json={"email": "admin@projectx.example", "password": "x"},
             )
     assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Token revocation on auth-failure branches (C7)
+#
+# Each of the 4 minted-token branches must:
+#   1. Call AuthProvider.sign_out with the tokens just minted
+#   2. Still return the original auth-failure status (revocation tolerant)
+#   3. Not unbreak the auth failure if sign_out itself raises
+# ---------------------------------------------------------------------------
+
+
+async def test_login_revokes_tokens_on_token_verify_failure() -> None:
+    """Branch 1: provider returns tokens, verify_access_token returns None.
+    Handler must sign_out before raising 401."""
+    minted = SessionTokens(
+        access_token="atk-verify-fail",
+        refresh_token="rtk-verify-fail",
+        expires_in=3600,
+    )
+    provider = _FakeProvider(sign_in_return=minted)
+    with patch(
+        "app.modules.auth.admin.get_auth_provider", return_value=provider
+    ), _patch_verify_token(None):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/api/auth/login",
+                json={"email": "user@example.com", "password": "x"},
+            )
+    assert resp.status_code == 401
+    assert len(provider.sign_out_calls) == 1
+    assert provider.sign_out_calls[0] == minted
+
+
+async def test_login_revokes_tokens_on_missing_tenant_id() -> None:
+    """Branch 2: tenant_id empty → sign_out then 403."""
+    minted = SessionTokens(
+        access_token="atk-no-tenant",
+        refresh_token="rtk-no-tenant",
+        expires_in=3600,
+    )
+    provider = _FakeProvider(sign_in_return=minted)
+    with patch(
+        "app.modules.auth.admin.get_auth_provider", return_value=provider
+    ), _patch_verify_token(""):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/api/auth/login",
+                json={"email": "admin@projectx.example", "password": "x"},
+            )
+    assert resp.status_code == 403
+    assert len(provider.sign_out_calls) == 1
+    assert provider.sign_out_calls[0] == minted
+
+
+async def test_login_revokes_tokens_on_no_app_user(db: AsyncSession) -> None:
+    """Branch 3: token decodes to a tenant_id but no users row exists for
+    that email. sign_out then 403."""
+    # Seed a tenant only — no User row for the email we'll send.
+    client_obj = Client(
+        name="No User Co",
+        workspace_mode="enterprise",
+        onboarding_complete=False,
+    )
+    db.add(client_obj)
+    await db.flush()
+
+    minted = SessionTokens(
+        access_token="atk-no-user",
+        refresh_token="rtk-no-user",
+        expires_in=3600,
+    )
+    provider = _FakeProvider(sign_in_return=minted)
+
+    app.dependency_overrides[get_bypass_db] = _make_db_override(db)
+    try:
+        with patch(
+            "app.modules.auth.admin.get_auth_provider", return_value=provider
+        ), _patch_verify_token(str(client_obj.id)):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as http_client:
+                resp = await http_client.post(
+                    "/api/auth/login",
+                    json={
+                        "email": "ghost@example.com",
+                        "password": "x",
+                    },
+                )
+    finally:
+        app.dependency_overrides.pop(get_bypass_db, None)
+
+    assert resp.status_code == 403
+    assert len(provider.sign_out_calls) == 1
+    assert provider.sign_out_calls[0] == minted
+
+
+async def test_login_revokes_tokens_on_deactivated_user(
+    db: AsyncSession,
+) -> None:
+    """Branch 4: deactivated user → sign_out then 403."""
+    user = await _seed_active_user(
+        db, is_active=False, is_super_admin=False
+    )
+    minted = SessionTokens(
+        access_token="atk-deactivated",
+        refresh_token="rtk-deactivated",
+        expires_in=3600,
+    )
+    provider = _FakeProvider(sign_in_return=minted)
+
+    app.dependency_overrides[get_bypass_db] = _make_db_override(db)
+    try:
+        with patch(
+            "app.modules.auth.admin.get_auth_provider", return_value=provider
+        ), _patch_verify_token(str(user.tenant_id)):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as http_client:
+                resp = await http_client.post(
+                    "/api/auth/login",
+                    json={"email": user.email, "password": "x"},
+                )
+    finally:
+        app.dependency_overrides.pop(get_bypass_db, None)
+
+    assert resp.status_code == 403
+    assert "deactivated" in resp.json()["detail"].lower()
+    assert len(provider.sign_out_calls) == 1
+    assert provider.sign_out_calls[0] == minted
+
+
+async def test_login_invalid_credentials_does_not_call_sign_out() -> None:
+    """The InvalidCredentialsError branch raises BEFORE tokens are minted.
+    sign_out must NOT be called — there is nothing to revoke."""
+    provider = _FakeProvider(
+        sign_in_side_effect=InvalidCredentialsError("bad pw"),
+    )
+    with patch(
+        "app.modules.auth.admin.get_auth_provider", return_value=provider
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/api/auth/login",
+                json={"email": "user@example.com", "password": "wrongpass"},
+            )
+    assert resp.status_code == 401
+    assert provider.sign_out_calls == []
+
+
+async def test_login_revoke_failure_does_not_unbreak_auth_failure() -> None:
+    """If sign_out itself raises AuthProviderError, the original
+    auth-failure response status MUST stand. Revocation errors are
+    logged but never propagated to the caller."""
+    minted = SessionTokens(
+        access_token="atk-revoke-fail",
+        refresh_token="rtk-revoke-fail",
+        expires_in=3600,
+    )
+    provider = _FakeProvider(
+        sign_in_return=minted,
+        sign_out_side_effect=AuthProviderError("revocation transport error"),
+    )
+    with patch(
+        "app.modules.auth.admin.get_auth_provider", return_value=provider
+    ), _patch_verify_token(""):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/api/auth/login",
+                json={"email": "admin@projectx.example", "password": "x"},
+            )
+    # Revocation failure must not change the original 403.
+    assert resp.status_code == 403
+    # But sign_out WAS attempted.
+    assert len(provider.sign_out_calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# Password length validation (Field(min_length=1, max_length=128))
+# ---------------------------------------------------------------------------
+
+
+async def test_login_rejects_empty_password() -> None:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post(
+            "/api/auth/login",
+            json={"email": "user@example.com", "password": ""},
+        )
+    assert resp.status_code == 422
+    body = resp.json()
+    assert any(err["loc"][-1] == "password" for err in body["detail"])
+
+
+async def test_login_rejects_oversized_password() -> None:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post(
+            "/api/auth/login",
+            json={
+                "email": "user@example.com",
+                "password": "x" * 129,
+            },
+        )
+    assert resp.status_code == 422
+    body = resp.json()
+    assert any(err["loc"][-1] == "password" for err in body["detail"])
