@@ -31,6 +31,9 @@ export {
 } from "./Dialog";
 export type { DialogProps, DialogContentProps } from "./Dialog";
 
+export { DangerConfirmDialog } from "./DangerConfirmDialog";
+export type { DangerConfirmDialogProps } from "./DangerConfirmDialog";
+
 export { Alert, AlertTitle, AlertDescription } from "./Alert";
 export type { AlertProps, AlertVariant } from "./Alert";
 
