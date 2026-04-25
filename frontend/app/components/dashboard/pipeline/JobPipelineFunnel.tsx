@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertCircle, Check, Loader2 } from 'lucide-react'
 
+import { DangerConfirmDialog } from '@/components/px'
 import {
   useResetJobPipeline,
   useSaveJobPipeline,
@@ -247,6 +248,7 @@ export function JobPipelineFunnel({ job, pipeline, jobId }: Props) {
   const [isDirty, setIsDirty] = useState(false)
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const [overIdx, setOverIdx] = useState<number | null>(null)
+  const [confirmingReset, setConfirmingReset] = useState(false)
 
   // Autosave plumbing
   const saveTimerRef = useRef<number | null>(null)
@@ -380,20 +382,25 @@ export function JobPipelineFunnel({ job, pipeline, jobId }: Props) {
   }
 
   function handleReset() {
-    if (!confirm('Discard your edits and reset to the source template?')) return
+    setConfirmingReset(true)
+  }
+
+  async function confirmReset() {
     if (saveTimerRef.current !== null) {
       window.clearTimeout(saveTimerRef.current)
       saveTimerRef.current = null
     }
     setIsDirty(false)
-    resetMutation.mutate(undefined, {
-      onSuccess: (fresh) => {
-        const normalized = normalizeStages(fresh.stages)
-        setStages(normalized)
-        setActiveId(null)
-        if (normalized.length !== fresh.stages.length) scheduleSave(normalized)
-      },
-    })
+    try {
+      const fresh = await resetMutation.mutateAsync()
+      const normalized = normalizeStages(fresh.stages)
+      setStages(normalized)
+      setActiveId(null)
+      if (normalized.length !== fresh.stages.length) scheduleSave(normalized)
+      setConfirmingReset(false)
+    } catch {
+      // hook surfaces error via toast; keep dialog open
+    }
   }
 
   const activeStage =
@@ -581,6 +588,17 @@ export function JobPipelineFunnel({ job, pipeline, jobId }: Props) {
           }
         />
       )}
+
+      <DangerConfirmDialog
+        open={confirmingReset}
+        title="Reset to source template"
+        description="Discard your edits and reset to the source template? This cannot be undone."
+        confirmLabel="Reset"
+        pendingLabel="Resetting…"
+        pending={resetMutation.isPending}
+        onConfirm={confirmReset}
+        onClose={() => setConfirmingReset(false)}
+      />
     </div>
   )
 }
@@ -882,6 +900,9 @@ function HeroFunnel({
   const [contextMenu, setContextMenu] = useState<
     | { idx: number; stageId: string | undefined; stageName: string; x: number; y: number }
     | null
+  >(null)
+  const [confirmingDelete, setConfirmingDelete] = useState<
+    { id: string; name: string } | null
   >(null)
 
   useEffect(() => {
@@ -1341,16 +1362,34 @@ function HeroFunnel({
             setContextMenu(null)
           }}
           onDelete={() => {
-            if (
-              contextMenu.stageId &&
-              confirm(`Delete stage "${contextMenu.stageName}"?`)
-            ) {
-              onDelete(contextMenu.stageId)
+            if (contextMenu.stageId) {
+              setConfirmingDelete({
+                id: contextMenu.stageId,
+                name: contextMenu.stageName,
+              })
             }
             setContextMenu(null)
           }}
         />
       )}
+
+      <DangerConfirmDialog
+        open={confirmingDelete !== null}
+        title="Delete stage"
+        description={
+          <>
+            Delete stage <strong>{confirmingDelete?.name ?? ''}</strong>?
+          </>
+        }
+        confirmLabel="Delete"
+        pendingLabel="Deleting…"
+        onConfirm={() => {
+          if (!confirmingDelete) return
+          onDelete(confirmingDelete.id)
+          setConfirmingDelete(null)
+        }}
+        onClose={() => setConfirmingDelete(null)}
+      />
     </div>
   )
 }
