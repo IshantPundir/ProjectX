@@ -35,7 +35,7 @@ These are **explicitly excluded** from this batch — flag and move on if encoun
 | D5.1 | jd-panels component boundaries | Nested `components/` + `helpers/` subfolders. One component per file (no exceptions for "small leaves"). Helpers are pure-function modules with no JSX. `index.ts` re-exports `JDReviewShell` only — internal layout free to refactor without touching the page. |
 | D5.2 | `confirm()` → Dialog pattern | Shared `<DangerConfirmDialog>` primitive in `components/px/`. All 7 callsites (6 in C4 + 1 in C5.3 + MembersSection in C5.5) use it. MembersSection migrates from its inline B4 pattern in the same batch for codebase consistency. |
 | D5.3 | `applyApiErrorToForm` nested-loc strategy | `stripPrefixes?: string[]` opt, default `["body"]` (preserves current behavior). Greedy front-strip — strips while the head matches any string in the list. No `locTransform` hook (YAGNI). |
-| D5.4 | `AuthProvider.sign_out` shape | `sign_out(tokens: SessionTokens) -> None` on the `AuthProvider` protocol. Idempotent on already-revoked tokens. Idempotent in unconfigured environments. Called from BOTH 403 branches in the login handler (deactivated-user AND missing-tenant_id), not just the deactivated case. |
+| D5.4 | `AuthProvider.sign_out` shape | `sign_out(tokens: SessionTokens) -> None` on the `AuthProvider` protocol. Idempotent on already-revoked tokens. Idempotent in unconfigured environments. Called from **every** auth-failure branch that has minted tokens — see §6.7 for the 4-branch enumeration (token-verify-fail, missing-tenant_id, no-app-user, deactivated). |
 | D5.5 | Onboarding error mapping | `CompanyProfileForm` accepts an optional `onError?: (err, form) => void` prop. Onboarding wires it with `applyApiErrorToForm(err, form, { stripPrefixes: ["body", "metadata"] })` falling back to `toast.error`. Folded into C5 as item 4. |
 | D5.6 | C8 composition test approach | Reusable harness `tests/_utils/render.tsx` exports `renderWithProviders(ui)` that wraps a fresh `QueryClient` (`retry: false`, `gcTime: 0`). C8.1, C8.2, C8.3 all use it. Network is mocked at `apiFetch` boundary, not deeper. |
 
@@ -51,7 +51,7 @@ These are **explicitly excluded** from this batch — flag and move on if encoun
 | C4 | T1 | `DangerConfirmDialog` primitive + 6 `confirm()` callsites: pipeline-templates page, UnifiedPipelineView, JobPipelineFunnel ×2, QuestionCard ×2. (C1 owns the 7th callsite at line 1412.) | Combined |
 | C5 | T1 | Small cleanups: (1) `useJobStatusStream.isStreaming` initial-state fix, (2) `MembersSection` uses real `useTeamMembers`, (3) `settings/team` bespoke `ConfirmDialog` → `DangerConfirmDialog`, (4) onboarding `onError` wiring, (5) MembersSection inline Dialog → `DangerConfirmDialog`. | Combined |
 | C6 | T2 | `applyApiErrorToForm` gets `stripPrefixes` opt per D5.3. Default unchanged; existing 14 callers behave identically. | Split |
-| C7 | T2 | Backend: add `sign_out` to `AuthProvider` protocol + Supabase impl. Login handler calls it in both 403 branches. `LoginRequest.password` gets `Field(min_length=1, max_length=128)`. CLAUDE.md auth-module gate triggers — split review. | Split |
+| C7 | T2 | Backend: add `sign_out` to `AuthProvider` protocol + Supabase impl. Login handler calls it in all 4 minted-token auth-failure branches (token verify failed, missing tenant_id, no app user row, deactivated). `LoginRequest.password` gets `Field(min_length=1, max_length=128)`. CLAUDE.md auth-module gate triggers — split review. | Split |
 | C8 | T2 | New `tests/_utils/render.tsx` harness. New tests: MembersSection cancel-path (C8.1), org-units `client_account` flow (C8.2), `<CompanyProfileDetail>` no-nested-form composition test (C8.3). C6 strip-prefix regression test colocated. | Combined |
 
 Review cadence per `feedback_subagent_review_cadence`: combined for small mechanical clusters (C3, C4, C5, C8); split for behavioral-semantics or load-bearing clusters (C1 decomposition, C2 a11y, C6 error-mapping, C7 auth + CLAUDE.md gate).
@@ -283,21 +283,23 @@ return <>
 3. **`settings/team/page.tsx` `ConfirmDialog` → `DangerConfirmDialog`**:
    - Delete the bespoke `ConfirmDialog` component at lines ~83-119.
    - Replace the callsite at line ~172 with `<DangerConfirmDialog>`.
-   - Verify same UX: title + description + Cancel + destructive Confirm.
+   - **UX shift:** the bespoke component closes synchronously on Confirm (`action.onConfirm(); onClose()`), with no pending state. `DangerConfirmDialog` stays open while the mutation runs and only closes on success — the parent calls `onClose()` after `await mutation.mutateAsync(...)`. This is an intentional improvement (user sees pending state, dialog stays open on error so the user can retry or cancel explicitly). The `confirmAction` state shape may need to grow from `{ message, onConfirm }` to track the in-flight mutation, OR the action can carry a `useMutation` reference so the dialog reads `pending` from it. Resolve in the plan; both shapes work.
 
 4. **Onboarding `onError` wiring** (`app/onboarding/page.tsx`):
-   - `CompanyProfileForm` gets a new optional `onError?: (err, form) => void` prop. When provided, the form's internal submit catches and delegates to `onError(err, form)` instead of re-throwing.
-   - Onboarding passes:
+   - `CompanyProfileForm` gets a new optional `onError?: (err, form) => void` prop. The form wraps its `onSubmit` callback in a try/catch — if the parent's `onSubmit` throws AND `onError` is provided, the form delegates to `onError(err, form)`. Otherwise the error re-throws (preserves current behavior for callers without `onError`).
+   - **Onboarding's existing wrapper at lines 420–431 is removed** (the `try { handleSubmitProfile } catch { setProfileError(); throw }` block). The parent passes `handleSubmitProfile` directly:
      ```tsx
      <CompanyProfileForm
        onSubmit={handleSubmitProfile}
        onError={(err, form) => {
          if (applyApiErrorToForm(err, form, { stripPrefixes: ["body", "metadata"] })) return
-         toast.error(err instanceof Error ? err.message : "Failed to save profile")
+         setProfileError(err instanceof Error ? err.message : "Failed to save profile")
        }}
+       submitLabel="Finish Onboarding"
      />
      ```
-   - When `onError` is not provided, current behavior (re-throw to parent) is preserved — other callers (`[unitId]/CompanyProfileDetail`) unaffected.
+   - The `profileError` useState + display block at lines ~410–417 is preserved as the form-level fallback for non-422 errors. (Could be migrated to `form.setError('root', ...)` later, but that's a refactor of `CompanyProfileForm`'s error-rendering surface — out of scope here.)
+   - When `onError` is not provided, current behavior (re-throw to parent) is preserved — other callers (`[unitId]/CompanyProfileDetail`) handle their own try/catch at the page level and are unaffected.
 
 5. **MembersSection inline Dialog → `DangerConfirmDialog`**:
    - Replace the inline `<Dialog open={!!toRemove}>...</Dialog>` block (lines 314-346) with a single `<DangerConfirmDialog>` callsite. Identical UX, less code.
@@ -338,7 +340,7 @@ function locToPath(loc: (string | number)[], stripPrefixes: string[]): string | 
 }
 ```
 
-**Tests in `tests/api/apply-api-error-to-form.test.ts` (new):**
+**Tests in `tests/api/apply-api-error-to-form.test.ts` (file exists from B4 — extend it with new cases):**
 - Default `["body"]`: `loc: ["body", "metadata", "website"]` → `"metadata.website"` (current behavior preserved)
 - `stripPrefixes: ["body", "metadata"]`: same loc → `"website"`
 - Multiple matching prefixes: `loc: ["body", "body", "x"]` → `"x"` (greedy)
@@ -389,21 +391,51 @@ async def sign_out(self, tokens: SessionTokens) -> None:
 ```
 
 **Login handler change (`app/modules/auth/router.py`):**
+
+The current handler has FOUR auth-failure branches that have already minted tokens (the `sign_in_with_password` call returned tokens before each check fired). All four leak the token into Supabase's GoTrue session log. All four get the same `sign_out` fix:
+
+| Branch | Line (current) | Status | Detail |
+|---|---|---|---|
+| 1 | 309–313 | 401 | `verify_access_token` returned None (token signature/audience/issuer mismatch) |
+| 2 | 315–323 | 403 | `payload.tenant_id` missing — ProjectX-admin-only account |
+| 3 | 330–337 | 403 | No app `users` row for this email (stranded auth account) |
+| 4 | 338–343 | 403 | `users.is_active = false` (deactivated) |
+
+A small helper colocated in the handler keeps each branch readable:
 ```python
-tokens = await auth_provider.sign_in_with_password(req.email, req.password)
-payload = verify_access_token(tokens.access_token)
+async def _revoke_quietly(provider: AuthProvider, tokens: SessionTokens) -> None:
+    """Revoke a session, swallowing transport errors.
+
+    The user is already being told their auth attempt failed; a revocation
+    failure must not change that response, but it MUST be surfaced in
+    structured logs at error level for ops.
+    """
+    try:
+        await provider.sign_out(tokens)
+    except AuthProviderError:
+        logger.exception("auth.login.sign_out_failed")
+```
+
+Each branch becomes:
+```python
+if payload is None:
+    await _revoke_quietly(provider, tokens)
+    raise HTTPException(401, "Invalid email or password.")
 
 if not payload.tenant_id:
-    await auth_provider.sign_out(tokens)
+    await _revoke_quietly(provider, tokens)
     raise HTTPException(403, "This account does not have access to the client dashboard.")
 
-user = await _load_user(db, payload.user_id)
+if user is None:
+    await _revoke_quietly(provider, tokens)
+    raise HTTPException(403, "This account does not have access to the client dashboard.")
+
 if not user.is_active:
-    await auth_provider.sign_out(tokens)
+    await _revoke_quietly(provider, tokens)
     raise HTTPException(403, "This account has been deactivated.")
 ```
 
-If `sign_out` itself raises, the 403 still fires — log the failure, do not propagate the revocation error to the client. (The original auth failure is the user-facing error.) This is implemented via `try/except AuthProviderError: logger.warning(...)` around the `sign_out` call.
+The `InvalidCredentialsError` / `UserNotFoundError` branch (line 295) is NOT one of these four — `sign_in_with_password` raises BEFORE returning tokens, so there is nothing to revoke.
 
 **Schema bound (`app/modules/auth/schemas.py`):**
 ```python
@@ -413,9 +445,9 @@ class LoginRequest(BaseModel):
 ```
 
 **Tests (`tests/test_auth_login.py`):**
-- Add: deactivated-user branch invokes `provider.sign_out`. Use a mock `AuthProvider` via dependency override; assert `sign_out` was called with the tokens returned by `sign_in_with_password`.
-- Add: missing-tenant_id branch invokes `provider.sign_out`. Same mock assertion.
-- Add: `sign_out` raises `AuthProviderError` → handler still returns 403 (revocation failure does not unbreak the auth failure).
+- Add a parametrized test covering all 4 minted-token branches: each provokes the corresponding error, asserts the correct status code, AND asserts `provider.sign_out` was called with the tokens returned by `sign_in_with_password`. Use a mock `AuthProvider` via dependency override.
+- Add: `sign_out` raises `AuthProviderError` → handler still returns the original auth-failure status (revocation failure does not unbreak the auth failure). Assert the structured log line was emitted.
+- Add: `InvalidCredentialsError`-from-`sign_in_with_password` branch does NOT call `sign_out` (no tokens were minted to revoke).
 - Update existing `test_login_rejects_missing_fields` to cover password-over-128-chars (422).
 
 ### 6.8 C8 — Test gaps + `renderWithProviders` harness
@@ -522,7 +554,7 @@ tests/test_auth_login.py                   (extend for sign_out branches + lengt
 | C4 | Each Dialog manually exercised: Cancel dismisses, Confirm fires mutation, dialog stays open on error; `grep -rn "confirm(" components/dashboard/pipeline/ components/dashboard/question-bank/ app/(dashboard)/settings/org-units/[unitId]/pipeline-templates/` returns 0 matches |
 | C5 | (1) Kill backend mid-stream, watch SSE retry once, polling kicks in immediately; (2) MembersSection still loads users; (3,5) team + MembersSection danger-confirms work; (4) onboarding submit with bad website surfaces field-level error |
 | C6 | New tests pass; existing 14 callers verified by full vitest suite |
-| C7 | Backend pytest passes including new tests; manual login flows: (a) valid user 200 + tokens, (b) deactivated user 403 + Supabase token-log shows revoked, (c) over-128-char password 422, (d) Supabase outage during sign_out → still returns 403 (logged warning) |
+| C7 | Backend pytest passes including new tests; manual login flows: (a) valid user 200 + tokens, (b) deactivated user 403 + Supabase token-log shows session revoked, (c) ProjectX-admin (no tenant_id) 403 + token revoked, (d) over-128-char password 422, (e) Supabase outage during sign_out → still returns the original auth-failure status (logged at error level), (f) bad password 401 → no `sign_out` invoked (nothing was minted) |
 | C8 | Composition test fails on temporary nested-form re-introduction (negative-control verification before commit); cancel test fails if cancel button calls mutation; client_account test fails if dialog flow regresses |
 
 **Whole-batch final gates:**
@@ -552,7 +584,8 @@ C7 touches `app/modules/auth/{router.py, admin/base.py, admin/supabase.py, schem
 
 Whole-batch reviewer must specifically scrutinize:
 - `sign_out` boundary on the `AuthProvider` protocol — does it port cleanly to Cognito (`RevokeToken` takes refresh token but `SessionTokens` includes both) and Keycloak (`/logout` endpoint)?
-- The two login-handler 403 branches — is revocation failure truly tolerant (logged, not propagated)? Is the order correct (verify access, then sign_out, then raise)?
+- All FOUR minted-token branches in the login handler call `_revoke_quietly` before raising. Is the order correct (verify access OR DB lookup → revoke → raise)? Is `_revoke_quietly` idempotent and DoS-safe (a malicious actor flooding bad creds against deactivated accounts cannot stack revocation timeouts indefinitely — the 10s httpx timeout caps each call)?
+- The `InvalidCredentialsError` branch correctly does NOT call `sign_out` — verified by test that no `sign_out` is invoked when `sign_in_with_password` raises before returning tokens.
 - `LoginRequest.password` 128-char bound — is this a DoS surface today (no, since FastAPI's request size limits cap before this), and is 128 chars a reasonable user-facing limit (yes — well above common password-manager output, well below DoS thresholds)?
 
 C1 touches `app/(dashboard)/jobs/[jobId]/page.tsx` which is NOT under any auth/middleware gate. Split review applied for size + behavioral coverage of signal-editing flow.
