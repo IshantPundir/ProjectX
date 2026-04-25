@@ -847,7 +847,7 @@ docs/superpowers/plans/2026-04-24-cleanup-batch-1-mechanical-fixes.md
 docs/superpowers/plans/2026-04-24-cleanup-batch-2-schema-sse.md
 docs/superpowers/plans/2026-04-24-cleanup-batch-3-auth-hardening.md
 docs/superpowers/plans/2026-04-24-cleanup-batch-4-form-migration.md
-docs/superpowers/plans/2026-04-24-cleanup-batch-5-decomposition-a11y.md
+docs/superpowers/plans/2026-04-24-cleanup-batch-5-6-final.md
 ```
 
 Each plan is executed in sequence. Per-batch acceptance criteria (sections 5.3, 6.7, 7.6, 8.4, 9.5) are the gate to move to the next batch.
