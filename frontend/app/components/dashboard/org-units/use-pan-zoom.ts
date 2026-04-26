@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
@@ -58,7 +59,12 @@ export function usePanZoom(
 
   // Latest values for use inside event handlers without stale closures.
   const latest = useRef({ tx, ty, scale })
-  latest.current = { tx, ty, scale }
+  // Mirror the latest state into a ref for use inside event handlers
+  // (the wheel listener is attached imperatively to get passive: false,
+  // so it doesn't see new closure values when state changes).
+  useLayoutEffect(() => {
+    latest.current = { tx, ty, scale }
+  }, [tx, ty, scale])
 
   const panState = useRef<{
     pointerId: number
