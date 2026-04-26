@@ -231,32 +231,48 @@ is_stale = (
 
 Recomputed **on writes** that could affect it (signal save, stage config save, bank generation/regeneration), and persisted. Read paths read the column directly. The `compute_is_stale` helper is repurposed into a writer (`recompute_and_persist_stale(db, bank)`) called from the relevant write paths. `bank.status` does not change on stale flip; it stays `generated` (or `confirmed`-then-dropped, see §11.5).
 
-### 5.4 Candidate journey snapshot — designed-for, Phase 3
+### 5.4 Candidate journey — existing schema + one new column
 
-The schema needs to support per-candidate forensic reconstruction. **No columns are added to candidate-journey tables in this spec** because the `candidate_journey` table doesn't exist yet. The Phase 3 migration that creates it must include:
+The candidate-journey infrastructure already exists from migration `0013_candidates_core`:
 
+- `candidate_job_assignments(id, candidate_id, job_posting_id, current_stage_id, status, ...)` with `status ∈ {'active','archived','hired','rejected','withdrawn'}` and `UNIQUE(candidate_id, job_posting_id)`.
+- `candidate_stage_progress(id, assignment_id, stage_id, entered_at, exited_at, outcome, ...)` — append-only transition log with `outcome ∈ {'advanced','rejected','withdrawn'} | NULL`.
+
+The `candidates` module is implemented (`app/modules/candidates/router.py:177-220` exposes `POST /candidates/{id}/assignments`, `PATCH /candidates/{id}/assignments/{aid}`, `POST /candidates/{id}/assignments/{aid}/transition`). `app/modules/candidates/service.py` has the `create_assignment`, `update_assignment_status`, and `transition_stage` helpers — *the advance-time resolver effectively lives here today* (verify exact form in `tests/test_candidates_stage_transitions.py`).
+
+**This spec adds one column** to support the per-candidate `pipeline_version` reconstruction that the active-job edit categories (§8) and Phase 3 reporting need:
+
+```sql
+ALTER TABLE candidate_job_assignments
+  ADD COLUMN entered_at_pipeline_version int NULL;
 ```
-entered_at_pipeline_version    int     NOT NULL
-current_stage_id               uuid    NOT NULL
-completed_stage_ids            uuid[]  NOT NULL DEFAULT '{}'
-```
 
-With the advance-time resolution algorithm:
+- Nullable, no backfill: existing rows have NULL ("unknown version, predates this design").
+- Populated on `create_assignment` from `pipeline_instance.pipeline_version` at time of insert. The `candidates/service.py::create_assignment` function gains one read of the instance version.
+- Read-only after creation. `update_assignment_status` and `transition_stage` do not touch it.
+
+The shape-resolution rule from §5.1 ("pipeline shape resolves at advance-time") uses the **live** pipeline state; `entered_at_pipeline_version` is purely forensic. The `next_stage_for(assignment)` resolver — which already exists in `app/modules/candidates/service.py::transition_stage` — must be updated to skip `paused_at IS NOT NULL` stages. This is a small change inside the existing function.
+
+Concretely the resolver becomes:
 
 ```python
-def next_stage_for(journey: CandidateJourney) -> Stage | None:
-    current = stages_by_id[journey.current_stage_id]
+def next_stage_for(assignment: CandidateJobAssignment) -> Stage | None:
+    completed_stage_ids = {
+        p.stage_id for p in candidate_stage_progress
+        if p.assignment_id == assignment.id and p.outcome == 'advanced'
+    }
+    current = stages_by_id[assignment.current_stage_id]
     return min(
         (s for s in pipeline.stages
          if s.position > current.position
          and s.paused_at is None
-         and s.id not in journey.completed_stage_ids),
+         and s.id not in completed_stage_ids),
         key=lambda s: s.position,
         default=None,
     )
 ```
 
-Reorders that would create a non-monotonic position vs. `completed_stage_ids` are naturally skipped by the `s.id not in completed_stage_ids` clause. Phase 3 may add stricter pre-flight checks if real workflows produce confusion.
+`completed_stage_ids` is derived live from the existing `candidate_stage_progress` table — no new column needed.
 
 ### 5.5 Session-start freeze — designed-for, Phase 3
 
@@ -319,7 +335,13 @@ This is the contract. Both UI and server enforce it. ✓ = configurable; ✗ = a
 - Pipeline unchanged from source template/starter since picker — "You haven't customized the starter pipeline. Activate anyway?"
 - Bank in state `generated` but never confirmed — informational, doesn't block.
 
-### 7.3 The activation surface (UI)
+### 7.3 What activation actually enforces server-side
+
+Activation is not just a UX flag — it is the gate at which `candidate_job_assignments` rows can be created. `app/modules/candidates/service.py::create_assignment` rejects with 409 `code: job_not_active` when `job.status != 'active'`. Before activation, the recruiter can configure the pipeline freely, but no candidate can enter it. After activation, candidates can be assigned (and they will pick up the live pipeline shape per §5).
+
+This is the only enforcement gate this design adds at the candidates boundary. Existing candidate operations (transition, status updates, redaction) are unaffected by activation state.
+
+### 7.4 The activation surface (UI)
 
 A status strip at the top of `/pipeline`:
 
@@ -373,13 +395,15 @@ Confirm dialog → DELETE stage (cascades).
 
 ### 8.3 Server-side change classification
 
-Frontend issues a dry-run before applying:
+Frontend issues a preview before applying:
 
 ```
-POST /api/jobs/{id}/pipeline:dry-run
+POST /api/jobs/{id}/pipeline/preview-changes
 Body: <proposed PATCH body>
 Response: { category: "A"|"B"|"C"|"D", warnings: string[], in_flight: { stage_id: count, ... } }
 ```
+
+`in_flight[stage_id]` counts come from `SELECT count(*) FROM candidate_job_assignments WHERE current_stage_id = $1 AND status = 'active'`.
 
 Frontend renders the appropriate banner/modal, then submits the real `PATCH` if the recruiter confirms. **The actual PATCH re-runs classification server-side** as a TOCTOU defense — between dry-run and apply, a candidate may have entered a stage. If category escalated (e.g., from B to C), the PATCH returns 409 `code: pipeline_diff_category_changed` and the frontend re-classifies and re-prompts.
 
@@ -533,7 +557,7 @@ All three are Category A.
 
 **Regenerate** (existing): wipes the bank, runs the full-bank actor. Treated as Category A on `active` jobs (forward-only — in-flight candidates not in mid-session pick up the new bank at session-start). Strong confirm dialog before fire because it discards prior recruiter refinements.
 
-**Confirm** (new affordance): `POST /api/jobs/{job_id}/pipeline/stages/{stage_id}/bank/confirm` sets `bank.status = 'confirmed'`, stamps `confirmed_at` and `confirmed_by`. Available on banks in `generated` state (not stale, not failed). Optional per §7 (not gating activation).
+**Confirm** (existing endpoint, not new — `POST /api/jobs/{job_id}/pipeline/stages/{stage_id}/questions/confirm` in `app/modules/question_bank/router.py`): sets `bank.status = 'confirmed'`, stamps `confirmed_at` and `confirmed_by`. Available on banks in `generated` state (not stale, not failed). Optional per §7 (not gating activation).
 
 ### 11.5 Stale + confirmation interaction
 
@@ -587,14 +611,15 @@ ALTER TABLE question_banks
   ADD COLUMN stage_config_snapshot jsonb NULL,
   ADD COLUMN is_stale bool NOT NULL DEFAULT false;
 
--- Backfill is_stale for existing banks (compare against current state once at migration time)
--- Subsequent recomputation happens on writes via recompute_and_persist_stale.
+-- Backfill is_stale for existing banks. Equivalent to current compute_is_stale
+-- (signal_snapshot drift only — stage_config_snapshot is null on legacy rows so
+-- that branch of the predicate is naturally skipped on first read).
 UPDATE question_banks qb
    SET is_stale = (
        qb.signal_snapshot_id != (
            SELECT id FROM job_posting_signal_snapshots
             WHERE job_posting_id = (
-                SELECT instance.job_id
+                SELECT instance.job_posting_id
                   FROM job_pipeline_stages stage
                   JOIN pipeline_instances instance ON instance.id = stage.instance_id
                  WHERE stage.id = qb.stage_id
@@ -604,9 +629,18 @@ UPDATE question_banks qb
        )
    );
 
--- jobs status: add new states
-ALTER TABLE job_postings
-  DROP CONSTRAINT IF EXISTS ck_job_postings_status;
+-- candidate_job_assignments: forensic version stamp (per §5.4)
+ALTER TABLE candidate_job_assignments
+  ADD COLUMN entered_at_pipeline_version int NULL;
+-- No backfill: legacy rows stay NULL ("unknown version"). All new rows
+-- created by candidates/service.py::create_assignment populate this from
+-- the live pipeline_instance.pipeline_version.
+
+-- job_postings.status: add CHECK constraint for the first time.
+-- The initial Supabase schema (backend/supabase/migrations/20260410000001_phase_2a_job_postings.sql)
+-- creates the column without a CHECK; values are enforced only by
+-- LEGAL_TRANSITIONS in app/modules/jd/state_machine.py. We harden by adding
+-- a DB-level CHECK that includes the new states.
 ALTER TABLE job_postings
   ADD CONSTRAINT ck_job_postings_status
   CHECK (status IN ('draft', 'signals_extracting', 'signals_extraction_failed',
@@ -618,13 +652,15 @@ ALTER TABLE job_postings
 UPDATE job_postings
    SET status = 'pipeline_built'
  WHERE status = 'signals_confirmed'
-   AND id IN (SELECT job_id FROM pipeline_instances);
+   AND id IN (SELECT job_posting_id FROM pipeline_instances);
 ```
 
 Notes:
 
 - `is_stale` is added with `DEFAULT false` and backfilled inline. Subsequent writes call a `recompute_and_persist_stale` helper.
-- The exact CHECK constraint name (`ck_job_postings_status`) and the exact column on `job_postings` (`status`) are verified against `app/models.py:156` (column) and the existing migration history (constraint name pattern).
+- `ck_job_postings_status` is **net-new** — the column predates this migration with no CHECK constraint (verified in initial schema and migration history). The rollback drops the constraint rather than re-creating an older one.
+- `entered_at_pipeline_version` is added now — `candidates/service.py::create_assignment` is updated to populate it on every new assignment. Existing rows stay NULL; consumer code (Phase 3 reporting) handles NULL as "unknown version" without falling over.
+- The data-migration UPDATE references `pipeline_instances.job_posting_id` — verify the exact FK column name in `app/models.py` at implementation time.
 - No new tables in this migration; `_assert_rls_completeness` enumerated list in `app/main.py` is unchanged.
 - A rollback script lives alongside per the root CLAUDE.md policy. See §15.
 
@@ -681,33 +717,45 @@ Validator behavior:
 
 ## 13. Endpoints — full inventory
 
-### 13.1 New
+**Codebase audit:** several question-bank endpoints I initially proposed as "new" already exist in `app/modules/question_bank/router.py`:
+
+| Already exists (verbatim path) | Treated by this spec as |
+|---|---|
+| `POST /jobs/{id}/pipeline/questions/generate-all` | Existing — wires the "Generate banks for all stages" CTA in §11.1 |
+| `POST /jobs/{id}/pipeline/stages/{sid}/questions/generate` | Existing — wires the per-stage Generate button |
+| `POST /jobs/{id}/pipeline/stages/{sid}/questions/{qid}/regenerate` | Existing — single-question regeneration |
+| `POST /jobs/{id}/pipeline/stages/{sid}/questions` | Existing — used as the "Add accept" call after the new `/draft` LLM preview |
+| `PATCH /jobs/{id}/pipeline/stages/{sid}/questions/{qid}` | Existing — used both for Mandatory toggle and for "Refine accept" (replaces text + metadata) |
+| `PATCH /jobs/{id}/pipeline/stages/{sid}/questions/reorder` | Existing — wires the question reorder UX |
+| `DELETE /jobs/{id}/pipeline/stages/{sid}/questions/{qid}` | Existing — wires the Delete button |
+| `POST /jobs/{id}/pipeline/stages/{sid}/questions/confirm` | Existing — wires the bank-level Confirm in §11.4 |
+
+These don't need new code; they need their behavior verified against this spec's invariants (Category-A version bump, stale recompute, etc.) and have new tests added where coverage is thin.
+
+### 13.1 Net-new endpoints
 
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/api/jobs/{id}/activate` | Run gate; transition `pipeline_built → active`; 422 with `predicates_failed` array on failure |
-| POST | `/api/jobs/{id}/pipeline:dry-run` | Classify proposed PATCH → `{category, warnings, in_flight}` |
-| POST | `/api/jobs/{id}/pipeline/stages/{stage_id}/pause` | Set `paused_at = now()`. 409 on intake/debrief |
-| POST | `/api/jobs/{id}/pipeline/stages/{stage_id}/unpause` | Clear `paused_at` |
-| POST | `/api/jobs/{id}/pipeline/stages/{stage_id}/bank/confirm` | Set `bank.status = 'confirmed'` |
-| POST | `/api/jobs/{id}/pipeline/stages/{stage_id}/questions/{q_id}/refine` | Sync LLM call; returns proposal; **no DB write** |
-| POST | `/api/jobs/{id}/pipeline/stages/{stage_id}/questions/draft` | Sync LLM call; returns proposal; **no DB write** |
-| PUT | `/api/jobs/{id}/pipeline/stages/{stage_id}/questions/{q_id}` | Replace question (refine accept) |
-| POST | `/api/jobs/{id}/pipeline/stages/{stage_id}/questions` | Create question (add accept) |
-| PATCH | `/api/jobs/{id}/pipeline/stages/{stage_id}/questions/{q_id}` | Toggle `mandatory` |
-| PATCH | `/api/jobs/{id}/pipeline/stages/{stage_id}/questions:reorder` | New positions for the stage's questions |
-| DELETE | `/api/jobs/{id}/pipeline/stages/{stage_id}/questions/{q_id}` | Delete question |
+| POST | `/api/jobs/{id}/pipeline/preview-changes` | Classify proposed PATCH → `{category, warnings, in_flight}` (renamed from `:dry-run` to match codebase slash-path convention; e.g. `/transition`, `/regenerate`, `/redact-pii`). |
+| POST | `/api/jobs/{id}/pipeline/stages/{stage_id}/pause` | Set `paused_at = now()`. 409 on intake/debrief. |
+| POST | `/api/jobs/{id}/pipeline/stages/{stage_id}/unpause` | Clear `paused_at`. |
+| POST | `/api/jobs/{id}/pipeline/stages/{stage_id}/questions/{q_id}/refine` | Sync LLM call; returns proposal; **no DB write**. Acceptance is a follow-up `PATCH` on the existing question-update endpoint. |
+| POST | `/api/jobs/{id}/pipeline/stages/{stage_id}/questions/draft` | Sync LLM call; returns proposal for a new question; **no DB write**. Acceptance is a follow-up `POST` on the existing question-create endpoint. |
 
-### 13.2 Modified
+### 13.2 Modified endpoints
 
 | Path | Change |
 |---|---|
-| `POST /api/jd/{id}/confirm-signals` | **Remove** call to `auto_apply_pipeline_on_confirmation`. Job transitions `signals_extracted → signals_confirmed` only. |
+| `POST /api/jd/{id}/confirm-signals` (`app/modules/jd/service.py`) | **Remove** the import + call of `auto_apply_pipeline_on_confirmation` (lines 429, 431-433). Job transitions `signals_extracted → signals_confirmed` only — no pipeline side-effect. |
 | `POST /api/jobs/{id}/pipeline` | Body becomes discriminated union by `source` (template / starter / scratch). On success: pipeline created AND job transitions `signals_confirmed → pipeline_built`. |
-| `PATCH /api/jobs/{id}/pipeline` | Runs change classifier internally (re-runs it as a TOCTOU defense vs the dry-run); bumps `pipeline_version`; rejects Category D on `active` jobs with 409. |
+| `PATCH /api/jobs/{id}/pipeline` | Runs change classifier internally (re-runs it as a TOCTOU defense vs `preview-changes`); bumps `pipeline_version`; rejects Category D on `active` jobs with 409. |
 | `POST /api/jobs/{id}/pipeline/reset` | Blocked when job is `active` (409 `code: pipeline_replace_forbidden_on_active`). Otherwise unchanged. |
-| `POST /api/jobs/{id}/pipeline/swap` | Same as reset. Unchanged otherwise. |
-| Bank read paths in `app/modules/question_bank/router.py` | Read persisted `is_stale` instead of calling `compute_is_stale()`. |
+| `POST /api/jobs/{id}/pipeline/swap` | Same as reset. |
+| `POST /candidates/{id}/assignments` (`app/modules/candidates/service.py::create_assignment`, line 267) | (a) Reject with 409 `code: job_not_active` when `job.status != 'active'`. This is what makes the Activate gate enforcement-real, not just UX. (b) Populate `entered_at_pipeline_version` from `pipeline_instance.pipeline_version` at insert time. |
+| `POST /candidates/{id}/assignments/{aid}/transition` (`app/modules/candidates/service.py::transition_stage`, line 391) | Update the next-stage resolver to skip stages where `paused_at IS NOT NULL`. Existing `tests/test_candidates_stage_transitions.py` gains a paused-stage case. |
+| `PATCH /jobs/{id}/pipeline/stages/{sid}/questions/{qid}` | Now bumps `pipeline_version`; calls `recompute_and_persist_stale` if signal-affecting fields change. |
+| Bank read paths in `app/modules/question_bank/router.py` (line 275, 337) | Read persisted `is_stale` column instead of calling `compute_is_stale()`. |
 | Bank write paths (signal save, stage config save, generation, regeneration) | Call `recompute_and_persist_stale(db, bank)` before commit. |
 
 ### 13.3 Unchanged
@@ -732,7 +780,7 @@ Validator behavior:
 | `components/dashboard/question-bank/RefineQuestionDialog.tsx` | §11.3 Refine modal |
 | `components/dashboard/question-bank/AddQuestionDialog.tsx` | §11.3 Add modal |
 | `lib/api/questions.ts` | Typed namespace for refine/draft/CRUD |
-| `lib/hooks/use-pipeline-classify.ts` | Wrapper around `:dry-run` |
+| `lib/hooks/use-pipeline-classify.ts` | Wrapper around `POST /pipeline/preview-changes` |
 | `lib/hooks/use-activate-job.ts` | Wrapper around `POST /activate` |
 | `lib/hooks/use-refine-question.ts`, `use-draft-question.ts` | Sync LLM call wrappers |
 
@@ -757,29 +805,42 @@ Validator behavior:
 ## 15. Rollback
 
 - **DB:** rollback script reverses migration `0017`:
-  - Drop `pipeline_version`, `paused_at`, `pipeline_version_at_generation`, `stage_config_snapshot`, `is_stale` columns.
+  - For any rows with `status = 'pipeline_built'` or `status = 'active'`: downgrade to `signals_confirmed`. Lossy on the active period; MVP, no production data, accepted.
+  - **Drop** the `ck_job_postings_status` constraint (it was net-new in `0017` — no prior version to restore).
+  - Drop `pipeline_version`, `paused_at`, `pipeline_version_at_generation`, `stage_config_snapshot`, `is_stale`, `entered_at_pipeline_version` columns.
   - Drop `ix_job_pipeline_stages_paused_at`.
-  - Restore `ck_job_postings_status` with the prior value set (no `pipeline_built`, no `archived`).
-  - For any rows with `status = 'pipeline_built'`: downgrade to `signals_confirmed`. For any with `status = 'active'`: downgrade to `signals_confirmed`. Lossy on the active period; MVP, no production data, accepted.
-- **Code:** standard Git revert. New endpoints are additive; reverting drops them. The `auto_apply_pipeline_on_confirmation` removal is the one *behavior-changing* revert — restoring it puts confirmation back to silent auto-apply.
+- **Code:** standard Git revert. New endpoints are additive; reverting drops them. The `auto_apply_pipeline_on_confirmation` removal in `confirm_signals` is the one *behavior-changing* revert — restoring it puts confirmation back to silent auto-apply.
 - **Frontend:** revert removes the new components. The discriminated-union schema change is the only TypeScript-breaking revert — old code expected the unified shape. Easy to revert because we're not removing fields, just narrowing them.
 
 ## 16. Tests
 
-### 16.1 Backend (pytest)
+All backend tests live in `tests/` at the repo root (not `app/modules/<module>/tests/` — the per-module convention is not used in this codebase).
+
+**New test files:**
 
 | Area | New test file |
 |---|---|
-| Per-category schema validators | `app/modules/pipelines/tests/test_stage_field_rules.py` — every (stage_type, field) cell of the matrix; reject Forbidden, server-stamp Locked, require Required |
-| Activation gate | `app/modules/jd/tests/test_activate.py` — happy path; each predicate failure surfaces structured error; can't activate from non-`pipeline_built`; idempotent on `active` (409 not 422) |
-| Picker (POST /pipeline discriminator) | extends `test_pipeline_create.py` (or equivalent) — template/starter/scratch each path; 409 on existing instance; transition to `pipeline_built` |
-| Confirm-signals no longer auto-applies | extends `test_jd_confirm.py` — assert no pipeline instance after confirm; `pipeline_built` reached only by explicit picker call |
-| Pipeline versioning | `app/modules/pipelines/tests/test_versioning.py` — every PATCH bumps; bank-question CRUD bumps; signal-edit does NOT bump pipeline_version (bumps signal_snapshot.version) |
-| Pause / unpause | `app/modules/pipelines/tests/test_pause.py` — pause intake/debrief → 409; pause non-IO → succeeds; unpause; in-flight count guard for delete |
-| Edit-category classifier (dry-run) | `app/modules/pipelines/tests/test_classify_diff.py` — every transition type maps to A/B/C/D; warnings surface; in-flight counts accurate |
-| Active-job edit guards | `app/modules/jd/tests/test_active_edits.py` — Category D blocked with `stage_type_change_forbidden`; Category C with in-flight=K forces pause-first; Category A bumps version; classifier re-runs on PATCH |
-| Refine / Add LLM endpoints | `app/modules/question_bank/tests/test_refine.py`, `test_draft.py` — full context loader called; structured response shape validated; mocked LLM (no real API hits in tests) |
-| Persisted stale flag | `app/modules/question_bank/tests/test_stale_persisted.py` — signal edit flips `is_stale`; stage `signal_filter`/`difficulty` edit flips `is_stale`; confirmation drops back to `generated` on stale |
+| Per-category schema validators | `tests/test_pipelines_stage_field_rules.py` — every (stage_type, field) cell of the matrix; reject Forbidden, server-stamp Locked, require Required |
+| Activation gate | `tests/test_pipelines_activate.py` — happy path; each predicate failure surfaces structured error; can't activate from non-`pipeline_built`; idempotent on `active` (409 not 422) |
+| Pipeline versioning | `tests/test_pipelines_versioning.py` — every PATCH bumps; bank-question CRUD bumps; signal-edit does NOT bump `pipeline_version` (bumps `signal_snapshot.version` instead) |
+| Pause / unpause | `tests/test_pipelines_pause.py` — pause intake/debrief → 409; pause non-IO → succeeds; unpause; in-flight count guard for delete (queries `candidate_job_assignments`) |
+| Edit-category classifier | `tests/test_pipelines_classify_diff.py` — every transition type maps to A/B/C/D; warnings surface; in-flight counts accurate |
+| Active-job edit guards | `tests/test_pipelines_active_edits.py` — Category D blocked with `stage_type_change_forbidden`; Category C with in-flight=K forces pause-first; Category A bumps version; classifier re-runs on PATCH |
+| Refine / Add LLM endpoints | `tests/test_question_banks_refine.py`, `tests/test_question_banks_draft.py` — full context loader called; structured response shape validated; mocked LLM (no real API hits in tests) |
+| Persisted stale flag | `tests/test_question_banks_stale_persisted.py` — signal edit flips `is_stale`; stage `signal_filter`/`difficulty` edit flips `is_stale`; confirmation drops back to `generated` on stale |
+| `entered_at_pipeline_version` populated on assignment create | `tests/test_candidates_assignment_version.py` — new column populated from current instance version; existing rows (NULL) handled gracefully |
+
+**Existing test files that need updates:**
+
+| File | Change |
+|---|---|
+| `tests/test_pipelines_auto_apply.py` | Test currently runs `confirm_signals` and asserts auto-apply happens. After this design lands, `confirm_signals` no longer auto-applies. Rewrite: call `auto_apply_pipeline_on_confirmation` directly to keep coverage of the helper; add a new assertion that `confirm_signals` produces no pipeline instance. |
+| `tests/test_pipelines_router.py` | Update the `POST /api/jobs/{id}/pipeline` cases for the discriminated-union body. Add cases for the `pipeline_built` transition. |
+| `tests/test_jd_router.py` | Update confirm-signals cases — assert no pipeline instance after confirm. |
+| `tests/test_jd_state_transitions_integration.py` | Add the `signals_confirmed → pipeline_built → active` transitions. |
+| `tests/test_pipelines_service.py` | Add coverage for the version classifier helper and `recompute_and_persist_stale`. |
+| `tests/test_candidates_stage_transitions.py` | Update `transition_stage` resolver test cases to verify paused stages are skipped. |
+| `tests/test_question_banks_*.py` (router, service, actors) | Spot-check that the existing endpoints behave as the spec expects (Category-A version bump, persisted `is_stale` reads). Many will need a small fixture tweak rather than a full rewrite. |
 
 ### 16.2 Frontend (vitest)
 
@@ -815,13 +876,15 @@ One end-to-end happy-path test (backend pytest with httpx + DB fixture):
 - **Order within the PR** (matches §1 in the implementation plan, to be authored next):
   1. Migration `0017` + rollback + ORM model updates.
   2. Pydantic schemas + per-category validators (with backend tests).
-  3. Modified backend endpoints (drop auto-apply, expand source discriminator, classifier, version bumping).
-  4. New backend endpoints (activate, dry-run, pause/unpause, bank confirm, refine/draft, question CRUD).
-  5. New prompt files + `build_question_context` refactor.
-  6. Frontend types + API namespaces + hooks.
-  7. Frontend component rewrites — config gating first (visual smoke).
-  8. Frontend new components — picker, ActivationGate, SourcePill, dialogs.
-  9. Frontend page-level wiring — `/pipeline` branch, `/questions` filter, dry-run integration.
+  3. Modified `confirm_signals` (drop auto-apply call); modified `POST /pipeline` (source discriminator) + `pipeline_built` transition; modified `PATCH /pipeline` (versioning + classifier).
+  4. Modified `candidates/service.py::create_assignment` (populate `entered_at_pipeline_version`) and `transition_stage` (skip paused stages).
+  5. Net-new backend endpoints (activate, preview-changes, pause/unpause, refine/draft).
+  6. New prompt files + `build_question_context` refactor.
+  7. Persisted `is_stale` migration: rename `compute_is_stale` to `recompute_and_persist_stale`; switch read paths to direct column reads.
+  8. Frontend types + API namespaces + hooks.
+  9. Frontend component rewrites — config gating first (visual smoke).
+  10. Frontend new components — picker, ActivationGate, SourcePill, dialogs.
+  11. Frontend page-level wiring — `/pipeline` branch, `/questions` filter, preview-changes integration.
 
 ## 18. Risk register
 
@@ -835,6 +898,8 @@ One end-to-end happy-path test (backend pytest with httpx + DB fixture):
 | Stale-bank cascade when recruiter does multi-field stage edit | Acceptable — stale is informational, not blocking. Recruiter regenerates if they care. |
 | `take_home` still shows in the type dropdown but is disabled | UI shouldn't let recruiters select it (existing behavior — `<option disabled>`). Predicate excludes it from middle-stage check. |
 | Persisting `is_stale` introduces drift if a write path forgets to call `recompute_and_persist_stale` | Centralize the helper; add backend test that asserts every write path that mutates signal/stage-config calls it (audit-style test). |
+| `candidates` module is more built-out than CLAUDE.md suggests (it's not stubbed — `service.py` is 651 LOC with real assignment + transition logic) | Coordinate the `transition_stage` resolver update (skip paused stages) and the `create_assignment` `entered_at_pipeline_version` write with the existing `tests/test_candidates_stage_transitions.py` and `tests/test_candidates_router.py`. CLAUDE.md update for the candidates module is a separate small follow-up. |
+| Existing question-bank PATCH endpoint allows direct text edits — UI rule "no manual text editing" is UI-only, not server-enforced | Acceptable. Refine accept reuses the same PATCH endpoint; the UI is the only place that controls *whether* a recruiter can submit free-text. Server stays permissive so refine accept and any future direct API consumers (CLI tools, ATS imports) work. |
 
 ## 19. Decisions
 
