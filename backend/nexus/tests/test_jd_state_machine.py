@@ -45,3 +45,29 @@ def test_confirmed_to_extracting_illegal():
 
 def test_unknown_from_state_is_illegal():
     assert not is_legal_transition("made_up_state", "signals_extracting")
+
+
+def test_signals_confirmed_to_pipeline_built_legal():
+    from app.modules.jd.state_machine import is_legal_transition
+    assert is_legal_transition("signals_confirmed", "pipeline_built") is True
+
+
+def test_pipeline_built_to_active_legal():
+    from app.modules.jd.state_machine import is_legal_transition
+    assert is_legal_transition("pipeline_built", "active") is True
+
+
+def test_active_has_no_outbound_transitions():
+    from app.modules.jd.state_machine import LEGAL_TRANSITIONS
+    assert LEGAL_TRANSITIONS["active"] == set()
+
+
+def test_archived_has_no_outbound_transitions():
+    from app.modules.jd.state_machine import LEGAL_TRANSITIONS
+    assert LEGAL_TRANSITIONS["archived"] == set()
+
+
+def test_pipeline_built_back_to_signals_confirmed_illegal():
+    # Pipeline-built does not transition back to signals_confirmed in this design.
+    from app.modules.jd.state_machine import is_legal_transition
+    assert is_legal_transition("pipeline_built", "signals_confirmed") is False
