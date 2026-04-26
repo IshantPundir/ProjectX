@@ -14,6 +14,7 @@ from app.config import settings
 from app.models import Client, UserInvite
 from app.modules.audit import actions as audit_actions
 from app.modules.audit.service import log_event
+from app.modules.auth.admin import AuthProviderError, get_auth_provider
 from app.modules.notifications.service import render_template, send_email
 
 logger = structlog.get_logger()
@@ -179,6 +180,33 @@ async def _load_client(db: AsyncSession, client_id: uuid_mod.UUID) -> Client:
     if client is None:
         raise ClientNotFoundError()
     return client
+
+
+async def _purge_auth_users(
+    auth_user_ids: list[str],
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Best-effort bulk delete of Supabase Auth users.
+
+    Returns `(purged, failed)`. `failed` is `[(auth_user_id, reason_str), ...]`.
+    Each call is independently try/excepted so one failure does not abort
+    the rest. Reuses the provider abstraction so a future Cognito swap
+    requires no change here.
+    """
+    provider = get_auth_provider()
+    purged: list[str] = []
+    failed: list[tuple[str, str]] = []
+    for uid in auth_user_ids:
+        try:
+            await provider.delete_user(uid)
+            purged.append(uid)
+        except AuthProviderError as e:
+            failed.append((uid, str(e)))
+            logger.warning(
+                "admin.hard_delete.auth_user_purge_failed",
+                auth_user_id=uid,
+                error=str(e),
+            )
+    return purged, failed
 
 
 async def block_client(
