@@ -227,6 +227,7 @@ def create_app() -> FastAPI:
     from app.modules.ats.router import router as ats_router
     from app.modules.jd.router import router as jd_router
     from app.modules.question_bank.router import router as question_bank_router
+    from app.modules.question_bank.refine import router as question_bank_refine_router
     from app.modules.scheduler.router import scheduler_router
     from app.modules.session.router import candidate_session_router, session_router
     from app.modules.analysis.router import router as analysis_router
@@ -247,6 +248,7 @@ def create_app() -> FastAPI:
     application.include_router(ats_router)
     application.include_router(jd_router)
     application.include_router(question_bank_router)
+    application.include_router(question_bank_refine_router)
     application.include_router(analysis_router)
     application.include_router(reporting_router)
     application.include_router(notifications_router)
