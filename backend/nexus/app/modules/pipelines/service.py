@@ -58,7 +58,13 @@ def _stage_input_to_row_dict(
     template_id: UUID | None = None,
     instance_id: UUID | None = None,
 ) -> dict:
-    """Convert a PipelineStageInput into a dict for row constructors."""
+    """Convert a PipelineStageInput into a dict for row constructors.
+
+    intake and debrief stages have FORBIDDEN fields that the validator sets to
+    None — the DB columns for those fields are now nullable (migration 0019).
+    Guard every optional field with an explicit None check before calling
+    .model_dump() so we never crash with AttributeError on None.model_dump().
+    """
     base = {
         "tenant_id": tenant_id,
         "position": stage.position,
@@ -66,8 +72,8 @@ def _stage_input_to_row_dict(
         "stage_type": stage.stage_type,
         "duration_minutes": stage.duration_minutes,
         "difficulty": stage.difficulty,
-        "signal_filter": stage.signal_filter.model_dump(),
-        "pass_criteria": stage.pass_criteria.model_dump(),
+        "signal_filter": stage.signal_filter.model_dump() if stage.signal_filter is not None else None,
+        "pass_criteria": stage.pass_criteria.model_dump() if stage.pass_criteria is not None else None,
         "advance_behavior": stage.advance_behavior,
         "sla_days": stage.sla_days,
     }
@@ -644,8 +650,8 @@ async def update_job_pipeline_stages(
             existing.stage_type = update.stage_type
             existing.duration_minutes = update.duration_minutes
             existing.difficulty = update.difficulty
-            existing.signal_filter = update.signal_filter.model_dump()
-            existing.pass_criteria = update.pass_criteria.model_dump()
+            existing.signal_filter = update.signal_filter.model_dump() if update.signal_filter is not None else None
+            existing.pass_criteria = update.pass_criteria.model_dump() if update.pass_criteria is not None else None
             existing.advance_behavior = update.advance_behavior
             existing.sla_days = update.sla_days
 

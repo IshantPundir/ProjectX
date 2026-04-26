@@ -259,11 +259,13 @@ class PipelineTemplateStage(Base):
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     stage_type: Mapped[str] = mapped_column(String, nullable=False)
-    duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
-    difficulty: Mapped[str] = mapped_column(String, nullable=False)
-    signal_filter: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    pass_criteria: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    advance_behavior: Mapped[str] = mapped_column(String, nullable=False)
+    # Nullable: intake / debrief stages have these fields FORBIDDEN by the
+    # field-rules validator (migration 0019 relaxes the DB constraint to match).
+    duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    difficulty: Mapped[str | None] = mapped_column(String, nullable=True)
+    signal_filter: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    pass_criteria: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    advance_behavior: Mapped[str | None] = mapped_column(String, nullable=True)
     sla_days: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("NOW()")
@@ -330,11 +332,13 @@ class JobPipelineStage(Base):
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     stage_type: Mapped[str] = mapped_column(String, nullable=False)
-    duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
-    difficulty: Mapped[str] = mapped_column(String, nullable=False)
-    signal_filter: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    pass_criteria: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    advance_behavior: Mapped[str] = mapped_column(String, nullable=False)
+    # Nullable: intake / debrief stages have these fields FORBIDDEN by the
+    # field-rules validator (migration 0019 relaxes the DB constraint to match).
+    duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    difficulty: Mapped[str | None] = mapped_column(String, nullable=True)
+    signal_filter: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    pass_criteria: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    advance_behavior: Mapped[str | None] = mapped_column(String, nullable=True)
     sla_days: Mapped[int | None] = mapped_column(Integer)
     otp_required_default: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=sql_text("false")

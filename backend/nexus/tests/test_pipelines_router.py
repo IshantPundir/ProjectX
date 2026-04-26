@@ -670,3 +670,157 @@ async def test_swap_job_pipeline_replaces_instance(db: AsyncSession):
     assert len(data["stages"]) == 3
     stage_names = [s["name"] for s in data["stages"]]
     assert "OldStage" not in stage_names
+
+
+# ---------------------------------------------------------------------------
+# Picker: POST /jobs/{id}/pipeline → state transition tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_post_pipeline_starter_transitions_job_to_pipeline_built(db: AsyncSession):
+    """Picker starter path: creates instance + transitions job to pipeline_built."""
+    tenant, user, company = await _setup_org(db)
+    job = await _make_confirmed_job(db, tenant.id, company.id, user.id)
+    await db.commit()
+
+    headers, restore = _setup_test_context(db, user, tenant.id, is_super_admin=True)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            resp = await ac.post(
+                f"/api/jobs/{job.id}/pipeline",
+                json={"source": "starter", "starter_key": "standard_technical"},
+                headers=headers,
+            )
+            assert resp.status_code == 201, resp.text
+            # Reload job and verify status
+            job_resp = await ac.get(f"/api/jobs/{job.id}", headers=headers)
+    finally:
+        restore()
+
+    assert job_resp.status_code == 200, job_resp.text
+    assert job_resp.json()["status"] == "pipeline_built"
+
+
+@pytest.mark.asyncio
+async def test_post_pipeline_scratch_with_intake_debrief_only(db: AsyncSession):
+    """Blank pipeline path: creates intake + debrief, transitions to pipeline_built.
+
+    This is the primary I1 regression test — intake/debrief have FORBIDDEN
+    fields (signal_filter, duration_minutes, difficulty) that the validator
+    sets to None. The service layer must guard .model_dump() calls against None
+    or this test will crash with AttributeError.
+    """
+    tenant, user, company = await _setup_org(db)
+    job = await _make_confirmed_job(db, tenant.id, company.id, user.id)
+    await db.commit()
+
+    headers, restore = _setup_test_context(db, user, tenant.id, is_super_admin=True)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            resp = await ac.post(
+                f"/api/jobs/{job.id}/pipeline",
+                json={
+                    "source": "scratch",
+                    "stages": [
+                        {"position": 0, "name": "Intake", "stage_type": "intake"},
+                        {"position": 1, "name": "Debrief", "stage_type": "debrief"},
+                    ],
+                },
+                headers=headers,
+            )
+            assert resp.status_code == 201, resp.text
+            body = resp.json()
+            # Reload job and verify status
+            job_resp = await ac.get(f"/api/jobs/{job.id}", headers=headers)
+    finally:
+        restore()
+
+    assert len(body["stages"]) == 2
+    assert body["stages"][0]["stage_type"] == "intake"
+    assert body["stages"][1]["stage_type"] == "debrief"
+    assert job_resp.status_code == 200, job_resp.text
+    assert job_resp.json()["status"] == "pipeline_built"
+
+
+@pytest.mark.asyncio
+async def test_post_pipeline_template_transitions(db: AsyncSession):
+    """Picker template path: creates instance + transitions job to pipeline_built."""
+    tenant, user, company = await _setup_org(db)
+    job = await _make_confirmed_job(db, tenant.id, company.id, user.id)
+
+    template = PipelineTemplate(
+        tenant_id=tenant.id, org_unit_id=company.id, name="Tpl",
+        is_default=False, created_by=user.id,
+    )
+    db.add(template)
+    await db.flush()
+    db.add(PipelineTemplateStage(
+        tenant_id=tenant.id, template_id=template.id, position=0, name="Phone",
+        stage_type="phone_screen", duration_minutes=15, difficulty="easy",
+        signal_filter={"include_types": ["competency"]},
+        pass_criteria={"type": "all_knockouts_pass"},
+        advance_behavior="auto_advance",
+    ))
+    await db.commit()
+
+    headers, restore = _setup_test_context(db, user, tenant.id, is_super_admin=True)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            resp = await ac.post(
+                f"/api/jobs/{job.id}/pipeline",
+                json={"source": "template", "template_id": str(template.id)},
+                headers=headers,
+            )
+            assert resp.status_code == 201, resp.text
+            job_resp = await ac.get(f"/api/jobs/{job.id}", headers=headers)
+    finally:
+        restore()
+
+    assert job_resp.status_code == 200, job_resp.text
+    assert job_resp.json()["status"] == "pipeline_built"
+
+
+@pytest.mark.asyncio
+async def test_post_pipeline_when_already_exists_returns_409(db: AsyncSession):
+    """Duplicate creation returns 409 — no state transition attempted."""
+    tenant, user, company = await _setup_org(db)
+    job = await _make_confirmed_job(db, tenant.id, company.id, user.id)
+
+    # Pre-create a pipeline instance so the second POST hits PipelineAlreadyExistsError
+    instance = JobPipelineInstance(
+        tenant_id=tenant.id,
+        job_posting_id=job.id,
+        source_template_id=None,
+    )
+    db.add(instance)
+    await db.flush()
+    db.add(JobPipelineStage(
+        tenant_id=tenant.id, instance_id=instance.id, position=0, name="Existing",
+        stage_type="phone_screen", duration_minutes=10, difficulty="easy",
+        signal_filter={"include_types": ["competency"]},
+        pass_criteria={"type": "all_knockouts_pass"},
+        advance_behavior="auto_advance",
+    ))
+    await db.commit()
+
+    headers, restore = _setup_test_context(db, user, tenant.id, is_super_admin=True)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            resp = await ac.post(
+                f"/api/jobs/{job.id}/pipeline",
+                json={"source": "starter", "starter_key": "standard_technical"},
+                headers=headers,
+            )
+    finally:
+        restore()
+
+    assert resp.status_code == 409, resp.text

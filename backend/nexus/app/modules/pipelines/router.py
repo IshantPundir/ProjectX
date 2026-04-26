@@ -14,10 +14,11 @@ Route groups:
   - POST /api/jobs/{job_id}/pipeline/save-as-template            (save as new template)
   - POST /api/jobs/{job_id}/pipeline/update-source-template      (write back to source)"""
 
+import uuid as _uuid_mod
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_tenant_db
@@ -28,6 +29,7 @@ from app.models import (
     PipelineTemplateStage,
 )
 from app.modules.auth.context import UserContext, get_current_user_roles
+from app.modules.jd.state_machine import transition as jd_transition
 from app.modules.org_units.service import get_org_unit_ancestry
 from app.modules.pipelines.authz import (
     require_instance_access,
@@ -81,6 +83,20 @@ from app.modules.pipelines.starter_pack import STARTER_TEMPLATES
 
 router = APIRouter(tags=["pipelines"])
 
+_MAX_CORRELATION_ID_LEN = 128
+
+
+def _get_correlation_id(request: Request) -> str:
+    """Extract x-correlation-id header or mint a fresh uuid4 fallback.
+
+    Mirrors the same helper in app.modules.jd.router — untrusted input is
+    validated before propagating to logs and audit events.
+    """
+    raw = request.headers.get("x-correlation-id")
+    if raw and 0 < len(raw) <= _MAX_CORRELATION_ID_LEN and raw.isascii() and raw.isprintable():
+        return raw
+    return str(_uuid_mod.uuid4())
+
 
 # ---------------------------------------------------------------------------
 # Response helpers
@@ -98,7 +114,10 @@ def _stage_row_to_response(
         stage_type=row.stage_type,  # type: ignore[arg-type]
         duration_minutes=row.duration_minutes,
         difficulty=row.difficulty,  # type: ignore[arg-type]
-        signal_filter=SignalFilter(**row.signal_filter),
+        # intake / debrief stages have signal_filter / pass_criteria as None
+        # (FORBIDDEN/LOCKED by the field-rules validator). Guard before
+        # constructing the nested model.
+        signal_filter=SignalFilter(**row.signal_filter) if row.signal_filter is not None else None,
         pass_criteria=row.pass_criteria,  # type: ignore[arg-type]
         advance_behavior=row.advance_behavior,  # type: ignore[arg-type]
         sla_days=row.sla_days,
@@ -346,10 +365,12 @@ async def get_job_pipeline(
 async def create_job_pipeline(
     job_id: UUID,
     body: CreateJobPipelineRequest,
+    request: Request,
     db: AsyncSession = Depends(get_tenant_db),
     user: UserContext = Depends(get_current_user_roles),
 ) -> JobPipelineInstanceResponse:
     job, _ = await require_instance_access(db, job_id, user, "manage")
+    correlation_id = _get_correlation_id(request)
 
     try:
         if isinstance(body, CreateJobPipelineFromTemplate):
@@ -371,6 +392,15 @@ async def create_job_pipeline(
         raise HTTPException(status_code=409, detail=str(e))
     except StarterKeyNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+    # Transition job status: signals_confirmed → pipeline_built
+    await jd_transition(
+        db,
+        job=job,
+        to_state="pipeline_built",
+        actor_id=user.user.id,
+        correlation_id=correlation_id,
+    )
 
     result = await get_job_pipeline_with_stages(db, job_id)
     if result is None:

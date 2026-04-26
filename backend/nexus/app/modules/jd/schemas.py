@@ -22,6 +22,9 @@ JobStatus = Literal[
     "signals_extraction_failed",
     "signals_extracted",
     "signals_confirmed",
+    "pipeline_built",
+    "active",
+    "archived",
 ]
 
 EnrichmentStatus = Literal["idle", "streaming", "completed", "failed"]
