@@ -280,6 +280,20 @@ def create_app() -> FastAPI:
     ) -> JSONResponse:
         return suspended_response(exc.status)
 
+    from app.modules.admin.service import ConfirmationMismatchError as _ConfirmationMismatchError
+
+    @application.exception_handler(_ConfirmationMismatchError)
+    async def _confirmation_mismatch(
+        request: Request, exc: _ConfirmationMismatchError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": "Confirmation name does not match.",
+                "code": "CONFIRMATION_MISMATCH",
+            },
+        )
+
     _ILLEGAL_TRANSITION_MESSAGES: dict[tuple[str, str], str] = {
         ("signals_extracting", "signals_extracting"):
             "Job is already being processed",
