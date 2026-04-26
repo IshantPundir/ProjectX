@@ -56,7 +56,10 @@ export function computeActivationFailures(
     }
     if (BANK_ELIGIBLE_TYPES.has(s.stage_type)) {
       const bank = banksByStage[s.id]
-      if (!bank || (bank.status !== 'generated' && bank.status !== 'confirmed')) {
+      // 'reviewing' is the post-generation state (recruiter hasn't confirmed
+      // yet); 'confirmed' is post-recruiter-approval. Both pass the gate per
+      // spec §7.1 #5 ("any non-empty generated bank passes activation").
+      if (!bank || (bank.status !== 'reviewing' && bank.status !== 'confirmed')) {
         failures.push({
           code: 'missing_bank',
           message: `Generate a question bank for '${s.name}'.`,

@@ -32,6 +32,7 @@ import { StageParticipantsEditor } from './StageParticipantsEditor'
 import { DifficultySlider } from './DifficultySlider'
 import { participantSlotsFor, stageCategory } from '@/lib/pipelines/categories'
 import { useGenerateAllQuestions } from '@/lib/hooks/use-generate-questions'
+import { useQuestionsStatusStream } from '@/lib/hooks/use-questions-status-stream'
 import { SourcePill } from './SourcePill'
 import { ActivationGate } from './ActivationGate'
 import { EditCategoryWarningModal } from './EditCategoryWarningModal'
@@ -519,8 +520,18 @@ export function JobPipelineFunnel({ job, pipeline, jobId }: Props) {
   const banks = overview?.banks ?? []
   const confirmedBanks = banks.filter((b) => b.status === 'confirmed').length
   const banksByStage = new Map(banks.map((b) => [b.stage_id, b]))
+  const anyBankGenerating = banks.some((b) => b.status === 'generating')
 
   const generateAllMutation = useGenerateAllQuestions(jobId)
+
+  // Subscribe to the SSE stream so generation progress (per-stage status
+  // changes, question additions) invalidates the banks cache live.
+  // Without this, the UI sits frozen until something else triggers a
+  // refetch — and the ActivationGate predicates keep showing "Generate a
+  // question bank for X" even after the actor finished. activeStage's id
+  // drives the per-stage bank cache invalidation; we read it lazily so
+  // the SSE connection doesn't churn on every active-id change.
+  useQuestionsStatusStream(jobId, activeStage?.id ?? null)
 
   return (
     <div>
@@ -599,10 +610,18 @@ export function JobPipelineFunnel({ job, pipeline, jobId }: Props) {
             className="px-btn sm"
             type="button"
             onClick={() => generateAllMutation.mutate()}
-            disabled={generateAllMutation.isPending || isSaving}
-            title="Generate question banks for every eligible stage"
+            disabled={
+              generateAllMutation.isPending || isSaving || anyBankGenerating
+            }
+            title={
+              anyBankGenerating
+                ? 'A bank is currently generating — please wait'
+                : 'Generate question banks for every eligible stage'
+            }
           >
-            {generateAllMutation.isPending ? 'Generating…' : 'Generate all questions'}
+            {generateAllMutation.isPending || anyBankGenerating
+              ? 'Generating…'
+              : 'Generate all questions'}
           </button>
         </div>
       </div>

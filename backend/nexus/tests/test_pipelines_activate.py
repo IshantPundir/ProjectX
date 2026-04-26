@@ -258,7 +258,7 @@ async def _add_bank(
     stage_id: uuid.UUID,
     job_id: uuid.UUID,
     snapshot_id: uuid.UUID,
-    status: str = "generated",
+    status: str = "reviewing",
 ) -> StageQuestionBank:
     bank = StageQuestionBank(
         tenant_id=tenant_id,
@@ -301,7 +301,7 @@ async def _pipeline_built_job_no_participants(db: AsyncSession):
     # Find the phone_screen stage and add a bank so the bank predicate passes.
     phone_stage = next(s for s in stages if s.stage_type == "phone_screen")
     await _add_bank(db, tenant_id=tenant.id, stage_id=phone_stage.id,
-                    job_id=job.id, snapshot_id=snap.id, status="generated")
+                    job_id=job.id, snapshot_id=snap.id, status="reviewing")
 
     # Find debrief stage and add a reviewer participant so only missing_interviewer fires.
     debrief_stage = next(s for s in stages if s.stage_type == "debrief")
@@ -324,7 +324,7 @@ async def _pipeline_built_job_no_reviewer(db: AsyncSession):
 
     phone_stage = next(s for s in stages if s.stage_type == "phone_screen")
     await _add_bank(db, tenant_id=tenant.id, stage_id=phone_stage.id,
-                    job_id=job.id, snapshot_id=snap.id, status="generated")
+                    job_id=job.id, snapshot_id=snap.id, status="reviewing")
     # interviewer on phone_screen
     await _add_participant(db, tenant_id=tenant.id, stage_id=phone_stage.id,
                            user_id=user.id, role="interviewer", assigned_by=user.id)
@@ -402,7 +402,7 @@ async def _pipeline_built_ready(db: AsyncSession):
     await _add_participant(db, tenant_id=tenant.id, stage_id=debrief_stage.id,
                            user_id=user.id, role="reviewer", assigned_by=user.id)
     await _add_bank(db, tenant_id=tenant.id, stage_id=phone_stage.id,
-                    job_id=job.id, snapshot_id=snap.id, status="generated")
+                    job_id=job.id, snapshot_id=snap.id, status="reviewing")
 
     await db.commit()
     return job
@@ -426,7 +426,7 @@ async def _active_job_with_pipeline(db: AsyncSession):
     await _add_participant(db, tenant_id=tenant.id, stage_id=debrief_stage.id,
                            user_id=user.id, role="reviewer", assigned_by=user.id)
     await _add_bank(db, tenant_id=tenant.id, stage_id=phone_stage.id,
-                    job_id=job.id, snapshot_id=snap.id, status="generated")
+                    job_id=job.id, snapshot_id=snap.id, status="reviewing")
 
     await db.commit()
     return job

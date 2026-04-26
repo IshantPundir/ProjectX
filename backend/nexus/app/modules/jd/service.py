@@ -593,10 +593,14 @@ async def evaluate_activation_predicates(
                     stage_id=s.id,
                 ))
 
-        # Predicate 5: bank-eligible stage has a generated/confirmed bank
+        # Predicate 5: bank-eligible stage has a reviewing/confirmed bank.
+        # 'reviewing' is the post-generation state (recruiter hasn't
+        # confirmed yet); 'confirmed' is post-recruiter-approval. Both pass
+        # the gate per spec §7.1 #5 ("any non-empty generated bank passes
+        # activation").
         if s.stage_type in bank_types:
             bank = banks_by_stage.get(s.id)
-            if bank is None or bank.status not in ("generated", "confirmed"):
+            if bank is None or bank.status not in ("reviewing", "confirmed"):
                 failures.append(ActivationPredicateFailure(
                     code="missing_bank",
                     message=f"Generate a question bank for '{s.name}'.",

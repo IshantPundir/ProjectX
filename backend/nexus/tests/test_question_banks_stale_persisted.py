@@ -250,7 +250,9 @@ async def test_confirmed_bank_drops_to_generated_on_stale(db):
 
     fresh = await db.get(StageQuestionBank, bank.id)
     assert fresh.is_stale is True
-    assert fresh.status == "generated"
+    # Stale confirmed banks drop back to the post-generation 'reviewing' state
+    # so the recruiter is prompted to re-review before re-confirming.
+    assert fresh.status == "reviewing"
     assert fresh.confirmed_at is None
     assert fresh.confirmed_by is None
 

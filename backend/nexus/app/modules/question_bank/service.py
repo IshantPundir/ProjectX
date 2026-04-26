@@ -191,7 +191,10 @@ async def recompute_and_persist_stale(
     new_stale = signal_drift or config_drift
 
     if new_stale and bank.status == "confirmed":
-        bank.status = "generated"
+        # Per spec §11.5: a stale confirmed bank drops back to the
+        # post-generation state ('reviewing') so the recruiter is
+        # prompted to re-review before re-confirming.
+        bank.status = "reviewing"
         bank.confirmed_at = None
         bank.confirmed_by = None
 

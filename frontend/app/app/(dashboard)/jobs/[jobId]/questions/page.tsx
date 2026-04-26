@@ -17,6 +17,8 @@ import { useConfirmBank } from '@/lib/hooks/use-confirm-bank'
 import { useRegenerateQuestion } from '@/lib/hooks/use-regenerate-question'
 import { useRefineQuestion } from '@/lib/hooks/use-refine-question'
 import { useDraftQuestion } from '@/lib/hooks/use-draft-question'
+import { useGenerateStageQuestions } from '@/lib/hooks/use-generate-questions'
+import { useQuestionsStatusStream } from '@/lib/hooks/use-questions-status-stream'
 import { questionsApi } from '@/lib/api/questions'
 import { getFreshSupabaseToken } from '@/lib/auth/tokens'
 import { stageSupportsQuestionBank } from '@/lib/pipelines/categories'
@@ -112,6 +114,11 @@ export default function QuestionBankPage() {
 
   // Stage selection from URL — matches pipeline page convention.
   const selectedStageId = searchParams.get('stage')
+
+  // Live updates while banks generate. The hook invalidates ['banks', jobId]
+  // and ['bank', jobId, selectedStageId] caches on every SSE event so the
+  // pill row + active-stage detail re-render in real time.
+  useQuestionsStatusStream(jobId, selectedStageId)
 
   // Auto-pick first bank-eligible stage if none selected (or if current
   // selection points to an intake/debrief stage that was filtered out).
@@ -1536,6 +1543,9 @@ function EmptyBankState({
   stage: PipelineStageResponse
   bank?: BankResponse | null
 }) {
+  const generateMutation = useGenerateStageQuestions(jobId, stage.id)
+  const isGenerating =
+    bank?.status === 'generating' || generateMutation.isPending
   return (
     <div
       className="rounded-[10px] border p-10 text-center"
@@ -1554,17 +1564,18 @@ function EmptyBankState({
         className="mx-auto mb-6 max-w-lg text-sm"
         style={{ color: 'var(--px-fg-3)' }}
       >
-        Generate a question bank from the pipeline view — Copilot will draft
-        questions scoped to this stage&apos;s signals.
+        {isGenerating
+          ? "Copilot is drafting questions scoped to this stage's signals."
+          : 'Generate a question bank for this stage. Copilot will draft questions scoped to this stage’s signals.'}
       </p>
-      {bank?.status === 'generating' ? (
+      {isGenerating ? (
         <div className="text-sm" style={{ color: 'var(--px-accent)' }}>
           <SparkIcon size={12} /> Generating…
         </div>
       ) : (
-        <Link href={`/jobs/${jobId}/pipeline?stage=${stage.id}`}>
-          <Button size="sm">Go to pipeline → generate</Button>
-        </Link>
+        <Button size="sm" onClick={() => generateMutation.mutate()}>
+          Generate questions
+        </Button>
       )}
     </div>
   )
