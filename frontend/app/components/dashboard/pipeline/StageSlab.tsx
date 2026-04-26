@@ -18,6 +18,10 @@ import { isStageUnstaffed } from '@/lib/pipelines/categories'
 // and UpdateInput shapes.
 type SlabStage = Omit<PipelineStageInput, 'participants'> & { id?: string }
 
+// TODO(Task 19/25): narrow by stage_type once matrix-driven components land.
+// For now, cast to this loose shape for display-only field access.
+type LooseSlabStage = SlabStage & { duration_minutes?: number; difficulty?: StageDifficulty }
+
 type Props = {
   stage: SlabStage
   position: number
@@ -105,12 +109,13 @@ export function StageSlab({ stage, position, selected, onClick, onDelete }: Prop
             <Icon className={`w-3.5 h-3.5 ${typeText}`} />
             <span className={typeText}>{STAGE_TYPE_LABELS[stage.stage_type] ?? stage.stage_type}</span>
             <span className="text-zinc-300">·</span>
-            <span>{stage.duration_minutes} min</span>
+            {/* TODO(Task 19/25): narrow by stage_type once matrix-driven components land */}
+            <span>{(stage as LooseSlabStage).duration_minutes} min</span>
             <span className="text-zinc-300">·</span>
             <span
-              className={`inline-flex items-center px-1.5 py-0.5 rounded-full border text-[10px] font-medium ${DIFFICULTY_CHIP[stage.difficulty]}`}
+              className={`inline-flex items-center px-1.5 py-0.5 rounded-full border text-[10px] font-medium ${DIFFICULTY_CHIP[(stage as LooseSlabStage).difficulty ?? 'easy']}`}
             >
-              {stage.difficulty}
+              {(stage as LooseSlabStage).difficulty}
             </span>
             {isStageUnstaffed(stage) && (
               <>

@@ -2,13 +2,19 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
-import type { PipelineStageInput, PipelineStageUpdateInput, StageType, StageDifficulty, AdvanceBehavior } from '@/lib/api/pipelines'
+import type {
+  PipelineStageUpdateInput,
+  StageType,
+  StageDifficulty,
+  AdvanceBehavior,
+  PassCriteria,
+  SignalFilter,
+} from '@/lib/api/pipelines'
 import { DifficultySlider } from './DifficultySlider'
 import { SignalFilterEditor } from './SignalFilterEditor'
 import { PassCriteriaEditor } from './PassCriteriaEditor'
 import { StageParticipantsEditor } from './StageParticipantsEditor'
 import { participantSlotsFor } from '@/lib/pipelines/categories'
-import type { StageParticipantInput } from '@/lib/api/pipelines'
 
 type Props = {
   stage: PipelineStageUpdateInput
@@ -52,8 +58,14 @@ export function StageConfigDrawer({ stage, jobId, onChange, onClose }: Props) {
     return () => document.removeEventListener('keydown', handler)
   }, [onClose])
 
-  function update<K extends keyof PipelineStageInput>(key: K, value: PipelineStageInput[K]) {
-    onChange({ ...stage, [key]: value })
+  // TODO(Task 19): replace with per-category field rendering once the
+  // matrix-driven drawer refactor lands. Until then, we operate on a
+  // loose stage object and cast back to the discriminated union type.
+  type LooseStage = Record<string, unknown> & { id?: string }
+  const loose = stage as LooseStage
+
+  function update(key: string, value: unknown) {
+    onChange({ ...stage, [key]: value } as PipelineStageUpdateInput)
   }
 
   function handleTypeChange(next: StageType) {
@@ -62,7 +74,7 @@ export function StageConfigDrawer({ stage, jobId, onChange, onClose }: Props) {
     const filtered = newSlot === null
       ? []
       : currentParticipants.filter((p) => p.role === newSlot)
-    onChange({ ...stage, stage_type: next, participants: filtered })
+    onChange({ ...stage, stage_type: next, participants: filtered } as PipelineStageUpdateInput)
   }
 
   return (
@@ -163,7 +175,7 @@ export function StageConfigDrawer({ stage, jobId, onChange, onClose }: Props) {
                   type="number"
                   min={1}
                   max={240}
-                  value={stage.duration_minutes}
+                  value={(loose.duration_minutes as number | undefined) ?? ''}
                   onChange={(e) => update('duration_minutes', parseInt(e.target.value) || 1)}
                   className="w-full text-sm border rounded-lg px-3 py-2 pr-12 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
                   style={{ borderColor: 'var(--px-divider)' }}
@@ -188,7 +200,7 @@ export function StageConfigDrawer({ stage, jobId, onChange, onClose }: Props) {
               </label>
               <DifficultySlider
                 id="stage-difficulty"
-                value={stage.difficulty}
+                value={(loose.difficulty as StageDifficulty | undefined) ?? 'easy'}
                 onChange={(v) => update('difficulty', v as StageDifficulty)}
               />
             </div>
@@ -295,7 +307,7 @@ export function StageConfigDrawer({ stage, jobId, onChange, onClose }: Props) {
                   </label>
                   <select
                     id="stage-advance"
-                    value={stage.advance_behavior}
+                    value={(loose.advance_behavior as AdvanceBehavior | undefined) ?? 'auto_advance'}
                     onChange={(e) => update('advance_behavior', e.target.value as AdvanceBehavior)}
                     className="w-full text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
                     style={{
@@ -318,7 +330,7 @@ export function StageConfigDrawer({ stage, jobId, onChange, onClose }: Props) {
                     Pass criteria
                   </div>
                   <PassCriteriaEditor
-                    value={stage.pass_criteria}
+                    value={(loose.pass_criteria as PassCriteria) ?? { type: 'all_knockouts_pass' }}
                     onChange={(pc) => update('pass_criteria', pc)}
                   />
                 </div>
@@ -332,7 +344,7 @@ export function StageConfigDrawer({ stage, jobId, onChange, onClose }: Props) {
                     Signal types
                   </div>
                   <SignalFilterEditor
-                    value={stage.signal_filter}
+                    value={(loose.signal_filter as SignalFilter) ?? { include_types: [] }}
                     onChange={(sf) => update('signal_filter', sf)}
                   />
                 </div>

@@ -180,12 +180,13 @@ export function StageFlowCard({
               {STAGE_TYPE_LABELS[stage.stage_type] ?? stage.stage_type}
             </span>
             <span className="text-zinc-300">·</span>
-            <span>{stage.duration_minutes} min</span>
+            {/* TODO(Task 19/25): narrow by stage_type once matrix-driven drawer lands */}
+            <span>{(stage as { duration_minutes?: number }).duration_minutes} min</span>
             <span className="text-zinc-300">·</span>
             <span
-              className={`inline-flex items-center px-1.5 py-0.5 rounded-full border text-[10px] font-medium ${DIFFICULTY_CHIP[stage.difficulty]}`}
+              className={`inline-flex items-center px-1.5 py-0.5 rounded-full border text-[10px] font-medium ${DIFFICULTY_CHIP[(stage as { difficulty?: StageDifficulty }).difficulty ?? 'easy']}`}
             >
-              {stage.difficulty}
+              {(stage as { difficulty?: StageDifficulty }).difficulty}
             </span>
             {isStageUnstaffed(stage) && (
               <>

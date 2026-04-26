@@ -148,9 +148,13 @@ function stageGate(stageType: StageType, advance: AdvanceBehavior): string {
   return 'manual review'
 }
 
+// TODO(Task 25): replace loose-stage helpers with per-category constructors once
+// the matrix-driven funnel refactor lands.
+type LooseStageInput = { [K in string]: unknown } & { id?: string; position: number; name: string; stage_type: StageType }
+
 function makeBlankStage(
   position: number,
-  overrides: Partial<PipelineStageUpdateInput> = {},
+  overrides: Partial<LooseStageInput> = {},
 ): PipelineStageUpdateInput {
   return {
     id: undefined,
@@ -166,7 +170,7 @@ function makeBlankStage(
     advance_behavior: 'auto_advance',
     sla_days: null,
     ...overrides,
-  }
+  } as PipelineStageUpdateInput
 }
 
 // A pipeline MUST start with Intake and end with Debrief — these are the
@@ -206,7 +210,7 @@ function normalizeStages(
     )
   }
 
-  return next.map((s, i) => ({ ...s, position: i }))
+  return next.map((s, i) => ({ ...s, position: i } as PipelineStageUpdateInput))
 }
 
 // Strip any extra display fields from participants (full_name, email) before
@@ -221,7 +225,7 @@ function stripStagesForApi(
       user_id: p.user_id,
       role: p.role,
     })),
-  }))
+  } as PipelineStageUpdateInput))
 }
 
 /* ─── Main component ──────────────────────────────────────── */
@@ -309,9 +313,11 @@ export function JobPipelineFunnel({ job, pipeline, jobId }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  function updateStageById(id: string, patch: Partial<PipelineStageUpdateInput>) {
+  function updateStageById(id: string, patch: Partial<LooseStageInput>) {
     setStages((prev) => {
-      const next = prev.map((s) => (s.id === id ? { ...s, ...patch } : s))
+      const next = prev.map((s) =>
+        s.id === id ? ({ ...s, ...patch } as PipelineStageUpdateInput) : s,
+      )
       scheduleSave(next)
       return next
     })
@@ -641,7 +647,7 @@ function HeroScene({
   onDragStart: (i: number) => void
   onDragOver: (i: number) => void
   onDrop: () => void
-  onChangeStage: (patch: Partial<PipelineStageUpdateInput>) => void
+  onChangeStage: (patch: Partial<LooseStageInput>) => void
   onChangeParticipants: (next: StageParticipantInput[]) => void
   bank: BankLite | null
   jobId: string
@@ -1208,7 +1214,7 @@ function HeroFunnel({
               )}
 
               {/* Auto-advance badge — sits just right of the slice edge */}
-              {s.advance_behavior === 'auto_advance' && (
+              {(s as LooseStageInput).advance_behavior === 'auto_advance' && (
                 <g transform={`translate(${tr + 16}, ${y + sliceH / 2 - 8})`}>
                   <circle
                     cx={8}
@@ -1672,9 +1678,13 @@ function ConfigTab({
   isFixedBookend,
 }: {
   stage: PipelineStageUpdateInput
-  onChange: (patch: Partial<PipelineStageUpdateInput>) => void
+  onChange: (patch: Partial<LooseStageInput>) => void
   isFixedBookend: boolean
 }) {
+  // TODO(Task 25): replace with per-category field rendering once the
+  // matrix-driven funnel refactor lands.
+  const loose = stage as LooseStageInput
+
   const advanceOptions: { k: AdvanceBehavior; label: string }[] = [
     { k: 'auto_advance', label: 'Auto-advance' },
     { k: 'manual_review', label: 'Manual review' },
@@ -1698,7 +1708,7 @@ function ConfigTab({
   // backend accepts 1..240; the slider is the UI-facing preset range.
   const clampedDuration = Math.max(
     5,
-    Math.min(60, Math.round(stage.duration_minutes / 5) * 5 || 5),
+    Math.min(60, Math.round(((loose.duration_minutes as number | undefined) ?? 0) / 5) * 5 || 5),
   )
 
   return (
@@ -1744,7 +1754,7 @@ function ConfigTab({
 
       <SheetField label="Difficulty">
         <DifficultySlider
-          value={stage.difficulty}
+          value={(loose.difficulty as StageDifficulty | undefined) ?? 'easy'}
           onChange={(d) => onChange({ difficulty: d })}
         />
       </SheetField>
@@ -1772,11 +1782,11 @@ function ConfigTab({
 
       <SheetField
         label="Advance rule"
-        sub={`Currently: ${stageGate(stage.stage_type, stage.advance_behavior)}.`}
+        sub={`Currently: ${stageGate(stage.stage_type, (loose.advance_behavior as AdvanceBehavior | undefined) ?? 'manual_review')}.`}
       >
         <div className="flex flex-wrap gap-1.5">
           {advanceOptions.map((opt) => {
-            const active = stage.advance_behavior === opt.k
+            const active = (loose.advance_behavior as AdvanceBehavior | undefined) === opt.k
             return (
               <button
                 key={opt.k}

@@ -40,22 +40,55 @@ export type PassCriteria =
   | { type: 'score_threshold'; threshold: number }
   | { type: 'manual_review' }
 
-// --- Stage ---
+// --- Stage discriminated union (matches backend §6 capability matrix) ---
 
-export type PipelineStageInput = {
+// Common fields present on every stage variant.
+type StageBase = {
   position: number
   name: string
-  stage_type: StageType
-  duration_minutes: number
-  difficulty: StageDifficulty
-  signal_filter: SignalFilter
-  pass_criteria: PassCriteria
-  advance_behavior: AdvanceBehavior
   /** Per-stage dwell SLA in days. Null = no SLA configured. */
   sla_days?: number | null
   /** Initial participants when creating from scratch. Empty by default. */
   participants?: StageParticipantInput[]
 }
+
+// IO stages — intake and debrief do not accept screening config fields.
+type IntakeStage = StageBase & {
+  stage_type: 'intake'
+  // No duration_minutes, difficulty, signal_filter, pass_criteria,
+  // advance_behavior, or otp_required — backend enforces this.
+}
+
+type DebriefStage = StageBase & {
+  stage_type: 'debrief'
+  // Same restriction as intake — IO stage only.
+}
+
+// Screening stages — phone_screen, ai_screening, human_interview all
+// require the full screening config field set.
+type ScreeningStageBase = StageBase & {
+  duration_minutes: number
+  difficulty: StageDifficulty
+  signal_filter: SignalFilter
+  pass_criteria: PassCriteria
+  advance_behavior: AdvanceBehavior
+  otp_required?: boolean
+}
+
+type PhoneScreenStage    = ScreeningStageBase & { stage_type: 'phone_screen' }
+type AiScreeningStage    = ScreeningStageBase & { stage_type: 'ai_screening' }
+type HumanInterviewStage = ScreeningStageBase & { stage_type: 'human_interview' }
+
+// Take-home — disabled for now; no configurable fields beyond base.
+type TakeHomeStage = StageBase & { stage_type: 'take_home' }
+
+export type PipelineStageInput =
+  | IntakeStage
+  | PhoneScreenStage
+  | AiScreeningStage
+  | HumanInterviewStage
+  | DebriefStage
+  | TakeHomeStage
 
 // Stage update shape — existing stages pass their id, new stages omit it.
 // The backend's diff-and-sync uses id to preserve row UUIDs through edits
@@ -66,14 +99,28 @@ export type PipelineStageInput = {
 //   [...]             → replace the staffing set
 // (undefined is chosen over null so the shape widens from PipelineStageInput
 // cleanly — Pydantic on the server treats missing field and null the same.)
-export type PipelineStageUpdateInput = PipelineStageInput & {
-  id?: string
-}
+//
+// The intersection distributes over the union, producing:
+//   (IntakeStage & { id?: string }) | (PhoneScreenStage & { id?: string }) | ...
+export type PipelineStageUpdateInput = PipelineStageInput & { id?: string }
 
-// Server response — templates always carry `participants: []` (staffing-agnostic);
-// instance stages may carry real participants with full_name + email.
-export type PipelineStageResponse = Omit<PipelineStageInput, 'participants'> & {
+// Server response shape — the backend always returns all fields for every
+// stage type (the discriminator is advisory for display, not for field
+// presence in the response). PipelineStageResponse is intentionally a flat
+// type so consumers can safely read duration_minutes / difficulty etc.
+// without narrowing. Tasks 19/20 will add narrowed response variants.
+export type PipelineStageResponse = {
   id: string
+  position: number
+  name: string
+  stage_type: StageType
+  duration_minutes: number
+  difficulty: StageDifficulty
+  signal_filter: SignalFilter
+  pass_criteria: PassCriteria
+  advance_behavior: AdvanceBehavior
+  otp_required?: boolean
+  sla_days?: number | null
   participants: StageParticipantResponse[]
 }
 
@@ -140,6 +187,44 @@ export type CreateJobPipelineBody =
   | { source: 'template'; template_id: string }
   | { source: 'starter'; starter_key: string }
   | { source: 'scratch'; stages: PipelineStageInput[] }
+
+// --- Picker (Task 6 + Task 21) -----------------------------------------------
+
+export type PipelineSourceTemplate = { source: 'template'; template_id: string }
+export type PipelineSourceStarter = {
+  source: 'starter'
+  starter_key: 'standard_technical' | 'fast_track' | 'screening_only' | 'senior_leadership'
+}
+export type PipelineSourceScratch = { source: 'scratch'; stages: PipelineStageInput[] }
+
+// Alias of CreateJobPipelineBody — same discriminated shape, named for the picker UI.
+export type PipelineCreateRequest =
+  | PipelineSourceTemplate
+  | PipelineSourceStarter
+  | PipelineSourceScratch
+
+// --- Activation (Task 12 + Task 22) -----------------------------------------
+
+export type ActivationPredicateFailure = {
+  code: string
+  message: string
+  stage_id: string | null
+}
+
+export type ActivationFailedResponse = {
+  code: 'activation_predicates_failed'
+  predicates_failed: ActivationPredicateFailure[]
+}
+
+// --- Edit-category classifier (Task 9 preview-changes) ----------------------
+
+export type EditCategory = 'A' | 'B' | 'C' | 'D'
+
+export type PreviewChangesResponse = {
+  category: EditCategory
+  warnings: string[]
+  in_flight: Record<string, number>
+}
 
 export type UpdateJobPipelineBody = {
   stages: PipelineStageUpdateInput[]
@@ -303,5 +388,44 @@ export const pipelinesApi = {
     apiFetch<AssignableUser[]>(
       `/api/jobs/${jobId}/pipeline/assignable-users?role=${role}`,
       { token, signal: opts?.signal },
+    ),
+
+  previewChanges: (
+    token: string,
+    jobId: string,
+    body: { stages: PipelineStageUpdateInput[] },
+  ): Promise<PreviewChangesResponse> =>
+    apiFetch<PreviewChangesResponse>(
+      `/api/jobs/${jobId}/pipeline/preview-changes`,
+      { method: 'POST', body: JSON.stringify(body), token },
+    ),
+
+  activate: (
+    token: string,
+    jobId: string,
+  ): Promise<{ status: 'active'; job_id: string }> =>
+    apiFetch<{ status: 'active'; job_id: string }>(
+      `/api/jobs/${jobId}/activate`,
+      { method: 'POST', token },
+    ),
+
+  pauseStage: (
+    token: string,
+    jobId: string,
+    stageId: string,
+  ): Promise<JobPipelineInstance> =>
+    apiFetch<JobPipelineInstance>(
+      `/api/jobs/${jobId}/pipeline/stages/${stageId}/pause`,
+      { method: 'POST', token },
+    ),
+
+  unpauseStage: (
+    token: string,
+    jobId: string,
+    stageId: string,
+  ): Promise<JobPipelineInstance> =>
+    apiFetch<JobPipelineInstance>(
+      `/api/jobs/${jobId}/pipeline/stages/${stageId}/unpause`,
+      { method: 'POST', token },
     ),
 }
