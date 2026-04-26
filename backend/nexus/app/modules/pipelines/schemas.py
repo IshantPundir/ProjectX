@@ -360,6 +360,7 @@ class JobPipelineInstanceResponse(BaseModel):
     job_posting_id: UUID
     source_template_id: UUID | None = None
     source_template_name: str | None = None
+    pipeline_version: int
     stages: list[PipelineStageResponse]
     created_at: datetime
     updated_at: datetime

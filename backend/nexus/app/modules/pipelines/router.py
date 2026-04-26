@@ -155,6 +155,7 @@ def _instance_to_response(
         job_posting_id=instance.job_posting_id,
         source_template_id=instance.source_template_id,
         source_template_name=source_template.name if source_template else None,
+        pipeline_version=instance.pipeline_version,
         stages=[
             _stage_row_to_response(s, participants_by_stage.get(s.id, []))
             for s in stages

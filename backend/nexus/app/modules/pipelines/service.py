@@ -48,6 +48,19 @@ from app.modules.pipelines.starter_pack import (
 logger = structlog.get_logger()
 
 
+async def bump_pipeline_version(
+    db: AsyncSession, instance: JobPipelineInstance
+) -> None:
+    """Atomically increment the instance's pipeline_version.
+
+    Caller must be inside the same transaction as the mutation that triggers
+    the bump. The increment is flushed immediately so subsequent reads within
+    the same transaction see the new value.
+    """
+    instance.pipeline_version = instance.pipeline_version + 1
+    await db.flush()
+
+
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -710,12 +723,14 @@ async def update_job_pipeline_stages(
 
     instance.updated_at = _now_utc()
     await db.flush()
+    await bump_pipeline_version(db, instance)
     logger.info(
         "pipelines.job_instance_stages_synced",
         instance_id=str(instance.id),
         updated=len([s for s in existing_list if s.id in incoming_by_id]),
         deleted=len([s for s in existing_list if s.id not in incoming_by_id]),
         inserted=len(incoming_new),
+        pipeline_version=instance.pipeline_version,
     )
     return instance
 
@@ -763,7 +778,12 @@ async def reset_job_pipeline_to_source(
         )
     instance.updated_at = _now_utc()
     await db.flush()
-    logger.info("pipelines.job_instance_reset", instance_id=str(instance.id))
+    await bump_pipeline_version(db, instance)
+    logger.info(
+        "pipelines.job_instance_reset",
+        instance_id=str(instance.id),
+        pipeline_version=instance.pipeline_version,
+    )
     return instance
 
 
