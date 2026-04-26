@@ -6,6 +6,7 @@ import Link from 'next/link'
 import gsap from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
 import { useGSAP } from '@gsap/react'
+import { useQueryClient } from '@tanstack/react-query'
 
 import { Button } from '@/components/px'
 import { useJob } from '@/lib/hooks/use-job'
@@ -14,6 +15,13 @@ import { useBanksOverview } from '@/lib/hooks/use-banks-overview'
 import { useBankWithQuestions } from '@/lib/hooks/use-bank-with-questions'
 import { useConfirmBank } from '@/lib/hooks/use-confirm-bank'
 import { useRegenerateQuestion } from '@/lib/hooks/use-regenerate-question'
+import { useRefineQuestion } from '@/lib/hooks/use-refine-question'
+import { useDraftQuestion } from '@/lib/hooks/use-draft-question'
+import { questionsApi } from '@/lib/api/questions'
+import { getFreshSupabaseToken } from '@/lib/auth/tokens'
+import { stageSupportsQuestionBank } from '@/lib/pipelines/categories'
+import { RefineQuestionDialog } from '@/components/dashboard/question-bank/RefineQuestionDialog'
+import { AddQuestionDialog } from '@/components/dashboard/question-bank/AddQuestionDialog'
 import type { BankResponse, QuestionResponse } from '@/lib/api/question-banks'
 import type { PipelineStageResponse, StageType } from '@/lib/api/pipelines'
 
@@ -105,12 +113,22 @@ export default function QuestionBankPage() {
   // Stage selection from URL — matches pipeline page convention.
   const selectedStageId = searchParams.get('stage')
 
-  // Auto-pick first available stage if none selected.
+  // Auto-pick first bank-eligible stage if none selected (or if current
+  // selection points to an intake/debrief stage that was filtered out).
   useEffect(() => {
-    if (selectedStageId) return
+    const selectableStages = pipeline?.stages.filter((s) =>
+      stageSupportsQuestionBank(s.stage_type),
+    ) ?? []
+
+    const currentIsSelectable = selectableStages.some(
+      (s) => s.id === selectedStageId,
+    )
+    if (selectedStageId && currentIsSelectable) return
+
     const first =
-      overview?.banks.find((b) => b.status !== 'failed')?.stage_id ??
-      pipeline?.stages[0]?.id
+      overview?.banks
+        .find((b) => b.status !== 'failed' && selectableStages.some((s) => s.id === b.stage_id))
+        ?.stage_id ?? selectableStages[0]?.id
     if (first) {
       const qs = new URLSearchParams(searchParams.toString())
       qs.set('stage', first)
@@ -166,16 +184,18 @@ export default function QuestionBankPage() {
         >
           Stages
         </span>
-        {stages.map((s, i) => (
-          <StagePill
-            key={s.id}
-            index={i}
-            stage={s}
-            bank={banks.find((b) => b.stage_id === s.id) ?? null}
-            active={selectedStageId === s.id}
-            onClick={() => selectStage(s.id)}
-          />
-        ))}
+        {stages
+          .filter((s) => stageSupportsQuestionBank(s.stage_type))
+          .map((s, i) => (
+            <StagePill
+              key={s.id}
+              index={i}
+              stage={s}
+              bank={banks.find((b) => b.stage_id === s.id) ?? null}
+              active={selectedStageId === s.id}
+              onClick={() => selectStage(s.id)}
+            />
+          ))}
         <div className="flex-1" />
         <div
           className="inline-flex rounded-md border p-0.5"
@@ -324,6 +344,9 @@ function QBReview({
   const { data: bankDetail, isLoading } = useBankWithQuestions(jobId, stage.id)
   const confirmMutation = useConfirmBank(jobId, stage.id)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [addOpen, setAddOpen] = useState(false)
+  const draftMutation = useDraftQuestion(jobId, stage.id)
+  const qc = useQueryClient()
 
   const containerRef = useRef<HTMLDivElement>(null)
   const pinWrapRef = useRef<HTMLDivElement>(null)
@@ -637,7 +660,11 @@ function QBReview({
           className="flex items-center gap-1.5 border-t px-3.5 py-2.5"
           style={{ borderColor: 'var(--px-hairline)' }}
         >
-          <button className="px-btn ghost xs" type="button">
+          <button
+            className="px-btn ghost xs"
+            type="button"
+            onClick={() => setAddOpen(true)}
+          >
             <PlusIcon size={10} /> Add question
           </button>
           <div className="flex-1" />
@@ -653,6 +680,17 @@ function QBReview({
           )}
         </div>
         </aside>
+
+      <AddQuestionDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        onDraft={async (body) => draftMutation.mutateAsync(body)}
+        onAccept={async (body) => {
+          const token = await getFreshSupabaseToken()
+          await questionsApi.acceptDraft(token, jobId, stage.id, body)
+          qc.invalidateQueries({ queryKey: ['bank', jobId, stage.id] })
+        }}
+      />
       </div>
 
       {/* Detail pane */}
@@ -828,6 +866,9 @@ function QBDetail({
 }) {
   const regenMutation = useRegenerateQuestion(jobId, stage.id, q.id)
   const [isRegenerating, setIsRegenerating] = useState(false)
+  const [refineOpen, setRefineOpen] = useState(false)
+  const refineMutation = useRefineQuestion(jobId, stage.id, q.id)
+  const qc = useQueryClient()
 
   const handleRegenerate = () => {
     setIsRegenerating(true)
@@ -873,6 +914,13 @@ function QBDetail({
               label={`${q.follow_ups.length} probe${q.follow_ups.length === 1 ? '' : 's'}`}
             />
             <div className="flex-1" />
+            <button
+              type="button"
+              className="px-btn ghost xs"
+              onClick={() => setRefineOpen(true)}
+            >
+              <SparkIcon size={10} /> Refine
+            </button>
             <button
               type="button"
               className="px-btn ghost xs"
@@ -1056,6 +1104,23 @@ function QBDetail({
       </div>
 
       <style>{`@keyframes qbSpin { to { transform: rotate(360deg); } }`}</style>
+
+      <RefineQuestionDialog
+        open={refineOpen}
+        onOpenChange={setRefineOpen}
+        question={{
+          id: q.id,
+          text: q.text,
+          signal_probed: q.signal_values[0] ?? '',
+          mandatory: q.is_mandatory,
+        }}
+        onRefine={async (body) => refineMutation.mutateAsync(body)}
+        onAccept={async (body) => {
+          const token = await getFreshSupabaseToken()
+          await questionsApi.acceptRefine(token, jobId, stage.id, q.id, body)
+          qc.invalidateQueries({ queryKey: ['bank', jobId, stage.id] })
+        }}
+      />
     </div>
   )
 }
