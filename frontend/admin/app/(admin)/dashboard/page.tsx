@@ -111,6 +111,42 @@ export default function DashboardPage() {
     }
   }
 
+  async function runHardDelete(c: Client) {
+    if (hardDeleteInput !== c.client_name) return;
+    setError("");
+    setHardDeleteSubmitting(true);
+    try {
+      const token = await getToken();
+      if (!token) {
+        window.location.href = "/login";
+        return;
+      }
+      const result = await apiFetch<{
+        client_id: string;
+        purged_at: string;
+        auth_users_purged: number;
+        auth_users_failed: number;
+      }>(`/api/admin/clients/${c.client_id}/hard-delete`, {
+        token,
+        method: "POST",
+        body: JSON.stringify({ confirmation_name: hardDeleteInput }),
+      });
+      // Drop the row from the list — there is nothing to update on it.
+      setClients((prev) => prev.filter((row) => row.client_id !== c.client_id));
+      setConfirmHardDelete(null);
+      setHardDeleteInput("");
+      if (result.auth_users_failed > 0) {
+        setError(
+          `Tenant deleted, but ${result.auth_users_failed} Supabase Auth identities failed to purge. Check server logs.`,
+        );
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to permanently delete");
+    } finally {
+      setHardDeleteSubmitting(false);
+    }
+  }
+
   const inviteStatusColor: Record<string, string> = {
     pending: "bg-amber-50 text-amber-700",
     accepted: "bg-green-50 text-green-700",
@@ -296,6 +332,68 @@ export default function DashboardPage() {
                 className="px-4 py-2 text-sm rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
               >
                 {pending === confirmDelete.client_id ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmHardDelete && (
+        <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+            <h2 className="text-base font-semibold text-zinc-900 mb-2">
+              Permanently delete {confirmHardDelete.client_name}?
+            </h2>
+            <p className="text-sm text-zinc-600 mb-4">
+              This will erase:
+            </p>
+            <ul className="list-disc pl-5 text-sm text-zinc-600 mb-4 space-y-1">
+              <li>All operational data (users, jobs, candidates, sessions, pipelines, …)</li>
+              <li>All Supabase Auth identities for users in this tenant</li>
+              <li>The tenant record itself</li>
+            </ul>
+            <p className="text-sm text-zinc-600 mb-1">
+              The audit log will be preserved.
+            </p>
+            <p className="text-sm font-medium text-red-600 mb-4">
+              This cannot be undone.
+            </p>
+            <label className="block text-sm text-zinc-700 mb-1">
+              Type{" "}
+              <span className="font-mono font-semibold">
+                {confirmHardDelete.client_name}
+              </span>{" "}
+              to confirm:
+            </label>
+            <input
+              type="text"
+              value={hardDeleteInput}
+              onChange={(e) => setHardDeleteInput(e.target.value)}
+              autoFocus
+              className="w-full border border-zinc-300 rounded-md px-3 py-2 text-sm mb-4"
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmHardDelete(null);
+                  setHardDeleteInput("");
+                }}
+                disabled={hardDeleteSubmitting}
+                className="px-4 py-2 text-sm rounded-lg border border-zinc-200 hover:bg-zinc-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => runHardDelete(confirmHardDelete)}
+                disabled={
+                  hardDeleteSubmitting ||
+                  hardDeleteInput !== confirmHardDelete.client_name
+                }
+                className="px-4 py-2 text-sm rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {hardDeleteSubmitting ? "Deleting..." : "Permanently delete"}
               </button>
             </div>
           </div>
