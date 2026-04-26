@@ -27,8 +27,10 @@ from app.modules.jd.schemas import (
     SignalItemResponse,
     SignalSnapshotResponse,
 )
+from app.modules.jd.errors import ActivationPredicatesFailed, IllegalTransitionError
 from app.modules.jd.service import (
     _job_to_summary,
+    activate_job,
     confirm_signals,
     create_job_posting,
     enrich_job_summaries,
@@ -582,6 +584,52 @@ async def enrich_job(
         )
 
     return {"status": "accepted"}
+
+
+@router.post("/{job_id}/activate")
+async def activate_job_endpoint(
+    job_id: UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_tenant_db),
+    user: UserContext = Depends(get_current_user_roles),
+) -> dict:
+    """Transition a job from pipeline_built → active after running all activation
+    gate predicates.
+
+    Returns 409 if the job is not in pipeline_built state.
+    Returns 422 with predicates_failed array if any predicate fails.
+    Returns 200 {"status": "active", "job_id": "..."} on success.
+    """
+    job = await require_job_access(db, job_id, user, "manage")
+    correlation_id = _get_correlation_id(request)
+    try:
+        await activate_job(
+            db, job=job, actor_id=user.user.id, correlation_id=correlation_id,
+        )
+    except IllegalTransitionError as e:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "job_not_in_pipeline_built_state",
+                "message": str(e),
+            },
+        )
+    except ActivationPredicatesFailed as e:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "activation_predicates_failed",
+                "predicates_failed": [
+                    {
+                        "code": f.code,
+                        "message": f.message,
+                        "stage_id": str(f.stage_id) if f.stage_id else None,
+                    }
+                    for f in e.failures
+                ],
+            },
+        )
+    return {"status": "active", "job_id": str(job.id)}
 
 
 @router.delete("/{job_id}", status_code=200)

@@ -12,10 +12,15 @@ Three responsibilities co-located in one file:
      instructor failure may leak API URLs, keys, request IDs, file paths,
      or prompt payloads — none of which should reach job_posting.status_error
      or the frontend.
+  4. ActivationPredicateFailure / ActivationPredicatesFailed — raised by
+     activate_job() when one or more activation gate predicates fail.
+     Mapped to HTTP 422 at the router layer with a structured predicates_failed
+     array so the frontend can surface exactly which checks need attention.
 
 Rich exception detail is still captured in structlog / Sentry — we only
 sanitize what reaches the DB and the frontend."""
 
+from dataclasses import dataclass
 from typing import Final
 from uuid import UUID
 
@@ -49,6 +54,34 @@ class CompanyProfileIncompleteError(Exception):
         super().__init__(
             f"Org unit {org_unit_id} has no ancestor with a completed company profile"
         )
+
+
+@dataclass
+class ActivationPredicateFailure:
+    """A single failed activation gate predicate.
+
+    code — machine-readable string the frontend uses to render the right
+    error chip (e.g. 'missing_interviewer').
+    message — human-readable description shown in the UI.
+    stage_id — set when the failure is tied to a specific stage; None
+    for pipeline-level failures such as 'no_pipeline' or 'no_middle_stage'.
+    """
+
+    code: str
+    message: str
+    stage_id: UUID | None = None
+
+
+class ActivationPredicatesFailed(Exception):
+    """Raised by activate_job() when one or more activation gate predicates fail.
+
+    Carries the full list of failures so the router can return all of them
+    in a single 422 response rather than stopping at the first failure.
+    """
+
+    def __init__(self, failures: list[ActivationPredicateFailure]) -> None:
+        self.failures = failures
+        super().__init__(f"{len(failures)} activation predicate(s) failed")
 
 
 # --- Error sanitization for job_posting.status_error ---------------------

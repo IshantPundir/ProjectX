@@ -485,6 +485,174 @@ async def trigger_reenrichment(
     return job
 
 
+async def evaluate_activation_predicates(
+    db: AsyncSession, *, job: JobPosting,
+) -> list:
+    """Run the activation gate predicates. Returns a list of ActivationPredicateFailure
+    objects (empty list means ready to activate)."""
+    from app.models import PipelineStageParticipant, StageQuestionBank
+    from app.modules.jd.errors import ActivationPredicateFailure
+    from app.modules.pipelines.categories import (
+        bank_eligible_stage_types,
+        human_led_stage_types,
+        middle_stage_types_for_activation,
+    )
+
+    failures: list = []
+
+    # Predicate 1: pipeline instance exists
+    from sqlalchemy import select as _select
+
+    instance_result = await db.execute(
+        _select(JobPipelineInstance).where(
+            JobPipelineInstance.job_posting_id == job.id
+        )
+    )
+    instance = instance_result.scalar_one_or_none()
+    if instance is None:
+        return [ActivationPredicateFailure(code="no_pipeline", message="Pipeline not yet built")]
+
+    # Load all stages ordered by position
+    from app.models import JobPipelineStage
+
+    stages_result = await db.execute(
+        _select(JobPipelineStage)
+        .where(JobPipelineStage.instance_id == instance.id)
+        .order_by(JobPipelineStage.position)
+    )
+    stages = list(stages_result.scalars().all())
+
+    # Predicate 2: at least one middle stage
+    middle_types = middle_stage_types_for_activation()
+    middle_stages = [s for s in stages if s.stage_type in middle_types]
+    if not middle_stages:
+        failures.append(ActivationPredicateFailure(
+            code="no_middle_stage",
+            message="Add at least one screening stage between Intake and Debrief.",
+        ))
+
+    # Bulk-load participants for all stages
+    stage_ids = [s.id for s in stages]
+    participants_by_stage: dict = {s.id: [] for s in stages}
+    if stage_ids:
+        part_result = await db.execute(
+            _select(PipelineStageParticipant).where(
+                PipelineStageParticipant.stage_id.in_(stage_ids)
+            )
+        )
+        for p in part_result.scalars().all():
+            participants_by_stage.setdefault(p.stage_id, []).append(p)
+
+    # Bulk-load banks for all stages
+    banks_by_stage: dict = {}
+    if stage_ids:
+        bank_result = await db.execute(
+            _select(StageQuestionBank).where(
+                StageQuestionBank.stage_id.in_(stage_ids)
+            )
+        )
+        for b in bank_result.scalars().all():
+            banks_by_stage[b.stage_id] = b
+
+    # take_home is disabled — exclude from bank-eligible check
+    bank_types = bank_eligible_stage_types() - {"take_home"}
+    human_led = human_led_stage_types()
+
+    for s in stages:
+        # Predicate 6: stage name non-empty
+        if not (s.name or "").strip():
+            failures.append(ActivationPredicateFailure(
+                code="empty_stage_name",
+                message=f"Stage at position {s.position} has no name.",
+                stage_id=s.id,
+            ))
+
+        # Predicate 3: human_led stages need ≥1 interviewer
+        if s.stage_type in human_led:
+            interviewers = [
+                p for p in participants_by_stage.get(s.id, [])
+                if p.role == "interviewer"
+            ]
+            if not interviewers:
+                failures.append(ActivationPredicateFailure(
+                    code="missing_interviewer",
+                    message=f"Assign an interviewer to '{s.name}'.",
+                    stage_id=s.id,
+                ))
+
+        # Predicate 4: debrief stage needs ≥1 reviewer
+        if s.stage_type == "debrief":
+            reviewers = [
+                p for p in participants_by_stage.get(s.id, [])
+                if p.role == "reviewer"
+            ]
+            if not reviewers:
+                failures.append(ActivationPredicateFailure(
+                    code="missing_reviewer",
+                    message=f"Assign a reviewer to '{s.name}'.",
+                    stage_id=s.id,
+                ))
+
+        # Predicate 5: bank-eligible stage has a generated/confirmed bank
+        if s.stage_type in bank_types:
+            bank = banks_by_stage.get(s.id)
+            if bank is None or bank.status not in ("generated", "confirmed"):
+                failures.append(ActivationPredicateFailure(
+                    code="missing_bank",
+                    message=f"Generate a question bank for '{s.name}'.",
+                    stage_id=s.id,
+                ))
+
+    # Predicate 7: positions sequential 0..N-1 (defensive)
+    sorted_positions = sorted(s.position for s in stages)
+    if sorted_positions != list(range(len(stages))):
+        failures.append(ActivationPredicateFailure(
+            code="positions_not_sequential",
+            message=f"Stage positions are not sequential: {sorted_positions}",
+        ))
+
+    return failures
+
+
+async def activate_job(
+    db: AsyncSession,
+    *,
+    job: JobPosting,
+    actor_id: UUID,
+    correlation_id: str,
+) -> JobPosting:
+    """Run activation gate; on success, transition job to active.
+
+    Raises:
+        IllegalTransitionError: if job is not in pipeline_built (or already active).
+        ActivationPredicatesFailed: if one or more predicates fail.
+    """
+    from app.modules.jd.errors import ActivationPredicatesFailed
+
+    if job.status != "pipeline_built":
+        raise IllegalTransitionError(from_state=job.status, to_state="active")
+
+    failures = await evaluate_activation_predicates(db, job=job)
+    if failures:
+        raise ActivationPredicatesFailed(failures)
+
+    await transition(
+        db,
+        job,
+        to_state="active",
+        actor_id=actor_id,
+        correlation_id=correlation_id,
+    )
+    await db.flush()
+
+    logger.info(
+        "jd.service.job_activated",
+        job_posting_id=str(job.id),
+        correlation_id=correlation_id,
+    )
+    return job
+
+
 async def delete_job_posting(
     db: AsyncSession,
     *,
