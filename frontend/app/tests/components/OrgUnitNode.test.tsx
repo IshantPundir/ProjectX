@@ -41,14 +41,17 @@ function renderNode(opts: {
   selectedId?: string | null
   onSelectPath?: Set<string>
   onSelect?: (id: string) => void
+  onContextMenu?: (id: string) => void
 } = {}) {
   const unit = makeUnit(opts.unit)
   const onSelect = opts.onSelect ?? vi.fn()
+  const onContextMenu = opts.onContextMenu ?? vi.fn()
   const data = {
     unit,
     selectedId: opts.selectedId ?? null,
     onSelectPath: opts.onSelectPath ?? new Set<string>(),
     onSelect,
+    onContextMenu,
   }
   const nodeProps = {
     id: unit.id,
@@ -69,7 +72,7 @@ function renderNode(opts: {
       <OrgUnitNode {...nodeProps} />
     </ReactFlowProvider>,
   )
-  return { ...utils, unit, onSelect }
+  return { ...utils, unit, onSelect, onContextMenu }
 }
 
 describe('OrgUnitNode', () => {
@@ -136,5 +139,24 @@ describe('OrgUnitNode', () => {
     })
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('unknown unit_type'))
     warn.mockRestore()
+  })
+
+  it('calls data.onContextMenu on Shift+F10', () => {
+    const onContextMenu = vi.fn()
+    renderNode({ onContextMenu })
+    const card = screen.getByRole('button', { name: /division: Engineering/ })
+    card.focus()
+    fireEvent.keyDown(card, { key: 'F10', shiftKey: true })
+    expect(onContextMenu).toHaveBeenCalledTimes(1)
+    expect(onContextMenu).toHaveBeenCalledWith('u1')
+  })
+
+  it('calls data.onContextMenu on the ContextMenu key', () => {
+    const onContextMenu = vi.fn()
+    renderNode({ onContextMenu })
+    const card = screen.getByRole('button', { name: /division: Engineering/ })
+    card.focus()
+    fireEvent.keyDown(card, { key: 'ContextMenu' })
+    expect(onContextMenu).toHaveBeenCalledTimes(1)
   })
 })

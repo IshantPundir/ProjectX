@@ -79,6 +79,7 @@ type OrgUnitNodeData = {
   selectedId: string | null
   onSelectPath: Set<string>
   onSelect: (id: string) => void
+  onContextMenu: (id: string) => void
 } & Record<string, unknown>
 
 // `nodeTypes` and `edgeTypes` MUST be defined outside the component so
@@ -144,6 +145,26 @@ function OrgGraphInner({
     }
   }, [units])
 
+  const onCardContextMenu = useCallback(
+    (id: string) => {
+      const unit = units.find((u) => u.id === id)
+      if (!unit) return
+      // Anchor the menu at the card's bounding-box center in the canvas.
+      const cardEl = wrapperRef.current?.querySelector<HTMLElement>(
+        `[data-id="${id}"]`,
+      )
+      const wrapperRect = wrapperRef.current?.getBoundingClientRect()
+      if (!cardEl || !wrapperRect) return
+      const cardRect = cardEl.getBoundingClientRect()
+      const x = cardRect.left + cardRect.width / 2 - wrapperRect.left
+      const y = cardRect.top + cardRect.height / 2 - wrapperRect.top
+      onSelect(unit.id)
+      setOverlay({ kind: 'menu', unit, x, y })
+      setCreateError(null)
+    },
+    [units, onSelect],
+  )
+
   const rawNodes = useMemo<Node<OrgUnitNodeData>[]>(
     () =>
       units.map((u) => ({
@@ -151,9 +172,15 @@ function OrgGraphInner({
         type: 'orgUnit',
         // dagre overwrites this in useDagreLayout.
         position: { x: 0, y: 0 },
-        data: { unit: u, selectedId, onSelectPath, onSelect },
+        data: {
+          unit: u,
+          selectedId,
+          onSelectPath,
+          onSelect,
+          onContextMenu: onCardContextMenu,
+        },
       })),
-    [units, selectedId, onSelectPath, onSelect],
+    [units, selectedId, onSelectPath, onSelect, onCardContextMenu],
   )
 
   const rawEdges = useMemo<Edge[]>(

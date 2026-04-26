@@ -9,6 +9,7 @@ interface OrgUnitNodeData {
   selectedId: string | null
   onSelectPath: Set<string>
   onSelect: (id: string) => void
+  onContextMenu?: (id: string) => void
 }
 
 type Pressure = 'hot' | 'steady' | null
@@ -24,7 +25,7 @@ function OrgUnitNodeImpl({
   sourcePosition = Position.Bottom,
   targetPosition = Position.Top,
 }: NodeProps) {
-  const { unit, selectedId, onSelectPath, onSelect } =
+  const { unit, selectedId, onSelectPath, onSelect, onContextMenu } =
     data as unknown as OrgUnitNodeData
   const style = getUnitTypeStyle(unit.unit_type)
   const Icon = style.icon
@@ -43,6 +44,15 @@ function OrgUnitNodeImpl({
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
       onSelect(unit.id)
+      return
+    }
+    // OS-standard "open context menu" shortcuts.
+    if (
+      e.key === 'ContextMenu' ||
+      (e.key === 'F10' && e.shiftKey)
+    ) {
+      e.preventDefault()
+      onContextMenu?.(unit.id)
     }
   }
 
