@@ -11,7 +11,7 @@ Data migration: any job in 'signals_confirmed' that already has a pipeline
 instance is moved to 'pipeline_built' (matches the new auto-apply-removed
 front-door flow — see spec §10).
 
-Revision ID: 0018_pipeline_version
+Revision ID: 0018_pipeline_ver_pause
 Revises: 0017_sq_updated_at_trigger
 Create Date: 2026-04-26
 """
@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from alembic import op
 
-revision = "0018_pipeline_version"
+revision = "0018_pipeline_ver_pause"
 down_revision = "0017_sq_updated_at_trigger"
 branch_labels = None
 depends_on = None
@@ -53,7 +53,7 @@ def upgrade() -> None:
     # Backfill is_stale to match current compute_is_stale (signal-snapshot drift only).
     op.execute("""
         UPDATE stage_question_banks qb
-           SET is_stale = (
+           SET is_stale = COALESCE(
                qb.signal_snapshot_id != (
                    SELECT id FROM job_posting_signal_snapshots
                     WHERE job_posting_id = (
@@ -64,7 +64,8 @@ def upgrade() -> None:
                     )
                     AND confirmed_at IS NOT NULL
                     ORDER BY version DESC LIMIT 1
-               )
+               ),
+               false
            )
     """)
 
