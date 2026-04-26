@@ -42,6 +42,7 @@ export function OrgGraphControls({ onZoomIn, onZoomOut, onFitView }: Props) {
         type="button"
         aria-label="Zoom in"
         onClick={onZoomIn}
+        className="focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--px-accent)]"
         style={{ ...buttonStyle, borderBottom: '1px solid var(--px-hairline)' }}
       >
         <Plus size={14} aria-hidden strokeWidth={2} />
@@ -50,6 +51,7 @@ export function OrgGraphControls({ onZoomIn, onZoomOut, onFitView }: Props) {
         type="button"
         aria-label="Zoom out"
         onClick={onZoomOut}
+        className="focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--px-accent)]"
         style={{ ...buttonStyle, borderBottom: '1px solid var(--px-hairline)' }}
       >
         <Minus size={14} aria-hidden strokeWidth={2} />
@@ -58,6 +60,7 @@ export function OrgGraphControls({ onZoomIn, onZoomOut, onFitView }: Props) {
         type="button"
         aria-label="Fit view"
         onClick={onFitView}
+        className="focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--px-accent)]"
         style={buttonStyle}
       >
         <Maximize size={13} aria-hidden strokeWidth={2} />
