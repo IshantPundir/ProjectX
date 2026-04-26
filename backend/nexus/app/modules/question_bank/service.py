@@ -147,14 +147,71 @@ async def get_bank_questions(
     return list(result.scalars().all())
 
 
+async def _latest_confirmed_signal_snapshot_id_for_bank(
+    db: AsyncSession, bank: StageQuestionBank
+) -> "UUID | None":
+    """Return the id of the latest confirmed signal snapshot for the bank's job.
+
+    Returns None when no confirmed snapshot exists (bank cannot be stale).
+    """
+    latest = await get_latest_confirmed_snapshot(db, bank.job_posting_id)
+    if latest is None:
+        return None
+    return latest.id
+
+
+async def recompute_and_persist_stale(
+    db: AsyncSession,
+    bank: StageQuestionBank,
+    *,
+    current_stage_config: dict | None = None,
+) -> bool:
+    """Recompute is_stale and persist to the column. Returns the new value.
+
+    Predicate: stale if the latest confirmed signal_snapshot id differs from
+    the bank's pinned snapshot, OR the stage's signal_filter/difficulty
+    differs from stage_config_snapshot.
+
+    Per spec §11.5: when a confirmed bank goes stale, it drops back to
+    'generated' state (clears confirmed_at/confirmed_by).
+    """
+    latest_snapshot_id = await _latest_confirmed_signal_snapshot_id_for_bank(db, bank)
+    signal_drift = (
+        latest_snapshot_id is not None
+        and bank.signal_snapshot_id != latest_snapshot_id
+    )
+
+    config_drift = False
+    if current_stage_config is not None and bank.stage_config_snapshot is not None:
+        for key in ("signal_filter", "difficulty"):
+            if current_stage_config.get(key) != bank.stage_config_snapshot.get(key):
+                config_drift = True
+                break
+
+    new_stale = signal_drift or config_drift
+
+    if new_stale and bank.status == "confirmed":
+        bank.status = "generated"
+        bank.confirmed_at = None
+        bank.confirmed_by = None
+
+    bank.is_stale = new_stale
+    await db.flush()
+    return new_stale
+
+
 async def compute_is_stale(
     db: AsyncSession, bank: StageQuestionBank
 ) -> bool:
-    """True if the bank's pinned snapshot is not the job's latest confirmed one."""
-    latest = await get_latest_confirmed_snapshot(db, bank.job_posting_id)
-    if latest is None:
-        return False  # no confirmed snapshot; bank can't be stale
-    return bank.signal_snapshot_id != latest.id
+    """Backward-compat shim: returns the persisted bank.is_stale column.
+
+    Tests that previously created a bank, edited a signal, then called
+    compute_is_stale will now need to call recompute_and_persist_stale on the
+    write side first. Update those tests if they fail.
+
+    New code should NOT call this; read bank.is_stale directly.
+    """
+    return bank.is_stale
 
 
 async def get_banks_for_pipeline(
@@ -201,10 +258,6 @@ async def get_banks_for_pipeline(
         for q in q_result.scalars().all():
             questions_by_bank.setdefault(q.bank_id, []).append(q)
 
-    # 4. Cache latest confirmed snapshot once for staleness computation.
-    latest = await get_latest_confirmed_snapshot(db, instance.job_posting_id)
-    latest_id = latest.id if latest else None
-
     out: list[tuple[StageQuestionBank, int, float, bool]] = []
     for stage in stages:
         bank = banks_by_stage.get(stage.id)
@@ -213,7 +266,8 @@ async def get_banks_for_pipeline(
         questions = questions_by_bank.get(bank.id, [])
         question_count = len(questions)
         total_minutes = float(sum(q.estimated_minutes for q in questions))
-        is_stale = latest_id is not None and bank.signal_snapshot_id != latest_id
+        # Read persisted column directly — no recompute on read path (§11.5).
+        is_stale = bank.is_stale
         out.append((bank, question_count, total_minutes, is_stale))
     return out
 
@@ -703,6 +757,7 @@ __all__ = [
     "get_bank_questions",
     "get_banks_for_pipeline",
     "compute_is_stale",
+    "recompute_and_persist_stale",
     "get_latest_confirmed_snapshot",
     "validate_knockout_coverage",
     "validate_mandatory_fits_session",

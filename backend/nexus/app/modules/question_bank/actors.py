@@ -380,6 +380,14 @@ async def _generate_one_bank(
             db, bank=bank, questions=validated, source="ai_generated"
         )
 
+        # Stamp generation-time config snapshot and clear staleness (§11.5).
+        bank.pipeline_version_at_generation = instance.pipeline_version
+        bank.stage_config_snapshot = {
+            "signal_filter": stage.signal_filter,
+            "difficulty": stage.difficulty,
+        }
+        bank.is_stale = False
+
         # Transition bank → reviewing
         transition_to_reviewing_after_generation(bank, user_id=started_by)
     except Exception as exc:

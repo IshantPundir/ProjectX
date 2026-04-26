@@ -11,7 +11,7 @@ import structlog
 from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import JobPosting, JobPostingSignalSnapshot, OrganizationalUnit, User
+from app.models import JobPipelineInstance, JobPosting, JobPostingSignalSnapshot, OrganizationalUnit, User
 from app.modules.jd.errors import CompanyProfileIncompleteError, IllegalTransitionError
 from app.modules.jd.schemas import (
     JobPostingSummary,
@@ -369,7 +369,44 @@ async def save_signals(
         snapshot_version=snapshot.version,
         correlation_id=correlation_id,
     )
+
+    # Recompute is_stale for all banks on this job's pipeline (§11.5).
+    # The new snapshot is not yet confirmed, so signal_drift won't fire here —
+    # it will fire once the recruiter confirms the new snapshot. We still call
+    # recompute so that any prior drift stays correctly persisted.
+    await _recompute_stale_for_job_banks(db, job)
+
     return snapshot
+
+
+async def _recompute_stale_for_job_banks(db: AsyncSession, job: JobPosting) -> None:
+    """Recompute and persist is_stale for every bank on the job's pipeline.
+
+    Fires after signal save so banks that are already pinned to an older
+    confirmed snapshot remain marked stale after the edit. Import is lazy to
+    avoid a circular import chain (jd ← question_bank ← jd).
+    """
+    from app.modules.question_bank.service import recompute_and_persist_stale
+
+    instance_result = await db.execute(
+        select(JobPipelineInstance).where(
+            JobPipelineInstance.job_posting_id == job.id
+        )
+    )
+    instance = instance_result.scalar_one_or_none()
+    if instance is None:
+        return  # no pipeline yet; nothing to recompute
+
+    from app.models import StageQuestionBank, JobPipelineStage
+
+    banks_result = await db.execute(
+        select(StageQuestionBank)
+        .join(JobPipelineStage, StageQuestionBank.stage_id == JobPipelineStage.id)
+        .where(JobPipelineStage.instance_id == instance.id)
+    )
+    banks = list(banks_result.scalars().all())
+    for bank in banks:
+        await recompute_and_persist_stale(db, bank)
 
 
 async def confirm_signals(

@@ -629,6 +629,16 @@ async def update_job_pipeline_stages(
         else:
             incoming_new.append(s)
 
+    # Snapshot pre-mutation signal_filter/difficulty for each matched stage so
+    # we can detect config drift after the update (§11.5).
+    _pre_config: dict[UUID, dict] = {}
+    for e in existing_list:
+        if e.id in incoming_by_id:
+            _pre_config[e.id] = {
+                "signal_filter": e.signal_filter,
+                "difficulty": e.difficulty,
+            }
+
     # Park matched existing stages in unique negative positions so the main
     # update loop can shuffle freely without tripping
     # UNIQUE(instance_id, position). Postgres checks that constraint row-by-
@@ -725,6 +735,11 @@ async def update_job_pipeline_stages(
     instance.updated_at = _now_utc()
     await db.flush()
     await bump_pipeline_version(db, instance)
+
+    # Recompute is_stale for banks whose stage config changed (§11.5).
+    # Lazy import to avoid circular: pipelines → question_bank → pipelines.
+    await _recompute_stale_for_config_changed_stages(db, existing_list, incoming_by_id, _pre_config)
+
     logger.info(
         "pipelines.job_instance_stages_synced",
         instance_id=str(instance.id),
@@ -734,6 +749,42 @@ async def update_job_pipeline_stages(
         pipeline_version=instance.pipeline_version,
     )
     return instance
+
+
+async def _recompute_stale_for_config_changed_stages(
+    db: AsyncSession,
+    existing_list: list[JobPipelineStage],
+    incoming_by_id: dict[UUID, "PipelineStageUpdateInput"],
+    pre_config: dict[UUID, dict],
+) -> None:
+    """Recompute is_stale for every matched stage whose signal_filter or
+    difficulty changed. Lazy import avoids a circular import chain."""
+    from app.models import StageQuestionBank
+    from app.modules.question_bank.service import recompute_and_persist_stale
+
+    for stage in existing_list:
+        if stage.id not in incoming_by_id:
+            continue
+        old = pre_config.get(stage.id, {})
+        if (
+            old.get("signal_filter") != stage.signal_filter
+            or old.get("difficulty") != stage.difficulty
+        ):
+            bank_result = await db.execute(
+                select(StageQuestionBank).where(
+                    StageQuestionBank.stage_id == stage.id
+                )
+            )
+            bank = bank_result.scalar_one_or_none()
+            if bank is not None:
+                await recompute_and_persist_stale(
+                    db,
+                    bank,
+                    current_stage_config={
+                        "signal_filter": stage.signal_filter,
+                        "difficulty": stage.difficulty,
+                    },
+                )
 
 
 async def reset_job_pipeline_to_source(

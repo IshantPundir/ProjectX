@@ -45,6 +45,7 @@ from app.modules.question_bank.service import (
     confirm_bank,
     ensure_bank_exists,
     get_bank_questions,
+    recompute_and_persist_stale,
     transition_to_generating,
     update_question,
 )
@@ -435,6 +436,9 @@ async def test_staleness_detection_after_signal_edit(
     )
     db.add(v2)
     await db.flush()
+
+    # Write-side: recompute and persist the column.
+    await recompute_and_persist_stale(db, bank)
 
     # Now bank is pinned to v1, but latest confirmed is v2 → stale
     assert await compute_is_stale(db, bank) is True

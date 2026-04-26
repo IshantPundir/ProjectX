@@ -53,7 +53,6 @@ from app.modules.question_bank.schemas import (
     UpdateQuestionBody,
 )
 from app.modules.question_bank.service import (
-    compute_is_stale,
     confirm_bank,
     create_recruiter_question,
     delete_question,
@@ -358,7 +357,7 @@ async def get_bank(
         bank = await ensure_bank_exists(db, stage=stage, job=job)
 
     questions = await get_bank_questions(db, bank.id)
-    is_stale = await compute_is_stale(db, bank)
+    is_stale = bank.is_stale
     total_minutes = float(sum(q.estimated_minutes for q in questions))
 
     return BankWithQuestionsResponse(
@@ -604,7 +603,7 @@ async def reorder_questions_endpoint(
     # test in a nested transaction that hides this — but production does
     # not, so the response would be populated with empty questions.
     questions = await get_bank_questions(db, bank.id)
-    is_stale = await compute_is_stale(db, bank)
+    is_stale = bank.is_stale
     total_minutes = float(sum(q.estimated_minutes for q in questions))
     response = BankWithQuestionsResponse(
         **_bank_to_response(
@@ -794,7 +793,7 @@ async def confirm_bank_endpoint(
     # reorder_questions_endpoint. Post-commit queries on the tenant session
     # run with app.current_tenant unset and RLS returns zero rows.
     questions = await get_bank_questions(db, bank.id)
-    is_stale = await compute_is_stale(db, bank)
+    is_stale = bank.is_stale
     total_minutes = float(sum(q.estimated_minutes for q in questions))
     response = _bank_to_response(
         bank,

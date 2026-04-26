@@ -50,6 +50,7 @@ from app.modules.question_bank.service import (
     delete_question,
     ensure_bank_exists,
     get_bank_questions,
+    recompute_and_persist_stale,
     replace_question_in_place,
     reorder_questions,
     transition_to_failed,
@@ -1061,7 +1062,7 @@ async def test_compute_is_stale_returns_true_when_snapshot_superseded(db):
     bank = await ensure_bank_exists(db, stage=stage, job=job)
     assert bank.signal_snapshot_id == snapshot_v1.id
 
-    # Initially not stale
+    # Initially not stale (column is False)
     assert await compute_is_stale(db, bank) is False
 
     # Add a newer confirmed snapshot for the same job
@@ -1079,5 +1080,8 @@ async def test_compute_is_stale_returns_true_when_snapshot_superseded(db):
     db.add(snapshot_v2)
     await db.flush()
 
-    # Now bank's pinned v1 is no longer the latest
+    # Write-side: recompute and persist the column so readers see the new value.
+    await recompute_and_persist_stale(db, bank)
+
+    # compute_is_stale shim now reads the persisted column — True.
     assert await compute_is_stale(db, bank) is True
