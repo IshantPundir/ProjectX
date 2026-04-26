@@ -46,16 +46,6 @@ const TREE: GraphNodeData[] = [
 
 beforeEach(() => {
   window.localStorage.clear()
-  // jsdom has no ResizeObserver, which xyflow uses internally.
-  // Polyfill with a no-op so the canvas mounts cleanly.
-  if (!('ResizeObserver' in window)) {
-    // @ts-expect-error injecting polyfill into the test environment
-    window.ResizeObserver = class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    }
-  }
 })
 
 afterEach(() => {
