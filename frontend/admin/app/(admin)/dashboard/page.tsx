@@ -36,6 +36,9 @@ export default function DashboardPage() {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Client | null>(null);
+  const [confirmHardDelete, setConfirmHardDelete] = useState<Client | null>(null);
+  const [hardDeleteInput, setHardDeleteInput] = useState("");
+  const [hardDeleteSubmitting, setHardDeleteSubmitting] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -196,7 +199,7 @@ export default function DashboardPage() {
                     <td className="px-4 py-2.5 text-right relative">
                       <button
                         type="button"
-                        disabled={isDeleted || isPending}
+                        disabled={isPending}
                         onClick={() => setOpenMenu(menuOpen ? null : c.client_id)}
                         className="text-zinc-400 hover:text-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed px-2 py-1 rounded"
                         aria-haspopup="menu"
@@ -209,38 +212,54 @@ export default function DashboardPage() {
                         <div
                           ref={menuRef}
                           role="menu"
-                          className="absolute right-4 top-10 z-10 bg-white border border-zinc-200 rounded-lg shadow-md w-40 py-1 text-left"
+                          className="absolute right-4 top-10 z-10 bg-white border border-zinc-200 rounded-lg shadow-md w-44 py-1 text-left"
                         >
-                          {isBlocked ? (
+                          {isDeleted ? (
                             <button
                               type="button"
                               role="menuitem"
-                              onClick={() => runAction(c, "unblock")}
-                              className="w-full text-left px-3 py-2 text-sm hover:bg-zinc-50"
+                              onClick={() => {
+                                setOpenMenu(null);
+                                setConfirmHardDelete(c);
+                              }}
+                              className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50"
                             >
-                              Unblock
+                              Permanently delete
                             </button>
                           ) : (
-                            <button
-                              type="button"
-                              role="menuitem"
-                              onClick={() => runAction(c, "block")}
-                              className="w-full text-left px-3 py-2 text-sm hover:bg-zinc-50"
-                            >
-                              Block
-                            </button>
+                            <>
+                              {isBlocked ? (
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  onClick={() => runAction(c, "unblock")}
+                                  className="w-full text-left px-3 py-2 text-sm hover:bg-zinc-50"
+                                >
+                                  Unblock
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  onClick={() => runAction(c, "block")}
+                                  className="w-full text-left px-3 py-2 text-sm hover:bg-zinc-50"
+                                >
+                                  Block
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                  setOpenMenu(null);
+                                  setConfirmDelete(c);
+                                }}
+                                className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50"
+                              >
+                                Delete
+                              </button>
+                            </>
                           )}
-                          <button
-                            type="button"
-                            role="menuitem"
-                            onClick={() => {
-                              setOpenMenu(null);
-                              setConfirmDelete(c);
-                            }}
-                            className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50"
-                          >
-                            Delete
-                          </button>
                         </div>
                       )}
                     </td>
