@@ -430,6 +430,7 @@ export default function OrgUnitsPage() {
               hoverId={hoverId}
               onSelect={setSelectedId}
               onHover={setHoverId}
+              onOpen={(id) => router.push(`/settings/org-units/${id}`)}
             />
             <div
               className="absolute bottom-2.5 left-3.5 text-[10.5px]"

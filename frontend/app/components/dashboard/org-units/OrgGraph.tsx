@@ -40,6 +40,9 @@ interface OrgGraphProps {
   units: GraphNodeData[]
   selectedId: string | null
   onSelect: (id: string) => void
+  /** Fired when the user double-clicks a card. Typically wired to a
+   *  `router.push` to the unit's detail page. */
+  onOpen?: (id: string) => void
   /** Accepted for backward compatibility with the old SVG impl. Unused. */
   hoverId?: string | null
   /** Accepted for backward compatibility with the old SVG impl. Unused. */
@@ -63,7 +66,7 @@ const edgeTypes: EdgeTypes = { orgUnit: OrgUnitEdge }
 
 // ─── Inner canvas component (uses useReactFlow → must be inside Provider) ──
 
-function OrgGraphInner({ units, selectedId, onSelect }: OrgGraphProps) {
+function OrgGraphInner({ units, selectedId, onSelect, onOpen }: OrgGraphProps) {
   const { fitView } = useReactFlow()
   const [direction, setDirection] = useDirectionToggle()
 
@@ -140,12 +143,15 @@ function OrgGraphInner({ units, selectedId, onSelect }: OrgGraphProps) {
       nodes={positionedNodes}
       edges={rawEdges}
       onNodesChange={onNodesChange}
+      onNodeDoubleClick={(_e, node) => onOpen?.(node.id)}
       nodeTypes={nodeTypes}
       edgeTypes={edgeTypes}
       fitView
       // Keep the xyflow attribution visible (no Pro license) but out of
-      // the way of <Controls> at bottom-right.
+      // the way of <Controls> at bottom-right. Also disable double-click
+      // zoom so it doesn't fight onNodeDoubleClick on the card.
       attributionPosition="bottom-left"
+      zoomOnDoubleClick={false}
       nodesDraggable={false}
       nodesConnectable={false}
       elementsSelectable={false}

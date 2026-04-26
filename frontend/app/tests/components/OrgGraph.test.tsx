@@ -86,6 +86,34 @@ describe('OrgGraph', () => {
     expect(onSelect).toHaveBeenCalledWith('na')
   })
 
+  it('calls onOpen with the unit id on double-click', () => {
+    const onOpen = vi.fn()
+    renderWithProviders(
+      <OrgGraph
+        units={TREE}
+        selectedId={null}
+        onSelect={vi.fn()}
+        onOpen={onOpen}
+      />,
+    )
+    fireEvent.doubleClick(
+      screen.getByRole('button', { name: /division: Engineering/ }),
+    )
+    expect(onOpen).toHaveBeenCalledTimes(1)
+    expect(onOpen).toHaveBeenCalledWith('eng')
+  })
+
+  it('does not throw on double-click when onOpen is omitted', () => {
+    renderWithProviders(
+      <OrgGraph units={TREE} selectedId={null} onSelect={vi.fn()} />,
+    )
+    expect(() => {
+      fireEvent.doubleClick(
+        screen.getByRole('button', { name: /division: Engineering/ }),
+      )
+    }).not.toThrow()
+  })
+
   it('marks the selected card and its ancestors with on-path / selected states', () => {
     renderWithProviders(
       <OrgGraph units={TREE} selectedId="eng" onSelect={vi.fn()} />,
