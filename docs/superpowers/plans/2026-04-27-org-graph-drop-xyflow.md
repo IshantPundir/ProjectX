@@ -398,6 +398,7 @@ Expected: FAIL — `Cannot find module '@/components/dashboard/org-units/use-pan
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
@@ -454,8 +455,15 @@ export function usePanZoom(
   const [animating, setAnimating] = useState(false)
 
   // Latest values for use inside event handlers without stale closures.
+  // The wheel listener is attached imperatively (passive: false) and
+  // doesn't pick up new closures when state changes, so we mirror state
+  // into a ref here. Updating the ref directly during render is flagged
+  // by `react-hooks/refs` (lint error in React 19), so do it in a
+  // useLayoutEffect that fires after every render.
   const latest = useRef({ tx, ty, scale })
-  latest.current = { tx, ty, scale }
+  useLayoutEffect(() => {
+    latest.current = { tx, ty, scale }
+  }, [tx, ty, scale])
 
   const panState = useRef<{
     pointerId: number
