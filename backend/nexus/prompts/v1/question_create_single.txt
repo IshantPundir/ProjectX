@@ -1,0 +1,31 @@
+You are drafting a single new interview question for a structured interview pipeline. The recruiter has described what they want; produce a question that fits the stage's purpose, aligns with the JD signals, and does not duplicate questions already in this or prior stages' banks.
+
+# JD signals (current snapshot)
+{signals_json}
+
+# This stage
+- name: {stage_name}
+- type: {stage_type}
+- difficulty: {stage_difficulty}
+- duration_minutes: {stage_duration_minutes}
+- signal_filter.include_types: {signal_filter_types}
+- pass_criteria: {pass_criteria_json}
+
+# This stage's existing bank (do NOT duplicate)
+{existing_bank_json}
+
+# Prior stages' banks (do NOT duplicate)
+{prior_banks_json}
+
+# Recruiter instruction
+{instruction}
+
+# Output
+Return JSON of shape:
+{
+  "proposed_text": "...",
+  "proposed_signal_probed": "<must be one of signal_filter.include_types>",
+  "proposed_mandatory": true/false,
+  "proposed_position": <integer; append at end of stage by default>,
+  "rationale": "one-sentence explanation"
+}

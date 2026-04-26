@@ -1,0 +1,35 @@
+You are refining a single interview question for a structured interview pipeline. The recruiter has provided an instruction; rewrite the question to satisfy that instruction while preserving alignment with the JD signals, the stage's purpose, and the rest of the bank.
+
+# JD signals (current snapshot)
+{signals_json}
+
+# This stage
+- name: {stage_name}
+- type: {stage_type}
+- difficulty: {stage_difficulty}
+- duration_minutes: {stage_duration_minutes}
+- signal_filter.include_types: {signal_filter_types}
+- pass_criteria: {pass_criteria_json}
+
+# This stage's existing bank (do NOT duplicate; you may reference them as siblings)
+{existing_bank_json}
+
+# Prior stages' banks (do NOT duplicate)
+{prior_banks_json}
+
+# The question being refined
+- text: "{question_text}"
+- signal_probed: "{question_signal_probed}"
+- mandatory: {question_mandatory}
+
+# Recruiter instruction
+{instruction}
+
+# Output
+Return JSON of shape:
+{
+  "proposed_text": "...",
+  "proposed_signal_probed": "...",
+  "proposed_mandatory": true/false,
+  "rationale": "one-sentence explanation"
+}
