@@ -40,6 +40,13 @@ export function getDagreLayout<T>(
       position: { x: d.x - NODE_WIDTH / 2, y: d.y - NODE_HEIGHT / 2 },
       sourcePosition: isHorizontal ? Position.Right : Position.Bottom,
       targetPosition: isHorizontal ? Position.Left : Position.Top,
+      // Pre-supply the dimensions xyflow would otherwise wait for
+      // ResizeObserver to measure. Cards are fixed size by design, so
+      // this is accurate. Without it, xyflow keeps every node at
+      // `visibility: hidden` on first paint until the observer fires —
+      // a real-world flash, and it also breaks RTL queries that skip
+      // hidden nodes (jsdom never fires ResizeObserver organically).
+      measured: { width: NODE_WIDTH, height: NODE_HEIGHT },
     }
   })
 }
