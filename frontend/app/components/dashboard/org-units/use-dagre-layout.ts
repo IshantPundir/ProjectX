@@ -12,7 +12,7 @@ export type Direction = 'TB' | 'LR'
  * returns the same nodes with positions and source/target handle sides
  * filled in. Easy to unit-test.
  */
-export function getDagreLayout<T>(
+export function getDagreLayout<T extends Record<string, unknown>>(
   nodes: Node<T>[],
   edges: Edge[],
   direction: Direction,
@@ -55,7 +55,7 @@ export function getDagreLayout<T>(
  * Memoized React hook wrapper around `getDagreLayout`. Recomputes only
  * when nodes, edges, or direction reference-change.
  */
-export function useDagreLayout<T>(
+export function useDagreLayout<T extends Record<string, unknown>>(
   nodes: Node<T>[],
   edges: Edge[],
   direction: Direction,

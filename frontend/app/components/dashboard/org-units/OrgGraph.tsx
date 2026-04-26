@@ -50,12 +50,14 @@ interface OrgGraphProps {
   onHover?: (id: string | null) => void
 }
 
-interface OrgUnitNodeData {
+// Index-signature intersection is required by xyflow's `Node<T>` generic,
+// which constrains its data parameter to `Record<string, unknown>`.
+type OrgUnitNodeData = {
   unit: GraphNodeData
   selectedId: string | null
   onSelectPath: Set<string>
   onSelect: (id: string) => void
-}
+} & Record<string, unknown>
 
 // `nodeTypes` and `edgeTypes` MUST be defined outside the component so
 // xyflow doesn't recreate them on every render — that triggers a
