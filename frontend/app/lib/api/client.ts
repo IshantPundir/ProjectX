@@ -12,10 +12,12 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
  */
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  code: string | null;
+  constructor(message: string, status: number, code: string | null = null) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -99,7 +101,8 @@ export async function apiFetch<T>(
       : typeof detail === 'string'
         ? detail
         : `API error: ${res.status}`;
-    throw new ApiError(message, res.status);
+    const code = typeof body.code === 'string' ? body.code : null;
+    throw new ApiError(message, res.status, code);
   }
 
   if (res.status === 204) return undefined as T;

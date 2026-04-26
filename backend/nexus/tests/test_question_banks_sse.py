@@ -399,7 +399,6 @@ async def test_e2e_mutation_to_sse_happy_path(db: AsyncSession, monkeypatch):
     ctx = UserContext(
         user=user,
         is_super_admin=True,   # super-admin bypasses all permission checks
-        workspace_mode="enterprise",
         assignments=[],
     )
 

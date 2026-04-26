@@ -200,11 +200,6 @@ export default function OrgUnitsPage() {
   const totalUnits = units.length;
 
   const selectOptions = useMemo(() => flattenForSelect(units), [units]);
-  const createableTypes = UNIT_TYPES.filter((t) => {
-    if (t.value === "client_account" && me?.workspace_mode !== "agency")
-      return false;
-    return true;
-  });
 
   async function doCreate(companyProfile: CompanyProfile | null) {
     const values = createForm.getValues();
@@ -355,7 +350,7 @@ export default function OrgUnitsPage() {
                 className="px-input"
                 {...createForm.register("unit_type")}
               >
-                {createableTypes.map((t) => (
+                {UNIT_TYPES.map((t) => (
                   <option key={t.value} value={t.value}>
                     {t.label}
                   </option>

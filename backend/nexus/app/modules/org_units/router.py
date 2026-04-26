@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_tenant_db
-from app.models import Client, OrganizationalUnit, User
+from app.models import OrganizationalUnit, User
 from app.modules.auth.context import UserContext, get_current_user_roles
 from app.modules.org_units.schemas import (
     AssignRoleRequest,
@@ -96,10 +96,6 @@ async def create_unit(
                 status_code=403, detail="Only a super admin can create top-level units"
             )
 
-    # Load workspace_mode for the tenant
-    client_result = await db.execute(select(Client).where(Client.id == ctx.user.tenant_id))
-    client = client_result.scalar_one()
-
     try:
         unit = await create_org_unit(
             db,
@@ -110,7 +106,6 @@ async def create_unit(
             created_by=ctx.user.id,
             actor_email=ctx.user.email,
             ip_address=request.client.host if request.client else None,
-            workspace_mode=client.workspace_mode,
             company_profile=data.company_profile,
             metadata=data.metadata,
         )

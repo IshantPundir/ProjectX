@@ -116,5 +116,4 @@ class MeResponse(BaseModel):
     is_super_admin: bool
     onboarding_complete: bool
     has_org_units: bool
-    workspace_mode: str
     assignments: list[RoleAssignmentResponse]

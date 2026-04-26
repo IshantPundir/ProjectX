@@ -4,14 +4,9 @@ import { cache } from "react";
 import { AppShell } from "@/components/dashboard/AppShell";
 import { DashboardProviders } from "@/components/dashboard/providers";
 import { authApi, type MeResponse } from "@/lib/api/auth";
+import { ApiError } from "@/lib/api/client";
 
-const getMe = cache(async (token: string): Promise<MeResponse | null> => {
-  try {
-    return await authApi.me(token);
-  } catch {
-    return null;
-  }
-});
+const getMe = cache(async (token: string): Promise<MeResponse> => authApi.me(token));
 
 export default async function DashboardLayout({
   children,
@@ -39,7 +34,21 @@ export default async function DashboardLayout({
     redirect("/login");
   }
 
-  const me = await getMe(session.access_token);
+  let me: MeResponse | null = null;
+  let suspended = false;
+  try {
+    me = await getMe(session.access_token);
+  } catch (err) {
+    if (err instanceof ApiError && err.code === "ACCOUNT_SUSPENDED") {
+      suspended = true;
+    }
+    // Any other error: render the shell with me=null and let downstream
+    // queries surface the failure — same behaviour as before.
+  }
+
+  if (suspended) {
+    redirect("/suspended");
+  }
 
   if (me && me.is_super_admin && !me.onboarding_complete) {
     redirect("/onboarding");

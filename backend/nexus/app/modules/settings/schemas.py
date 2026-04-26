@@ -32,7 +32,3 @@ class TeamMember(BaseModel):
 class ResendInviteResponse(BaseModel):
     new_invite_id: str
     invite_url: str  # Only present in dry-run mode
-
-
-class WorkspaceModeRequest(BaseModel):
-    workspace_mode: str

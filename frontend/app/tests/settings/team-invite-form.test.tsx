@@ -38,7 +38,7 @@ describe('TeamPage invite form', () => {
     meMock.mockResolvedValue({
       user_id: 'u1', email: 'admin@x.com', full_name: 'A', tenant_id: 't1',
       client_name: 'Acme', is_super_admin: true, onboarding_complete: true,
-      has_org_units: true, workspace_mode: 'enterprise', assignments: [],
+      has_org_units: true, assignments: [],
     })
     inviteMock.mockReset()
   })

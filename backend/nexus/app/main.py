@@ -235,7 +235,7 @@ def create_app() -> FastAPI:
     from app.modules.notifications.router import router as notifications_router
     from app.modules.auth.router import router as auth_router
     from app.modules.admin.router import router as admin_router
-    from app.modules.settings.router import router as settings_router, workspace_router
+    from app.modules.settings.router import router as settings_router
     from app.modules.org_units.router import router as org_units_router
     from app.modules.roles.router import router as roles_router
     from app.modules.pipelines.router import router as pipelines_router
@@ -254,7 +254,6 @@ def create_app() -> FastAPI:
     application.include_router(notifications_router)
     application.include_router(admin_router)
     application.include_router(settings_router)
-    application.include_router(workspace_router)
     application.include_router(org_units_router)
     application.include_router(roles_router)
     application.include_router(pipelines_router)
@@ -269,10 +268,17 @@ def create_app() -> FastAPI:
     from fastapi import Request
     from fastapi.responses import JSONResponse
 
+    from app.modules.auth.errors import AccountSuspendedError, suspended_response
     from app.modules.jd.errors import (
         CompanyProfileIncompleteError,
         IllegalTransitionError,
     )
+
+    @application.exception_handler(AccountSuspendedError)
+    async def _account_suspended(
+        request: Request, exc: AccountSuspendedError
+    ) -> JSONResponse:
+        return suspended_response(exc.status)
 
     _ILLEGAL_TRANSITION_MESSAGES: dict[tuple[str, str], str] = {
         ("signals_extracting", "signals_extracting"):

@@ -37,7 +37,7 @@ vi.mock('@/lib/api/auth', () => ({
     me: async () => ({
       user_id: 'u', email: 'a@x.com', full_name: null, tenant_id: 't',
       client_name: 'Acme', is_super_admin: true, onboarding_complete: true,
-      has_org_units: true, workspace_mode: 'enterprise', assignments: [],
+      has_org_units: true, assignments: [],
     }),
   },
 }))

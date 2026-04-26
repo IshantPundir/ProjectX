@@ -43,7 +43,6 @@ async def create_org_unit(
     created_by: uuid_mod.UUID | None = None,
     actor_email: str | None = None,
     ip_address: str | None = None,
-    workspace_mode: str = "enterprise",
     company_profile: dict | None = None,
     metadata: dict | None = None,
 ) -> OrganizationalUnit:
@@ -74,11 +73,7 @@ async def create_org_unit(
     # Strict shape validation still runs when a profile IS provided.
     validated_profile = _validate_and_normalize_company_profile(company_profile)
 
-    # Rule 4: client_account only in agency workspaces
-    if unit_type == "client_account" and workspace_mode != "agency":
-        raise ValueError("Client accounts are only available in agency workspaces.")
-
-    # Rule 5: parent-based nesting enforcement
+    # Rule 4: parent-based nesting enforcement
     if parent_unit_id is not None:
         parent_result = await db.execute(
             select(OrganizationalUnit).where(OrganizationalUnit.id == parent_unit_id)

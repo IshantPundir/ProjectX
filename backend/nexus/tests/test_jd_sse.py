@@ -458,7 +458,6 @@ async def test_e2e_confirm_signals_to_sse(db: AsyncSession, monkeypatch):
     ctx = UserContext(
         user=user,
         is_super_admin=True,
-        workspace_mode="enterprise",
         assignments=[],
     )
 

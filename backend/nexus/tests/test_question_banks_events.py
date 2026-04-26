@@ -217,7 +217,6 @@ def _setup_test_context(db: AsyncSession, user, tenant_id: UUID):
     ctx = UserContext(
         user=user,
         is_super_admin=True,
-        workspace_mode="enterprise",
         assignments=[],
     )
 

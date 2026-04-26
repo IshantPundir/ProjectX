@@ -18,7 +18,6 @@ describe('authApi.me', () => {
       is_super_admin: true,
       onboarding_complete: true,
       has_org_units: true,
-      workspace_mode: 'single_company',
       assignments: [
         {
           org_unit_id: 'o1',

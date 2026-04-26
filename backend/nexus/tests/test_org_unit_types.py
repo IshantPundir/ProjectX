@@ -26,7 +26,6 @@ async def _create_root(db: AsyncSession, client_id: uuid.UUID, user_id: uuid.UUI
         unit_type="company",
         parent_unit_id=None,
         created_by=user_id,
-        workspace_mode="enterprise",
         company_profile=PLACEHOLDER_PROFILE,
     )
 
@@ -46,7 +45,6 @@ async def test_company_with_parent_raises(db: AsyncSession):
             name="Bad",
             unit_type="company",
             parent_unit_id=root.id,
-            workspace_mode="enterprise",
             company_profile=PLACEHOLDER_PROFILE,
         )
 
@@ -74,7 +72,6 @@ async def test_company_without_profile_is_allowed(db: AsyncSession):
         name="Root",
         unit_type="company",
         parent_unit_id=None,
-        workspace_mode="enterprise",
         company_profile=None,
     )
     assert unit.unit_type == "company"
@@ -115,7 +112,7 @@ async def test_client_account_without_profile_is_allowed(db: AsyncSession):
     """Phase 2A: client_account can be created with NULL company_profile.
     Same rationale as test_company_without_profile_is_allowed — profile is
     collected post-hoc and enforced at JD creation time via ancestry walk."""
-    client = await create_test_client(db, workspace_mode="agency")
+    client = await create_test_client(db)
     root = await _create_root(db, client.id)
     unit = await create_org_unit(
         db=db,
@@ -123,7 +120,6 @@ async def test_client_account_without_profile_is_allowed(db: AsyncSession):
         name="Acme",
         unit_type="client_account",
         parent_unit_id=root.id,
-        workspace_mode="agency",
         company_profile=None,
     )
     assert unit.unit_type == "client_account"
@@ -131,26 +127,9 @@ async def test_client_account_without_profile_is_allowed(db: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_client_account_in_enterprise_raises(db: AsyncSession):
-    """client_account only available in agency workspaces."""
-    client = await create_test_client(db)
-    root = await _create_root(db, client.id)
-    with pytest.raises(ValueError, match="agency workspaces"):
-        await create_org_unit(
-            db=db,
-            client_id=client.id,
-            name="Acme",
-            unit_type="client_account",
-            parent_unit_id=root.id,
-            workspace_mode="enterprise",
-            company_profile=PLACEHOLDER_PROFILE,
-        )
-
-
-@pytest.mark.asyncio
 async def test_client_account_under_client_account_raises(db: AsyncSession):
     """client_account cannot nest under another client_account."""
-    client = await create_test_client(db, workspace_mode="agency")
+    client = await create_test_client(db)
     root = await _create_root(db, client.id)
     ca1 = await create_org_unit(
         db=db,
@@ -158,7 +137,6 @@ async def test_client_account_under_client_account_raises(db: AsyncSession):
         name="CA1",
         unit_type="client_account",
         parent_unit_id=root.id,
-        workspace_mode="agency",
         company_profile=PLACEHOLDER_PROFILE,
     )
     with pytest.raises(ValueError, match="cannot be nested under another client account"):
@@ -168,7 +146,6 @@ async def test_client_account_under_client_account_raises(db: AsyncSession):
             name="CA2",
             unit_type="client_account",
             parent_unit_id=ca1.id,
-            workspace_mode="agency",
             company_profile=PLACEHOLDER_PROFILE,
         )
 
@@ -176,7 +153,7 @@ async def test_client_account_under_client_account_raises(db: AsyncSession):
 @pytest.mark.asyncio
 async def test_client_account_under_team_raises(db: AsyncSession):
     """client_account cannot nest under a team."""
-    client = await create_test_client(db, workspace_mode="agency")
+    client = await create_test_client(db)
     root = await _create_root(db, client.id)
     team = await create_org_unit(
         db=db,
@@ -184,7 +161,6 @@ async def test_client_account_under_team_raises(db: AsyncSession):
         name="Team",
         unit_type="team",
         parent_unit_id=root.id,
-        workspace_mode="agency",
     )
     with pytest.raises(ValueError, match="leaf nodes"):
         await create_org_unit(
@@ -193,7 +169,6 @@ async def test_client_account_under_team_raises(db: AsyncSession):
             name="Acme",
             unit_type="client_account",
             parent_unit_id=team.id,
-            workspace_mode="agency",
             company_profile=PLACEHOLDER_PROFILE,
         )
 
@@ -201,7 +176,7 @@ async def test_client_account_under_team_raises(db: AsyncSession):
 @pytest.mark.asyncio
 async def test_client_account_under_company_success(db: AsyncSession):
     """client_account under company (agency) should succeed."""
-    client = await create_test_client(db, workspace_mode="agency")
+    client = await create_test_client(db)
     root = await _create_root(db, client.id)
     ca = await create_org_unit(
         db=db,
@@ -209,7 +184,6 @@ async def test_client_account_under_company_success(db: AsyncSession):
         name="Acme",
         unit_type="client_account",
         parent_unit_id=root.id,
-        workspace_mode="agency",
         company_profile=PLACEHOLDER_PROFILE,
     )
     assert ca.unit_type == "client_account"
@@ -218,7 +192,7 @@ async def test_client_account_under_company_success(db: AsyncSession):
 @pytest.mark.asyncio
 async def test_client_account_under_division_success(db: AsyncSession):
     """client_account under division (agency) should succeed."""
-    client = await create_test_client(db, workspace_mode="agency")
+    client = await create_test_client(db)
     root = await _create_root(db, client.id)
     div = await create_org_unit(
         db=db,
@@ -226,7 +200,6 @@ async def test_client_account_under_division_success(db: AsyncSession):
         name="Div",
         unit_type="division",
         parent_unit_id=root.id,
-        workspace_mode="agency",
     )
     ca = await create_org_unit(
         db=db,
@@ -234,7 +207,6 @@ async def test_client_account_under_division_success(db: AsyncSession):
         name="Acme",
         unit_type="client_account",
         parent_unit_id=div.id,
-        workspace_mode="agency",
         company_profile=PLACEHOLDER_PROFILE,
     )
     assert ca.unit_type == "client_account"
@@ -243,7 +215,7 @@ async def test_client_account_under_division_success(db: AsyncSession):
 @pytest.mark.asyncio
 async def test_client_account_under_region_success(db: AsyncSession):
     """client_account under region (agency) should succeed."""
-    client = await create_test_client(db, workspace_mode="agency")
+    client = await create_test_client(db)
     root = await _create_root(db, client.id)
     region = await create_org_unit(
         db=db,
@@ -251,7 +223,6 @@ async def test_client_account_under_region_success(db: AsyncSession):
         name="APAC",
         unit_type="region",
         parent_unit_id=root.id,
-        workspace_mode="agency",
     )
     ca = await create_org_unit(
         db=db,
@@ -259,7 +230,6 @@ async def test_client_account_under_region_success(db: AsyncSession):
         name="Acme",
         unit_type="client_account",
         parent_unit_id=region.id,
-        workspace_mode="agency",
         company_profile=PLACEHOLDER_PROFILE,
     )
     assert ca.unit_type == "client_account"
@@ -337,7 +307,7 @@ async def test_team_under_team_raises(db: AsyncSession):
 @pytest.mark.asyncio
 async def test_client_account_under_team_via_team_parent_path(db: AsyncSession):
     """client_account under team rejected via the team-parent check."""
-    client = await create_test_client(db, workspace_mode="agency")
+    client = await create_test_client(db)
     root = await _create_root(db, client.id)
     team = await create_org_unit(
         db=db,
@@ -345,7 +315,6 @@ async def test_client_account_under_team_via_team_parent_path(db: AsyncSession):
         name="Team",
         unit_type="team",
         parent_unit_id=root.id,
-        workspace_mode="agency",
     )
     with pytest.raises(ValueError, match="leaf nodes"):
         await create_org_unit(
@@ -354,7 +323,6 @@ async def test_client_account_under_team_via_team_parent_path(db: AsyncSession):
             name="Acme",
             unit_type="client_account",
             parent_unit_id=team.id,
-            workspace_mode="agency",
             company_profile=PLACEHOLDER_PROFILE,
         )
 
@@ -378,7 +346,7 @@ async def test_division_under_company(db: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_division_under_client_account(db: AsyncSession):
-    client = await create_test_client(db, workspace_mode="agency")
+    client = await create_test_client(db)
     root = await _create_root(db, client.id)
     ca = await create_org_unit(
         db=db,
@@ -386,7 +354,6 @@ async def test_division_under_client_account(db: AsyncSession):
         name="CA",
         unit_type="client_account",
         parent_unit_id=root.id,
-        workspace_mode="agency",
         company_profile=PLACEHOLDER_PROFILE,
     )
     u = await create_org_unit(
@@ -457,7 +424,7 @@ async def test_region_under_company(db: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_region_under_client_account(db: AsyncSession):
-    client = await create_test_client(db, workspace_mode="agency")
+    client = await create_test_client(db)
     root = await _create_root(db, client.id)
     ca = await create_org_unit(
         db=db,
@@ -465,7 +432,6 @@ async def test_region_under_client_account(db: AsyncSession):
         name="CA",
         unit_type="client_account",
         parent_unit_id=root.id,
-        workspace_mode="agency",
         company_profile=PLACEHOLDER_PROFILE,
     )
     u = await create_org_unit(
@@ -557,7 +523,7 @@ async def test_team_under_division(db: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_team_under_client_account(db: AsyncSession):
-    client = await create_test_client(db, workspace_mode="agency")
+    client = await create_test_client(db)
     root = await _create_root(db, client.id)
     ca = await create_org_unit(
         db=db,
@@ -565,7 +531,6 @@ async def test_team_under_client_account(db: AsyncSession):
         name="CA",
         unit_type="client_account",
         parent_unit_id=root.id,
-        workspace_mode="agency",
         company_profile=PLACEHOLDER_PROFILE,
     )
     t = await create_org_unit(
@@ -574,7 +539,6 @@ async def test_team_under_client_account(db: AsyncSession):
         name="T",
         unit_type="team",
         parent_unit_id=ca.id,
-        workspace_mode="agency",
     )
     assert t.unit_type == "team"
 

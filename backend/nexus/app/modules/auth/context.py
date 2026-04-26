@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_bypass_db
 from app.models import Client, OrganizationalUnit, Role, User, UserRoleAssignment
+from app.modules.auth.errors import AccountSuspendedError
 
 logger = structlog.get_logger()
 
@@ -32,7 +33,6 @@ class RoleAssignment:
 class UserContext:
     user: User
     is_super_admin: bool
-    workspace_mode: str = "enterprise"
     assignments: list[RoleAssignment] = field(default_factory=list)
 
     def has_role_in_unit(self, org_unit_id: uuid_mod.UUID, role_name: str) -> bool:
@@ -86,6 +86,15 @@ async def get_current_user_roles(
         raise HTTPException(status_code=404, detail="User not found")
 
     user, client = row
+
+    # Lifecycle gate — every authenticated route runs through this dep, so a
+    # blocked/deleted tenant is locked out within one request even if their
+    # JWT is still valid in the cookie.
+    if client.deleted_at is not None:
+        raise AccountSuspendedError(status="deleted")
+    if client.blocked_at is not None:
+        raise AccountSuspendedError(status="blocked")
+
     is_super_admin = client.super_admin_id is not None and client.super_admin_id == user.id
 
     # Single JOIN: user_role_assignments + roles + organizational_units
@@ -110,7 +119,6 @@ async def get_current_user_roles(
     return UserContext(
         user=user,
         is_super_admin=is_super_admin,
-        workspace_mode=client.workspace_mode,
         assignments=assignments,
     )
 

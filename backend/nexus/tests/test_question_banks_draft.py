@@ -165,7 +165,6 @@ def _setup_test_context(
     ctx = UserContext(
         user=user,
         is_super_admin=True,
-        workspace_mode="enterprise",
         assignments=[],
     )
 

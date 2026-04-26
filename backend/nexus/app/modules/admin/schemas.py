@@ -25,3 +25,13 @@ class ClientListItem(BaseModel):
     admin_email: str | None
     invite_status: str | None
     created_at: str
+    status: str  # "active" | "blocked" | "deleted"
+    blocked_at: str | None
+    deleted_at: str | None
+
+
+class ClientStatusResponse(BaseModel):
+    client_id: str
+    status: str
+    blocked_at: str | None
+    deleted_at: str | None

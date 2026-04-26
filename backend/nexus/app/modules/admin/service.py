@@ -3,7 +3,9 @@
 import hashlib
 import secrets
 import uuid as uuid_mod
+from datetime import UTC, datetime
 
+import sqlalchemy
 import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +17,30 @@ from app.modules.audit.service import log_event
 from app.modules.notifications.service import render_template, send_email
 
 logger = structlog.get_logger()
+
+
+def _client_status(client: Client) -> str:
+    """Derived state from the (blocked_at, deleted_at) pair."""
+    if client.deleted_at is not None:
+        return "deleted"
+    if client.blocked_at is not None:
+        return "blocked"
+    return "active"
+
+
+class ClientNotFoundError(Exception):
+    pass
+
+
+class InvalidClientStateError(Exception):
+    """Raised when a state transition is impossible (e.g. unblock a deleted tenant)."""
+
+    def __init__(self, current: str, requested: str) -> None:
+        self.current = current
+        self.requested = requested
+        super().__init__(
+            f"Cannot transition client from '{current}' to '{requested}'"
+        )
 
 
 async def provision_client(
@@ -133,6 +159,161 @@ async def list_clients(db: AsyncSession) -> list[dict]:
             "admin_email": invite.email if invite else None,
             "invite_status": invite.status if invite else None,
             "created_at": company.created_at.isoformat(),
+            "status": _client_status(company),
+            "blocked_at": company.blocked_at.isoformat() if company.blocked_at else None,
+            "deleted_at": company.deleted_at.isoformat() if company.deleted_at else None,
         }
         for company, invite in rows
     ]
+
+
+async def _load_client(db: AsyncSession, client_id: uuid_mod.UUID) -> Client:
+    result = await db.execute(select(Client).where(Client.id == client_id))
+    client = result.scalar_one_or_none()
+    if client is None:
+        raise ClientNotFoundError()
+    return client
+
+
+async def block_client(
+    *,
+    db: AsyncSession,
+    client_id: uuid_mod.UUID,
+    admin_identity: str,
+    actor_id: uuid_mod.UUID | None = None,
+    ip_address: str | None = None,
+) -> Client:
+    """Mark a tenant as blocked. Idempotent: re-blocking refreshes blocked_at.
+
+    Deleted tenants cannot be blocked — that's a no-op state transition.
+    """
+    client = await _load_client(db, client_id)
+    if client.deleted_at is not None:
+        raise InvalidClientStateError(current="deleted", requested="blocked")
+
+    client.blocked_at = datetime.now(UTC)
+    await db.flush()
+
+    await log_event(
+        db,
+        tenant_id=client.id,
+        actor_id=actor_id,
+        actor_email=admin_identity,
+        action=audit_actions.CLIENT_BLOCKED,
+        resource="client",
+        resource_id=client.id,
+        payload={"client_name": client.name},
+        ip_address=ip_address,
+    )
+    logger.info("admin.client_blocked", client_id=str(client.id))
+    return client
+
+
+async def unblock_client(
+    *,
+    db: AsyncSession,
+    client_id: uuid_mod.UUID,
+    admin_identity: str,
+    actor_id: uuid_mod.UUID | None = None,
+    ip_address: str | None = None,
+) -> Client:
+    """Clear `blocked_at`. Deleted tenants cannot be unblocked from this path —
+    they need a separate undelete operation that does not exist yet.
+    """
+    client = await _load_client(db, client_id)
+    if client.deleted_at is not None:
+        raise InvalidClientStateError(current="deleted", requested="active")
+
+    client.blocked_at = None
+    await db.flush()
+
+    await log_event(
+        db,
+        tenant_id=client.id,
+        actor_id=actor_id,
+        actor_email=admin_identity,
+        action=audit_actions.CLIENT_UNBLOCKED,
+        resource="client",
+        resource_id=client.id,
+        payload={"client_name": client.name},
+        ip_address=ip_address,
+    )
+    logger.info("admin.client_unblocked", client_id=str(client.id))
+    return client
+
+
+async def delete_client(
+    *,
+    db: AsyncSession,
+    client_id: uuid_mod.UUID,
+    admin_identity: str,
+    actor_id: uuid_mod.UUID | None = None,
+    ip_address: str | None = None,
+) -> Client:
+    """Soft-delete: set `deleted_at` on the client AND cascade-soft-delete
+    all rows that would block re-onboarding the same admin email.
+
+    Cascade scope:
+      - users:        deleted_at = now, is_active = false
+                      (frees `users_auth_user_id_active_uniq` for the same
+                      Supabase Auth identity to be re-bound to a fresh
+                      tenant)
+      - user_invites: any pending → revoked
+                      (the deleted tenant's invites must not be claimable
+                      after deletion)
+
+    NOT cascaded (preserved for audit + restore):
+      - jobs, candidates, sessions, audit_log, org_units, role assignments
+      - the underlying Supabase Auth user (left alive — `accept_invite`'s
+        find-and-reuse path handles re-onboarding correctly)
+
+    Idempotent (re-running refreshes the timestamps). Restoring a deleted
+    tenant requires a direct DB edit — no UI restore path on purpose.
+    """
+    client = await _load_client(db, client_id)
+    now = datetime.now(UTC)
+    tenant_uuid_str = str(client.id)
+
+    client.deleted_at = now
+
+    # Cascade: free auth_user_id for re-binding by soft-deleting users.
+    # Both `deleted_at` and `is_active` are set so login + auth context
+    # filters (each filters on `is_active = TRUE`) reject these rows
+    # immediately — no race window where a deleted-tenant user could log
+    # in between this UPDATE committing and the rest of the transaction.
+    await db.execute(
+        sqlalchemy.text(
+            "UPDATE public.users "
+            "SET deleted_at = :now, is_active = FALSE, updated_at = :now "
+            "WHERE tenant_id = :tenant_id AND deleted_at IS NULL"
+        ),
+        {"now": now, "tenant_id": tenant_uuid_str},
+    )
+
+    # Cascade: revoke pending invites so the now-orphan tokens cannot be
+    # accepted post-deletion. Already-accepted invites are left as-is
+    # (their status='accepted' history is part of the audit trail).
+    await db.execute(
+        sqlalchemy.text(
+            "UPDATE public.user_invites "
+            "SET status = 'revoked' "
+            "WHERE tenant_id = :tenant_id AND status = 'pending'"
+        ),
+        {"tenant_id": tenant_uuid_str},
+    )
+
+    await db.flush()
+
+    await log_event(
+        db,
+        tenant_id=client.id,
+        actor_id=actor_id,
+        actor_email=admin_identity,
+        action=audit_actions.CLIENT_DELETED,
+        resource="client",
+        resource_id=client.id,
+        payload={"client_name": client.name},
+        ip_address=ip_address,
+    )
+    logger.info("admin.client_deleted", client_id=str(client.id))
+    return client

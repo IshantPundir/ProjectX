@@ -70,7 +70,6 @@ def _user_ctx(
     return UserContext(
         user=user,
         is_super_admin=is_super,
-        workspace_mode="enterprise",
         assignments=assignments,
     )
 

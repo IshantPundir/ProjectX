@@ -58,6 +58,15 @@ async def verify_invite(
         raise HTTPException(status_code=401, detail="Invalid or expired invite")
 
     invite, client = row
+
+    # Tenant-lifecycle gate. A blocked or deleted tenant must not have
+    # outstanding invites accepted into it.
+    if client.deleted_at is not None or client.blocked_at is not None:
+        from app.modules.auth.errors import AccountSuspendedError
+
+        suspension_status = "deleted" if client.deleted_at is not None else "blocked"
+        raise AccountSuspendedError(status=suspension_status)
+
     return VerifyInviteResponse(email=invite.email, client_name=client.name)
 
 
@@ -102,6 +111,17 @@ async def accept_invite(
     if not verify_row:
         raise HTTPException(status_code=401, detail="Invalid or expired invite")
     invite_row, _client_row = verify_row
+
+    # Tenant-lifecycle gate, BEFORE we touch the auth provider. We must
+    # not provision/reuse a Supabase Auth user for a tenant that has been
+    # suspended in the interim — the user would end up with a working
+    # auth identity that immediately can't reach the dashboard.
+    if _client_row.deleted_at is not None or _client_row.blocked_at is not None:
+        from app.modules.auth.errors import AccountSuspendedError
+
+        suspension_status = "deleted" if _client_row.deleted_at is not None else "blocked"
+        raise AccountSuspendedError(status=suspension_status)
+
     email = invite_row.email
 
     # Phase 2: provision the auth user.
@@ -204,7 +224,6 @@ async def accept_invite(
                 parent_unit_id=None,
                 created_by=user.id,
                 actor_email=email,
-                workspace_mode="enterprise",
                 company_profile=None,
             )
             root_unit_id = str(root_unit.id)
@@ -330,8 +349,12 @@ async def login(
         )
 
     # Phase 3: app user lookup. Reject deactivated accounts.
+    # Filter on is_active=TRUE so a soft-deleted historical row from a
+    # prior (now-deleted) tenant does not collide with the current active
+    # row when the same email has been re-onboarded — scalar_one_or_none()
+    # would otherwise raise on the multi-row result.
     user_row = await db.execute(
-        select(User).where(User.email == data.email)
+        select(User).where(User.email == data.email, User.is_active == True)
     )
     user = user_row.scalar_one_or_none()
     if user is None:
@@ -356,6 +379,23 @@ async def login(
         select(Client).where(Client.id == user.tenant_id)
     )
     client = client_row.scalar_one()
+
+    # Lifecycle gate — refuse login for suspended tenants. We've already
+    # minted Supabase tokens at this point, so revoke them before raising
+    # so the now-rejected user doesn't carry a usable session.
+    if client.deleted_at is not None or client.blocked_at is not None:
+        suspension_status = "deleted" if client.deleted_at is not None else "blocked"
+        logger.info(
+            "auth.login.suspended",
+            user_id=str(user.id),
+            tenant_id=str(user.tenant_id),
+            status=suspension_status,
+        )
+        await _revoke_quietly(provider, tokens)
+        from app.modules.auth.errors import AccountSuspendedError
+
+        raise AccountSuspendedError(status=suspension_status)
+
     is_super_admin = client.super_admin_id == user.id
     redirect_to = (
         "/onboarding"
@@ -476,7 +516,6 @@ async def get_current_user(
         is_super_admin=ctx.is_super_admin,
         onboarding_complete=client.onboarding_complete,
         has_org_units=has_org_units,
-        workspace_mode=ctx.workspace_mode,
         assignments=[
             RoleAssignmentResponse(
                 org_unit_id=str(a.org_unit_id),

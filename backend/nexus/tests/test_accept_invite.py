@@ -55,7 +55,7 @@ async def _seed_client_and_invite(
     - projectx_admin_id is a Text column (not UUID FK) — a non-None string
       triggers the super-admin path inside the handler.
     """
-    client_obj = Client(name="Test Co", workspace_mode="enterprise")
+    client_obj = Client(name="Test Co")
     db.add(client_obj)
     await db.flush()
     tenant_id: uuid_mod.UUID = client_obj.id

@@ -119,7 +119,6 @@ async def _seed_active_user(
     `is_super_admin` check returns True."""
     client_obj = Client(
         name="Login Test Co",
-        workspace_mode="enterprise",
         onboarding_complete=onboarding_complete,
     )
     db.add(client_obj)
@@ -436,7 +435,6 @@ async def test_login_revokes_tokens_on_no_app_user(db: AsyncSession) -> None:
     # Seed a tenant only — no User row for the email we'll send.
     client_obj = Client(
         name="No User Co",
-        workspace_mode="enterprise",
         onboarding_complete=False,
     )
     db.add(client_obj)

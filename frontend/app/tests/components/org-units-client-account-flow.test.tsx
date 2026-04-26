@@ -33,8 +33,6 @@ vi.mock('@/lib/api/jobs', () => ({
   jobsApi: { list: async () => [] },
 }))
 
-// workspace_mode: 'agency' is required for client_account to be a creatable
-// unit type — see UNIT_TYPES filter in the page.
 vi.mock('@/lib/api/auth', () => ({
   authApi: {
     me: async () => ({
@@ -46,7 +44,6 @@ vi.mock('@/lib/api/auth', () => ({
       is_super_admin: true,
       onboarding_complete: true,
       has_org_units: true,
-      workspace_mode: 'agency',
       assignments: [],
     }),
   },

@@ -9,7 +9,6 @@ export interface MeResponse {
   is_super_admin: boolean
   onboarding_complete: boolean
   has_org_units: boolean
-  workspace_mode: string
   assignments: {
     org_unit_id: string
     org_unit_name: string
@@ -40,15 +39,6 @@ export interface LoginResponse {
   refresh_token: string
   expires_in: number
   redirect_to: string
-}
-
-export interface SetWorkspaceModeRequest {
-  workspace_mode: 'enterprise' | 'agency'
-}
-
-export interface SetWorkspaceModeResponse {
-  status: string
-  workspace_mode: string
 }
 
 export const authApi = {
@@ -82,18 +72,6 @@ export const authApi = {
     apiFetch<{ status: string }>('/api/auth/onboarding/complete', {
       method: 'POST',
       token,
-      signal: opts?.signal,
-    }),
-
-  setWorkspaceMode: (
-    token: string,
-    body: SetWorkspaceModeRequest,
-    opts?: { signal?: AbortSignal },
-  ): Promise<SetWorkspaceModeResponse> =>
-    apiFetch<SetWorkspaceModeResponse>('/api/settings/workspace', {
-      method: 'PATCH',
-      token,
-      body: JSON.stringify(body),
       signal: opts?.signal,
     }),
 }

@@ -5,6 +5,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from app.database import get_bypass_session
+from app.modules.auth.errors import suspended_response
+from app.modules.auth.lifecycle import load_tenant_status
 from app.modules.auth.service import verify_access_token, verify_candidate_token
 
 logger = structlog.get_logger()
@@ -145,7 +147,24 @@ class AuthMiddleware(BaseHTTPMiddleware):
             # downstream. The JWT claim is signed, but the DB row is what
             # scheduler/session services will reconcile against when the
             # candidate endpoints read rows under tenant RLS.
-            request.state.tenant_id = str(row["tenant_id"])
+            tenant_id_str = str(row["tenant_id"])
+            request.state.tenant_id = tenant_id_str
+
+            # CENTRAL TENANT-LIFECYCLE GATE — candidate flow.
+            # A blocked or deleted tenant must not have its candidate
+            # interviews served. Enforced here so every candidate-session
+            # route inherits the gate by default — no per-route dep to
+            # forget.
+            tenant_status = await load_tenant_status(tenant_id_str)
+            if tenant_status != "active":
+                logger.info(
+                    "auth.candidate_tenant_suspended",
+                    jti=str(candidate_payload.jti),
+                    tenant_id=tenant_id_str,
+                    status=tenant_status,
+                )
+                return suspended_response(tenant_status)
+
             # Do NOT fall through to the dashboard JWT check — candidate
             # sessions never carry a Bearer header.
             return await call_next(request)
@@ -165,5 +184,25 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request.state.user_id = payload.sub
         request.state.tenant_id = payload.tenant_id
         request.state.is_projectx_admin = payload.is_projectx_admin
+
+        # CENTRAL TENANT-LIFECYCLE GATE — dashboard flow.
+        # ProjectX admin tokens carry an empty `tenant_id` (they're not
+        # scoped to any tenant), so they correctly skip this check —
+        # admin operations must remain available even when tenants are
+        # suspended.
+        # Pre-onboarding edge case: tenant_id is always set the moment
+        # the invite is accepted; there is no authenticated request that
+        # legitimately carries a non-empty tenant_id pointing at a
+        # missing client row.
+        if payload.tenant_id:
+            tenant_status = await load_tenant_status(payload.tenant_id)
+            if tenant_status != "active":
+                logger.info(
+                    "auth.dashboard_tenant_suspended",
+                    user_id=payload.sub,
+                    tenant_id=payload.tenant_id,
+                    status=tenant_status,
+                )
+                return suspended_response(tenant_status)
 
         return await call_next(request)
