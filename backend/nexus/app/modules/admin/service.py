@@ -43,6 +43,12 @@ class InvalidClientStateError(Exception):
         )
 
 
+class ConfirmationMismatchError(Exception):
+    """Raised when the typed confirmation name does not match
+    `client.name` exactly. Mapped to 422 with `code = 'CONFIRMATION_MISMATCH'`
+    by the handler in `app/main.py`."""
+
+
 async def provision_client(
     *,
     db: AsyncSession,
