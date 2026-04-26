@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
 
 import { getFreshSupabaseToken } from "@/lib/auth/tokens";
 import { jobsApi, type JobPostingSummary } from "@/lib/api/jobs";
@@ -12,6 +13,7 @@ import { type OrgUnit } from "@/lib/api/org-units";
 import { authApi, type MeResponse } from "@/lib/api/auth";
 import { useOrgUnits } from "@/lib/hooks/use-org-units";
 import { useCreateOrgUnit } from "@/lib/hooks/use-create-org-unit";
+import { useDeleteOrgUnit } from "@/lib/hooks/use-delete-org-unit";
 import { applyApiErrorToForm } from "@/lib/api/errors";
 import {
   CompanyProfileForm,
@@ -23,7 +25,9 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
+  DangerConfirmDialog,
 } from "@/components/px";
+import type { UnitType } from "@/components/dashboard/org-units/unit-type-style";
 import {
   OrgGraph,
   OrgLegend,
@@ -139,6 +143,45 @@ export default function OrgUnitsPage() {
   const [error, setError] = useState("");
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
+  const deleteMutation = useDeleteOrgUnit();
+
+  async function handleCreateChild(
+    parentId: string,
+    unitType: UnitType,
+    name: string,
+  ) {
+    await createMutation.mutateAsync({
+      name,
+      unit_type: unitType,
+      parent_unit_id: parentId,
+      company_profile: null,
+      metadata: null,
+    });
+    toast.success(`${unitType.replace("_", " ")} created`);
+  }
+
+  function handleDeleteRequest(id: string) {
+    const unit = graphNodes.find((u) => u.id === id);
+    if (!unit) return;
+    setDeleteTarget({ id, name: unit.name });
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    try {
+      await deleteMutation.mutateAsync(deleteTarget.id);
+      if (selectedId === deleteTarget.id) setSelectedId(null);
+      toast.success("Unit deleted");
+      setDeleteTarget(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to delete unit");
+    }
+  }
+
   const [hoverId, setHoverId] = useState<string | null>(null);
 
   // Create form
@@ -431,6 +474,8 @@ export default function OrgUnitsPage() {
               onSelect={setSelectedId}
               onHover={setHoverId}
               onOpen={(id) => router.push(`/settings/org-units/${id}`)}
+              onDelete={handleDeleteRequest}
+              onCreateChild={handleCreateChild}
             />
             <div
               className="absolute bottom-2.5 left-3.5 text-[10.5px]"
@@ -489,6 +534,17 @@ export default function OrgUnitsPage() {
           />
         </DialogContent>
       </Dialog>
+
+      <DangerConfirmDialog
+        open={deleteTarget !== null}
+        title={deleteTarget ? `Delete ${deleteTarget.name}?` : "Delete unit?"}
+        description="This will also delete all of its sub-units. This cannot be undone."
+        confirmLabel="Delete unit"
+        pendingLabel="Deleting…"
+        pending={deleteMutation.isPending}
+        onConfirm={confirmDelete}
+        onClose={() => setDeleteTarget(null)}
+      />
     </div>
   );
 }
