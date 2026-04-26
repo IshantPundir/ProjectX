@@ -13,7 +13,7 @@
 2. Use `@dagrejs/dagre` for automatic hierarchical layout, exposing a user-facing direction toggle (top-to-bottom / left-to-right) instead of the current single-axis fixed layout.
 3. Encode each org-unit type with its own shape **and** color (current implementation keys shapes off **depth**, which is wrong — a `division` at depth 1 looks the same as a `team` at depth 2).
 4. Match the existing dashboard design language exactly: warm-cream `--px-bg`, off-white `--px-surface` cards, deep-teal `--px-accent`, hairline borders, `--px-shadow-sm`. No new color tokens.
-5. Preserve the existing public API of `<OrgGraph>` so `app/(dashboard)/settings/org-units/page.tsx` keeps working with a one-line import change.
+5. Preserve the existing public API of `<OrgGraph>` (default export + named `OrgLegend`, `GraphNodeData`, `Pressure`) so `app/(dashboard)/settings/org-units/page.tsx` keeps working with **zero** changes — same path, same exports, same prop shape.
 
 ## 2. Non-Goals
 
