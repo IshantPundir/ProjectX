@@ -73,7 +73,6 @@ function OrgUnitNodeImpl({
     overflow: 'hidden',
     transition: 'box-shadow 120ms ease, border-color 120ms ease',
     cursor: 'pointer',
-    outline: 'none',
   }
 
   return (
@@ -90,6 +89,7 @@ function OrgUnitNodeImpl({
         aria-label={`${unit.unit_type}: ${unit.name}`}
         aria-pressed={isSelected}
         data-state={dataState}
+        className="focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--px-accent)]"
         style={cardStyle}
         onClick={() => onSelect(unit.id)}
         onKeyDown={handleKey}

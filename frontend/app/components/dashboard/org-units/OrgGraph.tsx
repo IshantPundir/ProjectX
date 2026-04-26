@@ -167,6 +167,15 @@ function OrgGraphInner({ units, selectedId, onSelect }: OrgGraphProps) {
             borderColor: 'var(--px-hairline-strong)',
             background: 'var(--px-surface)',
           }}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowLeft') {
+              e.preventDefault()
+              setDirection('TB')
+            } else if (e.key === 'ArrowRight') {
+              e.preventDefault()
+              setDirection('LR')
+            }
+          }}
         >
           <DirButton
             active={direction === 'TB'}
