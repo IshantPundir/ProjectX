@@ -351,3 +351,88 @@ async def delete_client(
     )
     logger.info("admin.client_deleted", client_id=str(client.id))
     return client
+
+
+async def hard_delete_client(
+    *,
+    db: AsyncSession,
+    client_id: uuid_mod.UUID,
+    admin_identity: str,
+    confirmation_name: str,
+    actor_id: uuid_mod.UUID | None = None,
+    ip_address: str | None = None,
+) -> dict:
+    """Permanently purge a tenant.
+
+    Preconditions:
+      - The client must be in `deleted` state (soft-deleted first).
+      - `confirmation_name` must equal `client.name` exactly.
+
+    On success:
+      - DB cascade unwinds every tenant-scoped table except `audit_log`.
+      - Supabase Auth users are purged best-effort (post-commit; failures
+        are logged but do not roll back the DB delete).
+      - Returns `{client_id, purged_at, auth_user_ids}`.
+
+    Raises:
+      - `ClientNotFoundError` if the client doesn't exist.
+      - `InvalidClientStateError` if not in `deleted` state.
+      - `ConfirmationMismatchError` if name doesn't match.
+    """
+    client = await _load_client(db, client_id)
+
+    # State gate: must be soft-deleted.
+    current = _client_status(client)
+    if current != "deleted":
+        raise InvalidClientStateError(current=current, requested="purged")
+
+    # Confirmation gate.
+    if confirmation_name != client.name:
+        raise ConfirmationMismatchError()
+
+    # Snapshot before the cascade for audit + auth purge.
+    auth_user_ids_result = await db.execute(
+        sqlalchemy.text(
+            "SELECT auth_user_id::text FROM public.users WHERE tenant_id = :tid"
+        ),
+        {"tid": str(client.id)},
+    )
+    auth_user_ids = [row[0] for row in auth_user_ids_result.all()]
+    snapshot = {"client_name": client.name, "user_count": len(auth_user_ids)}
+
+    # Pre-cascade audit. Written inside the same transaction as the DELETE
+    # so either both happen or neither does.
+    await log_event(
+        db,
+        tenant_id=client.id,
+        actor_id=actor_id,
+        actor_email=admin_identity,
+        action=audit_actions.CLIENT_HARD_DELETED,
+        resource="client",
+        resource_id=client.id,
+        payload=snapshot,
+        ip_address=ip_address,
+    )
+
+    # The cascade. Postgres unwinds every CASCADE-marked FK in dependency
+    # order; audit_log rows survive because their FKs were dropped by
+    # migration 0023.
+    await db.execute(
+        sqlalchemy.text("DELETE FROM public.clients WHERE id = :id"),
+        {"id": str(client.id)},
+    )
+    await db.flush()
+
+    purged_at = datetime.now(UTC)
+    logger.info(
+        "admin.client_hard_deleted",
+        client_id=str(client.id),
+        client_name=client.name,
+        user_count=len(auth_user_ids),
+    )
+
+    return {
+        "client_id": str(client.id),
+        "purged_at": purged_at.isoformat(),
+        "auth_user_ids": auth_user_ids,  # router consumes for the auth-purge step
+    }
