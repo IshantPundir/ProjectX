@@ -301,6 +301,9 @@ class JobPipelineInstance(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("NOW()")
     )
+    pipeline_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
 
 
 class JobPipelineStage(Base):
@@ -338,6 +341,9 @@ class JobPipelineStage(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("NOW()")
+    )
+    paused_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
 
@@ -418,6 +424,15 @@ class StageQuestionBank(Base):
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     confirmed_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    pipeline_version_at_generation: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
+    stage_config_snapshot: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True
+    )
+    is_stale: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("NOW()")
@@ -640,6 +655,9 @@ class CandidateJobAssignment(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=sql_text("NOW()")
+    )
+    entered_at_pipeline_version: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
     )
 
 
