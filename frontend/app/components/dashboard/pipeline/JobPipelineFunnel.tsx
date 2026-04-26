@@ -30,7 +30,7 @@ import type { JobPostingWithSnapshot } from '@/lib/api/jobs'
 import { TemplatePickerDialog } from './TemplatePickerDialog'
 import { StageParticipantsEditor } from './StageParticipantsEditor'
 import { DifficultySlider } from './DifficultySlider'
-import { participantSlotsFor } from '@/lib/pipelines/categories'
+import { participantSlotsFor, stageCategory } from '@/lib/pipelines/categories'
 import { useGenerateAllQuestions } from '@/lib/hooks/use-generate-questions'
 import { SourcePill } from './SourcePill'
 import { ActivationGate } from './ActivationGate'
@@ -1806,9 +1806,13 @@ function ConfigTab({
   onChange: (patch: Partial<LooseStageInput>) => void
   isFixedBookend: boolean
 }) {
-  // TODO(Task 25): replace with per-category field rendering once the
-  // matrix-driven funnel refactor lands.
+  // Matrix-aware rendering — per spec §6 + Task 19. Intake / debrief / take_home
+  // are I/O stages with no duration / difficulty / signal_filter / pass_criteria /
+  // advance_behavior — only Name, SLA, and (for debrief) locked manual_review chip.
   const loose = stage as LooseStageInput
+  const category = stageCategory(stage.stage_type)
+  const isScreening = category === 'human_led' || category === 'ai_led'
+  const isReview = category === 'review'
 
   const advanceOptions: { k: AdvanceBehavior; label: string }[] = [
     { k: 'auto_advance', label: 'Auto-advance' },
@@ -1877,20 +1881,26 @@ function ConfigTab({
         </SheetField>
       </div>
 
-      <SheetField label="Difficulty">
-        <DifficultySlider
-          value={(loose.difficulty as StageDifficulty | undefined) ?? 'easy'}
-          onChange={(d) => onChange({ difficulty: d })}
-        />
-      </SheetField>
+      {/* Difficulty + Duration + Advance rule — only for screening categories */}
+      {isScreening && (
+        <SheetField label="Difficulty">
+          <DifficultySlider
+            value={(loose.difficulty as StageDifficulty | undefined) ?? 'easy'}
+            onChange={(d) => onChange({ difficulty: d })}
+          />
+        </SheetField>
+      )}
 
-      <SheetField label="Duration">
-        <DurationSlider
-          value={clampedDuration}
-          onChange={(v) => onChange({ duration_minutes: v })}
-        />
-      </SheetField>
+      {isScreening && (
+        <SheetField label="Duration">
+          <DurationSlider
+            value={clampedDuration}
+            onChange={(v) => onChange({ duration_minutes: v })}
+          />
+        </SheetField>
+      )}
 
+      {/* SLA — visible on every category except disabled (take_home) */}
       <SheetField label="SLA (days)">
         <input
           className="px-input"
@@ -1905,27 +1915,54 @@ function ConfigTab({
         />
       </SheetField>
 
-      <SheetField
-        label="Advance rule"
-        sub={`Currently: ${stageGate(stage.stage_type, (loose.advance_behavior as AdvanceBehavior | undefined) ?? 'manual_review')}.`}
-      >
-        <div className="flex flex-wrap gap-1.5">
-          {advanceOptions.map((opt) => {
-            const active = (loose.advance_behavior as AdvanceBehavior | undefined) === opt.k
-            return (
-              <button
-                key={opt.k}
-                type="button"
-                className={`px-chip ${active ? 'active' : ''}`}
-                style={{ fontSize: 11 }}
-                onClick={() => onChange({ advance_behavior: opt.k })}
-              >
-                {opt.label}
-              </button>
-            )
-          })}
-        </div>
-      </SheetField>
+      {isScreening && (
+        <SheetField
+          label="Advance rule"
+          sub={`Currently: ${stageGate(stage.stage_type, (loose.advance_behavior as AdvanceBehavior | undefined) ?? 'manual_review')}.`}
+        >
+          <div className="flex flex-wrap gap-1.5">
+            {advanceOptions.map((opt) => {
+              const active = (loose.advance_behavior as AdvanceBehavior | undefined) === opt.k
+              return (
+                <button
+                  key={opt.k}
+                  type="button"
+                  className={`px-chip ${active ? 'active' : ''}`}
+                  style={{ fontSize: 11 }}
+                  onClick={() => onChange({ advance_behavior: opt.k })}
+                >
+                  {opt.label}
+                </button>
+              )
+            })}
+          </div>
+        </SheetField>
+      )}
+
+      {/* Review (debrief) — locked chips with explanatory tooltip */}
+      {isReview && (
+        <SheetField label="Pass criteria">
+          <div
+            aria-disabled
+            title="Debrief is always manual review (HM decides)."
+            className="rounded bg-zinc-100 px-3 py-2 text-sm text-zinc-500"
+          >
+            Manual review
+          </div>
+        </SheetField>
+      )}
+
+      {isReview && (
+        <SheetField label="Advance rule">
+          <div
+            aria-disabled
+            title="Debrief is the final decision step."
+            className="rounded bg-zinc-100 px-3 py-2 text-sm text-zinc-500"
+          >
+            Manual review (terminal)
+          </div>
+        </SheetField>
+      )}
     </div>
   )
 }
