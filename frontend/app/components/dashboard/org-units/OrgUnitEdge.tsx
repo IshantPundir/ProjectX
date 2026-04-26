@@ -1,28 +1,35 @@
-import {
-  BaseEdge,
-  getBezierPath,
-  type EdgeProps,
-} from '@xyflow/react'
+import { getBezierPath } from './edge-path'
+import type { Position } from './types'
 
-interface OrgUnitEdgeData {
-  selectedPath: Set<string>
+export interface OrgUnitEdgeProps {
+  id: string
+  source: string
+  target: string
+  sourceX: number
+  sourceY: number
+  targetX: number
+  targetY: number
+  sourcePosition: Position
+  targetPosition: Position
+  selectedPath?: Set<string>
 }
 
-export function OrgUnitEdge(props: EdgeProps) {
-  const {
-    id,
-    sourceX,
-    sourceY,
-    targetX,
-    targetY,
-    sourcePosition,
-    targetPosition,
-    source,
-    target,
-    data,
-  } = props
+export function OrgUnitEdge({
+  id,
+  source,
+  target,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  selectedPath,
+}: OrgUnitEdgeProps) {
+  const onPath =
+    selectedPath?.has(source) === true && selectedPath?.has(target) === true
 
-  const [path] = getBezierPath({
+  const d = getBezierPath({
     sourceX,
     sourceY,
     sourcePosition,
@@ -31,20 +38,14 @@ export function OrgUnitEdge(props: EdgeProps) {
     targetPosition,
   })
 
-  const selectedPath = (data as unknown as OrgUnitEdgeData | undefined)
-    ?.selectedPath
-  const onPath =
-    selectedPath?.has(source) === true && selectedPath?.has(target) === true
-
   return (
-    <BaseEdge
-      id={id}
-      path={path}
-      style={{
-        stroke: onPath ? 'var(--px-accent)' : 'var(--px-hairline-strong)',
-        strokeWidth: onPath ? 1.8 : 1.4,
-        opacity: onPath ? 0.9 : 0.55,
-      }}
+    <path
+      data-edge-id={id}
+      d={d}
+      fill="none"
+      stroke={onPath ? 'var(--px-accent)' : 'var(--px-hairline-strong)'}
+      strokeWidth={onPath ? 1.8 : 1.4}
+      opacity={onPath ? 0.9 : 0.55}
     />
   )
 }
