@@ -36,10 +36,16 @@ describe('getUnitTypeStyle', () => {
     expect(getUnitTypeStyle('region')).toBe(UNIT_TYPE_STYLE.region)
   })
 
-  it('falls back to team style and warns for an unknown type', () => {
+  it('falls back to team style and warns once per unknown type', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const result = getUnitTypeStyle('not_a_real_type')
-    expect(result).toBe(UNIT_TYPE_STYLE.team)
+    // Use a distinct type name per test run so the module-level dedup
+    // set doesn't suppress the warn from prior tests.
+    const unknown = `not_a_real_type_${Math.random().toString(36).slice(2)}`
+    const result1 = getUnitTypeStyle(unknown)
+    const result2 = getUnitTypeStyle(unknown)
+    expect(result1).toBe(UNIT_TYPE_STYLE.team)
+    expect(result2).toBe(UNIT_TYPE_STYLE.team)
+    expect(warn).toHaveBeenCalledTimes(1)
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining('unknown unit_type'),
     )
@@ -68,5 +74,8 @@ describe('Glyph', () => {
 
     const { container: c4 } = render(<Glyph kind="hexagon" color="#000" />)
     expect(c4.querySelector('polygon')).toBeInTheDocument()
+
+    const { container: c5 } = render(<Glyph kind="pill" color="#000" />)
+    expect(c5.querySelector('rect')).toBeInTheDocument()
   })
 })

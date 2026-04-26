@@ -66,18 +66,24 @@ export const UNIT_TYPE_STYLE: Record<UnitType, UnitTypeStyle> = {
 
 const FALLBACK_STYLE: UnitTypeStyle = UNIT_TYPE_STYLE.team
 
+const _warnedTypes = new Set<string>()
+
 /**
  * Look up the style for an org unit type. If the backend ever ships a
  * sixth type before the frontend updates this map, fall back to the
- * team style and emit a single console warning so the bug surfaces.
+ * team style and emit a single console warning per unknown type so the
+ * bug surfaces without spamming the log.
  */
 export function getUnitTypeStyle(type: string): UnitTypeStyle {
   if (type in UNIT_TYPE_STYLE) {
     return UNIT_TYPE_STYLE[type as UnitType]
   }
-  console.warn(
-    `OrgGraph: unknown unit_type "${type}", falling back to team style`,
-  )
+  if (!_warnedTypes.has(type)) {
+    _warnedTypes.add(type)
+    console.warn(
+      `OrgGraph: unknown unit_type "${type}", falling back to team style`,
+    )
+  }
   return FALLBACK_STYLE
 }
 
@@ -152,5 +158,9 @@ export function Glyph({
           <circle r={half - 2.5} fill={color} />
         </svg>
       )
+    default: {
+      const _exhaustive: never = kind
+      return _exhaustive
+    }
   }
 }
