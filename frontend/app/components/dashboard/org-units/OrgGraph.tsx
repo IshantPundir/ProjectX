@@ -23,11 +23,7 @@ import { OrgUnitEdge } from './OrgUnitEdge'
 import { OrgUnitNode } from './OrgUnitNode'
 import { useDagreLayout } from './use-dagre-layout'
 import { useDirectionToggle } from './use-direction-toggle'
-import {
-  Glyph,
-  UNIT_TYPE_STYLE,
-  type UnitType,
-} from './unit-type-style'
+import { UNIT_TYPE_STYLE, type UnitType } from './unit-type-style'
 
 // ─── Public types ──────────────────────────────────────────────────────────
 
@@ -264,6 +260,7 @@ export function OrgLegend() {
     >
       {items.map(({ type, label }) => {
         const s = UNIT_TYPE_STYLE[type]
+        const Icon = s.icon
         return (
           <span
             key={type}
@@ -276,14 +273,14 @@ export function OrgLegend() {
             <span
               className="inline-flex items-center justify-center"
               style={{
-                width: 16,
-                height: 16,
+                width: 18,
+                height: 18,
                 borderRadius: 4,
                 background: s.bgVar,
                 border: `1px solid ${s.lineVar}`,
               }}
             >
-              <Glyph kind={s.glyph} color={s.stripVar} size={10} />
+              <Icon size={11} color={s.stripVar} strokeWidth={1.8} aria-hidden />
             </span>
             <span>{label}</span>
           </span>

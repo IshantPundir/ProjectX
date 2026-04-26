@@ -1,10 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import { render } from '@testing-library/react'
+import { Building, Building2, Globe2, Network, Users } from 'lucide-react'
 
 import {
   UNIT_TYPE_STYLE,
   getUnitTypeStyle,
-  Glyph,
   type UnitType,
 } from '@/components/dashboard/org-units/unit-type-style'
 
@@ -22,12 +21,31 @@ describe('UNIT_TYPE_STYLE', () => {
       expect(UNIT_TYPE_STYLE[t].stripVar).toMatch(/^var\(--/)
       expect(UNIT_TYPE_STYLE[t].bgVar).toMatch(/^var\(--/)
       expect(UNIT_TYPE_STYLE[t].lineVar).toMatch(/^var\(--/)
+      expect(typeof UNIT_TYPE_STYLE[t].icon).toBe('object')
     }
   })
 
-  it('maps each type to a unique glyph kind', () => {
-    const glyphs = Object.values(UNIT_TYPE_STYLE).map((s) => s.glyph)
-    expect(new Set(glyphs).size).toBe(glyphs.length)
+  it('binds each type to its semantic lucide icon', () => {
+    expect(UNIT_TYPE_STYLE.company.icon).toBe(Building2)
+    expect(UNIT_TYPE_STYLE.client_account.icon).toBe(Building)
+    expect(UNIT_TYPE_STYLE.region.icon).toBe(Globe2)
+    expect(UNIT_TYPE_STYLE.division.icon).toBe(Network)
+    expect(UNIT_TYPE_STYLE.team.icon).toBe(Users)
+  })
+
+  it('uses Building-family icons for both company-profile-bearing types', () => {
+    // company and client_account share the company_profile concept;
+    // their icons should cluster visually (both Building*) while the
+    // variant + color split keeps them distinguishable.
+    const profileBearingIcons = [
+      UNIT_TYPE_STYLE.company.icon,
+      UNIT_TYPE_STYLE.client_account.icon,
+    ]
+    expect(profileBearingIcons).toContain(Building)
+    expect(profileBearingIcons).toContain(Building2)
+    expect(UNIT_TYPE_STYLE.company.icon).not.toBe(
+      UNIT_TYPE_STYLE.client_account.icon,
+    )
   })
 })
 
@@ -50,32 +68,5 @@ describe('getUnitTypeStyle', () => {
       expect.stringContaining('unknown unit_type'),
     )
     warn.mockRestore()
-  })
-})
-
-describe('Glyph', () => {
-  it('renders an SVG with the requested fill color', () => {
-    const { container } = render(<Glyph kind="circle" color="#abc123" />)
-    const svg = container.querySelector('svg')
-    expect(svg).toBeInTheDocument()
-    expect(svg?.getAttribute('aria-hidden')).toBe('true')
-    expect(container.innerHTML).toContain('#abc123')
-  })
-
-  it('renders different shape elements per glyph kind', () => {
-    const { container: c1 } = render(<Glyph kind="square" color="#000" />)
-    expect(c1.querySelector('rect')).toBeInTheDocument()
-
-    const { container: c2 } = render(<Glyph kind="circle" color="#000" />)
-    expect(c2.querySelector('circle')).toBeInTheDocument()
-
-    const { container: c3 } = render(<Glyph kind="diamond" color="#000" />)
-    expect(c3.querySelector('polygon')).toBeInTheDocument()
-
-    const { container: c4 } = render(<Glyph kind="hexagon" color="#000" />)
-    expect(c4.querySelector('polygon')).toBeInTheDocument()
-
-    const { container: c5 } = render(<Glyph kind="pill" color="#000" />)
-    expect(c5.querySelector('rect')).toBeInTheDocument()
   })
 })

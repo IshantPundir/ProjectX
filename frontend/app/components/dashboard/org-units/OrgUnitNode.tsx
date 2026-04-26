@@ -2,7 +2,7 @@ import { memo, type CSSProperties, type KeyboardEvent } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 
 import type { GraphNodeData } from './OrgGraph'
-import { Glyph, getUnitTypeStyle } from './unit-type-style'
+import { getUnitTypeStyle } from './unit-type-style'
 
 interface OrgUnitNodeData {
   unit: GraphNodeData
@@ -27,6 +27,7 @@ function OrgUnitNodeImpl({
   const { unit, selectedId, onSelectPath, onSelect } =
     data as unknown as OrgUnitNodeData
   const style = getUnitTypeStyle(unit.unit_type)
+  const Icon = style.icon
 
   const isSelected = selectedId === unit.id
   const isOnPath = !isSelected && onSelectPath.has(unit.id)
@@ -120,7 +121,7 @@ function OrgUnitNodeImpl({
             border: `1px solid ${style.lineVar}`,
           }}
         >
-          <Glyph kind={style.glyph} color={style.stripVar} />
+          <Icon size={16} color={style.stripVar} strokeWidth={1.8} aria-hidden />
         </span>
         <span style={{ flex: 1, minWidth: 0 }}>
           <span
