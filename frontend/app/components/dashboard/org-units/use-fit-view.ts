@@ -11,7 +11,7 @@ interface FitViewOptions {
   maxScale?: number
 }
 
-interface FitViewArgs<T extends Record<string, unknown>> {
+interface FitViewArgs<T extends object> {
   wrapperRef: RefObject<HTMLDivElement | null>
   nodes: LayoutNode<T>[]
   nodeWidth: number
@@ -28,7 +28,7 @@ interface FitViewArgs<T extends Record<string, unknown>> {
  * within the wrapper with `padding` breathing room. Re-runs whenever
  * `runId` reference-changes.
  */
-export function useFitView<T extends Record<string, unknown>>({
+export function useFitView<T extends object>({
   wrapperRef,
   nodes,
   nodeWidth,

@@ -12,7 +12,7 @@ export type Position = 'top' | 'bottom' | 'left' | 'right'
 export type Direction = 'TB' | 'LR'
 
 /** A node after dagre layout. Generic `T` is the per-node payload. */
-export interface LayoutNode<T extends Record<string, unknown> = Record<string, unknown>> {
+export interface LayoutNode<T extends object = Record<string, unknown>> {
   id: string
   type?: string
   position: { x: number; y: number }
