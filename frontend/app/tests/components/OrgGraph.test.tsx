@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, screen, within } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 
 import { renderWithProviders } from '../_utils/render'
 import {
@@ -165,5 +165,69 @@ describe('OrgGraph', () => {
       expect.stringContaining('expected one root unit'),
     )
     warn.mockRestore()
+  })
+
+  it('opens the radial menu on right-click of a node', () => {
+    renderWithProviders(
+      <OrgGraph units={TREE} selectedId={null} onSelect={vi.fn()} />,
+    )
+    const card = screen.getByRole('button', { name: /region: NA/ })
+    fireEvent.contextMenu(card)
+    expect(
+      screen.getByRole('menu', { name: /Actions for NA/i }),
+    ).toBeInTheDocument()
+  })
+
+  it('calls onDelete with the unit id when Delete is picked', () => {
+    const onDelete = vi.fn()
+    renderWithProviders(
+      <OrgGraph
+        units={TREE}
+        selectedId={null}
+        onSelect={vi.fn()}
+        onDelete={onDelete}
+      />,
+    )
+    fireEvent.contextMenu(screen.getByRole('button', { name: /region: NA/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Delete NA/i }))
+    expect(onDelete).toHaveBeenCalledWith('na')
+  })
+
+  it('renders the inline-create form when a child-type item is picked', async () => {
+    renderWithProviders(
+      <OrgGraph
+        units={TREE}
+        selectedId={null}
+        onSelect={vi.fn()}
+        onCreateChild={vi.fn()}
+      />,
+    )
+    fireEvent.contextMenu(screen.getByRole('button', { name: /region: NA/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Add Division/i }))
+    await waitFor(() => {
+      expect(
+        screen.getByPlaceholderText(/Name the new division/i),
+      ).toBeInTheDocument()
+    })
+  })
+
+  it('calls onCreateChild with parent id, type, and name on inline submit', async () => {
+    const onCreateChild = vi.fn().mockResolvedValue(undefined)
+    renderWithProviders(
+      <OrgGraph
+        units={TREE}
+        selectedId={null}
+        onSelect={vi.fn()}
+        onCreateChild={onCreateChild}
+      />,
+    )
+    fireEvent.contextMenu(screen.getByRole('button', { name: /region: NA/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Add Team/i }))
+    const input = await screen.findByPlaceholderText(/Name the new team/i)
+    fireEvent.change(input, { target: { value: 'Frontend' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => {
+      expect(onCreateChild).toHaveBeenCalledWith('na', 'team', 'Frontend')
+    })
   })
 })
