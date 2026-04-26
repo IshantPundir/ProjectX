@@ -27,20 +27,33 @@ class Client(Base):
     logo_url: Mapped[str | None] = mapped_column(Text)
     plan: Mapped[str] = mapped_column(String, nullable=False, server_default="trial")
     onboarding_complete: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
-    workspace_mode: Mapped[str] = mapped_column(Text, nullable=False, server_default="'enterprise'")
     super_admin_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", deferrable=True, initially="DEFERRED"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("NOW()"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("NOW()"))
+    blocked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class User(Base):
     """Dashboard user — identity only. Roles live on user_role_assignments."""
     __tablename__ = "users"
+    __table_args__ = (
+        # Partial unique index: enforces auth_user_id uniqueness only among
+        # non-soft-deleted rows. Lets a re-invitation of the same Supabase
+        # Auth identity to a fresh tenant succeed after the prior tenant was
+        # soft-deleted (and its users were cascade-soft-deleted). See
+        # migration 0022 for the full rationale.
+        Index(
+            "users_auth_user_id_active_uniq",
+            "auth_user_id",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
-    auth_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, unique=True)
-    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False)
+    auth_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
     email: Mapped[str] = mapped_column(Text, nullable=False)
     full_name: Mapped[str | None] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
@@ -53,7 +66,7 @@ class OrganizationalUnit(Base):
     __tablename__ = "organizational_units"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
-    client_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False)
+    client_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
     parent_unit_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("organizational_units.id"))
     name: Mapped[str] = mapped_column(Text, nullable=False)
     unit_type: Mapped[str] = mapped_column(String, nullable=False)
@@ -81,7 +94,7 @@ class Role(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
-    tenant_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("clients.id"))
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("clients.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str] = mapped_column(Text, server_default="''")
     permissions: Mapped[list] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
@@ -100,7 +113,7 @@ class UserRoleAssignment(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     org_unit_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizational_units.id"), nullable=False)
     role_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("roles.id"), nullable=False)
-    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
     assigned_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("NOW()"))
 
@@ -110,7 +123,7 @@ class UserInvite(Base):
     __tablename__ = "user_invites"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
-    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
     invited_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
     projectx_admin_id: Mapped[str | None] = mapped_column(Text)
     email: Mapped[str] = mapped_column(Text, nullable=False)
@@ -127,8 +140,8 @@ class AuditLog(Base):
     __tablename__ = "audit_log"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
-    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False)
-    actor_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     actor_email: Mapped[str | None] = mapped_column(Text)
     action: Mapped[str] = mapped_column(Text, nullable=False)
     resource: Mapped[str] = mapped_column(Text, nullable=False)
@@ -146,7 +159,7 @@ class JobPosting(Base):
     __tablename__ = "job_postings"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
-    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
     org_unit_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizational_units.id"), nullable=False)
     title: Mapped[str] = mapped_column(Text, nullable=False)
     description_raw: Mapped[str] = mapped_column(Text, nullable=False)
@@ -185,7 +198,7 @@ class JobPostingSignalSnapshot(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
-    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
     job_posting_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("job_postings.id", ondelete="CASCADE"), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     signals: Mapped[list] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
@@ -210,7 +223,7 @@ class PipelineTemplate(Base):
         UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
     )
     tenant_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False
+        UUID(as_uuid=True), ForeignKey("clients.id", ondelete="CASCADE"), nullable=False
     )
     org_unit_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("organizational_units.id"), nullable=False
@@ -249,7 +262,7 @@ class PipelineTemplateStage(Base):
         UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
     )
     tenant_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False
+        UUID(as_uuid=True), ForeignKey("clients.id", ondelete="CASCADE"), nullable=False
     )
     template_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -286,7 +299,7 @@ class JobPipelineInstance(Base):
         UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
     )
     tenant_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False
+        UUID(as_uuid=True), ForeignKey("clients.id", ondelete="CASCADE"), nullable=False
     )
     job_posting_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -322,7 +335,7 @@ class JobPipelineStage(Base):
         UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
     )
     tenant_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False
+        UUID(as_uuid=True), ForeignKey("clients.id", ondelete="CASCADE"), nullable=False
     )
     instance_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -399,7 +412,7 @@ class StageQuestionBank(Base):
         UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
     )
     tenant_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False
+        UUID(as_uuid=True), ForeignKey("clients.id", ondelete="CASCADE"), nullable=False
     )
     stage_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -459,7 +472,7 @@ class StageQuestion(Base):
         UUID(as_uuid=True), primary_key=True, server_default=sql_text("gen_random_uuid()")
     )
     tenant_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False
+        UUID(as_uuid=True), ForeignKey("clients.id", ondelete="CASCADE"), nullable=False
     )
     bank_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
