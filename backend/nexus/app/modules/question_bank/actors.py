@@ -34,7 +34,6 @@ from app.models import (
     StageQuestionBank,
 )
 from app.modules.audit.service import log_event
-from app.modules.org_units.service import find_company_profile_in_ancestry
 from app.modules.question_bank.schemas import (
     SingleQuestionOutput,
     StageQuestionBankOutput,
@@ -48,6 +47,12 @@ from app.modules.question_bank.service import (
     transition_to_reviewing_after_generation,
     validate_llm_output_against_snapshot,
     write_generated_questions,
+)
+from app.modules.question_bank.context import (
+    QuestionContext,
+    build_question_context,
+    _load_pipeline_stages,
+    _load_prior_stage_questions,
 )
 from app.modules.question_bank.state_machine import auto_revert_on_edit
 
@@ -65,78 +70,10 @@ STAGE_TYPE_TO_PROMPT = {
     "take_home":       "question_bank_take_home",
 }
 
-
-async def _load_pipeline_context(
-    db, *, instance_id: UUID
-) -> list[dict]:
-    """Load all stages in the instance with their metadata, ordered by position."""
-    result = await db.execute(
-        select(JobPipelineStage)
-        .where(JobPipelineStage.instance_id == instance_id)
-        .order_by(JobPipelineStage.position)
-    )
-    stages = list(result.scalars().all())
-    return [
-        {
-            "id": str(s.id),
-            "position": s.position,
-            "name": s.name,
-            "stage_type": s.stage_type,
-            "duration_minutes": s.duration_minutes,
-            "difficulty": s.difficulty,
-            "advance_behavior": s.advance_behavior,
-        }
-        for s in stages
-    ]
-
-
-async def _load_prior_stages_questions(
-    db, *, instance_id: UUID, current_position: int
-) -> list[dict]:
-    """Load questions from stages with position < current_position, grouped by stage."""
-    stage_result = await db.execute(
-        select(JobPipelineStage)
-        .where(
-            JobPipelineStage.instance_id == instance_id,
-            JobPipelineStage.position < current_position,
-        )
-        .order_by(JobPipelineStage.position)
-    )
-    prior_stages = list(stage_result.scalars().all())
-
-    out = []
-    for stage in prior_stages:
-        bank_result = await db.execute(
-            select(StageQuestionBank).where(StageQuestionBank.stage_id == stage.id)
-        )
-        bank = bank_result.scalar_one_or_none()
-        questions: list[dict] = []
-        if bank is not None:
-            q_result = await db.execute(
-                select(StageQuestion)
-                .where(StageQuestion.bank_id == bank.id)
-                .order_by(StageQuestion.position)
-            )
-            for q in q_result.scalars().all():
-                questions.append(
-                    {
-                        "position": q.position,
-                        "text": q.text,
-                        "signal_values": q.signal_values,
-                        "is_mandatory": q.is_mandatory,
-                        "rubric_meets_bar": q.rubric.get("meets_bar", ""),
-                    }
-                )
-        out.append(
-            {
-                "stage_name": stage.name,
-                "stage_type": stage.stage_type,
-                "duration_minutes": stage.duration_minutes,
-                "difficulty": stage.difficulty,
-                "questions": questions,
-            }
-        )
-    return out
+# Backward-compatible aliases so existing tests (which import these names
+# directly from actors) continue to work without modification.
+_load_pipeline_context = _load_pipeline_stages
+_load_prior_stages_questions = _load_prior_stage_questions
 
 
 def _build_user_message(
@@ -282,13 +219,7 @@ async def _generate_one_bank(
     )
 
     try:
-        company_profile = await find_company_profile_in_ancestry(db, job.org_unit_id)
-        pipeline_stages = await _load_pipeline_context(
-            db, instance_id=instance.id
-        )
-        prior_stages_questions = await _load_prior_stages_questions(
-            db, instance_id=instance.id, current_position=stage.position
-        )
+        ctx = await build_question_context(db, job=job, instance=instance, stage=stage)
 
         type_prompt = STAGE_TYPE_TO_PROMPT.get(stage.stage_type)
         if type_prompt is None:
@@ -298,10 +229,10 @@ async def _generate_one_bank(
         user_message = _build_user_message(
             job=job,
             snapshot=snapshot,
-            company_profile=company_profile,
+            company_profile=ctx.company_profile,
             stage=stage,
-            pipeline_stages=pipeline_stages,
-            prior_stages_questions=prior_stages_questions,
+            pipeline_stages=ctx.pipeline_stages,
+            prior_stages_questions=ctx.prior_stages_questions,
         )
 
         client = get_openai_client()
