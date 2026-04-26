@@ -4,7 +4,7 @@ All enum-style fields use Literal types for strict validation.
 Signal filter and pass criteria are JSONB shapes validated via nested models."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -125,6 +125,85 @@ def _validate_participants_role_for_type(
             )
 
 
+# Field-rule enums (private to this module).
+_REQUIRED = "required"
+_FORBIDDEN = "forbidden"
+_OPTIONAL = "optional"
+_LOCKED = "locked"
+
+_FIELD_RULES_BY_TYPE: dict[str, dict[str, str]] = {
+    "intake": {
+        "duration_minutes": _FORBIDDEN, "difficulty": _FORBIDDEN,
+        "signal_filter": _FORBIDDEN, "pass_criteria": _LOCKED,
+        "advance_behavior": _LOCKED, "sla_days": _OPTIONAL,
+        "otp_required": _FORBIDDEN,
+    },
+    "phone_screen": {
+        "duration_minutes": _REQUIRED, "difficulty": _REQUIRED,
+        "signal_filter": _REQUIRED, "pass_criteria": _REQUIRED,
+        "advance_behavior": _REQUIRED, "sla_days": _OPTIONAL,
+        "otp_required": _OPTIONAL,
+    },
+    "ai_screening": {
+        "duration_minutes": _REQUIRED, "difficulty": _REQUIRED,
+        "signal_filter": _REQUIRED, "pass_criteria": _REQUIRED,
+        "advance_behavior": _REQUIRED, "sla_days": _OPTIONAL,
+        "otp_required": _OPTIONAL,
+    },
+    "human_interview": {
+        "duration_minutes": _REQUIRED, "difficulty": _REQUIRED,
+        "signal_filter": _REQUIRED, "pass_criteria": _REQUIRED,
+        "advance_behavior": _REQUIRED, "sla_days": _OPTIONAL,
+        "otp_required": _OPTIONAL,
+    },
+    "debrief": {
+        "duration_minutes": _FORBIDDEN, "difficulty": _FORBIDDEN,
+        "signal_filter": _FORBIDDEN, "pass_criteria": _LOCKED,
+        "advance_behavior": _LOCKED, "sla_days": _OPTIONAL,
+        "otp_required": _FORBIDDEN,
+    },
+    "take_home": {
+        "duration_minutes": _FORBIDDEN, "difficulty": _FORBIDDEN,
+        "signal_filter": _FORBIDDEN, "pass_criteria": _FORBIDDEN,
+        "advance_behavior": _FORBIDDEN, "sla_days": _FORBIDDEN,
+        "otp_required": _FORBIDDEN,
+    },
+}
+
+_LOCKED_VALUES: dict[str, dict[str, Any]] = {
+    "intake": {
+        "pass_criteria": {"type": "all_knockouts_pass"},
+        "advance_behavior": "auto_advance",
+    },
+    "debrief": {
+        "pass_criteria": {"type": "manual_review"},
+        "advance_behavior": "manual_review",
+    },
+}
+
+
+def _validate_fields_for_stage_type(values: dict) -> dict:
+    """Validate matrix-driven field rules; mutate `values` for LOCKED fields."""
+    stage_type = values.get("stage_type")
+    if stage_type not in _FIELD_RULES_BY_TYPE:
+        return values
+    rules = _FIELD_RULES_BY_TYPE[stage_type]
+    locked = _LOCKED_VALUES.get(stage_type, {})
+    for field, rule in rules.items():
+        present = field in values and values[field] is not None
+        if rule == _FORBIDDEN and present:
+            raise ValueError(
+                f"{field} is not allowed for stage_type='{stage_type}'"
+            )
+        if rule == _REQUIRED and not present:
+            raise ValueError(
+                f"{field} is required for stage_type='{stage_type}'"
+            )
+        if rule == _LOCKED:
+            values[field] = locked[field]
+    return values
+
+
 # --- Stage schemas ---
 
 
@@ -132,15 +211,19 @@ class PipelineStageBase(BaseModel):
     position: int = Field(ge=0)
     name: str = Field(min_length=1, max_length=200)
     stage_type: StageType
-    duration_minutes: int = Field(gt=0, le=240)
-    difficulty: StageDifficulty
-    signal_filter: SignalFilter
-    pass_criteria: PassCriteria
-    advance_behavior: AdvanceBehavior
+    duration_minutes: int | None = Field(default=None, gt=0, le=240)
+    difficulty: StageDifficulty | None = None
+    signal_filter: SignalFilter | None = None
+    pass_criteria: PassCriteria | None = None
+    advance_behavior: AdvanceBehavior | None = None
     # Stage SLA in days — how long a candidate can sit here before being
     # flagged stalled. Distinct from ``duration_minutes`` (the interview's
     # own length). NULL = no SLA configured.
     sla_days: int | None = Field(default=None, gt=0)
+    # OTP gate — whether the candidate must supply an OTP before entering
+    # the session. Only applicable to phone_screen / ai_screening /
+    # human_interview (OPTIONAL for those; FORBIDDEN for all others).
+    otp_required: bool | None = None
 
 
 class PipelineStageInput(PipelineStageBase):
@@ -148,6 +231,13 @@ class PipelineStageInput(PipelineStageBase):
 
     model_config = ConfigDict(extra="forbid")
     participants: list[StageParticipantInput] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _apply_field_rules(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            return _validate_fields_for_stage_type(data)
+        return data
 
     @model_validator(mode="after")
     def _check_participants_for_stage_type(self) -> "PipelineStageInput":
@@ -173,6 +263,13 @@ class PipelineStageUpdateInput(PipelineStageInput):
     # the "don't touch" sentinel. The inherited @model_validator (via the
     # None-tolerant helper) handles both None and non-None correctly.
     participants: list[StageParticipantInput] | None = None  # type: ignore[assignment]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _apply_field_rules(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            return _validate_fields_for_stage_type(data)
+        return data
 
 
 class PipelineStageResponse(PipelineStageBase):
