@@ -33,10 +33,7 @@ import { OrgUnitNode } from './OrgUnitNode'
 import { useDagreLayout } from './use-dagre-layout'
 import { useDirectionToggle } from './use-direction-toggle'
 import { UNIT_TYPE_STYLE, type UnitType } from './unit-type-style'
-import {
-  OrgUnitContextMenu,
-  type ContextMenuTarget,
-} from './OrgUnitContextMenu'
+import { OrgUnitContextMenu } from './OrgUnitContextMenu'
 import { OrgUnitInlineCreate } from './OrgUnitInlineCreate'
 import { getAllowedChildTypes } from './unit-children-rules'
 
