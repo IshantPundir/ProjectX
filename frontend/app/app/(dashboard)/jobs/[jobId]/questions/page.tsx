@@ -873,16 +873,42 @@ function QBDetail({
 }) {
   const regenMutation = useRegenerateQuestion(jobId, stage.id, q.id)
   const [isRegenerating, setIsRegenerating] = useState(false)
+  // Snapshot of the question's updated_at at the moment regenerate started.
+  // The POST returns 202 in ~2s after dispatching the actor, but the LLM
+  // call takes ~30-40s. We hold isRegenerating=true until the SSE-driven
+  // refetch brings back a fresh updated_at (signalling the worker actually
+  // wrote the new question text).
+  const regenStartedAtRef = useRef<string | null>(null)
   const [refineOpen, setRefineOpen] = useState(false)
   const refineMutation = useRefineQuestion(jobId, stage.id, q.id)
   const qc = useQueryClient()
 
+  // Clear the regenerating state once the question's updated_at advances
+  // past the snapshot we captured at click time.
+  useEffect(() => {
+    if (
+      isRegenerating &&
+      regenStartedAtRef.current &&
+      q.updated_at !== regenStartedAtRef.current
+    ) {
+      setIsRegenerating(false)
+      regenStartedAtRef.current = null
+    }
+  }, [isRegenerating, q.updated_at])
+
   const handleRegenerate = () => {
+    regenStartedAtRef.current = q.updated_at
     setIsRegenerating(true)
     regenMutation.mutate(
       {},
       {
-        onSettled: () => setIsRegenerating(false),
+        onError: () => {
+          // Mutation failed (e.g. 409 — another bank already generating).
+          // Clear the spinner so the user can retry; on success we wait for
+          // the SSE-driven refetch instead.
+          setIsRegenerating(false)
+          regenStartedAtRef.current = null
+        },
       },
     )
   }
