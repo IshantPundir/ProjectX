@@ -439,3 +439,130 @@ async def test_redact_pii_super_admin_succeeds(db: AsyncSession):
     await db.refresh(candidate)
     assert candidate.name is None
     assert candidate.email is None
+
+
+# ---------------------------------------------------------------------------
+# Assignment creation: active-state gate + pipeline-version stamp
+# ---------------------------------------------------------------------------
+
+
+async def _make_job_with_pipeline(db, tenant_id, user_id, org_unit_id, *, status="active"):
+    """Create a JobPosting + pipeline instance + one stage. Returns (job, pipeline)."""
+    from app.models import JobPipelineInstance, JobPipelineStage, JobPosting
+
+    job = JobPosting(
+        tenant_id=tenant_id,
+        org_unit_id=org_unit_id,
+        title="Gate Test Job",
+        description_raw="X" * 60,
+        created_by=user_id,
+        status=status,
+    )
+    db.add(job)
+    await db.flush()
+
+    pipeline = JobPipelineInstance(tenant_id=tenant_id, job_posting_id=job.id)
+    db.add(pipeline)
+    await db.flush()
+
+    stage = JobPipelineStage(
+        tenant_id=tenant_id,
+        instance_id=pipeline.id,
+        position=0,
+        name="Intake",
+        stage_type="intake",
+        duration_minutes=30,
+        difficulty="easy",
+        signal_filter={},
+        pass_criteria={},
+        advance_behavior="auto_advance",
+    )
+    db.add(stage)
+    await db.flush()
+
+    return job, pipeline
+
+
+@pytest.mark.asyncio
+async def test_create_assignment_rejects_when_job_not_active(db: AsyncSession):
+    """Job must be 'active' to accept new candidate assignments — spec §7.3."""
+    from tests.conftest import create_test_org_unit
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    org_unit = await create_test_org_unit(db, tenant.id)
+
+    # pipeline_built status — not active
+    job, _pipeline = await _make_job_with_pipeline(
+        db, tenant.id, user.id, org_unit.id, status="pipeline_built"
+    )
+
+    candidate = Candidate(
+        tenant_id=tenant.id,
+        name="Gated",
+        email="gated@example.com",
+        source="manual",
+        created_by=user.id,
+    )
+    db.add(candidate)
+    await db.flush()
+
+    headers, restore = _setup_test_context(db, user, tenant.id, is_super=True)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            r = await ac.post(
+                f"/api/candidates/{candidate.id}/assignments",
+                json={"job_posting_id": str(job.id)},
+                headers=headers,
+            )
+    finally:
+        restore()
+
+    assert r.status_code == 409, r.text
+    detail = r.json().get("detail", {})
+    code = detail.get("code") if isinstance(detail, dict) else None
+    assert code == "job_not_active"
+
+
+@pytest.mark.asyncio
+async def test_create_assignment_stamps_pipeline_version(db: AsyncSession):
+    """Assignment response must carry entered_at_pipeline_version >= 1 when job is active."""
+    from tests.conftest import create_test_org_unit
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    org_unit = await create_test_org_unit(db, tenant.id)
+
+    job, _pipeline = await _make_job_with_pipeline(
+        db, tenant.id, user.id, org_unit.id, status="active"
+    )
+
+    candidate = Candidate(
+        tenant_id=tenant.id,
+        name="Versioned",
+        email="versioned@example.com",
+        source="manual",
+        created_by=user.id,
+    )
+    db.add(candidate)
+    await db.flush()
+
+    headers, restore = _setup_test_context(db, user, tenant.id, is_super=True)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            r = await ac.post(
+                f"/api/candidates/{candidate.id}/assignments",
+                json={"job_posting_id": str(job.id)},
+                headers=headers,
+            )
+    finally:
+        restore()
+
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["entered_at_pipeline_version"] is not None
+    assert body["entered_at_pipeline_version"] >= 1

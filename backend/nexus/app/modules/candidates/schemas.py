@@ -100,6 +100,7 @@ class AssignmentResponse(BaseModel):
     status: AssignmentStatus
     status_changed_at: datetime
     assigned_at: datetime
+    entered_at_pipeline_version: int | None = None
 
 
 class StageTransitionRequest(BaseModel):

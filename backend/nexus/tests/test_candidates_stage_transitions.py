@@ -1,5 +1,6 @@
 """Tests for update_assignment_status + transition_stage."""
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import select
@@ -35,7 +36,7 @@ async def _make_job_with_stages(db, tenant_id, user_id, stage_names=("Screening"
     org_unit = await create_test_org_unit(db, tenant_id)
     job = JobPosting(
         tenant_id=tenant_id, org_unit_id=org_unit.id, title="Engineer",
-        description_raw="R" * 60, created_by=user_id, status="draft",
+        description_raw="R" * 60, created_by=user_id, status="active",
     )
     db.add(job)
     await db.flush()
@@ -168,3 +169,107 @@ async def test_transition_stage_missing_assignment_raises(db):
             StageTransitionRequest(target_stage_id=uuid.uuid4()),
             _make_ctx(user),
         )
+
+
+@pytest.mark.asyncio
+async def test_transition_skips_paused_stage(db):
+    """transition_stage must skip stages where paused_at is not None — spec §5.4 resolver.
+
+    Pipeline: intake(pos=0) → phone_screen(pos=1) → ai_screening(pos=2, PAUSED)
+              → human_interview(pos=3) → debrief(pos=4)
+
+    Candidate is at phone_screen. When we try to advance to ai_screening (paused),
+    the resolver should skip it and land on human_interview instead.
+    """
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    org_unit = await create_test_org_unit(db, tenant.id)
+
+    # Build the job in active state.
+    job = JobPosting(
+        tenant_id=tenant.id,
+        org_unit_id=org_unit.id,
+        title="Engineer (paused-skip test)",
+        description_raw="R" * 60,
+        created_by=user.id,
+        status="active",
+    )
+    db.add(job)
+    await db.flush()
+
+    instance = JobPipelineInstance(tenant_id=tenant.id, job_posting_id=job.id)
+    db.add(instance)
+    await db.flush()
+
+    stage_defs = [
+        ("Intake", "intake"),
+        ("Phone Screen", "phone_screen"),
+        ("AI Screening", "ai_screening"),
+        ("Human Interview", "human_interview"),
+        ("Debrief", "debrief"),
+    ]
+    stages = []
+    for i, (name, stype) in enumerate(stage_defs):
+        s = JobPipelineStage(
+            tenant_id=tenant.id,
+            instance_id=instance.id,
+            position=i,
+            name=name,
+            stage_type=stype,
+            duration_minutes=30,
+            difficulty="medium",
+            signal_filter={},
+            pass_criteria={},
+            advance_behavior="manual",
+        )
+        db.add(s)
+        stages.append(s)
+    await db.flush()
+
+    intake_stage, phone_stage, ai_stage, human_stage, _debrief_stage = stages
+
+    # Pause the ai_screening stage.
+    ai_stage.paused_at = datetime.now(UTC)
+    await db.flush()
+
+    # Create a candidate at phone_screen.
+    candidate = Candidate(
+        tenant_id=tenant.id,
+        name="Skip Tester",
+        email=f"skip-{uuid.uuid4().hex[:6]}@example.com",
+        source="manual",
+        created_by=user.id,
+    )
+    db.add(candidate)
+    await db.flush()
+
+    assignment = CandidateJobAssignment(
+        tenant_id=tenant.id,
+        candidate_id=candidate.id,
+        job_posting_id=job.id,
+        current_stage_id=phone_stage.id,
+        status="active",
+        assigned_by=user.id,
+    )
+    db.add(assignment)
+    await db.flush()  # get assignment.id before referencing it in progress
+
+    # Also open a stage-progress row so transition_stage can close it.
+    progress = CandidateStageProgress(
+        tenant_id=tenant.id,
+        assignment_id=assignment.id,
+        stage_id=phone_stage.id,
+        moved_by=user.id,
+    )
+    db.add(progress)
+    await db.flush()
+
+    # Attempt to advance to ai_screening (the paused stage).
+    req = StageTransitionRequest(target_stage_id=ai_stage.id)
+    updated = await service.transition_stage(db, assignment.id, req, _make_ctx(user))
+
+    # The resolver must have skipped ai_screening and landed on human_interview.
+    assert updated.current_stage_id == human_stage.id, (
+        f"Expected human_interview ({human_stage.id}), "
+        f"got {updated.current_stage_id} (ai_screening={ai_stage.id})"
+    )

@@ -19,6 +19,7 @@ from app.database import get_tenant_db
 from app.modules.auth.context import UserContext, get_current_user_roles
 from app.modules.candidates import resume_service, service
 from app.modules.candidates.authz import require_candidate_access
+from app.modules.candidates.errors import JobNotActiveError
 from app.modules.candidates.schemas import (
     AssignmentCreateRequest,
     AssignmentResponse,
@@ -187,7 +188,13 @@ async def create_assignment_endpoint(
 ) -> AssignmentResponse:
     await require_candidate_access(db, candidate_id, user, "manage")
     await require_job_access(db, body.job_posting_id, user, "manage")
-    assignment = await service.create_assignment(db, candidate_id, body, user)
+    try:
+        assignment = await service.create_assignment(db, candidate_id, body, user)
+    except JobNotActiveError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "job_not_active", "message": str(e)},
+        )
     return await service.assignment_response(db, assignment)
 
 

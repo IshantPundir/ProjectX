@@ -36,6 +36,7 @@ from app.modules.candidates.errors import (
     AssignmentAlreadyExistsError,
     CandidateNotFoundError,
     DuplicateEmailError,
+    JobNotActiveError,
     StageNotInPipelineError,
 )
 from app.modules.candidates.schemas import (
@@ -259,6 +260,7 @@ async def list_assignments(
             status=a.status,
             status_changed_at=a.status_changed_at,
             assigned_at=a.assigned_at,
+            entered_at_pipeline_version=a.entered_at_pipeline_version,
         )
         for a in assignments
     ]
@@ -284,6 +286,11 @@ async def create_assignment(
     """
     candidate = await get_candidate(db, candidate_id)
 
+    # Load the job to check its status (active-state gate, spec §7.3).
+    job = (await db.execute(
+        select(JobPosting).where(JobPosting.id == request.job_posting_id)
+    )).scalar_one_or_none()
+
     pipeline = (await db.execute(
         select(JobPipelineInstance).where(
             JobPipelineInstance.job_posting_id == request.job_posting_id
@@ -291,6 +298,10 @@ async def create_assignment(
     )).scalar_one_or_none()
     if pipeline is None:
         raise StageNotInPipelineError(str(request.target_stage_id or "<default>"))
+
+    # Active-state gate (per spec §7.3): only active jobs accept new candidates.
+    if job is None or job.status != "active":
+        raise JobNotActiveError(job.status if job is not None else "not_found")
 
     stages = list((await db.execute(
         select(JobPipelineStage)
@@ -316,6 +327,7 @@ async def create_assignment(
         current_stage_id=target_stage.id,
         status="active",
         assigned_by=user.user.id,
+        entered_at_pipeline_version=pipeline.pipeline_version,
     )
     db.add(assignment)
     try:
@@ -430,6 +442,24 @@ async def transition_stage(
     )).scalar_one_or_none()
     if target is None:
         raise StageNotInPipelineError(str(request.target_stage_id))
+
+    # Paused-stage skip (spec §5.4): if the target stage is paused and this is
+    # not an explicit override, resolve to the next non-paused stage in the
+    # pipeline (by position). If no such stage exists, allow landing on the
+    # paused stage so the candidate is not left stranded.
+    if target.paused_at is not None and not request.override:
+        next_unpaused = (await db.execute(
+            select(JobPipelineStage)
+            .where(
+                JobPipelineStage.instance_id == pipeline.id,
+                JobPipelineStage.position > target.position,
+                JobPipelineStage.paused_at.is_(None),
+            )
+            .order_by(JobPipelineStage.position.asc())
+            .limit(1)
+        )).scalar_one_or_none()
+        if next_unpaused is not None:
+            target = next_unpaused
 
     from_stage_id = assignment.current_stage_id
     now = datetime.now(UTC)
@@ -648,4 +678,5 @@ async def assignment_response(
         status=assignment.status,
         status_changed_at=assignment.status_changed_at,
         assigned_at=assignment.assigned_at,
+        entered_at_pipeline_version=assignment.entered_at_pipeline_version,
     )

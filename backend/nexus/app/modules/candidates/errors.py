@@ -46,3 +46,13 @@ class ResumeNotFoundInS3Error(Exception):
 
 class InvalidResumeContentTypeError(Exception):
     """422 — S3 HEAD returned content-type other than application/pdf."""
+
+
+class JobNotActiveError(Exception):
+    """Raised when attempting to assign a candidate to a job that is not in 'active' status."""
+
+    def __init__(self, current_status: str) -> None:
+        self.current_status = current_status
+        super().__init__(
+            f"Job is in '{current_status}' state; activation required to accept candidates"
+        )

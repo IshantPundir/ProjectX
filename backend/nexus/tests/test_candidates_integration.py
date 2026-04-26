@@ -155,7 +155,7 @@ async def _make_job_with_stages(
         title="Engineer",
         description_raw="R" * 60,
         created_by=user_id,
-        status="draft",
+        status="active",
     )
     db.add(job)
     await db.flush()
