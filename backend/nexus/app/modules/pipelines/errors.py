@@ -47,3 +47,11 @@ class PipelineAlreadyExistsError(Exception):
         super().__init__(
             "This job already has a pipeline instance. Use PATCH to update it."
         )
+
+
+class StagePauseForbiddenError(Exception):
+    """Raised when attempting to pause an intake or debrief stage."""
+
+    def __init__(self, stage_type: str) -> None:
+        self.stage_type = stage_type
+        super().__init__(f"Cannot pause stage of type '{stage_type}'")

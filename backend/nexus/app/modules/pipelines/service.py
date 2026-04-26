@@ -26,6 +26,7 @@ from app.modules.pipelines.errors import (
     JobNotInConfirmedStateError,
     NoSourceTemplateError,
     PipelineAlreadyExistsError,
+    StagePauseForbiddenError,
     StarterKeyNotFoundError,
 )
 from app.modules.pipelines.schemas import (
@@ -1083,6 +1084,82 @@ def stage_to_dict(stage: JobPipelineStage) -> dict:
         "advance_behavior": stage.advance_behavior,
         "sla_days": stage.sla_days,
     }
+
+
+async def get_stage_in_instance(
+    db: AsyncSession, *, instance: JobPipelineInstance, stage_id: UUID,
+) -> JobPipelineStage:
+    """Load a stage and verify it belongs to the given instance.
+
+    Raises HTTPException(404) if not found.
+    """
+    result = await db.execute(
+        select(JobPipelineStage).where(
+            JobPipelineStage.id == stage_id,
+            JobPipelineStage.instance_id == instance.id,
+        )
+    )
+    stage = result.scalar_one_or_none()
+    if stage is None:
+        from fastapi import HTTPException
+        raise HTTPException(404, detail=f"Stage {stage_id} not found in this pipeline")
+    return stage
+
+
+_UNPAUSABLE_TYPES: frozenset[str] = frozenset({"intake", "debrief"})
+
+
+async def pause_stage(
+    db: AsyncSession,
+    *,
+    instance: JobPipelineInstance,
+    stage: JobPipelineStage,
+) -> JobPipelineStage:
+    """Set paused_at on a stage and bump pipeline_version.
+
+    Forbidden for intake/debrief (raises StagePauseForbiddenError).
+    Idempotent: already-paused stage is returned without mutation.
+    """
+    if stage.stage_type in _UNPAUSABLE_TYPES:
+        raise StagePauseForbiddenError(stage.stage_type)
+    if stage.paused_at is not None:
+        return stage  # idempotent
+    stage.paused_at = datetime.now(timezone.utc)
+    await db.flush()
+    await bump_pipeline_version(db, instance)
+    logger.info(
+        "pipelines.stage_paused",
+        instance_id=str(instance.id),
+        stage_id=str(stage.id),
+        stage_type=stage.stage_type,
+        pipeline_version=instance.pipeline_version,
+    )
+    return stage
+
+
+async def unpause_stage(
+    db: AsyncSession,
+    *,
+    instance: JobPipelineInstance,
+    stage: JobPipelineStage,
+) -> JobPipelineStage:
+    """Clear paused_at on a stage and bump pipeline_version.
+
+    Idempotent: already-unpaused stage is returned without mutation.
+    """
+    if stage.paused_at is None:
+        return stage  # idempotent
+    stage.paused_at = None
+    await db.flush()
+    await bump_pipeline_version(db, instance)
+    logger.info(
+        "pipelines.stage_unpaused",
+        instance_id=str(instance.id),
+        stage_id=str(stage.id),
+        stage_type=stage.stage_type,
+        pipeline_version=instance.pipeline_version,
+    )
+    return stage
 
 
 async def count_in_flight_per_stage(

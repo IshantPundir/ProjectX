@@ -41,6 +41,7 @@ from app.modules.pipelines.errors import (
     JobNotInConfirmedStateError,
     NoSourceTemplateError,
     PipelineAlreadyExistsError,
+    StagePauseForbiddenError,
     StarterKeyNotFoundError,
 )
 from app.modules.pipelines.schemas import (
@@ -72,14 +73,17 @@ from app.modules.pipelines.service import (
     create_template_from_starter,
     delete_template,
     get_job_pipeline_with_stages,
+    get_stage_in_instance,
     get_template_with_stages,
     list_stages_for_instance,
     list_templates_for_org_unit,
+    pause_stage,
     reset_job_pipeline_to_source,
     save_job_pipeline_as_template,
     set_template_as_default,
     stage_to_dict,
     swap_job_pipeline,
+    unpause_stage,
     update_job_pipeline_stages,
     update_source_template_from_job,
     update_template,
@@ -112,6 +116,9 @@ def _stage_row_to_response(
     row: PipelineTemplateStage | JobPipelineStage,
     participants: list[dict] | None = None,
 ) -> PipelineStageResponse:
+    # paused_at is only present on JobPipelineStage (instance stages).
+    # PipelineTemplateStage rows are never paused — use getattr with a None
+    # default so template stages still serialize cleanly.
     return PipelineStageResponse(
         id=row.id,
         position=row.position,
@@ -126,6 +133,7 @@ def _stage_row_to_response(
         pass_criteria=row.pass_criteria,  # type: ignore[arg-type]
         advance_behavior=row.advance_behavior,  # type: ignore[arg-type]
         sla_days=row.sla_days,
+        paused_at=getattr(row, "paused_at", None),
         participants=[
             StageParticipantResponse(**p) for p in (participants or [])
         ],
@@ -628,3 +636,75 @@ async def get_assignable_users(
     job, _instance = await require_instance_access(db, job_id, user, "view")
     from app.modules.pipelines.participants import list_assignable_users
     return await list_assignable_users(db, job=job, role=role)
+
+
+# ---------------------------------------------------------------------------
+# Stage pause / unpause endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/api/jobs/{job_id}/pipeline/stages/{stage_id}/pause",
+    response_model=JobPipelineInstanceResponse,
+)
+async def pause_stage_endpoint(
+    job_id: UUID,
+    stage_id: UUID,
+    db: AsyncSession = Depends(get_tenant_db),
+    user: UserContext = Depends(get_current_user_roles),
+) -> JobPipelineInstanceResponse:
+    """Pause a pipeline stage.
+
+    Forbidden for intake and debrief stages (returns 409).
+    Idempotent: pausing an already-paused stage is a no-op.
+    Bumps pipeline_version on the first pause.
+    """
+    job, instance = await require_instance_access(db, job_id, user, "manage")
+    if instance is None:
+        raise HTTPException(404, detail="No pipeline for this job")
+    stage = await get_stage_in_instance(db, instance=instance, stage_id=stage_id)
+    try:
+        await pause_stage(db, instance=instance, stage=stage)
+    except StagePauseForbiddenError as e:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "stage_pause_forbidden",
+                "message": (
+                    f"Cannot pause stage of type '{e.stage_type}' "
+                    "(intake/debrief are structural)."
+                ),
+            },
+        )
+    result = await get_job_pipeline_with_stages(db, job_id)
+    if result is None:
+        raise HTTPException(500, detail="Reload failed")
+    new_instance, stages, source_template, participants_by_stage = result
+    return _instance_to_response(new_instance, stages, source_template, participants_by_stage)
+
+
+@router.post(
+    "/api/jobs/{job_id}/pipeline/stages/{stage_id}/unpause",
+    response_model=JobPipelineInstanceResponse,
+)
+async def unpause_stage_endpoint(
+    job_id: UUID,
+    stage_id: UUID,
+    db: AsyncSession = Depends(get_tenant_db),
+    user: UserContext = Depends(get_current_user_roles),
+) -> JobPipelineInstanceResponse:
+    """Unpause a pipeline stage.
+
+    Idempotent: unpausing an already-active stage is a no-op.
+    Bumps pipeline_version on the first unpause.
+    """
+    job, instance = await require_instance_access(db, job_id, user, "manage")
+    if instance is None:
+        raise HTTPException(404, detail="No pipeline for this job")
+    stage = await get_stage_in_instance(db, instance=instance, stage_id=stage_id)
+    await unpause_stage(db, instance=instance, stage=stage)
+    result = await get_job_pipeline_with_stages(db, job_id)
+    if result is None:
+        raise HTTPException(500, detail="Reload failed")
+    new_instance, stages, source_template, participants_by_stage = result
+    return _instance_to_response(new_instance, stages, source_template, participants_by_stage)

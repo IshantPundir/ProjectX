@@ -277,9 +277,13 @@ class PipelineStageResponse(PipelineStageBase):
 
     Templates always return `participants=[]` (templates are staffing-agnostic);
     instance stages may carry real participants.
+
+    `paused_at` is None for template stages (templates are never paused) and
+    for active instance stages. Non-None means the stage is currently paused.
     """
 
     id: UUID
+    paused_at: datetime | None = None
     participants: list[StageParticipantResponse] = Field(default_factory=list)
 
 
