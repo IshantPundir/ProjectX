@@ -7,15 +7,20 @@ from app.database import get_bypass_db
 from app.modules.admin.schemas import (
     ClientListItem,
     ClientStatusResponse,
+    HardDeleteRequest,
+    HardDeleteResponse,
     ProvisionClientRequest,
     ProvisionClientResponse,
 )
 from app.modules.admin.service import (
     ClientNotFoundError,
+    ConfirmationMismatchError,
     InvalidClientStateError,
     _client_status,
+    _purge_auth_users,
     block_client,
     delete_client,
+    hard_delete_client,
     list_clients,
     provision_client,
     unblock_client,
@@ -158,3 +163,76 @@ async def delete_client_endpoint(
     except ClientNotFoundError:
         raise HTTPException(status_code=404, detail="Client not found")
     return _to_status_response(client)
+
+
+@router.post(
+    "/clients/{client_id}/hard-delete",
+    response_model=HardDeleteResponse,
+    dependencies=[require_projectx_admin()],
+)
+async def hard_delete_client_endpoint(
+    client_id: str,
+    data: HardDeleteRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_bypass_db),
+) -> HardDeleteResponse:
+    """Permanently purge a soft-deleted tenant.
+
+    Returns counts of Supabase Auth identities that were purged vs.
+    failed. The DB cascade always succeeds atomically (any failure
+    rolls back); the auth purge is best-effort and a partial state is
+    captured in the audit log.
+    """
+    cid = _parse_client_id(client_id)
+    actor_email = request.state.token_payload.email
+
+    try:
+        result = await hard_delete_client(
+            db=db,
+            client_id=cid,
+            admin_identity=actor_email,
+            confirmation_name=data.confirmation_name,
+            ip_address=request.client.host if request.client else None,
+        )
+    except ClientNotFoundError:
+        raise HTTPException(status_code=404, detail="Client not found")
+    except InvalidClientStateError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    # ConfirmationMismatchError is mapped to 422 by the global handler.
+
+    # Best-effort Supabase Auth purge — runs after DB transaction commits
+    # via the get_bypass_db context manager exit.
+    purged, failed = await _purge_auth_users(result["auth_user_ids"])
+
+    if failed:
+        # Open a fresh bypass session for the partial-success audit event.
+        # The original session has already exited the context manager.
+        from app.database import get_bypass_session
+        from app.modules.audit import actions as audit_actions
+        from app.modules.audit.service import log_event
+
+        async with get_bypass_session() as audit_db:
+            await log_event(
+                audit_db,
+                tenant_id=cid,
+                actor_id=None,
+                actor_email=actor_email,
+                action=audit_actions.CLIENT_HARD_DELETE_AUTH_PARTIAL,
+                resource="client",
+                resource_id=cid,
+                payload={
+                    "purged": purged,
+                    "failed": [
+                        {"auth_user_id": uid, "reason": reason}
+                        for uid, reason in failed
+                    ],
+                },
+                ip_address=request.client.host if request.client else None,
+            )
+
+    return HardDeleteResponse(
+        client_id=result["client_id"],
+        purged_at=result["purged_at"],
+        auth_users_purged=len(purged),
+        auth_users_failed=len(failed),
+    )

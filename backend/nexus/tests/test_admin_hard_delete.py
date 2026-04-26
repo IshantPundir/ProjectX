@@ -18,6 +18,7 @@ from app.modules.admin.service import (
     hard_delete_client,
 )
 from app.modules.auth.admin import AuthProviderError
+from app.modules.auth.schemas import TokenPayload
 from tests.conftest import create_test_client
 
 
@@ -151,3 +152,50 @@ async def test_hard_delete_purges_users_and_invites_preserves_audit(
         {"tid": str(client.id)},
     )
     assert audit_count.scalar() == 1
+
+
+def _admin_token_payload(email: str = "admin@projectx.com") -> TokenPayload:
+    return TokenPayload(
+        sub=str(uuid_mod.uuid4()),
+        tenant_id="",  # ProjectX admins have no tenant
+        email=email,
+        role="authenticated",
+        is_projectx_admin=True,
+        exp=2_000_000_000,
+    )
+
+
+@pytest.mark.asyncio
+async def test_hard_delete_endpoint_returns_409_when_not_soft_deleted(
+    client, db, monkeypatch
+):
+    """Active tenant must be rejected with 409 InvalidClientStateError."""
+    from app.middleware.auth import AuthMiddleware
+    from app.database import get_bypass_db
+
+    test_client_obj = await create_test_client(db)
+    await db.commit()  # endpoint uses its own session; need this row visible
+
+    # Patch the auth middleware to inject the admin token payload.
+    async def _fake_dispatch(self, request, call_next):
+        request.state.token_payload = _admin_token_payload()
+        request.state.user_id = request.state.token_payload.sub
+        request.state.tenant_id = ""
+        request.state.is_projectx_admin = True
+        return await call_next(request)
+
+    monkeypatch.setattr(AuthMiddleware, "dispatch", _fake_dispatch)
+
+    # Override get_bypass_db to share the test transaction.
+    from app.main import app as fastapi_app
+    fastapi_app.dependency_overrides[get_bypass_db] = lambda: db
+
+    try:
+        resp = await client.post(
+            f"/api/admin/clients/{test_client_obj.id}/hard-delete",
+            json={"confirmation_name": test_client_obj.name},
+        )
+    finally:
+        fastapi_app.dependency_overrides.clear()
+
+    assert resp.status_code == 409
