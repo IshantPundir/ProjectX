@@ -1,10 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, screen } from '@testing-library/react'
-import {
-  Position,
-  ReactFlowProvider,
-  type NodeProps,
-} from '@xyflow/react'
 
 import { renderWithProviders } from '../_utils/render'
 import { OrgUnitNode } from '@/components/dashboard/org-units/OrgUnitNode'
@@ -46,31 +41,14 @@ function renderNode(opts: {
   const unit = makeUnit(opts.unit)
   const onSelect = opts.onSelect ?? vi.fn()
   const onContextMenu = opts.onContextMenu ?? vi.fn()
-  const data = {
-    unit,
-    selectedId: opts.selectedId ?? null,
-    onSelectPath: opts.onSelectPath ?? new Set<string>(),
-    onSelect,
-    onContextMenu,
-  }
-  const nodeProps = {
-    id: unit.id,
-    data,
-    type: 'orgUnit',
-    selected: false,
-    isConnectable: false,
-    xPos: 0,
-    yPos: 0,
-    dragging: false,
-    zIndex: 0,
-    sourcePosition: Position.Bottom,
-    targetPosition: Position.Top,
-  } as unknown as NodeProps
-
   const utils = renderWithProviders(
-    <ReactFlowProvider>
-      <OrgUnitNode {...nodeProps} />
-    </ReactFlowProvider>,
+    <OrgUnitNode
+      unit={unit}
+      selectedId={opts.selectedId ?? null}
+      onSelectPath={opts.onSelectPath ?? new Set<string>()}
+      onSelect={onSelect}
+      onContextMenu={onContextMenu}
+    />,
   )
   return { ...utils, unit, onSelect, onContextMenu }
 }
@@ -158,5 +136,11 @@ describe('OrgUnitNode', () => {
     card.focus()
     fireEvent.keyDown(card, { key: 'ContextMenu' })
     expect(onContextMenu).toHaveBeenCalledTimes(1)
+  })
+
+  it('marks the card with data-node-card so the pan hook can skip it', () => {
+    renderNode()
+    const card = screen.getByRole('button', { name: /division: Engineering/ })
+    expect(card.hasAttribute('data-node-card')).toBe(true)
   })
 })
