@@ -15,7 +15,7 @@ import { DifficultySlider } from './DifficultySlider'
 import { SignalFilterEditor } from './SignalFilterEditor'
 import { PassCriteriaEditor } from './PassCriteriaEditor'
 import { StageParticipantsEditor } from './StageParticipantsEditor'
-import { participantSlotsFor } from '@/lib/pipelines/categories'
+import { stageCategory, participantSlotsFor } from '@/lib/pipelines/categories'
 
 type Props = {
   stage: PipelineStageUpdateInput
@@ -38,14 +38,53 @@ const ADVANCE_BEHAVIORS: { value: AdvanceBehavior; label: string }[] = [
   { value: 'manual_review', label: 'Manual review' },
 ]
 
+// Locked field — renders a disabled display chip with a tooltip title.
+// Used for review (debrief) stages where pass_criteria and advance_behavior
+// are fixed and should not be edited.
+function LockedField({
+  label,
+  value,
+  tooltip,
+}: {
+  label: string
+  value: string
+  tooltip: string
+}) {
+  return (
+    <div className="space-y-1.5">
+      <div className="block text-xs font-medium text-zinc-700">
+        {label}
+      </div>
+      <div
+        aria-disabled="true"
+        title={tooltip}
+        className="rounded-lg border border-zinc-200 px-3 py-2 text-sm cursor-not-allowed select-none bg-zinc-100 text-zinc-400"
+      >
+        {value}
+      </div>
+    </div>
+  )
+}
+
 export function StageConfigurationTab({ stage, jobId, onChange }: Props) {
   const [advancedOpen, setAdvancedOpen] = useState(false)
 
-  // TODO(Task 20): replace with per-category field rendering once the
-  // matrix-driven tab refactor lands. Until then, we operate on a
-  // loose stage object and cast back to the discriminated union type.
-  type LooseStage = Record<string, unknown> & { id?: string }
-  const loose = stage as LooseStage
+  const category = stageCategory(stage.stage_type)
+  const isScreening = category === 'human_led' || category === 'ai_led'
+  const isReview = category === 'review'
+
+  // For screening stages we need a narrowed type to access screening-only fields.
+  // We cast to a local widened type — this is safe because we only access these
+  // fields inside `isScreening` guards below.
+  type ScreeningFields = {
+    duration_minutes?: number
+    difficulty?: StageDifficulty
+    signal_filter?: SignalFilter
+    pass_criteria?: PassCriteria
+    advance_behavior?: AdvanceBehavior
+    otp_required?: boolean
+  }
+  const screeningStage = isScreening ? (stage as PipelineStageUpdateInput & ScreeningFields) : null
 
   function update(key: string, value: unknown) {
     onChange({ ...stage, [key]: value } as PipelineStageUpdateInput)
@@ -62,7 +101,7 @@ export function StageConfigurationTab({ stage, jobId, onChange }: Props) {
 
   return (
     <div className="p-6 space-y-5 max-w-2xl">
-      {/* --- Basic section --- */}
+      {/* --- Always-visible fields: Name + Stage type + SLA --- */}
       <div className="space-y-4">
         {/* Name */}
         <div>
@@ -91,6 +130,7 @@ export function StageConfigurationTab({ stage, jobId, onChange }: Props) {
           </label>
           <select
             id="stage-type"
+            aria-label="Stage type"
             value={stage.stage_type}
             onChange={(e) => handleTypeChange(e.target.value as StageType)}
             className="w-full text-sm border border-zinc-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
@@ -103,47 +143,102 @@ export function StageConfigurationTab({ stage, jobId, onChange }: Props) {
           </select>
         </div>
 
-        {/* Duration */}
+        {/* SLA days — visible on all categories */}
         <div>
           <label
-            htmlFor="stage-duration"
+            htmlFor="stage-sla-days"
             className="block text-xs font-medium text-zinc-700 mb-1.5"
           >
-            Duration
+            Stage SLA
           </label>
           <div className="relative">
             <input
-              id="stage-duration"
+              id="stage-sla-days"
               type="number"
               min={1}
-              max={240}
-              value={(loose.duration_minutes as number | undefined) ?? ''}
-              onChange={(e) =>
-                update('duration_minutes', parseInt(e.target.value) || 1)
-              }
-              className="w-full text-sm border border-zinc-300 rounded-lg px-3 py-2 pr-12 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
+              value={stage.sla_days ?? ''}
+              onChange={(e) => {
+                const v = e.target.value
+                update(
+                  'sla_days',
+                  v === '' ? null : Math.max(1, parseInt(v) || 1),
+                )
+              }}
+              placeholder="No SLA"
+              className="w-full text-sm border border-zinc-300 rounded-lg px-3 py-2 pr-14 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
             />
             <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-zinc-400 pointer-events-none">
-              min
+              days
             </span>
           </div>
+          <p className="text-[11px] mt-1 text-zinc-400">
+            Max days a candidate can sit in this stage before being
+            flagged stalled. Leave blank for no SLA.
+          </p>
         </div>
 
-        {/* Difficulty slider */}
-        <div>
-          <label
-            htmlFor="stage-difficulty"
-            className="block text-xs font-medium text-zinc-700 mb-2"
-          >
-            Difficulty
-          </label>
-          <DifficultySlider
-            id="stage-difficulty"
-            value={(loose.difficulty as StageDifficulty | undefined) ?? 'easy'}
-            onChange={(v) => update('difficulty', v as StageDifficulty)}
+        {/* --- Screening-only: Duration + Difficulty --- */}
+        {isScreening && (
+          <>
+            {/* Duration */}
+            <div>
+              <label
+                htmlFor="stage-duration"
+                className="block text-xs font-medium text-zinc-700 mb-1.5"
+              >
+                Duration
+              </label>
+              <div className="relative">
+                <input
+                  id="stage-duration"
+                  type="number"
+                  min={1}
+                  max={240}
+                  value={screeningStage?.duration_minutes ?? ''}
+                  onChange={(e) =>
+                    update('duration_minutes', parseInt(e.target.value) || 1)
+                  }
+                  className="w-full text-sm border border-zinc-300 rounded-lg px-3 py-2 pr-12 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-zinc-400 pointer-events-none">
+                  min
+                </span>
+              </div>
+            </div>
+
+            {/* Difficulty slider */}
+            <div>
+              <label
+                htmlFor="stage-difficulty"
+                className="block text-xs font-medium text-zinc-700 mb-2"
+              >
+                Difficulty
+              </label>
+              <DifficultySlider
+                id="stage-difficulty"
+                value={screeningStage?.difficulty ?? 'easy'}
+                onChange={(v) => update('difficulty', v as StageDifficulty)}
+              />
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* --- Review (debrief) locked fields --- */}
+      {isReview && (
+        <div className="border-t border-zinc-100 pt-4 space-y-4">
+          <LockedField
+            label="Pass criteria"
+            value="Manual review (HM decides)"
+            tooltip="Debrief is always manual review — the hiring manager makes the final call."
+          />
+          <LockedField
+            label="Advance behavior"
+            value="Manual review (terminal)"
+            tooltip="Debrief is the final decision step and cannot auto-advance."
           />
         </div>
-      </div>
+      )}
 
       {/* --- Participants editor --- */}
       {jobId !== undefined && participantSlotsFor(stage.stage_type).length > 0 && (
@@ -163,73 +258,76 @@ export function StageConfigurationTab({ stage, jobId, onChange }: Props) {
         </div>
       )}
 
-      {/* --- Advanced section --- */}
-      <div className="border-t border-zinc-100 pt-4">
-        <button
-          type="button"
-          onClick={() => setAdvancedOpen((v) => !v)}
-          aria-expanded={advancedOpen}
-          aria-controls="advanced-section"
-          className="w-full flex items-center justify-between text-xs font-medium text-zinc-700 hover:text-zinc-900 transition"
-        >
-          <span>Advanced settings</span>
-          <ChevronDown
-            className={`w-4 h-4 transition-transform duration-200 ${
-              advancedOpen ? 'rotate-180' : ''
-            }`}
-          />
-        </button>
+      {/* --- Screening-only: Advanced section --- */}
+      {isScreening && (
+        <div className="border-t border-zinc-100 pt-4">
+          <button
+            type="button"
+            onClick={() => setAdvancedOpen((v) => !v)}
+            aria-expanded={advancedOpen}
+            aria-controls="advanced-section"
+            className="w-full flex items-center justify-between text-xs font-medium text-zinc-700 hover:text-zinc-900 transition"
+          >
+            <span>Advanced settings</span>
+            <ChevronDown
+              className={`w-4 h-4 transition-transform duration-200 ${
+                advancedOpen ? 'rotate-180' : ''
+              }`}
+            />
+          </button>
 
-        {advancedOpen && (
-          <div id="advanced-section" className="mt-4 space-y-4">
-            {/* Advance behavior */}
-            <div>
-              <label
-                htmlFor="stage-advance"
-                className="block text-xs font-medium text-zinc-700 mb-1.5"
-              >
-                Advance behavior
-              </label>
-              <select
-                id="stage-advance"
-                value={(loose.advance_behavior as AdvanceBehavior | undefined) ?? 'auto_advance'}
-                onChange={(e) =>
-                  update('advance_behavior', e.target.value as AdvanceBehavior)
-                }
-                className="w-full text-sm border border-zinc-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
-              >
-                {ADVANCE_BEHAVIORS.map((a) => (
-                  <option key={a.value} value={a.value}>
-                    {a.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Pass criteria */}
-            <div>
-              <div className="block text-xs font-medium text-zinc-700 mb-1.5">
-                Pass criteria
+          {advancedOpen && (
+            <div id="advanced-section" className="mt-4 space-y-4">
+              {/* Advance behavior */}
+              <div>
+                <label
+                  htmlFor="stage-advance"
+                  className="block text-xs font-medium text-zinc-700 mb-1.5"
+                >
+                  Advance behavior
+                </label>
+                <select
+                  id="stage-advance"
+                  aria-label="Advance behavior"
+                  value={screeningStage?.advance_behavior ?? 'auto_advance'}
+                  onChange={(e) =>
+                    update('advance_behavior', e.target.value as AdvanceBehavior)
+                  }
+                  className="w-full text-sm border border-zinc-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
+                >
+                  {ADVANCE_BEHAVIORS.map((a) => (
+                    <option key={a.value} value={a.value}>
+                      {a.label}
+                    </option>
+                  ))}
+                </select>
               </div>
-              <PassCriteriaEditor
-                value={(loose.pass_criteria as PassCriteria) ?? { type: 'all_knockouts_pass' }}
-                onChange={(pc) => update('pass_criteria', pc)}
-              />
-            </div>
 
-            {/* Signal types */}
-            <div>
-              <div className="block text-xs font-medium text-zinc-700 mb-1.5">
-                Signal types
+              {/* Pass criteria */}
+              <div>
+                <div className="block text-xs font-medium text-zinc-700 mb-1.5">
+                  Pass criteria
+                </div>
+                <PassCriteriaEditor
+                  value={screeningStage?.pass_criteria ?? { type: 'all_knockouts_pass' }}
+                  onChange={(pc) => update('pass_criteria', pc)}
+                />
               </div>
-              <SignalFilterEditor
-                value={(loose.signal_filter as SignalFilter) ?? { include_types: [] }}
-                onChange={(sf) => update('signal_filter', sf)}
-              />
+
+              {/* Signal types */}
+              <div>
+                <div className="block text-xs font-medium text-zinc-700 mb-1.5">
+                  Signal types
+                </div>
+                <SignalFilterEditor
+                  value={screeningStage?.signal_filter ?? { include_types: [] }}
+                  onChange={(sf) => update('signal_filter', sf)}
+                />
+              </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
