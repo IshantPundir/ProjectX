@@ -286,3 +286,33 @@ async def test_confirm_signals_succeeds_when_auto_apply_fails(db, monkeypatch):
     )
 
     assert confirmed.status == "signals_confirmed"
+
+
+# ---------------------------------------------------------------------------
+# After design: confirm_signals does NOT auto-apply
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_confirm_signals_does_not_auto_apply_pipeline(db):
+    """After this design lands, confirm_signals leaves the pipeline empty.
+    The recruiter creates one explicitly via the picker (POST /api/jobs/{id}/pipeline).
+    Pipeline-build via picker is a separate step (Task 6)."""
+    tenant, user, company = await _setup(db)
+    job = await _make_extracted_job_with_snapshot(
+        db, tenant.id, company.id, user.id,
+    )
+
+    await confirm_signals(
+        db,
+        job=job,
+        actor_id=user.id,
+        correlation_id="cid",
+    )
+
+    result = await db.execute(
+        select(JobPipelineInstance).where(JobPipelineInstance.job_posting_id == job.id)
+    )
+    assert result.scalar_one_or_none() is None
+    await db.refresh(job)
+    assert job.status == "signals_confirmed"
