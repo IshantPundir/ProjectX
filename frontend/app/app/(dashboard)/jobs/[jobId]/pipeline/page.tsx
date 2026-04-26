@@ -26,12 +26,13 @@ export default function JobPipelinePage() {
     )
   }
 
-  if (!job.can_manage || job.status !== 'signals_confirmed') {
+  const pipelineEditableStatuses = new Set(['signals_confirmed', 'pipeline_built', 'active'])
+  if (!job.can_manage || !pipelineEditableStatuses.has(job.status)) {
     return (
       <div className="max-w-4xl">
         <p className="mt-4 text-sm" style={{ color: 'var(--px-fg-3)' }}>
           This pipeline is not available for editing.{' '}
-          {job.status !== 'signals_confirmed' &&
+          {!pipelineEditableStatuses.has(job.status) &&
             'Confirm the role signals first to unlock pipeline editing.'}
         </p>
         <Link href={`/jobs/${jobId}?tab=jd`}>

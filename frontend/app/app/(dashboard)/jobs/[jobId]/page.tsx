@@ -27,7 +27,12 @@ export default function JobReviewPage() {
   // unless they explicitly asked for the JD view with ?tab=jd.
   useEffect(() => {
     if (!pipeline) return
-    if (job?.status !== 'signals_confirmed') return
+    if (
+      job?.status !== 'signals_confirmed' &&
+      job?.status !== 'pipeline_built' &&
+      job?.status !== 'active'
+    )
+      return
     if (searchParams.get('tab') === 'jd') return
     router.replace(`/jobs/${jobId}/pipeline`)
   }, [pipeline, job?.status, searchParams, router, jobId])

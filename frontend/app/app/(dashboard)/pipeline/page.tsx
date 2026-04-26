@@ -255,7 +255,8 @@ function PipelineForRole({ jobId }: { jobId: string }) {
     )
   }
 
-  if (!job.can_manage || job.status !== 'signals_confirmed') {
+  const pipelineEditableStatuses = new Set(['signals_confirmed', 'pipeline_built', 'active'])
+  if (!job.can_manage || !pipelineEditableStatuses.has(job.status)) {
     return (
       <div
         className="rounded-[10px] border p-8"
