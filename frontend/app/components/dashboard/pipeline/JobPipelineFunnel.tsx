@@ -226,16 +226,56 @@ function normalizeStages(
 // Strip any extra display fields from participants (full_name, email) before
 // sending to the API. State keeps them for rendering; the backend rejects
 // anything beyond {user_id, role} due to `extra="forbid"` on the input schema.
+// Strip per-category-forbidden fields before sending to the API. The backend's
+// per-category Pydantic validator (see app/modules/pipelines/schemas.py) rejects
+// fields that don't apply to the stage_type — e.g. duration_minutes / difficulty /
+// signal_filter on intake/debrief/take_home. We strip those here so the funnel's
+// internal makeBlankStage defaults (which include all screening fields) don't
+// trip the validator on IO stages.
+//
+// The locked-fields path (pass_criteria + advance_behavior on intake/debrief) is
+// also stripped: the server will stamp the canonical values regardless of what
+// we send, but the validator's FORBIDDEN check fires before LOCKED stamping, so
+// we have to ensure the request doesn't carry incompatible values.
 function stripStagesForApi(
   stages: PipelineStageUpdateInput[],
 ): PipelineStageUpdateInput[] {
-  return stages.map((s) => ({
-    ...s,
-    participants: s.participants?.map((p) => ({
-      user_id: p.user_id,
-      role: p.role,
-    })),
-  } as PipelineStageUpdateInput))
+  return stages.map((s) => {
+    const base: Record<string, unknown> = {
+      ...(s.id !== undefined ? { id: s.id } : {}),
+      position: s.position,
+      name: s.name,
+      stage_type: s.stage_type,
+      sla_days: s.sla_days ?? null,
+      participants: s.participants?.map((p) => ({
+        user_id: p.user_id,
+        role: p.role,
+      })),
+    }
+
+    const isScreening =
+      s.stage_type === 'phone_screen' ||
+      s.stage_type === 'ai_screening' ||
+      s.stage_type === 'human_interview'
+
+    if (isScreening) {
+      const screening = s as Record<string, unknown>
+      base.duration_minutes = screening.duration_minutes
+      base.difficulty = screening.difficulty
+      base.signal_filter = screening.signal_filter
+      base.pass_criteria = screening.pass_criteria
+      base.advance_behavior = screening.advance_behavior
+      if (screening.otp_required !== undefined) {
+        base.otp_required = screening.otp_required
+      }
+    }
+
+    // intake / debrief / take_home: only the base fields go to the server.
+    // The server will stamp pass_criteria + advance_behavior for intake/debrief
+    // via the LOCKED rule.
+
+    return base as PipelineStageUpdateInput
+  })
 }
 
 /* ─── Main component ──────────────────────────────────────── */

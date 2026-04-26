@@ -84,8 +84,14 @@ export default function JobLayout({ children }: { children: React.ReactNode }) {
   const isPipelineRoute = pathname.startsWith(`/jobs/${jobId}/pipeline`)
   const isQuestionsRoute = pathname.startsWith(`/jobs/${jobId}/questions`)
 
-  const pipelineEnabled = job?.status === 'signals_confirmed'
-  const questionsEnabled = job?.status === 'signals_confirmed'
+  const pipelineEnabled =
+    job?.status === 'signals_confirmed' ||
+    job?.status === 'pipeline_built' ||
+    job?.status === 'active'
+  const questionsEnabled =
+    job?.status === 'signals_confirmed' ||
+    job?.status === 'pipeline_built' ||
+    job?.status === 'active'
 
   const tabs: TabDef[] = [
     {

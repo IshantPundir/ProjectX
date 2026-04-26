@@ -55,7 +55,9 @@ export type JobStatus =
   | 'signals_extraction_failed'
   | 'signals_extracted'
   | 'signals_confirmed'
+  | 'pipeline_built'
   | 'active'
+  | 'archived'
 
 export type JobPostingSummary = {
   id: string
