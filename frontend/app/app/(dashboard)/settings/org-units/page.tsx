@@ -148,6 +148,7 @@ export default function OrgUnitsPage() {
     name: string;
   } | null>(null);
   const deleteMutation = useDeleteOrgUnit();
+  const createMutation = useCreateOrgUnit();
 
   async function handleCreateChild(
     parentId: string,
@@ -192,7 +193,6 @@ export default function OrgUnitsPage() {
     resolver: zodResolver(createOrgUnitSchema),
     defaultValues: { name: "", unit_type: "division", parent_unit_id: "" },
   });
-  const createMutation = useCreateOrgUnit();
 
   // Compute open-role count per unit (non-draft = active role)
   const openRolesByUnit = useMemo(() => {
@@ -538,7 +538,7 @@ export default function OrgUnitsPage() {
       <DangerConfirmDialog
         open={deleteTarget !== null}
         title={deleteTarget ? `Delete ${deleteTarget.name}?` : "Delete unit?"}
-        description="This will also delete all of its sub-units. This cannot be undone."
+        description="This will permanently delete this unit. The unit must have no sub-units or members before it can be deleted. This cannot be undone."
         confirmLabel="Delete unit"
         pendingLabel="Deleting…"
         pending={deleteMutation.isPending}

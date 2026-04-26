@@ -147,6 +147,9 @@ function OrgGraphInner({
       const unit = units.find((u) => u.id === id)
       if (!unit) return
       // Anchor the menu at the card's bounding-box center in the canvas.
+      // `data-id` is set by @xyflow/react on every node wrapper —
+      // verified in v12 ESM dist. It's not part of xyflow's documented
+      // public API, so re-verify on major-version upgrades.
       const cardEl = wrapperRef.current?.querySelector<HTMLElement>(
         `[data-id="${id}"]`,
       )

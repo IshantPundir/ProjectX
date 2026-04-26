@@ -16,6 +16,13 @@ import { UNIT_TYPE_STYLE, type UnitType } from './unit-type-style'
 const RADIUS = 110
 const PILL_HEIGHT = 36
 
+// NOTE: The spec called for staggered scale-in animations on pills and a
+// scaleX draw-in on spokes (see design §8). Implementation deferred:
+// xyflow's inline `transform: translate(...)` on each pill blocks a
+// CSS-keyframe `transform: ... scale(...)` from composing without
+// rewriting the positioning to use CSS variables. The menu currently
+// appears instantly. Revisit if motion polish becomes a priority.
+
 const CHILD_LABEL: Record<UnitType, string> = {
   company: 'Company',
   client_account: 'Client account',
@@ -108,8 +115,13 @@ export function OrgUnitContextMenu({
     [items],
   )
 
+  // Capture the element that had focus before we steal it for the
+  // first menu item. Used to restore focus on Escape (a11y).
+  const originElRef = useRef<HTMLElement | null>(null)
+
   // Focus first item on mount.
   useEffect(() => {
+    originElRef.current = (document.activeElement as HTMLElement) ?? null
     const first = ref.current?.querySelector<HTMLElement>('[role="menuitem"]')
     first?.focus()
   }, [])
@@ -135,7 +147,10 @@ export function OrgUnitContextMenu({
   function handleKeyDown(e: KeyboardEvent<HTMLDivElement>) {
     if (e.key === 'Escape') {
       e.preventDefault()
+      const origin = originElRef.current
       onClose()
+      // Restore focus AFTER unmount so the body doesn't briefly own it.
+      origin?.focus()
       return
     }
     if (items.length === 0) return
