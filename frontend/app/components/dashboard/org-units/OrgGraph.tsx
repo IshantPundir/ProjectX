@@ -17,6 +17,15 @@ import {
 
 import '@xyflow/react/dist/style.css'
 
+// xyflow's `.react-flow__node.selected` ships a 1px outline by default.
+// We render our own selection state (accent border + glow) on the inner
+// card; the outline doubles up and looks off. Suppress it for our node
+// type only — keep xyflow's default behavior elsewhere.
+const SUPPRESS_DEFAULT_SELECTED_OUTLINE = `
+.react-flow__node-orgUnit { outline: none !important; }
+.react-flow__node-orgUnit.selected { outline: none !important; box-shadow: none !important; }
+`
+
 import type { OrgUnit } from '@/lib/api/org-units'
 
 import { OrgUnitEdge } from './OrgUnitEdge'
@@ -143,18 +152,27 @@ function OrgGraphInner({ units, selectedId, onSelect, onOpen }: OrgGraphProps) {
       nodes={positionedNodes}
       edges={rawEdges}
       onNodesChange={onNodesChange}
+      onNodeClick={(_e, node) => onSelect(node.id)}
       onNodeDoubleClick={(_e, node) => onOpen?.(node.id)}
       nodeTypes={nodeTypes}
       edgeTypes={edgeTypes}
       fitView
       // Keep the xyflow attribution visible (no Pro license) but out of
-      // the way of <Controls> at bottom-right. Also disable double-click
-      // zoom so it doesn't fight onNodeDoubleClick on the card.
+      // the way of <Controls> at bottom-right.
       attributionPosition="bottom-left"
+      // Disable double-click zoom so node-level open isn't fighting the
+      // canvas zoom-in animation.
       zoomOnDoubleClick={false}
       nodesDraggable={false}
       nodesConnectable={false}
-      elementsSelectable={false}
+      // `elementsSelectable` MUST stay true. When false, xyflow sets
+      // `pointer-events: none` on every node wrapper — that blocks
+      // clicks AND hover in real browsers (synthetic test events bypass
+      // it, which is why the test suite was green while the live UI was
+      // dead). xyflow's own "selected" class can be ignored visually;
+      // our `data-state` attribute is what drives the card's selected
+      // styling.
+      elementsSelectable
       panOnDrag
       zoomOnScroll
     >
@@ -244,6 +262,7 @@ function DirButton({
 export function OrgGraph(props: OrgGraphProps) {
   return (
     <ReactFlowProvider>
+      <style>{SUPPRESS_DEFAULT_SELECTED_OUTLINE}</style>
       <OrgGraphInner {...props} />
     </ReactFlowProvider>
   )
