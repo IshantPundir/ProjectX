@@ -202,16 +202,30 @@ async def accept_invite(
         is_super_admin = claimed_row.projectx_admin_id is not None
         root_unit_id = ""
         if is_super_admin:
-            await db.execute(
-                sqlalchemy.text(
-                    "UPDATE public.clients SET super_admin_id = :user_id "
-                    "WHERE id = :tenant_id"
-                ),
-                {
-                    "user_id": str(user.id),
-                    "tenant_id": str(claimed_row.tenant_id),
-                },
-            )
+            client_row = (
+                await db.execute(
+                    sqlalchemy.text(
+                        "UPDATE public.clients SET super_admin_id = :user_id "
+                        "WHERE id = :tenant_id "
+                        "RETURNING name, domain"
+                    ),
+                    {
+                        "user_id": str(user.id),
+                        "tenant_id": str(claimed_row.tenant_id),
+                    },
+                )
+            ).first()
+            # The Client row is guaranteed to exist — the User row we just
+            # inserted above has a tenant_id FK to it.
+            client_name = client_row.name  # type: ignore[union-attr]
+            client_domain = client_row.domain  # type: ignore[union-attr]
+
+            # Seed the org unit's editable metadata from admin-provisioned
+            # fields so the user doesn't see empty inputs for values they've
+            # already supplied. `clients.domain` is the same shape as the
+            # form's "Website" field (`metadata.website`).
+            root_metadata = {"website": client_domain} if client_domain else None
+
             from app.modules.org_units.service import (
                 create_org_unit as _create_root_unit,
             )
@@ -219,12 +233,13 @@ async def accept_invite(
             root_unit = await _create_root_unit(
                 db=db,
                 client_id=uuid_mod.UUID(str(claimed_row.tenant_id)),
-                name="Company",
+                name=client_name,
                 unit_type="company",
                 parent_unit_id=None,
                 created_by=user.id,
                 actor_email=email,
                 company_profile=None,
+                metadata=root_metadata,
             )
             root_unit_id = str(root_unit.id)
 

@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_bypass_db
 from app.main import app
-from app.models import Client, User, UserInvite
+from app.models import Client, OrganizationalUnit, User, UserInvite
 from app.modules.auth.admin.base import (
     AuthProviderError,
     SessionTokens,
@@ -55,7 +55,7 @@ async def _seed_client_and_invite(
     - projectx_admin_id is a Text column (not UUID FK) — a non-None string
       triggers the super-admin path inside the handler.
     """
-    client_obj = Client(name="Test Co")
+    client_obj = Client(name="Test Co", domain="testco.com")
     db.add(client_obj)
     await db.flush()
     tenant_id: uuid_mod.UUID = client_obj.id
@@ -203,6 +203,23 @@ async def test_accept_invite_happy_path_creates_super_admin(db: AsyncSession):
         await db.execute(select(Client).where(Client.id == tenant_id))
     ).scalar_one()
     assert client_row.super_admin_id == user_row.id
+
+    # Root org unit takes its name from clients.name — not a hardcoded
+    # "Company". Without this, the user lands on the company settings page
+    # with the wrong name pre-filled in every form.
+    root_unit = (
+        await db.execute(
+            select(OrganizationalUnit).where(
+                OrganizationalUnit.client_id == tenant_id,
+                OrganizationalUnit.is_root.is_(True),
+            )
+        )
+    ).scalar_one()
+    assert root_unit.name == client_row.name
+    # Admin-provisioned `clients.domain` seeds the unit's metadata.website
+    # so the form doesn't show an empty Website field for a value that was
+    # already collected at provisioning time.
+    assert root_unit.unit_metadata == {"website": client_row.domain}
 
 
 @pytest.mark.asyncio
