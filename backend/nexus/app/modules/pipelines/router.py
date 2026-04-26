@@ -19,6 +19,7 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_tenant_db
@@ -61,7 +62,9 @@ from app.modules.pipelines.schemas import (
     UpdateJobPipelineRequest,
     UpdateTemplateRequest,
 )
+from app.modules.pipelines.classifier import EditCategory, classify_pipeline_diff
 from app.modules.pipelines.service import (
+    count_in_flight_per_stage,
     create_job_pipeline_from_scratch,
     create_job_pipeline_from_starter,
     create_job_pipeline_from_template,
@@ -70,10 +73,12 @@ from app.modules.pipelines.service import (
     delete_template,
     get_job_pipeline_with_stages,
     get_template_with_stages,
+    list_stages_for_instance,
     list_templates_for_org_unit,
     reset_job_pipeline_to_source,
     save_job_pipeline_as_template,
     set_template_as_default,
+    stage_to_dict,
     swap_job_pipeline,
     update_job_pipeline_stages,
     update_source_template_from_job,
@@ -410,6 +415,57 @@ async def create_job_pipeline(
     return _instance_to_response(instance, stages, source_template, participants_by_stage)
 
 
+class PreviewChangesResponse(BaseModel):
+    category: Literal["A", "B", "C", "D"]
+    warnings: list[str]
+    in_flight: dict[str, int]
+
+
+def _stages_to_classifier_dicts(stages) -> list[dict]:
+    """Convert a list of PipelineStageUpdateInput objects to classifier-compatible dicts.
+
+    The classifier's _stages_by_id keying uses str IDs (matching stage_to_dict output),
+    but model_dump() returns UUID objects for UUID fields. This normalises the id to str
+    so current (str IDs from stage_to_dict) and proposed keys are comparable.
+    """
+    result = []
+    for s in stages:
+        d = s.model_dump()
+        if d.get("id") is not None:
+            d["id"] = str(d["id"])
+        result.append(d)
+    return result
+
+
+@router.post(
+    "/api/jobs/{job_id}/pipeline/preview-changes",
+    response_model=PreviewChangesResponse,
+)
+async def preview_pipeline_changes(
+    job_id: UUID,
+    body: UpdateJobPipelineRequest,
+    db: AsyncSession = Depends(get_tenant_db),
+    user: UserContext = Depends(get_current_user_roles),
+) -> PreviewChangesResponse:
+    """Dry-run classifier — returns the edit category without applying changes.
+
+    Frontend calls this before saving so it can show the appropriate warning UX.
+    """
+    job, instance = await require_instance_access(db, job_id, user, "manage")
+    if instance is None:
+        raise HTTPException(status_code=404, detail="No pipeline for this job")
+    current_stages = await list_stages_for_instance(db, instance=instance)
+    current = [stage_to_dict(s) for s in current_stages]
+    proposed = _stages_to_classifier_dicts(body.stages)
+    in_flight = await count_in_flight_per_stage(db, instance=instance)
+    result = classify_pipeline_diff(current=current, proposed=proposed, in_flight=in_flight)
+    return PreviewChangesResponse(
+        category=result.category.value,
+        warnings=result.warnings,
+        in_flight=result.in_flight,
+    )
+
+
 @router.patch(
     "/api/jobs/{job_id}/pipeline",
     response_model=JobPipelineInstanceResponse,
@@ -420,9 +476,26 @@ async def update_job_pipeline(
     db: AsyncSession = Depends(get_tenant_db),
     user: UserContext = Depends(get_current_user_roles),
 ) -> JobPipelineInstanceResponse:
-    _job, instance = await require_instance_access(db, job_id, user, "manage")
+    job, instance = await require_instance_access(db, job_id, user, "manage")
     if instance is None:
         raise HTTPException(status_code=404, detail="No pipeline for this job")
+
+    # Active-job: re-classify and reject Category D before applying (TOCTOU defense)
+    if job.status == "active":
+        current_stages = await list_stages_for_instance(db, instance=instance)
+        current = [stage_to_dict(s) for s in current_stages]
+        proposed = _stages_to_classifier_dicts(body.stages)
+        in_flight = await count_in_flight_per_stage(db, instance=instance)
+        classification = classify_pipeline_diff(current=current, proposed=proposed, in_flight=in_flight)
+        if classification.category == EditCategory.D:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "stage_type_change_forbidden",
+                    "message": "Stage type can't be changed once the job is active. Remove this stage and add a new one.",
+                },
+            )
+
     await update_job_pipeline_stages(db, instance=instance, stages=body.stages, actor_id=user.user.id)
     result = await get_job_pipeline_with_stages(db, job_id)
     if result is None:

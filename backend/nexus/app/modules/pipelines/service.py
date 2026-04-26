@@ -10,10 +10,11 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 import structlog
-from sqlalchemy import and_, desc, select
+from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
+    CandidateJobAssignment,
     JobPipelineInstance,
     JobPipelineStage,
     JobPosting,
@@ -997,3 +998,60 @@ async def auto_apply_pipeline_on_confirmation(
     return await create_job_pipeline_from_starter(
         db, job=job, starter_key=SYSTEM_FALLBACK_STARTER
     )
+
+
+# ---------------------------------------------------------------------------
+# Classifier helpers
+# ---------------------------------------------------------------------------
+
+
+async def list_stages_for_instance(
+    db: AsyncSession, *, instance: JobPipelineInstance
+) -> list[JobPipelineStage]:
+    """Load all stages for a pipeline instance, ordered by position."""
+    result = await db.execute(
+        select(JobPipelineStage)
+        .where(JobPipelineStage.instance_id == instance.id)
+        .order_by(JobPipelineStage.position)
+    )
+    return list(result.scalars().all())
+
+
+def stage_to_dict(stage: JobPipelineStage) -> dict:
+    """Serialize a JobPipelineStage to the dict shape that classify_pipeline_diff consumes."""
+    return {
+        "id": str(stage.id),
+        "position": stage.position,
+        "stage_type": stage.stage_type,
+        "name": stage.name,
+        "paused_at": stage.paused_at.isoformat() if stage.paused_at else None,
+        "duration_minutes": stage.duration_minutes,
+        "difficulty": stage.difficulty,
+        "signal_filter": stage.signal_filter,
+        "pass_criteria": stage.pass_criteria,
+        "advance_behavior": stage.advance_behavior,
+        "sla_days": stage.sla_days,
+    }
+
+
+async def count_in_flight_per_stage(
+    db: AsyncSession, *, instance: JobPipelineInstance,
+) -> dict[str, int]:
+    """Count active candidate_job_assignments per stage_id in this instance.
+
+    Returns {stage_id_str: count}, only including stages with count > 0.
+    """
+    q = (
+        select(CandidateJobAssignment.current_stage_id, func.count())
+        .where(CandidateJobAssignment.status == "active")
+        .where(
+            CandidateJobAssignment.current_stage_id.in_(
+                select(JobPipelineStage.id).where(
+                    JobPipelineStage.instance_id == instance.id
+                )
+            )
+        )
+        .group_by(CandidateJobAssignment.current_stage_id)
+    )
+    rows = (await db.execute(q)).all()
+    return {str(stage_id): n for stage_id, n in rows}
