@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { Position, type Edge, type Node } from '@xyflow/react'
 
 import {
   getDagreLayout,
   NODE_HEIGHT,
   NODE_WIDTH,
 } from '@/components/dashboard/org-units/use-dagre-layout'
+import type {
+  LayoutEdge,
+  LayoutNode,
+} from '@/components/dashboard/org-units/types'
 
-function makeNode(id: string): Node<{ label: string }> {
+function makeNode(id: string): LayoutNode<{ label: string }> {
   return {
     id,
     type: 'orgUnit',
@@ -16,7 +19,7 @@ function makeNode(id: string): Node<{ label: string }> {
   }
 }
 
-function makeEdge(source: string, target: string): Edge {
+function makeEdge(source: string, target: string): LayoutEdge {
   return { id: `${source}->${target}`, source, target }
 }
 
@@ -34,8 +37,8 @@ describe('getDagreLayout', () => {
         y: expect.any(Number),
       }),
     )
-    expect(out[0].sourcePosition).toBe(Position.Bottom)
-    expect(out[0].targetPosition).toBe(Position.Top)
+    expect(out[0].sourcePosition).toBe('bottom')
+    expect(out[0].targetPosition).toBe('top')
   })
 
   it('positions child below parent in TB direction', () => {
@@ -58,15 +61,15 @@ describe('getDagreLayout', () => {
     const p = out.find((n) => n.id === 'p')!
     const c = out.find((n) => n.id === 'c')!
     expect(c.position.x).toBeGreaterThan(p.position.x)
-    expect(c.sourcePosition).toBe(Position.Right)
-    expect(c.targetPosition).toBe(Position.Left)
+    expect(c.sourcePosition).toBe('right')
+    expect(c.targetPosition).toBe('left')
   })
 
   it('flips source/target positions when direction changes', () => {
     const tb = getDagreLayout([makeNode('a')], [], 'TB')
     const lr = getDagreLayout([makeNode('a')], [], 'LR')
-    expect(tb[0].sourcePosition).toBe(Position.Bottom)
-    expect(lr[0].sourcePosition).toBe(Position.Right)
+    expect(tb[0].sourcePosition).toBe('bottom')
+    expect(lr[0].sourcePosition).toBe('right')
   })
 
   it('uses the hardcoded card dimensions for layout', () => {
