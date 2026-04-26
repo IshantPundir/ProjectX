@@ -1,12 +1,11 @@
 'use client'
 
-import { useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 
 import { Button } from '@/components/px'
 import { JobPipelineFunnel } from '@/components/dashboard/pipeline/JobPipelineFunnel'
-import { TemplatePickerDialog } from '@/components/dashboard/pipeline/TemplatePickerDialog'
+import { PipelineSourcePicker } from '@/components/dashboard/pipeline/PipelineSourcePicker'
 import { useJob } from '@/lib/hooks/use-job'
 import { useJobPipeline } from '@/lib/hooks/use-job-pipeline'
 import { useCreateJobPipeline } from '@/lib/hooks/use-create-job-pipeline'
@@ -18,8 +17,6 @@ export default function JobPipelinePage() {
   const { data: job, isLoading: jobLoading } = useJob(jobId)
   const { data: pipeline, isLoading: pipelineLoading } = useJobPipeline(jobId)
   const createMutation = useCreateJobPipeline(jobId)
-
-  const [pickerOpen, setPickerOpen] = useState(false)
 
   if (jobLoading || pipelineLoading || !job) {
     return (
@@ -46,47 +43,18 @@ export default function JobPipelinePage() {
     )
   }
 
+  // No pipeline yet → show the source picker
   if (!pipeline) {
     return (
-      <div className="max-w-4xl">
-        <h2
-          className="px-serif m-0 mb-2 text-[24px] font-normal"
-          style={{ letterSpacing: '-0.5px', color: 'var(--px-fg)' }}
-        >
-          No pipeline yet
-        </h2>
-        <p className="mb-6 text-sm" style={{ color: 'var(--px-fg-3)' }}>
-          Pick a template from your library, the starter pack, or build from
-          scratch.
-        </p>
-        <Button
-          onClick={() => setPickerOpen(true)}
-          disabled={createMutation.isPending}
-        >
-          Pick a pipeline
-        </Button>
-        {pickerOpen && (
-          <TemplatePickerDialog
-            orgUnitId={job.org_unit_id}
-            open={pickerOpen}
-            onClose={() => setPickerOpen(false)}
-            onPickTemplate={(t) =>
-              createMutation.mutate(
-                { source: 'template', template_id: t.id },
-                { onSuccess: () => setPickerOpen(false) },
-              )
-            }
-            onPickStarter={(s) =>
-              createMutation.mutate(
-                { source: 'starter', starter_key: s.key },
-                { onSuccess: () => setPickerOpen(false) },
-              )
-            }
-          />
-        )}
-      </div>
+      <PipelineSourcePicker
+        jobId={jobId}
+        recentTemplates={[]}
+        teamDefault={null}
+        onPick={(body) => createMutation.mutate(body)}
+      />
     )
   }
 
+  // Pipeline exists → show the funnel
   return <JobPipelineFunnel key={pipeline.id} job={job} pipeline={pipeline} jobId={jobId} />
 }

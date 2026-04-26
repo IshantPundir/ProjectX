@@ -3,12 +3,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertCircle, Check, Loader2 } from 'lucide-react'
 
+import { toast } from 'sonner'
+
 import { DangerConfirmDialog } from '@/components/px'
 import {
   useResetJobPipeline,
+  useSaveAsTemplate,
   useSaveJobPipeline,
   useSwapJobPipeline,
+  useUpdateSourceTemplate,
 } from '@/lib/hooks/use-save-job-pipeline'
+import { useActivateJob } from '@/lib/hooks/use-activate-job'
+import { usePipelineClassify } from '@/lib/hooks/use-pipeline-classify'
 import { useBanksOverview } from '@/lib/hooks/use-banks-overview'
 import type {
   JobPipelineInstance,
@@ -26,6 +32,10 @@ import { StageParticipantsEditor } from './StageParticipantsEditor'
 import { DifficultySlider } from './DifficultySlider'
 import { participantSlotsFor } from '@/lib/pipelines/categories'
 import { useGenerateAllQuestions } from '@/lib/hooks/use-generate-questions'
+import { SourcePill } from './SourcePill'
+import { ActivationGate } from './ActivationGate'
+import { EditCategoryWarningModal } from './EditCategoryWarningModal'
+import { computeActivationFailures } from '@/lib/pipelines/activation'
 
 const AUTOSAVE_DEBOUNCE_MS = 800
 
@@ -240,6 +250,10 @@ export function JobPipelineFunnel({ job, pipeline, jobId }: Props) {
   const saveMutation = useSaveJobPipeline(jobId)
   const resetMutation = useResetJobPipeline(jobId)
   const swapMutation = useSwapJobPipeline(jobId)
+  const saveAsTemplateMutation = useSaveAsTemplate(jobId)
+  const updateSourceMutation = useUpdateSourceTemplate(jobId)
+  const activateMutation = useActivateJob(jobId)
+  const classifyMutation = usePipelineClassify(jobId)
   const { data: overview } = useBanksOverview(jobId)
 
   const [stages, setStages] = useState<PipelineStageUpdateInput[]>(() =>
@@ -253,6 +267,13 @@ export function JobPipelineFunnel({ job, pipeline, jobId }: Props) {
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const [overIdx, setOverIdx] = useState<number | null>(null)
   const [confirmingReset, setConfirmingReset] = useState(false)
+  // Edit-category warning modal state
+  const [warningModal, setWarningModal] = useState<{
+    category: 'B' | 'C'
+    pendingStages: PipelineStageUpdateInput[]
+    inFlight: Record<string, number>
+    editGen: number
+  } | null>(null)
 
   // Autosave plumbing
   const saveTimerRef = useRef<number | null>(null)
@@ -262,6 +283,31 @@ export function JobPipelineFunnel({ job, pipeline, jobId }: Props) {
     stagesRef.current = stages
   })
 
+  // Direct save — bypasses classify gate. Called after user confirms a B/C warning,
+  // or when the classify result is category A.
+  const doSave = useCallback(
+    (nextStages: PipelineStageUpdateInput[], gen: number) => {
+      saveMutation.mutate(
+        { stages: stripStagesForApi(nextStages) },
+        {
+          onSuccess: (updated) => {
+            setStages((prev) => {
+              if (prev.every((s) => s.id !== undefined)) return prev
+              const byPosition = new Map(updated.stages.map((s) => [s.position, s.id]))
+              return prev.map((s) =>
+                s.id === undefined
+                  ? { ...s, id: byPosition.get(s.position) ?? s.id }
+                  : s,
+              )
+            })
+            if (gen === editGenRef.current) setIsDirty(false)
+          },
+        },
+      )
+    },
+    [saveMutation],
+  )
+
   const scheduleSave = useCallback(
     (nextStages: PipelineStageUpdateInput[]) => {
       editGenRef.current += 1
@@ -270,26 +316,39 @@ export function JobPipelineFunnel({ job, pipeline, jobId }: Props) {
       if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current)
       saveTimerRef.current = window.setTimeout(() => {
         saveTimerRef.current = null
-        saveMutation.mutate(
-          { stages: stripStagesForApi(nextStages) },
-          {
-            onSuccess: (updated) => {
-              setStages((prev) => {
-                if (prev.every((s) => s.id !== undefined)) return prev
-                const byPosition = new Map(updated.stages.map((s) => [s.position, s.id]))
-                return prev.map((s) =>
-                  s.id === undefined
-                    ? { ...s, id: byPosition.get(s.position) ?? s.id }
-                    : s,
-                )
-              })
+        void (async () => {
+          try {
+            const result = await classifyMutation.mutateAsync({
+              stages: stripStagesForApi(nextStages),
+            })
+            // Category D: stage-type change blocked on active jobs
+            if (job.status === 'active' && result.category === 'D') {
+              toast.error("Stage type can't be changed once the job is active.")
               if (gen === editGenRef.current) setIsDirty(false)
-            },
-          },
-        )
+              return
+            }
+            // Category B or C: show warning modal — save is deferred until confirmed
+            if (result.category === 'B' || result.category === 'C') {
+              setWarningModal({
+                category: result.category,
+                pendingStages: nextStages,
+                inFlight: result.in_flight,
+                editGen: gen,
+              })
+              // isDirty stays true until confirmed or cancelled
+              return
+            }
+            // Category A (or D on inactive job): proceed directly
+            doSave(nextStages, gen)
+          } catch {
+            // Classify failed — fall back to direct save so edits are not lost
+            doSave(nextStages, gen)
+          }
+        })()
       }, AUTOSAVE_DEBOUNCE_MS)
     },
-    [saveMutation],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [saveMutation, classifyMutation, doSave, job.status],
   )
 
   // Flush pending save on unmount
@@ -505,27 +564,34 @@ export function JobPipelineFunnel({ job, pipeline, jobId }: Props) {
           >
             {generateAllMutation.isPending ? 'Generating…' : 'Generate all questions'}
           </button>
-
-          <button
-            className="px-btn outline sm"
-            type="button"
-            onClick={() => setPickerOpen(true)}
-            disabled={swapMutation.isPending}
-          >
-            Swap template
-          </button>
-
-          {pipeline.source_template_id && (
-            <button
-              className="px-btn outline sm"
-              type="button"
-              onClick={handleReset}
-              disabled={resetMutation.isPending}
-            >
-              Reset to source
-            </button>
-          )}
         </div>
+      </div>
+
+      {/* ─── Source pill + ActivationGate ─── */}
+      <div className="mb-4 space-y-3">
+        <SourcePill
+          sourceTemplateId={pipeline.source_template_id}
+          sourceTemplateName={pipeline.source_template_name}
+          sourceStarterKey={null}
+          diverged={pipeline.pipeline_version > 1}
+          canSwap={job.status !== 'active'}
+          canUpdateSource={pipeline.source_template_id !== null && job.status !== 'active'}
+          onReset={handleReset}
+          onSwap={() => setPickerOpen(true)}
+          onSaveAsTemplate={() =>
+            saveAsTemplateMutation.mutate({
+              name: `${job.title} pipeline`,
+              description: null,
+              is_default: false,
+            })
+          }
+          onUpdateSourceTemplate={() => updateSourceMutation.mutate()}
+        />
+        <ActivationGate
+          failures={computeActivationFailures(pipeline, banks)}
+          onActivate={() => activateMutation.mutate()}
+          onFocusStage={(stageId) => setActiveId(stageId)}
+        />
       </div>
 
       {/* ─── Hero scene: SVG funnel + floating config sheet ─── */}
@@ -604,6 +670,25 @@ export function JobPipelineFunnel({ job, pipeline, jobId }: Props) {
         pending={resetMutation.isPending}
         onConfirm={confirmReset}
         onClose={() => setConfirmingReset(false)}
+      />
+
+      <EditCategoryWarningModal
+        open={warningModal !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            // User dismissed: discard the pending save and clear dirty state
+            setWarningModal(null)
+            setIsDirty(false)
+          }
+        }}
+        category={warningModal?.category ?? null}
+        inFlightCounts={warningModal?.inFlight ?? {}}
+        onConfirm={() => {
+          if (warningModal) {
+            doSave(warningModal.pendingStages, warningModal.editGen)
+          }
+          setWarningModal(null)
+        }}
       />
     </div>
   )

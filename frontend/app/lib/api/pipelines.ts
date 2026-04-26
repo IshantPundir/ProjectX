@@ -154,6 +154,8 @@ export type JobPipelineInstance = {
   job_posting_id: string
   source_template_id: string | null
   source_template_name: string | null
+  /** Incremented on every PATCH save. Used by SourcePill to show "Edited" badge. */
+  pipeline_version: number
   stages: PipelineStageResponse[]
   created_at: string
   updated_at: string
