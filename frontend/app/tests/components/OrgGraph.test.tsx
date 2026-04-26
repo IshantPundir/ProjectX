@@ -1,0 +1,141 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { fireEvent, screen, within } from '@testing-library/react'
+
+import { renderWithProviders } from '../_utils/render'
+import {
+  OrgGraph,
+  type GraphNodeData,
+} from '@/components/dashboard/org-units/OrgGraph'
+
+function unit(overrides: Partial<GraphNodeData>): GraphNodeData {
+  return {
+    id: overrides.id ?? 'x',
+    client_id: 't1',
+    parent_unit_id: null,
+    name: 'X',
+    unit_type: 'division',
+    member_count: 0,
+    created_at: '2026-04-01T00:00:00Z',
+    created_by: null,
+    created_by_email: null,
+    deletable_by: null,
+    deletable_by_email: null,
+    admin_delete_disabled: false,
+    is_accessible: true,
+    admin_emails: [],
+    is_root: false,
+    company_profile: null,
+    company_profile_completed_at: null,
+    metadata: null,
+    openRoles: 0,
+    pressure: 'cool',
+    ...overrides,
+  }
+}
+
+const TREE: GraphNodeData[] = [
+  unit({ id: 'co', name: 'BinQle', unit_type: 'company', is_root: true }),
+  unit({ id: 'na', name: 'NA', unit_type: 'region', parent_unit_id: 'co' }),
+  unit({
+    id: 'eng',
+    name: 'Engineering',
+    unit_type: 'division',
+    parent_unit_id: 'na',
+  }),
+]
+
+beforeEach(() => {
+  window.localStorage.clear()
+  // jsdom has no ResizeObserver, which xyflow uses internally.
+  // Polyfill with a no-op so the canvas mounts cleanly.
+  if (!('ResizeObserver' in window)) {
+    // @ts-expect-error injecting polyfill into the test environment
+    window.ResizeObserver = class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+  }
+})
+
+afterEach(() => {
+  window.localStorage.clear()
+})
+
+describe('OrgGraph', () => {
+  it('renders one card per unit', () => {
+    renderWithProviders(
+      <OrgGraph
+        units={TREE}
+        selectedId={null}
+        onSelect={vi.fn()}
+      />,
+    )
+    // Each card has its name visible.
+    expect(screen.getByText('BinQle')).toBeInTheDocument()
+    expect(screen.getByText('NA')).toBeInTheDocument()
+    expect(screen.getByText('Engineering')).toBeInTheDocument()
+  })
+
+  it('calls onSelect with the clicked unit id', () => {
+    const onSelect = vi.fn()
+    renderWithProviders(
+      <OrgGraph units={TREE} selectedId={null} onSelect={onSelect} />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /region: NA/ }))
+    expect(onSelect).toHaveBeenCalledWith('na')
+  })
+
+  it('marks the selected card and its ancestors with on-path / selected states', () => {
+    renderWithProviders(
+      <OrgGraph units={TREE} selectedId="eng" onSelect={vi.fn()} />,
+    )
+    expect(
+      screen.getByRole('button', { name: /division: Engineering/ }),
+    ).toHaveAttribute('data-state', 'selected')
+    expect(
+      screen.getByRole('button', { name: /region: NA/ }),
+    ).toHaveAttribute('data-state', 'on-path')
+    expect(
+      screen.getByRole('button', { name: /company: BinQle/ }),
+    ).toHaveAttribute('data-state', 'on-path')
+  })
+
+  it('persists the chosen direction to localStorage', () => {
+    renderWithProviders(
+      <OrgGraph units={TREE} selectedId={null} onSelect={vi.fn()} />,
+    )
+    const group = screen.getByRole('group', { name: /Layout direction/i })
+    fireEvent.click(within(group).getByRole('button', { name: /Left.*Right/i }))
+    expect(window.localStorage.getItem('org-graph-direction')).toBe('LR')
+    expect(
+      within(group).getByRole('button', { name: /Left.*Right/i }),
+    ).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('reads the persisted direction on mount', () => {
+    window.localStorage.setItem('org-graph-direction', 'LR')
+    renderWithProviders(
+      <OrgGraph units={TREE} selectedId={null} onSelect={vi.fn()} />,
+    )
+    const group = screen.getByRole('group', { name: /Layout direction/i })
+    expect(
+      within(group).getByRole('button', { name: /Left.*Right/i }),
+    ).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('warns when more than one root unit is present', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const twoRoots: GraphNodeData[] = [
+      unit({ id: 'a', name: 'A', unit_type: 'company', is_root: true }),
+      unit({ id: 'b', name: 'B', unit_type: 'company', is_root: true }),
+    ]
+    renderWithProviders(
+      <OrgGraph units={twoRoots} selectedId={null} onSelect={vi.fn()} />,
+    )
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('expected one root unit'),
+    )
+    warn.mockRestore()
+  })
+})
