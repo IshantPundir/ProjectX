@@ -1,367 +1,353 @@
 "use client";
 
+import * as React from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
 import { toast } from "sonner";
-import { Button } from "@/components/px";
-import { type OrgUnit } from "@/lib/api/org-units";
-import { useUpdateOrgUnit } from "@/lib/hooks/use-update-org-unit";
+
 import { applyApiErrorToForm } from "@/lib/api/errors";
+import { type OrgUnit, type RegionMetadata } from "@/lib/api/org-units";
+import { useUpdateOrgUnit } from "@/lib/hooks/use-update-org-unit";
+
+import { Sidebar } from "./Sidebar";
+import { SidebarMembersCard } from "./SidebarMembersCard";
 import {
-  UnitPageHeader,
-  Section,
-  Field,
-  SubUnitsList,
-  SmallStats,
+  COMPLIANCE_FLAGS,
+  ComplianceRow,
+  CrumbBack,
+  CURRENCY_COMMON_VALUES,
+  CURRENCY_OPTIONS,
+  HeaderActions,
+  LOCALE_OPTIONS,
+  LocaleChip,
+  StatItem,
+  StatSep,
+  SubUnitCard,
+  TIMEZONE_OPTIONS,
+  UnitCrumb,
+  UnitPill,
+  getLocaleCommonValues,
+  getTimezoneCommonValues,
+  localeDefaults,
 } from "./shared";
-import { MembersSection } from "./MembersSection";
+import {
+  mergeMetadata,
+  regionFormSchema,
+  type RegionFormValues,
+} from "./schema";
 
-interface Office {
-  city: string;
-  addr: string;
-  seats: number;
-  status: string;
+import "./detail.css";
+
+export interface RegionDetailProps {
+  unit: OrgUnit;
+  parentChain: OrgUnit[];
+  subUnits: OrgUnit[];
+  openRolesCount: number;
+  openRolesByChildId: Record<string, number>;
+  onBack: () => void;
+  onSaved: (next: OrgUnit) => void;
 }
-
-interface RegionMetadata {
-  code?: string;
-  primary_city?: string;
-  timezone?: string;
-  currency?: string;
-  locale?: string;
-  offices?: Office[];
-  notes?: string;
-  lead_name?: string;
-}
-
-const officeSchema = z.object({
-  city: z.string(),
-  addr: z.string(),
-  seats: z.number(),
-  status: z.string(),
-});
-
-const regionDetailSchema = z.object({
-  name: z.string().min(1, "Name is required").max(100),
-  code: z.string(),
-  primary_city: z.string(),
-  timezone: z.string(),
-  currency: z.string(),
-  locale: z.string(),
-  notes: z.string(),
-  lead_name: z.string(),
-  offices: z.array(officeSchema),
-});
-
-type RegionDetailFormValues = z.infer<typeof regionDetailSchema>;
 
 export function RegionDetail({
   unit,
-  parentPath,
+  parentChain,
   subUnits,
+  openRolesCount,
+  openRolesByChildId,
   onBack,
   onSaved,
-  openRolesCount,
-}: {
-  unit: OrgUnit;
-  parentPath: string;
-  subUnits: OrgUnit[];
-  onBack: () => void;
-  onSaved: (unit: OrgUnit) => void;
-  openRolesCount: number;
-}) {
-  const initial = (unit.metadata ?? {}) as RegionMetadata;
+}: RegionDetailProps) {
+  const metadata = (unit.metadata ?? {}) as RegionMetadata;
+  const [mode, setMode] = React.useState<"view" | "edit">("view");
 
-  const form = useForm<RegionDetailFormValues>({
-    resolver: zodResolver(regionDetailSchema),
-    defaultValues: {
+  const defaults = React.useMemo<RegionFormValues>(
+    () => ({
       name: unit.name,
-      code: initial.code ?? "",
-      primary_city: initial.primary_city ?? "",
-      timezone: initial.timezone ?? "",
-      currency: initial.currency ?? "",
-      locale: initial.locale ?? "",
-      notes: initial.notes ?? "",
-      lead_name: initial.lead_name ?? "",
-      offices: initial.offices ?? [],
-    },
+      default_timezone: metadata.default_timezone,
+      default_currency: metadata.default_currency,
+      default_locale: metadata.default_locale,
+      compliance_aivia_il: metadata.compliance_aivia_il,
+      compliance_gdpr_eu: metadata.compliance_gdpr_eu,
+      compliance_ccpa_ca: metadata.compliance_ccpa_ca,
+    }),
+    [
+      unit.name,
+      metadata.default_timezone,
+      metadata.default_currency,
+      metadata.default_locale,
+      metadata.compliance_aivia_il,
+      metadata.compliance_gdpr_eu,
+      metadata.compliance_ccpa_ca,
+    ],
+  );
+
+  const form = useForm<RegionFormValues>({
+    resolver: zodResolver(regionFormSchema),
+    defaultValues: defaults,
   });
 
+  React.useEffect(() => {
+    form.reset(defaults);
+  }, [defaults, form]);
+
   const updateMutation = useUpdateOrgUnit();
+  const watched = form.watch();
+  const isEdit = mode === "edit";
 
-  // Reactive values used in the render chrome.
-  const leadName = form.watch("lead_name");
-  const offices = form.watch("offices");
+  const inheritedFromName = React.useMemo(() => {
+    const sourceId =
+      unit.inherited_locale?.source_unit_id ??
+      unit.inherited_compliance?.source_unit_id ??
+      null;
+    if (!sourceId || sourceId === unit.id) return null;
+    return parentChain.find((u) => u.id === sourceId)?.name ?? null;
+  }, [
+    unit.id,
+    unit.inherited_locale?.source_unit_id,
+    unit.inherited_compliance?.source_unit_id,
+    parentChain,
+  ]);
 
-  async function onSubmit(values: RegionDetailFormValues) {
+  async function onSubmit(values: RegionFormValues) {
     try {
+      const merged = mergeMetadata(unit.metadata, {
+        default_timezone: values.default_timezone,
+        default_currency: values.default_currency,
+        default_locale: values.default_locale,
+        compliance_aivia_il: values.compliance_aivia_il,
+        compliance_gdpr_eu: values.compliance_gdpr_eu,
+        compliance_ccpa_ca: values.compliance_ccpa_ca,
+      });
       const updated = await updateMutation.mutateAsync({
         unitId: unit.id,
         body: {
           name: values.name.trim() || unit.name,
-          metadata: {
-            code: values.code,
-            primary_city: values.primary_city,
-            timezone: values.timezone,
-            currency: values.currency,
-            locale: values.locale,
-            offices: values.offices,
-            notes: values.notes,
-            lead_name: values.lead_name,
-          },
+          metadata: merged,
           set_metadata: true,
         },
       });
       onSaved(updated);
       toast.success("Region saved");
+      setMode("view");
+      const meta = (updated.metadata ?? {}) as RegionMetadata;
+      form.reset({
+        name: updated.name,
+        default_timezone: meta.default_timezone,
+        default_currency: meta.default_currency,
+        default_locale: meta.default_locale,
+        compliance_aivia_il: meta.compliance_aivia_il,
+        compliance_gdpr_eu: meta.compliance_gdpr_eu,
+        compliance_ccpa_ca: meta.compliance_ccpa_ca,
+      });
     } catch (err) {
       if (applyApiErrorToForm(err, form)) return;
       toast.error(err instanceof Error ? err.message : "Failed to save region");
     }
   }
 
-  function updateOffice(i: number, patch: Partial<Office>) {
-    const current = form.getValues("offices");
-    form.setValue(
-      "offices",
-      current.map((o, idx) => (idx === i ? { ...o, ...patch } : o)),
-      { shouldDirty: true },
-    );
+  function handleDiscard() {
+    form.reset(defaults);
+    setMode("view");
   }
-  function addOffice() {
-    const current = form.getValues("offices");
-    form.setValue(
-      "offices",
-      [...current, { city: "", addr: "", seats: 0, status: "Active" }],
-      { shouldDirty: true },
-    );
-  }
-  function removeOffice(i: number) {
-    const current = form.getValues("offices");
-    form.setValue(
-      "offices",
-      current.filter((_, idx) => idx !== i),
-      { shouldDirty: true },
-    );
-  }
+
+  const crumbs = parentChain.map((u) => ({
+    label: u.name,
+    href: `/settings/org-units/${u.id}`,
+  }));
 
   return (
-    <div>
-      <UnitPageHeader
-        type="region"
-        name={unit.name}
-        parentPath={parentPath}
-        lead={leadName || null}
-        people={unit.member_count}
-        openRoles={openRolesCount}
-        onBack={onBack}
-        right={
-          <>
-            <Button variant="ghost" size="sm" type="button">
-              Archive
-            </Button>
-            <Button variant="outline" size="sm" type="button">
-              Copy link
-            </Button>
-            <Button
-              size="sm"
-              type="button"
-              onClick={form.handleSubmit(onSubmit)}
-              disabled={updateMutation.isPending}
-            >
-              {updateMutation.isPending ? "Saving…" : "Save changes"}
-            </Button>
-          </>
-        }
-      />
-
-      <div
-        className="grid items-start gap-7 px-8 pb-10 pt-5"
-        style={{ gridTemplateColumns: "1fr 320px" }}
-      >
-        <div>
-          <Section
-            title="Region details"
-            sub="A region is a geography, not a reporting line. Division and team headcount roll up to it."
-          >
-            <div className="grid grid-cols-2 gap-3.5">
-              <Field label="Region name">
-                <input className="px-input" {...form.register("name")} />
-              </Field>
-              <Field label="Code" hint="Used in role IDs and payroll exports.">
-                <input
-                  className="px-input mono"
-                  {...form.register("code", {
-                    setValueAs: (v: unknown) =>
-                      typeof v === "string" ? v.toUpperCase() : "",
-                  })}
-                  placeholder="AMER"
-                />
-              </Field>
-              <Field label="Primary city">
-                <input
-                  className="px-input"
-                  {...form.register("primary_city")}
-                  placeholder="San Francisco, CA"
-                />
-              </Field>
-              <Field label="Timezone base">
-                <input
-                  className="px-input"
-                  {...form.register("timezone")}
-                  placeholder="America/Los_Angeles"
-                />
-              </Field>
-              <Field label="Currency">
-                <input
-                  className="px-input"
-                  {...form.register("currency")}
-                  placeholder="USD"
-                />
-              </Field>
-              <Field label="Locale">
-                <input
-                  className="px-input mono"
-                  {...form.register("locale")}
-                  placeholder="en-US"
-                />
-              </Field>
-              <Field label="Region lead" span={2}>
-                <input
-                  className="px-input"
-                  {...form.register("lead_name")}
-                  placeholder="Sam Rivera · VP"
-                />
-              </Field>
+    <main
+      className="org-unit-detail-root"
+      data-edit-mode={isEdit ? "true" : "false"}
+    >
+      <header className="unit-header">
+        <CrumbBack onBack={onBack} />
+        <div className="unit-header-row">
+          <div className="unit-header-main">
+            <div className="unit-pills">
+              <UnitPill type="region" />
             </div>
-          </Section>
-
-          <Section
-            title="Offices in this region"
-            right={
-              <Button
-                variant="outline"
-                size="xs"
-                type="button"
-                onClick={addOffice}
-              >
-                + Add office
-              </Button>
-            }
-          >
-            <div
-              className="overflow-hidden rounded-[10px] border"
-              style={{
-                background: "var(--px-surface)",
-                borderColor: "var(--px-hairline)",
+            <UnitCrumb items={crumbs} />
+            <h1
+              className="unit-name"
+              style={{ marginTop: 8 }}
+              data-editable-text="region-name"
+              contentEditable={isEdit}
+              suppressContentEditableWarning
+              onBlur={(e) => {
+                const next = e.currentTarget.textContent?.trim() ?? "";
+                if (next && next !== watched.name) {
+                  form.setValue("name", next, { shouldDirty: true });
+                }
               }}
             >
-              {offices.length === 0 ? (
-                <div
-                  className="px-4 py-8 text-center text-[12.5px]"
-                  style={{ color: "var(--px-fg-4)" }}
-                >
-                  No offices yet. Click <b>Add office</b> to add one.
-                </div>
-              ) : (
-                offices.map((o, i) => (
-                  <div
-                    key={i}
-                    className="grid items-center gap-3.5 px-3.5 py-3"
-                    style={{
-                      gridTemplateColumns: "1.2fr 2fr 100px 120px 30px",
-                      borderBottom:
-                        i < offices.length - 1
-                          ? "1px solid var(--px-divider)"
-                          : "none",
-                    }}
-                  >
-                    <input
-                      className="px-input sm"
-                      value={o.city}
-                      onChange={(e) =>
-                        updateOffice(i, { city: e.target.value })
-                      }
-                      placeholder="City"
-                    />
-                    <input
-                      className="px-input sm mono"
-                      value={o.addr}
-                      onChange={(e) =>
-                        updateOffice(i, { addr: e.target.value })
-                      }
-                      placeholder="Address"
-                    />
-                    <input
-                      className="px-input sm mono"
-                      type="number"
-                      min={0}
-                      value={o.seats || ""}
-                      onChange={(e) =>
-                        updateOffice(i, {
-                          seats: Math.max(0, Number(e.target.value) || 0),
-                        })
-                      }
-                      placeholder="seats"
-                    />
-                    <select
-                      className="px-input sm"
-                      value={o.status}
-                      onChange={(e) =>
-                        updateOffice(i, { status: e.target.value })
-                      }
-                    >
-                      <option value="Primary">Primary</option>
-                      <option value="Active">Active</option>
-                      <option value="Closed">Closed</option>
-                    </select>
-                    <button
-                      type="button"
-                      onClick={() => removeOffice(i)}
-                      className="cursor-pointer"
-                      style={{ color: "var(--px-fg-4)" }}
-                      aria-label="Remove office"
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))
-              )}
+              {unit.name}
+            </h1>
+            <div className="locale-strip" aria-label="Locale & defaults">
+              <LocaleChip
+                label="Locale"
+                variant="inherit"
+                isEdit={isEdit}
+                value={watched.default_locale}
+                inheritedValue={
+                  unit.inherited_locale?.values.default_locale ?? null
+                }
+                inheritedFromName={inheritedFromName}
+                options={LOCALE_OPTIONS}
+                commonValues={getLocaleCommonValues()}
+                onChange={(v) => {
+                  form.setValue("default_locale", v, { shouldDirty: true });
+                  if (!v) return;
+                  const d = localeDefaults(v);
+                  if (d.timezone) {
+                    form.setValue("default_timezone", d.timezone, {
+                      shouldDirty: true,
+                    });
+                  }
+                  if (d.currency) {
+                    form.setValue("default_currency", d.currency, {
+                      shouldDirty: true,
+                    });
+                  }
+                }}
+              />
+              <LocaleChip
+                label="Timezone"
+                variant="inherit"
+                isEdit={isEdit}
+                value={watched.default_timezone}
+                inheritedValue={
+                  unit.inherited_locale?.values.default_timezone ?? null
+                }
+                inheritedFromName={inheritedFromName}
+                options={TIMEZONE_OPTIONS}
+                commonValues={getTimezoneCommonValues()}
+                onChange={(v) =>
+                  form.setValue("default_timezone", v, { shouldDirty: true })
+                }
+              />
+              <LocaleChip
+                label="Currency"
+                variant="inherit"
+                isEdit={isEdit}
+                value={watched.default_currency}
+                inheritedValue={
+                  unit.inherited_locale?.values.default_currency ?? null
+                }
+                inheritedFromName={inheritedFromName}
+                options={CURRENCY_OPTIONS}
+                commonValues={CURRENCY_COMMON_VALUES}
+                onChange={(v) =>
+                  form.setValue("default_currency", v, { shouldDirty: true })
+                }
+              />
             </div>
-          </Section>
+            <div className="unit-stats">
+              <StatItem
+                value={subUnits.filter((u) => u.unit_type === "division").length}
+                label={
+                  subUnits.filter((u) => u.unit_type === "division").length === 1
+                    ? "division"
+                    : "divisions"
+                }
+              />
+              <StatSep />
+              <StatItem value={unit.member_count} label="direct members" />
+              <StatSep />
+              <StatItem value={openRolesCount} label="open jobs" rolledUp />
+            </div>
+          </div>
+          <HeaderActions
+            mode={mode}
+            onModeChange={setMode}
+            saving={updateMutation.isPending}
+            dirty={form.formState.isDirty}
+            onSave={form.handleSubmit(onSubmit)}
+            onDiscard={handleDiscard}
+          />
+        </div>
+      </header>
 
-          <Section
-            title="Regional hiring notes"
-            sub="Optional — overrides the company profile when Copilot writes roles in this region."
-          >
-            <textarea
-              className="px-input"
-              rows={3}
-              {...form.register("notes")}
-              placeholder="e.g. We sponsor TN and H-1B from the US offices. Pay bands posted on all job descriptions in NY, CA, CO, WA."
-            />
-          </Section>
+      <div className="unit-body">
+        <div>
+          {/* Sub-units */}
+          <section className="section">
+            <div className="section-head">
+              <div className="section-head-main">
+                <div className="section-title">
+                  Sub-units <span className="count">{subUnits.length}</span>
+                </div>
+              </div>
+              <a
+                className="btn outline xs"
+                href={`/settings/org-units?parent=${unit.id}`}
+              >
+                + New sub-unit
+              </a>
+            </div>
+            {subUnits.length === 0 ? (
+              <div className="empty-state">No sub-units yet.</div>
+            ) : (
+              <div className="subunits-grid">
+                {subUnits.map((child) => (
+                  <SubUnitCard
+                    key={child.id}
+                    unit={child}
+                    href={`/settings/org-units/${child.id}`}
+                    openRoles={openRolesByChildId[child.id] ?? 0}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
 
-          <MembersSection unitId={unit.id} />
+          <div className="section-divider">
+            Tenant defaults — inherited from {inheritedFromName ?? "tenant"}
+          </div>
+
+          <section className="section">
+            <div className="section-head">
+              <div className="section-head-main">
+                <div className="section-title">Compliance flags</div>
+                <div className="section-sub">
+                  Inherited from parent. Toggle to override per-region.
+                </div>
+              </div>
+            </div>
+            <div className="card">
+              {COMPLIANCE_FLAGS.map((flag) => (
+                <ComplianceRow
+                  key={flag.key}
+                  flag={flag}
+                  variant="inherit"
+                  isEdit={isEdit}
+                  value={watched[flag.key]}
+                  inheritedValue={
+                    unit.inherited_compliance?.values[flag.key] ?? null
+                  }
+                  inheritedFromName={inheritedFromName}
+                  onChange={(v) =>
+                    form.setValue(flag.key, v, { shouldDirty: true })
+                  }
+                />
+              ))}
+            </div>
+          </section>
         </div>
 
-        <aside className="flex flex-col gap-3.5">
-          <SmallStats
-            rows={[
-              { l: "Offices", v: String(offices.length) },
-              { l: "Headcount", v: String(unit.member_count) },
-              {
-                l: "Open roles",
-                v: String(openRolesCount),
-                ok: openRolesCount > 0,
-              },
-              { l: "Sub-units", v: String(subUnits.length) },
-            ]}
-          />
-          <SubUnitsList subUnits={subUnits} />
-        </aside>
+        <Sidebar
+          unit={unit}
+          parentChain={parentChain}
+          subUnits={subUnits}
+          topCard={
+            <SidebarMembersCard
+              unitId={unit.id}
+              isEdit={isEdit}
+              helperText="Often empty — most members live at division/team level. Useful for regional HR partners and legal."
+            />
+          }
+        />
       </div>
-    </div>
+    </main>
   );
 }

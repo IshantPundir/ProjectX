@@ -3,7 +3,6 @@
 import { useCallback, useMemo } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { toast } from 'sonner'
 
 import { getFreshSupabaseToken } from '@/lib/auth/tokens'
 import { jobsApi, type JobPostingSummary } from '@/lib/api/jobs'
@@ -11,7 +10,7 @@ import { useOrgUnit } from '@/lib/hooks/use-org-unit'
 import { useOrgUnits } from '@/lib/hooks/use-org-units'
 import type { OrgUnit } from '@/lib/api/org-units'
 
-import { CompanyProfileDetail } from './CompanyProfileDetail'
+import { CompanyDetail } from './CompanyDetail'
 import { DivisionDetail } from './DivisionDetail'
 import { RegionDetail } from './RegionDetail'
 import { TeamDetail } from './TeamDetail'
@@ -31,39 +30,44 @@ export default function OrgUnitDetailPage() {
   })
 
   const unit = unitQuery.data ?? null
-  const allUnits = useMemo(
-    () => allUnitsQuery.data ?? [],
-    [allUnitsQuery.data],
-  )
-  const jobs = useMemo(
-    () => jobsQuery.data ?? [],
-    [jobsQuery.data],
-  )
+  const allUnits = useMemo(() => allUnitsQuery.data ?? [], [allUnitsQuery.data])
+  const jobs = useMemo(() => jobsQuery.data ?? [], [jobsQuery.data])
   const loading = unitQuery.isLoading || allUnitsQuery.isLoading
   const error = unitQuery.error?.message || allUnitsQuery.error?.message || ''
 
-  const parentPath = useMemo(() => {
-    if (!unit) return ''
-    const byId = new Map(allUnits.map((u) => [u.id, u]))
-    const chain: string[] = []
+  const byId = useMemo(() => new Map(allUnits.map((u) => [u.id, u])), [allUnits])
+
+  /**
+   * Parent chain ordered root → ... → immediate parent. Used by:
+   *  - the Hierarchy sidebar card (renders the tree)
+   *  - the inheritance-source resolver in Region / Client account
+   *  - the breadcrumb string in the page header
+   */
+  const parentChain = useMemo<OrgUnit[]>(() => {
+    if (!unit) return []
+    const chain: OrgUnit[] = []
     let cur = unit.parent_unit_id ? byId.get(unit.parent_unit_id) : null
-    while (cur) {
-      chain.unshift(cur.name)
+    const seen = new Set<string>()
+    while (cur && !seen.has(cur.id)) {
+      seen.add(cur.id)
+      chain.unshift(cur)
       cur = cur.parent_unit_id ? byId.get(cur.parent_unit_id) : null
     }
-    return chain.join(' · ')
-  }, [unit, allUnits])
+    return chain
+  }, [unit, byId])
 
-  const subUnits = useMemo(() => {
+const subUnits = useMemo(() => {
     if (!unit) return []
     return allUnits.filter((u) => u.parent_unit_id === unit.id)
   }, [unit, allUnits])
 
-  const { openRolesCount, openRolesByChildId } = useMemo(() => {
+  const { openRolesCount, openRolesByChildId, jobsAnchoredHere } = useMemo(() => {
     const raw: Record<string, number> = {}
+    const titlesByUnit: Record<string, { id: string; title: string }[]> = {}
     for (const j of jobs) {
       if (j.status === 'draft') continue
       raw[j.org_unit_id] = (raw[j.org_unit_id] ?? 0) + 1
+      ;(titlesByUnit[j.org_unit_id] ||= []).push({ id: j.id, title: j.title })
     }
     const childrenOf: Record<string, string[]> = {}
     for (const u of allUnits) {
@@ -81,15 +85,15 @@ export default function OrgUnitDetailPage() {
     return {
       openRolesCount: unit ? rolled(unit.id) : 0,
       openRolesByChildId: byChild,
+      jobsAnchoredHere: unit ? titlesByUnit[unit.id] ?? [] : [],
     }
   }, [jobs, allUnits, unit])
 
   /**
-   * Subcomponent mutations drive cache invalidation through their hooks;
-   * this callback is purely for the success toast and the local
-   * `allUnits` list to reflect the updated row without a flicker. The
-   * hook's invalidate triggers a refetch anyway — the optimistic update
-   * below is a UX polish, not a correctness requirement.
+   * Optimistic cache write so the freshly-saved unit is reflected in
+   * `useOrgUnits()` and `useOrgUnit()` callers without a refetch flicker.
+   * The mutation hook also runs `invalidateQueries` so the source of
+   * truth is reconciled by the next refetch.
    */
   const handleSaved = useCallback(
     (updated: OrgUnit) => {
@@ -105,7 +109,10 @@ export default function OrgUnitDetailPage() {
 
   if (loading) {
     return (
-      <div className="mx-auto max-w-[1200px] px-8 pt-6 text-sm" style={{ color: 'var(--px-fg-3)' }}>
+      <div
+        className="mx-auto max-w-[1200px] px-8 pt-6 text-sm"
+        style={{ color: 'var(--px-fg-3)' }}
+      >
         Loading unit…
       </div>
     )
@@ -131,15 +138,15 @@ export default function OrgUnitDetailPage() {
   if (unit.unit_type === 'company' || unit.unit_type === 'client_account') {
     return (
       <div className="mx-auto max-w-[1200px]">
-        <CompanyProfileDetail
+        <CompanyDetail
           unit={unit}
+          isClientAccount={unit.unit_type === 'client_account'}
+          parentChain={parentChain}
           subUnits={subUnits}
-          onBack={onBack}
-          onSaved={(u) => {
-            handleSaved(u)
-            toast.success('Changes saved')
-          }}
           openRolesCount={openRolesCount}
+          openRolesByChildId={openRolesByChildId}
+          onBack={onBack}
+          onSaved={handleSaved}
         />
       </div>
     )
@@ -149,11 +156,12 @@ export default function OrgUnitDetailPage() {
       <div className="mx-auto max-w-[1200px]">
         <RegionDetail
           unit={unit}
-          parentPath={parentPath}
+          parentChain={parentChain}
           subUnits={subUnits}
+          openRolesCount={openRolesCount}
+          openRolesByChildId={openRolesByChildId}
           onBack={onBack}
           onSaved={handleSaved}
-          openRolesCount={openRolesCount}
         />
       </div>
     )
@@ -163,12 +171,12 @@ export default function OrgUnitDetailPage() {
       <div className="mx-auto max-w-[1200px]">
         <DivisionDetail
           unit={unit}
-          parentPath={parentPath}
+          parentChain={parentChain}
           subUnits={subUnits}
-          onBack={onBack}
-          onSaved={handleSaved}
           openRolesCount={openRolesCount}
           openRolesByChildId={openRolesByChildId}
+          onBack={onBack}
+          onSaved={handleSaved}
         />
       </div>
     )
@@ -177,10 +185,12 @@ export default function OrgUnitDetailPage() {
     <div className="mx-auto max-w-[1200px]">
       <TeamDetail
         unit={unit}
-        parentPath={parentPath}
+        parentChain={parentChain}
+        subUnits={subUnits}
+        jobsAnchoredHere={jobsAnchoredHere}
+        openRolesCount={openRolesCount}
         onBack={onBack}
         onSaved={handleSaved}
-        openRolesCount={openRolesCount}
       />
     </div>
   )

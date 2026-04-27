@@ -1,111 +1,105 @@
 "use client";
 
-import Link from "next/link";
+import * as React from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
 import { toast } from "sonner";
-import { Button } from "@/components/px";
-import { type OrgUnit } from "@/lib/api/org-units";
-import { useUpdateOrgUnit } from "@/lib/hooks/use-update-org-unit";
+
 import { applyApiErrorToForm } from "@/lib/api/errors";
 import {
-  UnitPageHeader,
-  Section,
-  Field,
-  SmallStats,
+  type DivisionMetadata,
+  type OrgUnit,
+} from "@/lib/api/org-units";
+import { useUpdateOrgUnit } from "@/lib/hooks/use-update-org-unit";
+import { usePipelineTemplates } from "@/lib/hooks/use-pipeline-templates";
+
+import { Sidebar } from "./Sidebar";
+import { SidebarMembersCard } from "./SidebarMembersCard";
+import {
+  CrumbBack,
+  HeaderActions,
+  StatItem,
+  StatSep,
+  SubUnitCard,
+  UnitCrumb,
+  UnitPill,
 } from "./shared";
-import { MembersSection } from "./MembersSection";
+import {
+  divisionFormSchema,
+  mergeMetadata,
+  type DivisionFormValues,
+} from "./schema";
 
-interface DivisionMetadata {
-  code?: string;
-  lead_name?: string;
-  cost_center?: string;
-  hiring_budget?: string;
-  description?: string;
-  default_panel?: string;
-  default_takehome?: string;
-  default_tech_screen?: string;
-  bar_raiser_pool?: string;
-}
+import "./detail.css";
 
-const divisionDetailSchema = z.object({
-  name: z.string().min(1, "Name is required").max(100),
-  code: z.string(),
-  lead_name: z.string(),
-  cost_center: z.string(),
-  hiring_budget: z.string(),
-  description: z.string(),
-  default_panel: z.string(),
-  default_takehome: z.string(),
-  default_tech_screen: z.string(),
-  bar_raiser_pool: z.string(),
-});
-
-type DivisionDetailFormValues = z.infer<typeof divisionDetailSchema>;
-
-export function DivisionDetail({
-  unit,
-  parentPath,
-  subUnits,
-  onBack,
-  onSaved,
-  openRolesCount,
-  openRolesByChildId,
-}: {
+export interface DivisionDetailProps {
   unit: OrgUnit;
-  parentPath: string;
+  parentChain: OrgUnit[];
   subUnits: OrgUnit[];
-  onBack: () => void;
-  onSaved: (unit: OrgUnit) => void;
   openRolesCount: number;
   openRolesByChildId: Record<string, number>;
-}) {
-  const initial = (unit.metadata ?? {}) as DivisionMetadata;
+  onBack: () => void;
+  onSaved: (next: OrgUnit) => void;
+}
 
-  const form = useForm<DivisionDetailFormValues>({
-    resolver: zodResolver(divisionDetailSchema),
-    defaultValues: {
+/**
+ * Division detail page — 1:1 with the design HTML's #page-division block.
+ */
+export function DivisionDetail({
+  unit,
+  parentChain,
+  subUnits,
+  openRolesCount,
+  openRolesByChildId,
+  onBack,
+  onSaved,
+}: DivisionDetailProps) {
+  const metadata = (unit.metadata ?? {}) as DivisionMetadata;
+  const [mode, setMode] = React.useState<"view" | "edit">("view");
+
+  const defaults = React.useMemo<DivisionFormValues>(
+    () => ({
       name: unit.name,
-      code: initial.code ?? "",
-      lead_name: initial.lead_name ?? "",
-      cost_center: initial.cost_center ?? "",
-      hiring_budget: initial.hiring_budget ?? "",
-      description: initial.description ?? "",
-      default_panel: initial.default_panel ?? "",
-      default_takehome: initial.default_takehome ?? "",
-      default_tech_screen: initial.default_tech_screen ?? "",
-      bar_raiser_pool: initial.bar_raiser_pool ?? "",
-    },
+      description: metadata.description ?? "",
+    }),
+    [unit.name, metadata.description],
+  );
+
+  const form = useForm<DivisionFormValues>({
+    resolver: zodResolver(divisionFormSchema),
+    defaultValues: defaults,
   });
 
+  React.useEffect(() => {
+    form.reset(defaults);
+  }, [defaults, form]);
+
   const updateMutation = useUpdateOrgUnit();
+  const templatesQuery = usePipelineTemplates(unit.id);
+  const templates = templatesQuery.data ?? [];
+  const watched = form.watch();
 
-  // Watch fields used in the render chrome (header lead name).
-  const leadName = form.watch("lead_name");
-
-  async function onSubmit(values: DivisionDetailFormValues) {
+  async function onSubmit(values: DivisionFormValues) {
     try {
+      const merged = mergeMetadata(unit.metadata, {
+        description: values.description?.trim() || undefined,
+      });
       const updated = await updateMutation.mutateAsync({
         unitId: unit.id,
         body: {
           name: values.name.trim() || unit.name,
-          metadata: {
-            code: values.code,
-            lead_name: values.lead_name,
-            cost_center: values.cost_center,
-            hiring_budget: values.hiring_budget,
-            description: values.description,
-            default_panel: values.default_panel,
-            default_takehome: values.default_takehome,
-            default_tech_screen: values.default_tech_screen,
-            bar_raiser_pool: values.bar_raiser_pool,
-          },
+          metadata: merged,
           set_metadata: true,
         },
       });
       onSaved(updated);
       toast.success("Division saved");
+      setMode("view");
+      form.reset({
+        name: updated.name,
+        description:
+          (updated.metadata as DivisionMetadata | null)?.description ?? "",
+      });
     } catch (err) {
       if (applyApiErrorToForm(err, form)) return;
       toast.error(
@@ -114,246 +108,210 @@ export function DivisionDetail({
     }
   }
 
-  const teams = subUnits.filter((u) => u.unit_type === "team");
+  function handleDiscard() {
+    form.reset(defaults);
+    setMode("view");
+  }
+
+  const crumbs = parentChain.map((u) => ({
+    label: u.name,
+    href: `/settings/org-units/${u.id}`,
+  }));
 
   return (
-    <div>
-      <UnitPageHeader
-        type="division"
-        name={unit.name}
-        parentPath={parentPath}
-        lead={leadName || null}
-        people={unit.member_count}
-        openRoles={openRolesCount}
-        onBack={onBack}
-        right={
-          <>
-            <Button variant="ghost" size="sm" type="button">
-              Archive
-            </Button>
-            <Button variant="outline" size="sm" type="button">
-              Copy link
-            </Button>
-            <Button
-              size="sm"
-              type="button"
-              onClick={form.handleSubmit(onSubmit)}
-              disabled={updateMutation.isPending}
-            >
-              {updateMutation.isPending ? "Saving…" : "Save changes"}
-            </Button>
-          </>
-        }
-      />
-
-      <div
-        className="grid items-start gap-7 px-8 pb-10 pt-5"
-        style={{ gridTemplateColumns: "1fr 320px" }}
-      >
-        <div>
-          <Section title="Division details">
-            <div className="grid grid-cols-2 gap-3.5">
-              <Field label="Division name">
-                <input className="px-input" {...form.register("name")} />
-              </Field>
-              <Field label="Code">
-                <input
-                  className="px-input mono"
-                  {...form.register("code", {
-                    setValueAs: (v: unknown) =>
-                      typeof v === "string" ? v.toUpperCase() : "",
-                  })}
-                  placeholder="ENG"
-                />
-              </Field>
-              <Field label="Division lead">
-                <input
-                  className="px-input"
-                  {...form.register("lead_name")}
-                  placeholder="Sam Rivera · VP Engineering"
-                />
-              </Field>
-              <Field label="Rolls up to">
-                <input
-                  className="px-input"
-                  value={parentPath}
-                  readOnly
-                />
-              </Field>
-              <Field label="Cost center">
-                <input
-                  className="px-input mono"
-                  {...form.register("cost_center")}
-                  placeholder="CC-401-ENG"
-                />
-              </Field>
-              <Field label="Hiring budget">
-                <input
-                  className="px-input mono"
-                  {...form.register("hiring_budget")}
-                  placeholder="$14.2M"
-                />
-              </Field>
+    <main
+      className="org-unit-detail-root"
+      data-edit-mode={mode === "edit" ? "true" : "false"}
+    >
+      <header className="unit-header">
+        <CrumbBack onBack={onBack} />
+        <div className="unit-header-row">
+          <div className="unit-header-main">
+            <div className="unit-pills">
+              <UnitPill type="division" />
             </div>
-          </Section>
+            <UnitCrumb items={crumbs} />
+            <h1
+              className="unit-name"
+              style={{ marginTop: 8 }}
+              data-editable-text="division-name"
+              contentEditable={mode === "edit"}
+              suppressContentEditableWarning
+              onBlur={(e) => {
+                const next = e.currentTarget.textContent?.trim() ?? "";
+                if (next && next !== watched.name) {
+                  form.setValue("name", next, { shouldDirty: true });
+                }
+              }}
+            >
+              {unit.name}
+            </h1>
+            <p
+              className="unit-description"
+              data-editable-text="division-description"
+              contentEditable={mode === "edit"}
+              suppressContentEditableWarning
+              onBlur={(e) => {
+                const next = e.currentTarget.textContent?.trim() ?? "";
+                if (next !== watched.description) {
+                  form.setValue("description", next, { shouldDirty: true });
+                }
+              }}
+            >
+              {watched.description ||
+                (mode === "edit"
+                  ? "Click to add a description. Copilot uses this when enriching JDs anchored to teams under this division."
+                  : "")}
+            </p>
+            <div className="unit-stats">
+              <StatItem
+                value={subUnits.filter((u) => u.unit_type === "team").length}
+                label={
+                  subUnits.filter((u) => u.unit_type === "team").length === 1
+                    ? "team"
+                    : "teams"
+                }
+              />
+              <StatSep />
+              <StatItem value={unit.member_count} label="direct members" />
+              <StatSep />
+              <StatItem value={openRolesCount} label="open jobs" rolledUp />
+            </div>
+          </div>
+          <HeaderActions
+            mode={mode}
+            onModeChange={setMode}
+            saving={updateMutation.isPending}
+            dirty={form.formState.isDirty}
+            onSave={form.handleSubmit(onSubmit)}
+            onDiscard={handleDiscard}
+          />
+        </div>
+      </header>
 
-          <Section
-            title="Description"
-            sub="What this division does. Copilot appends this to every JD opened under it."
-          >
-            <textarea
-              className="px-input"
-              rows={4}
-              {...form.register("description")}
-              placeholder="Engineering owns the platform, the product surface customers touch, and the infra that keeps both running…"
-            />
-          </Section>
-
-          <Section
-            title={`Teams under ${unit.name}`}
-            right={
-              <Button variant="outline" size="xs" type="button">
-                + New team
-              </Button>
-            }
-          >
-            {teams.length === 0 ? (
-              <div
-                className="rounded-[10px] border px-4 py-6 text-center text-[12.5px]"
-                style={{
-                  borderColor: "var(--px-hairline)",
-                  background: "var(--px-surface)",
-                  color: "var(--px-fg-4)",
-                }}
+      <div className="unit-body">
+        <div>
+          {/* Sub-units */}
+          <section className="section">
+            <div className="section-head">
+              <div className="section-head-main">
+                <div className="section-title">
+                  Sub-units{" "}
+                  <span className="count">{subUnits.length}</span>
+                </div>
+              </div>
+              <a
+                className="btn outline xs"
+                href={`/settings/org-units?parent=${unit.id}`}
               >
-                No teams yet.
+                + New sub-unit
+              </a>
+            </div>
+            {subUnits.length === 0 ? (
+              <div className="empty-state">
+                No sub-units yet. Add a team from the org graph.
               </div>
             ) : (
-              <div className="grid grid-cols-2 gap-2.5">
-                {teams.map((t) => {
-                  const open = openRolesByChildId[t.id] ?? 0;
-                  const pressure =
-                    open >= 3 ? "hot" : open > 0 ? "steady" : "cool";
-                  const dot =
-                    pressure === "hot"
-                      ? "var(--px-accent)"
-                      : pressure === "steady"
-                        ? "var(--px-ok)"
-                        : "var(--px-fg-4)";
-                  return (
-                    <Link
-                      key={t.id}
-                      href={`/settings/org-units/${t.id}`}
-                      className="block rounded-[10px] border p-3.5 transition-colors hover:brightness-[0.98]"
-                      style={{
-                        background: "var(--px-surface)",
-                        borderColor: "var(--px-hairline)",
-                      }}
-                    >
-                      <div className="mb-1.5 flex items-center gap-2">
-                        <span
-                          className="h-2 w-2 rounded-full"
-                          style={{ background: dot }}
-                        />
-                        <div
-                          className="text-[15px] font-semibold"
-                          style={{ color: "var(--px-fg)" }}
-                        >
-                          {t.name}
-                        </div>
-                        <span className="flex-1" />
-                        {open > 0 && (
-                          <span
-                            className="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium"
-                            style={{
-                              background: "var(--px-accent-tint)",
-                              color: "var(--px-accent)",
-                              borderColor: "var(--px-accent-line)",
-                            }}
-                          >
-                            {open} open
-                          </span>
-                        )}
-                      </div>
-                      <div
-                        className="flex items-baseline gap-3.5 text-[11.5px]"
-                        style={{ color: "var(--px-fg-4)" }}
-                      >
-                        <span>
-                          <span
-                            className="px-mono mr-1 text-[13px] font-medium"
-                            style={{ color: "var(--px-fg-2)" }}
-                          >
-                            {t.member_count}
-                          </span>
-                          people
-                        </span>
-                        <span className="flex-1" />
-                        <span style={{ color: "var(--px-accent)" }}>
-                          Open →
-                        </span>
-                      </div>
-                    </Link>
-                  );
-                })}
+              <div className="subunits-grid">
+                {subUnits.map((child) => (
+                  <SubUnitCard
+                    key={child.id}
+                    unit={child}
+                    href={`/settings/org-units/${child.id}`}
+                    openRoles={openRolesByChildId[child.id] ?? 0}
+                  />
+                ))}
               </div>
             )}
-          </Section>
+          </section>
 
-          <Section
-            title="Default interview panel"
-            sub="Applied to any role created under this division unless the recruiter overrides."
-          >
-            <div className="grid grid-cols-2 gap-3.5">
-              <Field label="Panel composition">
-                <input
-                  className="px-input"
-                  {...form.register("default_panel")}
-                  placeholder="1 HM · 2 peers · 1 bar raiser"
-                />
-              </Field>
-              <Field label="Takehome">
-                <input
-                  className="px-input"
-                  {...form.register("default_takehome")}
-                  placeholder="Off by default"
-                />
-              </Field>
-              <Field label="Technical screen">
-                <input
-                  className="px-input"
-                  {...form.register("default_tech_screen")}
-                  placeholder="System-design (45 min)"
-                />
-              </Field>
-              <Field label="Bar raiser pool">
-                <input
-                  className="px-input"
-                  {...form.register("bar_raiser_pool")}
-                  placeholder="Staff+ · cross-team · 18 people"
-                />
-              </Field>
+          {/* Pipeline templates */}
+          <section className="section">
+            <div className="section-head">
+              <div className="section-head-main">
+                <div className="section-title">
+                  Pipeline templates{" "}
+                  <span className="count">
+                    {templates.length}{" "}
+                    {templates.length === 1 ? "template" : "templates"}
+                  </span>
+                </div>
+                <div className="section-sub">
+                  Reusable interview pipelines for jobs anchored under any
+                  team in this division. The default template auto-applies
+                  when creating a new JD.
+                </div>
+              </div>
+              <a
+                className="btn outline xs"
+                href={`/settings/org-units/${unit.id}/pipeline-templates`}
+              >
+                + Manage templates →
+              </a>
             </div>
-          </Section>
-
-          <MembersSection unitId={unit.id} />
+            {templatesQuery.isLoading ? (
+              <div className="empty-state">Loading templates…</div>
+            ) : templates.length === 0 ? (
+              <div className="empty-state">
+                No templates yet. Inherits the tenant default.
+              </div>
+            ) : (
+              <div className="card">
+                {[...templates]
+                  .sort((a, b) =>
+                    a.is_default === b.is_default ? 0 : a.is_default ? -1 : 1,
+                  )
+                  .map((tpl) => {
+                    const stages = [...tpl.stages].sort(
+                      (a, b) => a.position - b.position,
+                    );
+                    return (
+                      <div key={tpl.id} className="template-row">
+                        <div className="template-name">
+                          {tpl.name}
+                          {tpl.is_default && (
+                            <span className="default-tag">Default</span>
+                          )}
+                        </div>
+                        <div className="template-stages">
+                          {stages.map((s, i) => (
+                            <React.Fragment key={s.id}>
+                              {i > 0 && (
+                                <span className="arrow" aria-hidden="true">
+                                  →
+                                </span>
+                              )}
+                              <span className="stage">{s.name}</span>
+                            </React.Fragment>
+                          ))}
+                        </div>
+                        <a
+                          className="btn link"
+                          href={`/settings/org-units/${unit.id}/pipeline-templates/${tpl.id}`}
+                        >
+                          Edit
+                        </a>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+          </section>
         </div>
 
-        <aside className="flex flex-col gap-3.5">
-          <SmallStats
-            rows={[
-              { l: "Teams", v: String(teams.length) },
-              { l: "Headcount", v: String(unit.member_count) },
-              {
-                l: "Open roles",
-                v: String(openRolesCount),
-                ok: openRolesCount > 0,
-              },
-              { l: "Sub-units", v: String(subUnits.length) },
-            ]}
-          />
-        </aside>
+        <Sidebar
+          unit={unit}
+          parentChain={parentChain}
+          subUnits={subUnits}
+          topCard={
+            <SidebarMembersCard
+              unitId={unit.id}
+              isEdit={mode === "edit"}
+              helperText="Per-member role picker. Default-role logic only applies to teams."
+            />
+          }
+        />
       </div>
-    </div>
+    </main>
   );
 }

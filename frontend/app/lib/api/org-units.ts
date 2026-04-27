@@ -2,20 +2,82 @@ import { apiFetch } from './client'
 import type { CompanyProfile } from '@/components/dashboard/company-profile-form'
 
 /**
- * Rich per-unit-type metadata. Shape is intentionally loose — each unit_type
- * uses its own subset of keys. Unknown keys are preserved by the backend.
- *
- * Company/Client extras: legal_name, short_name, website, sector, hq, size,
- *   description, interview_style, panel_size, takehome_policy, time_to_decision,
- *   values, base_philosophy, equity, bonus, locations[], remote_policy, visa,
- *   contract_start, renews, fee_model, guarantee_period, exclusive_roles,
- *   account_manager.
- * Region: code, primary_city, timezone, currency, locale, offices[], notes.
- * Division: code, lead_name, cost_center, hiring_budget, description,
- *   default_panel, default_takehome, default_tech_screen, bar_raiser_pool.
- * Team: slug, lead_name, focus.
+ * Rich per-unit-type metadata. Each unit_type uses its own subset of keys;
+ * unknown keys are preserved by the backend (JSONB column). The typed
+ * subtypes below describe the keys that the redesigned detail pages
+ * actively read or write — see spec 2026-04-27 §7.
  */
 export type OrgUnitMetadata = Record<string, unknown>
+
+export const TEAM_DEFAULT_ROLES = [
+  'Recruiter',
+  'Hiring Manager',
+  'Interviewer',
+  'Observer',
+] as const
+export type TeamDefaultRole = (typeof TEAM_DEFAULT_ROLES)[number]
+
+export interface TeamMetadata {
+  default_role?: TeamDefaultRole
+  focus?: string
+}
+
+export interface DivisionMetadata {
+  description?: string
+}
+
+/**
+ * Locale + compliance keys can appear on company / client_account (sources
+ * of truth) AND on region / client_account (per-field overrides of an
+ * inherited value). The frontend uses the same key set in both cases —
+ * presence of a key here means "this unit has set/overridden the value".
+ */
+export interface RegionMetadata {
+  default_timezone?: string
+  default_currency?: string
+  default_locale?: string
+  compliance_aivia_il?: boolean
+  compliance_gdpr_eu?: boolean
+  compliance_ccpa_ca?: boolean
+}
+
+export interface CompanyMetadata {
+  short_name?: string
+  website?: string
+  default_timezone?: string
+  default_currency?: string
+  default_locale?: string
+  compliance_aivia_il?: boolean
+  compliance_gdpr_eu?: boolean
+  compliance_ccpa_ca?: boolean
+}
+
+/**
+ * Resolved-from-ancestry blocks returned by GET /api/org-units/{id}.
+ *
+ * `null` (top-level) means no value is set anywhere in the chain — the
+ * unit + every ancestor are silent on these keys. `null` per-key means
+ * that specific key is unset all the way up. `source_unit_id` points to
+ * the closest ancestor that contributed at least one key (used for the
+ * "Inherited from {ancestor name}" label in the override UX).
+ */
+export interface InheritedLocale {
+  values: {
+    default_timezone: string | null
+    default_currency: string | null
+    default_locale: string | null
+  }
+  source_unit_id: string | null
+}
+
+export interface InheritedCompliance {
+  values: {
+    compliance_aivia_il: boolean | null
+    compliance_gdpr_eu: boolean | null
+    compliance_ccpa_ca: boolean | null
+  }
+  source_unit_id: string | null
+}
 
 export interface OrgUnit {
   id: string
@@ -36,6 +98,8 @@ export interface OrgUnit {
   company_profile: CompanyProfile | null
   company_profile_completed_at: string | null
   metadata: OrgUnitMetadata | null
+  inherited_locale: InheritedLocale | null
+  inherited_compliance: InheritedCompliance | null
 }
 
 export interface OrgUnitMember {
