@@ -66,26 +66,35 @@ The migration is idempotent: it sets the permissions JSONB to the canonical list
 
 ### 3.2 Authority-derived role identity (used by code, not stored)
 
-Code paths that decide "is this caller acting as HM or recruiter on this JD?" derive identity from permissions, not from a role-name lookup. This avoids the trap that `_require_unit_admin` falls into (literal name match). The decision rule, applied to a JD's org-unit ancestry:
+Code paths that decide "is this caller acting as HM or recruiter on this JD?" derive identity from permissions, not from a role-name lookup. The decision rule, applied to a JD's org-unit ancestry:
 
 ```
-caller is_super_admin                          → 'admin' authority
 caller has jobs.manage in ancestry             → 'recruiter' authority
 caller has jobs.create in ancestry, no manage  → 'hm' authority
 otherwise                                      → no authority (403)
 ```
 
-`'admin' authority` includes super admin and anyone holding the `Admin` role on the unit's ancestry — both have `jobs.manage`. Admins are functionally treated as recruiters for state transitions, with the additional ability to override locks (edit a JD even when in `pending_hm_approval`, force-publish, etc.).
+This is **two-valued, not three-valued.** Authority is purely permission-derived; "Admin" is not an authority value. An Admin role-holder (or super-admin) has `jobs.manage` and therefore gets `'recruiter'` authority — they can do everything a recruiter can do.
 
-This is encapsulated in a new helper:
+Admins additionally hold an **override capability** that's separate from authority. Override is what lets an Admin edit a JD that's otherwise locked (e.g., during `pending_hm_approval`), force-publish without HM sign-off, or re-claim a JD assigned to someone else. Override is name-matched + super-admin:
 
 ```python
 # app/modules/jd/authz.py
-def derive_jd_authority(user: UserContext, ancestry: list[OrgUnit]) -> JdAuthority:
-    """Returns 'admin' | 'recruiter' | 'hm' | None."""
+
+JdAuthority = Literal['recruiter', 'hm']
+
+def derive_jd_authority(user: UserContext, ancestry: list[OrgUnit]) -> JdAuthority | None:
+    """Returns 'recruiter' | 'hm' | None based purely on permissions."""
+
+def has_admin_override(user: UserContext, ancestry: list[OrgUnit]) -> bool:
+    """True if super admin OR holds the system 'Admin' role on the
+    JD's ancestry. Name-matched (intentional) — bypassing edit locks
+    is a trust signal, not a permission signal. Tenant-custom roles
+    with equivalent permissions do NOT get override.
+    """
 ```
 
-`JdAuthority` is a `Literal['admin', 'recruiter', 'hm']`. Every JD route handler calls this once, then routes on the result. **No business logic checks `role_name == 'Hiring Manager'` directly** — that's the lesson from the `_require_unit_admin` design choice.
+Every JD route handler calls `derive_jd_authority` once for the normal-flow decision, and `has_admin_override` separately when the route can be bypassed. The existing `_require_unit_admin` precedent (name-matched on `'Admin'`) is the correct pattern here for the same reason: override is a deliberate trust escalation, not a permission shorthand.
 
 ---
 
@@ -223,6 +232,30 @@ The startup RLS-completeness check in `app/main.py` requires no update — `job_
 - `job_postings_unclaimed_idx` is partial (only rows with `assigned_recruiter_id IS NULL AND status = 'pending_recruiter'`) so it stays small even at scale. The "Unclaimed reqs" dashboard query for a recruiter is `WHERE org_unit_id IN (their_unit_ids) AND status = 'pending_recruiter' AND assigned_recruiter_id IS NULL`. Index covers it.
 - `job_postings_assigned_recruiter_idx` powers the "My active reqs" list for a recruiter and the future "Sarah's queue" UI.
 
+### 5.5 status CHECK constraint update — load-bearing
+
+`job_postings.status` is gated by `ck_job_postings_status` (introduced in migration `0018`). It currently allows: `'draft', 'signals_extracting', 'signals_extraction_failed', 'signals_extracted', 'signals_confirmed', 'pipeline_built', 'active', 'archived'`. Migration A **must drop and re-create** this constraint to add the three new states. Forgetting this will fail every INSERT/UPDATE that sets `status` to a new value with a constraint-violation error at runtime.
+
+```sql
+ALTER TABLE job_postings DROP CONSTRAINT ck_job_postings_status;
+ALTER TABLE job_postings ADD CONSTRAINT ck_job_postings_status
+  CHECK (status IN (
+    'pending_recruiter',
+    'draft',
+    'signals_extracting',
+    'signals_extraction_failed',
+    'signals_extracted',
+    'signals_confirmed',
+    'pipeline_built',
+    'pending_hm_approval',
+    'pending_recruiter_revision',
+    'active',
+    'archived'
+  ));
+```
+
+Downgrade reverses, but only after data-migrating any rows in the new states back to a legacy value (see §13.3).
+
 ---
 
 ## 6. API Surface
@@ -231,9 +264,11 @@ The startup RLS-completeness check in `app/main.py` requires no update — `job_
 
 **Behavior split based on caller's authority on the target org unit**, derived via `derive_jd_authority(user, ancestry)`:
 
-- **`'admin'` or `'recruiter'`:** existing behavior. JD lands in `draft`, `created_by_role` = caller's authority, `assigned_recruiter_id` = caller, `claimed_at` = now. Dramatiq actor dispatched. Response is 201 + the existing snapshot shape.
-- **`'hm'`:** new behavior. JD lands in `pending_recruiter`, `created_by_role = 'hm'`, `assigned_recruiter_id = NULL`, `claimed_at = NULL`. **No Dramatiq dispatch.** Response is 201 + a minimal "raised, awaiting recruiter" payload (no snapshot — there's nothing to snapshot yet).
+- **`'recruiter'` authority** (incl. super admin and Admin via override path): existing behavior. JD lands in `draft`, `created_by_role` ∈ `{'admin', 'recruiter'}` based on whether `has_admin_override` is true, `assigned_recruiter_id` = caller, `claimed_at` = now. Dramatiq actor dispatched. Response: `JobPostingWithSnapshot` (existing schema) with `latest_snapshot=None` until the actor commits the first snapshot.
+- **`'hm'` authority:** new behavior. JD lands in `pending_recruiter`, `created_by_role = 'hm'`, `assigned_recruiter_id = NULL`, `claimed_at = NULL`. **No Dramatiq dispatch.** Response is the same `JobPostingWithSnapshot` shape with `latest_snapshot=None` (the schema's existing nullability covers it — no API-shape change).
 - **No authority:** 403 (existing behavior).
+
+The single response schema for both paths is intentional: API stability + frontend can pivot off `status` (or `created_by_role`) for branching, not on response shape.
 
 Request body remains the same shape. The HM-only path requires `description_raw` (their brief) and accepts `project_scope_raw`; all other fields (deadline, headcount, employment_type, etc.) are optional from the HM and may be filled in by the recruiter post-claim.
 
@@ -305,7 +340,15 @@ Admin override behavior: an Admin or super-admin can edit any artifact at any st
 
 ### 7.2 Locking implementation
 
-State + `assigned_recruiter_id` + `created_by` together encode who can edit what. The check is simple lookup-then-compare; no additional locks. Concurrency is handled by the existing version-bump pattern on signals (`SELECT … FOR UPDATE` on the JD row before signal writes), extended to pipeline and question bank writes via the same pattern.
+State + `assigned_recruiter_id` + `created_by` together encode who can edit what. The edit-rights check is a simple lookup-then-compare in `require_edit_rights` — no additional advisory locks needed.
+
+Concurrency for the underlying writes already has per-module mechanisms:
+
+- **Signal writes** (`save_signals` in `jd/service.py`) use `SELECT … FOR UPDATE` on the parent JD row to serialize concurrent writers, then insert at `MAX(version) + 1` with a unique constraint backstop.
+- **Pipeline writes** (`bump_pipeline_version` in `pipelines/service.py`) atomically increment `pipeline_version` on the instance via in-place UPDATE. This is fine for our case because in `pending_hm_approval` only the HM can write — there is no recruiter/HM concurrency to resolve. The HM editing from two browser tabs is the only race surface, which the existing pattern already handles.
+- **Question bank writes** follow a similar version-bump pattern via the QB state machine.
+
+This spec **does not** introduce new row-locking patterns. The edit-rights matrix is the lock. Existing per-artifact concurrency mechanisms continue to apply within their domains.
 
 ### 7.3 "Which HM can approve?"
 
@@ -327,7 +370,7 @@ The frontend reads `me.assignments` and the JD's state + `assigned_recruiter_id`
 The cost concern is real and load-bearing for Phase 3 economics: at Fortune 500 volume, every speculative HM brief that triggers a full Call-1+Call-2 extraction is ~3–6k tokens of waste if the recruiter rejects the req. The new `pending_recruiter` state isolates AI cost behind a recruiter checkpoint:
 
 - HM-raised JDs sit in `pending_recruiter` with no Dramatiq dispatch.
-- Recruiter claim is the trigger for `transition → draft → signals_extracting`. The same `_safe_dispatch_extraction` background task that runs in today's create flow is moved into the claim handler.
+- Recruiter claim is the trigger for `transition → draft → signals_extracting`. The same `_safe_dispatch_extraction` background task that runs in today's create flow is also wired into the claim handler (called in both places, not moved).
 - If a recruiter rejects a req before claiming (hypothetical "Decline" action — out of scope for MVP), zero AI cost is incurred.
 
 For recruiter-self-created JDs, behavior is unchanged: extraction fires immediately, same cost profile as today.
@@ -455,7 +498,16 @@ Both migrations are **independent** and can be applied in either order. They're 
 
 Each migration has a paired downgrade. Schema downgrade drops the new columns; permission-seed downgrade restores the prior canonical permission lists. The seed downgrade is required reading before a customer-facing rollout — it's a small file but easy to forget.
 
-A backwards-compatibility note: if any JDs were created in `pending_recruiter` and the schema is rolled back, those rows have nowhere to live (status enum lacks the value). Operationally, before downgrading we'd need to (a) archive any open `pending_recruiter` rows, or (b) hand-update them to `draft`. Documented in the migration file's docstring.
+A backwards-compatibility note: if any JDs were created in one of the new states (`pending_recruiter`, `pending_hm_approval`, `pending_recruiter_revision`) and the schema is rolled back, those rows would violate the rolled-back `ck_job_postings_status` CHECK constraint. The downgrade migration must data-migrate those rows first:
+
+```sql
+UPDATE job_postings SET status = 'draft'
+ WHERE status IN ('pending_recruiter', 'pending_recruiter_revision');
+UPDATE job_postings SET status = 'pipeline_built'
+ WHERE status = 'pending_hm_approval';
+```
+
+Lossy but safe — pending_recruiter JDs collapse to draft (their pre-claim equivalent), in-revision JDs go back to pipeline_built. Documented in the migration file's downgrade docstring.
 
 ---
 
@@ -475,6 +527,8 @@ These are deliberately deferred. Each is a real follow-up but not part of this s
 - Revision history / multiple revision_notes (single overwrite-on-resend in MVP).
 - Email/Slack notifications beyond the `notifications/` module's existing dispatch surfaces.
 - Mobile responsive design for the new HM raise form.
+- HM-initiated cancellation of a `pending_recruiter` req before claim. (Reasonable to add later; for MVP an HM who raised something in error can ask an Admin to archive it.)
+- A "Decline" action that lets a recruiter explicitly reject a `pending_recruiter` req and bounce it back to the HM with notes.
 
 ---
 
