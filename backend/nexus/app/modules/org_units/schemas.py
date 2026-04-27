@@ -43,6 +43,14 @@ class OrgUnitResponse(BaseModel):
     admin_delete_disabled: bool
     is_accessible: bool = True
     admin_emails: list[str] = []
+    # Resolved-from-ancestry blocks (Phase 2C — org unit redesign).
+    # Shape: {"values": {<key>: <value>|null, ...}, "source_unit_id": "uuid"|null}.
+    # `null` at the top level means no value is set anywhere in the chain;
+    # `null` per-key means that specific key is unset all the way up. The
+    # frontend renders inherited values + per-field override toggles using
+    # this data without re-walking the tree client-side.
+    inherited_locale: dict | None = None
+    inherited_compliance: dict | None = None
 
 
 class AssignRoleRequest(BaseModel):

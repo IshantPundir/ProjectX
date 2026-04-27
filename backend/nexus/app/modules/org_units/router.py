@@ -18,6 +18,8 @@ from app.modules.org_units.service import (
     assign_role,
     create_org_unit,
     delete_org_unit,
+    find_compliance_flags_in_ancestry,
+    find_locale_defaults_in_ancestry,
     get_org_unit,
     list_org_units,
     list_unit_members,
@@ -38,7 +40,12 @@ def _require_unit_admin(ctx: UserContext, org_unit_id: uuid_mod.UUID) -> None:
 
 
 def _build_response(
-    unit: OrganizationalUnit, member_count: int, email_map: dict
+    unit: OrganizationalUnit,
+    member_count: int,
+    email_map: dict,
+    *,
+    inherited_locale: dict | None = None,
+    inherited_compliance: dict | None = None,
 ) -> OrgUnitResponse:
     return OrgUnitResponse(
         id=str(unit.id),
@@ -61,6 +68,8 @@ def _build_response(
         deletable_by=str(unit.deletable_by) if unit.deletable_by else None,
         deletable_by_email=email_map.get(unit.deletable_by) if unit.deletable_by else None,
         admin_delete_disabled=unit.admin_delete_disabled,
+        inherited_locale=inherited_locale,
+        inherited_compliance=inherited_compliance,
     )
 
 
@@ -113,7 +122,15 @@ async def create_unit(
         raise HTTPException(status_code=400, detail=str(e))
 
     email_map = await _load_email_map(db, unit.created_by, unit.deletable_by)
-    return _build_response(unit, 0, email_map)
+    inherited_locale = await find_locale_defaults_in_ancestry(db, unit.id)
+    inherited_compliance = await find_compliance_flags_in_ancestry(db, unit.id)
+    return _build_response(
+        unit,
+        0,
+        email_map,
+        inherited_locale=inherited_locale,
+        inherited_compliance=inherited_compliance,
+    )
 
 
 @router.get("", response_model=list[OrgUnitResponse])
@@ -200,7 +217,15 @@ async def update_unit(
         raise HTTPException(status_code=400, detail=str(e))
 
     email_map = await _load_email_map(db, unit.created_by, unit.deletable_by)
-    return _build_response(unit, 0, email_map)
+    inherited_locale = await find_locale_defaults_in_ancestry(db, unit.id)
+    inherited_compliance = await find_compliance_flags_in_ancestry(db, unit.id)
+    return _build_response(
+        unit,
+        0,
+        email_map,
+        inherited_locale=inherited_locale,
+        inherited_compliance=inherited_compliance,
+    )
 
 
 @router.delete("/{unit_id}")
