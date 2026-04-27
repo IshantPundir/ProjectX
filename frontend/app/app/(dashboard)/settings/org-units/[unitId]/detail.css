@@ -663,15 +663,27 @@
 [data-edit-mode='false'] .textarea::placeholder {
   color: transparent;
 }
+/*
+ * Member management is admin-only and always interactive — it is NOT
+ * gated by the page-level edit/view toggle. Re-assert the active input
+ * styling for the team Members add-form (`.add-form .input`) and the
+ * sidebar Direct-members card (`.sidebar-add-form .input`) so these
+ * pickers remain clickable while the page is in view mode.
+ */
+[data-edit-mode='false'] .add-form .input,
+[data-edit-mode='false'] .sidebar-add-form .input {
+  border-color: var(--px-hairline-strong) !important;
+  background: var(--px-surface) !important;
+  padding-left: 8px;
+  padding-right: 8px;
+  pointer-events: auto;
+  cursor: default;
+}
+[data-edit-mode='false'] .add-form .input::placeholder,
+[data-edit-mode='false'] .sidebar-add-form .input::placeholder {
+  color: var(--px-fg-4);
+}
 [data-edit-mode='false'] .field-hint {
-  display: none;
-}
-[data-edit-mode='false'] .add-member-row,
-[data-edit-mode='false'] .add-member-helper {
-  display: none;
-}
-[data-edit-mode='false'] .row-action,
-[data-edit-mode='false'] .opt-in-link {
   display: none;
 }
 [data-edit-mode='false'] .section-sub {
@@ -1592,12 +1604,6 @@ select.select {
 }
 .role-mini-remove:hover {
   opacity: 1;
-}
-[data-edit-mode='false'] .role-mini-remove {
-  display: none;
-}
-[data-edit-mode='false'] .role-mini {
-  padding-right: 7px;
 }
 
 /* Structured add form (vs. the existing inline `sidebar-add-row`). */

@@ -145,4 +145,35 @@ describe('OrgUnitNode', () => {
     const card = screen.getByRole('button', { name: /division: Engineering/ })
     expect(card.hasAttribute('data-node-card')).toBe(true)
   })
+
+  describe('when is_accessible is false', () => {
+    it('exposes data-state="locked" and aria-disabled', () => {
+      renderNode({ unit: { is_accessible: false } })
+      const card = screen.getByRole('button')
+      expect(card).toHaveAttribute('data-state', 'locked')
+      expect(card).toHaveAttribute('aria-disabled', 'true')
+    })
+
+    it('renders a lock indicator and replaces the member-count subtitle', () => {
+      renderNode({ unit: { is_accessible: false, member_count: 12 } })
+      expect(screen.getByTestId('locked-icon')).toBeInTheDocument()
+      expect(screen.getByText(/division\s+·\s+locked/)).toBeInTheDocument()
+      expect(screen.queryByText(/12 members/)).not.toBeInTheDocument()
+    })
+
+    it('does not fire onContextMenu for keyboard shortcuts on locked nodes', () => {
+      const onContextMenu = vi.fn()
+      renderNode({ unit: { is_accessible: false }, onContextMenu })
+      const card = screen.getByRole('button')
+      card.focus()
+      fireEvent.keyDown(card, { key: 'F10', shiftKey: true })
+      fireEvent.keyDown(card, { key: 'ContextMenu' })
+      expect(onContextMenu).not.toHaveBeenCalled()
+    })
+
+    it('hides the open-roles badge even when openRoles > 0', () => {
+      renderNode({ unit: { is_accessible: false, openRoles: 5 } })
+      expect(screen.queryByTestId('open-roles-badge')).not.toBeInTheDocument()
+    })
+  })
 })

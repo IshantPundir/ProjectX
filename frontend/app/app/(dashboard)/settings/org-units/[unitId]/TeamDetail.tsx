@@ -15,6 +15,7 @@ import {
   type TeamDefaultRole,
   type TeamMetadata,
 } from "@/lib/api/org-units";
+import { canManageUnit, useMe } from "@/lib/hooks/use-me";
 import { useUpdateOrgUnit } from "@/lib/hooks/use-update-org-unit";
 import { useOrgUnitMembers } from "@/lib/hooks/use-org-unit-members";
 import { useRoles } from "@/lib/hooks/use-roles";
@@ -116,6 +117,8 @@ export function TeamDetail({
   }, [mode]);
 
   const updateMutation = useUpdateOrgUnit();
+  const meQuery = useMe();
+  const canManageMembers = canManageUnit(meQuery.data, unit.id);
   const watched = form.watch();
   const role = watched.default_role;
 
@@ -294,7 +297,7 @@ export function TeamDetail({
             unit={unit}
             defaultRole={role}
             parentChain={parentChain}
-            isEdit={mode === "edit"}
+            canManageMembers={canManageMembers}
           />
         </div>
 
@@ -368,16 +371,23 @@ interface TeamMembersSectionProps {
   unit: OrgUnit;
   defaultRole: TeamDefaultRole | undefined;
   parentChain: OrgUnit[];
-  isEdit: boolean;
+  /** True for super admin or Admin-on-this-unit. Drives whether the
+   *  section renders at all and the add-form is unconditionally open. */
+  canManageMembers: boolean;
 }
 
 function TeamMembersSection({
   unit,
   defaultRole,
   parentChain,
-  isEdit,
+  canManageMembers,
 }: TeamMembersSectionProps) {
-  const membersQuery = useOrgUnitMembers(unit.id);
+  // Hooks must run unconditionally (rules-of-hooks). Disable the
+  // members query for non-admins so we don't fire a request that the
+  // backend would 403 anyway.
+  const membersQuery = useOrgUnitMembers(unit.id, {
+    enabled: canManageMembers,
+  });
   const rolesQuery = useRoles();
   const tenantUsersQuery = useTeamMembers();
   const assignMutation = useAssignRole();
@@ -399,24 +409,44 @@ function TeamMembersSection({
   const cascadeSources = useAdminCascadeSources(parentChain, members);
 
   const [pickerUserId, setPickerUserId] = React.useState("");
+  // Role to assign to the new member. Defaults to the team's default
+  // role when set; the admin can override per-add. Keeping this as
+  // explicit local state (rather than gating the button on
+  // `defaultRoleId`) means the form is always usable — even on a team
+  // whose default role hasn't been chosen yet, or while `useRoles` is
+  // still resolving.
+  const [pickerRoleId, setPickerRoleId] = React.useState<string>("");
+  React.useEffect(() => {
+    // Sync the role picker with the team's resolved default role,
+    // but don't clobber an explicit override the admin already made.
+    if (!pickerRoleId && defaultRoleId) {
+      setPickerRoleId(defaultRoleId);
+    }
+  }, [defaultRoleId, pickerRoleId]);
+
+  // After all hooks: bail out for non-admins. The whole section is
+  // admin-only — no read-only mode.
+  if (!canManageMembers) return null;
+
+  const pickerRoleName =
+    roles.find((r) => r.id === pickerRoleId)?.name ?? null;
 
   async function handleAdd() {
-    if (!pickerUserId || !defaultRoleId) {
-      toast.error(
-        defaultRole
-          ? `Could not resolve role id for "${defaultRole}".`
-          : "Set a default role for this team before adding members.",
-      );
-      return;
-    }
+    if (!pickerUserId || !pickerRoleId) return;
     try {
       await assignMutation.mutateAsync({
         unitId: unit.id,
         userId: pickerUserId,
-        roleId: defaultRoleId,
+        roleId: pickerRoleId,
       });
-      toast.success(`Added with role "${defaultRole}"`);
+      toast.success(
+        pickerRoleName
+          ? `Added with role "${pickerRoleName}"`
+          : "Member added",
+      );
       setPickerUserId("");
+      // Reset the role picker back to the team's default for the next add.
+      setPickerRoleId(defaultRoleId ?? "");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to add member");
     }
@@ -459,9 +489,10 @@ function TeamMembersSection({
       </div>
       <div className="card members-list">
         <div className="add-member-helper">
-          No role picker — every member inherits the team&rsquo;s default
-          role. Admins shown separately and may opt in to also hold the
-          default role.
+          New members default to the team&rsquo;s{" "}
+          <strong>{defaultRole ?? "default role"}</strong>; pick a different
+          role per-add when needed. Admins shown separately and may opt in
+          to also hold the default role.
         </div>
         <div className="members-head team-grid">
           <span>Person</span>
@@ -561,42 +592,54 @@ function TeamMembersSection({
         })}
 
         <div className="add-member-row">
-          {!isEdit ? (
-            <span style={{ fontSize: 12, color: "var(--px-fg-4)" }}>
-              Adding will assign{" "}
-              <strong style={{ color: "var(--px-caution)" }}>
-                {defaultRole ?? "—"}
-              </strong>{" "}
-              automatically.
-            </span>
-          ) : (
-            <div className="add-form">
-              <select
-                className="input"
-                style={{ height: 28, fontSize: 12, flex: 1 }}
-                value={pickerUserId}
-                onChange={(e) => setPickerUserId(e.target.value)}
-                aria-label="Pick a person to add"
-              >
-                <option value="">Pick a person…</option>
-                {candidateUsers.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.full_name ? `${u.full_name} · ${u.email}` : u.email}
-                  </option>
-                ))}
-              </select>
-              <button
-                className="btn outline xs"
-                type="button"
-                onClick={handleAdd}
-                disabled={
-                  !pickerUserId || !defaultRoleId || assignMutation.isPending
-                }
-              >
-                {assignMutation.isPending ? "Adding…" : "+ Add member"}
-              </button>
-            </div>
-          )}
+          <div className="add-form">
+            <select
+              className="input"
+              style={{ height: 28, fontSize: 12, flex: 1 }}
+              value={pickerUserId}
+              onChange={(e) => setPickerUserId(e.target.value)}
+              aria-label="Pick a person to add"
+            >
+              <option value="">Pick a person…</option>
+              {candidateUsers.length === 0 && (
+                <option value="" disabled>
+                  No more team members to add
+                </option>
+              )}
+              {candidateUsers.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.full_name ? `${u.full_name} · ${u.email}` : u.email}
+                </option>
+              ))}
+            </select>
+            <select
+              className="input"
+              style={{ height: 28, fontSize: 12, width: 140 }}
+              value={pickerRoleId}
+              onChange={(e) => setPickerRoleId(e.target.value)}
+              aria-label="Pick a role"
+            >
+              <option value="">Pick a role…</option>
+              {roles.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
+                  {defaultRoleId && r.id === defaultRoleId
+                    ? " (default)"
+                    : ""}
+                </option>
+              ))}
+            </select>
+            <button
+              className="btn outline xs"
+              type="button"
+              onClick={handleAdd}
+              disabled={
+                !pickerUserId || !pickerRoleId || assignMutation.isPending
+              }
+            >
+              {assignMutation.isPending ? "Adding…" : "+ Add member"}
+            </button>
+          </div>
         </div>
       </div>
     </section>

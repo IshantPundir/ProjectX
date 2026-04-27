@@ -9,7 +9,9 @@ import { getFreshSupabaseToken } from "@/lib/auth/tokens";
 import { jobsApi, type JobPostingSummary } from "@/lib/api/jobs";
 import { useOrgUnits } from "@/lib/hooks/use-org-units";
 import { useDeleteOrgUnit } from "@/lib/hooks/use-delete-org-unit";
+import { isAnyAdmin, useMe } from "@/lib/hooks/use-me";
 import { DangerConfirmDialog } from "@/components/px";
+import { AccessDenied } from "@/components/dashboard/AccessDenied";
 import type { UnitType } from "@/components/dashboard/org-units/unit-type-style";
 import {
   OrgGraph,
@@ -48,6 +50,7 @@ function pressureFor(openRoles: number): Pressure {
 export default function OrgUnitsPage() {
   const router = useRouter();
 
+  const meQuery = useMe();
   const unitsQuery = useOrgUnits();
   const jobsQuery = useQuery<JobPostingSummary[]>({
     queryKey: ["jobs-list"],
@@ -154,6 +157,15 @@ export default function OrgUnitsPage() {
 
   const totalPeople = units.reduce((n, u) => n + u.member_count, 0);
   const totalUnits = units.length;
+
+  // RBAC: tenant admins only (super admin OR holds Admin on at least
+  // one unit). Wait for /me to resolve before deciding to avoid a
+  // flicker, then render the access-denied panel for non-admins. The
+  // nav rail also hides this entry, so this is the second line of
+  // defence against direct URL navigation.
+  if (!meQuery.isLoading && !isAnyAdmin(meQuery.data)) {
+    return <AccessDenied />;
+  }
 
   return (
     <div className="mx-auto flex h-full max-w-[1600px] flex-col overflow-hidden">
@@ -264,6 +276,7 @@ function SelectedDetail({
   unit: GraphNodeData;
   onOpen: () => void;
 }) {
+  const isLocked = !unit.is_accessible;
   const pressureCopy: Record<Pressure, string> = {
     hot: "hiring hot",
     steady: "steady",
@@ -300,17 +313,31 @@ function SelectedDetail({
         >
           {unit.name}
         </h2>
-        <span
-          className="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase"
-          style={{
-            letterSpacing: "0.3px",
-            color: pressureColor[unit.pressure],
-            background: pressureBg[unit.pressure],
-            borderColor: pressureLine[unit.pressure],
-          }}
-        >
-          {pressureCopy[unit.pressure]}
-        </span>
+        {isLocked ? (
+          <span
+            className="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase"
+            style={{
+              letterSpacing: "0.3px",
+              color: "var(--px-fg-4)",
+              background: "var(--px-surface-2)",
+              borderColor: "var(--px-hairline)",
+            }}
+          >
+            locked
+          </span>
+        ) : (
+          <span
+            className="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase"
+            style={{
+              letterSpacing: "0.3px",
+              color: pressureColor[unit.pressure],
+              background: pressureBg[unit.pressure],
+              borderColor: pressureLine[unit.pressure],
+            }}
+          >
+            {pressureCopy[unit.pressure]}
+          </span>
+        )}
       </div>
       <div
         className="text-[13px]"
@@ -319,16 +346,29 @@ function SelectedDetail({
         <span className="px-chip soft" style={{ height: 18, padding: "0 7px", fontSize: 10.5 }}>
           {unit.unit_type.replace("_", " ")}
         </span>{" "}
-        {unit.member_count} people · {unit.openRoles} open role
-        {unit.openRoles === 1 ? "" : "s"}.
+        {isLocked ? (
+          <>You don&apos;t have admin access on this unit.</>
+        ) : (
+          <>
+            {unit.member_count} people · {unit.openRoles} open role
+            {unit.openRoles === 1 ? "" : "s"}.
+          </>
+        )}
       </div>
       <div className="mt-3.5 flex gap-2">
-        <button onClick={onOpen} className="px-btn outline xs">
+        <button
+          onClick={onOpen}
+          className="px-btn outline xs"
+          disabled={isLocked}
+          title={isLocked ? "Locked — ask an admin for access" : undefined}
+        >
           Open detail →
         </button>
-        <button className="px-btn ghost xs">
-          <IconSearch className="h-3 w-3" /> Find person
-        </button>
+        {!isLocked && (
+          <button className="px-btn ghost xs">
+            <IconSearch className="h-3 w-3" /> Find person
+          </button>
+        )}
       </div>
     </div>
   );

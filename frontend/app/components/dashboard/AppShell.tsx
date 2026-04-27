@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import type { MeResponse } from "@/lib/api/auth";
+import { isAnyAdmin } from "@/lib/hooks/use-me";
 
 /* ─── Icons ────────────────────────────────────────────────── */
 
@@ -98,6 +100,14 @@ type NavItem = {
   label: string;
   icon: IconPath;
   kbd?: string;
+  /**
+   * Optional visibility predicate. When present and returns false, the
+   * item is not rendered in the rail. Used to gate tenant-wide admin
+   * surfaces (Org units, Team & access) to admins only — pages enforce
+   * the same rule independently so direct URL navigation also lands on
+   * the access-denied panel.
+   */
+  visible?: (me: MeResponse | null | undefined) => boolean;
 };
 
 // Primary nav matches the v4 design. Pipeline + Question bank are
@@ -114,8 +124,18 @@ const PRIMARY_NAV: readonly NavItem[] = [
 ] as const;
 
 const FOOTER_NAV: readonly NavItem[] = [
-  { href: "/settings/org-units", label: "Org units", icon: NI.tree },
-  { href: "/settings/team", label: "Team & access", icon: NI.users },
+  {
+    href: "/settings/org-units",
+    label: "Org units",
+    icon: NI.tree,
+    visible: isAnyAdmin,
+  },
+  {
+    href: "/settings/team",
+    label: "Team & access",
+    icon: NI.users,
+    visible: isAnyAdmin,
+  },
   { href: "/profile", label: "Profile", icon: NI.user },
 ] as const;
 
@@ -211,6 +231,10 @@ export interface AppShellProps {
   userRole?: string;
   orgContext?: string;
   aiChip?: string;
+  /** Server-fetched /me payload; null when /me failed (rendered as a
+   *  graceful degradation so the shell still mounts). Drives nav-item
+   *  visibility for admin-only surfaces. */
+  me?: MeResponse | null;
   children: React.ReactNode;
 }
 
@@ -220,6 +244,7 @@ export function AppShell({
   userRole = "Recruiter",
   orgContext,
   aiChip,
+  me,
   children,
 }: AppShellProps) {
   const pathname = usePathname();
@@ -358,7 +383,9 @@ export function AppShell({
           className="flex flex-col gap-px border-t px-2 pb-2 pt-2.5"
           style={{ borderColor: "var(--px-hairline)" }}
         >
-          {FOOTER_NAV.map((item) => (
+          {FOOTER_NAV.filter(
+            (item) => item.visible == null || item.visible(me),
+          ).map((item) => (
             <NavLink
               key={item.href}
               item={item}

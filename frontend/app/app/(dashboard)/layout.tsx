@@ -56,7 +56,7 @@ export default async function DashboardLayout({
 
   return (
     <div className="flex h-screen w-full flex-1">
-      <AppShell userEmail={user.email ?? ""}>
+      <AppShell userEmail={user.email ?? ""} me={me}>
         <DashboardProviders>{children}</DashboardProviders>
       </AppShell>
     </div>

@@ -1,4 +1,5 @@
 import { memo, type CSSProperties, type KeyboardEvent } from 'react'
+import { Lock } from 'lucide-react'
 
 import type { GraphNodeData } from './OrgGraph'
 import { getUnitTypeStyle } from './unit-type-style'
@@ -31,13 +32,20 @@ function OrgUnitNodeImpl({
 
   const isSelected = selectedId === unit.id
   const isOnPath = !isSelected && onSelectPath.has(unit.id)
-  const pressure = pressureForOpenRoles(unit.openRoles)
+  // is_accessible=false marks ancestors that the caller can see for tree
+  // context but does not hold Admin on. Backend already 403s on writes
+  // (_require_unit_admin in org_units/router.py); this card visually
+  // reinforces that — greyed, locked, no context menu, no openRoles badge.
+  const isLocked = !unit.is_accessible
+  const pressure = isLocked ? null : pressureForOpenRoles(unit.openRoles)
 
-  const dataState: 'selected' | 'on-path' | 'default' = isSelected
-    ? 'selected'
-    : isOnPath
-      ? 'on-path'
-      : 'default'
+  const dataState: 'selected' | 'on-path' | 'locked' | 'default' = isLocked
+    ? 'locked'
+    : isSelected
+      ? 'selected'
+      : isOnPath
+        ? 'on-path'
+        : 'default'
 
   function handleKey(e: KeyboardEvent<HTMLDivElement>) {
     if (e.key === 'Enter' || e.key === ' ') {
@@ -45,8 +53,12 @@ function OrgUnitNodeImpl({
       onSelect(unit.id)
       return
     }
-    // OS-standard "open context menu" shortcuts.
-    if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
+    // OS-standard "open context menu" shortcuts. Suppressed for locked
+    // nodes so a non-admin can't open the create/delete radial menu.
+    if (
+      !isLocked &&
+      (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey))
+    ) {
       e.preventDefault()
       onContextMenu?.(unit.id)
     }
@@ -62,25 +74,35 @@ function OrgUnitNodeImpl({
   const cardStyle: CSSProperties = {
     width: 168,
     height: 52,
-    background: 'var(--px-surface)',
+    background: isLocked ? 'var(--px-bg-2)' : 'var(--px-surface)',
     borderRadius: 10,
-    border: `1px solid ${
-      isSelected
+    // Use longhand border-* properties only — mixing the `border`
+    // shorthand with `borderStyle` triggers a React rerender warning
+    // ("Updating a style property during rerender (border) when a
+    // conflicting property is set (borderStyle)") because the shorthand
+    // also sets border-style and the two write order is undefined.
+    borderWidth: 1,
+    borderStyle: isLocked ? 'dashed' : 'solid',
+    borderColor: isLocked
+      ? 'var(--px-hairline)'
+      : isSelected
         ? 'var(--px-accent)'
         : isOnPath
           ? 'var(--px-accent-line)'
-          : 'var(--px-hairline-strong)'
-    }`,
-    boxShadow: isSelected
-      ? '0 0 0 3px var(--px-accent-glow)'
-      : 'var(--px-shadow-sm)',
+          : 'var(--px-hairline-strong)',
+    boxShadow: isLocked
+      ? 'none'
+      : isSelected
+        ? '0 0 0 3px var(--px-accent-glow)'
+        : 'var(--px-shadow-sm)',
     display: 'flex',
     alignItems: 'center',
     paddingRight: 8,
     overflow: 'hidden',
     transition: 'box-shadow 120ms ease, border-color 120ms ease',
-    cursor: 'pointer',
+    cursor: isLocked ? 'not-allowed' : 'pointer',
     userSelect: 'none',
+    opacity: isLocked ? 0.55 : 1,
   }
 
   return (
@@ -88,8 +110,13 @@ function OrgUnitNodeImpl({
       role="button"
       tabIndex={0}
       data-node-card
-      aria-label={`${unit.unit_type}: ${unit.name}`}
+      aria-label={
+        isLocked
+          ? `${unit.unit_type}: ${unit.name} (locked — ask an admin for access)`
+          : `${unit.unit_type}: ${unit.name}`
+      }
       aria-pressed={isSelected}
+      aria-disabled={isLocked}
       data-state={dataState}
       className="focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--px-accent)]"
       style={cardStyle}
@@ -150,9 +177,22 @@ function OrgUnitNodeImpl({
             textOverflow: 'ellipsis',
           }}
         >
-          {unit.unit_type} &middot; {unit.member_count} members
+          {isLocked
+            ? `${unit.unit_type} · locked`
+            : `${unit.unit_type} · ${unit.member_count} members`}
         </span>
       </span>
+      {isLocked && (
+        <span
+          data-testid="locked-icon"
+          aria-hidden="true"
+          className="ml-2 flex-none"
+          title="Locked — you do not have admin access on this unit"
+          style={{ color: 'var(--px-fg-4)' }}
+        >
+          <Lock size={12} strokeWidth={2} />
+        </span>
+      )}
       {pressure && (
         <span
           data-testid="open-roles-badge"

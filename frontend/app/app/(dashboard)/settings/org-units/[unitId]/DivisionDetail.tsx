@@ -10,6 +10,7 @@ import {
   type DivisionMetadata,
   type OrgUnit,
 } from "@/lib/api/org-units";
+import { canManageUnit, useMe } from "@/lib/hooks/use-me";
 import { useUpdateOrgUnit } from "@/lib/hooks/use-update-org-unit";
 import { usePipelineTemplates } from "@/lib/hooks/use-pipeline-templates";
 
@@ -75,6 +76,8 @@ export function DivisionDetail({
   }, [defaults, form]);
 
   const updateMutation = useUpdateOrgUnit();
+  const meQuery = useMe();
+  const canManageMembers = canManageUnit(meQuery.data, unit.id);
   const templatesQuery = usePipelineTemplates(unit.id);
   const templates = templatesQuery.data ?? [];
   const watched = form.watch();
@@ -306,7 +309,7 @@ export function DivisionDetail({
           topCard={
             <SidebarMembersCard
               unitId={unit.id}
-              isEdit={mode === "edit"}
+              canManageMembers={canManageMembers}
               helperText="Per-member role picker. Default-role logic only applies to teams."
             />
           }

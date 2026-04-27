@@ -14,8 +14,10 @@ import { useInviteTeamMember } from '@/lib/hooks/use-invite-team-member'
 import { useResendTeamInvite } from '@/lib/hooks/use-resend-team-invite'
 import { useRevokeTeamInvite } from '@/lib/hooks/use-revoke-team-invite'
 import { useDeactivateUser } from '@/lib/hooks/use-deactivate-user'
+import { isAnyAdmin } from '@/lib/hooks/use-me'
 import type { TeamMember } from '@/lib/api/team'
 import { DangerConfirmDialog } from '@/components/px'
+import { AccessDenied } from '@/components/dashboard/AccessDenied'
 
 import { inviteTeamMemberSchema, type InviteTeamMemberFormValues } from './schema'
 
@@ -125,6 +127,16 @@ export default function TeamPage() {
   // backend enforces permission too, but avoids showing a non-admin
   // a form they can't submit.
   const showInviteForm = !meQuery.isLoading && isSuperAdmin
+
+  // RBAC: this page is restricted to tenant admins (super admin OR
+  // anyone holding the system Admin role on at least one unit). Hide
+  // it for everyone else with a clear access-denied panel; the nav
+  // rail also hides the entry. Wait for /me to resolve before deciding
+  // — `isAnyAdmin(undefined)` is false and would flicker the banner.
+  if (!meQuery.isLoading && !isAnyAdmin(me)) {
+    return <AccessDenied />
+  }
+
   const members: TeamMember[] = membersQuery.data ?? []
   const users = members.filter((m) => m.source === 'user')
   const invites = members.filter((m) => m.source === 'invite')

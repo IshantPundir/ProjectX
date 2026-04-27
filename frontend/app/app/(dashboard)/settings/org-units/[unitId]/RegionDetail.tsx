@@ -7,6 +7,7 @@ import { toast } from "sonner";
 
 import { applyApiErrorToForm } from "@/lib/api/errors";
 import { type OrgUnit, type RegionMetadata } from "@/lib/api/org-units";
+import { canManageUnit, useMe } from "@/lib/hooks/use-me";
 import { useUpdateOrgUnit } from "@/lib/hooks/use-update-org-unit";
 
 import { Sidebar } from "./Sidebar";
@@ -91,6 +92,8 @@ export function RegionDetail({
   }, [defaults, form]);
 
   const updateMutation = useUpdateOrgUnit();
+  const meQuery = useMe();
+  const canManageMembers = canManageUnit(meQuery.data, unit.id);
   const watched = form.watch();
   const isEdit = mode === "edit";
 
@@ -342,7 +345,7 @@ export function RegionDetail({
           topCard={
             <SidebarMembersCard
               unitId={unit.id}
-              isEdit={isEdit}
+              canManageMembers={canManageMembers}
               helperText="Often empty — most members live at division/team level. Useful for regional HR partners and legal."
             />
           }

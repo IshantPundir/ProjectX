@@ -10,6 +10,7 @@ import {
   type CompanyMetadata,
   type OrgUnit,
 } from "@/lib/api/org-units";
+import { canManageUnit, useMe } from "@/lib/hooks/use-me";
 import { useUpdateOrgUnit } from "@/lib/hooks/use-update-org-unit";
 import { usePipelineTemplates } from "@/lib/hooks/use-pipeline-templates";
 import { type CompanyProfile } from "@/components/dashboard/company-profile-form";
@@ -124,6 +125,8 @@ export function CompanyDetail({
   }, [defaults, form]);
 
   const updateMutation = useUpdateOrgUnit();
+  const meQuery = useMe();
+  const canManageMembers = canManageUnit(meQuery.data, unit.id);
   const templatesQuery = usePipelineTemplates(unit.id);
   const templates = templatesQuery.data ?? [];
   const watched = form.watch();
@@ -616,7 +619,7 @@ export function CompanyDetail({
           topCard={
             <SidebarMembersCard
               unitId={unit.id}
-              isEdit={isEdit}
+              canManageMembers={canManageMembers}
               helperText={
                 isClientAccount
                   ? "Client-account admins live here. Per-member role picker."

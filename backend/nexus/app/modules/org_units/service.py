@@ -19,6 +19,49 @@ logger = structlog.get_logger()
 VALID_UNIT_TYPES = {"company", "division", "client_account", "region", "team"}
 
 
+async def _collect_descendant_ids(
+    db: AsyncSession,
+    root_unit_id: uuid_mod.UUID,
+    client_id: uuid_mod.UUID,
+) -> list[uuid_mod.UUID]:
+    """Return ids of every unit transitively under `root_unit_id` (root excluded).
+
+    Loads the tenant's units once and walks parent_unit_id in-memory. Mirrors
+    the in-memory walk used by `list_org_units` — the tree is shallow and
+    bounded (<10 deep in practice), so the constant-query approach beats a
+    recursive CTE for clarity and consistency."""
+    result = await db.execute(
+        select(OrganizationalUnit.id, OrganizationalUnit.parent_unit_id).where(
+            OrganizationalUnit.client_id == client_id,
+        )
+    )
+    children_of: dict[uuid_mod.UUID, list[uuid_mod.UUID]] = {}
+    for uid, parent_id in result.all():
+        if parent_id is not None:
+            children_of.setdefault(parent_id, []).append(uid)
+
+    out: list[uuid_mod.UUID] = []
+    stack: list[uuid_mod.UUID] = list(children_of.get(root_unit_id, []))
+    seen: set[uuid_mod.UUID] = set()
+    while stack:
+        uid = stack.pop()
+        if uid in seen:
+            continue  # defensive: corrupted parent-chain cycle
+        seen.add(uid)
+        out.append(uid)
+        stack.extend(children_of.get(uid, []))
+    return out
+
+
+async def _get_admin_role(db: AsyncSession) -> Role | None:
+    """Look up the seeded system 'Admin' role. Returns None if missing
+    (only possible in test fixtures that skip role seeding)."""
+    result = await db.execute(
+        select(Role).where(Role.name == "Admin", Role.is_system == True)
+    )
+    return result.scalar_one_or_none()
+
+
 def _validate_and_normalize_company_profile(profile: dict | None) -> dict | None:
     """Strict validation of the 4-field Phase 2A company profile shape.
     Returns the validated dict (Pydantic round-trip) or raises ValueError
@@ -109,10 +152,7 @@ async def create_org_unit(
 
     # Admin inheritance: copy Admin role assignments from parent
     if parent_unit_id is not None:
-        admin_role_result = await db.execute(
-            select(Role).where(Role.name == "Admin", Role.is_system == True)
-        )
-        admin_role = admin_role_result.scalar_one_or_none()
+        admin_role = await _get_admin_role(db)
 
         if admin_role:
             parent_admins_result = await db.execute(
@@ -603,13 +643,23 @@ async def assign_role(
     actor_email: str | None = None,
     ip_address: str | None = None,
 ) -> UserRoleAssignment:
-    """Assign a role to a user in an org unit."""
+    """Assign a role to a user in an org unit.
+
+    Admin inheritance: when the role is the system 'Admin' role, also create
+    Admin assignments for every existing descendant of `org_unit_id`. This
+    mirrors `create_org_unit`, which copies parent Admin assignments down
+    when a child is created. Without this cascade, granting Admin on a unit
+    after its tree was built would leave the user without access to the
+    pre-existing children — they'd see the unit but none of its sub-units,
+    which is the bug this hook fixes.
+    """
     user_result = await db.execute(select(User).where(User.id == user_id, User.is_active == True))
     if not user_result.scalar_one_or_none():
         raise ValueError("User not found or inactive")
 
     role_result = await db.execute(select(Role).where(Role.id == role_id))
-    if not role_result.scalar_one_or_none():
+    role = role_result.scalar_one_or_none()
+    if role is None:
         raise ValueError("Role not found")
 
     assignment = UserRoleAssignment(
@@ -626,11 +676,40 @@ async def assign_role(
     except Exception:
         raise ValueError("User already has this role in this unit")
 
+    cascaded_to: list[uuid_mod.UUID] = []
+    if role.is_system and role.name == "Admin":
+        descendant_ids = await _collect_descendant_ids(db, org_unit_id, tenant_id)
+        if descendant_ids:
+            existing_result = await db.execute(
+                select(UserRoleAssignment.org_unit_id).where(
+                    UserRoleAssignment.user_id == user_id,
+                    UserRoleAssignment.role_id == role_id,
+                    UserRoleAssignment.org_unit_id.in_(descendant_ids),
+                )
+            )
+            already_have = {row[0] for row in existing_result.all()}
+            for desc_id in descendant_ids:
+                if desc_id in already_have:
+                    continue
+                db.add(
+                    UserRoleAssignment(
+                        user_id=user_id,
+                        org_unit_id=desc_id,
+                        role_id=role_id,
+                        tenant_id=tenant_id,
+                        assigned_by=assigned_by,
+                    )
+                )
+                cascaded_to.append(desc_id)
+            if cascaded_to:
+                await db.flush()
+
     logger.info(
         "org_units.role_assigned",
         user_id=str(user_id),
         org_unit_id=str(org_unit_id),
         role_id=str(role_id),
+        cascaded_descendants=len(cascaded_to),
     )
 
     await log_event(
@@ -641,7 +720,11 @@ async def assign_role(
         action=audit_actions.ORG_UNIT_MEMBER_ADDED,
         resource="org_unit",
         resource_id=org_unit_id,
-        payload={"user_id": str(user_id), "role_id": str(role_id)},
+        payload={
+            "user_id": str(user_id),
+            "role_id": str(role_id),
+            "cascaded_to": [str(d) for d in cascaded_to],
+        },
         ip_address=ip_address,
     )
 
@@ -656,7 +739,13 @@ async def remove_user_from_unit(
     actor_email: str | None = None,
     ip_address: str | None = None,
 ) -> int:
-    """Remove ALL role assignments for a user in an org unit."""
+    """Remove ALL role assignments for a user in an org unit.
+
+    Admin inheritance: if any of the removed roles is the system 'Admin'
+    role, also remove that user's Admin assignment from every descendant.
+    Symmetrical to `assign_role`'s cascade so the denormalized model stays
+    coherent.
+    """
     result = await db.execute(
         select(UserRoleAssignment).where(
             UserRoleAssignment.org_unit_id == org_unit_id,
@@ -667,26 +756,44 @@ async def remove_user_from_unit(
     if not assignments:
         raise ValueError("No assignments found for this user in this unit")
 
+    tenant_id = assignments[0].tenant_id
+    admin_role = await _get_admin_role(db)
+    removed_admin = admin_role is not None and any(
+        a.role_id == admin_role.id for a in assignments
+    )
+
     for a in assignments:
         await db.delete(a)
 
     await _nullify_deletable_by_if_needed(db, org_unit_id, user_id)
+
+    cascaded_to: list[uuid_mod.UUID] = []
+    if removed_admin and admin_role is not None:
+        cascaded_to = await _cascade_remove_admin_from_descendants(
+            db, org_unit_id, user_id, admin_role.id, tenant_id
+        )
+
     logger.info(
         "org_units.user_removed",
         user_id=str(user_id),
         org_unit_id=str(org_unit_id),
         count=len(assignments),
+        cascaded_descendants=len(cascaded_to),
     )
 
     await log_event(
         db,
-        tenant_id=assignments[0].tenant_id,
+        tenant_id=tenant_id,
         actor_id=actor_id,
         actor_email=actor_email,
         action=audit_actions.ORG_UNIT_MEMBER_REMOVED,
         resource="org_unit",
         resource_id=org_unit_id,
-        payload={"user_id": str(user_id), "roles_removed": len(assignments)},
+        payload={
+            "user_id": str(user_id),
+            "roles_removed": len(assignments),
+            "cascaded_to": [str(d) for d in cascaded_to],
+        },
         ip_address=ip_address,
     )
 
@@ -762,6 +869,42 @@ async def delete_org_unit(
     logger.info("org_units.deleted", unit_id=str(org_unit_id), name=unit.name)
 
 
+async def _cascade_remove_admin_from_descendants(
+    db: AsyncSession,
+    root_unit_id: uuid_mod.UUID,
+    user_id: uuid_mod.UUID,
+    admin_role_id: uuid_mod.UUID,
+    tenant_id: uuid_mod.UUID,
+) -> list[uuid_mod.UUID]:
+    """Drop `user_id`'s Admin assignment from every descendant of
+    `root_unit_id` and run the deletable_by-nullification helper on each.
+
+    Returns the list of descendant unit ids that actually had a row removed
+    (used by callers for audit logging). Symmetric to the inheritance cascade
+    in `assign_role`.
+    """
+    descendant_ids = await _collect_descendant_ids(db, root_unit_id, tenant_id)
+    if not descendant_ids:
+        return []
+
+    existing_result = await db.execute(
+        select(UserRoleAssignment).where(
+            UserRoleAssignment.user_id == user_id,
+            UserRoleAssignment.role_id == admin_role_id,
+            UserRoleAssignment.org_unit_id.in_(descendant_ids),
+        )
+    )
+    cascaded: list[uuid_mod.UUID] = []
+    for ura in existing_result.scalars().all():
+        cascaded.append(ura.org_unit_id)
+        await db.delete(ura)
+
+    for desc_id in cascaded:
+        await _nullify_deletable_by_if_needed(db, desc_id, user_id)
+
+    return cascaded
+
+
 async def _nullify_deletable_by_if_needed(
     db: AsyncSession,
     org_unit_id: uuid_mod.UUID,
@@ -805,7 +948,12 @@ async def remove_role_from_user(
     actor_email: str | None = None,
     ip_address: str | None = None,
 ) -> None:
-    """Remove a specific role assignment."""
+    """Remove a specific role assignment.
+
+    If the role being removed is the system 'Admin' role, the user's Admin
+    assignment is also removed from every descendant — symmetric to
+    `assign_role`'s cascade.
+    """
     result = await db.execute(
         select(UserRoleAssignment).where(
             UserRoleAssignment.org_unit_id == org_unit_id,
@@ -817,24 +965,42 @@ async def remove_role_from_user(
     if not assignment:
         raise ValueError("Assignment not found")
 
+    tenant_id = assignment.tenant_id
+
+    role_result = await db.execute(select(Role).where(Role.id == role_id))
+    role = role_result.scalar_one_or_none()
+    is_admin_role = role is not None and role.is_system and role.name == "Admin"
+
     await db.delete(assignment)
     await _nullify_deletable_by_if_needed(db, org_unit_id, user_id)
+
+    cascaded_to: list[uuid_mod.UUID] = []
+    if is_admin_role:
+        cascaded_to = await _cascade_remove_admin_from_descendants(
+            db, org_unit_id, user_id, role_id, tenant_id
+        )
+
     logger.info(
         "org_units.role_removed",
         user_id=str(user_id),
         org_unit_id=str(org_unit_id),
         role_id=str(role_id),
+        cascaded_descendants=len(cascaded_to),
     )
 
     await log_event(
         db,
-        tenant_id=assignment.tenant_id,
+        tenant_id=tenant_id,
         actor_id=actor_id,
         actor_email=actor_email,
         action=audit_actions.ORG_UNIT_ROLE_REMOVED,
         resource="org_unit",
         resource_id=org_unit_id,
-        payload={"user_id": str(user_id), "role_id": str(role_id)},
+        payload={
+            "user_id": str(user_id),
+            "role_id": str(role_id),
+            "cascaded_to": [str(d) for d in cascaded_to],
+        },
         ip_address=ip_address,
     )
 

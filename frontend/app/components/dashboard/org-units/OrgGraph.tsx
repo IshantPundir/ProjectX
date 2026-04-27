@@ -111,6 +111,13 @@ export function OrgGraph({
     (id: string) => {
       const unit = units.find((u) => u.id === id)
       if (!unit) return
+      // Locked nodes (is_accessible=false) are ancestors-for-context only.
+      // Suppress the radial menu so a non-admin can't try to add children
+      // or delete — backend would 403 anyway, this avoids the confusion.
+      if (!unit.is_accessible) {
+        onSelect(unit.id)
+        return
+      }
       onSelect(unit.id)
       // Cancel any in-flight close — this is a fresh open.
       pendingActionRef.current = null
@@ -188,7 +195,13 @@ export function OrgGraph({
         selectedId={selectedId}
         selectedPath={onSelectPath}
         fitRunId={direction}
-        onNodeDoubleClick={(id) => onOpen?.(id)}
+        onNodeDoubleClick={(id) => {
+          const unit = units.find((u) => u.id === id)
+          // Don't navigate into the detail page for locked nodes — the
+          // detail route would just render the same locked stub.
+          if (unit && !unit.is_accessible) return
+          onOpen?.(id)
+        }}
         onNodeContextMenu={onNodeContextMenu}
         overlay={
           <DirectionToggle

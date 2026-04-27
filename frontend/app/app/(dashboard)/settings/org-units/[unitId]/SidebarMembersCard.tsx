@@ -15,7 +15,15 @@ import { Avatar } from "./shared";
 export interface SidebarMembersCardProps {
   unitId: string;
   helperText: string;
-  isEdit: boolean;
+  /**
+   * True when the caller is super admin or holds the Admin role on this
+   * unit. Drives whether the card renders at all (non-admins see no
+   * member-management UI; backend enforces this independently via
+   * `_require_unit_admin` on every member-mutating endpoint and on
+   * GET /members itself, so a non-admin's `useOrgUnitMembers` would 403
+   * — we just hide the card cleanly).
+   */
+  canManageMembers: boolean;
   /** Optional title override — defaults to "Direct members". */
   title?: string;
 }
@@ -24,23 +32,29 @@ export interface SidebarMembersCardProps {
  * Sidebar Direct-members card. Used by Division / Region / Company /
  * Client account pages.
  *
- * Edit-mode capabilities (per spec D5):
+ * Capabilities (admin-only — gated by `canManageMembers`):
  *   - Add a tenant user to this unit with a role
  *   - Add an additional role to an existing member (same picker)
  *   - Remove a single role from a member via the × on its chip
  *   - Removing a member's last role removes them from the unit (the
  *     backend handles this; we just refetch and the row disappears)
  *
- * View mode hides the × buttons and the add affordance via CSS
- * (`[data-edit-mode='false']` on the page <main>).
+ * Member management is always-on for admins — there is no separate
+ * "edit mode" gate. The card simply doesn't render for non-admins.
  */
 export function SidebarMembersCard({
   unitId,
   helperText,
-  isEdit,
+  canManageMembers,
   title = "Direct members",
 }: SidebarMembersCardProps) {
-  const membersQuery = useOrgUnitMembers(unitId);
+  // Hooks must run unconditionally; the early return for non-admins
+  // happens after hook setup. The backend's GET /members would 403
+  // for non-admins anyway, but `useOrgUnitMembers` accepts a disabled
+  // option (passed below) so we don't even fire the query for them.
+  const membersQuery = useOrgUnitMembers(unitId, {
+    enabled: canManageMembers,
+  });
   const rolesQuery = useRoles();
   const tenantUsersQuery = useTeamMembers();
   const assignMutation = useAssignRole();
@@ -65,6 +79,10 @@ export function SidebarMembersCard({
     roleId: string;
     roleName: string;
   } | null>(null);
+
+  // After all hooks: bail out cleanly for non-admins. The whole card
+  // is admin-only — no read-only mode.
+  if (!canManageMembers) return null;
 
   async function handleAdd() {
     if (!pickerUserId || !pickerRoleId) return;
@@ -165,7 +183,7 @@ export function SidebarMembersCard({
             </div>
           );
         })}
-        {isEdit && !adding && (
+        {!adding && (
           <div className="sidebar-add-row">
             <span style={{ fontSize: "11.5px", color: "var(--px-fg-4)" }}>
               Add a member or extra role.
@@ -179,7 +197,7 @@ export function SidebarMembersCard({
             </button>
           </div>
         )}
-        {isEdit && adding && (
+        {adding && (
           <div className="sidebar-add-form">
             <label className="sidebar-add-form-label">User</label>
             <select
