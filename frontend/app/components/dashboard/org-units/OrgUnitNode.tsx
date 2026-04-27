@@ -80,6 +80,7 @@ function OrgUnitNodeImpl({
     overflow: 'hidden',
     transition: 'box-shadow 120ms ease, border-color 120ms ease',
     cursor: 'pointer',
+    userSelect: 'none',
   }
 
   return (

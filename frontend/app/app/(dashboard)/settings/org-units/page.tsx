@@ -2,31 +2,14 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { getFreshSupabaseToken } from "@/lib/auth/tokens";
 import { jobsApi, type JobPostingSummary } from "@/lib/api/jobs";
-import { type OrgUnit } from "@/lib/api/org-units";
-import { authApi, type MeResponse } from "@/lib/api/auth";
 import { useOrgUnits } from "@/lib/hooks/use-org-units";
-import { useCreateOrgUnit } from "@/lib/hooks/use-create-org-unit";
 import { useDeleteOrgUnit } from "@/lib/hooks/use-delete-org-unit";
-import { applyApiErrorToForm } from "@/lib/api/errors";
-import {
-  CompanyProfileForm,
-  type CompanyProfile,
-} from "@/components/dashboard/company-profile-form";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DangerConfirmDialog,
-} from "@/components/px";
+import { DangerConfirmDialog } from "@/components/px";
 import type { UnitType } from "@/components/dashboard/org-units/unit-type-style";
 import {
   OrgGraph,
@@ -34,48 +17,10 @@ import {
   type GraphNodeData,
   type Pressure,
 } from "@/components/dashboard/org-units/OrgGraph";
-
 import {
-  createOrgUnitSchema,
-  type CreateOrgUnitFormValues,
-} from "./schema";
-
-const UNIT_TYPES = [
-  { value: "division", label: "Division" },
-  { value: "client_account", label: "Client account" },
-  { value: "region", label: "Region" },
-  { value: "team", label: "Team" },
-] as const;
-
-function IconPlus({ className = "w-4 h-4" }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      fill="none"
-      viewBox="0 0 24 24"
-      strokeWidth={2}
-      stroke="currentColor"
-      aria-hidden="true"
-    >
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-    </svg>
-  );
-}
-
-function IconX({ className = "w-3.5 h-3.5" }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      fill="none"
-      viewBox="0 0 24 24"
-      strokeWidth={2}
-      stroke="currentColor"
-      aria-hidden="true"
-    >
-      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-    </svg>
-  );
-}
+  OrgUnitCreateDialog,
+  type CreateChildTarget,
+} from "@/components/dashboard/org-units/OrgUnitCreateDialog";
 
 function IconSearch({ className = "w-3.5 h-3.5" }: { className?: string }) {
   return (
@@ -93,27 +38,6 @@ function IconSearch({ className = "w-3.5 h-3.5" }: { className?: string }) {
   );
 }
 
-function flattenForSelect(
-  units: OrgUnit[],
-): { unit: OrgUnit; depth: number }[] {
-  const childrenMap = new Map<string | null, OrgUnit[]>();
-  for (const u of units) {
-    childrenMap.set(u.parent_unit_id, [
-      ...(childrenMap.get(u.parent_unit_id) || []),
-      u,
-    ]);
-  }
-  const result: { unit: OrgUnit; depth: number }[] = [];
-  const walk = (parentId: string | null, depth: number) => {
-    for (const child of childrenMap.get(parentId) || []) {
-      result.push({ unit: child, depth });
-      walk(child.id, depth + 1);
-    }
-  };
-  walk(null, 0);
-  return result;
-}
-
 /** Heuristic: map open-role count → hiring pressure. */
 function pressureFor(openRoles: number): Pressure {
   if (openRoles >= 3) return "hot";
@@ -125,11 +49,6 @@ export default function OrgUnitsPage() {
   const router = useRouter();
 
   const unitsQuery = useOrgUnits();
-  const meQuery = useQuery<MeResponse>({
-    queryKey: ["me"],
-    queryFn: async () => authApi.me(await getFreshSupabaseToken()),
-    staleTime: 60_000,
-  });
   const jobsQuery = useQuery<JobPostingSummary[]>({
     queryKey: ["jobs-list"],
     queryFn: async () => jobsApi.list(await getFreshSupabaseToken()),
@@ -138,9 +57,7 @@ export default function OrgUnitsPage() {
 
   const units = useMemo(() => unitsQuery.data ?? [], [unitsQuery.data]);
   const jobs = useMemo(() => jobsQuery.data ?? [], [jobsQuery.data]);
-  const me = meQuery.data ?? null;
-  const loading = unitsQuery.isLoading || meQuery.isLoading;
-  const [error, setError] = useState("");
+  const loading = unitsQuery.isLoading;
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{
@@ -148,21 +65,28 @@ export default function OrgUnitsPage() {
     name: string;
   } | null>(null);
   const deleteMutation = useDeleteOrgUnit();
-  const createMutation = useCreateOrgUnit();
 
-  async function handleCreateChild(
-    parentId: string,
-    unitType: UnitType,
-    name: string,
-  ) {
-    await createMutation.mutateAsync({
-      name,
-      unit_type: unitType,
-      parent_unit_id: parentId,
-      company_profile: null,
-      metadata: null,
+  // Spider-menu create flow: clicking a child-type pill opens a popup
+  // dialog (single name input, with a profile-form cascade for client
+  // accounts). After successful creation we navigate the user straight
+  // to the new unit's detail page to finish configuring it.
+  const [pickChildTarget, setPickChildTarget] =
+    useState<CreateChildTarget | null>(null);
+
+  function handlePickChild(parentId: string, childType: UnitType) {
+    const parent = graphNodes.find((u) => u.id === parentId);
+    if (!parent) return;
+    setPickChildTarget({
+      parentId,
+      parentName: parent.name,
+      childType,
     });
-    toast.success(`${unitType.replace("_", " ")} created`);
+  }
+
+  function handlePickChildCreated(newUnitId: string) {
+    setPickChildTarget(null);
+    toast.success("Unit created");
+    router.push(`/settings/org-units/${newUnitId}`);
   }
 
   function handleDeleteRequest(id: string) {
@@ -182,17 +106,6 @@ export default function OrgUnitsPage() {
       toast.error(err instanceof Error ? err.message : "Failed to delete unit");
     }
   }
-
-  const [hoverId, setHoverId] = useState<string | null>(null);
-
-  // Create form
-  const [showCreate, setShowCreate] = useState(false);
-  const [showProfileDialog, setShowProfileDialog] = useState(false);
-
-  const createForm = useForm<CreateOrgUnitFormValues>({
-    resolver: zodResolver(createOrgUnitSchema),
-    defaultValues: { name: "", unit_type: "division", parent_unit_id: "" },
-  });
 
   // Compute open-role count per unit (non-draft = active role)
   const openRolesByUnit = useMemo(() => {
@@ -242,50 +155,6 @@ export default function OrgUnitsPage() {
   const totalPeople = units.reduce((n, u) => n + u.member_count, 0);
   const totalUnits = units.length;
 
-  const selectOptions = useMemo(() => flattenForSelect(units), [units]);
-
-  async function doCreate(companyProfile: CompanyProfile | null) {
-    const values = createForm.getValues();
-    try {
-      const newUnit = await createMutation.mutateAsync({
-        name: values.name.trim(),
-        unit_type: values.unit_type,
-        parent_unit_id: values.parent_unit_id || null,
-        company_profile: companyProfile,
-      });
-      createForm.reset({ name: "", unit_type: "division", parent_unit_id: "" });
-      setShowCreate(false);
-      setShowProfileDialog(false);
-      router.push(`/settings/org-units/${newUnit.id}`);
-    } catch (err) {
-      if (applyApiErrorToForm(err, createForm)) throw err;
-      setError(err instanceof Error ? err.message : "Failed to create unit");
-      throw err;
-    }
-  }
-
-  const onCreateSubmit = createForm.handleSubmit(async () => {
-    if (createForm.getValues("unit_type") === "client_account") {
-      setError("");
-      setShowProfileDialog(true);
-      return;
-    }
-    try {
-      await doCreate(null);
-    } catch {
-      // error already surfaced via setError or form.setError
-    }
-  });
-
-  async function handleClientAccountProfileSubmit(profile: CompanyProfile) {
-    try {
-      await doCreate(profile);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create unit");
-      throw err;
-    }
-  }
-
   return (
     <div className="mx-auto flex h-full max-w-[1600px] flex-col overflow-hidden">
       {/* Page header */}
@@ -308,136 +177,7 @@ export default function OrgUnitsPage() {
         </div>
         <div className="flex-1" />
         <OrgLegend />
-        {me?.is_super_admin && (
-          <>
-            <button
-              type="button"
-              onClick={() => setShowCreate((v) => !v)}
-              className="px-btn primary sm"
-            >
-              {showCreate ? (
-                <>
-                  <IconX className="h-3 w-3" /> Cancel
-                </>
-              ) : (
-                <>
-                  <IconPlus className="h-3 w-3" /> New unit
-                </>
-              )}
-            </button>
-          </>
-        )}
       </div>
-
-      {error && (
-        <div
-          role="alert"
-          className="mx-8 mb-3 flex items-start justify-between rounded-md border p-3 text-sm"
-          style={{
-            color: "var(--px-danger)",
-            background: "var(--px-danger-bg)",
-            borderColor: "var(--px-danger-line)",
-          }}
-        >
-          <span>{error}</span>
-          <button
-            onClick={() => setError("")}
-            className="ml-2 shrink-0 cursor-pointer"
-            aria-label="Dismiss error"
-          >
-            <IconX className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      )}
-
-      {/* Create form */}
-      {showCreate && me?.is_super_admin && (
-        <form
-          onSubmit={onCreateSubmit}
-          className="mx-8 mb-4 space-y-4 rounded-[10px] border p-5"
-          style={{
-            background: "var(--px-surface)",
-            borderColor: "var(--px-hairline)",
-          }}
-        >
-          <h2
-            className="text-[11px] font-semibold uppercase"
-            style={{ letterSpacing: "1.1px", color: "var(--px-fg-4)" }}
-          >
-            Create org unit
-          </h2>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label htmlFor="create-name" className="px-label">
-                Name
-              </label>
-              <input
-                id="create-name"
-                type="text"
-                className="px-input"
-                placeholder="e.g., Engineering"
-                {...createForm.register("name")}
-              />
-              {createForm.formState.errors.name && (
-                <p className="px-hint" style={{ color: "var(--px-danger)" }}>
-                  {createForm.formState.errors.name.message}
-                </p>
-              )}
-            </div>
-            <div>
-              <label htmlFor="create-type" className="px-label">
-                Type
-              </label>
-              <select
-                id="create-type"
-                className="px-input"
-                {...createForm.register("unit_type")}
-              >
-                {UNIT_TYPES.map((t) => (
-                  <option key={t.value} value={t.value}>
-                    {t.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-          {units.length > 0 && (
-            <div>
-              <label htmlFor="create-parent" className="px-label">
-                Parent unit{" "}
-                <span
-                  className="font-normal"
-                  style={{ color: "var(--px-fg-4)" }}
-                >
-                  (optional)
-                </span>
-              </label>
-              <select
-                id="create-parent"
-                className="px-input"
-                {...createForm.register("parent_unit_id")}
-              >
-                <option value="">None (top-level)</option>
-                {selectOptions.map(({ unit: u, depth }) => (
-                  <option key={u.id} value={u.id}>
-                    {"  ".repeat(depth)}
-                    {u.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-          <div className="flex justify-end">
-            <button
-              type="submit"
-              disabled={createMutation.isPending}
-              className="px-btn primary sm"
-            >
-              {createMutation.isPending ? "Creating…" : "Create unit"}
-            </button>
-          </div>
-        </form>
-      )}
 
       {/* Graph */}
       <div
@@ -455,27 +195,16 @@ export default function OrgUnitsPage() {
             <p className="text-sm" style={{ color: "var(--px-fg-3)" }}>
               No organizational units yet.
             </p>
-            {me?.is_super_admin && (
-              <button
-                onClick={() => setShowCreate(true)}
-                className="mt-3 cursor-pointer text-sm font-medium"
-                style={{ color: "var(--px-accent)" }}
-              >
-                Create your first unit →
-              </button>
-            )}
           </div>
         ) : (
           <>
             <OrgGraph
               units={graphNodes}
               selectedId={selectedId}
-              hoverId={hoverId}
               onSelect={setSelectedId}
-              onHover={setHoverId}
               onOpen={(id) => router.push(`/settings/org-units/${id}`)}
               onDelete={handleDeleteRequest}
-              onCreateChild={handleCreateChild}
+              onPickChild={handlePickChild}
             />
             <div
               className="absolute bottom-2.5 left-3.5 text-[10.5px]"
@@ -485,7 +214,7 @@ export default function OrgUnitsPage() {
                 letterSpacing: "0.3px",
               }}
             >
-              click a node to focus · double-click to open detail
+              click a node to focus · double-click to open detail · right-click to add a sub-unit
             </div>
           </>
         )}
@@ -506,35 +235,6 @@ export default function OrgUnitsPage() {
         </div>
       )}
 
-      {/* Client account profile dialog */}
-      <Dialog
-        open={showProfileDialog}
-        onOpenChange={(open) => {
-          if (createMutation.isPending) return;
-          setShowProfileDialog(open);
-        }}
-      >
-        <DialogContent widthClass="sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Client account profile</DialogTitle>
-            <DialogDescription>
-              Set up the profile for{" "}
-              <span className="font-medium" style={{ color: "var(--px-fg)" }}>
-                {createForm.watch("name").trim()}
-              </span>
-              . This describes the end client — the company your recruiters are
-              hiring <em>for</em>. It feeds the AI when generating JD
-              enhancements and interview questions for this client&apos;s
-              roles.
-            </DialogDescription>
-          </DialogHeader>
-          <CompanyProfileForm
-            onSubmit={handleClientAccountProfileSubmit}
-            submitLabel="Create client account"
-          />
-        </DialogContent>
-      </Dialog>
-
       <DangerConfirmDialog
         open={deleteTarget !== null}
         title={deleteTarget ? `Delete ${deleteTarget.name}?` : "Delete unit?"}
@@ -544,6 +244,12 @@ export default function OrgUnitsPage() {
         pending={deleteMutation.isPending}
         onConfirm={confirmDelete}
         onClose={() => setDeleteTarget(null)}
+      />
+
+      <OrgUnitCreateDialog
+        target={pickChildTarget}
+        onClose={() => setPickChildTarget(null)}
+        onCreated={handlePickChildCreated}
       />
     </div>
   );

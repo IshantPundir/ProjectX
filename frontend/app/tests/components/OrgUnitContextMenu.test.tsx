@@ -25,6 +25,8 @@ function makeUnit(overrides: Partial<GraphNodeData> = {}): GraphNodeData {
     company_profile: null,
     company_profile_completed_at: null,
     metadata: null,
+    inherited_locale: null,
+    inherited_compliance: null,
     openRoles: 0,
     pressure: 'cool',
     ...overrides,
@@ -38,6 +40,8 @@ function defaultProps(overrides: object = {}) {
     onClose: vi.fn(),
     onPickDelete: vi.fn(),
     onPickChild: vi.fn(),
+    closing: false,
+    onExitComplete: vi.fn(),
     ...overrides,
   }
 }
@@ -64,6 +68,27 @@ describe('OrgUnitContextMenu', () => {
     expect(screen.getByRole('menuitem', { name: /Add Region/i })).toBeInTheDocument()
   })
 
+  it('omits Delete for the root company unit (is_root mirrors backend invariant)', () => {
+    renderWithProviders(
+      <OrgUnitContextMenu
+        {...defaultProps({
+          target: {
+            unit: makeUnit({
+              is_root: true,
+              unit_type: 'company',
+              // admin_delete_disabled is intentionally false here — the
+              // root invariant is independent of that flag.
+              admin_delete_disabled: false,
+            }),
+            x: 0,
+            y: 0,
+          },
+        })}
+      />,
+    )
+    expect(screen.queryByRole('menuitem', { name: /Delete/i })).not.toBeInTheDocument()
+  })
+
   it('renders only Delete when no child types are allowed (team leaf)', () => {
     renderWithProviders(
       <OrgUnitContextMenu
@@ -74,16 +99,18 @@ describe('OrgUnitContextMenu', () => {
     expect(screen.queryByRole('menuitem', { name: /Add/i })).not.toBeInTheDocument()
   })
 
-  it('places items at evenly-spaced angles starting at 12 o\'clock', () => {
+  it('places items in a 180° right-side fan, centred on each slice', () => {
     renderWithProviders(<OrgUnitContextMenu {...defaultProps()} />)
     const items = screen.getAllByRole('menuitem')
-    // 5 items: Delete + 4 child types → 360/5 = 72° apart.
+    // 5 items spread across the right semicircle [0°, 180°], one per
+    // slice of width 36°, each anchored at slice centre:
+    //   angle_i = (i + 0.5) * 36
     expect(items).toHaveLength(5)
-    expect(items[0].getAttribute('data-angle')).toBe('0')   // Delete at top
-    expect(items[1].getAttribute('data-angle')).toBe('72')
-    expect(items[2].getAttribute('data-angle')).toBe('144')
-    expect(items[3].getAttribute('data-angle')).toBe('216')
-    expect(items[4].getAttribute('data-angle')).toBe('288')
+    expect(items[0].getAttribute('data-angle')).toBe('18')   // Delete (top-right)
+    expect(items[1].getAttribute('data-angle')).toBe('54')
+    expect(items[2].getAttribute('data-angle')).toBe('90')   // Centre (3 o'clock)
+    expect(items[3].getAttribute('data-angle')).toBe('126')
+    expect(items[4].getAttribute('data-angle')).toBe('162')  // Bottom-right
   })
 
   it('calls onPickDelete when the Delete pill is clicked', () => {

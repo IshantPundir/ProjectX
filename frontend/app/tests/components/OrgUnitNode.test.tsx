@@ -25,6 +25,8 @@ function makeUnit(overrides: Partial<GraphNodeData> = {}): GraphNodeData {
     company_profile: null,
     company_profile_completed_at: null,
     metadata: null,
+    inherited_locale: null,
+    inherited_compliance: null,
     openRoles: 0,
     pressure: 'cool',
     ...overrides,

@@ -57,3 +57,22 @@ if (typeof window !== 'undefined') {
 
 ;(globalThis as unknown as { Storage: typeof StoragePolyfill }).Storage =
   StoragePolyfill
+
+/**
+ * `window.matchMedia` polyfill. jsdom does not implement it, but app
+ * code (and GSAP-driven motion gating) calls it to honor
+ * `prefers-reduced-motion`. The stub always reports "not matched",
+ * which is correct: tests run with motion enabled.
+ */
+if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
+  window.matchMedia = (query: string): MediaQueryList => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  }) as unknown as MediaQueryList
+}

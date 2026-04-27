@@ -27,6 +27,8 @@ function unit(overrides: Partial<GraphNodeData>): GraphNodeData {
     company_profile: null,
     company_profile_completed_at: null,
     metadata: null,
+    inherited_locale: null,
+    inherited_compliance: null,
     openRoles: 0,
     pressure: 'cool',
     ...overrides,
@@ -183,41 +185,22 @@ describe('OrgGraph', () => {
     expect(onDelete).toHaveBeenCalledWith('na')
   })
 
-  it('renders the inline-create form when a child-type item is picked', async () => {
+  it('fires onPickChild with parent id and child type once the menu retracts', async () => {
+    const onPickChild = vi.fn()
     renderWithProviders(
       <OrgGraph
         units={TREE}
         selectedId={null}
         onSelect={vi.fn()}
-        onCreateChild={vi.fn()}
-      />,
-    )
-    fireEvent.contextMenu(screen.getByRole('button', { name: /region: NA/ }))
-    fireEvent.click(screen.getByRole('menuitem', { name: /Add Division/i }))
-    await waitFor(() => {
-      expect(
-        screen.getByPlaceholderText(/Name the new division/i),
-      ).toBeInTheDocument()
-    })
-  })
-
-  it('calls onCreateChild with parent id, type, and name on inline submit', async () => {
-    const onCreateChild = vi.fn().mockResolvedValue(undefined)
-    renderWithProviders(
-      <OrgGraph
-        units={TREE}
-        selectedId={null}
-        onSelect={vi.fn()}
-        onCreateChild={onCreateChild}
+        onPickChild={onPickChild}
       />,
     )
     fireEvent.contextMenu(screen.getByRole('button', { name: /region: NA/ }))
     fireEvent.click(screen.getByRole('menuitem', { name: /Add Team/i }))
-    const input = await screen.findByPlaceholderText(/Name the new team/i)
-    fireEvent.change(input, { target: { value: 'Frontend' } })
-    fireEvent.keyDown(input, { key: 'Enter' })
+    // The pick fires through the menu's exit animation, so wait for it
+    // to reach the consumer rather than asserting synchronously.
     await waitFor(() => {
-      expect(onCreateChild).toHaveBeenCalledWith('na', 'team', 'Frontend')
+      expect(onPickChild).toHaveBeenCalledWith('na', 'team')
     })
   })
 })

@@ -1,9 +1,9 @@
 'use client'
 
 import {
+  useEffect,
   useRef,
   type CSSProperties,
-  type MouseEvent,
   type ReactNode,
 } from 'react'
 
@@ -27,25 +27,38 @@ export interface OrgGraphCanvasNodeData {
 interface Props {
   nodes: LayoutNode<OrgGraphCanvasNodeData>[]
   edges: LayoutEdge[]
+  /** Currently-selected unit id. Each change animates the viewport so
+   *  the selected card is centred. */
+  selectedId: string | null
   /** Set of unit ids on the selection ancestry chain — colours edges. */
   selectedPath: Set<string>
   /** Bumped to trigger a fit-view animation. */
   fitRunId: unknown
   onNodeDoubleClick: (id: string) => void
-  onNodeContextMenu: (id: string, e: MouseEvent<HTMLDivElement>) => void
-  /** Optional overlay layer rendered above everything — radial menu /
-   *  inline create live here so the consumer can position them. */
+  onNodeContextMenu: (id: string) => void
+  /** Optional overlay rendered at wrapper level (above everything,
+   *  unaffected by pan/zoom). Use for chrome — direction toggle, etc. */
   overlay?: ReactNode
+  /** Id of the unit `worldOverlay` is anchored to. When set, the
+   *  overlay is rendered inside the transformed viewport at the unit's
+   *  right-edge midpoint, so it tracks the card through pan / zoom /
+   *  centring animations. A counter-scale keeps the content at native
+   *  pixel size regardless of zoom level. */
+  worldAnchorId?: string | null
+  worldOverlay?: ReactNode
 }
 
 export function OrgGraphCanvas({
   nodes,
   edges,
+  selectedId,
   selectedPath,
   fitRunId,
   onNodeDoubleClick,
   onNodeContextMenu,
   overlay,
+  worldAnchorId,
+  worldOverlay,
 }: Props) {
   const wrapperRef = useRef<HTMLDivElement>(null)
   const pz = usePanZoom(wrapperRef, { minScale: 0.25, maxScale: 2.5 })
@@ -62,6 +75,33 @@ export function OrgGraphCanvas({
 
   // Quick lookup to resolve edge anchor coordinates.
   const nodeIndex = useNodeIndex(nodes)
+
+  // Centre the selected card in the viewport at the current zoom level
+  // whenever `selectedId` changes. Layout-only changes (direction flip,
+  // node add/remove) intentionally don't re-trigger this — fit-view
+  // handles those.
+  useEffect(() => {
+    if (!selectedId) return
+    const node = nodeIndex.get(selectedId)
+    if (!node) return
+    const wrapper = wrapperRef.current
+    if (!wrapper) return
+    const rect = wrapper.getBoundingClientRect()
+    if (rect.width === 0 || rect.height === 0) return
+
+    const cx = node.position.x + NODE_WIDTH / 2
+    const cy = node.position.y + NODE_HEIGHT / 2
+    const scale = pz.scale
+    pz.setView({
+      tx: rect.width / 2 - scale * cx,
+      ty: rect.height / 2 - scale * cy,
+      scale,
+      animate: true,
+    })
+    // Intentionally only re-runs when selectedId changes — we read the
+    // latest nodeIndex and pz values from the closure.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId])
 
   // SVG edge layer: paths use raw world coordinates. The SVG itself is
   // a 1×1 element with overflow:visible so we don't need to size it to
@@ -83,12 +123,6 @@ export function OrgGraphCanvas({
         position: 'absolute',
         inset: 0,
         overflow: 'hidden',
-        // Dot grid background — the same look as xyflow's <Background>
-        // with size=1 gap=22, resolved in our token system.
-        backgroundColor: 'transparent',
-        backgroundImage:
-          'radial-gradient(circle, var(--px-fg-4) 1px, transparent 1px)',
-        backgroundSize: '22px 22px',
         cursor: 'grab',
         touchAction: 'none',
       }}
@@ -108,7 +142,10 @@ export function OrgGraphCanvas({
           left: 0,
           top: 0,
           transformOrigin: '0 0',
-          transform: `translate(${pz.tx}px, ${pz.ty}px) scale(${pz.scale})`,
+          // Round translation to integer pixels to avoid sub-pixel
+          // rendering blur on cards / pill text. Scale is left exact so
+          // wheel-zoom math stays continuous.
+          transform: `translate(${Math.round(pz.tx)}px, ${Math.round(pz.ty)}px) scale(${pz.scale})`,
           transition: pz.animating ? 'transform 240ms ease' : 'none',
           willChange: 'transform',
         }}
@@ -162,7 +199,7 @@ export function OrgGraphCanvas({
             onContextMenu={(e) => {
               e.preventDefault()
               e.stopPropagation()
-              onNodeContextMenu(n.id, e)
+              onNodeContextMenu(n.id)
             }}
           >
             <OrgUnitNode
@@ -174,6 +211,36 @@ export function OrgGraphCanvas({
             />
           </div>
         ))}
+
+        {/* World-anchored overlay: lives inside the transformed viewport
+         * so it tracks the card through pan / zoom / centring. The
+         * counter-scale `1 / pz.scale` neutralises the viewport zoom so
+         * the overlay content renders at native pixel sizes. */}
+        {worldAnchorId &&
+          (() => {
+            const anchor = nodeIndex.get(worldAnchorId)
+            if (!anchor) return null
+            return (
+              <div
+                // `data-no-pan` lets the pan hook see a click inside
+                // any anchored overlay (radial menu pills) and skip
+                // initiating a pan — otherwise pointer-capture eats the
+                // click event before the pill's onClick can fire.
+                data-no-pan
+                style={{
+                  position: 'absolute',
+                  left: anchor.position.x + NODE_WIDTH,
+                  top: anchor.position.y + NODE_HEIGHT / 2,
+                  transformOrigin: '0 0',
+                  transform: `scale(${1 / pz.scale})`,
+                  pointerEvents: 'none',
+                  zIndex: 5,
+                }}
+              >
+                {worldOverlay}
+              </div>
+            )
+          })()}
       </div>
 
       <OrgGraphControls

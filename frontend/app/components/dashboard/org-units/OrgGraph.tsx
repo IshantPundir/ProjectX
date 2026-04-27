@@ -7,14 +7,12 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type MouseEvent,
 } from 'react'
 
 import type { OrgUnit } from '@/lib/api/org-units'
 
 import { OrgGraphCanvas, type OrgGraphCanvasNodeData } from './OrgGraphCanvas'
 import { OrgUnitContextMenu } from './OrgUnitContextMenu'
-import { OrgUnitInlineCreate } from './OrgUnitInlineCreate'
 import { getAllowedChildTypes } from './unit-children-rules'
 import { UNIT_TYPE_STYLE, type UnitType } from './unit-type-style'
 import { useDagreLayout } from './use-dagre-layout'
@@ -41,12 +39,10 @@ interface OrgGraphProps {
   onOpen?: (id: string) => void
   /** Fired when the user picks Delete in the right-click menu. */
   onDelete?: (id: string) => void
-  /** Fired when the user submits the inline create form. */
-  onCreateChild?: (
-    parentId: string,
-    unitType: UnitType,
-    name: string,
-  ) => Promise<void>
+  /** Fired when the user picks a child unit type in the right-click
+   *  menu. The consumer is responsible for opening a create dialog and
+   *  calling the create API. */
+  onPickChild?: (parentId: string, childType: UnitType) => void
   /** Accepted for backward compatibility with the old SVG impl. Unused. */
   hoverId?: string | null
   /** Accepted for backward compatibility with the old SVG impl. Unused. */
@@ -59,34 +55,29 @@ export function OrgGraph({
   onSelect,
   onOpen,
   onDelete,
-  onCreateChild,
+  onPickChild,
 }: OrgGraphProps) {
   const [direction, setDirection] = useDirectionToggle()
 
-  type Overlay =
-    | { kind: 'menu'; unit: GraphNodeData; x: number; y: number }
-    | { kind: 'create'; unit: GraphNodeData; childType: UnitType; x: number; y: number }
-    | null
+  // The radial menu is rendered through OrgGraphCanvas's `worldOverlay`
+  // slot anchored to the unit's right-edge midpoint in canvas-world
+  // coords. The canvas applies a counter-scale so the menu stays at
+  // native pixel sizes while still tracking the card through pan /
+  // zoom / centring animations.
+  //
+  // The `closing` flag drives the menu's reverse-stagger exit. When
+  // true, the menu plays the exit and fires `onExitComplete`; the
+  // parent then runs any queued `pendingActionRef.current` (e.g. firing
+  // `onPickChild` once the menu has visually retracted, so the create
+  // dialog doesn't pop while the menu is still on screen).
+  type Overlay = { unit: GraphNodeData; closing: boolean } | null
   const [overlay, setOverlay] = useState<Overlay>(null)
-  const [createPending, setCreatePending] = useState(false)
-  const [createError, setCreateError] = useState<string | null>(null)
-  const wrapperRef = useRef<HTMLDivElement>(null)
+  const pendingActionRef = useRef<(() => void) | null>(null)
 
-  // Bumped to trigger a fit-view: on first mount and on direction flip.
-  const [fitRunId, setFitRunId] = useState(0)
-  useEffect(() => {
-    setFitRunId((n) => n + 1)
-  }, [direction])
-
-  // Translate a viewport-coords MouseEvent into wrapper-local coords.
-  const toWrapperCoords = useCallback(
-    (e: { clientX: number; clientY: number }) => {
-      const rect = wrapperRef.current?.getBoundingClientRect()
-      if (!rect) return { x: 0, y: 0 }
-      return { x: e.clientX - rect.left, y: e.clientY - rect.top }
-    },
-    [],
-  )
+  // Pass `direction` itself as the fit-view runId — every direction
+  // flip reference-changes it, which is exactly the signal the canvas's
+  // useFitView watches for. Initial mount counts too, so the first fit
+  // happens automatically.
 
   // Walk parents from the selected node up to the root so the card +
   // edge components can highlight the path.
@@ -116,27 +107,36 @@ export function OrgGraph({
     }
   }, [units])
 
-  const onCardContextMenu = useCallback(
+  const openMenuFor = useCallback(
     (id: string) => {
       const unit = units.find((u) => u.id === id)
       if (!unit) return
-      // Anchor the menu at the card's bounding-box centre in wrapper-local
-      // coords. We write `data-id` on every node wrapper inside
-      // OrgGraphCanvas, so this lookup keeps working.
-      const cardEl = wrapperRef.current?.querySelector<HTMLElement>(
-        `[data-id="${id}"]`,
-      )
-      const wrapperRect = wrapperRef.current?.getBoundingClientRect()
-      if (!cardEl || !wrapperRect) return
-      const cardRect = cardEl.getBoundingClientRect()
-      const x = cardRect.left + cardRect.width / 2 - wrapperRect.left
-      const y = cardRect.top + cardRect.height / 2 - wrapperRect.top
       onSelect(unit.id)
-      setOverlay({ kind: 'menu', unit, x, y })
-      setCreateError(null)
+      // Cancel any in-flight close — this is a fresh open.
+      pendingActionRef.current = null
+      setOverlay({ unit, closing: false })
     },
     [units, onSelect],
   )
+
+  // Mark the menu as closing (plays the reverse stagger). Optionally
+  // queue an action to fire once the exit completes — used by the
+  // pick-child flow so the create dialog opens after the menu has
+  // visually retracted, not while it's still on screen.
+  const closeMenuAnimated = useCallback((next: (() => void) | null = null) => {
+    setOverlay((current) => {
+      if (!current || current.closing) return current
+      pendingActionRef.current = next
+      return { ...current, closing: true }
+    })
+  }, [])
+
+  const handleMenuExitComplete = useCallback(() => {
+    setOverlay(null)
+    const action = pendingActionRef.current
+    pendingActionRef.current = null
+    action?.()
+  }, [])
 
   const rawNodes = useMemo<LayoutNode<OrgGraphCanvasNodeData>[]>(
     () =>
@@ -150,10 +150,10 @@ export function OrgGraph({
           selectedId,
           onSelectPath,
           onSelect,
-          onContextMenu: onCardContextMenu,
+          onContextMenu: openMenuFor,
         },
       })),
-    [units, selectedId, onSelectPath, onSelect, onCardContextMenu],
+    [units, selectedId, onSelectPath, onSelect, openMenuFor],
   )
 
   const rawEdges = useMemo<LayoutEdge[]>(
@@ -174,88 +174,57 @@ export function OrgGraph({
   const positionedNodes = useDagreLayout(rawNodes, rawEdges, direction)
 
   const onNodeContextMenu = useCallback(
-    (id: string, e: MouseEvent<HTMLDivElement>) => {
-      const unit = units.find((u) => u.id === id)
-      if (!unit) return
-      onSelect(unit.id)
-      const { x, y } = toWrapperCoords(e)
-      setOverlay({ kind: 'menu', unit, x, y })
-      setCreateError(null)
+    (id: string) => {
+      openMenuFor(id)
     },
-    [units, onSelect, toWrapperCoords],
+    [openMenuFor],
   )
 
   return (
-    <div ref={wrapperRef} style={{ position: 'absolute', inset: 0 }}>
+    <div style={{ position: 'absolute', inset: 0 }}>
       <OrgGraphCanvas
         nodes={positionedNodes}
         edges={rawEdges}
+        selectedId={selectedId}
         selectedPath={onSelectPath}
-        fitRunId={fitRunId}
+        fitRunId={direction}
         onNodeDoubleClick={(id) => onOpen?.(id)}
         onNodeContextMenu={onNodeContextMenu}
         overlay={
-          <>
-            <DirectionToggle
-              direction={direction}
-              setDirection={setDirection}
+          <DirectionToggle
+            direction={direction}
+            setDirection={setDirection}
+          />
+        }
+        worldAnchorId={overlay?.unit.id ?? null}
+        worldOverlay={
+          overlay && (
+            <OrgUnitContextMenu
+              // `key` forces a remount when switching to a different
+              // unit's menu so the entrance animation plays again.
+              key={overlay.unit.id}
+              target={{ unit: overlay.unit, x: 0, y: 0 }}
+              allowedChildTypes={getAllowedChildTypes(
+                overlay.unit.unit_type as UnitType,
+              )}
+              closing={overlay.closing}
+              onExitComplete={handleMenuExitComplete}
+              onClose={() => closeMenuAnimated()}
+              onPickDelete={() => {
+                // Fire delete immediately (opens the confirm dialog)
+                // while the menu plays its exit in parallel.
+                onDelete?.(overlay.unit.id)
+                closeMenuAnimated()
+              }}
+              onPickChild={(type) => {
+                // Queue the create flow to fire after the menu has
+                // visually retracted, so the dialog doesn't pop while
+                // the menu is still on screen.
+                const parentId = overlay.unit.id
+                closeMenuAnimated(() => onPickChild?.(parentId, type))
+              }}
             />
-            {overlay?.kind === 'menu' && (
-              <OrgUnitContextMenu
-                target={{ unit: overlay.unit, x: overlay.x, y: overlay.y }}
-                allowedChildTypes={getAllowedChildTypes(
-                  overlay.unit.unit_type as UnitType,
-                )}
-                onClose={() => setOverlay(null)}
-                onPickDelete={() => {
-                  const id = overlay.unit.id
-                  setOverlay(null)
-                  onDelete?.(id)
-                }}
-                onPickChild={(type) => {
-                  setOverlay({
-                    kind: 'create',
-                    unit: overlay.unit,
-                    childType: type,
-                    x: overlay.x,
-                    y: overlay.y,
-                  })
-                  setCreateError(null)
-                }}
-              />
-            )}
-            {overlay?.kind === 'create' && (
-              <OrgUnitInlineCreate
-                unitType={overlay.childType}
-                x={overlay.x}
-                y={overlay.y}
-                pending={createPending}
-                error={createError}
-                onCancel={() => {
-                  setOverlay(null)
-                  setCreateError(null)
-                }}
-                onSubmit={async (name) => {
-                  if (!onCreateChild) {
-                    setOverlay(null)
-                    return
-                  }
-                  setCreatePending(true)
-                  setCreateError(null)
-                  try {
-                    await onCreateChild(overlay.unit.id, overlay.childType, name)
-                    setOverlay(null)
-                  } catch (err) {
-                    setCreateError(
-                      err instanceof Error ? err.message : 'Failed to create unit',
-                    )
-                  } finally {
-                    setCreatePending(false)
-                  }
-                }}
-              />
-            )}
-          </>
+          )
         }
       />
     </div>
