@@ -130,6 +130,7 @@ export type CreateJobBody = {
   salary_currency: SalaryCurrency | null
   travel_required: TravelRequired | null
   start_date_pref: StartDatePref | null
+  skip_enrichment?: boolean
 }
 
 export type SaveSignalsBody = {

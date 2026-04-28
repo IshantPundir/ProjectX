@@ -87,6 +87,7 @@ const createJobSchema = z.object({
     .enum(['immediate', 'within_30_days', 'within_60_days', 'flexible'])
     .nullable()
     .optional(),
+  skip_enrichment: z.boolean().default(false),
 })
 
 type CreateJobForm = z.infer<typeof createJobSchema>
@@ -218,6 +219,7 @@ export default function NewJobPage() {
       salary_currency: null,
       travel_required: null,
       start_date_pref: null,
+      skip_enrichment: false,
     },
     mode: 'onChange',
   })
@@ -269,6 +271,7 @@ export default function NewJobPage() {
         salary_currency: data.salary_currency || null,
         travel_required: data.travel_required || null,
         start_date_pref: data.start_date_pref || null,
+        skip_enrichment: data.skip_enrichment,
       })
     },
     onSuccess: (job) => {
@@ -586,6 +589,34 @@ export default function NewJobPage() {
               >
                 <Textarea {...form.register('project_scope_raw')} rows={5} />
               </Field>
+            </div>
+
+            <div
+              className="flex items-start gap-3 rounded-md border p-3.5 mt-2"
+              style={{
+                background: 'var(--px-surface-2)',
+                borderColor: 'var(--px-hairline)',
+              }}
+            >
+              <input
+                type="checkbox"
+                id="enrich-toggle"
+                className="mt-0.5"
+                checked={!form.watch('skip_enrichment')}
+                onChange={(e) =>
+                  form.setValue('skip_enrichment', !e.target.checked, {
+                    shouldDirty: true,
+                  })
+                }
+              />
+              <label htmlFor="enrich-toggle" className="flex-1 text-[13px]" style={{ color: 'var(--px-fg-2)' }}>
+                <div style={{ color: 'var(--px-fg)', fontWeight: 600 }}>
+                  Enrich JD with Copilot
+                </div>
+                <div className="mt-0.5 text-[12.5px]" style={{ color: 'var(--px-fg-3)' }}>
+                  Off if your JD is already polished — Copilot will extract signals from it as-is.
+                </div>
+              </label>
             </div>
           </div>
         )}
