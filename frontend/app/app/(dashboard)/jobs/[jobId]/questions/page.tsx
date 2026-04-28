@@ -180,6 +180,13 @@ export default function QuestionBankPage() {
 
   return (
     <div className="-mx-8">
+      <style>{`
+        @keyframes qbPillPulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.4; }
+        }
+        .qb-pill-pulse { animation: qbPillPulse 1.2s ease-in-out infinite; }
+      `}</style>
       {/* Per-stage switcher */}
       <div
         className="mb-4 flex items-center gap-2 overflow-x-auto border-b px-8 pb-3"
@@ -290,16 +297,45 @@ function StagePill({
           <span
             className="px-mono text-[9.5px] font-semibold"
             style={{ color: 'var(--px-ok)' }}
+            aria-label="Confirmed"
           >
             ✓
           </span>
         )}
         {bank?.status === 'generating' && (
           <span
-            className="text-[9.5px]"
+            className="text-[9.5px] inline-flex items-center"
             style={{ color: 'var(--px-accent)' }}
+            aria-label="Generating"
           >
-            •••
+            <span className="qb-pill-pulse">•••</span>
+          </span>
+        )}
+        {bank?.status === 'reviewing' && (
+          <span
+            className="text-[9.5px]"
+            style={{ color: 'var(--px-caution)' }}
+            aria-label="Awaiting review"
+          >
+            ◆
+          </span>
+        )}
+        {bank?.status === 'draft' && (
+          <span
+            className="text-[9.5px]"
+            style={{ color: 'var(--px-fg-4)' }}
+            aria-label="Empty"
+          >
+            ○
+          </span>
+        )}
+        {bank?.status === 'failed' && (
+          <span
+            className="text-[9.5px] font-semibold"
+            style={{ color: 'var(--px-danger)' }}
+            aria-label="Failed"
+          >
+            ✗
           </span>
         )}
       </div>

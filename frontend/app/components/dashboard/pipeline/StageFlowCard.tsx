@@ -17,6 +17,7 @@ import type {
 } from '@/lib/api/pipelines'
 import type { BankStatus } from '@/lib/api/question-banks'
 import { isStageUnstaffed } from '@/lib/pipelines/categories'
+import { BankStatusBadge } from '@/components/dashboard/question-bank/BankStatusBadge'
 
 type Props = {
   stage: PipelineStageUpdateInput
@@ -168,11 +169,15 @@ export function StageFlowCard({
             <div className="text-sm font-semibold text-zinc-900 truncate">
               {stage.name}
             </div>
-            <span
-              className={`flex-shrink-0 w-2 h-2 rounded-full ${statusDotClass(bankStatus)}`}
-              aria-label={statusLabel(bankStatus)}
-              title={statusLabel(bankStatus)}
-            />
+            {bankStatus !== null ? (
+              <BankStatusBadge status={bankStatus} small />
+            ) : (
+              <span
+                className={`flex-shrink-0 w-2 h-2 rounded-full ${statusDotClass(null)}`}
+                aria-label={statusLabel(null)}
+                title={statusLabel(null)}
+              />
+            )}
           </div>
           <div className="flex items-center gap-1.5 text-xs text-zinc-500 mt-0.5">
             <Icon className={`w-3.5 h-3.5 ${typeText}`} aria-hidden="true" />
