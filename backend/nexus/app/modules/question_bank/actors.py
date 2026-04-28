@@ -556,7 +556,7 @@ async def _regenerate_one_question(
 
     Separated from the Dramatiq actor so @observe() can wrap only the
     observable path (not the actor's session bootstrap). Matches the
-    jd/actors.py `_run_extraction` pattern. (B13 wiring.)
+    jd/actors.py inner-coroutine pattern (e.g., `_run_reenrichment`). (B13 wiring.)
     """
     # Attach trace metadata for Langfuse dashboard search / grouping.
     langfuse_context.update_current_trace(

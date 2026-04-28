@@ -54,7 +54,7 @@ backend/nexus/
 │   │   ├── config.py            ← AIConfig — env-driven model IDs and reasoning_effort
 │   │   ├── client.py            ← get_openai_client() — instructor.AsyncInstructor + langfuse.openai factory
 │   │   ├── prompts.py           ← PromptLoader — versioned prompt file reader, in-memory cache
-│   │   └── schemas.py           ← ExtractionOutput and structured output schemas with provenance validators
+│   │   └── schemas.py           ← EnrichmentOutput, SignalExtractionOutput, ReEnrichmentOutput — structured output schemas with provenance validators
 │   └── modules/
 │       ├── auth/                ← JWT verification, UserContext, RBAC guards, /me endpoint, invite claiming
 │       │   ├── service.py       ← verify_access_token(), verify_candidate_token(), require_projectx_admin()
@@ -132,7 +132,8 @@ backend/nexus/
 │       └── reporting/            ← [Stub] Report compilation, score aggregation
 ├── prompts/
 │   └── v1/
-│       ├── jd_enhancement.txt       ← Call 1 — JD extraction + enhancement
+│       ├── jd_enrichment.txt        ← Phase 1 — JD enrichment (rewrite raw JD)
+│       ├── jd_signal_extraction.txt ← Phase 2 — signal extraction from (enriched or raw) JD
 │       ├── jd_reenrichment.txt      ← Call 2 — re-enrichment after signal edits
 │       ├── question_bank_common.txt ← Shared system prompt for question bank calls
 │       └── question_bank_<stage_type>.txt ← Per-stage-type system prompts
@@ -267,7 +268,7 @@ Phase 2A introduces `app/ai/` as the provider-agnostic AI layer.
 - **AIConfig** (`app/ai/config.py`) — env-driven model IDs and `reasoning_effort`. Never hardcode. Swapping a model for a task is a single `.env` change.
 - **PromptLoader** (`app/ai/prompts.py`) — reads versioned prompts from `prompts/v{N}/<name>.txt`, cached in memory. Prompt updates are file changes, not code deploys.
 - **OpenAI client factory** (`app/ai/client.py`) — returns an `instructor.AsyncInstructor` wrapped around `langfuse.openai.AsyncOpenAI`. Langfuse tracing is a drop-in — no-op when `LANGFUSE_HOST` is empty.
-- **ExtractionOutput** and related schemas (`app/ai/schemas.py`) — strict Pydantic models for structured outputs. `source=ai_inferred` requires `inference_basis`; `ai_extracted` requires it to be null.
+- **EnrichmentOutput** and **SignalExtractionOutput** schemas (`app/ai/schemas.py`) — strict Pydantic models for the two-phase JD pipeline. Phase 1 produces an enriched JD; Phase 2 produces signals + seniority + role_summary with provenance metadata. `source=ai_inferred` requires `inference_basis`; `ai_extracted` requires it to be null.
 
 Business logic imports `get_openai_client()` and `prompt_loader` from `app.ai.*` — never openai/instructor/langfuse directly. This is the single swap point for a future provider change.
 
@@ -326,7 +327,7 @@ from openai import AsyncOpenAI
 
 | Module | What It Owns |
 |---|---|
-| `ai` | Provider-agnostic AI layer. `AIConfig` (env-driven model/effort), `PromptLoader` (versioned prompts, in-memory cache), `get_openai_client()` (instructor + langfuse.openai factory with self-hosted-only guard — `_is_langfuse_cloud_host()` raises outside dev), `ExtractionOutput` schemas with provenance validators. |
+| `ai` | Provider-agnostic AI layer. `AIConfig` (env-driven model/effort), `PromptLoader` (versioned prompts, in-memory cache), `get_openai_client()` (instructor + langfuse.openai factory with self-hosted-only guard — `_is_langfuse_cloud_host()` raises outside dev), `EnrichmentOutput` + `SignalExtractionOutput` schemas (split in the JD creation flow refinement) with provenance validators. (The original combined `ExtractionOutput` landed in Phase 2A; subsequently split into the two-phase form on 2026-04-28 — see docs/superpowers/specs/2026-04-28-jd-creation-flow-refinement-design.md.) |
 | `jd` | JD pipeline full implementation. `create_job_posting` with company profile ancestry gate, `extract_and_enhance_jd` + `reenrich_jd` Dramatiq actors (Call 1 + Call 2), state machine with audit trail, `require_job_access` ancestry-walking authz, SSE status stream via `get_tenant_session` (Batch F RLS fix), `x-correlation-id` header validation (Batch D), router with create/get/list/stream/re-enrich/confirm-signals endpoints. |
 | `org_units` (extended) | `CompanyProfile` strict Pydantic schema, `find_company_profile_in_ancestry()` helper, `_validate_and_normalize_company_profile()` hook in create/update, `company_profile_completed_at/by` tracking stamps. |
 | `audit` | Append-only audit log with tenant-scoped RLS (migration 0008 added the missing `FOR INSERT WITH CHECK` policy that was silently dropping tenant-scoped writes). |

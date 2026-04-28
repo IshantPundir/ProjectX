@@ -9,8 +9,9 @@ import openai
 import pytest
 from sqlalchemy import func, select
 
-from app.ai.schemas import ExtractedSignals, SignalItemV2
+from app.ai.schemas import EnrichmentOutput, ExtractedSignals, SignalExtractionOutput, SignalItemV2
 from app.models import JobPosting, JobPostingSignalSnapshot
+from app.modules.jd.actors import _run_enrichment, _run_signal_extraction
 from tests.conftest import (
     create_test_client,
     create_test_org_unit,
@@ -53,8 +54,6 @@ async def test_actor_happy_path_persists_snapshot(db, monkeypatch):
     after both phases the job status is 'signals_extracted', description_enriched
     is set, and a signal snapshot with 5 signals at version 1 is written.
     """
-    from app.modules.jd.actors import _run_enrichment, _run_signal_extraction
-
     tenant, user, job = await _make_extracting_job(db)
 
     enrichment = _fake_enrichment_output()
@@ -103,8 +102,6 @@ async def test_actor_final_retry_failure_sanitizes(db, monkeypatch):
     enrichment_status='failed', transitions main status to
     'signals_extraction_failed', and sanitizes the error (no API keys leaked).
     """
-    from app.modules.jd.actors import _run_enrichment
-
     tenant, user, job = await _make_extracting_job(db)
 
     class FakeResponse:
@@ -145,8 +142,6 @@ async def test_actor_intermediate_retry_does_not_flip_state(db, monkeypatch):
     """Intermediate retry (retries_so_far=0): a failing phase-1 LLM call raises
     so Dramatiq retries, without committing any failed state to the DB.
     """
-    from app.modules.jd.actors import _run_enrichment
-
     tenant, user, job = await _make_extracting_job(db)
 
     fake_client = MagicMock()
@@ -166,14 +161,14 @@ async def test_actor_intermediate_retry_does_not_flip_state(db, monkeypatch):
     await db.refresh(job)
     assert job.status == "signals_extracting"  # unchanged
     assert job.status_error is None
+    assert job.enrichment_status == "idle"
 
 
 # --- Phase 1 (two-phase split) tests ----------------------------------------
 
 
-def _fake_enrichment_output() -> "EnrichmentOutput":
+def _fake_enrichment_output() -> EnrichmentOutput:
     """Returns a valid EnrichmentOutput with at least 50 chars."""
-    from app.ai.schemas import EnrichmentOutput
     return EnrichmentOutput(
         enriched_jd=(
             "## Header\n"
@@ -184,13 +179,8 @@ def _fake_enrichment_output() -> "EnrichmentOutput":
     )
 
 
-def _fake_signal_extraction_output() -> "SignalExtractionOutput":
+def _fake_signal_extraction_output() -> SignalExtractionOutput:
     """Returns a valid SignalExtractionOutput satisfying coverage rules."""
-    from app.ai.schemas import (
-        ExtractedSignals,
-        SignalExtractionOutput,
-        SignalItemV2,
-    )
     signals = [
         SignalItemV2(
             value="Python",
@@ -260,8 +250,6 @@ async def test_two_phase_extraction_runs_both_llm_calls_in_order(db, monkeypatch
     enrichment_status flips to 'completed' between them; final state lands
     at signals_extracted with description_enriched + snapshot v1 written.
     """
-    from app.modules.jd.actors import _run_enrichment, _run_signal_extraction
-
     tenant, user, job = await _make_extracting_job(db)
     await db.flush()
 
@@ -325,8 +313,6 @@ async def test_two_phase_extraction_runs_both_llm_calls_in_order(db, monkeypatch
 @pytest.mark.asyncio
 async def test_phase_2_reads_enriched_jd_when_phase_1_ran(db, monkeypatch):
     """Signal extraction must use description_enriched as input when phase 1 ran."""
-    from app.modules.jd.actors import _run_enrichment, _run_signal_extraction
-
     tenant, user, job = await _make_extracting_job(db)
     # Embed a distinctive marker in description_raw so the negative-control
     # assertion is real: if _run_signal_extraction reads raw instead of enriched,
