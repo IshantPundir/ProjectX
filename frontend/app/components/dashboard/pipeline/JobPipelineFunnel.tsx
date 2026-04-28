@@ -327,17 +327,9 @@ export function JobPipelineFunnel({ job, pipeline, jobId }: Props) {
   // Bridges the gap between the 202 response and the first SSE event from
   // the actor. Without this, the button briefly re-enables after the POST
   // returns but before the actor has marked any bank as 'generating'.
+  // The clearing useEffect is placed below, after `anyBankGenerating` is
+  // computed (it's defined later in this file from `banks`).
   const [justDispatched, setJustDispatched] = useState(false)
-
-  useEffect(() => {
-    if (!justDispatched) return
-    if (anyBankGenerating) {
-      setJustDispatched(false)
-      return
-    }
-    const timeout = window.setTimeout(() => setJustDispatched(false), 15_000)
-    return () => window.clearTimeout(timeout)
-  }, [justDispatched, anyBankGenerating])
 
   // Direct save — bypasses classify gate. Called after user confirms a B/C warning,
   // or when the classify result is category A.
@@ -550,6 +542,20 @@ export function JobPipelineFunnel({ job, pipeline, jobId }: Props) {
   const confirmedBanks = banks.filter((b) => b.status === 'confirmed').length
   const banksByStage = new Map(banks.map((b) => [b.stage_id, b]))
   const anyBankGenerating = banks.some((b) => b.status === 'generating')
+
+  // Clear `justDispatched` once SSE confirms a bank entered 'generating',
+  // or after a 15s safety timeout in case SSE never fires. Defined here
+  // (rather than next to the useState above) so it can reference
+  // `anyBankGenerating` after that const is in scope.
+  useEffect(() => {
+    if (!justDispatched) return
+    if (anyBankGenerating) {
+      setJustDispatched(false)
+      return
+    }
+    const timeout = window.setTimeout(() => setJustDispatched(false), 15_000)
+    return () => window.clearTimeout(timeout)
+  }, [justDispatched, anyBankGenerating])
 
   const generateAllMutation = useGenerateAllQuestions(jobId)
 
