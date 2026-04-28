@@ -45,6 +45,9 @@ export { Skeleton } from "./Skeleton";
 export { Separator } from "./Separator";
 export type { SeparatorProps } from "./Separator";
 
+export { Tabs } from './Tabs'
+export type { TabItem } from './Tabs'
+
 export {
   Tooltip,
   TooltipProvider,
