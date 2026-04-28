@@ -22,6 +22,22 @@ export function ErrorBanner({ jobId, error }: Props) {
     try {
       const token = await getFreshSupabaseToken()
       await jobsApi.retry(token, jobId)
+      // Optimistically clear stale failure state so JDExtractingView doesn't
+      // flash enrichment_status='failed' while the invalidation refetch is
+      // in flight. The real values arrive with the next SSE event.
+      queryClient.setQueryData<import('@/lib/api/jobs').JobPostingWithSnapshot>(
+        ['jobs', jobId],
+        (prev) =>
+          prev
+            ? {
+                ...prev,
+                status: 'signals_extracting',
+                status_error: null,
+                enrichment_status: 'idle',
+                enrichment_error: null,
+              }
+            : prev,
+      )
       queryClient.invalidateQueries({ queryKey: ['jobs', jobId] })
       toast.success('Retry dispatched')
     } catch (e) {
