@@ -158,6 +158,13 @@ class JobPostingCreate(BaseModel):
     salary_currency: SalaryCurrency | None = None
     travel_required: TravelRequired | None = None
     start_date_pref: StartDatePref | None = None
+    skip_enrichment: bool = Field(
+        default=False,
+        description=(
+            "If true, signal extraction runs against the raw JD; "
+            "JD enrichment phase is skipped entirely."
+        ),
+    )
 
 
 class SaveSignalsRequest(BaseModel):
