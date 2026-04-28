@@ -405,10 +405,12 @@ export function JobPipelineFunnel({ job, pipeline, jobId }: Props) {
 
   // If normalizeStages added an intake/debrief that wasn't on the server,
   // persist that now so the backend stops returning a broken pipeline on
-  // every subsequent load.
+  // every subsequent load. This is a sync, not a user edit — bypass the
+  // classify+confirm modal path (otherwise the user sees "Remove this stage?"
+  // on first load, which is wrong both in copy and in intent).
   useEffect(() => {
     if (stages.length !== pipeline.stages.length) {
-      scheduleSave(stages)
+      doSave(stages, editGenRef.current)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
