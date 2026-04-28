@@ -586,3 +586,132 @@ async def test_create_job_with_skip_enrichment_forwards_to_actor(
 
     assert response.status_code == 201, response.text
     assert captured["kwargs"].get("skip_enrichment") is True
+
+
+# ---------------------------------------------------------------------------
+# T10 — retry preserves original skip_enrichment intent (C2 / M3)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_retry_extraction_preserves_skip_enrichment_intent(
+    db: AsyncSession, monkeypatch
+):
+    """Retry on a job created with skip_enrichment=True must forward
+    skip_enrichment=True to the actor.
+
+    Signal: enrichment_status='idle' AND description_enriched IS NULL
+    uniquely identifies a job that was created with skip_enrichment=True
+    (phase 1 always transitions enrichment_status to at least 'streaming'
+    if it ever ran).
+    """
+    captured: dict = {}
+
+    def fake_send(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(
+        "app.modules.jd.actors.extract_and_enhance_jd.send",
+        fake_send,
+    )
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    company = await create_test_org_unit(
+        db,
+        tenant.id,
+        unit_type="company",
+        company_profile=_VALID_PROFILE,
+    )
+    tenant.super_admin_id = user.id
+    await db.flush()
+
+    # Job in failed state with enrichment_status='idle' and no enriched
+    # description — simulates a skip-enrichment job that hit a phase-2 failure.
+    job = JobPosting(
+        tenant_id=tenant.id,
+        org_unit_id=company.id,
+        title="Skip Enrichment Retry Test",
+        description_raw="A" * 200,
+        status="signals_extraction_failed",
+        source="native",
+        created_by=user.id,
+        status_error="Phase-2 failure on skip-enrichment job",
+        # enrichment_status defaults to 'idle'; description_enriched is NULL
+    )
+    db.add(job)
+    await db.commit()
+
+    headers, restore = _setup_test_context(db, user, tenant.id, is_super_admin=True)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.post(f"/api/jobs/{job.id}/retry", headers=headers)
+    finally:
+        restore()
+
+    assert response.status_code == 202, response.text
+    # The actor must have been dispatched with skip_enrichment=True
+    assert captured.get("kwargs", {}).get("skip_enrichment") is True
+
+
+@pytest.mark.asyncio
+async def test_retry_extraction_reruns_enrichment_after_phase1_failure(
+    db: AsyncSession, monkeypatch
+):
+    """Retry on a job whose phase 1 already FAILED must pass skip_enrichment=False
+    so the actor re-attempts enrichment.
+
+    Signal: enrichment_status='failed' — phase 1 was attempted but failed.
+    """
+    captured: dict = {}
+
+    def fake_send(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(
+        "app.modules.jd.actors.extract_and_enhance_jd.send",
+        fake_send,
+    )
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    company = await create_test_org_unit(
+        db,
+        tenant.id,
+        unit_type="company",
+        company_profile=_VALID_PROFILE,
+    )
+    tenant.super_admin_id = user.id
+    await db.flush()
+
+    # Job in failed state with enrichment_status='failed' — phase 1 ran but
+    # errored out; retry should re-run phase 1, so skip_enrichment=False.
+    job = JobPosting(
+        tenant_id=tenant.id,
+        org_unit_id=company.id,
+        title="Phase-1 Failure Retry Test",
+        description_raw="A" * 200,
+        status="signals_extraction_failed",
+        source="native",
+        created_by=user.id,
+        status_error="Phase-1 LLM call timed out",
+        enrichment_status="failed",
+    )
+    db.add(job)
+    await db.commit()
+
+    headers, restore = _setup_test_context(db, user, tenant.id, is_super_admin=True)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.post(f"/api/jobs/{job.id}/retry", headers=headers)
+    finally:
+        restore()
+
+    assert response.status_code == 202, response.text
+    # enrichment_status='failed' → phase 1 was attempted; retry must re-run it
+    assert captured.get("kwargs", {}).get("skip_enrichment") is False

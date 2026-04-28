@@ -452,12 +452,23 @@ async def retry_extraction(
         correlation_id=correlation_id,
     )
 
+    # Infer skip_enrichment intent from persisted state:
+    # A job created with skip_enrichment=True never enters the enrichment
+    # phase, so enrichment_status stays 'idle' and description_enriched
+    # remains NULL. Phase 1 always transitions enrichment_status to at
+    # least 'streaming' on first attempt, so idle+null uniquely identifies
+    # a skip-enrichment job that failed before phase 1 ever began.
+    inferred_skip_enrichment = (
+        job.enrichment_status == "idle" and job.description_enriched is None
+    )
+
     # Same post-commit enqueue pattern as create_job.
     background_tasks.add_task(
         _safe_dispatch_extraction,
         job_posting_id=str(job.id),
         tenant_id=str(job.tenant_id),
         correlation_id=correlation_id,
+        skip_enrichment=inferred_skip_enrichment,
     )
 
     status_event = await get_job_status(db, job_id)
