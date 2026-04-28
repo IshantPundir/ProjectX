@@ -201,7 +201,7 @@ async def build_question_context(
         stage_type=stage.stage_type,
         stage_difficulty=stage.difficulty,
         stage_duration_minutes=stage.duration_minutes,
-        signal_filter_types=stage.signal_filter.get("include_types", []),
+        signal_filter_types=(stage.signal_filter or {}).get("include_types", []),
         pass_criteria=stage.pass_criteria or {},
         existing_bank_questions=existing_bank_questions,
     )
