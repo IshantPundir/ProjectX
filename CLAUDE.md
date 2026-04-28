@@ -26,7 +26,8 @@ ProjectX is an enterprise-grade B2B SaaS platform that replaces recruiter phone 
 ProjectX/
 ├── CLAUDE.md                  ← you are here
 ├── frontend/
-│   └── app/                   ← Next.js 14+ (App Router), TypeScript
+│   ├── app/                   ← Next.js 16 App Router — recruiter dashboard + candidate interview surface
+│   └── admin/                 ← Next.js 16 App Router — internal ProjectX-operator console (provision tenants)
 └── backend/
     └── nexus/                 ← FastAPI, Python 3.12, Docker, Modular Monolith
 ```
@@ -56,6 +57,25 @@ Each subdirectory has its own `CLAUDE.md` with context-specific rules. Always re
 | Observability | Sentry + Langfuse (self-hosted) | + CloudTrail |
 
 **The rule:** Data model, RLS policies, auth contracts, and module boundaries must be correct from day 1. Everything else evolves on demand, triggered by a real client requirement — not in anticipation of one.
+
+---
+
+## Current Phase Status
+
+| Phase | Scope | Status |
+|---|---|---|
+| 1 | Auth, multi-tenancy + RLS, client provisioning, team invites, org units, roles, audit log, notifications | ✅ done |
+| 2A | JD pipeline, signal schema v2 with provenance, `app/ai/` provider-agnostic layer, Langfuse tracing | ✅ done |
+| 2B | Signal editing with snapshot versioning + row-locked save, company profile ancestry walk | ✅ done |
+| 2C.1 | Pipeline templates + per-job instances + stages, drag-to-reorder, stage type v5 (6 values), participants | ✅ done |
+| 2C.2 | Question bank generation (per-stage LLM, adaptive coverage, mandatory demotion, bundling, SSE) | ✅ done |
+| 3B | Candidates module (CRUD, resume + S3, kanban, PII redaction gate) | ✅ done |
+| 3C.1 | Scheduler invites + supersession chain; session pre-check / consent / OTP; **single-use token enforcement** atomic on `/start` | ✅ done |
+| 3C.2 | LiveKit room + token provisioning (replaces the 501 stub on `session.start`) | 🟡 pending |
+| 3D | Real-time `analysis` (scoring, probe selection) + `reporting` (post-session report) | 🟡 pending |
+| ATS | Ceipal polling, Greenhouse/Workday adapters, outbound sync | 🟡 stubbed |
+
+Subdirectory CLAUDE.md files are the source of truth for module-level detail. This table is the cross-cutting summary only.
 
 ---
 
@@ -143,15 +163,23 @@ Critical rules that are easy to get wrong:
 
 ```bash
 # Backend (from backend/nexus/)
-docker compose up --build          # Start full backend stack
+docker compose up --build          # Start full backend stack (api + worker + redis)
 docker compose run nexus alembic upgrade head   # Run migrations
 docker compose run nexus pytest    # Run tests
 
-# Frontend (from frontend/app/)
+# Recruiter app (from frontend/app/, port 3000)
 npm run dev          # Start dev server (localhost:3000)
 npm run build        # Production build
 npm run lint         # ESLint check
-npm run type-check   # TypeScript check
+npm run test         # Vitest
+
+# Admin app (from frontend/admin/, port 3001)
+npm run dev          # Start dev server (localhost:3001)
+npm run build
+npm run lint
+
+# Local Supabase (Postgres on 54322, Studio on 54323, Inbucket on 54324)
+supabase start
 ```
 
 ---

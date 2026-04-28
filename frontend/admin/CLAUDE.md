@@ -95,6 +95,17 @@ The `is_projectx_admin: true` claim must be set in the admin user's Supabase `ap
 
 Both require `is_projectx_admin` JWT claim.
 
+**Available but not yet wired into the admin UI** — backend exposes the full tenant lifecycle:
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| POST | `/api/admin/clients/{id}/block` | Set `clients.blocked_at` (reversible) |
+| POST | `/api/admin/clients/{id}/unblock` | Clear `clients.blocked_at` |
+| DELETE | `/api/admin/clients/{id}` | Soft-delete (sets `clients.deleted_at` + cascades to users) |
+| POST | `/api/admin/clients/{id}/hard-delete` | Hard-delete via PG cascade (audit history is preserved — see migration 0023) |
+
+Wire these into the dashboard when tenant suspension / deletion lands as an admin task.
+
 ---
 
 ## Environment Variables
@@ -113,7 +124,7 @@ NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
 npm run dev          # Start dev server (localhost:3001)
 npm run build        # Production build
 npm run lint         # ESLint
-npm run type-check   # tsc --noEmit
+npx tsc --noEmit     # Type check (no dedicated script — package.json only ships dev/build/start/lint)
 ```
 
 ---

@@ -39,121 +39,136 @@ Both surfaces must be designed as **enterprise products**, not consumer apps. Cl
 
 ### Currently Installed (Phase 2A)
 
-- **Component library:** shadcn/ui v4.2.0 (`base-nova` preset, **Base UI** not Radix — see ecosystem note below)
 - **Server state:** TanStack Query v5 (`@tanstack/react-query` + devtools, provider lives in `DashboardProviders` client boundary inside the server dashboard layout)
 - **Forms:** React Hook Form + Zod (`@hookform/resolvers/zod`)
 - **SSE client:** `@microsoft/fetch-event-source` — used by `use-job-status-stream` and `use-questions-status-stream`. Both hooks use a ref-mirroring pattern so stage/job selection doesn't churn the underlying connection; `useJobStatusStream` also caps total reconnect attempts via `MAX_TOTAL_RETRIES` to prevent runaway loops.
 - **Toast:** `sonner` (mounted via `<Toaster />` in `DashboardProviders`)
 - **Testing:** Vitest + @testing-library/react + jsdom. Run via `npm run test`.
 
+### Currently Installed (Phase 2B+)
+
+- **Client-side global state:** Zustand v5 (`zustand`). Used for editable JD signal state in `stores/job-edit.ts` (isDirty tracking, optimistic local edits before save). Add new stores under `stores/` only when state needs to live outside a single React tree — most state should still go in TanStack Query cache or co-located component state.
+
 ### Currently Installed (Phase 2C)
 
-- **Drag & drop:** `@dnd-kit/core` + `@dnd-kit/sortable` with `KeyboardSensor` wired for a11y. Used by `PipelineFlowColumn` for stage reordering.
-- **Node-link canvas:** `@xyflow/react` v12 + `dagre` for layout. Used by the org-units infinite-canvas tree view. Custom node types are adapted via a typed cast in `OrgUnitCanvas.tsx`.
+- **Drag & drop:** `@dnd-kit/core` + `@dnd-kit/sortable` + `@dnd-kit/modifiers` with `KeyboardSensor` wired for a11y. Used by `PipelineFlowColumn` for stage reordering.
+- **Node-link canvas:** `@dagrejs/dagre` for layout (no `@xyflow/react` — the org-unit canvas in `components/dashboard/org-units/` uses a custom SVG renderer in `OrgGraphCanvas.tsx` + `OrgUnitEdge.tsx` + `edge-path.ts`, with its own pan/zoom hook `use-pan-zoom.ts` and direction toggle `use-direction-toggle.ts`).
+- **Animation:** GSAP v3 + `@gsap/react` (used sparingly for transitions; avoid for any state-driven motion that would be cleaner with Tailwind transitions).
 
-**⚠️ shadcn v4 / Base UI ecosystem note:** shadcn v4 switched from Radix primitives to `@base-ui/react`. Writing custom components that extend shadcn primitives requires Base UI idioms:
+### Component Library — In-House `px/` Primitives
+
+There is **no shadcn/ui in this codebase**. The design system is a hand-rolled primitive library at `components/px/` built directly on `@base-ui-components/react`. The barrel export is `components/px/index.ts`.
+
+| Primitive | File |
+|---|---|
+| `Button`, `ButtonVariant`, `ButtonSize` | `components/px/Button.tsx` |
+| `Input`, `InputSize` | `components/px/Input.tsx` |
+| `Textarea`, `Label` | `components/px/Textarea.tsx`, `components/px/Label.tsx` |
+| `Select` family | `components/px/Select.tsx` |
+| `Dialog` family + `DangerConfirmDialog` | `components/px/Dialog.tsx`, `components/px/DangerConfirmDialog.tsx` |
+| `Alert`, `Badge`, `Skeleton`, `Separator` | `components/px/{Alert,Badge,Skeleton,Separator}.tsx` |
+| `Tooltip` family | `components/px/Tooltip.tsx` |
+| `Toaster` (sonner wrapper) | `components/px/Toaster.tsx` |
+
+**Base UI ecosystem rules (still apply, just inside `px/` primitives):**
 - `TooltipTrigger` uses `render={<span>...</span>}` instead of Radix's `asChild`
 - `TooltipProvider` uses `delay={150}` instead of Radix's `delayDuration`
 - `Select`'s `onValueChange` types its value as `unknown` (Zod validation catches invalid shapes)
 - `SelectTrigger` defaults to `w-fit` — add `w-full` explicitly when you need it to fill a grid column
 
-Don't blindly copy Radix patterns from the internet; check the actual component source in `components/ui/` before adapting anything.
+When you need a new primitive, add it under `components/px/` and export it from `index.ts` — never reach for an external shadcn snippet or copy a Radix pattern from the internet without checking the actual `@base-ui-components/react` API.
 
-### Planned for Phase 2+
+### Planned for Phase 3+
 
-- **State management:** Zustand for client-side global state (deferred from Phase 2A)
-- **Real-time / WebRTC:** LiveKit React SDK (`@livekit/components-react`) — Phase 3
+- **Real-time / WebRTC:** LiveKit React SDK (`@livekit/components-react`) — pairs with the backend's pending Phase 3C.2 LiveKit room provisioning (currently a 501 stub).
 
 ---
 
 ## Directory Structure
 
-### Current (Phase 1)
+### Current
 
 ```
 frontend/app/
-├── app/                              ← Next.js App Router
-│   ├── layout.tsx                    ← Root layout (Geist fonts, zinc-50 bg)
-│   ├── globals.css                   ← Tailwind v4 import only
+├── app/                                  ← Next.js App Router
+│   ├── layout.tsx                        ← Root layout (Geist fonts, zinc-50 bg)
+│   ├── globals.css                       ← Tailwind v4 import only + @theme tokens
 │   ├── (auth)/
-│   │   ├── layout.tsx                ← Centered card container
-│   │   ├── login/page.tsx            ← Email+password + JWT tenant_id check
-│   │   └── invite/page.tsx           ← Invite acceptance + account setup
+│   │   ├── layout.tsx                    ← Centered card container
+│   │   ├── login/page.tsx                ← Email+password + JWT tenant_id check
+│   │   └── invite/page.tsx               ← Invite acceptance + account setup
 │   ├── onboarding/
-│   │   ├── layout.tsx                ← Centered full-viewport (no sidebar)
-│   │   └── page.tsx                  ← 2-step onboarding wizard
-│   └── (dashboard)/
-│       ├── layout.tsx                ← Server component: auth guard + /me check + sidebar shell
-│       ├── SidebarNav.tsx            ← Client component: nav links + sign out
-│       ├── page.tsx                  ← Dashboard home (placeholder cards)
-│       ├── profile/page.tsx          ← User profile + role assignments
-│       └── settings/
-│           ├── team/page.tsx         ← Team management, invites, resend, revoke, deactivate
-│           └── org-units/
-│               ├── page.tsx          ← Org unit tree + create form
-│               └── [unitId]/page.tsx ← Unit detail: members, roles, sub-units, delete
-├── lib/
-│   ├── api/client.ts                 ← apiFetch() utility — typed fetch wrapper
-│   └── supabase/
-│       ├── client.ts                 ← Browser Supabase client
-│       └── server.ts                 ← Server Supabase client (cookies)
-└── CLAUDE.md                         ← you are here
-```
-
-### Added in Phase 2A
-
-```
-├── app/
-│   └── (dashboard)/
-│       └── jobs/                         ← Job pipeline management (Phase 2A)
-│           ├── page.tsx                  ← Jobs list
-│           └── [jobId]/
-│               └── review/page.tsx       ← Three-panel JD review (server component shell)
-├── components/
-│   ├── ui/                               ← shadcn primitives — auto-generated, do not edit
-│   ├── dashboard/
-│   │   ├── providers.tsx                 ← DashboardProviders client boundary (TanStack Query + Toaster)
-│   │   ├── company-profile-form.tsx      ← Shared 4-field RHF+Zod form
-│   │   └── jd-panels/
-│   │       ├── SignalChip.tsx            ← Provenance-aware chip with inference tooltip
-│   │       ├── OriginalJdPanel.tsx       ← Collapses to drawer below 3xl
-│   │       ├── EnrichedJdPanel.tsx
-│   │       ├── SignalsPanel.tsx
-│   │       ├── LoadingSkeleton.tsx       ← Content-aware skeleton with SSE status pill
-│   │       └── ErrorBanner.tsx          ← Retry button + sanitized error message
-├── lib/
-│   ├── api/
-│   │   ├── client.ts                     ← existing apiFetch()
-│   │   └── jobs.ts                       ← NEW typed API namespace for JD module
-│   ├── auth/
-│   │   └── tokens.ts                     ← getFreshSupabaseToken() — no in-memory cache layer
-│   └── hooks/
-│       ├── use-job.ts                    ← TanStack Query wrapper for GET /api/jobs/{id}
-│       └── use-job-status-stream.ts      ← fetch-event-source SSE with query invalidation
-```
-
-### Planned Additions (Phase 3+)
-
-```
-├── app/
+│   │   ├── layout.tsx                    ← Centered full-viewport (no sidebar)
+│   │   └── page.tsx                      ← 2-step onboarding wizard
+│   ├── suspended/page.tsx                ← Tenant blocked / user revoked landing
 │   ├── (dashboard)/
-│   │   ├── candidates/           ← Candidate cards, kanban board
-│   │   ├── sessions/             ← Live session management
-│   │   └── reports/              ← Evaluation report viewer
-│   └── (interview)/              ← Route group — candidate interview surface
-│       ├── layout.tsx            ← Minimal layout, no nav
-│       └── [token]/              ← JWT-gated entry point
-│           ├── pre-check/        ← Camera/mic test, identity confirm, OTP
-│           ├── session/          ← Live interview (2×2 video grid)
-│           └── complete/         ← Post-session completion screen
+│   │   ├── layout.tsx                    ← Server component: auth guard + React.cache(getMe) + sidebar shell
+│   │   ├── page.tsx                      ← Dashboard home
+│   │   ├── profile/page.tsx              ← User profile + role assignments
+│   │   ├── jobs/
+│   │   │   ├── page.tsx                  ← Jobs list
+│   │   │   ├── new/page.tsx              ← Create JD wizard
+│   │   │   └── [jobId]/
+│   │   │       ├── page.tsx              ← Three-panel JD review (signals + original + enriched)
+│   │   │       ├── pipeline/page.tsx     ← Per-job pipeline editor
+│   │   │       └── questions/page.tsx    ← Per-stage question bank UI
+│   │   ├── candidates/
+│   │   │   ├── page.tsx                  ← Kanban + list view (ClientCandidatesPage shell)
+│   │   │   └── [candidateId]/page.tsx    ← Candidate detail (profile / assignments / sessions)
+│   │   ├── pipeline/page.tsx             ← Tenant-wide pipeline templates browser
+│   │   ├── questions/page.tsx            ← Tenant-wide question bank browser (placeholder)
+│   │   ├── reports/page.tsx              ← Reports landing (Phase 3D — placeholder)
+│   │   └── settings/
+│   │       ├── team/page.tsx             ← Team management, invites, resend, revoke, deactivate
+│   │       └── org-units/
+│   │           ├── page.tsx              ← Org unit infinite-canvas tree + create
+│   │           └── [unitId]/page.tsx     ← Unit detail: members, roles, sub-units, delete
+│   └── (interview)/
+│       └── interview/[token]/
+│           ├── page.tsx                  ← WizardShell host (pre-check stepper)
+│           ├── error/page.tsx            ← Token error fallback
+│           ├── WizardShell.tsx
+│           ├── StartStep.tsx
+│           ├── ConsentStep.tsx
+│           ├── OtpStep.tsx
+│           └── CameraMicStep.tsx
 ├── components/
-│   ├── interview/                ← Candidate session components
-│   ├── shared/                   ← Shared across both surfaces
-│   └── copilot/                  ← AI Copilot panel components
-├── stores/                       ← Zustand stores
-├── types/                        ← Shared TypeScript types/interfaces
-└── middleware.ts                 ← Route protection, auth checks
+│   ├── px/                               ← In-house design-system primitives (Button, Input, Dialog, Tooltip, …)
+│   ├── interview/
+│   │   └── providers.tsx                 ← QueryClientProvider + Toaster mount for the interview surface
+│   └── dashboard/
+│       ├── AppShell.tsx                  ← Sidebar nav + header
+│       ├── SessionGuard.tsx              ← Client-side session presence check
+│       ├── AccessDenied.tsx              ← RBAC-denial fallback
+│       ├── providers.tsx                 ← DashboardProviders client boundary
+│       ├── company-profile-form.tsx      ← Shared 4-field RHF+Zod form
+│       ├── jd-panels/                    ← OriginalJdPanel, EnrichedJdPanel, SignalsPanel, SignalChip, LoadingSkeleton, ErrorBanner
+│       ├── pipeline/                     ← Pipeline editor: PipelineFlowColumn, StageInspectorPanel, StageConfigDrawer, TemplatePickerDialog, StarterPackBrowser, ActivationGate, StageParticipantsEditor, etc.
+│       ├── question-bank/                ← AddQuestionDialog, AddCustomQuestionDialog, BankStatusBadge, QuestionCard, QuestionRefinePanel, …
+│       ├── candidates/                   ← AddCandidateDialog, CandidateKanbanView/Card/Column, CandidateListView, ClientCandidatesPage, ResumeUploadField, SendInviteDialog, JdPicker, StageTransitionDropdown, SessionStatusBadge, StatusBadge
+│       └── org-units/                    ← OrgGraph + OrgGraphCanvas + custom SVG edge/node + dagre layout hook + pan-zoom + direction-toggle
+├── stores/
+│   └── job-edit.ts                       ← Zustand: editable signal state with isDirty tracking
+├── lib/
+│   ├── api/                              ← Typed API namespaces: client, jobs, candidates, pipelines, question-banks, questions, scheduler, candidate-session, team, org-units, auth, errors
+│   ├── auth/                             ← getFreshSupabaseToken, handle-error (global 401 sink)
+│   ├── hooks/                            ← 50+ TanStack Query hooks (use-jobs, use-candidates, use-banks, use-pipeline-templates, use-job-status-stream, use-questions-status-stream, …)
+│   ├── pipelines/                        ← Pipeline-specific helpers (e.g. classification, stage rules)
+│   ├── supabase/{client,server}.ts       ← @supabase/ssr clients (cookies / browser)
+│   └── utils.ts
+├── tests/                                ← Vitest + Testing Library + jsdom
+│   ├── setup.ts                          ← Stubs localStorage (private-mode resilient)
+│   ├── _utils/render.tsx                 ← Test render helper
+│   ├── api/, auth/, components/, lib/, settings/
+└── proxy.ts                              ← Next.js middleware: validates Supabase session + decodes JWT for tenant_id, gates dashboard routes
 ```
+
+### Pending UI work (Phase 3C.2 / Phase 3D)
+
+- **Live interview session UI** — `app/(interview)/interview/[token]/` currently only ships the pre-check WizardShell (Start → Consent → Camera/Mic → OTP). The live session surface (2×2 video grid, live transcript, AI Copilot panel, Q-progress indicator, mic/camera-loss blocker, completion screen) is not yet built. Pairs with backend Phase 3C.2 (LiveKit room provisioning).
+- **`components/copilot/`** — AI Copilot panel components don't exist yet. Required for any human-in-the-loop session.
+- **`components/shared/`** — directory is reserved for cross-surface components; not yet populated.
+- **Reports view** — `app/(dashboard)/reports/page.tsx` is a placeholder. Pairs with backend Phase 3D (`reporting` module is still a stub).
 
 ---
 
@@ -181,17 +196,16 @@ The Supabase client on the frontend is used **only** for Auth (session managemen
 
 | Component type | Location |
 |---|---|
-| shadcn/ui primitives | `components/ui/` (auto-generated — do not edit) |
-| Dashboard composite components | `components/dashboard/` |
-| Candidate session components | `components/interview/` |
-| AI Copilot panel | `components/copilot/` |
-| Shared across both surfaces | `components/shared/` |
-| New dashboard page sections | Inside the relevant `app/(dashboard)/` route folder |
-| New interview page sections | Inside the relevant `app/(interview)/` route folder |
+| In-house design-system primitives | `components/px/` (Button, Input, Dialog, Tooltip, …) |
+| Dashboard composite components | `components/dashboard/<feature>/` |
+| Candidate interview surface | `components/interview/` (currently providers only) |
+| AI Copilot panel | `components/copilot/` (not yet built) |
+| Cross-surface shared components | `components/shared/` (reserved, empty) |
+| Page-local components | Inside the relevant `app/(dashboard)/<route>/` or `app/(interview)/<route>/` folder |
 
 Do not drop components at the root of `components/` without a subdirectory.
 
-**Current state (Phase 2A):** `components/ui/` and `components/dashboard/` are live. `components/interview/`, `components/copilot/`, `components/shared/` are Phase 3+.
+When extending `components/px/`, add an export to `components/px/index.ts`. Always import from the barrel (`from "@/components/px"`), not the underlying file.
 
 ### Forms
 
@@ -243,9 +257,10 @@ Do not drop components at the root of `components/` without a subdirectory.
 
 ## State Management
 
-### Current (Phase 2A+)
-- **Server state** (API data, cache, loading states): TanStack Query v5. No Zustand for this.
-- **Form state**: React Hook Form + Zod. Not Zustand, not useState.
+### Current
+- **Server state** (API data, cache, loading states): TanStack Query v5. Default for anything that comes from the backend.
+- **Form state**: React Hook Form + Zod. Not Zustand, not useState. Validation schemas live in a co-located `schema.ts` file when shared, or inline when single-use.
+- **Client global state**: Zustand v5, used **only** when state genuinely needs to live outside a single React tree. Current footprint is intentionally small — `stores/job-edit.ts` (editable signal state with isDirty tracking) is the only store today. Do not reach for Zustand when TanStack Query or component-local state would do.
 - `DashboardProviders` client boundary wraps the server dashboard layout and mounts `QueryClientProvider`, `<Toaster />`, and `ReactQueryDevtools` (dev only).
 - Avoid prop drilling beyond 2 levels — co-locate state in the route segment or use TanStack Query cache.
 - **Query key discipline**: list endpoints use distinct keys from their detail siblings. E.g. the jobs list uses `['jobs-list']` while `useJob(id)` uses `['jobs', id]`. Prefix matching on invalidate calls means the wrong key shape clobbers unrelated caches.
@@ -253,8 +268,8 @@ Do not drop components at the root of `components/` without a subdirectory.
 ### Legacy (Phase 1 pages still pending migration)
 Login, invite, and onboarding pages still use raw `useState` + `fetch`. Per convention: **migrate them when you touch them**, not as a standalone refactor.
 
-### Target (Phase 3+)
-- **Client-side global state** (UI state, session context, copilot buffer): Zustand (not yet installed).
+### Pending (Phase 3C.2)
+- **Interview session state machine** — once the live session UI lands, candidate consent state, current-question index, copilot buffer, and mic/camera readiness will likely warrant their own Zustand store under `stores/` (e.g. `stores/interview-session.ts`). Don't pre-create the store — wait until at least one component genuinely needs the shared state.
 
 ---
 
@@ -279,30 +294,41 @@ Login, invite, and onboarding pages still use raw `useState` + `fetch`. Per conv
 
 ## API Client (`lib/api/client.ts`)
 
-### Current Implementation
-- Single `apiFetch<T>()` function — generic typed `fetch` wrapper
-- Base URL from `NEXT_PUBLIC_API_URL` (defaults to `http://127.0.0.1:8000`)
-- Token passed explicitly per call (not auto-injected)
-- Handles FastAPI error shape: parses `{ detail: string }` and 422 `{ detail: ValidationError[] }` from non-OK responses, throws `ApiError` with the HTTP `status`
-- Response types defined inline per-page (no shared `types/` directory yet)
+### Implementation
+- Single `apiFetch<T>()` function — generic typed `fetch` wrapper at `lib/api/client.ts`.
+- Base URL from `NEXT_PUBLIC_API_URL` (defaults to `http://127.0.0.1:8000`).
+- Token passed explicitly per call (not auto-injected). New hooks call `getFreshSupabaseToken()` from `lib/auth/tokens.ts` rather than inline `supabase.auth.getSession()`.
+- Errors:
+  - 422 → `ApiValidationError` with structured `fieldErrors[]` (FastAPI `loc` array → RHF path mapping in `lib/api/errors.ts::applyApiErrorToForm`).
+  - Other non-OK → `ApiError` with `status` and `code` fields. Narrow with `err instanceof ApiError && err.status === N`.
+  - Global 401 sink in `lib/auth/handle-error.ts` dedupes concurrent unauthorized responses, signs out, toasts, and redirects.
 
 ```typescript
-// Current pattern — used throughout Phase 1
+// Canonical pattern
 import { apiFetch } from '@/lib/api/client'
 
-const me = await apiFetch<MeData>('/api/auth/me', { token })
+const me = await apiFetch<MeResponse>('/api/auth/me', { token })
 const members = await apiFetch<TeamMember[]>('/api/settings/team/members', { token })
 ```
 
-### Current (Phase 2A)
-- `lib/api/jobs.ts` is the first typed API namespace — use it as the pattern for new modules.
-- `lib/auth/tokens.ts` exports `getFreshSupabaseToken()` — call this instead of inline `getSession()` calls when building new hooks or API calls.
-- Auth header still passed explicitly per call (not auto-injected); TanStack Query hooks handle this via `getFreshSupabaseToken()`.
+### Typed API namespaces (`lib/api/*`)
 
-### Target (Phase 3+)
-- Expand to `api.candidates.*`, `api.sessions.*`, `api.reports.*` namespaces
-- Shared `types/` directory for cross-module response types
-- Candidate session calls use the candidate JWT from the URL token — not Supabase
+Each backend module has a co-located `lib/api/<module>.ts` file with response types and request helpers:
+
+| Namespace | Covers |
+|---|---|
+| `auth.ts` | `/api/auth/me`, accept-invite, onboarding/complete |
+| `team.ts` | `/api/settings/team/*` |
+| `org-units.ts` | `/api/org-units/*` |
+| `jobs.ts` | `/api/jobs/*` (signals, snapshots, status stream) |
+| `pipelines.ts` | `/api/pipelines/*` + `/api/jobs/{id}/pipeline` |
+| `question-banks.ts`, `questions.ts` | `/api/jobs/{id}/banks/*` and per-question CRUD |
+| `candidates.ts` | `/api/candidates/*` + kanban |
+| `scheduler.ts` | `/api/scheduler/*` (invite send/resend/revoke) |
+| `candidate-session.ts` | `/api/sessions/candidate/{token}/*` (uses candidate JWT, not Supabase) |
+| `client.ts`, `errors.ts` | Shared transport + error mapping |
+
+When adding endpoints for a new backend module, create a new file under `lib/api/` and follow the existing pattern. Keep response types co-located with their fetcher; there is no central `types/` directory.
 
 ---
 
@@ -350,7 +376,7 @@ npm run type-check   # tsc --noEmit — must pass with zero errors
 
 CI will fail if `lint` or `type-check` have errors. Fix before pushing.
 
-Vitest is installed (Phase 2A). Run `npm run test` to execute the suite.
+The Vitest suite (~30 files under `tests/`) covers API client error mapping, form error mapping, key components (BankStatusBadge, OrgGraph, OrgUnitNode, QuestionCard, SendInviteDialog, OtpStep, DangerConfirmDialog, UnitTypeStyle, EdgePath, UseDirectionToggle, UseDagreLayout, UsePanZoom, SignalsPanelWrapper, etc.). Composition tests (parent + child rendered together, mocking at the API boundary) are the convention — verify negative-control by reintroducing the bug. Run `npm run test` to execute.
 
 ---
 

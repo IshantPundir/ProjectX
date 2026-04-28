@@ -26,11 +26,14 @@
 - **Phase 1** — done: auth (Supabase + provider-agnostic interface), multi-tenancy with RLS, client provisioning, team invites, org units (hierarchical tree with typed nesting rules), roles & permissions, audit log, notification abstraction (Resend + dry-run).
 - **Phase 2A** — done: JD pipeline (create → extract → confirm → re-enrich), signal schema v2 with provenance, Dramatiq worker, `app/ai/` provider-agnostic AI layer, OpenAI instructor + Langfuse (self-hosted) tracing.
 - **Phase 2B** — done: signal editing with snapshot versioning + row-locked version conflict detection, company profile ancestry walk.
-- **Phase 2C.1** — done: pipeline builder (templates + per-job instances + stages), drag-to-reorder, tenant-scoped template library, starter pipelines.
+- **Phase 2C.1** — done: pipeline builder (templates + per-job instances + stages), drag-to-reorder, tenant-scoped template library, starter pipelines. Stage type collapsed to v5 (6 values) in migration 0016. Pipeline versioning + stage pause + stale-bank tracking added in 0018.
 - **Phase 2C.2** — done: question bank generation (adaptive coverage, mandatory demotion, per-stage LLM call, bundling discipline, SSE progress stream).
-- **Phase 3** — pending: LiveKit AI interview agent, candidate session flow, post-session report compilation.
+- **Phase 3B** — done: candidates module (`candidates`, `candidate_job_assignments`, `candidate_stage_progress` tables; resume upload + S3; PII redaction gate; kanban board; created in migration 0013).
+- **Phase 3C.1** — done: scheduler invite/resend/revoke flow; candidate JWT mint + supersession chain; OTP code (CSPRNG + HMAC-SHA256 hash + constant-time verify); session pre-check / consent / OTP / start endpoints; **single-use token enforcement** via atomic `UPDATE … WHERE used_at IS NULL RETURNING` (`session/service.py:412–426`).
+- **Phase 3C.2** — pending: LiveKit room creation + token provisioning. `session.start` currently returns HTTP 501 `LIVEKIT_INTEGRATION_PENDING`.
+- **Phase 3D** — pending: real-time `analysis` (scoring, probe selection) and `reporting` (post-session report compilation).
 
-Stubbed modules (routers registered, no business logic yet): `ats`, `scheduler`, `session`, `analysis`, `reporting`.
+Stubbed modules (routers registered, no business logic yet): `ats`, `analysis`, `reporting`.
 
 ---
 
@@ -39,10 +42,10 @@ Stubbed modules (routers registered, no business logic yet): `ats`, `scheduler`,
 ```
 backend/nexus/
 ├── app/
-│   ├── main.py                  ← FastAPI app factory, middleware + router registration
+│   ├── main.py                  ← FastAPI app factory, middleware + router registration, _assert_rls_completeness startup check
 │   ├── config.py                ← Settings via pydantic-settings (env vars only)
-│   ├── database.py              ← SQLAlchemy async engine, 3 session types (tenant/bypass/raw)
-│   ├── models.py                ← All ORM models (6 tables: clients, users, org units, roles, assignments, invites)
+│   ├── database.py              ← SQLAlchemy async engine, 3 session types (tenant/bypass/raw); SET LOCAL ROLE nexus_app on every request
+│   ├── models.py                ← All ORM models (Phase 1 + Phase 2 + Phase 3 tables)
 │   ├── worker.py                ← Dramatiq worker entrypoint — imports all actor modules to register with broker
 │   ├── middleware/
 │   │   ├── auth.py              ← JWT extraction via JWKS, attaches token_payload to request.state
@@ -98,21 +101,42 @@ backend/nexus/
 │       ├── question_bank/        ← Phase 2C.2 — AI generation, adaptive coverage, mandatory demotion, bundling
 │       │   ├── router.py         ← /api/jobs/{id}/banks/* — list (idempotent GET), generate, regenerate, update, stream
 │       │   ├── service.py        ← get_banks_for_pipeline (bulk 4-query load), ensure_bank_exists
+│       │   ├── refine.py         ← Per-question draft + refine LLM calls (uses get_openai_client)
+│       │   ├── context.py        ← Context-stack builder for per-stage prompts
 │       │   ├── authz.py          ← require_bank_access_by_stage, require_question_access
 │       │   ├── state_machine.py  ← IllegalTransitionError, ReorderMismatchError
 │       │   ├── actors.py         ← Dramatiq actors: generate_question_bank_stage (per-stage LLM call)
 │       │   └── sse.py            ← SSE status stream — routes every poll through get_tenant_session (Batch F)
-│       ├── scheduler/           ← [Stub] Session provisioning, invite dispatch, OTP
-│       ├── session/             ← [Stub] LiveKit orchestration, session state machine
-│       ├── analysis/            ← [Stub] Real-time scoring, probe decision logic
-│       └── reporting/           ← [Stub] Report compilation, score aggregation
+│       ├── candidates/           ← Phase 3B — candidate CRUD, resume upload, kanban board, assignments
+│       │   ├── router.py         ← /api/candidates/* + /api/candidates/kanban
+│       │   ├── service.py        ← create/get/list/update/redact_pii, kanban aggregation, stage transitions
+│       │   ├── resume_service.py ← S3 upload + content extraction
+│       │   ├── sources.py        ← Source typing (manual / ats / referral)
+│       │   ├── authz.py          ← require_candidate_access (ancestry-walking)
+│       │   ├── schemas.py        ← CandidateCreate / CandidateResponse / KanbanBoardResponse
+│       │   └── errors.py         ← DuplicateEmailError, CandidateHasActiveSessionError
+│       ├── scheduler/            ← Phase 3C.1 — invite send/resend/revoke, supersession chain
+│       │   ├── router.py         ← /api/scheduler/*
+│       │   ├── service.py        ← send_invite, resend_invite, revoke_invite (mints candidate JWT + token row)
+│       │   ├── authz.py          ← require_scheduler_access
+│       │   └── errors.py
+│       ├── session/              ← Phase 3C — candidate session state machine + atomic single-use enforcement
+│       │   ├── router.py         ← candidate_session_router (/api/sessions/candidate/{token}/*) + session_router (/api/sessions/*)
+│       │   ├── service.py        ← pre_check, consent, request/verify OTP, start (501 for LiveKit), supersession + replay gates
+│       │   ├── state_machine.py  ← created → pre_check → consented → active → completed | cancelled | error
+│       │   ├── otp.py            ← CSPRNG generate_code + HMAC-SHA256 hash + constant-time verify
+│       │   ├── schemas.py
+│       │   └── errors.py         ← TokenAlreadyUsedError, TokenSupersededError, OtpInvalidError, etc.
+│       ├── ats/                  ← [Stub] Per-ATS adapters, polling, outbound sync
+│       ├── analysis/             ← [Stub] Real-time scoring, probe decision logic
+│       └── reporting/            ← [Stub] Report compilation, score aggregation
 ├── prompts/
 │   └── v1/
 │       ├── jd_enhancement.txt       ← Call 1 — JD extraction + enhancement
 │       ├── jd_reenrichment.txt      ← Call 2 — re-enrichment after signal edits
 │       ├── question_bank_common.txt ← Shared system prompt for question bank calls
 │       └── question_bank_<stage_type>.txt ← Per-stage-type system prompts
-├── migrations/                  ← Alembic — 12 revisions covering Phase 2A/2B/2C.1/2C.2 + RLS hardening (0008–0012)
+├── migrations/                  ← Alembic — 23 revisions; head is `0023_tenant_hard_delete_cascade`
 │   └── versions/
 ├── tests/
 │   └── conftest.py              ← AsyncClient fixture
@@ -139,7 +163,7 @@ Valid types (as of Phase 2): `company`, `division`, `client_account`, `region`, 
 - `company_profile` (JSONB) is required — cannot be null.
 
 **`client_account`**
-- Only available when `clients.workspace_mode = 'agency'`.
+- Available to every tenant. The previous `workspace_mode='agency'` gate was removed in migration 0020 — every tenant can model itself as a staffing agency, an in-house employer, or a hybrid.
 - `company_profile` (JSONB) is required — cannot be null.
 - Cannot be nested under another `client_account` or under a `team`.
 - Can be nested under `company`, `division`, or `region`.
@@ -229,7 +253,10 @@ from supabase import Client
 
 Candidate JWTs (single-use session tokens, HS256, signed with `CANDIDATE_JWT_SECRET`) are the separate `verify_candidate_token()` path. Algorithm is hardcoded to `["HS256"]`; there is no algorithm allowlist confusion path.
 
-> **⚠ Phase 3 prerequisite**: candidate-JWT **single-use enforcement** is currently a TODO (`middleware/auth.py`). Not exploitable today because session endpoints are stubbed, but it MUST land before any Phase 3 session endpoint (start / consent / transcript) becomes live. Required: atomic mark-used on first verification (Redis SET NX or a `used_at` column with `UPDATE … WHERE used_at IS NULL RETURNING`), then reject replay.
+**Single-use enforcement** (Phase 3C.1, **shipped**):
+1. **Middleware gate** (`middleware/auth.py`) — verifies signature + expiry, then queries `candidate_session_tokens` by `jti`. Rejects with 401 if the JTI is unknown (`TOKEN_UNKNOWN`) or `superseded_at IS NOT NULL` (`TOKEN_SUPERSEDED`). The middleware does **not** consume `used_at` — that is the sole responsibility of the `/start` endpoint, by design (so a candidate can re-fetch pre-check / consent endpoints without burning their token).
+2. **Atomic consume on `/start`** (`session/service.py:412–426`) — `UPDATE candidate_session_tokens SET used_at = now() WHERE jti = ? AND used_at IS NULL RETURNING jti`. If 0 rows, raises `TokenAlreadyUsedError` (409). Replay coverage in `tests/test_middleware_candidate_single_use.py`.
+3. **Supersession chain** — when an invite is resent, `scheduler/service.py` mints a new token row and stamps `superseded_at = now()` + `superseded_by = <new_jti>` on the prior row. The middleware gate above rejects superseded tokens before they reach any handler.
 
 The only direct Supabase HTTP call is in `settings/service.py::_delete_auth_user()` for user deactivation (hitting the Admin API with the service role key). This is isolated and would be the single swap point.
 
@@ -253,6 +280,11 @@ from app.ai.config import ai_config
 # WRONG — hard couples to OpenAI
 from openai import AsyncOpenAI
 ```
+
+**Documented carve-outs (allowed):**
+- `app/modules/jd/errors.py` and `app/modules/jd/actors.py` import `openai` and `instructor.core.InstructorRetryException` *as types*, exclusively for retry/permanent-error classification (`_PERMANENT_EXCEPTIONS`) and user-safe error message mapping (`_SAFE_MESSAGES`). They never call the SDK. If the provider changes, this exception map moves with the new SDK; nothing else changes.
+- `langfuse.decorators.observe` is allowed anywhere actors run — it is the tracing scaffold, not a business-logic dependency.
+- A future cleanup is to lift the JD exception map into `app/ai/errors.py` and re-export typed sentinels so module code never references vendor exception classes by name. Tracked as tech-debt; not blocking.
 
 ### RBAC Enforcement
 - Auth middleware extracts JWT and attaches `token_payload` to `request.state` before any route handler runs.
@@ -315,15 +347,26 @@ from openai import AsyncOpenAI
 
 | Module | What It Owns |
 |---|---|
-| `question_bank` | Per-stage question bank generation via Dramatiq actor. Adaptive coverage (mandatory-fits-session validation, mandatory demotion auto-correction, duration as session time limit not generation budget), bundling discipline, per-stage-type prompts, coverage notes persistence for audit trail. `list_banks` GET is read-idempotent (Batch G — returns placeholder entries for stages without banks, does NOT create drafts on poll). State machine raises typed exceptions (`IllegalTransitionError`, `ReorderMismatchError`). Bulk `get_banks_for_pipeline` uses 4 constant queries instead of 1+2N. `@observe` decorators on actors wire Langfuse trace metadata. |
+| `question_bank` | Per-stage question bank generation via Dramatiq actor. Adaptive coverage (mandatory-fits-session validation, mandatory demotion auto-correction, duration as session time limit not generation budget), bundling discipline, per-stage-type prompts, coverage notes persistence for audit trail. `list_banks` GET is read-idempotent (Batch G — returns placeholder entries for stages without banks, does NOT create drafts on poll). State machine raises typed exceptions (`IllegalTransitionError`, `ReorderMismatchError`). Bulk `get_banks_for_pipeline` uses 4 constant queries instead of 1+2N. `refine.py` handles per-question draft + refine LLM calls. `@observe` decorators on actors wire Langfuse trace metadata. Bank staleness is tracked via `pipeline_version_at_generation` + `is_stale` (added in 0018) so pipeline edits invalidate banks deterministically. |
+
+### Phase 3B — Implemented
+
+| Module | What It Owns |
+|---|---|
+| `candidates` | Candidate CRUD with PII fields, partial-unique index on `(tenant_id, email) WHERE pii_redacted_at IS NULL` (duplicates raise `DuplicateEmailError`), resume upload via `resume_service.py` (S3 pre-signed URL pattern), source typing in `sources.py` (manual / ATS / referral). Kanban board aggregation (`/api/candidates/kanban`) and assignment-based stage transitions. PII redaction is a separate gate guarded by `CandidateHasActiveSessionError` — a candidate with any non-terminal session cannot be redacted. Ancestry-walking authz via `require_candidate_access`. |
+
+### Phase 3C — Implemented
+
+| Module | What It Owns |
+|---|---|
+| `scheduler` | Invite send / resend / revoke. `send_invite` mints a candidate JWT (HS256) and inserts the matching `candidate_session_tokens` row (jti, tenant, session_id, expires_at). Resend creates a new token row and stamps `superseded_at + superseded_by` on the prior row, building a per-session supersession chain. Notification dispatch via the provider-agnostic notifications module. |
+| `session` | Two routers: `candidate_session_router` (candidate-facing, JWT in path) and `session_router` (recruiter-facing, read-only). State machine: `created → pre_check → consented → active → completed | cancelled | error`. OTP gate (CSPRNG 6-digit code, HMAC-SHA256 hash, 10-minute lifetime, max 3 attempts, 60s rate limit, constant-time compare). **Single-use token enforcement** is atomic on `/start` (`UPDATE … WHERE used_at IS NULL RETURNING`). `/start` currently returns HTTP 501 `LIVEKIT_INTEGRATION_PENDING` — Phase 3C.2 will wire LiveKit room creation + token provisioning. |
 
 ### Future Phases — Stubbed
 
 | Module | What It Will Own |
 |---|---|
 | `ats` | Per-ATS adapter interface, Ceipal polling cron, Greenhouse/Workday webhooks, outbound sync after session completion |
-| `scheduler` | Session provisioning, JWT invite generation, scheduling link, OTP dispatch, calendar invites. **Must enforce candidate-JWT single-use** on first verification (see audit Round 2 H1 — not exploitable today because session endpoints are stubbed, must land before any Phase 3 code ships) |
-| `session` | LiveKit room creation/teardown, session state machine, Redis state management, copilot pipeline |
 | `analysis` | Real-time answer scoring, probe selection logic, signal detection (depth, specificity, evidence quality) |
 | `reporting` | Post-session report compilation, per-question scorecards, transcript assembly, score aggregation, PDF generation |
 
@@ -429,7 +472,7 @@ Outbound emails (company admin invite, team invite, invite resend) build links p
 ## Database Migrations
 
 ### Current State
-The initial schema (6 tables, first-cut RLS policies, system role seeds, and the Supabase auth hook) lives in `backend/supabase/migrations/20260405000000_initial_schema.sql`. Every incremental change since Phase 2A has been an Alembic migration in `migrations/versions/`. Current head: `0016_stage_v5_participants`.
+The initial schema (6 tables, first-cut RLS policies, system role seeds, and the Supabase auth hook) lives in `backend/supabase/migrations/20260405000000_initial_schema.sql`. Every incremental change since Phase 2A has been an Alembic migration in `migrations/versions/`. Current head: `0023_tenant_hard_delete_cascade`.
 
 Migrations so far:
 - `0001_phase_2b_columns` — signal editing + version columns
@@ -442,9 +485,19 @@ Migrations so far:
 - `0008_audit_log_tenant_insert` — **RLS hardening**: fixed `audit_log` silently dropping tenant writes
 - `0009_phase1_rls_full_command` — **RLS hardening**: Phase 1 tables get full-command `tenant_isolation` (USING + WITH CHECK)
 - `0010_create_nexus_app_role` — **RLS hardening**: dedicated `nexus_app` role with `NOBYPASSRLS` + grants; without this every policy is a runtime no-op because `postgres` has `rolbypassrls=true`
-- `0011_rls_nullif_tenant` — **RLS hardening**: wraps `current_setting('app.current_tenant', true)::uuid` in `NULLIF(..., '')::uuid` everywhere. Fixes a PG quirk where `SET LOCAL` reverts a custom GUC to empty-string rather than NULL on transaction end, making the cast crash on the next pooled request.
-- `0012_rename_service_role_bypass` — **cleanup**: rename `service_role_bypass` → `service_bypass` on Phase 2A/2C tables for consistency with the canonical name used elsewhere. Makes future policy-lint tooling sound.
-- `0016_stage_v5_participants` — stage type enum collapsed to 6 values; adds `pipeline_stage_participants` table (tenant-scoped, full RLS policy pair) for instance-stage staffing (interviewers / observers / reviewers). `pipeline_stage_participants` is registered in `_TENANT_SCOPED_TABLES` in `app/main.py`.
+- `0011_rls_null_safe_current_tenant` — **RLS hardening**: wraps `current_setting('app.current_tenant', true)::uuid` in `NULLIF(..., '')::uuid` everywhere. Fixes a PG quirk where `SET LOCAL` reverts a custom GUC to empty-string rather than NULL on transaction end, making the cast crash on the next pooled request.
+- `0012_rename_service_role_bypass` — **cleanup**: rename `service_role_bypass` → `service_bypass` on Phase 2A/2C tables for consistency with the canonical name used elsewhere.
+- `0013_candidates_core` — **Phase 3B**: `candidates`, `candidate_job_assignments`, `candidate_stage_progress` tables; canonical RLS pair (with NULLIF) on each; permission seed for candidate_view / candidate_edit / candidate_delete.
+- `0014_sessions_scheduler_core` — **Phase 3C.1**: reshape of `sessions` table; new `candidate_session_tokens` table (jti PK, tenant, session_id, expires_at, used_at, superseded_at, superseded_by); `job_pipeline_stages.otp_required_default BOOLEAN`.
+- `0015_pipeline_stage_v4` — pipeline stage type allowlist broadened to 9 values (intermediate state — superseded by 0016).
+- `0016_stage_v5_participants` — stage type enum collapsed from 9 → 6 values (`intake`, `phone_screen`, `ai_screening`, `human_interview`, `debrief`, `take_home`); legacy rows renamed (`recruiter`/`panel_interview` → `human_interview`, `ai_interview` → `ai_screening`); `offer` rows deleted. Adds `pipeline_stage_participants` (instance-only staffing table) with canonical RLS pair. Registered in `_TENANT_SCOPED_TABLES`.
+- `0017_stage_questions_updated_at_trigger` — BEFORE UPDATE trigger using `clock_timestamp()` (not `NOW()`) so updated_at advances even within a single transaction.
+- `0018_pipeline_versioning_and_pause` — adds `job_pipeline_instances.pipeline_version` (monotonic per-instance counter), `job_pipeline_stages.paused_at`, `stage_question_banks.{pipeline_version_at_generation, stage_config_snapshot, is_stale}`, `candidate_job_assignments.entered_at_pipeline_version`. Broadens `job_postings.status` CHECK to include `pipeline_built`, `active`, `archived`.
+- `0019_relax_io_stage_columns` — relaxes NOT NULL on stage columns that are FORBIDDEN for `intake` / `debrief` stage types (duration_minutes, difficulty, signal_filter, advance_behavior). Pydantic field-rules validator is the source of truth.
+- `0020_drop_workspace_mode` — removes `clients.workspace_mode`. The agency/enterprise distinction collapsed: every tenant can now nest `client_account` units regardless of how it identified during onboarding.
+- `0021_add_clients_blocked_at` — adds `clients.blocked_at TIMESTAMP NULL`. Pairs with `deleted_at` to define three tenant states (active / blocked / deleted) enforced at `/api/auth/login` and `get_current_user_roles`.
+- `0022_users_partial_unique_auth` — replaces the plain UNIQUE on `users.auth_user_id` with a partial unique index `WHERE deleted_at IS NULL`. Required so a re-invite after tenant soft-delete can re-bind the same Supabase Auth identity.
+- `0023_tenant_hard_delete_cascade` — drops `audit_log_tenant_id_fkey` + `audit_log_actor_id_fkey` (audit history outlives the rows it references); converts every other `tenant_id` FK to `ON DELETE CASCADE` so `DELETE FROM clients WHERE id = ?` propagates cleanly.
 
 ### Going Forward
 - Future schema changes should use Alembic migrations in `migrations/versions/`.
