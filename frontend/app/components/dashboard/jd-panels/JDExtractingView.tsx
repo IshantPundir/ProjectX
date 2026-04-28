@@ -41,6 +41,9 @@ export function JDExtractingView({
 }: Props) {
   // Default tab logic — see spec §5.2 default tab matrix.
   const computeDefaultView = (): View => {
+    // Guard: skipEnrichment=true + enrichmentStatus='completed' is logically
+    // impossible, but if it ever occurred the 'enriched' tab would be hidden
+    // while the default pointed at it. Short-circuit to 'raw' defensively.
     if (skipEnrichment) return 'raw'
     if (enrichmentStatus === 'streaming') return 'enriched'
     if (enrichmentStatus === 'completed') return 'enriched'
