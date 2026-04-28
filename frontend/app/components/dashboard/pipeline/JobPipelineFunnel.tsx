@@ -324,6 +324,21 @@ export function JobPipelineFunnel({ job, pipeline, jobId }: Props) {
     stagesRef.current = stages
   })
 
+  // Bridges the gap between the 202 response and the first SSE event from
+  // the actor. Without this, the button briefly re-enables after the POST
+  // returns but before the actor has marked any bank as 'generating'.
+  const [justDispatched, setJustDispatched] = useState(false)
+
+  useEffect(() => {
+    if (!justDispatched) return
+    if (anyBankGenerating) {
+      setJustDispatched(false)
+      return
+    }
+    const timeout = window.setTimeout(() => setJustDispatched(false), 15_000)
+    return () => window.clearTimeout(timeout)
+  }, [justDispatched, anyBankGenerating])
+
   // Direct save — bypasses classify gate. Called after user confirms a B/C warning,
   // or when the classify result is category A.
   const doSave = useCallback(
@@ -623,17 +638,26 @@ export function JobPipelineFunnel({ job, pipeline, jobId }: Props) {
           <button
             className="px-btn sm"
             type="button"
-            onClick={() => generateAllMutation.mutate()}
+            onClick={() => {
+              setJustDispatched(true)
+              generateAllMutation.mutate(undefined, {
+                onError: () => setJustDispatched(false),
+                // onSuccess: do NOT clear here — wait for SSE to confirm
+              })
+            }}
             disabled={
-              generateAllMutation.isPending || isSaving || anyBankGenerating
+              generateAllMutation.isPending ||
+              isSaving ||
+              anyBankGenerating ||
+              justDispatched
             }
             title={
-              anyBankGenerating
+              anyBankGenerating || justDispatched
                 ? 'A bank is currently generating — please wait'
                 : 'Generate question banks for every eligible stage'
             }
           >
-            {generateAllMutation.isPending || anyBankGenerating
+            {generateAllMutation.isPending || anyBankGenerating || justDispatched
               ? 'Generating…'
               : 'Generate all questions'}
           </button>
