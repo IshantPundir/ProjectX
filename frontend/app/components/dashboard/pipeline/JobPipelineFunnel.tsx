@@ -368,8 +368,20 @@ export function JobPipelineFunnel({ job, pipeline, jobId }: Props) {
               if (gen === editGenRef.current) setIsDirty(false)
               return
             }
-            // Category B or C: show warning modal — save is deferred until confirmed
+            // Category B or C: show warning modal — save is deferred until confirmed.
+            // Skip the modal when no candidates are in flight: the warnings
+            // ("candidates in flight stay on their entered shape", "stage will be
+            // deleted along with its bank") only matter when there's actually
+            // someone to affect. On a fresh / inactive pipeline the modal is noise.
             if (result.category === 'B' || result.category === 'C') {
+              const totalInFlight = Object.values(result.in_flight).reduce(
+                (sum, n) => sum + n,
+                0,
+              )
+              if (totalInFlight === 0) {
+                doSave(nextStages, gen)
+                return
+              }
               setWarningModal({
                 category: result.category,
                 pendingStages: nextStages,
