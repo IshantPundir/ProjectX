@@ -450,3 +450,73 @@ async def test_actor_marks_streaming_before_enrichment(monkeypatch):
         f"{observed_status_at_phase_1.get('enrichment_status')!r}"
     )
     assert observed_status_at_phase_1.get("status") == "signals_extracting"
+
+
+@pytest.mark.asyncio
+async def test_actor_skip_enrichment_runs_only_phase_2(monkeypatch):
+    """When skip_enrichment=True is passed to the public actor:
+    - Only ONE LLM call happens (signal extraction).
+    - enrichment_status stays 'idle' throughout.
+    - description_enriched is never written.
+    - The signal extraction's user message contains the raw JD.
+    """
+    from app.database import get_bypass_session
+    from app.modules.jd.actors import extract_and_enhance_jd
+    from uuid import UUID as _UUID
+
+    # Bootstrap job in its own committed session so it's visible to the actor's
+    # internal bypass sessions (the actor opens fresh sessions per phase).
+    async with get_bypass_session() as setup_db:
+        tenant = await create_test_client(setup_db)
+        await setup_db.flush()
+        user = await create_test_user(setup_db, tenant.id)
+        company = await create_test_org_unit(
+            setup_db, tenant.id, unit_type="company", company_profile=_VALID_PROFILE,
+        )
+        job = JobPosting(
+            tenant_id=tenant.id,
+            org_unit_id=company.id,
+            title="Sr Engineer",
+            description_raw="RAW_JD_FIXTURE_MARKER " + ("body content " * 12),
+            status="signals_extracting",
+            created_by=user.id,
+        )
+        setup_db.add(job)
+        await setup_db.commit()
+
+    job_id = str(job.id)
+    tenant_id = str(tenant.id)
+
+    signals = _fake_signal_extraction_output()
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock(return_value=signals)
+    monkeypatch.setattr("app.modules.jd.actors.get_openai_client", lambda: mock_client)
+
+    await extract_and_enhance_jd.fn.__wrapped__(
+        job_posting_id=job_id,
+        tenant_id=tenant_id,
+        correlation_id="cid-skip-test",
+        skip_enrichment=True,
+    )
+
+    # Refresh the committed state from a fresh session.
+    from sqlalchemy import select as sa_select, text as sa_text
+    async with get_bypass_session() as check_db:
+        await check_db.execute(
+            sa_text(f"SET LOCAL app.current_tenant = '{tenant_id}'")
+        )
+        r = await check_db.execute(
+            sa_select(JobPosting).where(JobPosting.id == _UUID(job_id))
+        )
+        refreshed = r.scalar_one()
+
+    assert refreshed.status == "signals_extracted"
+    assert refreshed.enrichment_status == "idle"
+    assert refreshed.description_enriched is None
+
+    # Exactly ONE LLM call (phase 2 only — no phase 1 enrichment call).
+    assert mock_client.chat.completions.create.call_count == 1
+    only_call = mock_client.chat.completions.create.call_args
+    assert only_call.kwargs["response_model"].__name__ == "SignalExtractionOutput"
+    user_msg = only_call.kwargs["messages"][1]["content"]
+    assert "RAW_JD_FIXTURE_MARKER" in user_msg
