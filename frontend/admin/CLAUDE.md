@@ -9,9 +9,11 @@
 
 ## What This Surface Is
 
-The **Admin App** is an internal tool for ProjectX operators. It is NOT client-facing. Its sole purpose is to provision new client tenants and monitor their status.
+The **Admin App** is an internal-only console for ProjectX operators. It provisions, blocks, and deletes client tenants — every action has tenant-wide blast radius. It is held to the **same enterprise quality bar** as the customer-facing surfaces. "Internal" describes the audience, not a license to skip security, accessibility, audit, or test rigor.
 
-This is a minimal internal surface — not a product UI. It does not need the same level of polish as the Client App.
+Surface scope is intentionally narrow: tenant lifecycle (provision / block / unblock / soft-delete / hard-delete) and operator account management. Anything beyond that belongs in the recruiter app or the backend.
+
+> Read the root `CLAUDE.md` first — Enterprise Operating Standards (reliability, supply chain, secrets, logging/PII, audit, code review, incident response) apply to this surface in full.
 
 ---
 
@@ -123,14 +125,61 @@ NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
 ```bash
 npm run dev          # Start dev server (localhost:3001)
 npm run build        # Production build
-npm run lint         # ESLint
-npx tsc --noEmit     # Type check (no dedicated script — package.json only ships dev/build/start/lint)
+npm run lint         # ESLint — must pass with zero errors
+npx tsc --noEmit     # Type check — must pass with zero errors (no dedicated script yet)
+npm run test         # Vitest (add when test suite lands)
 ```
+
+CI fails on lint or type-check errors. Fix before pushing.
+
+---
+
+## Human Review Required For
+
+This surface has the highest blast radius in the platform. Senior reviewer + explicit sign-off in the PR description for any change to:
+
+- `proxy.ts` (route protection, `is_projectx_admin` gating)
+- `app/(auth)/` (login, signup, session establishment)
+- `app/(admin)/dashboard/provision/` (tenant provisioning form)
+- Any UI wiring for tenant block/unblock, soft-delete, or hard-delete (when those land)
+- Any change to how `is_projectx_admin` is read or surfaced
+- Any change to API client error handling that affects how operator failures are surfaced
+
+---
+
+## Absolute Rules
+
+### Security — Same Bar as the Recruiter App
+- **Security headers** in `next.config.ts` `headers()`: `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: camera=(), microphone=(), geolocation=()` (admin surface needs none of those). CSP is a planned follow-up.
+- **No `dangerouslySetInnerHTML`** for any backend-returned string.
+- **No `localStorage` for auth tokens.** Only non-sensitive UI preferences.
+- **Post-auth and post-mutation redirects must be allowlisted** — validate that any URL controlled by a backend response starts with `/` and not `//` before navigation.
+- **No direct Supabase data calls.** The Supabase client is auth-only. All data goes through `apiFetch` to Nexus.
+- **No PII in browser logs or Sentry** — tenant names are OK; emails, full tokens, and raw request bodies are not.
+
+### Audit & Authorization
+- **Every operator action is audit-logged backend-side.** Provision, block, unblock, soft-delete, hard-delete, and any role mutation must produce an audit record (`actor_id`, `action`, `resource_type`, `resource_id`, `correlation_id`). The frontend's job is to send the request and surface failures clearly; the backend writes the audit row.
+- The `is_projectx_admin` claim is set **out-of-band** (Supabase dashboard / CLI / backend script). The frontend never grants or modifies it. Treat it as a load-bearing claim — verify on every protected route via middleware.
+- Destructive operations (hard-delete, unblock-after-block) MUST use `DangerConfirmDialog` semantics (typed-confirmation, not a one-click button) when wired into the UI.
+
+### TypeScript & Forms
+- `"strict": true` — no `any`. Use `unknown` + type narrowing.
+- Forms use React Hook Form + Zod when added. No raw `useState` forms beyond the current Phase 1 login/signup/provision pages — migrate them when touching them.
+
+### Testing
+- The admin surface is **not exempt** from tests. Provisioning, blocking, deletion, and middleware route protection must have tests before they ship. Vitest is the runner of record (add via `npm install -D vitest @testing-library/react jsdom` if not yet present).
+- Composition tests (parent + child rendered together, mocking at the API boundary) are the convention — see the recruiter app's `tests/` directory.
+
+### Accessibility
+- All interactive elements keyboard-navigable. Semantic HTML, not `div` soup.
+- Dialogs and drawers move focus on open. Confirm dialogs trap focus.
+- ARIA labels on icon-only buttons.
 
 ---
 
 ## Design Constraints
 
-- No shared component library — all UI is inline within page files
-- No Zustand, TanStack Query, or shadcn/ui — not needed for this surface
-- Keep it simple — this is an internal tool, not a product
+- Surface stays narrow — tenant lifecycle + operator accounts only. Push anything else to the recruiter app or the backend.
+- UI is currently inline within page files because the surface is small. **If a component is reused across ≥2 pages, lift it into `components/`** and add an index barrel.
+- No Zustand or TanStack Query at present — surface is small enough for raw `useState` + `apiFetch`. Revisit when surface grows.
+- Tailwind v4 utility-first. Same design tokens as the recruiter app — when shared design tokens are extracted, this app consumes them.

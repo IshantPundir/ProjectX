@@ -357,11 +357,39 @@ When adding endpoints for a new backend module, create a new file under `lib/api
 
 ## Security
 
-- **Security headers** are set in `next.config.ts` `headers()`: `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`. The dashboard surface also exposes `Permissions-Policy: camera=(self), microphone=(self), geolocation=()` for the upcoming candidate session video flow. CSP is a planned follow-up (needs nonce wiring).
+> Cross-cutting standards (rate limiting, supply chain, secrets rotation, logging/PII, audit, code review, incident response) are defined **once in the root `CLAUDE.md` → Enterprise Operating Standards**. The rules below are frontend-specific implementation details on top of those.
+
+- **Security headers** are set in `next.config.ts` `headers()`: `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`. The dashboard surface also exposes `Permissions-Policy: camera=(self), microphone=(self), geolocation=()` for the upcoming candidate session video flow.
+- **Content-Security-Policy** is a planned follow-up (nonce-based) and tracked as a hard requirement before GA. When wired, the CSP must forbid `unsafe-eval`, allow `https://api.projectx.com` + LiveKit/Cartesia/Deepgram origins explicitly, and use a per-request nonce on inline scripts. No `unsafe-inline` for scripts.
 - **Post-auth redirects must be allowlisted.** Any `router.push(urlFromBackend)` where the URL is controlled by a mutation response must validate that the value starts with `/` (and does not start with `//`) before navigating. Without this, a compromised or MITM'd response creates an open redirect. The invite completion flow in `app/(auth)/invite/page.tsx` does this; any new post-auth redirect must follow suit.
 - **No `dangerouslySetInnerHTML`** for backend-returned strings. Render as text content with `whitespace-pre-wrap` instead.
 - **No `localStorage` for auth tokens.** Only non-sensitive UI preferences live in localStorage (e.g. `pipeline-inspector-tab`).
 - **No direct Supabase data calls from the frontend** (`supabase.from(...).select(...)`). The only Supabase client usage is auth/session management. All data goes through `apiFetch` to Nexus.
+
+### Browser-Side PII & Telemetry
+
+- **No raw PII in browser logs or Sentry events.** Forbidden in `console.*`, in Sentry breadcrumbs, and in any third-party analytics: candidate emails, resume contents, full JWT bearer values, OTP codes, transcripts.
+- Sentry's `beforeSend` strips request bodies and headers by default; do not whitelist `Authorization`, `Cookie`, or candidate-session payloads back in.
+- Analytics on the **candidate interview surface** is forbidden — no Sentry session replay, no third-party trackers, no heatmaps. The candidate surface is a sealed environment.
+- Analytics on the **dashboard surface** is allowlisted to a single endpoint (Sentry), not arbitrary third parties. Adding a new telemetry destination requires a threat-model update.
+
+### Form & Input Hygiene
+
+- Server is the source of truth for validation. Client Zod schemas are for UX speed, not security.
+- 422 responses surface field errors via `applyApiErrorToForm` — never silently swallow.
+- File uploads (resumes) go to S3 via pre-signed URL from Nexus. Never POST file bodies through the dashboard origin.
+
+---
+
+## Production Operating Rules
+
+- **Lockfile is authoritative.** `package-lock.json` is committed; `npm ci` is the only install command CI runs. Mismatched lockfile blocks merge.
+- **`npm audit --omit=dev`** runs on every PR. Critical CVE blocks merge; high CVE blocks merge unless waived in the PR description with a CVE exception note.
+- **Bundle budget per route**: dashboard pages target < 250 KB gzipped first-load JS; candidate interview pages target < 180 KB gzipped (pre-LiveKit); LiveKit-bearing routes are exempt from the JS budget but must lazy-load the SDK.
+- **Performance targets** (Lighthouse on production build): LCP < 2.5s on dashboard, < 2.0s on candidate pre-check; TTI < 3.5s; CLS < 0.1. Regressions block merge.
+- **Error boundaries** are required around every top-level route segment. The boundary surfaces a recovery action, never a silent blank screen.
+- **Hydration discipline**: no `Date.now()`, `Math.random()`, or `window` access during render. Use `useEffect` for client-only side effects.
+- **Suspense + loading.tsx** for every async route segment. No raw `<Spinner>` placeholder pages.
 
 ---
 
@@ -372,9 +400,10 @@ npm run dev          # Start dev server (localhost:3000)
 npm run build        # Production build (run before any PR)
 npm run lint         # ESLint — must pass with zero errors
 npm run type-check   # tsc --noEmit — must pass with zero errors
+npm run test         # Vitest — must pass with zero failures
 ```
 
-CI will fail if `lint` or `type-check` have errors. Fix before pushing.
+CI will fail if `lint`, `type-check`, or `test` have errors. Fix before pushing.
 
 The Vitest suite (~30 files under `tests/`) covers API client error mapping, form error mapping, key components (BankStatusBadge, OrgGraph, OrgUnitNode, QuestionCard, SendInviteDialog, OtpStep, DangerConfirmDialog, UnitTypeStyle, EdgePath, UseDirectionToggle, UseDagreLayout, UsePanZoom, SignalsPanelWrapper, etc.). Composition tests (parent + child rendered together, mocking at the API boundary) are the convention — verify negative-control by reintroducing the bug. Run `npm run test` to execute.
 

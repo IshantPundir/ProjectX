@@ -425,6 +425,15 @@ Tasks that must be async (never block the request cycle):
 - Candidate notification dispatch
 - ATS outbound status sync after session completion
 
+### Actor Discipline
+
+- **Idempotency is mandatory.** Every actor must be safe to re-run. Use a database row-state check (e.g. `enrichment_status`, `bank_status`) at the top of the actor and short-circuit if the work is already done or in progress.
+- **Retry policy is explicit.** Permanent errors (validation failures, missing rows, API 4xx that won't change on retry) raise a typed exception listed in `_PERMANENT_EXCEPTIONS`; Dramatiq does not retry those. Transient errors (network, 5xx, rate limits) retry with exponential backoff up to the actor's declared `max_retries`.
+- **Dead-letter queue (DLQ).** Tasks that exhaust retries land in the DLQ — not the main broker. The DLQ is monitored; SEV3 fires if it fills above 0 for >24h.
+- **Tracing.** Every actor uses `@observe` (Langfuse) for LLM calls and writes its `correlation_id` into structured logs at every hop. The correlation ID flows from the request that enqueued the task through to any downstream call.
+- **No PII in actor arguments.** Pass IDs (job_id, candidate_id, session_id), not bodies. The actor reloads from Postgres under the right RLS context.
+- **Bypass-RLS sessions in actors.** Worker tasks run outside a request — they don't have `app.current_tenant` set. Use `get_bypass_db()` and re-establish the tenant scope explicitly via `SET LOCAL app.current_tenant` if the actor needs RLS, or stay bypass-only for cross-tenant batch work.
+
 ---
 
 ## AI Pipeline Rules
@@ -514,6 +523,8 @@ Migrations so far:
 
 ## Code Standards
 
+> Cross-cutting enterprise standards (rate limiting, supply chain, secrets rotation, logging/PII, audit, code review, incident response, threat model) are defined **once in the root `CLAUDE.md` → Enterprise Operating Standards**. The rules below are backend-specific implementation details on top of those.
+
 - **Python 3.12** — use modern syntax (match/case, `X | Y` unions, etc.)
 - **Type hints required everywhere** — no untyped function signatures
 - **Async throughout** — no sync blocking calls in async context. Use `asyncio.to_thread()` if a library is sync-only.
@@ -522,6 +533,31 @@ Migrations so far:
 - **OpenTelemetry** instrumentation on all module boundaries
 - Follow existing module structure. New features go inside the correct module, not at root level.
 - One responsibility per module. Cross-module imports go through defined interfaces, not internal paths.
+
+### Logging & PII Discipline
+
+- **No raw PII in `structlog` events.** Forbidden values: candidate emails (post-redaction phase or otherwise), resume contents, transcripts, OTP codes, full JWT bearer values, full token payloads, signing keys.
+- Use redactors: log `candidate_id` not email; log `session_id` + `jti_prefix=<first 8>` not the full JWT; log lengths and hashes, not bodies.
+- Errors raised from validation must scrub user input from the message before reaching the log handler. The `errors.py` per-module file is the single place to map raw exceptions to user-safe messages.
+- `correlation_id` is required on every log record on every request path. Middleware injects it; never overwrite or strip it inside a handler.
+
+### Rate Limiting
+
+- Every public router declares a rate limit at the route level. Limits are in the root CLAUDE.md → "Rate Limiting & Abuse Posture" table. Adding an endpoint without a declared limit blocks merge.
+- `/api/sessions/candidate/*` endpoints are the highest-risk surface — keep per-IP and per-session caps tight.
+- `/api/admin/*` is operator-facing but still rate-limited (a compromised admin token must be capped).
+
+### Database & Connection Pool
+
+- One asyncpg pool per process. Pool size = `min(2 * cpu_count, 32)` for the API; workers run their own pool sized to `--processes * --threads`.
+- `statement_cache_size=0` for the `nexus_app` role (RLS GUC values change per request — cached prepared statements would bind to the wrong tenant context). Confirm in `app/database.py` whenever pool config changes.
+- Every tenant-scoped query goes through `get_tenant_db(request)`. Every admin/internal query goes through `get_bypass_db()`. Never construct a session manually outside these helpers.
+- `SELECT … FOR UPDATE` on the parent row is the chosen concurrency primitive (see `jd/service.py::save_signals`). Optimistic concurrency is opt-in, not default.
+
+### Tenant Hard-Delete Path
+
+- The cascade configured in migration 0023 is the contract. New tenant-scoped tables must declare `ON DELETE CASCADE` on `tenant_id` (audit_log is the documented exception).
+- Deletion order matters: app code soft-deletes first (`deleted_at`), and only the admin endpoint hard-deletes via PG cascade. Never delete tenants from a request handler.
 
 ---
 

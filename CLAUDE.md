@@ -115,6 +115,108 @@ Subdirectory CLAUDE.md files are the source of truth for module-level detail. Th
 
 ---
 
+## Enterprise Operating Standards
+
+These apply to **every** subdirectory and surface (backend, recruiter app, admin app). A leaf CLAUDE.md may be stricter; it must never be looser. "Internal" surfaces (e.g. the admin app) are not exempt — operator surfaces have the highest blast radius.
+
+### Reliability Targets
+
+| Surface | Availability | P50 | P95 |
+|---|---|---|---|
+| Recruiter dashboard API | 99.9% | < 200ms | < 600ms |
+| Candidate session API | 99.95% | < 200ms | < 500ms |
+| Real-time AI response (end-to-end) | per-session | ≤ 1,200ms | ≤ 1,500ms |
+| Async LLM tasks (Dramatiq) | per-task | ≤ 30s | ≤ 60s |
+
+Error budget: 0.1% / 30 days for the dashboard, 0.05% / 30 days for the candidate session path. If burned, ship-freeze on non-critical changes until the next window. LLM-bound endpoints are excluded from API latency targets.
+
+### Backup, Restore & Disaster Recovery
+
+- Postgres: managed daily backups + PITR. **RPO ≤ 15 min. RTO ≤ 4 h.**
+- Restore drill required quarterly — restore into a scratch DB, run `_assert_rls_completeness` + `pytest`, then drop. Log results under `docs/dr/`.
+- Redis (Dramatiq broker, session checkpoints) is ephemeral by design. Anything that must survive a flush goes to Postgres.
+- S3: versioning ON for the resume bucket and the recording bucket. MFA-delete ON for the recording bucket.
+
+### Rate Limiting & Abuse Posture
+
+Mandatory on every public endpoint. Limits cap **per-IP and per-token/per-tenant** — the per-token cap is the safety net for stolen credentials.
+
+| Endpoint class | Per-IP | Per-token / per-tenant |
+|---|---|---|
+| `/api/auth/*` (login, invite) | 10/min | — |
+| `/api/sessions/candidate/*/otp/request` | 3/hour | 5/day per session |
+| `/api/sessions/candidate/*/otp/verify` | 3 attempts (in code) | 60s window (in code) |
+| `/api/admin/*` | 30/min | — |
+| All other authenticated | 600/min | 10k/min per tenant |
+
+Declare the rate limit in the router when adding an endpoint, not after — un-rate-limited new endpoints block merge.
+
+### Supply Chain Security
+
+- Lockfiles are committed and authoritative (`uv.lock` / `poetry.lock`, `package-lock.json`). Never run `npm install` or `poetry add` "to see what happens" on CI.
+- CI runs `pip-audit` (backend) and `npm audit --omit=dev` (frontend) on every PR. Critical CVE → block merge. High CVE → block unless waived in the PR description with a CVE exception note.
+- Dependabot opens PRs; humans approve. No auto-merge of dep updates.
+- SBOM (CycloneDX) generated at release time, retained for compliance audits.
+
+### Secrets & Rotation
+
+- Local: gitignored `.env`. MVP: Railway env vars scoped per environment. Enterprise: AWS Secrets Manager + KMS, scoped to the ECS task role.
+- Rotate **candidate JWT signing key** and **OTP HMAC key** every 90 days, on personnel change, or on incident — whichever comes first.
+- Service-role keys (Supabase admin, S3, Resend, Twilio, Deepgram, Cartesia, LiveKit) rotate on personnel change or incident.
+- Rotation runbooks are the gate, not the rotation itself: a key cannot be rotated until its runbook is current. Runbooks live under `docs/security/`.
+
+### Logging, PII & Audit
+
+- **No raw PII in logs.** Forbidden values: candidate emails (post-redaction), resumes, transcripts, OTP codes, JWT bearer values, full token payloads, signing keys, raw resume contents.
+- Use redactors: log `candidate_id` not email; log `session_id` + `jti_prefix=<first 8>` not the full JWT; log `<n> chars` not the body.
+- The audit log is mandatory for: tenant provision/block/unblock/delete, candidate invite send/resend/revoke, role assignment changes, signal confirmation, PII redaction, **any action taken by a ProjectX-internal admin**.
+- Every audit record carries `actor_id`, `tenant_id`, `action`, `resource_type`, `resource_id`, `correlation_id`. This applies to admin-app operator actions too — admin operations are not exempt.
+
+### Test Coverage Gates
+
+PRs touching these paths without test deltas are rejected:
+
+- `app/modules/auth/` — JWT verification (algorithm pinning, audience, issuer, JWKS), candidate token verification, RBAC guards.
+- `app/middleware/` — tenant binding, candidate single-use enforcement.
+- `app/database.py` — RLS context binding helpers (`get_tenant_db`, `get_bypass_db`).
+- `app/modules/session/{otp.py,service.py}` — CSPRNG, HMAC compare, attempt cap, atomic single-use consume, supersession chain.
+- Any new tenant-scoped table — cross-tenant read must return 0 rows.
+- `frontend/app/proxy.ts` and `frontend/admin/proxy.ts` — auth gating + redirect allowlist.
+
+Project-wide line coverage target: 80%. Auth, RLS, candidate-session, and admin-app paths target **100% branch**.
+
+### Code Review
+
+- Every non-trivial PR requires at least one human reviewer. Trivial = typo fixes, Dependabot lockfile bumps, generated Alembic migrations with no policy changes.
+- Subdirectory "Human Review Required For" lists are stricter (senior reviewer + explicit sign-off in the PR description), never weaker.
+- AI-authored PRs follow the same rules. The merging human is the author of record; the AI is co-author (`Co-Authored-By:` line).
+
+### Incident Response
+
+- **SEV1**: data exposure, auth bypass, candidate-data leak, full outage. **SEV2**: degraded for >5% of tenants, partial auth failure, scheduler/notification breakage. **SEV3**: single-tenant or single-feature degradation.
+- SEV1/SEV2 require a written, **blameless** post-mortem within 5 business days, stored under `docs/incidents/YYYY-MM-DD-<slug>.md`. Template: root cause, contributing factors, detection, mitigation, action items.
+- Action items from a post-mortem are first-class work — they cannot be silently dropped.
+- SEV1 communications: status-page post within 30 min, affected Super Admins notified within 1 h.
+
+### Threat Model
+
+- A current threat model lives at `docs/security/threat-model.md` (STRIDE per trust boundary).
+- Update whenever: a new external service joins the data path (LiveKit, Cartesia, Deepgram, …); a new auth surface is added; tenant-isolation boundaries change; the candidate-facing surface changes.
+- PRs touching auth, RLS, or session must reference the relevant section.
+
+### Documentation Anchors
+
+Operating runbooks and standards live under `docs/`:
+
+- `docs/dr/` — backup/restore drill logs and DR runbook.
+- `docs/incidents/` — post-mortems.
+- `docs/security/` — threat model, key rotation runbooks, security review notes.
+- `docs/onboarding/` — new engineer ramp.
+
+If any of these directories are missing when an enterprise standard above demands one, that gap is itself the action item — create the directory and the first runbook in the same PR that introduces the dependency.
+
+---
+
 ## Key Domain Concepts
 
 | Concept | Meaning |
