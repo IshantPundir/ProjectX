@@ -420,9 +420,12 @@ async def test_create_job_pipeline_from_template_copies_stages(db):
     inst, stages, src, _pbs = result
     assert src is not None
     assert src.id == template.id
-    assert len(stages) == 2
-    assert stages[0].name == "S1"
-    assert stages[1].name == "S2"
+    # Bookend seeding: intake prepended, debrief appended → 2 template stages + 2 bookends
+    assert len(stages) == 4
+    assert stages[0].stage_type == "intake"
+    assert stages[1].name == "S1"
+    assert stages[2].name == "S2"
+    assert stages[3].stage_type == "debrief"
 
 
 @pytest.mark.asyncio
@@ -440,7 +443,10 @@ async def test_create_job_pipeline_from_starter_has_null_source_template_id(db):
     assert result is not None
     _inst, stages, src, _pbs = result
     assert src is None
-    assert len(stages) == 3
+    # standard_technical has 3 middle stages; bookends add 2 → 5 total
+    assert len(stages) == 5
+    assert stages[0].stage_type == "intake"
+    assert stages[-1].stage_type == "debrief"
 
 
 @pytest.mark.asyncio
@@ -460,7 +466,10 @@ async def test_create_job_pipeline_from_scratch_has_null_source_template_id(db):
     assert result is not None
     _inst, stages, src, _pbs = result
     assert src is None
-    assert len(stages) == 2
+    # 2 explicit stages + intake + debrief bookends = 4
+    assert len(stages) == 4
+    assert stages[0].stage_type == "intake"
+    assert stages[-1].stage_type == "debrief"
 
 
 @pytest.mark.asyncio
@@ -558,9 +567,12 @@ async def test_reset_job_pipeline_restores_from_source_template(db):
     post = await pipelines_service.get_job_pipeline_with_stages(db, job.id)
     assert post is not None
     _inst, stages, _src, _pbs = post
-    assert len(stages) == 2
-    assert stages[0].name == "TplA"
-    assert stages[1].name == "TplB"
+    # Bookend seeding on reset: intake + TplA + TplB + debrief = 4
+    assert len(stages) == 4
+    assert stages[0].stage_type == "intake"
+    assert stages[1].name == "TplA"
+    assert stages[2].name == "TplB"
+    assert stages[3].stage_type == "debrief"
 
 
 @pytest.mark.asyncio

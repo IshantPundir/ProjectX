@@ -67,6 +67,72 @@ def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _seed_bookends(
+    stages: list[JobPipelineStage],
+    *,
+    tenant_id: UUID,
+    instance_id: UUID,
+) -> list[JobPipelineStage]:
+    """Ensure the stage list has an intake at position 0 and a debrief at the end.
+
+    Mutates nothing.  Returns a NEW list (bookends prepended/appended as needed)
+    with positions re-indexed 0..N-1.  Callers must add all returned rows to the
+    session — only the newly-created bookend rows need adding; existing rows are
+    returned as-is so callers can simply call db.add() on all of them without
+    double-inserting (SQLAlchemy de-dupes adds for already-tracked objects).
+
+    Columns that are FORBIDDEN / NULL-relaxed for intake/debrief (migration 0019):
+      - duration_minutes, difficulty, signal_filter  → None
+      - pass_criteria                                → None  (LOCKED: server stamps)
+      - advance_behavior                             → None  (LOCKED: server stamps)
+    The Pydantic validator stamps pass_criteria and advance_behavior to their
+    canonical values on the way through the API; when we create rows directly
+    here we set them explicitly so the DB value is authoritative regardless of
+    whether the validator runs.
+    """
+    result = list(stages)
+
+    if not result or result[0].stage_type != "intake":
+        intake = JobPipelineStage(
+            tenant_id=tenant_id,
+            instance_id=instance_id,
+            position=0,  # will be re-indexed below
+            name="Intake",
+            stage_type="intake",
+            duration_minutes=None,
+            difficulty=None,
+            signal_filter=None,
+            pass_criteria=None,
+            advance_behavior="auto_advance",
+            sla_days=None,
+            otp_required_default=False,
+        )
+        result.insert(0, intake)
+
+    if result[-1].stage_type != "debrief":
+        debrief = JobPipelineStage(
+            tenant_id=tenant_id,
+            instance_id=instance_id,
+            position=len(result),  # will be re-indexed below
+            name="Debrief",
+            stage_type="debrief",
+            duration_minutes=None,
+            difficulty=None,
+            signal_filter=None,
+            pass_criteria=None,
+            advance_behavior="manual_review",
+            sla_days=None,
+            otp_required_default=False,
+        )
+        result.append(debrief)
+
+    # Re-index positions to be contiguous 0..N-1.
+    for idx, stage in enumerate(result):
+        stage.position = idx
+
+    return result
+
+
 def _stage_input_to_row_dict(
     stage: PipelineStageInput,
     tenant_id: UUID,
@@ -429,22 +495,27 @@ async def create_job_pipeline_from_template(
         .where(PipelineTemplateStage.template_id == template.id)
         .order_by(PipelineTemplateStage.position)
     )
-    for src_stage in stages_result.scalars().all():
-        db.add(
-            JobPipelineStage(
-                tenant_id=job.tenant_id,
-                instance_id=instance.id,
-                position=src_stage.position,
-                name=src_stage.name,
-                stage_type=src_stage.stage_type,
-                duration_minutes=src_stage.duration_minutes,
-                difficulty=src_stage.difficulty,
-                signal_filter=src_stage.signal_filter,
-                pass_criteria=src_stage.pass_criteria,
-                advance_behavior=src_stage.advance_behavior,
-                sla_days=src_stage.sla_days,
-            )
+    copied_stages: list[JobPipelineStage] = [
+        JobPipelineStage(
+            tenant_id=job.tenant_id,
+            instance_id=instance.id,
+            position=src_stage.position,
+            name=src_stage.name,
+            stage_type=src_stage.stage_type,
+            duration_minutes=src_stage.duration_minutes,
+            difficulty=src_stage.difficulty,
+            signal_filter=src_stage.signal_filter,
+            pass_criteria=src_stage.pass_criteria,
+            advance_behavior=src_stage.advance_behavior,
+            sla_days=src_stage.sla_days,
         )
+        for src_stage in stages_result.scalars().all()
+    ]
+    final_stages = _seed_bookends(
+        copied_stages, tenant_id=job.tenant_id, instance_id=instance.id
+    )
+    for stage in final_stages:
+        db.add(stage)
     await db.flush()
     logger.info(
         "pipelines.job_instance_created",
@@ -487,22 +558,27 @@ async def create_job_pipeline_from_starter(
     db.add(instance)
     await db.flush()
 
-    for stage in starter["stages"]:
-        db.add(
-            JobPipelineStage(
-                tenant_id=job.tenant_id,
-                instance_id=instance.id,
-                position=stage["position"],
-                name=stage["name"],
-                stage_type=stage["stage_type"],
-                duration_minutes=stage["duration_minutes"],
-                difficulty=stage["difficulty"],
-                signal_filter=stage["signal_filter"],
-                pass_criteria=stage["pass_criteria"],
-                advance_behavior=stage["advance_behavior"],
-                sla_days=stage.get("sla_days"),
-            )
+    starter_stages: list[JobPipelineStage] = [
+        JobPipelineStage(
+            tenant_id=job.tenant_id,
+            instance_id=instance.id,
+            position=stage["position"],
+            name=stage["name"],
+            stage_type=stage["stage_type"],
+            duration_minutes=stage["duration_minutes"],
+            difficulty=stage["difficulty"],
+            signal_filter=stage["signal_filter"],
+            pass_criteria=stage["pass_criteria"],
+            advance_behavior=stage["advance_behavior"],
+            sla_days=stage.get("sla_days"),
         )
+        for stage in starter["stages"]
+    ]
+    final_stages = _seed_bookends(
+        starter_stages, tenant_id=job.tenant_id, instance_id=instance.id
+    )
+    for stage in final_stages:
+        db.add(stage)
     await db.flush()
     logger.info(
         "pipelines.job_instance_created",
@@ -540,12 +616,17 @@ async def create_job_pipeline_from_scratch(
     db.add(instance)
     await db.flush()
 
-    for stage in stages:
-        db.add(
-            JobPipelineStage(
-                **_stage_input_to_row_dict(stage, job.tenant_id, instance_id=instance.id)
-            )
+    scratch_stages: list[JobPipelineStage] = [
+        JobPipelineStage(
+            **_stage_input_to_row_dict(stage, job.tenant_id, instance_id=instance.id)
         )
+        for stage in stages
+    ]
+    final_stages = _seed_bookends(
+        scratch_stages, tenant_id=job.tenant_id, instance_id=instance.id
+    )
+    for stage in final_stages:
+        db.add(stage)
     await db.flush()
     logger.info(
         "pipelines.job_instance_created",
@@ -813,22 +894,27 @@ async def reset_job_pipeline_to_source(
         await db.delete(s)
     await db.flush()
 
-    for src in src_stages:
-        db.add(
-            JobPipelineStage(
-                tenant_id=instance.tenant_id,
-                instance_id=instance.id,
-                position=src.position,
-                name=src.name,
-                stage_type=src.stage_type,
-                duration_minutes=src.duration_minutes,
-                difficulty=src.difficulty,
-                signal_filter=src.signal_filter,
-                pass_criteria=src.pass_criteria,
-                advance_behavior=src.advance_behavior,
-                sla_days=src.sla_days,
-            )
+    reset_stages: list[JobPipelineStage] = [
+        JobPipelineStage(
+            tenant_id=instance.tenant_id,
+            instance_id=instance.id,
+            position=src.position,
+            name=src.name,
+            stage_type=src.stage_type,
+            duration_minutes=src.duration_minutes,
+            difficulty=src.difficulty,
+            signal_filter=src.signal_filter,
+            pass_criteria=src.pass_criteria,
+            advance_behavior=src.advance_behavior,
+            sla_days=src.sla_days,
         )
+        for src in src_stages
+    ]
+    final_stages = _seed_bookends(
+        reset_stages, tenant_id=instance.tenant_id, instance_id=instance.id
+    )
+    for stage in final_stages:
+        db.add(stage)
     instance.updated_at = _now_utc()
     await db.flush()
     await bump_pipeline_version(db, instance)

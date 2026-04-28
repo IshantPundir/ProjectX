@@ -665,8 +665,10 @@ async def test_swap_job_pipeline_replaces_instance(db: AsyncSession):
     assert data["id"] != str(old_instance_id)
     # Came from a starter — no source_template_id
     assert data["source_template_id"] is None
-    # standard_technical starter has 3 stages
-    assert len(data["stages"]) == 3
+    # standard_technical starter has 3 middle stages; bookend seeding adds intake + debrief = 5
+    assert len(data["stages"]) == 5
+    assert data["stages"][0]["stage_type"] == "intake"
+    assert data["stages"][-1]["stage_type"] == "debrief"
     stage_names = [s["name"] for s in data["stages"]]
     assert "OldStage" not in stage_names
 
