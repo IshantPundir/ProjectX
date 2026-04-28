@@ -532,3 +532,57 @@ async def test_retry_returns_enriched_summary(db: AsyncSession, monkeypatch):
     assert data["created_by_email"] == user.email
     assert isinstance(data["signal_count"], int)
     assert isinstance(data["needs_review_count"], int)
+
+
+# ---------------------------------------------------------------------------
+# T9 — skip_enrichment is forwarded to the actor's .send() kwargs
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_create_job_with_skip_enrichment_forwards_to_actor(
+    db: AsyncSession, monkeypatch
+):
+    """When skip_enrichment=true is in the request body, the actor must
+    receive that flag in its kwargs."""
+    captured: dict = {}
+
+    def fake_send(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(
+        "app.modules.jd.actors.extract_and_enhance_jd.send",
+        fake_send,
+    )
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    company = await create_test_org_unit(
+        db,
+        tenant.id,
+        unit_type="company",
+        company_profile=_VALID_PROFILE,
+    )
+    tenant.super_admin_id = user.id
+    await db.commit()
+
+    headers, restore = _setup_test_context(db, user, tenant.id, is_super_admin=True)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.post(
+                "/api/jobs",
+                json={
+                    "org_unit_id": str(company.id),
+                    "title": "Test",
+                    "description_raw": "x" * 60,
+                    "skip_enrichment": True,
+                },
+                headers=headers,
+            )
+    finally:
+        restore()
+
+    assert response.status_code == 201, response.text
+    assert captured["kwargs"].get("skip_enrichment") is True

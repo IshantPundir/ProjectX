@@ -311,6 +311,28 @@ async def test_two_phase_extraction_runs_both_llm_calls_in_order(db, monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_run_signal_extraction_uses_raw_when_no_enrichment(db, monkeypatch):
+    """When phase 1 was skipped (enrichment_status='idle'), phase 2 reads raw JD."""
+    tenant, user, job = await _make_extracting_job(db)
+    job.description_raw = "RAW_JD_FIXTURE_MARKER " + ("filler content " * 10)
+    await db.commit()
+    assert job.enrichment_status == "idle"
+
+    signals = _fake_signal_extraction_output()
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock(return_value=signals)
+    monkeypatch.setattr("app.modules.jd.actors.get_openai_client", lambda: mock_client)
+
+    await _run_signal_extraction(
+        db, job_posting_id=str(job.id),
+        tenant_id=str(tenant.id), correlation_id="cid", retries_so_far=0,
+    )
+
+    user_message = mock_client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
+    assert "RAW_JD_FIXTURE_MARKER" in user_message
+
+
+@pytest.mark.asyncio
 async def test_phase_2_reads_enriched_jd_when_phase_1_ran(db, monkeypatch):
     """Signal extraction must use description_enriched as input when phase 1 ran."""
     tenant, user, job = await _make_extracting_job(db)

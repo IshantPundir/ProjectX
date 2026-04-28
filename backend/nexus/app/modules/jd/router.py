@@ -152,6 +152,7 @@ async def _safe_dispatch_extraction(
     job_posting_id: str,
     tenant_id: str,
     correlation_id: str,
+    skip_enrichment: bool = False,
 ) -> None:
     """Enqueue the Dramatiq actor, transitioning the job to failed if Redis
     is unreachable. FastAPI BackgroundTasks silently swallow exceptions, so
@@ -162,6 +163,7 @@ async def _safe_dispatch_extraction(
             job_posting_id=job_posting_id,
             tenant_id=tenant_id,
             correlation_id=correlation_id,
+            skip_enrichment=skip_enrichment,
         )
     except Exception as exc:
         _log.error(
@@ -342,6 +344,7 @@ async def create_job(
         job_posting_id=str(job.id),
         tenant_id=str(user.user.tenant_id),
         correlation_id=correlation_id,
+        skip_enrichment=body.skip_enrichment,
     )
 
     # Publish the initial state so SSE subscribers connecting immediately
