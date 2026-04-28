@@ -142,7 +142,7 @@ frontend/app/
 │       ├── AccessDenied.tsx              ← RBAC-denial fallback
 │       ├── providers.tsx                 ← DashboardProviders client boundary
 │       ├── company-profile-form.tsx      ← Shared 4-field RHF+Zod form
-│       ├── jd-panels/                    ← OriginalJdPanel, EnrichedJdPanel, SignalsPanel, SignalChip, LoadingSkeleton, ErrorBanner
+│       ├── jd-panels/                    ← JDReviewShell, JDExtractingView, RawJdCanvas, EnrichedJdCanvas, SectionsRail, SignalsCanvas, SignalInspector, ErrorBanner, helpers/, components/
 │       ├── pipeline/                     ← Pipeline editor: PipelineFlowColumn, StageInspectorPanel, StageConfigDrawer, TemplatePickerDialog, StarterPackBrowser, ActivationGate, StageParticipantsEditor, etc.
 │       ├── question-bank/                ← AddQuestionDialog, AddCustomQuestionDialog, BankStatusBadge, QuestionCard, QuestionRefinePanel, …
 │       ├── candidates/                   ← AddCandidateDialog, CandidateKanbanView/Card/Column, CandidateListView, ClientCandidatesPage, ResumeUploadField, SendInviteDialog, JdPicker, StageTransitionDropdown, SessionStatusBadge, StatusBadge
