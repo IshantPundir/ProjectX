@@ -132,9 +132,9 @@ async def _run_enrichment(
     """Phase 1 — JD enrichment only.
 
     Reads job.description_raw + company profile, calls jd_enrichment.txt,
-    writes job.description_enriched, sets enrichment_status='streaming'
-    on entry and 'completed' on success. Idempotent: skipped if
-    enrichment_status is already 'completed'.
+    writes job.description_enriched, sets enrichment_status='completed'
+    on success. Idempotent: skipped if enrichment_status is already
+    'completed'.
 
     On permanent error or final retry: sets enrichment_status='failed'
     and transitions main status to signals_extraction_failed.
@@ -170,8 +170,6 @@ async def _run_enrichment(
             actor_id=None, correlation_id=correlation_id,
         )
         return
-
-    job.enrichment_status = "streaming"
 
     langfuse_context.update_current_trace(
         session_id=job_posting_id,
