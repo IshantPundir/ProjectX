@@ -1,7 +1,5 @@
 'use client'
 
-import { useState } from 'react'
-
 import type { JobPostingWithSnapshot } from '@/lib/api/jobs'
 
 // Local copy of the page-level icon helper. The original `I` lives in
@@ -39,17 +37,14 @@ function I({
 
 const REFRESH_ICON = 'M21 12a9 9 0 11-3-6.7L21 8M21 3v5h-5'
 
-export function FullJdCanvas({
+export function EnrichedJdCanvas({
   job,
   onReEnrich,
 }: {
   job: JobPostingWithSnapshot
   onReEnrich: () => void
 }) {
-  const [which, setWhich] = useState<'enriched' | 'raw'>(
-    job.description_enriched ? 'enriched' : 'raw',
-  )
-  const text = which === 'enriched' ? job.description_enriched : job.description_raw
+  const text = job.description_enriched
 
   return (
     <main
@@ -64,12 +59,10 @@ export function FullJdCanvas({
           className="m-0 text-[22px] font-semibold"
           style={{ color: 'var(--px-fg)', letterSpacing: '-0.4px' }}
         >
-          Full JD
+          Enriched JD
         </h1>
         <div className="mt-1 text-[12.5px]" style={{ color: 'var(--px-fg-3)' }}>
-          {which === 'enriched'
-            ? 'Rewritten by Copilot to match your company voice.'
-            : 'Original text you pasted.'}
+          Rewritten by Copilot to match your company voice.
         </div>
       </div>
 
@@ -80,22 +73,6 @@ export function FullJdCanvas({
           borderColor: 'var(--px-hairline)',
         }}
       >
-        {job.description_enriched && (
-          <button
-            type="button"
-            className={`px-btn ${which === 'enriched' ? 'primary' : 'ghost'} xs`}
-            onClick={() => setWhich('enriched')}
-          >
-            Enriched
-          </button>
-        )}
-        <button
-          type="button"
-          className={`px-btn ${which === 'raw' ? 'primary' : 'ghost'} xs`}
-          onClick={() => setWhich('raw')}
-        >
-          Raw
-        </button>
         <div className="flex-1" />
         <button
           type="button"

@@ -7,7 +7,9 @@ import { useConfirmSignals } from '@/lib/hooks/use-confirm-signals'
 import { useSaveSignals } from '@/lib/hooks/use-save-signals'
 import type { JobPostingWithSnapshot, SignalItem } from '@/lib/api/jobs'
 
-import { FullJdCanvas } from './FullJdCanvas'
+import { Tabs } from '@/components/px'
+import { EnrichedJdCanvas } from './EnrichedJdCanvas'
+import { RawJdCanvas } from './RawJdCanvas'
 import { InspectorHint } from './components/InspectorHint'
 import { InspectorTips } from './components/InspectorTips'
 import { SectionsRail } from './SectionsRail'
@@ -16,7 +18,9 @@ import { SignalsCanvas } from './SignalsCanvas'
 import { groupSignals } from './helpers/groupSignals'
 import { needsReview } from './helpers/needsReview'
 
-type InnerView = 'signals' | 'jd'
+type InnerView = 'raw' | 'enriched' | 'signals'
+
+const VALID_VIEWS: InnerView[] = ['raw', 'enriched', 'signals']
 
 export function JDReviewShell({
   job,
@@ -32,7 +36,11 @@ export function JDReviewShell({
   const [signals, setSignals] = useState<SignalItem[]>(snapshot.signals)
   const [isDirty, setIsDirty] = useState(false)
 
-  const view = (searchParams.get('view') ?? 'signals') as InnerView
+  const rawView = searchParams.get('view')
+  const view: InnerView = (
+    rawView && (VALID_VIEWS as string[]).includes(rawView) ? rawView : 'signals'
+  ) as InnerView
+
   const focusIdxParam = searchParams.get('signal')
   const focusIdx = focusIdxParam ? Number(focusIdxParam) : null
 
@@ -58,7 +66,7 @@ export function JDReviewShell({
   const totalCount = signals.length
 
   const [activeSection, setActiveSection] = useState<
-    'must' | 'nice' | 'snapshot' | 'jd'
+    'must' | 'nice' | 'snapshot'
   >(must.length > 0 ? 'must' : nice.length > 0 ? 'nice' : 'snapshot')
 
   const saveMutation = useSaveSignals(job.id)
@@ -125,21 +133,10 @@ export function JDReviewShell({
         hasSnapshot={!!snapshot.role_summary || !!snapshot.seniority_level}
         totalCount={totalCount}
         needsReviewCount={needsReviewCount}
-        activeSection={view === 'jd' ? 'jd' : activeSection}
-        filename={`jd-v${snapshot.version}.txt`}
-        onShowJd={() => {
-          setView('jd')
-          setActiveSection('jd')
-        }}
+        activeSection={view !== 'signals' ? null : activeSection}
         onJump={(target) => {
-          if (target === 'jd') {
-            setView('jd')
-            setActiveSection('jd')
-            return
-          }
-
-          const wasJd = view === 'jd'
-          if (wasJd) setView('signals')
+          const wasNonSignals = view !== 'signals'
+          if (wasNonSignals) setView('signals')
           setActiveSection(target)
 
           const run = () => {
@@ -153,7 +150,7 @@ export function JDReviewShell({
             if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
           }
 
-          if (wasJd) {
+          if (wasNonSignals) {
             requestAnimationFrame(() => requestAnimationFrame(run))
           } else {
             run()
@@ -161,30 +158,54 @@ export function JDReviewShell({
         }}
       />
 
-      {view === 'jd' ? (
-        <FullJdCanvas job={job} onReEnrich={onReEnrich} />
-      ) : (
-        <SignalsCanvas
-          must={must}
-          nice={nice}
-          job={job}
-          stateBanner={stateBanner}
-          isConfirmed={isConfirmed}
-          canManage={canManage}
-          isDirty={isDirty}
-          saving={saveMutation.isPending}
-          confirming={confirmMutation.isPending}
-          needsReviewCount={needsReviewCount}
-          totalCount={totalCount}
-          focusIdx={focusIdx}
-          onFocus={setFocus}
-          onSave={save}
-          onSaveAndConfirm={saveAndConfirm}
-          onReEnrich={onReEnrich}
-        />
-      )}
+      {/* Center column: Tabs toggle + canvas */}
+      <div className="flex min-w-0 flex-col gap-3">
+        <div className="flex items-center justify-between">
+          <Tabs<InnerView>
+            ariaLabel="JD view"
+            value={view}
+            onChange={setView}
+            items={[
+              { value: 'raw', label: 'Raw JD' },
+              {
+                value: 'enriched',
+                label: 'Enriched JD',
+                hidden: !job.description_enriched && job.enrichment_status !== 'streaming',
+                disabled: job.enrichment_status === 'failed',
+                disabledHint: 'Enrichment failed — retry to re-run',
+              },
+              { value: 'signals', label: 'Signal details' },
+            ]}
+          />
+        </div>
 
-      {view === 'jd' ? (
+        {view === 'raw' ? (
+          <RawJdCanvas job={job} />
+        ) : view === 'enriched' ? (
+          <EnrichedJdCanvas job={job} onReEnrich={onReEnrich} />
+        ) : (
+          <SignalsCanvas
+            must={must}
+            nice={nice}
+            job={job}
+            stateBanner={stateBanner}
+            isConfirmed={isConfirmed}
+            canManage={canManage}
+            isDirty={isDirty}
+            saving={saveMutation.isPending}
+            confirming={confirmMutation.isPending}
+            needsReviewCount={needsReviewCount}
+            totalCount={totalCount}
+            focusIdx={focusIdx}
+            onFocus={setFocus}
+            onSave={save}
+            onSaveAndConfirm={saveAndConfirm}
+            onReEnrich={onReEnrich}
+          />
+        )}
+      </div>
+
+      {view !== 'signals' ? (
         <InspectorTips />
       ) : focusSignal ? (
         <SignalInspector
