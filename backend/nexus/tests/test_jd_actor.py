@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import openai
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.ai.schemas import ExtractedSignals, ExtractionOutput, SignalItemV2
 from app.models import JobPosting, JobPostingSignalSnapshot
@@ -150,3 +150,189 @@ async def test_actor_intermediate_retry_does_not_flip_state(db, monkeypatch):
     await db.refresh(job)
     assert job.status == "signals_extracting"  # unchanged
     assert job.status_error is None
+
+
+# --- Phase 1 (two-phase split) tests ----------------------------------------
+
+
+def _fake_enrichment_output() -> "EnrichmentOutput":
+    """Returns a valid EnrichmentOutput with at least 50 chars."""
+    from app.ai.schemas import EnrichmentOutput
+    return EnrichmentOutput(
+        enriched_jd=(
+            "## Header\n"
+            "Senior Backend Engineer · Remote · 5+ years experience\n\n"
+            "## The Role\n"
+            "Build distributed systems for a fintech platform.\n"
+        )
+    )
+
+
+def _fake_signal_extraction_output() -> "SignalExtractionOutput":
+    """Returns a valid SignalExtractionOutput satisfying coverage rules."""
+    from app.ai.schemas import (
+        ExtractedSignals,
+        SignalExtractionOutput,
+        SignalItemV2,
+    )
+    signals = [
+        SignalItemV2(
+            value="Python",
+            type="competency",
+            priority="required",
+            weight=3,
+            knockout=True,
+            stage="screen",
+            source="ai_extracted",
+            inference_basis=None,
+        ),
+        SignalItemV2(
+            value="distributed systems design",
+            type="competency",
+            priority="required",
+            weight=3,
+            knockout=False,
+            stage="interview",
+            source="ai_extracted",
+            inference_basis=None,
+        ),
+        SignalItemV2(
+            value="5+ years backend",
+            type="experience",
+            priority="required",
+            weight=2,
+            knockout=True,
+            stage="screen",
+            source="ai_extracted",
+            inference_basis=None,
+        ),
+        SignalItemV2(
+            value="BS in CS or equivalent",
+            type="credential",
+            priority="preferred",
+            weight=1,
+            knockout=False,
+            stage="screen",
+            source="ai_extracted",
+            inference_basis=None,
+        ),
+        SignalItemV2(
+            value="mentor juniors",
+            type="behavioral",
+            priority="preferred",
+            weight=2,
+            knockout=False,
+            stage="interview",
+            source="ai_inferred",
+            inference_basis="Senior title implies mentoring scope",
+        ),
+    ]
+    return SignalExtractionOutput(
+        signals=ExtractedSignals(
+            signals=signals,
+            seniority_level="senior",
+            role_summary="Senior backend engineer building distributed systems for a fintech platform.",
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_two_phase_extraction_runs_both_llm_calls_in_order(db, monkeypatch):
+    """Phase 1 (enrichment) must complete BEFORE phase 2 (signal extraction).
+
+    The actor calls jd_enrichment then jd_signal_extraction, in that order.
+    enrichment_status flips to 'completed' between them; final state lands
+    at signals_extracted with description_enriched + snapshot v1 written.
+    """
+    from app.modules.jd.actors import _run_enrichment, _run_signal_extraction
+
+    tenant, user, job = await _make_extracting_job(db)
+    await db.flush()
+
+    enrichment = _fake_enrichment_output()
+    signals = _fake_signal_extraction_output()
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock(side_effect=[enrichment, signals])
+    monkeypatch.setattr("app.modules.jd.actors.get_openai_client", lambda: mock_client)
+
+    # Phase 1
+    await _run_enrichment(
+        db,
+        job_posting_id=str(job.id),
+        tenant_id=str(tenant.id),
+        correlation_id="cid-test",
+        retries_so_far=0,
+    )
+    await db.flush()
+    await db.refresh(job)
+    assert job.enrichment_status == "completed"
+    assert job.description_enriched is not None
+    assert job.description_enriched.startswith("## Header")
+    # Snapshot has NOT been written yet — phase 2 hasn't run.
+    snap_count = await db.scalar(
+        select(func.count(JobPostingSignalSnapshot.id)).where(
+            JobPostingSignalSnapshot.job_posting_id == job.id
+        )
+    )
+    assert snap_count == 0
+
+    # Phase 2
+    await _run_signal_extraction(
+        db,
+        job_posting_id=str(job.id),
+        tenant_id=str(tenant.id),
+        correlation_id="cid-test",
+        retries_so_far=0,
+    )
+    await db.flush()
+    await db.refresh(job)
+    assert job.status == "signals_extracted"
+    snap = (
+        await db.execute(
+            select(JobPostingSignalSnapshot).where(
+                JobPostingSignalSnapshot.job_posting_id == job.id
+            )
+        )
+    ).scalar_one()
+    assert snap.version == 1
+    assert len(snap.signals) == 5
+
+    # Two LLM calls happened, in the right order, with the right prompts.
+    assert mock_client.chat.completions.create.call_count == 2
+    first_call = mock_client.chat.completions.create.call_args_list[0]
+    second_call = mock_client.chat.completions.create.call_args_list[1]
+    assert first_call.kwargs["response_model"].__name__ == "EnrichmentOutput"
+    assert second_call.kwargs["response_model"].__name__ == "SignalExtractionOutput"
+
+
+@pytest.mark.asyncio
+async def test_phase_2_reads_enriched_jd_when_phase_1_ran(db, monkeypatch):
+    """Signal extraction must use description_enriched as input when phase 1 ran."""
+    from app.modules.jd.actors import _run_enrichment, _run_signal_extraction
+
+    tenant, user, job = await _make_extracting_job(db)
+    await db.flush()
+
+    enrichment = _fake_enrichment_output()
+    signals = _fake_signal_extraction_output()
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock(side_effect=[enrichment, signals])
+    monkeypatch.setattr("app.modules.jd.actors.get_openai_client", lambda: mock_client)
+
+    await _run_enrichment(
+        db, job_posting_id=str(job.id),
+        tenant_id=str(tenant.id), correlation_id="cid", retries_so_far=0,
+    )
+    await db.flush()
+    await _run_signal_extraction(
+        db, job_posting_id=str(job.id),
+        tenant_id=str(tenant.id), correlation_id="cid", retries_so_far=0,
+    )
+
+    # Phase 2's user message must contain the enriched JD, NOT the raw JD.
+    second_call = mock_client.chat.completions.create.call_args_list[1]
+    user_message = second_call.kwargs["messages"][1]["content"]
+    assert "## Header\nSenior Backend Engineer" in user_message
+    # The original raw JD body should NOT appear (raw JD in fixture has different content).
+    assert "RAW_JD_FIXTURE_MARKER" not in user_message
