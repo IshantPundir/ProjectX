@@ -3,13 +3,13 @@
 Covers:
 - SignalItemV2: valid creation, provenance rules
 - ExtractedSignals: coverage validators (min 5, stage coverage, knockout cap)
-- ExtractionOutput: enriched_jd length validation
+- EnrichmentOutput: enriched_jd length validation
 """
 
 import pytest
 from pydantic import ValidationError
 
-from app.ai.schemas import ExtractedSignals, ExtractionOutput, SignalItemV2
+from app.ai.schemas import EnrichmentOutput, ExtractedSignals, SignalItemV2
 
 
 # ---------------------------------------------------------------------------
@@ -109,17 +109,9 @@ def _make_signals(count: int = 5, **overrides) -> list[SignalItemV2]:
     return base[:count]
 
 
-def test_extraction_output_minimum_fields():
-    out = ExtractionOutput(
-        enriched_jd="A" * 80,
-        signals=ExtractedSignals(
-            signals=_make_signals(5),
-            seniority_level="senior",
-            role_summary="A senior Python engineer building a scalable ingestion pipeline.",
-        ),
-    )
-    assert out.signals.seniority_level == "senior"
-    assert len(out.signals.signals) == 5
+def test_enrichment_output_minimum_fields():
+    out = EnrichmentOutput(enriched_jd="A" * 80)
+    assert len(out.enriched_jd) == 80
 
 
 def test_fewer_than_5_signals_rejected():
@@ -191,16 +183,9 @@ def test_knockout_cap_exceeded_rejected():
 
 
 # ---------------------------------------------------------------------------
-# ExtractionOutput — enriched_jd validation
+# EnrichmentOutput — enriched_jd validation
 # ---------------------------------------------------------------------------
 
 def test_enriched_jd_too_short():
     with pytest.raises(ValidationError):
-        ExtractionOutput(
-            enriched_jd="too short",
-            signals=ExtractedSignals(
-                signals=_make_signals(5),
-                seniority_level="junior",
-                role_summary="A valid role summary that meets the minimum length requirement.",
-            ),
-        )
+        EnrichmentOutput(enriched_jd="too short")

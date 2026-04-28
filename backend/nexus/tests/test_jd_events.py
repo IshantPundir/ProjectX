@@ -487,7 +487,12 @@ async def test_extract_actor_publishes_on_success(
     from contextlib import asynccontextmanager
     from unittest.mock import AsyncMock, MagicMock
 
-    from app.ai.schemas import ExtractedSignals, ExtractionOutput, SignalItemV2
+    from app.ai.schemas import (
+        EnrichmentOutput,
+        ExtractedSignals,
+        SignalExtractionOutput,
+        SignalItemV2,
+    )
     from app.modules.jd import actors
 
     # ---- Seed data -----------------------------------------------------------
@@ -508,9 +513,9 @@ async def test_extract_actor_publishes_on_success(
     await db.flush()
 
     # ---- Mock get_bypass_session to return the test db session ---------------
-    # The actor calls get_bypass_session() twice: once for the main session and
-    # once for the post-commit read. Both yield the same test db so everything
-    # stays inside the per-test rollback transaction.
+    # The actor calls get_bypass_session() twice: once for phase 1 and once for
+    # phase 2. Both yield the same test db so everything stays inside the
+    # per-test rollback transaction.
     @asynccontextmanager
     async def _fake_bypass_session():
         yield db
@@ -520,10 +525,10 @@ async def test_extract_actor_publishes_on_success(
         _fake_bypass_session,
     )
 
-    # ---- Mock the LLM call ---------------------------------------------------
-    # ExtractedSignals requires at least 5 signals — mirror test_jd_actor.py.
-    fake_output = ExtractionOutput(
-        enriched_jd="A" * 80,
+    # ---- Mock the two-phase LLM calls ----------------------------------------
+    # Phase 1 returns EnrichmentOutput; phase 2 returns SignalExtractionOutput.
+    fake_enrichment = EnrichmentOutput(enriched_jd="A" * 80)
+    fake_signals = SignalExtractionOutput(
         signals=ExtractedSignals(
             signals=[
                 SignalItemV2(value="Python", type="competency", priority="required", weight=2, knockout=False, stage="interview", source="ai_extracted", inference_basis=None),
@@ -537,7 +542,9 @@ async def test_extract_actor_publishes_on_success(
         ),
     )
     fake_client = MagicMock()
-    fake_client.chat.completions.create = AsyncMock(return_value=fake_output)
+    fake_client.chat.completions.create = AsyncMock(
+        side_effect=[fake_enrichment, fake_signals]
+    )
     monkeypatch.setattr(
         "app.modules.jd.actors.get_openai_client",
         lambda: fake_client,
@@ -553,14 +560,17 @@ async def test_extract_actor_publishes_on_success(
     )
 
     # ---- Assert publish -------------------------------------------------------
+    # The two-phase actor publishes twice: once after phase 1 (enrichment) and
+    # once after phase 2 (signal extraction). The final event must reflect
+    # signals_extracted status.
     jd_events = [
         p for p in capture_publishes if p.event == pubsub.Events.JD_STATUS_CHANGED
     ]
-    assert len(jd_events) == 1, f"expected 1 publish, got {len(jd_events)}"
-    pub = jd_events[0]
-    assert pub.channel == f"job:{job.id}"
-    assert pub.payload["status"] == "signals_extracted"
-    assert pub.correlation_id == "test-corr-extract"
+    assert len(jd_events) == 2, f"expected 2 publishes (one per phase), got {len(jd_events)}"
+    final_pub = jd_events[-1]
+    assert final_pub.channel == f"job:{job.id}"
+    assert final_pub.payload["status"] == "signals_extracted"
+    assert final_pub.correlation_id == "test-corr-extract"
 
 
 # ---------------------------------------------------------------------------

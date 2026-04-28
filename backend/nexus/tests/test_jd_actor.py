@@ -9,7 +9,7 @@ import openai
 import pytest
 from sqlalchemy import func, select
 
-from app.ai.schemas import ExtractedSignals, ExtractionOutput, SignalItemV2
+from app.ai.schemas import ExtractedSignals, SignalItemV2
 from app.models import JobPosting, JobPostingSignalSnapshot
 from tests.conftest import (
     create_test_client,
@@ -45,33 +45,37 @@ async def _make_extracting_job(db):
     return tenant, user, job
 
 
-def _fake_extraction_output() -> ExtractionOutput:
-    return ExtractionOutput(
-        enriched_jd="A" * 80,
-        signals=ExtractedSignals(
-            signals=[
-                SignalItemV2(value="Python", type="competency", priority="required", weight=2, knockout=False, stage="interview", source="ai_extracted", inference_basis=None),
-                SignalItemV2(value="5+ years backend", type="experience", priority="required", weight=2, knockout=True, stage="screen", source="ai_extracted", inference_basis=None),
-                SignalItemV2(value="CS degree", type="credential", priority="preferred", weight=1, knockout=False, stage="screen", source="ai_extracted", inference_basis=None),
-                SignalItemV2(value="System Design", type="competency", priority="required", weight=3, knockout=False, stage="interview", source="ai_inferred", inference_basis="Senior role implies architectural ownership"),
-                SignalItemV2(value="Mentoring", type="behavioral", priority="preferred", weight=1, knockout=False, stage="interview", source="ai_inferred", inference_basis="Senior role at growth-stage company"),
-            ],
-            seniority_level="senior",
-            role_summary="A senior backend engineer at a Series A fintech. Owns end-to-end.",
-        ),
-    )
-
-
 @pytest.mark.asyncio
 async def test_actor_happy_path_persists_snapshot(db, monkeypatch):
-    from app.modules.jd.actors import _run_extraction  # noqa: F401 — removed in Task 5
+    """Happy path: two-phase enrichment + signal extraction persists a snapshot.
+
+    Mocks two LLM calls (enrichment then signal extraction) and asserts that
+    after both phases the job status is 'signals_extracted', description_enriched
+    is set, and a signal snapshot with 5 signals at version 1 is written.
+    """
+    from app.modules.jd.actors import _run_enrichment, _run_signal_extraction
+
     tenant, user, job = await _make_extracting_job(db)
 
+    enrichment = _fake_enrichment_output()
+    signals = _fake_signal_extraction_output()
+
     fake_client = MagicMock()
-    fake_client.chat.completions.create = AsyncMock(return_value=_fake_extraction_output())
+    fake_client.chat.completions.create = AsyncMock(side_effect=[enrichment, signals])
     monkeypatch.setattr("app.modules.jd.actors.get_openai_client", lambda: fake_client)
 
-    await _run_extraction(
+    # Phase 1
+    await _run_enrichment(
+        db,
+        job_posting_id=str(job.id),
+        tenant_id=str(tenant.id),
+        correlation_id="corr-happy",
+        retries_so_far=0,
+    )
+    await db.commit()
+
+    # Phase 2
+    await _run_signal_extraction(
         db,
         job_posting_id=str(job.id),
         tenant_id=str(tenant.id),
@@ -95,7 +99,12 @@ async def test_actor_happy_path_persists_snapshot(db, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_actor_final_retry_failure_sanitizes(db, monkeypatch):
-    from app.modules.jd.actors import _run_extraction  # noqa: F401 — removed in Task 5
+    """Final retry (retries_so_far=2): a failing phase-1 LLM call sets
+    enrichment_status='failed', transitions main status to
+    'signals_extraction_failed', and sanitizes the error (no API keys leaked).
+    """
+    from app.modules.jd.actors import _run_enrichment
+
     tenant, user, job = await _make_extracting_job(db)
 
     class FakeResponse:
@@ -115,7 +124,7 @@ async def test_actor_final_retry_failure_sanitizes(db, monkeypatch):
     monkeypatch.setattr("app.modules.jd.actors.get_openai_client", lambda: fake_client)
 
     with pytest.raises(openai.RateLimitError):
-        await _run_extraction(
+        await _run_enrichment(
             db,
             job_posting_id=str(job.id),
             tenant_id=str(tenant.id),
@@ -124,6 +133,7 @@ async def test_actor_final_retry_failure_sanitizes(db, monkeypatch):
         )
     await db.flush()
     await db.refresh(job)
+    assert job.enrichment_status == "failed"
     assert job.status == "signals_extraction_failed"
     assert job.status_error is not None
     assert "sk-abc" not in job.status_error
@@ -132,7 +142,11 @@ async def test_actor_final_retry_failure_sanitizes(db, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_actor_intermediate_retry_does_not_flip_state(db, monkeypatch):
-    from app.modules.jd.actors import _run_extraction  # noqa: F401 — removed in Task 5
+    """Intermediate retry (retries_so_far=0): a failing phase-1 LLM call raises
+    so Dramatiq retries, without committing any failed state to the DB.
+    """
+    from app.modules.jd.actors import _run_enrichment
+
     tenant, user, job = await _make_extracting_job(db)
 
     fake_client = MagicMock()
@@ -142,7 +156,7 @@ async def test_actor_intermediate_retry_does_not_flip_state(db, monkeypatch):
     monkeypatch.setattr("app.modules.jd.actors.get_openai_client", lambda: fake_client)
 
     with pytest.raises(openai.APITimeoutError):
-        await _run_extraction(
+        await _run_enrichment(
             db,
             job_posting_id=str(job.id),
             tenant_id=str(tenant.id),

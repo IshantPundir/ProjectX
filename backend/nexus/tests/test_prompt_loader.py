@@ -5,21 +5,19 @@ import pytest
 from app.ai.prompts import PromptLoader, prompt_loader
 
 
-def test_loads_jd_enhancement_prompt():
-    """The canonical Phase 2A prompt must be loadable by name."""
-    content = prompt_loader.get("jd_enhancement")
+def test_loads_jd_enrichment_prompt():
+    """The Phase 1 enrichment prompt must be loadable by name."""
+    content = prompt_loader.get("jd_enrichment")
     assert len(content) > 100
     assert "enriched_jd" in content
-    assert "signals" in content
-    assert "ai_extracted" in content
 
 
 def test_caches_repeated_reads():
     """Second call for the same prompt returns the cached value without
     re-reading the file."""
     loader = PromptLoader(version="v1")
-    first = loader.get("jd_enhancement")
-    second = loader.get("jd_enhancement")
+    first = loader.get("jd_enrichment")
+    second = loader.get("jd_enrichment")
     assert first is second  # identity, not just equality — cached
 
 
