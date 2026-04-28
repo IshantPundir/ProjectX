@@ -560,13 +560,23 @@ async def test_extract_actor_publishes_on_success(
     )
 
     # ---- Assert publish -------------------------------------------------------
-    # The two-phase actor publishes twice: once after phase 1 (enrichment) and
-    # once after phase 2 (signal extraction). The final event must reflect
-    # signals_extracted status.
+    # The two-phase actor now publishes THREE times for a non-skipped job:
+    #   1. Pre-mark: enrichment_status='streaming', status='signals_extracting'
+    #   2. Phase 1 complete: enrichment_status='completed', status='signals_extracting'
+    #   3. Phase 2 complete: status='signals_extracted'
     jd_events = [
         p for p in capture_publishes if p.event == pubsub.Events.JD_STATUS_CHANGED
     ]
-    assert len(jd_events) == 2, f"expected 2 publishes (one per phase), got {len(jd_events)}"
+    assert len(jd_events) == 3, f"expected 3 publishes (pre-mark + phase-1 + phase-2), got {len(jd_events)}"
+
+    # First event: pre-mark streaming state visible to FE loading UI.
+    pre_mark_pub = jd_events[0]
+    assert pre_mark_pub.channel == f"job:{job.id}"
+    assert pre_mark_pub.payload["enrichment_status"] == "streaming"
+    assert pre_mark_pub.payload["status"] == "signals_extracting"
+    assert pre_mark_pub.correlation_id == "test-corr-extract"
+
+    # Final event: must reflect fully completed extraction.
     final_pub = jd_events[-1]
     assert final_pub.channel == f"job:{job.id}"
     assert final_pub.payload["status"] == "signals_extracted"

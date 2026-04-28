@@ -457,8 +457,45 @@ async def extract_and_enhance_jd(
     _exc_to_reraise: BaseException | None = None
 
     # ---- Phase 1: Enrichment (conditional) ----
-    phase_1_committed = False
     if not skip_enrichment:
+        # Pre-phase-1 mark: write enrichment_status='streaming' visibly so the
+        # frontend can render the phase-1-in-flight loading UI. This is a tiny
+        # additional commit+publish per non-skipped job; it's the load-bearing
+        # signal that disambiguates "phase 1 in flight" from "skip_enrichment=true".
+        pre_mark_committed = False
+        async with get_bypass_session() as db:
+            await db.execute(
+                text(f"SET LOCAL app.current_tenant = '{safe_tenant_id}'")
+            )
+            try:
+                result = await db.execute(
+                    select(JobPosting).where(JobPosting.id == UUID(job_posting_id))
+                )
+                job = result.scalar_one_or_none()
+                if (
+                    job is not None
+                    and job.status == "signals_extracting"
+                    and job.enrichment_status != "completed"
+                ):
+                    # Idempotent: only mark if we haven't already enriched on a
+                    # previous attempt (otherwise we'd undo the 'completed' state).
+                    job.enrichment_status = "streaming"
+                    await db.commit()
+                    pre_mark_committed = True
+            except Exception as exc:
+                # Pre-mark is best-effort; if it fails, the actual phase 1 commit
+                # below will still publish the eventual completed/failed state.
+                await db.rollback()
+                logger.warning(
+                    "actors.extract_and_enhance_jd.pre_mark_failed",
+                    job_posting_id=job_posting_id, error=str(exc),
+                )
+
+        if pre_mark_committed:
+            await _publish_status(job_posting_id, tenant_id, correlation_id)
+
+        # ---- Phase 1 LLM call ----
+        phase_1_committed = False
         async with get_bypass_session() as db:
             await db.execute(
                 text(f"SET LOCAL app.current_tenant = '{safe_tenant_id}'")

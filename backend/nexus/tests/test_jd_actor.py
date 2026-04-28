@@ -366,3 +366,87 @@ async def test_phase_2_reads_enriched_jd_when_phase_1_ran(db, monkeypatch):
     # The raw JD marker must NOT appear — if _run_signal_extraction wrongly
     # reads description_raw instead of description_enriched, this will FAIL.
     assert "RAW_JD_FIXTURE_MARKER" not in user_message
+
+
+@pytest.mark.asyncio
+async def test_actor_marks_streaming_before_enrichment(monkeypatch):
+    """The public actor must transition enrichment_status to 'streaming' BEFORE
+    the phase-1 LLM call begins, so the frontend can render the phase-1-in-flight
+    loading UI. This is checked by intercepting the OpenAI client and asserting
+    the DB state at call time."""
+    from app.database import get_bypass_session
+    from app.modules.jd.actors import extract_and_enhance_jd
+    from sqlalchemy import select, text as sa_text
+    from uuid import UUID as _UUID
+
+    # Bootstrap job directly in its own bypass session so it's committed and
+    # visible to the actor's pre-mark session.
+    async with get_bypass_session() as setup_db:
+        from tests.conftest import (
+            create_test_client,
+            create_test_org_unit,
+            create_test_user,
+        )
+        tenant = await create_test_client(setup_db)
+        await setup_db.flush()
+        user = await create_test_user(setup_db, tenant.id)
+        company = await create_test_org_unit(
+            setup_db, tenant.id, unit_type="company", company_profile=_VALID_PROFILE,
+        )
+        job = JobPosting(
+            tenant_id=tenant.id,
+            org_unit_id=company.id,
+            title="Sr Engineer",
+            description_raw="A" * 200,
+            status="signals_extracting",
+            created_by=user.id,
+        )
+        setup_db.add(job)
+        await setup_db.commit()
+
+    job_id = str(job.id)
+    tenant_id = str(tenant.id)
+    assert job.enrichment_status == "idle"
+
+    enrichment = _fake_enrichment_output()
+    signals = _fake_signal_extraction_output()
+
+    observed_status_at_phase_1: dict = {}
+
+    async def capture_then_return(*args, **kwargs):
+        # When phase 1 LLM is invoked, peek at the persisted enrichment_status.
+        # We use a fresh bypass session to avoid the in-flight transaction.
+        if not observed_status_at_phase_1.get("called_once"):
+            async with get_bypass_session() as peek_db:
+                await peek_db.execute(
+                    sa_text(f"SET LOCAL app.current_tenant = '{tenant_id}'")
+                )
+                r = await peek_db.execute(
+                    select(JobPosting).where(JobPosting.id == _UUID(job_id))
+                )
+                j = r.scalar_one()
+                observed_status_at_phase_1["enrichment_status"] = j.enrichment_status
+                observed_status_at_phase_1["status"] = j.status
+            observed_status_at_phase_1["called_once"] = True
+            return enrichment
+        return signals
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock(side_effect=capture_then_return)
+    monkeypatch.setattr("app.modules.jd.actors.get_openai_client", lambda: mock_client)
+
+    # Call the unwrapped actor directly to bypass Dramatiq.
+    await extract_and_enhance_jd.fn.__wrapped__(
+        job_posting_id=job_id,
+        tenant_id=tenant_id,
+        correlation_id="cid-stream-test",
+        skip_enrichment=False,
+    )
+
+    # The CRITICAL assertion: at the time phase 1's LLM call ran, the persisted
+    # enrichment_status must have been 'streaming'.
+    assert observed_status_at_phase_1.get("enrichment_status") == "streaming", (
+        f"Expected 'streaming' at phase-1 LLM time, got "
+        f"{observed_status_at_phase_1.get('enrichment_status')!r}"
+    )
+    assert observed_status_at_phase_1.get("status") == "signals_extracting"
