@@ -312,6 +312,11 @@ async def test_phase_2_reads_enriched_jd_when_phase_1_ran(db, monkeypatch):
     from app.modules.jd.actors import _run_enrichment, _run_signal_extraction
 
     tenant, user, job = await _make_extracting_job(db)
+    # Embed a distinctive marker in description_raw so the negative-control
+    # assertion is real: if _run_signal_extraction reads raw instead of enriched,
+    # the marker will appear in the LLM call and the `not in` check will fail.
+    job.description_raw = "RAW_JD_FIXTURE_MARKER " + ("filler content " * 10)
+    await db.commit()
     await db.flush()
 
     enrichment = _fake_enrichment_output()
@@ -334,5 +339,6 @@ async def test_phase_2_reads_enriched_jd_when_phase_1_ran(db, monkeypatch):
     second_call = mock_client.chat.completions.create.call_args_list[1]
     user_message = second_call.kwargs["messages"][1]["content"]
     assert "## Header\nSenior Backend Engineer" in user_message
-    # The original raw JD body should NOT appear (raw JD in fixture has different content).
+    # The raw JD marker must NOT appear — if _run_signal_extraction wrongly
+    # reads description_raw instead of description_enriched, this will FAIL.
     assert "RAW_JD_FIXTURE_MARKER" not in user_message
