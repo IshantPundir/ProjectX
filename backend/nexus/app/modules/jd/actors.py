@@ -1,17 +1,18 @@
-"""Dramatiq actor for Call 1 (JD enhancement + signal extraction).
+"""Dramatiq actor for Call 1 (JD enrichment + signal extraction).
 
-The public actor wraps an inner _run_extraction() coroutine that accepts
-a DB session as a parameter. This split makes the coroutine unit-testable
-without spinning up Dramatiq's scheduler — tests pass a transactional
-session directly and mock get_openai_client().
+The public actor wraps two inner coroutines (_run_enrichment and
+_run_signal_extraction) that each accept a DB session as a parameter.
+This split makes the coroutines unit-testable without spinning up
+Dramatiq's scheduler — tests pass a transactional session directly and
+mock get_openai_client().
 
 Tracing:
-  _run_extraction is decorated with @observe() which creates a parent
-  Langfuse trace. The OpenAI call (via langfuse.openai.AsyncOpenAI) is
-  auto-captured as a child generation, so each extraction job becomes a
-  single trace with the LLM call nested inside. Metadata (tenant_id,
-  correlation_id, job_posting_id, prompt_version) is propagated to all
-  child spans via propagate_attributes."""
+  Both phase coroutines are decorated with @observe() which creates
+  Langfuse child spans. The OpenAI calls (via langfuse.openai.AsyncOpenAI)
+  are auto-captured as nested generation spans, so each extraction job
+  produces a trace with two clearly labelled phase spans. Metadata
+  (tenant_id, correlation_id, job_posting_id, prompt_version) is
+  propagated to all child spans via langfuse_context.update_current_trace."""
 
 import asyncio
 import json
@@ -30,7 +31,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.client import flush_langfuse, get_openai_client, langfuse_enabled
 from app.ai.config import ai_config
 from app.ai.prompts import prompt_loader
-from app.ai.schemas import ExtractionOutput, ReEnrichmentOutput
+from app.ai.schemas import (
+    EnrichmentOutput,
+    ExtractedSignals,
+    ReEnrichmentOutput,
+    SignalExtractionOutput,
+)
 from app import pubsub
 from app.database import get_bypass_session
 from app.models import JobPosting, JobPostingSignalSnapshot
@@ -74,19 +80,27 @@ def _build_user_message(job: JobPosting, profile: dict) -> str:
     return "\n".join(parts)
 
 
-async def _persist_enriched(
-    db: AsyncSession, job: JobPosting, result: ExtractionOutput
+async def _persist_enriched_jd_only(
+    db: AsyncSession, job: JobPosting, enriched_jd: str
 ) -> None:
-    """Write the enriched JD onto the job row and insert a new snapshot.
+    """Phase 1 persistence — write enriched JD onto the job row.
+
+    Sets enrichment_status='completed'. Does NOT touch signal snapshots.
+    """
+    job.description_enriched = enriched_jd
+    job.enrichment_status = "completed"
+
+
+async def _persist_signal_snapshot(
+    db: AsyncSession, job: JobPosting, signals: "ExtractedSignals"
+) -> None:
+    """Phase 2 persistence — insert a new snapshot at MAX(version)+1.
 
     The version is auto-incremented from the latest existing snapshot for
     this job. On first extraction it starts at 1; on retry after failure it
     increments (2, 3, …) so the unique constraint (job_posting_id, version)
-    is never violated."""
-    job.description_enriched = result.enriched_jd
-    job.enrichment_status = "completed"
-
-    # Determine next snapshot version
+    is never violated.
+    """
     max_version_result = await db.execute(
         select(func.max(JobPostingSignalSnapshot.version)).where(
             JobPostingSignalSnapshot.job_posting_id == job.id
@@ -98,16 +112,16 @@ async def _persist_enriched(
         tenant_id=job.tenant_id,
         job_posting_id=job.id,
         version=current_max + 1,
-        signals=[item.model_dump() for item in result.signals.signals],
-        seniority_level=result.signals.seniority_level,
-        role_summary=result.signals.role_summary,
+        signals=[item.model_dump() for item in signals.signals],
+        seniority_level=signals.seniority_level,
+        role_summary=signals.role_summary,
         prompt_version="v1",
     )
     db.add(snapshot)
 
 
-@observe(name="jd_extraction_call1")
-async def _run_extraction(
+@observe(name="jd_enrichment_phase")
+async def _run_enrichment(
     db: AsyncSession,
     *,
     job_posting_id: str,
@@ -115,16 +129,21 @@ async def _run_extraction(
     correlation_id: str,
     retries_so_far: int,
 ) -> None:
-    """Core extraction logic — unit-testable without Dramatiq.
+    """Phase 1 — JD enrichment only.
 
-    @observe() creates a Langfuse trace for this function. The OpenAI call
-    inside (via langfuse.openai.AsyncOpenAI) is auto-captured as a nested
-    generation span. propagate_attributes attaches tenant/job/correlation
-    metadata to the trace and all child spans."""
+    Reads job.description_raw + company profile, calls jd_enrichment.txt,
+    writes job.description_enriched, sets enrichment_status='streaming'
+    on entry and 'completed' on success. Idempotent: skipped if
+    enrichment_status is already 'completed'.
+
+    On permanent error or final retry: sets enrichment_status='failed'
+    and transitions main status to signals_extraction_failed.
+    """
     log = logger.bind(
         job_posting_id=job_posting_id,
         correlation_id=correlation_id,
         retries_so_far=retries_so_far,
+        phase="enrichment",
     )
 
     result = await db.execute(select(JobPosting).where(JobPosting.id == UUID(job_posting_id)))
@@ -134,34 +153,34 @@ async def _run_extraction(
         return
 
     if job.status != "signals_extracting":
-        # Idempotency guard: don't double-process
         log.warn("jd.actor.skip_unexpected_state", state=job.status)
+        return
+
+    if job.enrichment_status == "completed":
+        # Already enriched on a previous attempt — skip phase 1, save tokens.
+        log.info("jd.enrichment.skip_already_complete")
         return
 
     profile = await find_company_profile_in_ancestry(db, job.org_unit_id)
     if profile is None:
-        # This should never happen — create_job_posting validated it.
-        # Defensive: mark as failed.
         job.status_error = "Company profile missing — create_job_posting should have blocked this"
+        job.enrichment_status = "failed"
         await transition(
-            db, job,
-            to_state="signals_extraction_failed",
-            actor_id=None,
-            correlation_id=correlation_id,
+            db, job, to_state="signals_extraction_failed",
+            actor_id=None, correlation_id=correlation_id,
         )
         return
 
-    # Attach trace metadata so every span in this extraction job is
-    # searchable in the Langfuse dashboard by tenant, job, or correlation_id.
-    # session_id groups all retries of the same job into one Langfuse session.
+    job.enrichment_status = "streaming"
+
     langfuse_context.update_current_trace(
         session_id=job_posting_id,
-        tags=["jd_extraction", f"retry:{retries_so_far}"],
+        tags=["jd_enrichment", f"retry:{retries_so_far}"],
         metadata={
             "correlation_id": correlation_id,
             "job_posting_id": job_posting_id,
             "tenant_id": tenant_id,
-            "prompt_name": "jd_enhancement",
+            "prompt_name": "jd_enrichment",
             "prompt_version": "v1",
             "model": ai_config.extraction_model,
             "reasoning_effort": ai_config.extraction_effort,
@@ -170,12 +189,11 @@ async def _run_extraction(
     )
 
     client = get_openai_client()
-    prompt = prompt_loader.get("jd_enhancement")
+    prompt = prompt_loader.get("jd_enrichment")
     user_message = _build_user_message(job, profile)
 
     log.info(
-        "jd.llm_call.start",
-        call_type="extraction",
+        "jd.llm_call.start", call_type="enrichment",
         model=ai_config.extraction_model,
         reasoning_effort=ai_config.extraction_effort,
         system_prompt_chars=len(prompt),
@@ -183,15 +201,15 @@ async def _run_extraction(
     )
     call_started_at = time.monotonic()
     try:
-        extraction: ExtractionOutput = await client.chat.completions.create(
+        enrichment: EnrichmentOutput = await client.chat.completions.create(
             model=ai_config.extraction_model,
             reasoning_effort=ai_config.extraction_effort,
-            response_model=ExtractionOutput,
+            response_model=EnrichmentOutput,
             messages=[
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": user_message},
             ],
-            name="jd_enhancement_call1",
+            name="jd_enrichment_call",
             metadata={
                 "correlation_id": correlation_id,
                 "job_posting_id": job_posting_id,
@@ -203,8 +221,7 @@ async def _run_extraction(
         duration_sec = time.monotonic() - call_started_at
         is_permanent = isinstance(exc, _PERMANENT_EXCEPTIONS)
         log.error(
-            "jd.llm_call.failed",
-            call_type="extraction",
+            "jd.llm_call.failed", call_type="enrichment",
             duration_sec=round(duration_sec, 2),
             error_type=type(exc).__name__,
             error_message=str(exc)[:500],
@@ -212,39 +229,204 @@ async def _run_extraction(
             retries_so_far=retries_so_far,
             exc_info=exc,
         )
-
         if is_permanent or retries_so_far >= 2:
-            # Permanent error → fail immediately, no retry.
-            # Final transient retry → fail with sanitized message.
+            job.enrichment_status = "failed"
             job.status_error = sanitize_error_for_user(exc)
             await transition(
-                db, job,
-                to_state="signals_extraction_failed",
-                actor_id=None,
-                correlation_id=correlation_id,
+                db, job, to_state="signals_extraction_failed",
+                actor_id=None, correlation_id=correlation_id,
             )
             if is_permanent:
-                # Return normally — Dramatiq won't retry. The outer function
-                # commits the failed state via the normal success path.
                 return
-        raise  # Transient error — Dramatiq retries with backoff
+        raise
 
-    # Success path
     duration_sec = time.monotonic() - call_started_at
     log.info(
-        "jd.llm_call.complete",
-        call_type="extraction",
+        "jd.llm_call.complete", call_type="enrichment",
         duration_sec=round(duration_sec, 2),
-        signal_count=len(extraction.signals.signals),
+        enriched_jd_chars=len(enrichment.enriched_jd),
     )
-    await _persist_enriched(db, job, extraction)
-    await transition(
-        db, job,
-        to_state="signals_extracted",
-        actor_id=None,
+    await _persist_enriched_jd_only(db, job, enrichment.enriched_jd)
+    log.info("jd.enrichment.completed")
+
+
+@observe(name="jd_signal_extraction_phase")
+async def _run_signal_extraction(
+    db: AsyncSession,
+    *,
+    job_posting_id: str,
+    tenant_id: str,
+    correlation_id: str,
+    retries_so_far: int,
+) -> None:
+    """Phase 2 — signal extraction only.
+
+    Reads either job.description_enriched (if phase 1 ran) or
+    job.description_raw (if skip_enrichment), calls jd_signal_extraction.txt,
+    writes a new JobPostingSignalSnapshot v1 row, transitions main state
+    signals_extracting → signals_extracted on success.
+
+    Idempotent: skipped if main status is no longer 'signals_extracting'.
+    """
+    log = logger.bind(
+        job_posting_id=job_posting_id,
         correlation_id=correlation_id,
+        retries_so_far=retries_so_far,
+        phase="signal_extraction",
     )
-    log.info("jd.actor.completed")
+
+    result = await db.execute(select(JobPosting).where(JobPosting.id == UUID(job_posting_id)))
+    job = result.scalar_one_or_none()
+    if job is None:
+        log.warn("jd.actor.job_not_found")
+        return
+
+    if job.status != "signals_extracting":
+        log.warn("jd.actor.skip_unexpected_state", state=job.status)
+        return
+
+    profile = await find_company_profile_in_ancestry(db, job.org_unit_id)
+    if profile is None:
+        job.status_error = "Company profile missing — create_job_posting should have blocked this"
+        await transition(
+            db, job, to_state="signals_extraction_failed",
+            actor_id=None, correlation_id=correlation_id,
+        )
+        return
+
+    # Use enriched JD if phase 1 ran; otherwise use raw JD.
+    source_is_enriched = (
+        job.enrichment_status == "completed" and job.description_enriched is not None
+    )
+    source_jd = job.description_enriched if source_is_enriched else job.description_raw
+
+    langfuse_context.update_current_trace(
+        session_id=job_posting_id,
+        tags=[
+            "jd_signal_extraction",
+            f"retry:{retries_so_far}",
+            "source:enriched" if source_is_enriched else "source:raw",
+        ],
+        metadata={
+            "correlation_id": correlation_id,
+            "job_posting_id": job_posting_id,
+            "tenant_id": tenant_id,
+            "prompt_name": "jd_signal_extraction",
+            "prompt_version": "v1",
+            "model": ai_config.extraction_model,
+            "reasoning_effort": ai_config.extraction_effort,
+            "source_jd": "enriched" if source_is_enriched else "raw",
+            "retries_so_far": retries_so_far,
+        },
+    )
+
+    client = get_openai_client()
+    prompt = prompt_loader.get("jd_signal_extraction")
+    # Build the user message with whichever JD applies.
+    user_message_parts: list[str] = [
+        "## Company Profile\n"
+        f"- About: {profile['about']}\n"
+        f"- Industry: {profile['industry']}\n"
+        f"- Company stage: {profile['company_stage']}\n"
+        f"- Hiring bar: {profile['hiring_bar']}\n",
+        f"## Job Description\n\n{source_jd}\n",
+    ]
+    if job.project_scope_raw:
+        user_message_parts.append(f"## Project Scope\n\n{job.project_scope_raw}\n")
+    user_message = "\n".join(user_message_parts)
+
+    log.info(
+        "jd.llm_call.start", call_type="signal_extraction",
+        source="enriched" if source_is_enriched else "raw",
+        model=ai_config.extraction_model,
+        reasoning_effort=ai_config.extraction_effort,
+        system_prompt_chars=len(prompt),
+        user_message_chars=len(user_message),
+    )
+    call_started_at = time.monotonic()
+    try:
+        signal_output: SignalExtractionOutput = await client.chat.completions.create(
+            model=ai_config.extraction_model,
+            reasoning_effort=ai_config.extraction_effort,
+            response_model=SignalExtractionOutput,
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": user_message},
+            ],
+            name="jd_signal_extraction_call",
+            metadata={
+                "correlation_id": correlation_id,
+                "job_posting_id": job_posting_id,
+                "tenant_id": tenant_id,
+                "prompt_version": "v1",
+            },
+        )
+    except Exception as exc:
+        duration_sec = time.monotonic() - call_started_at
+        is_permanent = isinstance(exc, _PERMANENT_EXCEPTIONS)
+        log.error(
+            "jd.llm_call.failed", call_type="signal_extraction",
+            duration_sec=round(duration_sec, 2),
+            error_type=type(exc).__name__,
+            error_message=str(exc)[:500],
+            permanent=is_permanent,
+            retries_so_far=retries_so_far,
+            exc_info=exc,
+        )
+        if is_permanent or retries_so_far >= 2:
+            job.status_error = sanitize_error_for_user(exc)
+            await transition(
+                db, job, to_state="signals_extraction_failed",
+                actor_id=None, correlation_id=correlation_id,
+            )
+            if is_permanent:
+                return
+        raise
+
+    duration_sec = time.monotonic() - call_started_at
+    log.info(
+        "jd.llm_call.complete", call_type="signal_extraction",
+        duration_sec=round(duration_sec, 2),
+        signal_count=len(signal_output.signals.signals),
+    )
+    await _persist_signal_snapshot(db, job, signal_output.signals)
+    await transition(
+        db, job, to_state="signals_extracted",
+        actor_id=None, correlation_id=correlation_id,
+    )
+    log.info("jd.signal_extraction.completed")
+
+
+async def _publish_status(
+    job_posting_id: str, tenant_id: str, correlation_id: str
+) -> None:
+    """Open a fresh session, read the committed JobStatusEvent, publish it.
+
+    Used between phases so each commit is followed by an SSE event.
+    Best-effort — failures are logged but never raised (consistent with
+    pubsub.publish() semantics).
+    """
+    try:
+        async with get_bypass_session() as pub_db:
+            safe_tenant_id = str(UUID(tenant_id))
+            await pub_db.execute(
+                text(f"SET LOCAL app.current_tenant = '{safe_tenant_id}'")
+            )
+            status_event = await get_job_status(pub_db, UUID(job_posting_id))
+    except Exception as exc:
+        logger.warning(
+            "actors.extract_and_enhance_jd.publish_read_failed",
+            job_posting_id=job_posting_id, error=str(exc),
+        )
+        return
+
+    if status_event is not None:
+        await pubsub.publish(
+            pubsub.job_channel(job_posting_id),
+            pubsub.Events.JD_STATUS_CHANGED,
+            status_event.model_dump(mode="json"),
+            correlation_id=correlation_id,
+        )
 
 
 @dramatiq.actor(
@@ -257,91 +439,84 @@ async def extract_and_enhance_jd(
     job_posting_id: str,
     tenant_id: str,
     correlation_id: str,
+    skip_enrichment: bool = False,
 ) -> None:
-    """Dramatiq entry point. Opens a bypass DB session (no HTTP request
-    context), sets app.current_tenant for RLS, delegates to _run_extraction,
-    commits on success."""
+    """Two-phase JD processing.
+
+    Phase 1 (conditional on `skip_enrichment`): enrichment LLM call →
+    write description_enriched, commit, publish status event.
+    Phase 2 (always): signal extraction LLM call → write snapshot,
+    transition to signals_extracted, commit, publish status event.
+
+    Each phase opens its own DB session and commits independently so
+    the intermediate state is visible to SSE subscribers. On retry,
+    phase 1 is skipped automatically when enrichment_status='completed'.
+    """
     current = CurrentMessage.get_current_message()
     retries_so_far = current.options.get("retries", 0) if current else 0
 
-    # Track whether a commit landed so we know to publish post-commit.
-    # Non-final retries roll back and re-raise — no publish should fire.
-    # We capture the exception rather than re-raising inside the `async with`
-    # block so that code after the block can publish before Dramatiq retries.
-    _committed = False
+    safe_tenant_id = str(UUID(tenant_id))
     _exc_to_reraise: BaseException | None = None
 
+    # ---- Phase 1: Enrichment (conditional) ----
+    phase_1_committed = False
+    if not skip_enrichment:
+        async with get_bypass_session() as db:
+            await db.execute(
+                text(f"SET LOCAL app.current_tenant = '{safe_tenant_id}'")
+            )
+            try:
+                await _run_enrichment(
+                    db, job_posting_id=job_posting_id,
+                    tenant_id=tenant_id, correlation_id=correlation_id,
+                    retries_so_far=retries_so_far,
+                )
+                await db.commit()
+                phase_1_committed = True
+            except Exception as exc:
+                if retries_so_far >= 2:
+                    await db.commit()
+                    phase_1_committed = True
+                else:
+                    await db.rollback()
+                _exc_to_reraise = exc
+            finally:
+                if langfuse_enabled():
+                    await asyncio.to_thread(flush_langfuse)
+
+        if phase_1_committed:
+            await _publish_status(job_posting_id, tenant_id, correlation_id)
+
+        if _exc_to_reraise is not None:
+            raise _exc_to_reraise
+
+    # ---- Phase 2: Signal extraction (always) ----
+    phase_2_committed = False
     async with get_bypass_session() as db:
-        # SET LOCAL does NOT accept bind parameters in PostgreSQL — the
-        # value must be a literal. asyncpg translates :t → $1 which
-        # fails with "syntax error at or near $1". f-string interpolation
-        # is the correct pattern (same as app/database.py::get_tenant_db).
-        # Defensive UUID round-trip rejects any malformed tenant_id before
-        # it reaches the SQL; the result is always a canonical UUID string
-        # with no injection vectors.
-        safe_tenant_id = str(UUID(tenant_id))
         await db.execute(
             text(f"SET LOCAL app.current_tenant = '{safe_tenant_id}'")
         )
         try:
-            await _run_extraction(
-                db,
-                job_posting_id=job_posting_id,
-                tenant_id=tenant_id,
-                correlation_id=correlation_id,
+            await _run_signal_extraction(
+                db, job_posting_id=job_posting_id,
+                tenant_id=tenant_id, correlation_id=correlation_id,
                 retries_so_far=retries_so_far,
             )
             await db.commit()
-            _committed = True
+            phase_2_committed = True
         except Exception as exc:
-            # _run_extraction already transitioned to _failed on final retry
-            # and staged the changes; commit them so the user sees the failed
-            # state. Intermediate retries rollback silently (state unchanged).
             if retries_so_far >= 2:
                 await db.commit()
-                _committed = True
+                phase_2_committed = True
             else:
                 await db.rollback()
-            # Store and defer the re-raise so post-commit publish can run.
             _exc_to_reraise = exc
         finally:
-            # Flush Langfuse traces after each actor invocation so they
-            # reach the server promptly. The worker process may not shut
-            # down cleanly, so we can't rely on atexit hooks alone.
-            # flush_langfuse() is a synchronous HTTP call — run it in a
-            # thread pool to avoid blocking the async event loop.
             if langfuse_enabled():
                 await asyncio.to_thread(flush_langfuse)
 
-    # Post-commit publish — runs AFTER the bypass session has closed (and
-    # therefore after the commit is visible to other connections). Open a
-    # fresh session to read the committed state so the event reflects the
-    # actual DB row, not the in-memory ORM object.
-    if _committed:
-        try:
-            async with get_bypass_session() as pub_db:
-                safe_tenant_id = str(UUID(tenant_id))
-                await pub_db.execute(
-                    text(f"SET LOCAL app.current_tenant = '{safe_tenant_id}'")
-                )
-                status_event = await get_job_status(pub_db, UUID(job_posting_id))
-        except Exception as exc:
-            # If we can't read post-commit state, skip publish — the
-            # 5-second backstop SSE poll will deliver the update shortly.
-            logger.warning(
-                "actors.extract_and_enhance_jd.publish_read_failed",
-                job_posting_id=job_posting_id,
-                error=str(exc),
-            )
-            status_event = None
-
-        if status_event is not None:
-            await pubsub.publish(
-                pubsub.job_channel(job_posting_id),
-                pubsub.Events.JD_STATUS_CHANGED,
-                status_event.model_dump(mode="json"),
-                correlation_id=correlation_id,
-            )
+    if phase_2_committed:
+        await _publish_status(job_posting_id, tenant_id, correlation_id)
 
     if _exc_to_reraise is not None:
         raise _exc_to_reraise

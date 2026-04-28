@@ -11,7 +11,6 @@ from sqlalchemy import func, select
 
 from app.ai.schemas import ExtractedSignals, ExtractionOutput, SignalItemV2
 from app.models import JobPosting, JobPostingSignalSnapshot
-from app.modules.jd.actors import _run_extraction
 from tests.conftest import (
     create_test_client,
     create_test_org_unit,
@@ -65,6 +64,7 @@ def _fake_extraction_output() -> ExtractionOutput:
 
 @pytest.mark.asyncio
 async def test_actor_happy_path_persists_snapshot(db, monkeypatch):
+    from app.modules.jd.actors import _run_extraction  # noqa: F401 — removed in Task 5
     tenant, user, job = await _make_extracting_job(db)
 
     fake_client = MagicMock()
@@ -95,6 +95,7 @@ async def test_actor_happy_path_persists_snapshot(db, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_actor_final_retry_failure_sanitizes(db, monkeypatch):
+    from app.modules.jd.actors import _run_extraction  # noqa: F401 — removed in Task 5
     tenant, user, job = await _make_extracting_job(db)
 
     class FakeResponse:
@@ -131,6 +132,7 @@ async def test_actor_final_retry_failure_sanitizes(db, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_actor_intermediate_retry_does_not_flip_state(db, monkeypatch):
+    from app.modules.jd.actors import _run_extraction  # noqa: F401 — removed in Task 5
     tenant, user, job = await _make_extracting_job(db)
 
     fake_client = MagicMock()
