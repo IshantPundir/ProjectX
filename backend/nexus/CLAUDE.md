@@ -332,6 +332,8 @@ from openai import AsyncOpenAI
 | `org_units` (extended) | `CompanyProfile` strict Pydantic schema, `find_company_profile_in_ancestry()` helper, `_validate_and_normalize_company_profile()` hook in create/update, `company_profile_completed_at/by` tracking stamps. |
 | `audit` | Append-only audit log with tenant-scoped RLS (migration 0008 added the missing `FOR INSERT WITH CHECK` policy that was silently dropping tenant-scoped writes). |
 
+**`enrichment_status` flow note:** The initial extraction actor (`extract_and_enhance_jd`) drives `enrichment_status` through `idle → streaming → completed` (or `failed`) as part of its two-phase run; `streaming` is written as a pre-mark before the phase-1 LLM call so the frontend can render a loading indicator. The legacy re-enrichment actor (`reenrich_jd`, Call 2, triggered after signal edits) also writes `streaming`/`completed`/`failed` but operates as an independent flow against an already-confirmed job. The `streaming` literal is therefore shared between both flows; retiring it is contingent on moving `reenrich_jd` to the same two-phase pattern as the initial extraction actor.
+
 ### Phase 2B — Implemented
 
 | Module | What It Owns |
