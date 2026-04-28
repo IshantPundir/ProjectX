@@ -158,9 +158,13 @@ async def _safe_dispatch_generate_pipeline(
     tenant_id: UUID,
     user_id: UUID,
 ) -> None:
-    """Enqueue generate_question_bank_pipeline. Pipeline-level generate-all
-    does NOT pre-transition any banks (they transition inside the actor
-    loop), so there is nothing to roll back. Log loudly and raise 503."""
+    """Enqueue generate_question_bank_pipeline. The endpoint pre-marks the first
+    eligible bank as 'generating' before calling this helper, but that commit has
+    already been issued — there is no in-flight transaction to roll back here.
+    The first bank is left in 'generating'; if the actor never runs it will stay
+    stuck. Acceptable: the actor has max_retries=0, so a Redis outage is logged
+    loudly and the user can retry via the single-stage endpoint. Log loudly and
+    raise 503."""
     try:
         bank_actors.generate_question_bank_pipeline.send(
             str(instance_id), str(tenant_id), str(user_id)
@@ -449,6 +453,40 @@ async def generate_all_questions(
         raise HTTPException(
             409, detail="Another bank is currently generating in this pipeline"
         )
+
+    # Pre-create banks for all eligible stages so that GET /questions returns
+    # real bank rows immediately after this response — before the actor has had
+    # a chance to call ensure_bank_exists itself.  Without this, there is a
+    # 1–3 s window where GET returns no banks → anyBankGenerating=false →
+    # the "Generate all" button appears active on a refresh.
+    stages_result = await db.execute(
+        select(JobPipelineStage)
+        .where(JobPipelineStage.instance_id == locked_instance.id)
+        .order_by(JobPipelineStage.position)
+    )
+    stages_list = list(stages_result.scalars().all())
+
+    eligible_stages = [
+        s for s in stages_list if s.stage_type in STAGE_TYPE_TO_PROMPT
+    ]
+    if not eligible_stages:
+        raise HTTPException(
+            400, detail="No generation-eligible stages in this pipeline"
+        )
+
+    # Idempotent — ensure_bank_exists returns the existing bank if it is already
+    # present, or creates a fresh draft row.
+    for stage in eligible_stages:
+        await ensure_bank_exists(db, stage=stage, job=job)
+
+    # Pre-mark the first eligible stage's bank as 'generating' so any GET
+    # issued between now and the actor's first iteration already shows the
+    # correct status.  The actor will see status='generating' for this stage
+    # and must skip the transition (handled in actors.py).
+    first_bank = await ensure_bank_exists(db, stage=eligible_stages[0], job=job)
+    if first_bank.status != "generating":
+        transition_to_generating(first_bank)
+        first_bank.generated_by = user.user.id
 
     # Capture IDs BEFORE commit — after commit the request session has
     # app.current_tenant unset and further attribute access is unsafe.

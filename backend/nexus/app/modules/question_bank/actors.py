@@ -481,18 +481,28 @@ async def generate_question_bank_pipeline(
         succeeded = 0
         failed = 0
         for stage in stages:
-            # Ensure bank exists and is in generating state
+            # Ensure bank exists and is in generating state.
+            # The endpoint pre-marks the first eligible stage's bank as
+            # 'generating' before dispatching this actor so that a GET issued
+            # in the 1–3 s between the POST response and the first loop
+            # iteration already shows the correct status.  For that stage,
+            # skip the transition (it is already correct); for all other
+            # stages, apply it normally.
             bank = await ensure_bank_exists(db, stage=stage, job=job)
-            try:
-                transition_to_generating(bank)
+            if bank.status == "generating":
+                # Already pre-marked by the endpoint — proceed with generation.
                 await db.flush()
-            except Exception as exc:
-                logger.warning(
-                    "question_bank.skip_busy_stage",
-                    stage_id=str(stage.id),
-                    reason=str(exc),
-                )
-                continue
+            else:
+                try:
+                    transition_to_generating(bank)
+                    await db.flush()
+                except Exception as exc:
+                    logger.warning(
+                        "question_bank.skip_busy_stage",
+                        stage_id=str(stage.id),
+                        reason=str(exc),
+                    )
+                    continue
 
             snap_result = await db.execute(
                 select(JobPostingSignalSnapshot).where(
