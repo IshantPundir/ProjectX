@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_tenant_db, get_tenant_session
 from app.models import (
+    JobPipelineInstance,
     JobPipelineStage,
     JobPosting,
     JobPostingSignalSnapshot,
@@ -426,6 +427,17 @@ async def generate_all_questions(
     """Trigger sequential generation for all stages in the pipeline."""
     instance, job = await require_pipeline_access(db, job_id, user, "manage")
 
+    # Acquire a row-level lock on the pipeline instance BEFORE the 409 check
+    # so that two concurrent requests can't both observe status != 'generating'
+    # and both dispatch — the second one blocks here until the first transaction
+    # commits, after which it re-reads the (now 'generating') status and 409s.
+    locked_result = await db.execute(
+        select(JobPipelineInstance)
+        .where(JobPipelineInstance.id == instance.id)
+        .with_for_update()
+    )
+    locked_instance = locked_result.scalar_one()
+
     # Check no bank is currently generating
     existing_result = await db.execute(
         select(StageQuestionBank).where(
@@ -440,7 +452,7 @@ async def generate_all_questions(
 
     # Capture IDs BEFORE commit — after commit the request session has
     # app.current_tenant unset and further attribute access is unsafe.
-    instance_id = instance.id
+    instance_id = locked_instance.id
     tenant_id = job.tenant_id
     await db.commit()
     await _safe_dispatch_generate_pipeline(
