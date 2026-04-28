@@ -85,3 +85,25 @@ class ExtractionOutput(BaseModel):
 
 class ReEnrichmentOutput(BaseModel):
     enriched_jd: str = Field(min_length=200)
+
+
+class EnrichmentOutput(BaseModel):
+    """Phase 1 output — JD enrichment only.
+
+    Produced by the jd_enrichment.txt prompt against the raw JD + 4-layer
+    context. The actor writes this to JobPosting.description_enriched and
+    sets enrichment_status='completed' before invoking phase 2.
+    """
+
+    enriched_jd: str = Field(min_length=50)
+
+
+class SignalExtractionOutput(BaseModel):
+    """Phase 2 output — signal extraction only.
+
+    Produced by the jd_signal_extraction.txt prompt against either the
+    enriched JD (when phase 1 ran) or the raw JD (when skip_enrichment=true).
+    Persisted as a JobPostingSignalSnapshot v1 row.
+    """
+
+    signals: ExtractedSignals
