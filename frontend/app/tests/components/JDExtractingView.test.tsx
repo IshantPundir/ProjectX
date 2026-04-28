@@ -40,5 +40,6 @@ describe('JDExtractingView', () => {
     )
     expect(getByTestId('jd-center-raw-body')).not.toBeNull()
     expect(queryByRole('tab', { name: /Enriched JD/i })).toBeNull()
+    expect(queryByRole('tab', { name: /Signal details/i })).toBeNull()
   })
 })

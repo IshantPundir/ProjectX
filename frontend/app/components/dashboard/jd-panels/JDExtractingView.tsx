@@ -13,7 +13,7 @@ type Props = {
   sseError?: string | null
 }
 
-type View = 'raw' | 'enriched' | 'signals'
+type View = 'raw' | 'enriched'
 
 /**
  * Loading view rendered while a job is in `signals_extracting` state.
@@ -101,7 +101,6 @@ export function JDExtractingView({
                 disabled: enrichmentStatus === 'failed',
                 disabledHint: 'Enrichment failed — retry to re-run',
               },
-              { value: 'signals', label: 'Signal details', disabled: true },
             ]}
           />
           {sseError && (
@@ -177,18 +176,7 @@ export function JDExtractingView({
           )
         )}
 
-        {view === 'signals' && (
-          <div
-            className="rounded-[10px] border p-6 text-[12.5px]"
-            style={{
-              background: 'var(--px-surface)',
-              borderColor: 'var(--px-hairline)',
-              color: 'var(--px-fg-4)',
-            }}
-          >
-            Signals will appear here once Copilot finishes extracting them.
-          </div>
-        )}
+
       </section>
 
       {/* Right panel */}
