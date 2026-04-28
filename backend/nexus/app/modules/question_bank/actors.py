@@ -476,7 +476,12 @@ async def generate_question_bank_pipeline(
             .where(JobPipelineStage.instance_id == instance.id)
             .order_by(JobPipelineStage.position)
         )
-        stages = list(stages_result.scalars().all())
+        all_stages = list(stages_result.scalars().all())
+        # Filter to question-bank-eligible stages only. Intake / debrief have
+        # no signal_filter, no duration, and produce no questions — including
+        # them in the loop crashes build_question_context on a None .get() call
+        # and leaves orphan failed banks in the DB.
+        stages = [s for s in all_stages if s.stage_type in STAGE_TYPE_TO_PROMPT]
 
         succeeded = 0
         failed = 0
