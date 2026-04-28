@@ -453,7 +453,7 @@ async def test_actor_marks_streaming_before_enrichment(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_actor_skip_enrichment_runs_only_phase_2(monkeypatch):
+async def test_actor_skip_enrichment_runs_only_phase_2(_create_tables, monkeypatch):
     """When skip_enrichment=True is passed to the public actor:
     - Only ONE LLM call happens (signal extraction).
     - enrichment_status stays 'idle' throughout.
@@ -520,3 +520,77 @@ async def test_actor_skip_enrichment_runs_only_phase_2(monkeypatch):
     assert only_call.kwargs["response_model"].__name__ == "SignalExtractionOutput"
     user_msg = only_call.kwargs["messages"][1]["content"]
     assert "RAW_JD_FIXTURE_MARKER" in user_msg
+
+
+@pytest.mark.asyncio
+async def test_actor_retry_skips_completed_phase_1(_create_tables, monkeypatch):
+    """When phase 1 already succeeded on a previous attempt
+    (enrichment_status='completed'), a retry must skip phase 1 entirely
+    and only run phase 2. This proves the idempotency guard works:
+    we don't pay for phase-1 LLM tokens twice."""
+    from app.database import get_bypass_session
+    from app.modules.jd.actors import extract_and_enhance_jd
+    from uuid import UUID as _UUID
+
+    # Bootstrap a job that looks like it survived phase 1 on a prior attempt:
+    # description_enriched is set and enrichment_status='completed', but the
+    # main status was reset to 'signals_extracting' (as retry_failed_extraction
+    # does when re-queuing a failed job whose phase 1 already completed).
+    async with get_bypass_session() as setup_db:
+        tenant = await create_test_client(setup_db)
+        await setup_db.flush()
+        user = await create_test_user(setup_db, tenant.id)
+        company = await create_test_org_unit(
+            setup_db, tenant.id, unit_type="company", company_profile=_VALID_PROFILE,
+        )
+        job = JobPosting(
+            tenant_id=tenant.id,
+            org_unit_id=company.id,
+            title="Sr Engineer",
+            description_raw="RAW_JD_FIXTURE_MARKER " + ("raw filler " * 15),
+            description_enriched="## Header\nPre-existing enriched body\n## The Role\nFrom previous attempt",
+            enrichment_status="completed",
+            status="signals_extracting",
+            created_by=user.id,
+        )
+        setup_db.add(job)
+        await setup_db.commit()
+
+    job_id = str(job.id)
+    tenant_id = str(tenant.id)
+
+    signals = _fake_signal_extraction_output()
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock(return_value=signals)
+    monkeypatch.setattr("app.modules.jd.actors.get_openai_client", lambda: mock_client)
+
+    await extract_and_enhance_jd.fn.__wrapped__(
+        job_posting_id=job_id,
+        tenant_id=tenant_id,
+        correlation_id="cid-retry-test",
+        skip_enrichment=False,  # User wanted enrichment — but phase 1 is done.
+    )
+
+    from sqlalchemy import select as sa_select, text as sa_text
+    async with get_bypass_session() as check_db:
+        await check_db.execute(
+            sa_text(f"SET LOCAL app.current_tenant = '{tenant_id}'")
+        )
+        r = await check_db.execute(
+            sa_select(JobPosting).where(JobPosting.id == _UUID(job_id))
+        )
+        refreshed = r.scalar_one()
+
+    assert refreshed.status == "signals_extracted"
+    # Enriched JD must be the pre-existing value — phase 1 was NOT re-run.
+    assert "Pre-existing enriched body" in refreshed.description_enriched
+
+    # Exactly ONE LLM call: only phase 2 (signal extraction).
+    assert mock_client.chat.completions.create.call_count == 1
+    only_call = mock_client.chat.completions.create.call_args
+    assert only_call.kwargs["response_model"].__name__ == "SignalExtractionOutput"
+    # Phase 2 must read the pre-existing enriched JD, not the raw JD.
+    user_msg = only_call.kwargs["messages"][1]["content"]
+    assert "Pre-existing enriched body" in user_msg
+    # Negative control: raw JD marker must NOT appear.
+    assert "RAW_JD_FIXTURE_MARKER" not in user_msg
