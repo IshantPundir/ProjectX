@@ -5,7 +5,7 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation'
 
 import { ErrorBanner } from '@/components/dashboard/jd-panels/ErrorBanner'
 import { JDReviewShell } from '@/components/dashboard/jd-panels'
-import { LoadingSkeleton } from '@/components/dashboard/jd-panels/LoadingSkeleton'
+import { JDExtractingView } from '@/components/dashboard/jd-panels/JDExtractingView'
 import { useJob } from '@/lib/hooks/use-job'
 import { useJobPipeline } from '@/lib/hooks/use-job-pipeline'
 import { useJobStatusStream } from '@/lib/hooks/use-job-status-stream'
@@ -17,7 +17,7 @@ export default function JobReviewPage() {
   const searchParams = useSearchParams()
   const router = useRouter()
 
-  const { status, error: sseError, isStreaming } = useJobStatusStream(jobId)
+  const { error: sseError, isStreaming } = useJobStatusStream(jobId)
   const { data: job, isLoading } = useJob(jobId, isStreaming)
   const { data: pipeline } = useJobPipeline(jobId)
   const triggerEnrich = useTriggerEnrich(jobId)
@@ -38,11 +38,32 @@ export default function JobReviewPage() {
   }, [pipeline, job?.status, searchParams, router, jobId])
 
   if (isLoading || !job) {
-    return <LoadingSkeleton status={status} sseError={sseError} />
+    return (
+      <JDExtractingView
+        descriptionRaw=""
+        enrichmentStatus="idle"
+        skipEnrichment={false}
+        sseError={sseError}
+      />
+    )
   }
 
   if (job.status === 'draft' || job.status === 'signals_extracting') {
-    return <LoadingSkeleton status={status} sseError={sseError} />
+    // skip_enrichment isn't persisted on the job — infer it from enrichment_status:
+    // 'idle' while we're past phase 1 means it was skipped.
+    // (Once a refresh lands during phase 2 of a non-skipped job, the column
+    //  will be 'completed' — so 'idle' uniquely identifies skipped runs.)
+    const skipEnrichment =
+      job.enrichment_status === 'idle' && job.status === 'signals_extracting'
+    return (
+      <JDExtractingView
+        descriptionRaw={job.description_raw}
+        descriptionEnriched={job.description_enriched ?? null}
+        enrichmentStatus={job.enrichment_status}
+        skipEnrichment={skipEnrichment}
+        sseError={sseError}
+      />
+    )
   }
 
   if (job.status === 'signals_extraction_failed') {
