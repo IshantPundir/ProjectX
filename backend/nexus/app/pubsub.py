@@ -32,7 +32,7 @@ from typing import AsyncIterator
 import orjson
 import redis.asyncio as aioredis
 import structlog
-from redis.exceptions import RedisError
+from redis.exceptions import RedisError, TimeoutError as RedisTimeoutError
 
 from app.config import settings
 
@@ -194,16 +194,29 @@ async def subscribe(*channels: str) -> AsyncIterator[Envelope]:
                 metric_name="pubsub.subscribe.connected",
             )
             backoff_seconds = 1.0  # reset on successful connection
-            async for raw in pubsub.listen():
-                if raw.get("type") != "message":
-                    continue  # skip subscribe/unsubscribe control messages
+            # Inner loop restarts listen() on idle socket-read timeouts
+            # without tearing down the connection. socket_timeout=5 fires
+            # every 5s of channel silence; treating that as a disconnect
+            # would spam reconnect logs once per idle window per subscriber.
+            # health_check_interval=10 sends PINGs that surface as
+            # ConnectionError — real death still flows through the
+            # outer except → backoff reconnect path.
+            while True:
                 try:
-                    yield Envelope.from_json(raw["data"])
-                except (orjson.JSONDecodeError, KeyError) as exc:
-                    logger.warning(
-                        "pubsub.subscribe.malformed_message",
-                        error=str(exc),
-                    )
+                    async for raw in pubsub.listen():
+                        if raw.get("type") != "message":
+                            continue  # skip subscribe/unsubscribe control messages
+                        try:
+                            yield Envelope.from_json(raw["data"])
+                        except (orjson.JSONDecodeError, KeyError) as exc:
+                            logger.warning(
+                                "pubsub.subscribe.malformed_message",
+                                error=str(exc),
+                            )
+                    # listen() exhausted normally (channel closed) — fall out.
+                    break
+                except (asyncio.TimeoutError, RedisTimeoutError):
+                    continue
         except asyncio.CancelledError:
             logger.info("pubsub.subscribe.cancelled", channels=list(channels))
             raise
