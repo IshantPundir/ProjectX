@@ -211,6 +211,8 @@ async def test_engine_dispatch_tokens_tenant_isolation(
     # apply once the policy exists and the role is nexus_app, but here we're
     # still postgres so the insert succeeds unconditionally). The isolation
     # assertion in step 3 is what actually validates the policy.
+    # jti is created here (before the try block) so the finally cleanup can
+    # reference it regardless of where a failure occurs.
     jti = uuid.uuid4()
     async with _rls_engine.connect() as conn_a:
         await conn_a.execute(sqlalchemy.text("BEGIN"))
@@ -233,52 +235,56 @@ async def test_engine_dispatch_tokens_tenant_isolation(
         )
         await conn_a.execute(sqlalchemy.text("COMMIT"))
 
-    # ---- Step 3: query under tenant B with nexus_app role --------------------
-    # nexus_app has rolbypassrls=false, so the tenant_isolation policy runs.
-    # With app.current_tenant set to tenant_b_id, the USING predicate
-    #   tenant_id = NULLIF(current_setting('app.current_tenant', true), '')::uuid
-    # resolves to tenant_b_id, which doesn't match the row's tenant_a_id.
-    # Result: 0 rows.
-    async with _rls_engine.connect() as conn_b:
-        await conn_b.execute(sqlalchemy.text("BEGIN"))
-        await conn_b.execute(sqlalchemy.text("SET LOCAL ROLE nexus_app"))
-        # Inline UUID — bound params not allowed in SET LOCAL.
-        await conn_b.execute(
-            sqlalchemy.text(f"SET LOCAL app.current_tenant = '{tenant_b_id}'")
-        )
-        result = await conn_b.execute(
-            sqlalchemy.text("SELECT jti FROM engine_dispatch_tokens")
-        )
-        rows = result.fetchall()
-        await conn_b.execute(sqlalchemy.text("ROLLBACK"))
+    try:
+        # ---- Step 3: query under tenant B with nexus_app role ---------------
+        # nexus_app has rolbypassrls=false, so the tenant_isolation policy runs.
+        # With app.current_tenant set to tenant_b_id, the USING predicate
+        #   tenant_id = NULLIF(current_setting('app.current_tenant', true), '')::uuid
+        # resolves to tenant_b_id, which doesn't match the row's tenant_a_id.
+        # Result: 0 rows.
+        async with _rls_engine.connect() as conn_b:
+            await conn_b.execute(sqlalchemy.text("BEGIN"))
+            await conn_b.execute(sqlalchemy.text("SET LOCAL ROLE nexus_app"))
+            # Inline UUID — bound params not allowed in SET LOCAL.
+            await conn_b.execute(
+                sqlalchemy.text(f"SET LOCAL app.current_tenant = '{tenant_b_id}'")
+            )
+            result = await conn_b.execute(
+                sqlalchemy.text("SELECT jti FROM engine_dispatch_tokens")
+            )
+            rows = result.fetchall()
+            await conn_b.execute(sqlalchemy.text("ROLLBACK"))
 
-    # ---- Step 4: assert isolation -------------------------------------------
-    assert rows == [], (
-        f"Tenant B must not see tenant A's dispatch tokens, but got {rows!r}"
-    )
+        # ---- Step 4: assert isolation ---------------------------------------
+        assert rows == [], (
+            f"Tenant B must not see tenant A's dispatch tokens, but got {rows!r}"
+        )
 
-    # ---- Cleanup: remove committed rows -------------------------------------
-    # Bypass connection so the delete isn't blocked by RLS.
-    async with _rls_engine.connect() as conn_clean:
-        await conn_clean.execute(sqlalchemy.text("BEGIN"))
-        await conn_clean.execute(
-            sqlalchemy.text("SET LOCAL app.bypass_rls = 'true'")
-        )
-        await conn_clean.execute(
-            sqlalchemy.text(
-                "DELETE FROM engine_dispatch_tokens WHERE jti = :jti"
-            ),
-            {"jti": str(jti)},
-        )
-        # ON DELETE CASCADE on sessions/assignments/candidates means
-        # deleting the clients will cascade through the FK chain.
-        await conn_clean.execute(
-            sqlalchemy.text(
-                "DELETE FROM clients WHERE id = :a OR id = :b"
-            ),
-            {"a": str(tenant_a_id), "b": str(tenant_b_id)},
-        )
-        await conn_clean.execute(sqlalchemy.text("COMMIT"))
+    finally:
+        # ---- Cleanup: remove committed rows (always runs) -------------------
+        # Bypass connection so the delete isn't blocked by RLS.
+        # Using finally ensures committed rows don't pollute subsequent tests
+        # even if the isolation assertion above fails.
+        async with _rls_engine.connect() as conn_clean:
+            await conn_clean.execute(sqlalchemy.text("BEGIN"))
+            await conn_clean.execute(
+                sqlalchemy.text("SET LOCAL app.bypass_rls = 'true'")
+            )
+            await conn_clean.execute(
+                sqlalchemy.text(
+                    "DELETE FROM engine_dispatch_tokens WHERE jti = :jti"
+                ),
+                {"jti": str(jti)},
+            )
+            # ON DELETE CASCADE on sessions/assignments/candidates means
+            # deleting the clients will cascade through the FK chain.
+            await conn_clean.execute(
+                sqlalchemy.text(
+                    "DELETE FROM clients WHERE id = :a OR id = :b"
+                ),
+                {"a": str(tenant_a_id), "b": str(tenant_b_id)},
+            )
+            await conn_clean.execute(sqlalchemy.text("COMMIT"))
 
 
 # ---------------------------------------------------------------------------
