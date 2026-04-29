@@ -758,6 +758,8 @@ git commit -m "docs(claude): document app/ai/realtime.py carve-out"
 
 Goal: `/api/internal/sessions/{id}/{config,results}` are live and authed by the engine JWT. Engine doesn't exist yet; tests use hand-minted JWTs.
 
+> **Known deferral from Chunk 1's final review:** `tests/test_migration_0014.py::_make_assignment_with_stage` uses `stage_type="ai_interview"` (retired in migration 0016). Before Chunk 3's `test_interview_runtime_config.py` lands, hoist that helper to `conftest.py` and switch the value to `"ai_screening"`. Search for the in-code TODO comment to find the function.
+
 ## Task 3.1: Create the module skeleton
 
 **Files:**

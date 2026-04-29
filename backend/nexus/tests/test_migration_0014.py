@@ -24,6 +24,13 @@ from app.models import (
 from tests.conftest import create_test_client, create_test_org_unit, create_test_user
 
 
+# TODO(Phase 3C.2 — Chunk 3): hoist this helper to conftest.py and switch
+# stage_type from the deprecated "ai_interview" (removed in migration 0016)
+# to the v5 value "ai_screening". The test DB doesn't enforce stage_type
+# CHECKs at the ORM level, so the deprecated value silently passes here,
+# but Chunk 3's test_interview_runtime_config.py exercises the
+# stage-type allowlist (`ai_screening`/`phone_screen` only) and will
+# confuse a reader who finds this helper using the wrong value.
 async def _make_assignment_with_stage(db, tenant, user, otp_default: bool = False):
     """Build the minimum graph (org_unit -> job_posting -> pipeline instance ->
     stage -> candidate -> assignment) and return the assignment + stage.
