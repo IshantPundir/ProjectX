@@ -57,7 +57,20 @@ from app.models import (
 
 logger = structlog.get_logger()
 
-POLL_INTERVAL_SEC = 5.0  # pub/sub is the fast path; backstop is correctness only
+# pub/sub is the fast path; the backstop poll is correctness insurance for
+# events missed during pub/sub reconnects. Two cadences:
+#   POLL_INTERVAL_SEC      — used while ≥1 bank is in `generating` status,
+#                            i.e. a Dramatiq actor is in flight and missing
+#                            its terminal event would block the user.
+#   POLL_INTERVAL_IDLE_SEC — used otherwise (all banks `draft` or terminal).
+#                            Pub/sub still delivers state changes within
+#                            ~100ms; this cadence is solely a safety net
+#                            against the pub/sub publish failing entirely.
+# The all-terminal exit (`pipeline.generation_complete`) and the idle timeout
+# fire on the *next* poll regardless of cadence, so closing the SSE stream
+# is not delayed beyond IDLE_TIMEOUT_SEC even at the slow cadence.
+POLL_INTERVAL_SEC = 5.0
+POLL_INTERVAL_IDLE_SEC = 30.0
 IDLE_TIMEOUT_SEC = 600  # 10 minutes
 
 
@@ -378,4 +391,10 @@ async def _poll_loop(
             )
             return
 
-        await asyncio.sleep(POLL_INTERVAL_SEC)
+        # Cadence selection: fast poll only while an actor is actually
+        # in flight (status="generating"). For draft + terminal states
+        # the slow heartbeat is sufficient — pub/sub still delivers
+        # transitions in real time, and the backstop just catches the
+        # rare case where a publish was lost entirely.
+        any_generating = any(status == "generating" for status, _, _ in state.values())
+        await asyncio.sleep(POLL_INTERVAL_SEC if any_generating else POLL_INTERVAL_IDLE_SEC)
