@@ -172,7 +172,7 @@ class Settings(BaseSettings):
     # CORS
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:3000", "http://127.0.0.1:3001"]
 
-    # --- Phase 3C.2 — Interview engine integration ---
+    # --- Interview engine — realtime LLM/STT/TTS + auth (Phase 3C.2) ---
     # HS256 signing key for the engine dispatch JWT minted by /start and
     # consumed by the interview-engine worker on /api/internal/sessions/*.
     # Required in non-test environments — see _engine_secret_required below.
@@ -193,13 +193,13 @@ class Settings(BaseSettings):
     interview_reasoning_effort: str = "medium"
 
     # STT — Deepgram realtime
-    stt_model: str = "nova-3"
-    stt_language: str = "en"
+    interview_stt_model: str = "nova-3"
+    interview_stt_language: str = "en"
 
     # TTS — Cartesia realtime
-    tts_model: str = "sonic-2"
-    tts_voice: str = "9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"
-    tts_language: str = "en"
+    interview_tts_model: str = "sonic-2"
+    interview_tts_voice: str = "9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"
+    interview_tts_language: str = "en"
 
     # Engine → Nexus internal API base URL. Read by the engine worker
     # (interview-engine container in docker-compose). Nexus itself does NOT
