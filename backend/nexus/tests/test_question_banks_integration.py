@@ -196,7 +196,6 @@ def _mock_llm_output(
     estimated_minutes: float = 5.0,
 ) -> StageQuestionBankOutput:
     return StageQuestionBankOutput(
-        stage_summary="Stage tests core competencies for the role assessment.",
         questions=[
             GeneratedQuestion(
                 position=i,
@@ -223,7 +222,6 @@ def _mock_llm_output(
             )
             for i, v in enumerate(signal_values)
         ],
-        coverage_notes="Allocated one question per signal based on weight and priority.",
     )
 
 

@@ -73,22 +73,26 @@ class GeneratedQuestion(BaseModel):
 
 
 class StageQuestionBankOutput(BaseModel):
-    """Full LLM response for one stage's bank generation."""
+    """Full LLM response for one stage's bank generation.
+
+    The bank is a STANDARDIZED TEMPLATE consumed downstream by:
+      - the live screening AI (uses `text` + `follow_ups` + `signal_values`
+        to drive the session and `rubric` + `positive_evidence` + `red_flags`
+        for in-flight scoring)
+      - the post-session report builder (cites `signal_values` and
+        compares answers against the rubric anchors)
+
+    The bank does NOT carry runtime narrative — fields like coverage notes
+    and per-session summaries are produced by the screening AI / report
+    builder, not by the bank-generation LLM. This keeps the bank purely
+    declarative ("what we plan to test") and prevents the generator from
+    self-rationalising things only the runtime knows ("what was actually
+    covered and how well").
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    stage_summary: str = Field(..., min_length=20,
-                                description="1-sentence: what this stage tests")
     questions: list[GeneratedQuestion] = Field(..., min_length=1, max_length=15)
-    coverage_notes: str = Field(
-        ..., min_length=20, max_length=2000,
-        description=(
-            "Chain-of-thought: why you allocated questions this way. "
-            "Persisted on the bank row for audit and debugging. Explain "
-            "signal coverage choices, knockout handling, and any override "
-            "decisions (e.g., pulling an interview-tagged signal forward)."
-        ),
-    )
 
 
 class SingleQuestionOutput(BaseModel):

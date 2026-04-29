@@ -28,6 +28,7 @@ from app.models import (
 )
 from app.modules.audit.service import log_event
 from app.modules.question_bank.errors import (
+    BudgetExceededError,
     KnockoutUnprobedError,
     MandatoryOverrunError,
     ReorderDuplicateError,
@@ -351,22 +352,75 @@ async def validate_mandatory_fits_session(
         )
 
 
+def _validate_budget_against_stage(
+    *,
+    questions: list[GeneratedQuestion],
+    duration_minutes: int,
+    margin_min: int,
+) -> None:
+    """Generation-time budget enforcement.
+
+    Two hard caps, both server-enforced regardless of what the LLM was asked
+    to do (the system prompt already told it the rules; this is the gate):
+
+      - mandatory_total ≤ duration_minutes
+      - mandatory_total + optional_total ≤ duration_minutes + margin_min
+
+    Raises ``BudgetExceededError`` on violation. The actor catches this and
+    feeds the violation back into the LLM context for one retry pass before
+    failing the bank.
+    """
+    mandatory_total = sum(
+        float(q.estimated_minutes) for q in questions if q.is_mandatory
+    )
+    if mandatory_total > duration_minutes:
+        raise BudgetExceededError(
+            kind="mandatory",
+            observed_minutes=mandatory_total,
+            cap_minutes=float(duration_minutes),
+            duration_minutes=duration_minutes,
+            margin_min=margin_min,
+        )
+
+    total = sum(float(q.estimated_minutes) for q in questions)
+    cap = duration_minutes + margin_min
+    if total > cap:
+        raise BudgetExceededError(
+            kind="total",
+            observed_minutes=total,
+            cap_minutes=float(cap),
+            duration_minutes=duration_minutes,
+            margin_min=margin_min,
+        )
+
+
 async def validate_llm_output_against_snapshot(
     db: AsyncSession,
     *,
     snapshot: JobPostingSignalSnapshot,
     allowed_types: list[str],
     questions: list[GeneratedQuestion],
+    stage: JobPipelineStage | None = None,
+    optional_budget_margin_min: int = 5,
 ) -> list[GeneratedQuestion]:
     """Run post-LLM validation checks. Returns the (possibly auto-corrected) list.
 
     - signal_values must all exist in the snapshot → SignalValueNotInSnapshotError
     - signal types must be in allowed_types → SignalTypeNotAllowedError
+    - Budget caps (when ``stage`` is provided): mandatory_total ≤ duration,
+      total ≤ duration + ``optional_budget_margin_min`` → BudgetExceededError
     - Mandatory knockout auto-correction: for each knockout signal, the EARLIEST
       question probing it (by position) must be mandatory. Subsequent questions
       probing the same knockout signal are auto-demoted to optional (depth probes).
       This guarantees exactly one mandatory verification per knockout; the rest
       become session-bot-adaptive optional probes.
+
+    The budget check runs AFTER signal validation (so we don't waste an LLM
+    retry slot on a bank that has hallucinated signals — those are unrecoverable)
+    but BEFORE mandatory auto-correction (so the recruiter sees the LLM's
+    intended mandatory split when interpreting the budget violation).
+    The ``stage`` argument is optional so existing callers (and tests that
+    only exercise signal validation) continue to work unchanged.
     """
     snapshot_by_value = {s["value"]: s for s in snapshot.signals}
     knockout_values = {
@@ -388,7 +442,16 @@ async def validate_llm_output_against_snapshot(
                     allowed_types=allowed_types,
                 )
 
-    # Second pass: mandatory auto-correction in position order.
+    # Second pass: budget caps. Skipped when stage is not provided (older
+    # tests, or paths that don't have stage in scope).
+    if stage is not None:
+        _validate_budget_against_stage(
+            questions=questions,
+            duration_minutes=stage.duration_minutes,
+            margin_min=optional_budget_margin_min,
+        )
+
+    # Third pass: mandatory auto-correction in position order.
     # For each knockout signal, the earliest question probing it claims the
     # mandatory slot; later questions probing the same knockout are demoted.
     knockouts_covered: set[str] = set()

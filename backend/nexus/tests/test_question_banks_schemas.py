@@ -70,9 +70,7 @@ def test_generated_question_rejects_estimated_minutes_too_large():
 def test_stage_question_bank_output_requires_at_least_one_question():
     with pytest.raises(ValidationError):
         StageQuestionBankOutput(
-            stage_summary="A" * 25,
             questions=[],
-            coverage_notes="B" * 25,
         )
 
 

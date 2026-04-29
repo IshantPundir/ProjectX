@@ -15,6 +15,7 @@ import time
 from uuid import UUID
 
 import dramatiq
+import orjson
 import structlog
 from langfuse.decorators import langfuse_context, observe
 from sqlalchemy import select
@@ -38,6 +39,7 @@ from app.modules.question_bank.schemas import (
     SingleQuestionOutput,
     StageQuestionBankOutput,
 )
+from app.modules.question_bank.errors import BudgetExceededError
 from app.modules.question_bank.service import (
     ensure_bank_exists,
     get_bank_questions,
@@ -63,11 +65,37 @@ logger = structlog.get_logger()
 # Prompt assembly helpers
 # ---------------------------------------------------------------------------
 
+# Optional-question buffer added on top of the stage's session duration.
+# `mandatory_total ≤ duration_minutes` (HARD CAP).
+# `mandatory_total + optional_total ≤ duration_minutes + OPTIONAL_BUDGET_MARGIN_MIN`
+# (HARD CAP — gives the screening AI 1–2 fallback probes if the candidate
+# moves through mandatory faster than estimated).
+OPTIONAL_BUDGET_MARGIN_MIN = 5
+
+# How many additional LLM calls we make if the first one violates the
+# budget contract. The first call is attempt 1; with MAX_BUDGET_RETRIES=1
+# we make at most 2 LLM calls per generation. Each retry adds the
+# previous output + a corrective user message to the conversation so the
+# LLM has the violation in its context. After this many retries with
+# violations, the bank transitions to 'failed' and the recruiter retries
+# (e.g. by extending the stage duration if the configuration is
+# structurally infeasible).
+MAX_BUDGET_RETRIES = 1
+
+# Stage types that support AI question-bank generation.
+#
+# `human_interview` and `take_home` are intentionally excluded — those
+# stage types remain valid in the pipeline schema (and in candidate
+# routing / participant assignment), but their questions are authored
+# manually by the recruiter, not generated. The corresponding prompt
+# files in `prompts/v1/` are retained for future re-enablement but
+# have no callers today. Endpoints that try to generate for an
+# excluded stage type return HTTP 400 with a clear message; the
+# `list_banks` endpoint hides the bank-generation surface entirely
+# for those stages (see router.py).
 STAGE_TYPE_TO_PROMPT = {
     "phone_screen":    "question_bank_phone_screen",
     "ai_screening":    "question_bank_ai_screening",
-    "human_interview": "question_bank_human_interview",
-    "take_home":       "question_bank_take_home",
 }
 
 # Backward-compatible aliases so existing tests (which import these names
@@ -167,6 +195,47 @@ def _build_user_message(
         f"{stage.signal_filter.get('include_types', [])}\n"
         f"Advance behavior: {stage.advance_behavior}\n"
     )
+
+    # Pre-computed budget block. The LLM does NOT do budget arithmetic —
+    # the server enforces both caps in `validate_llm_output_against_snapshot`
+    # (a violation triggers an instructor retry with the validation error
+    # in the LLM's context). Eligibility-after-include_types is computed
+    # here so the LLM doesn't have to filter the snapshot itself.
+    include_types = stage.signal_filter.get("include_types", [])
+    eligible_signals = [
+        s for s in snapshot.signals if s.get("type") in include_types
+    ]
+    eligible_knockouts = [s for s in eligible_signals if s.get("knockout", False)]
+    eligible_w3 = [
+        s for s in eligible_signals
+        if int(s.get("weight", 1)) == 3 and not s.get("knockout", False)
+    ]
+    eligible_w2 = [s for s in eligible_signals if int(s.get("weight", 1)) == 2]
+    eligible_w1 = [s for s in eligible_signals if int(s.get("weight", 1)) == 1]
+
+    parts.append("\n# BUDGET FOR THIS STAGE (HARD CAPS — server-enforced)\n")
+    parts.append(
+        f"Stage duration: {stage.duration_minutes} min\n"
+        f"Mandatory budget cap: {stage.duration_minutes} min "
+        f"(sum of estimated_minutes across is_mandatory=true questions)\n"
+        f"Total budget cap: {stage.duration_minutes + OPTIONAL_BUDGET_MARGIN_MIN} min "
+        f"(sum across ALL questions, mandatory + optional combined)\n"
+        f"Optional buffer: {OPTIONAL_BUDGET_MARGIN_MIN} min "
+        f"(reserved for the screening AI's runtime fallback probes)\n"
+        f"\n"
+        f"Eligible signals (after include_types filter):\n"
+        f"  - knockouts: {len(eligible_knockouts)} "
+        f"(each gets ONE mandatory question)\n"
+        f"  - weight=3 non-knockout: {len(eligible_w3)} "
+        f"(mandatory only if mandatory budget allows; otherwise optional)\n"
+        f"  - weight=2: {len(eligible_w2)} (optional depth probes)\n"
+        f"  - weight=1: {len(eligible_w1)} "
+        f"(skip unless every higher-weight signal is covered AND buffer remains)\n"
+        f"\n"
+        f"Optimize for SIGNAL DENSITY, not question count. Under-using budget "
+        f"by 1–2 minutes is acceptable; padding shallow questions is rejected.\n"
+    )
+
     parts.append(
         "\nNow generate the structured question bank output as specified "
         "in the system instructions.\n"
@@ -236,75 +305,132 @@ async def _generate_one_bank(
         )
 
         client = get_openai_client()
+        allowed_types = stage.signal_filter.get("include_types", [])
 
-        logger.info(
-            "question_bank.llm_call.start",
-            bank_id=str(bank.id),
-            stage_id=str(stage.id),
-            stage_type=stage.stage_type,
-            model=ai_config.question_bank_model,
-            reasoning_effort=ai_config.question_bank_effort,
-            system_prompt_chars=len(system_prompt),
-            user_message_chars=len(user_message),
-        )
-        call_started_at = time.monotonic()
-        try:
-            result: StageQuestionBankOutput = await client.chat.completions.create(
+        # LLM call + service-level validation, with one retry on budget
+        # violation. `instructor`'s own max_retries handles schema-level
+        # errors (Pydantic ValidationError); our budget caps are evaluated
+        # AFTER instructor returns a parsed model, so we manage that retry
+        # loop explicitly here. On budget violation, the offending stats
+        # are appended to the conversation as a user follow-up so the LLM
+        # has the violation in its context for the regeneration.
+        base_messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ]
+        feedback_history: list[dict] = []
+        validated: list = []
+
+        for attempt in range(MAX_BUDGET_RETRIES + 1):
+            messages = list(base_messages) + feedback_history
+
+            logger.info(
+                "question_bank.llm_call.start",
+                bank_id=str(bank.id),
+                stage_id=str(stage.id),
+                stage_type=stage.stage_type,
                 model=ai_config.question_bank_model,
                 reasoning_effort=ai_config.question_bank_effort,
-                response_model=StageQuestionBankOutput,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message},
-                ],
-                max_retries=1,
-                name="question_bank_generate_call1",
-                metadata={
-                    "bank_id": str(bank.id),
-                    "stage_id": str(stage.id),
-                    "stage_type": stage.stage_type,
-                    "tenant_id": str(bank.tenant_id),
-                    "job_posting_id": str(job.id),
-                    "prompt_version": bank.prompt_version,
-                },
+                system_prompt_chars=len(system_prompt),
+                user_message_chars=len(user_message),
+                attempt=attempt + 1,
+                feedback_messages=len(feedback_history),
             )
-        except Exception as llm_exc:
+            call_started_at = time.monotonic()
+            try:
+                result: StageQuestionBankOutput = await client.chat.completions.create(
+                    model=ai_config.question_bank_model,
+                    reasoning_effort=ai_config.question_bank_effort,
+                    response_model=StageQuestionBankOutput,
+                    messages=messages,
+                    max_retries=1,
+                    name="question_bank_generate_call1",
+                    metadata={
+                        "bank_id": str(bank.id),
+                        "stage_id": str(stage.id),
+                        "stage_type": stage.stage_type,
+                        "tenant_id": str(bank.tenant_id),
+                        "job_posting_id": str(job.id),
+                        "prompt_version": bank.prompt_version,
+                        "budget_attempt": attempt + 1,
+                    },
+                )
+            except Exception as llm_exc:
+                duration_sec = time.monotonic() - call_started_at
+                logger.error(
+                    "question_bank.llm_call.failed",
+                    bank_id=str(bank.id),
+                    stage_id=str(stage.id),
+                    stage_type=stage.stage_type,
+                    duration_sec=round(duration_sec, 2),
+                    error_type=type(llm_exc).__name__,
+                    error_message=str(llm_exc)[:500],
+                    attempt=attempt + 1,
+                    exc_info=True,
+                )
+                raise
+
             duration_sec = time.monotonic() - call_started_at
-            logger.error(
-                "question_bank.llm_call.failed",
+            logger.info(
+                "question_bank.llm_call.complete",
                 bank_id=str(bank.id),
                 stage_id=str(stage.id),
                 stage_type=stage.stage_type,
                 duration_sec=round(duration_sec, 2),
-                error_type=type(llm_exc).__name__,
-                error_message=str(llm_exc)[:500],
-                exc_info=True,
+                question_count=len(result.questions),
+                attempt=attempt + 1,
             )
-            raise
 
-        duration_sec = time.monotonic() - call_started_at
-        logger.info(
-            "question_bank.llm_call.complete",
-            bank_id=str(bank.id),
-            stage_id=str(stage.id),
-            stage_type=stage.stage_type,
-            duration_sec=round(duration_sec, 2),
-            question_count=len(result.questions),
-            coverage_notes_chars=len(result.coverage_notes),
-            coverage_notes_preview=result.coverage_notes[:100],
-        )
-
-        # Post-validate
-        allowed_types = stage.signal_filter.get("include_types", [])
-        validated = await validate_llm_output_against_snapshot(
-            db,
-            snapshot=snapshot,
-            allowed_types=allowed_types,
-            questions=result.questions,
-        )
-
-        # Persist the LLM's allocation reasoning
-        bank.coverage_notes = result.coverage_notes
+            try:
+                validated = await validate_llm_output_against_snapshot(
+                    db,
+                    snapshot=snapshot,
+                    allowed_types=allowed_types,
+                    questions=result.questions,
+                    stage=stage,
+                    optional_budget_margin_min=OPTIONAL_BUDGET_MARGIN_MIN,
+                )
+                break  # ok — validation passed
+            except BudgetExceededError as budget_exc:
+                if attempt >= MAX_BUDGET_RETRIES:
+                    logger.warning(
+                        "question_bank.budget_violation_unrecovered",
+                        bank_id=str(bank.id),
+                        stage_id=str(stage.id),
+                        kind=budget_exc.kind,
+                        observed_minutes=budget_exc.observed_minutes,
+                        cap_minutes=budget_exc.cap_minutes,
+                        attempts=attempt + 1,
+                    )
+                    raise
+                logger.warning(
+                    "question_bank.budget_violation_retry",
+                    bank_id=str(bank.id),
+                    stage_id=str(stage.id),
+                    kind=budget_exc.kind,
+                    observed_minutes=budget_exc.observed_minutes,
+                    cap_minutes=budget_exc.cap_minutes,
+                    attempt=attempt + 1,
+                )
+                # Append the violation to the conversation. The retry call
+                # sees the original system prompt + user message + the
+                # offending output (as a model_dump JSON) + a corrective
+                # user message naming the exact cap and the observed total.
+                # No PII leaves the worker — only IDs and minute counts.
+                feedback_history.append({
+                    "role": "assistant",
+                    "content": orjson.dumps(result.model_dump()).decode("utf-8"),
+                })
+                feedback_history.append({
+                    "role": "user",
+                    "content": (
+                        f"Your previous output violated the budget contract. "
+                        f"{budget_exc} "
+                        f"Regenerate the full StageQuestionBankOutput with the "
+                        f"caps respected. Do NOT pad shallow questions to fill "
+                        f"the buffer — under-using budget is acceptable."
+                    ),
+                })
 
         # Write questions to the DB (wipes prior AI-sourced, keeps recruiter-sourced)
         await write_generated_questions(
@@ -336,6 +462,95 @@ async def _generate_one_bank(
 # Actor: single stage
 # ---------------------------------------------------------------------------
 
+async def _run_stage_generation(
+    db,
+    *,
+    bank_id: UUID,
+    tenant_id: UUID,
+    started_by: UUID,
+) -> tuple[UUID, UUID, str] | None:
+    """Body of the single-stage actor — separated so tests can pass a session.
+
+    Caller manages the transaction: this helper flushes/transitions and lets
+    the caller commit. Returns ``(job_id, stage_id, new_status)`` on a write
+    that should be committed and published, or ``None`` if the bank could
+    not be found.
+
+    Raises on unexpected mid-flight failures (so the caller can rollback +
+    Dramatiq retries) — but if `_generate_one_bank` runs to its except
+    branch and transitions the bank to 'failed', this returns
+    ``(job_id, stage_id, 'failed')`` so the caller commits the failed
+    status and does not re-raise. That preserves the existing actor
+    contract (the bank is left in a terminal state visible to the
+    frontend even on permanent error).
+    """
+    bank = (
+        await db.execute(
+            select(StageQuestionBank).where(StageQuestionBank.id == bank_id)
+        )
+    ).scalar_one_or_none()
+    if bank is None:
+        logger.error("question_bank.bank_missing", bank_id=str(bank_id))
+        return None
+
+    stage = (
+        await db.execute(
+            select(JobPipelineStage).where(JobPipelineStage.id == bank.stage_id)
+        )
+    ).scalar_one()
+    instance = (
+        await db.execute(
+            select(JobPipelineInstance).where(
+                JobPipelineInstance.id == stage.instance_id
+            )
+        )
+    ).scalar_one()
+    job = (
+        await db.execute(
+            select(JobPosting).where(JobPosting.id == bank.job_posting_id)
+        )
+    ).scalar_one()
+    snapshot = (
+        await db.execute(
+            select(JobPostingSignalSnapshot).where(
+                JobPostingSignalSnapshot.id == bank.signal_snapshot_id
+            )
+        )
+    ).scalar_one()
+
+    job_id = job.id
+    stage_id = stage.id
+
+    try:
+        await _generate_one_bank(
+            db,
+            bank=bank,
+            stage=stage,
+            instance=instance,
+            job=job,
+            snapshot=snapshot,
+            started_by=started_by,
+        )
+        await log_event(
+            db,
+            tenant_id=tenant_id,
+            actor_id=started_by,
+            actor_email=None,
+            action="question_bank.bank_generated",
+            resource="stage_question_bank",
+            resource_id=bank.id,
+        )
+        return (job_id, stage_id, "reviewing")
+    except Exception:
+        if bank.status == "failed":
+            # _generate_one_bank already transitioned to 'failed' inside its
+            # own except branch — return the failed result so the caller
+            # commits the terminal state and publishes the status change.
+            return (job_id, stage_id, "failed")
+        # Unknown state — let the caller rollback + retry.
+        raise
+
+
 @dramatiq.actor(
     max_retries=2,
     min_backoff=2_000,
@@ -346,6 +561,7 @@ async def generate_question_bank_stage(
     bank_id: str,
     tenant_id: str,
     started_by: str,
+    correlation_id: str = "",
 ) -> None:
     """Generate questions for ONE stage's bank. Retries on transient failures.
 
@@ -353,42 +569,150 @@ async def generate_question_bank_stage(
     - Ensured the bank exists
     - Set bank.status = 'generating'
     - Committed so the actor sees the updated state
+
+    Publishes ``BANK_STATUS_CHANGED`` post-commit (success and failure
+    paths). The transition to 'failed' is reachable on permanent errors
+    inside `_generate_one_bank`; transient errors that don't transition
+    the bank trigger a rollback + Dramatiq retry without publishing.
     """
+    bank_uuid = UUID(bank_id)
+    tenant_uuid = UUID(tenant_id)
+    started_by_uuid = UUID(started_by)
+    effective_corr = correlation_id or f"actor-stage-{bank_id}"
+
+    publish_args: tuple[UUID, UUID, str] | None = None
     async with get_bypass_session() as db:
-        safe_tenant_id = str(UUID(tenant_id))
+        safe_tenant_id = str(tenant_uuid)
         await db.execute(
             text(f"SET LOCAL app.current_tenant = '{safe_tenant_id}'")
         )
 
-        bank_result = await db.execute(
-            select(StageQuestionBank).where(StageQuestionBank.id == UUID(bank_id))
-        )
-        bank = bank_result.scalar_one_or_none()
-        if bank is None:
-            logger.error("question_bank.bank_missing", bank_id=bank_id)
-            return
+        try:
+            result = await _run_stage_generation(
+                db,
+                bank_id=bank_uuid,
+                tenant_id=tenant_uuid,
+                started_by=started_by_uuid,
+            )
+            if result is None:
+                # Bank vanished — nothing to commit, nothing to publish.
+                return
+            publish_args = result
+            await db.commit()
+        except Exception:
+            # _run_stage_generation only re-raises if the bank is NOT in a
+            # terminal state, so partial writes here would corrupt the
+            # bank. Roll back and let Dramatiq retry.
+            logger.warning(
+                "question_bank.stage_actor_rollback",
+                bank_id=bank_id,
+                reason="exception_outside_failed_transition",
+            )
+            await db.rollback()
+            raise
 
-        # Load stage, instance, job, snapshot
-        stage_result = await db.execute(
-            select(JobPipelineStage).where(JobPipelineStage.id == bank.stage_id)
+    # Post-commit fast-path event. Outside the session context — the data
+    # is durable and any Redis outage here is logged but does not fail
+    # the task (publish() is fire-and-forget).
+    if publish_args is not None:
+        job_id_pub, stage_id_pub, new_status_pub = publish_args
+        await pubsub.publish(
+            pubsub.job_channel(job_id_pub),
+            pubsub.Events.BANK_STATUS_CHANGED,
+            {
+                "job_id": str(job_id_pub),
+                "bank_id": bank_id,
+                "stage_id": str(stage_id_pub),
+                "new_status": new_status_pub,
+                "source": "actor",
+            },
+            correlation_id=effective_corr,
         )
-        stage = stage_result.scalar_one()
-        instance_result = await db.execute(
-            select(JobPipelineInstance).where(
-                JobPipelineInstance.id == stage.instance_id
+
+
+# ---------------------------------------------------------------------------
+# Actor: full pipeline (sequential — required for anti-lie coherence)
+# ---------------------------------------------------------------------------
+
+async def _run_one_pipeline_stage_in_session(
+    *,
+    stage_id: UUID,
+    job_id: UUID,
+    instance_id: UUID,
+    started_by: UUID,
+    tenant_id: str,
+) -> tuple[UUID, str] | None:
+    """Run one pipeline stage in its own session/commit cycle.
+
+    Each stage is an independent transaction so a mid-pipeline crash leaves
+    earlier stages durably persisted. Returns ``(bank_id, new_status)`` —
+    where ``new_status`` is one of ``'reviewing'`` (success), ``'failed'``
+    (LLM/validation error caught inside ``_generate_one_bank``), or
+    ``'skipped'`` (the bank was already in a non-startable state — typically
+    another worker is mid-flight on the same stage). Returns ``None`` if
+    the structural lookups (stage / instance / job) failed: those are
+    treated as silent skips because the orchestrator already verified the
+    structure exists when it built the stage list.
+
+    Never raises — pipeline-level orchestration depends on each stage
+    completing or being skipped, not on exceptions propagating.
+    """
+    async with get_bypass_session() as db:
+        await db.execute(text(f"SET LOCAL app.current_tenant = '{tenant_id}'"))
+
+        stage = (
+            await db.execute(
+                select(JobPipelineStage).where(JobPipelineStage.id == stage_id)
             )
-        )
-        instance = instance_result.scalar_one()
-        job_result = await db.execute(
-            select(JobPosting).where(JobPosting.id == bank.job_posting_id)
-        )
-        job = job_result.scalar_one()
-        snap_result = await db.execute(
-            select(JobPostingSignalSnapshot).where(
-                JobPostingSignalSnapshot.id == bank.signal_snapshot_id
+        ).scalar_one_or_none()
+        instance = (
+            await db.execute(
+                select(JobPipelineInstance).where(
+                    JobPipelineInstance.id == instance_id
+                )
             )
-        )
-        snapshot = snap_result.scalar_one()
+        ).scalar_one_or_none()
+        job = (
+            await db.execute(
+                select(JobPosting).where(JobPosting.id == job_id)
+            )
+        ).scalar_one_or_none()
+        if stage is None or instance is None or job is None:
+            logger.warning(
+                "question_bank.pipeline_stage_structure_missing",
+                stage_id=str(stage_id),
+                instance_id=str(instance_id),
+                job_id=str(job_id),
+            )
+            return None
+
+        bank = await ensure_bank_exists(db, stage=stage, job=job)
+        bank_id = bank.id
+
+        if bank.status == "generating":
+            # Already pre-marked (by the endpoint, or by a re-run). Proceed.
+            pass
+        else:
+            try:
+                transition_to_generating(bank)
+            except Exception as exc:
+                # Most commonly BankAlreadyGeneratingError from a concurrent
+                # worker. Skip without writing anything; the with-block will
+                # commit the (no-op) transaction.
+                logger.warning(
+                    "question_bank.skip_busy_stage",
+                    stage_id=str(stage_id),
+                    reason=str(exc),
+                )
+                return (bank_id, "skipped")
+
+        snapshot = (
+            await db.execute(
+                select(JobPostingSignalSnapshot).where(
+                    JobPostingSignalSnapshot.id == bank.signal_snapshot_id
+                )
+            )
+        ).scalar_one()
 
         try:
             await _generate_one_bank(
@@ -398,41 +722,167 @@ async def generate_question_bank_stage(
                 instance=instance,
                 job=job,
                 snapshot=snapshot,
-                started_by=UUID(started_by),
+                started_by=started_by,
             )
-            await log_event(
-                db,
-                tenant_id=UUID(tenant_id),
-                actor_id=UUID(started_by),
-                actor_email=None,
-                action="question_bank.bank_generated",
-                resource="stage_question_bank",
-                resource_id=bank.id,
+            new_status = "reviewing"
+        except Exception as exc:
+            # _generate_one_bank already transitioned the bank to 'failed'
+            # before re-raising — caller-bug guard in state_machine.py
+            # ensures this. Swallow the exception so the pipeline continues.
+            logger.error(
+                "question_bank.pipeline_stage_failed",
+                stage_id=str(stage_id),
+                error=str(exc),
             )
-            await db.commit()
-        except Exception:
-            # Only commit if _generate_one_bank ran its `except` branch and
-            # already transitioned the bank to 'failed'. Anything else
-            # (e.g. a DB outage between the LLM call and the status write,
-            # or a bug higher up in the stack) would commit partially-
-            # written state. Roll back and re-raise so Dramatiq can retry
-            # or dead-letter the task cleanly.
-            if bank.status == "failed":
-                await db.commit()
-            else:
-                logger.warning(
-                    "question_bank.stage_actor_rollback",
-                    bank_id=str(bank.id),
-                    bank_status=bank.status,
-                    reason="exception_outside_failed_transition",
+            new_status = "failed"
+
+        # session.begin().__aexit__ commits on with-block exit. The
+        # 'reviewing' or 'failed' transition is durable from this point.
+
+    return (bank_id, new_status)
+
+
+async def _run_pipeline_generation(
+    *,
+    instance_id: str,
+    tenant_id: str,
+    started_by: str,
+    correlation_id: str,
+) -> None:
+    """Body of generate_question_bank_pipeline — separated for testability.
+
+    Two-phase flow:
+      1. Read the pipeline structure in a single read-only session, capture
+         the eligible stage UUIDs, then close the session.
+      2. For each eligible stage, run `_run_one_pipeline_stage_in_session`
+         which gives the stage its own transaction. After each stage's
+         commit, publish ``BANK_STATUS_CHANGED`` so the SSE fast path
+         delivers the transition with sub-100ms latency.
+      3. Write the final audit log entry and publish
+         ``PIPELINE_GENERATION_COMPLETE``.
+
+    Per-stage commit semantics: a mid-pipeline crash leaves prior stages
+    durably persisted. The user can retry just the failed stages via the
+    single-stage endpoint without losing earlier work.
+    """
+    safe_tenant_id = str(UUID(tenant_id))
+    instance_uuid = UUID(instance_id)
+    started_by_uuid = UUID(started_by)
+
+    # Phase 1: load pipeline structure ────────────────────────────────────
+    async with get_bypass_session() as db:
+        await db.execute(
+            text(f"SET LOCAL app.current_tenant = '{safe_tenant_id}'")
+        )
+
+        instance = (
+            await db.execute(
+                select(JobPipelineInstance).where(
+                    JobPipelineInstance.id == instance_uuid
                 )
-                await db.rollback()
-            raise
+            )
+        ).scalar_one_or_none()
+        if instance is None:
+            logger.error(
+                "question_bank.instance_missing", instance_id=instance_id
+            )
+            return
 
+        job = (
+            await db.execute(
+                select(JobPosting).where(JobPosting.id == instance.job_posting_id)
+            )
+        ).scalar_one()
+        all_stages = list(
+            (
+                await db.execute(
+                    select(JobPipelineStage)
+                    .where(JobPipelineStage.instance_id == instance.id)
+                    .order_by(JobPipelineStage.position)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        # Filter to question-bank-eligible stages only. Intake / debrief have
+        # no signal_filter, no duration, and produce no questions — including
+        # them in the loop crashes build_question_context and leaves orphan
+        # failed banks in the DB.
+        eligible_stage_ids = [
+            s.id for s in all_stages if s.stage_type in STAGE_TYPE_TO_PROMPT
+        ]
+        job_id = job.id
+        instance_uuid_captured = instance.id
 
-# ---------------------------------------------------------------------------
-# Actor: full pipeline (sequential — required for anti-lie coherence)
-# ---------------------------------------------------------------------------
+    # Phase 2: per-stage generation ───────────────────────────────────────
+    succeeded = 0
+    failed = 0
+    for stage_id in eligible_stage_ids:
+        result = await _run_one_pipeline_stage_in_session(
+            stage_id=stage_id,
+            job_id=job_id,
+            instance_id=instance_uuid_captured,
+            started_by=started_by_uuid,
+            tenant_id=safe_tenant_id,
+        )
+        if result is None:
+            # Structure missing for this stage — already logged inside.
+            continue
+        bank_id, new_status = result
+        if new_status == "reviewing":
+            succeeded += 1
+        elif new_status == "failed":
+            failed += 1
+        # 'skipped' counts toward neither — the bank was busy elsewhere.
+
+        if new_status in ("reviewing", "failed"):
+            await pubsub.publish(
+                pubsub.job_channel(job_id),
+                pubsub.Events.BANK_STATUS_CHANGED,
+                {
+                    "job_id": str(job_id),
+                    "bank_id": str(bank_id),
+                    "stage_id": str(stage_id),
+                    "new_status": new_status,
+                    "source": "actor",
+                },
+                correlation_id=correlation_id,
+            )
+
+    # Phase 3: pipeline-level audit log + completion event ────────────────
+    async with get_bypass_session() as db:
+        await db.execute(
+            text(f"SET LOCAL app.current_tenant = '{safe_tenant_id}'")
+        )
+        await log_event(
+            db,
+            tenant_id=UUID(tenant_id),
+            actor_id=started_by_uuid,
+            actor_email=None,
+            action="question_bank.pipeline_generation_complete",
+            resource="job_pipeline_instance",
+            resource_id=instance_uuid_captured,
+            payload={
+                "succeeded": succeeded,
+                "failed": failed,
+                "total": len(eligible_stage_ids),
+            },
+        )
+
+    await pubsub.publish(
+        pubsub.job_channel(job_id),
+        pubsub.Events.PIPELINE_GENERATION_COMPLETE,
+        {
+            "job_id": str(job_id),
+            "instance_id": instance_id,
+            "succeeded": succeeded,
+            "failed": failed,
+            "total": len(eligible_stage_ids),
+            "source": "actor",
+        },
+        correlation_id=correlation_id,
+    )
+
 
 @dramatiq.actor(
     max_retries=0,
@@ -443,113 +893,28 @@ async def generate_question_bank_pipeline(
     instance_id: str,
     tenant_id: str,
     started_by: str,
+    correlation_id: str = "",
 ) -> None:
     """Generate banks for ALL stages in a pipeline, sequentially.
 
     Sequential is REQUIRED — stage N needs to see stages 1..N-1's questions.
     On mid-pipeline failure: marks that stage failed, CONTINUES to next stage.
     User retries failed stages individually via the single-stage endpoint.
+
+    Each stage commits in its own transaction (`_run_one_pipeline_stage_in_session`)
+    so the worker process can crash mid-pipeline without rolling back earlier
+    stages. Pub/sub ``BANK_STATUS_CHANGED`` is published after each per-stage
+    commit; ``PIPELINE_GENERATION_COMPLETE`` fires at the end. The SSE
+    backstop poll is a correctness backstop only — under normal operation
+    the frontend gets sub-100ms updates via these publishes.
     """
-    async with get_bypass_session() as db:
-        safe_tenant_id = str(UUID(tenant_id))
-        await db.execute(
-            text(f"SET LOCAL app.current_tenant = '{safe_tenant_id}'")
-        )
-
-        instance_result = await db.execute(
-            select(JobPipelineInstance).where(
-                JobPipelineInstance.id == UUID(instance_id)
-            )
-        )
-        instance = instance_result.scalar_one_or_none()
-        if instance is None:
-            logger.error("question_bank.instance_missing", instance_id=instance_id)
-            return
-
-        job_result = await db.execute(
-            select(JobPosting).where(JobPosting.id == instance.job_posting_id)
-        )
-        job = job_result.scalar_one()
-
-        stages_result = await db.execute(
-            select(JobPipelineStage)
-            .where(JobPipelineStage.instance_id == instance.id)
-            .order_by(JobPipelineStage.position)
-        )
-        all_stages = list(stages_result.scalars().all())
-        # Filter to question-bank-eligible stages only. Intake / debrief have
-        # no signal_filter, no duration, and produce no questions — including
-        # them in the loop crashes build_question_context on a None .get() call
-        # and leaves orphan failed banks in the DB.
-        stages = [s for s in all_stages if s.stage_type in STAGE_TYPE_TO_PROMPT]
-
-        succeeded = 0
-        failed = 0
-        for stage in stages:
-            # Ensure bank exists and is in generating state.
-            # The endpoint pre-marks the first eligible stage's bank as
-            # 'generating' before dispatching this actor so that a GET issued
-            # in the 1–3 s between the POST response and the first loop
-            # iteration already shows the correct status.  For that stage,
-            # skip the transition (it is already correct); for all other
-            # stages, apply it normally.
-            bank = await ensure_bank_exists(db, stage=stage, job=job)
-            if bank.status == "generating":
-                # Already pre-marked by the endpoint — proceed with generation.
-                await db.flush()
-            else:
-                try:
-                    transition_to_generating(bank)
-                    await db.flush()
-                except Exception as exc:
-                    logger.warning(
-                        "question_bank.skip_busy_stage",
-                        stage_id=str(stage.id),
-                        reason=str(exc),
-                    )
-                    continue
-
-            snap_result = await db.execute(
-                select(JobPostingSignalSnapshot).where(
-                    JobPostingSignalSnapshot.id == bank.signal_snapshot_id
-                )
-            )
-            snapshot = snap_result.scalar_one()
-
-            try:
-                await _generate_one_bank(
-                    db,
-                    bank=bank,
-                    stage=stage,
-                    instance=instance,
-                    job=job,
-                    snapshot=snapshot,
-                    started_by=UUID(started_by),
-                )
-                succeeded += 1
-                await db.flush()
-            except Exception as exc:
-                logger.error(
-                    "question_bank.pipeline_stage_failed",
-                    stage_id=str(stage.id),
-                    error=str(exc),
-                )
-                failed += 1
-                # _generate_one_bank already transitioned the bank to failed
-                await db.flush()
-                continue  # move to next stage
-
-        await log_event(
-            db,
-            tenant_id=UUID(tenant_id),
-            actor_id=UUID(started_by),
-            actor_email=None,
-            action="question_bank.pipeline_generation_complete",
-            resource="job_pipeline_instance",
-            resource_id=instance.id,
-            payload={"succeeded": succeeded, "failed": failed, "total": len(stages)},
-        )
-        await db.commit()
+    effective_corr = correlation_id or f"actor-pipeline-{instance_id}"
+    await _run_pipeline_generation(
+        instance_id=instance_id,
+        tenant_id=tenant_id,
+        started_by=started_by,
+        correlation_id=effective_corr,
+    )
 
 
 # ---------------------------------------------------------------------------

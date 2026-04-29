@@ -34,7 +34,10 @@ from app.modules.question_bank.actors import (
     _generate_one_bank,
     _load_pipeline_context,
     _load_prior_stages_questions,
+    _run_pipeline_generation,
+    _run_stage_generation,
 )
+from app import pubsub
 from app.modules.question_bank.errors import (
     SignalTypeNotAllowedError,
     SignalValueNotInSnapshotError,
@@ -199,7 +202,6 @@ def _mock_llm_output(
 ) -> StageQuestionBankOutput:
     """Build a canned LLM response that passes all validations."""
     return StageQuestionBankOutput(
-        stage_summary="Stage tests core competencies for the role assessment.",
         questions=[
             GeneratedQuestion(
                 position=i,
@@ -226,7 +228,6 @@ def _mock_llm_output(
             )
             for i, v in enumerate(signal_values)
         ],
-        coverage_notes="Allocated one question per signal based on weight and priority.",
     )
 
 
@@ -234,9 +235,7 @@ def _mock_llm_output_with_questions(
     questions: list[GeneratedQuestion],
 ) -> StageQuestionBankOutput:
     return StageQuestionBankOutput(
-        stage_summary="Stage tests core competencies for the role assessment.",
         questions=questions,
-        coverage_notes="Allocated one question per signal based on weight and priority.",
     )
 
 
@@ -550,9 +549,12 @@ async def test_generate_pipeline_continues_on_stage_failure(db, monkeypatch):
         )
     assert bank2.status == "failed"
 
-    # Stage 3 — still generates regardless
+    # Stage 3 — still generates regardless. Uses ai_screening (one of the
+    # two stage types currently eligible for AI generation; human_interview
+    # was deliberately removed from STAGE_TYPE_TO_PROMPT — the recruiter
+    # authors those questions manually).
     _instance, stage3 = await _make_pipeline_and_stage(
-        db, job=job, position=2, name="Final", stage_type="human_interview",
+        db, job=job, position=2, name="Final AI Round", stage_type="ai_screening",
         instance=instance,
     )
     bank3 = await ensure_bank_exists(db, stage=stage3, job=job)
@@ -898,3 +900,615 @@ async def test_pipeline_context_section_omits_self_from_prior(db):
     # "Already generated questions" — there are no prior stages.
     assert "Already generated questions" not in msg
     assert "(CURRENT — you are generating this)" in msg
+
+
+# ===========================================================================
+# Pub/sub publish behaviour for the generation actors
+#
+# These tests exercise the new fast-path publishes added on top of the
+# correctness-only SSE backstop poll. They verify:
+#   - `_run_stage_generation` returns the correct (job_id, stage_id, status)
+#     tuple so the wrapping actor can publish BANK_STATUS_CHANGED post-commit.
+#   - `_run_pipeline_generation` publishes one BANK_STATUS_CHANGED per stage
+#     plus a final PIPELINE_GENERATION_COMPLETE — all carrying the supplied
+#     correlation_id.
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_run_stage_generation_returns_reviewing_on_success(db, monkeypatch):
+    """Happy path: success → returns (job_id, stage_id, 'reviewing')."""
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    job, _snapshot = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id, signals=[_signal(value="Apigee")],
+    )
+    _instance, stage = await _make_pipeline_and_stage(db, job=job)
+    bank = await ensure_bank_exists(db, stage=stage, job=job)
+    transition_to_generating(bank)
+    await db.flush()
+
+    _patch_llm(monkeypatch, _mock_llm_output(["Apigee"]))
+
+    result = await _run_stage_generation(
+        db,
+        bank_id=bank.id,
+        tenant_id=tenant.id,
+        started_by=user.id,
+    )
+
+    assert result is not None
+    job_id_out, stage_id_out, new_status = result
+    assert job_id_out == job.id
+    assert stage_id_out == stage.id
+    assert new_status == "reviewing"
+    assert bank.status == "reviewing"
+
+
+@pytest.mark.asyncio
+async def test_run_stage_generation_returns_failed_on_validation_error(db, monkeypatch):
+    """Permanent error (hallucinated signal) → returns (job_id, stage_id, 'failed').
+
+    The bank must be in 'failed' status so the wrapping actor commits the
+    terminal state and publishes the failure event. _generate_one_bank's
+    own try/except is what guarantees the transition before re-raising.
+    """
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    job, _snapshot = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id, signals=[_signal(value="Apigee")],
+    )
+    _instance, stage = await _make_pipeline_and_stage(db, job=job)
+    bank = await ensure_bank_exists(db, stage=stage, job=job)
+    transition_to_generating(bank)
+    await db.flush()
+
+    _patch_llm(monkeypatch, _mock_llm_output(["Hallucinated"]))
+
+    result = await _run_stage_generation(
+        db,
+        bank_id=bank.id,
+        tenant_id=tenant.id,
+        started_by=user.id,
+    )
+
+    assert result is not None
+    job_id_out, stage_id_out, new_status = result
+    assert job_id_out == job.id
+    assert stage_id_out == stage.id
+    assert new_status == "failed"
+    assert bank.status == "failed"
+    assert bank.generation_error is not None
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_generation_publishes_per_stage_and_completion(
+    db, monkeypatch, capture_publishes,
+):
+    """`_run_pipeline_generation` publishes BANK_STATUS_CHANGED per generated
+    stage and a single PIPELINE_GENERATION_COMPLETE at the end.
+
+    All envelopes carry the same supplied correlation_id (CLAUDE.md
+    observability standard: every session/request flows end-to-end with
+    one ID through the entire pipeline).
+    """
+    from contextlib import asynccontextmanager
+
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    job, _snapshot = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id, signals=[_signal(value="Python")],
+    )
+    instance, stage1 = await _make_pipeline_and_stage(
+        db, job=job, position=0, name="Phone Screen", stage_type="phone_screen",
+    )
+    _instance, stage2 = await _make_pipeline_and_stage(
+        db, job=job, position=1, name="AI Screening", stage_type="ai_screening",
+        instance=instance,
+    )
+    # Pre-mark stage1's bank to mirror the endpoint behaviour. Stage2's bank
+    # is created on first iteration by ensure_bank_exists.
+    bank1 = await ensure_bank_exists(db, stage=stage1, job=job)
+    transition_to_generating(bank1)
+    await db.flush()
+
+    _patch_llm(monkeypatch, _mock_llm_output(["Python"]))
+
+    @asynccontextmanager
+    async def _fake_session():
+        yield db
+    monkeypatch.setattr(
+        "app.modules.question_bank.actors.get_bypass_session", _fake_session
+    )
+
+    corr_id = "corr-pipeline-happy-path"
+    await _run_pipeline_generation(
+        instance_id=str(instance.id),
+        tenant_id=str(tenant.id),
+        started_by=str(user.id),
+        correlation_id=corr_id,
+    )
+
+    bank_events = [
+        p for p in capture_publishes if p.event == pubsub.Events.BANK_STATUS_CHANGED
+    ]
+    completion_events = [
+        p
+        for p in capture_publishes
+        if p.event == pubsub.Events.PIPELINE_GENERATION_COMPLETE
+    ]
+
+    assert len(bank_events) == 2, (
+        f"Expected one BANK_STATUS_CHANGED per stage (2), got {len(bank_events)}: "
+        f"{[(p.event, p.payload) for p in capture_publishes]}"
+    )
+    assert len(completion_events) == 1
+    assert all(p.correlation_id == corr_id for p in capture_publishes), (
+        "Every event must carry the supplied correlation_id end-to-end"
+    )
+    assert all(p.channel == pubsub.job_channel(job.id) for p in capture_publishes), (
+        "Every event must be published on the per-job channel"
+    )
+    # Completion payload reflects the run summary
+    completion_payload = completion_events[0].payload
+    assert completion_payload["succeeded"] == 2
+    assert completion_payload["failed"] == 0
+    assert completion_payload["total"] == 2
+    assert completion_payload["job_id"] == str(job.id)
+    assert completion_payload["source"] == "actor"
+    # Per-stage payloads carry new_status and stage_id
+    for p in bank_events:
+        assert p.payload["new_status"] == "reviewing"
+        assert p.payload["job_id"] == str(job.id)
+        assert "stage_id" in p.payload
+        assert "bank_id" in p.payload
+        assert p.payload["source"] == "actor"
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_generation_publishes_failed_status_on_stage_error(
+    db, monkeypatch, capture_publishes,
+):
+    """A failing stage publishes BANK_STATUS_CHANGED with new_status='failed'.
+
+    Pipeline does NOT abort — subsequent stages still run, the completion
+    event reflects the mixed succeeded/failed counts, and every envelope
+    carries the supplied correlation_id.
+    """
+    from contextlib import asynccontextmanager
+
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    job, _snapshot = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id, signals=[_signal(value="Python")],
+    )
+    instance, stage1 = await _make_pipeline_and_stage(
+        db, job=job, position=0, name="Phone Screen", stage_type="phone_screen",
+    )
+    _instance, stage2 = await _make_pipeline_and_stage(
+        db, job=job, position=1, name="AI Screening", stage_type="ai_screening",
+        instance=instance,
+    )
+    bank1 = await ensure_bank_exists(db, stage=stage1, job=job)
+    transition_to_generating(bank1)
+    await db.flush()
+
+    # Stage 1 returns a valid signal; stage 2 hallucinates.
+    call_count = {"n": 0}
+    valid_output = _mock_llm_output(["Python"])
+    bad_output = _mock_llm_output(["Hallucinated"])
+
+    fake_client = MagicMock()
+
+    async def _flaky_create(**_kwargs):
+        call_count["n"] += 1
+        return valid_output if call_count["n"] == 1 else bad_output
+    fake_client.chat.completions.create = AsyncMock(side_effect=_flaky_create)
+    monkeypatch.setattr(
+        "app.modules.question_bank.actors.get_openai_client",
+        lambda: fake_client,
+    )
+
+    @asynccontextmanager
+    async def _fake_session():
+        yield db
+    monkeypatch.setattr(
+        "app.modules.question_bank.actors.get_bypass_session", _fake_session
+    )
+
+    corr_id = "corr-pipeline-mixed"
+    await _run_pipeline_generation(
+        instance_id=str(instance.id),
+        tenant_id=str(tenant.id),
+        started_by=str(user.id),
+        correlation_id=corr_id,
+    )
+
+    bank_events = [
+        p for p in capture_publishes if p.event == pubsub.Events.BANK_STATUS_CHANGED
+    ]
+    completion_events = [
+        p
+        for p in capture_publishes
+        if p.event == pubsub.Events.PIPELINE_GENERATION_COMPLETE
+    ]
+    statuses = sorted(p.payload["new_status"] for p in bank_events)
+
+    assert statuses == ["failed", "reviewing"], (
+        f"Expected one reviewing + one failed, got {statuses}"
+    )
+    assert len(completion_events) == 1
+    cp = completion_events[0].payload
+    assert cp["succeeded"] == 1
+    assert cp["failed"] == 1
+    assert cp["total"] == 2
+    assert all(p.correlation_id == corr_id for p in capture_publishes)
+
+
+@pytest.mark.asyncio
+async def test_run_stage_generation_reraises_when_bank_not_terminal(db, monkeypatch):
+    """If an exception happens AFTER `_generate_one_bank` succeeds (e.g.
+    `log_event` raises), the bank is in 'reviewing' — not 'failed'. The
+    helper must re-raise so the wrapping actor rolls back and Dramatiq
+    retries. Publishing 'reviewing' here would falsely tell the frontend
+    the work is done while the audit log is missing.
+    """
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    job, _snapshot = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id, signals=[_signal(value="Apigee")],
+    )
+    _instance, stage = await _make_pipeline_and_stage(db, job=job)
+    bank = await ensure_bank_exists(db, stage=stage, job=job)
+    transition_to_generating(bank)
+    await db.flush()
+
+    _patch_llm(monkeypatch, _mock_llm_output(["Apigee"]))
+
+    async def _boom(*_args, **_kwargs):
+        raise RuntimeError("simulated audit log outage")
+    monkeypatch.setattr(
+        "app.modules.question_bank.actors.log_event", _boom
+    )
+
+    with pytest.raises(RuntimeError, match="simulated audit log outage"):
+        await _run_stage_generation(
+            db,
+            bank_id=bank.id,
+            tenant_id=tenant.id,
+            started_by=user.id,
+        )
+    # `_generate_one_bank` succeeded → bank transitioned to 'reviewing'.
+    # Then log_event raised. Bank is in 'reviewing' (a terminal state from
+    # a state-machine perspective) but the work is not durable yet — the
+    # caller must rollback. The contract: "re-raise when bank.status is
+    # not 'failed'" intentionally covers this case.
+    assert bank.status == "reviewing"
+
+
+# ===========================================================================
+# Generation-time budget enforcement
+#
+# The budget contract:
+#   mandatory_total ≤ duration_minutes                    (hard cap)
+#   mandatory_total + optional_total ≤ duration_minutes + 5  (hard cap)
+#
+# `validate_llm_output_against_snapshot(stage=...)` enforces both. On
+# violation, `_generate_one_bank` retries the LLM once with the violation
+# fed back into the conversation; on the second violation, the bank fails.
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_validator_rejects_mandatory_overrun_at_generation(db):
+    """Mandatory minutes > duration → BudgetExceededError(kind='mandatory').
+
+    Direct test of the validator (not the actor): 3 mandatory questions
+    @ 6 min = 18 min mandatory, against a 15-min stage duration. The
+    validator must surface the violation immediately and identify it as
+    a 'mandatory' kind so the actor retry loop can produce the right
+    LLM feedback message.
+    """
+    from app.modules.question_bank.errors import BudgetExceededError
+    from app.modules.question_bank.service import validate_llm_output_against_snapshot
+
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    job, snapshot = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id,
+        signals=[_signal(value=v) for v in ("A", "B", "C")],
+    )
+    _instance, stage = await _make_pipeline_and_stage(
+        db, job=job, duration_minutes=15,
+    )
+
+    questions = [
+        _build_question(
+            position=i, text=f"Question {i+1} about {v}", signal_values=[v],
+            is_mandatory=True, estimated_minutes=6.0,
+        )
+        for i, v in enumerate(("A", "B", "C"))
+    ]
+
+    with pytest.raises(BudgetExceededError) as exc_info:
+        await validate_llm_output_against_snapshot(
+            db,
+            snapshot=snapshot,
+            allowed_types=["competency", "experience", "credential", "behavioral"],
+            questions=questions,
+            stage=stage,
+        )
+    assert exc_info.value.kind == "mandatory"
+    assert exc_info.value.observed_minutes == 18.0
+    assert exc_info.value.cap_minutes == 15.0
+
+
+@pytest.mark.asyncio
+async def test_validator_rejects_total_overrun_at_generation(db):
+    """Total minutes > duration + margin → BudgetExceededError(kind='total').
+
+    1 mandatory @ 5 min + 4 optional @ 5 min = 25 min total against a
+    15-min stage with 5-min margin (cap = 20 min). Mandatory itself fits
+    (5 ≤ 15) so the FIRST cap passes; the TOTAL cap is what trips.
+    """
+    from app.modules.question_bank.errors import BudgetExceededError
+    from app.modules.question_bank.service import validate_llm_output_against_snapshot
+
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    job, snapshot = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id,
+        signals=[_signal(value=v) for v in ("A", "B", "C", "D", "E")],
+    )
+    _instance, stage = await _make_pipeline_and_stage(
+        db, job=job, duration_minutes=15,
+    )
+
+    questions = [
+        _build_question(
+            position=0, text="Mandatory question about A",
+            signal_values=["A"], is_mandatory=True, estimated_minutes=5.0,
+        ),
+    ] + [
+        _build_question(
+            position=i, text=f"Optional question {i} about {v}",
+            signal_values=[v], is_mandatory=False, estimated_minutes=5.0,
+        )
+        for i, v in enumerate(("B", "C", "D", "E"), start=1)
+    ]
+
+    with pytest.raises(BudgetExceededError) as exc_info:
+        await validate_llm_output_against_snapshot(
+            db,
+            snapshot=snapshot,
+            allowed_types=["competency", "experience", "credential", "behavioral"],
+            questions=questions,
+            stage=stage,
+        )
+    assert exc_info.value.kind == "total"
+    assert exc_info.value.observed_minutes == 25.0
+    assert exc_info.value.cap_minutes == 20.0  # duration 15 + margin 5
+
+
+@pytest.mark.asyncio
+async def test_validator_passes_when_within_budget(db):
+    """Mandatory + optional all fit → no exception."""
+    from app.modules.question_bank.service import validate_llm_output_against_snapshot
+
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    job, snapshot = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id,
+        signals=[_signal(value=v) for v in ("A", "B", "C")],
+    )
+    _instance, stage = await _make_pipeline_and_stage(
+        db, job=job, duration_minutes=15,
+    )
+
+    # 2 mandatory @ 4 min = 8 min mandatory (≤ 15 ✓)
+    # 2 optional @ 4 min, plus the mandatory 8 min = 16 min total (≤ 20 ✓)
+    questions = [
+        _build_question(
+            position=0, text="Mandatory A", signal_values=["A"],
+            is_mandatory=True, estimated_minutes=4.0,
+        ),
+        _build_question(
+            position=1, text="Mandatory B", signal_values=["B"],
+            is_mandatory=True, estimated_minutes=4.0,
+        ),
+        _build_question(
+            position=2, text="Optional C", signal_values=["C"],
+            is_mandatory=False, estimated_minutes=4.0,
+        ),
+        _build_question(
+            position=3, text="Optional A depth probe", signal_values=["A"],
+            is_mandatory=False, estimated_minutes=4.0,
+        ),
+    ]
+
+    validated = await validate_llm_output_against_snapshot(
+        db,
+        snapshot=snapshot,
+        allowed_types=["competency", "experience", "credential", "behavioral"],
+        questions=questions,
+        stage=stage,
+    )
+    assert len(validated) == 4
+    mandatory_total = sum(q.estimated_minutes for q in validated if q.is_mandatory)
+    total = sum(q.estimated_minutes for q in validated)
+    assert mandatory_total <= stage.duration_minutes
+    assert total <= stage.duration_minutes + 5
+
+
+@pytest.mark.asyncio
+async def test_validator_skips_budget_check_when_stage_omitted(db):
+    """Backwards compat: callers not passing `stage` skip the budget check.
+
+    Existing callers (and tests that only cover signal validation) must
+    not break — the budget check is opt-in via the optional `stage` kwarg.
+    """
+    from app.modules.question_bank.service import validate_llm_output_against_snapshot
+
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    job, snapshot = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id,
+        signals=[_signal(value="A")],
+    )
+    questions = [
+        _build_question(
+            position=0, text="Wildly over-budget mandatory question",
+            signal_values=["A"], is_mandatory=True, estimated_minutes=15.0,
+        ),
+    ]
+    # No stage argument → no budget check → no exception even though 15 min
+    # mandatory would clearly violate any reasonable stage's duration cap.
+    validated = await validate_llm_output_against_snapshot(
+        db,
+        snapshot=snapshot,
+        allowed_types=["competency", "experience", "credential", "behavioral"],
+        questions=questions,
+    )
+    assert len(validated) == 1
+
+
+@pytest.mark.asyncio
+async def test_generate_one_bank_retries_on_budget_violation_then_succeeds(
+    db, monkeypatch
+):
+    """First LLM call returns over-budget output → second call returns valid output.
+
+    Verifies the retry-with-feedback loop: the actor catches the budget
+    violation, appends the offending output + a corrective user message
+    to the conversation, calls the LLM again, and persists the second
+    result. The bank must end up in 'reviewing', not 'failed'.
+    """
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    job, snapshot = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id,
+        signals=[_signal(value="A"), _signal(value="B")],
+    )
+    instance, stage = await _make_pipeline_and_stage(
+        db, job=job, duration_minutes=15,
+    )
+    bank = await ensure_bank_exists(db, stage=stage, job=job)
+    transition_to_generating(bank)
+    await db.flush()
+
+    # First call: over-budget mandatory (3 × 8 min = 24 > 15)
+    bad_output = StageQuestionBankOutput(
+        questions=[
+            _build_question(
+                position=i, text=f"Mandatory {v}", signal_values=[v],
+                is_mandatory=True, estimated_minutes=8.0,
+            )
+            for i, v in enumerate(("A", "B", "A"))
+        ],
+    )
+    # Second call: within budget
+    good_output = _mock_llm_output(["A", "B"], estimated_minutes=4.0)
+
+    call_count = {"n": 0}
+
+    async def _flaky_create(**_kwargs):
+        call_count["n"] += 1
+        return bad_output if call_count["n"] == 1 else good_output
+
+    fake_client = MagicMock()
+    fake_client.chat.completions.create = AsyncMock(side_effect=_flaky_create)
+    monkeypatch.setattr(
+        "app.modules.question_bank.actors.get_openai_client",
+        lambda: fake_client,
+    )
+
+    await _generate_one_bank(
+        db,
+        bank=bank,
+        stage=stage,
+        instance=instance,
+        job=job,
+        snapshot=snapshot,
+        started_by=user.id,
+    )
+
+    assert call_count["n"] == 2, "actor must retry exactly once on budget violation"
+    assert bank.status == "reviewing"
+    questions = await get_bank_questions(db, bank.id)
+    # The good output's signals are A and B at 4 min each — second call wins.
+    mandatory_total = sum(q.estimated_minutes for q in questions if q.is_mandatory)
+    assert mandatory_total <= stage.duration_minutes
+
+
+@pytest.mark.asyncio
+async def test_generate_one_bank_fails_after_repeated_budget_violations(
+    db, monkeypatch
+):
+    """If the LLM produces over-budget output on EVERY attempt, the bank fails.
+
+    With MAX_BUDGET_RETRIES=1, the actor calls the LLM at most twice. If
+    both outputs violate the budget, the second BudgetExceededError
+    propagates → outer except → bank.status='failed' with the violation
+    in the error message.
+    """
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    job, snapshot = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id,
+        signals=[_signal(value="A"), _signal(value="B")],
+    )
+    instance, stage = await _make_pipeline_and_stage(
+        db, job=job, duration_minutes=15,
+    )
+    bank = await ensure_bank_exists(db, stage=stage, job=job)
+    transition_to_generating(bank)
+    await db.flush()
+
+    # Both calls return the same over-budget output.
+    over_budget = StageQuestionBankOutput(
+        questions=[
+            _build_question(
+                position=i, text=f"Mandatory {v}", signal_values=[v],
+                is_mandatory=True, estimated_minutes=10.0,
+            )
+            for i, v in enumerate(("A", "B"))
+        ],
+    )
+
+    call_count = {"n": 0}
+
+    async def _always_overbudget(**_kwargs):
+        call_count["n"] += 1
+        return over_budget
+
+    fake_client = MagicMock()
+    fake_client.chat.completions.create = AsyncMock(side_effect=_always_overbudget)
+    monkeypatch.setattr(
+        "app.modules.question_bank.actors.get_openai_client",
+        lambda: fake_client,
+    )
+
+    from app.modules.question_bank.errors import BudgetExceededError
+    with pytest.raises(BudgetExceededError):
+        await _generate_one_bank(
+            db,
+            bank=bank,
+            stage=stage,
+            instance=instance,
+            job=job,
+            snapshot=snapshot,
+            started_by=user.id,
+        )
+
+    # Two LLM calls (initial + 1 retry, MAX_BUDGET_RETRIES=1).
+    assert call_count["n"] == 2
+    assert bank.status == "failed"
+    assert bank.generation_error is not None
+    assert "Budget violation" in bank.generation_error
+
+
+@pytest.mark.asyncio
+async def test_generate_stage_disallowed_for_human_interview(db):
+    """STAGE_TYPE_TO_PROMPT no longer includes human_interview / take_home.
+
+    Direct test of the constant — the API guard at the endpoint level
+    relies on this mapping; the SSE list_banks endpoint hides bank cards
+    for stages whose type isn't in the mapping; the pipeline actor
+    filters out non-eligible stages before generation. All three rely
+    on this single source of truth.
+    """
+    from app.modules.question_bank.actors import STAGE_TYPE_TO_PROMPT
+
+    assert "phone_screen" in STAGE_TYPE_TO_PROMPT
+    assert "ai_screening" in STAGE_TYPE_TO_PROMPT
+    assert "human_interview" not in STAGE_TYPE_TO_PROMPT
+    assert "take_home" not in STAGE_TYPE_TO_PROMPT
