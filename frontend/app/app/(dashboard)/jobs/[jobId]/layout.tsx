@@ -3,6 +3,7 @@
 import { useParams, usePathname } from 'next/navigation'
 import Link from 'next/link'
 
+import { JobActivationBanner } from '@/components/dashboard/job/JobActivationBanner'
 import { useJob } from '@/lib/hooks/use-job'
 import type { JobStatus } from '@/lib/api/jobs'
 
@@ -64,13 +65,42 @@ function JobStatusChips({ status, signalCount }: { status: JobStatus; signalCoun
       </>
     )
   }
-  return (
-    <>
+  // signals_confirmed and pipeline_built collapse into one "Almost ready"
+  // chip per the agreed UX. signals_confirmed is a transient state that
+  // auto-transitions to pipeline_built when the pipeline is applied;
+  // collapsing avoids surfacing a chip the recruiter rarely sees on its own.
+  if (status === 'signals_confirmed' || status === 'pipeline_built') {
+    return (
+      <span className="px-chip soft" style={{ height: 22 }}>
+        <span className="px-dot" />
+        Almost ready
+      </span>
+    )
+  }
+  if (status === 'active') {
+    return (
       <span className="px-chip ok" style={{ height: 22 }}>
         <span className="px-dot" />
         live · accepting candidates
       </span>
-    </>
+    )
+  }
+  if (status === 'archived') {
+    return (
+      <span className="px-chip soft" style={{ height: 22 }}>
+        <span className="px-dot" />
+        Archived
+      </span>
+    )
+  }
+  // Defensive fallback for any future status we forgot to wire here —
+  // render a neutral chip with the raw status rather than misleadingly
+  // claiming the job is "live" (the previous fallthrough behaviour).
+  return (
+    <span className="px-chip soft" style={{ height: 22 }}>
+      <span className="px-dot" />
+      {status}
+    </span>
   )
 }
 
@@ -140,6 +170,15 @@ export default function JobLayout({ children }: { children: React.ReactNode }) {
     }
   }
 
+  // Tab the banner is being rendered on. Drives tab-aware copy in the
+  // banner (e.g. JD tab links the "Lock signals" CTA via #anchor; other
+  // tabs navigate to the JD page first).
+  const currentTab: 'jd' | 'pipeline' | 'questions' = isPipelineRoute
+    ? 'pipeline'
+    : isQuestionsRoute
+      ? 'questions'
+      : 'jd'
+
   return (
     <div className="mx-auto max-w-[1400px] px-8 pb-10 pt-[22px]">
       {/* Shared header */}
@@ -151,6 +190,16 @@ export default function JobLayout({ children }: { children: React.ReactNode }) {
         >
           ← Roles
         </Link>
+
+        {/* Layout-level activation banner. Hidden when state.kind is
+            'loading' / 'hidden' / 'active' — the banner returns null and
+            takes no vertical space, so the title still renders flush
+            against the breadcrumb. */}
+        {job && (
+          <div className="mb-4">
+            <JobActivationBanner jobId={job.id} tab={currentTab} />
+          </div>
+        )}
         {isLoading || !job ? (
           <div
             className="mt-1 h-9 w-72 animate-pulse rounded"
