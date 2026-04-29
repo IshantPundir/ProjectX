@@ -30,6 +30,20 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # ---- sessions: result + status columns (Phase 3C.2 result persistence) ----
+    op.add_column("sessions", sa.Column("raw_result_json", postgresql.JSONB()))
+    op.add_column("sessions", sa.Column("transcript", postgresql.JSONB()))
+    op.add_column("sessions", sa.Column("questions_asked", sa.Integer()))
+    op.add_column("sessions", sa.Column("probes_fired", sa.Integer()))
+    op.add_column("sessions", sa.Column("agent_completed_at", sa.DateTime(timezone=True)))
+    op.add_column("sessions", sa.Column("result_status", sa.Text()))
+    op.add_column("sessions", sa.Column("error_code", sa.Text()))
+    op.create_check_constraint(
+        "sessions_result_status_check",
+        "sessions",
+        "result_status IS NULL OR result_status IN ('ok', 'partial', 'error')",
+    )
+
     # ---- engine_dispatch_tokens ----
     op.create_table(
         "engine_dispatch_tokens",
@@ -116,3 +130,11 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.execute("DROP TABLE IF EXISTS engine_token_uses CASCADE")
     op.execute("DROP TABLE IF EXISTS engine_dispatch_tokens CASCADE")
+    op.drop_constraint("sessions_result_status_check", "sessions", type_="check")
+    op.drop_column("sessions", "error_code")
+    op.drop_column("sessions", "result_status")
+    op.drop_column("sessions", "agent_completed_at")
+    op.drop_column("sessions", "probes_fired")
+    op.drop_column("sessions", "questions_asked")
+    op.drop_column("sessions", "transcript")
+    op.drop_column("sessions", "raw_result_json")
