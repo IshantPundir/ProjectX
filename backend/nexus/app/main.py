@@ -67,7 +67,7 @@ _TENANT_SCOPED_TABLES: tuple[str, ...] = (
 # is reachable from the bypass-RLS internal API; this assertion verifies
 # that.
 #
-# DO NOT add a tenant-only table here, and DO NOT move a bypass-only table
+# DO NOT add a tenant-scoped table here, and DO NOT move a bypass-only table
 # into `_TENANT_SCOPED_TABLES` — the migration intentionally omits the
 # tenant_isolation policy and the assertion would fail.
 _BYPASS_ONLY_TABLES: tuple[str, ...] = (
@@ -77,7 +77,15 @@ _BYPASS_ONLY_TABLES: tuple[str, ...] = (
 
 
 async def _assert_rls_completeness() -> None:
-    """Verify every tenant-scoped table has both tenant_isolation + service_bypass.
+    """Verify RLS completeness for all tracked tables at startup.
+
+    Tenant-scoped tables (``_TENANT_SCOPED_TABLES``) must carry both a
+    ``tenant_isolation`` policy (with a non-NULL WITH CHECK) and a
+    ``service_bypass`` policy.
+
+    Bypass-only tables (``_BYPASS_ONLY_TABLES``) have no ``tenant_id`` column
+    and therefore no ``tenant_isolation`` policy; they must carry at least a
+    ``service_bypass`` policy.
 
     Runs once at startup. If any table is missing either policy — or if
     tenant_isolation has a NULL WITH CHECK, which is the 'FOR SELECT
