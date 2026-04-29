@@ -20,7 +20,7 @@ def _make_ctx(user):
     return UserContext(user=user, is_super_admin=False, assignments=[])
 
 
-async def _seed(db, stage_type="ai_interview", otp_default=False, assignment_status="active"):
+async def _seed(db, stage_type="ai_screening", otp_default=False, assignment_status="active"):
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
     org_unit = await create_test_org_unit(db, tenant.id)
@@ -99,9 +99,9 @@ async def test_send_invite_honors_otp_override(db):
 
 
 @pytest.mark.asyncio
-async def test_send_invite_rejects_non_ai_interview_stage(db):
+async def test_send_invite_rejects_non_ai_screening_stage(db):
     from app.modules.scheduler.errors import InvalidStageTypeForInviteError
-    tenant, user, _stage, _cand, assignment = await _seed(db, stage_type="manual_review")
+    tenant, user, _stage, _cand, assignment = await _seed(db, stage_type="human_interview")
     ctx = _make_ctx(user)
 
     with patch("app.modules.scheduler.service.send_email", new=AsyncMock()):
