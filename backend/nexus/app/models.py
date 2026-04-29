@@ -7,7 +7,7 @@ Tables: clients, users, organizational_units, roles,
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, text, UniqueConstraint
 from sqlalchemy import text as sql_text
 from sqlalchemy.dialects.postgresql import ARRAY, INET, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -796,9 +796,20 @@ class EngineTokenUse(Base):
     Service-bypass-only RLS — no tenant_id column; tenant scope is
     inherited via the FK to engine_dispatch_tokens and re-asserted at
     the application layer via the JWT claim.
+
+    The ``service_bypass`` policy covers both ``USING`` and ``WITH CHECK``
+    so bypass-role INSERTs are also gated on the bypass flag (different
+    from engine_dispatch_tokens whose service_bypass is USING-only — that
+    table is INSERTed under tenant context, this one always under bypass).
     """
 
     __tablename__ = "engine_token_uses"
+    __table_args__ = (
+        CheckConstraint(
+            "endpoint IN ('config', 'results')",
+            name="engine_token_uses_endpoint_check",
+        ),
+    )
 
     jti: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
