@@ -11,6 +11,15 @@ import os
 # check. Production deployments must set CANDIDATE_JWT_SECRET explicitly.
 os.environ.setdefault("ENVIRONMENT", "test")
 
+# Provide a dummy engine JWT secret for tests so the _engine_secret_required
+# validator (Phase 3C.2) doesn't fire when ENVIRONMENT is already set to
+# "development" in the container .env. The validator only skips in ENVIRONMENT=test;
+# if the container .env wins over os.environ.setdefault above, the validator
+# would raise before conftest finishes loading. Setting a non-empty dummy
+# value here sidesteps the check unconditionally — safe in tests because
+# the secret is never used against a real interview-engine worker.
+os.environ.setdefault("INTERVIEW_ENGINE_JWT_SECRET", "test-engine-secret-placeholder-32chars")
+
 # Force DB_RUNTIME_ROLE empty in tests regardless of what .env says. The
 # test database uses SQLAlchemy Base.metadata.create_all (see _create_tables
 # below), not real alembic migrations, so the `nexus_app` role that

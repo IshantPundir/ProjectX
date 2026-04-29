@@ -172,6 +172,55 @@ class Settings(BaseSettings):
     # CORS
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:3000", "http://127.0.0.1:3001"]
 
+    # --- Phase 3C.2 — Interview engine integration ---
+    # HS256 signing key for the engine dispatch JWT minted by /start and
+    # consumed by the interview-engine worker on /api/internal/sessions/*.
+    # Required in non-test environments — see _engine_secret_required below.
+    # Generate with: openssl rand -hex 32. Treat with the same sensitivity
+    # as candidate_jwt_secret (rotate every 90 days, on personnel change,
+    # or on incident).
+    interview_engine_jwt_secret: str = ""
+
+    # The agent_name used by the worker's @server.rtc_session decorator AND
+    # by Nexus's create_dispatch call. They MUST match for explicit dispatch
+    # to find the right worker pool.
+    interview_agent_name: str = "Dakota-1785"
+
+    # Realtime model selection — env-driven, mirrors the JD/question-bank
+    # convention. Consumed by AIConfig (in app/ai/config.py) and the
+    # plugin factories in app/ai/realtime.py.
+    interview_llm_model: str = "gpt-5.3-chat-latest"
+    interview_reasoning_effort: str = "medium"
+
+    # STT — Deepgram realtime
+    stt_model: str = "nova-3"
+    stt_language: str = "en"
+
+    # TTS — Cartesia realtime
+    tts_model: str = "sonic-2"
+    tts_voice: str = "9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"
+    tts_language: str = "en"
+
+    # Engine → Nexus internal API base URL. Read by the engine worker
+    # (interview-engine container in docker-compose). Nexus itself does NOT
+    # consume this — it's a no-op field for the FastAPI process. Defaulted
+    # to the docker-compose service hostname.
+    nexus_internal_base_url: str = "http://nexus:8000"
+
+    @field_validator("interview_engine_jwt_secret")
+    @classmethod
+    def _engine_secret_required(cls, v: str, info) -> str:
+        env = info.data.get("environment", "development")
+        if not v and env != "test":
+            raise ValueError(
+                "INTERVIEW_ENGINE_JWT_SECRET is required (generate with: "
+                "`openssl rand -hex 32`). This signs the engine dispatch JWT "
+                "embedded in LiveKit dispatch metadata and authenticates the "
+                "interview-engine worker against /api/internal/sessions/*. "
+                "Set ENVIRONMENT=test to skip this check in the test suite."
+            )
+        return v
+
     # Frontend base URL — used to build invite/confirmation links in emails.
     # Previously hardcoded with a `debug ? localhost : app.projectx.com`
     # ternary, which meant a staging deploy with DEBUG=false would mint
