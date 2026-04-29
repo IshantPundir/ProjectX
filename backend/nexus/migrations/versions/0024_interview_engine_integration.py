@@ -78,6 +78,41 @@ def upgrade() -> None:
         "GRANT SELECT, INSERT, UPDATE ON engine_dispatch_tokens TO nexus_app"
     )
 
+    # ---- engine_token_uses ----
+    op.create_table(
+        "engine_token_uses",
+        sa.Column("jti", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("endpoint", sa.Text(), nullable=False),
+        sa.Column(
+            "used_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("NOW()"),
+        ),
+        sa.Column("used_ip", postgresql.INET()),
+        sa.PrimaryKeyConstraint("jti", "endpoint", name="engine_token_uses_pkey"),
+        sa.ForeignKeyConstraint(
+            ["jti"],
+            ["engine_dispatch_tokens.jti"],
+            ondelete="CASCADE",
+            name="engine_token_uses_jti_fkey",
+        ),
+        sa.CheckConstraint(
+            "endpoint IN ('config', 'results')",
+            name="engine_token_uses_endpoint_check",
+        ),
+    )
+    op.execute("ALTER TABLE engine_token_uses ENABLE ROW LEVEL SECURITY")
+    op.execute(
+        """
+        CREATE POLICY "service_bypass" ON engine_token_uses
+          USING      (current_setting('app.bypass_rls', true) = 'true')
+          WITH CHECK (current_setting('app.bypass_rls', true) = 'true');
+        """
+    )
+    op.execute("GRANT SELECT, INSERT ON engine_token_uses TO nexus_app")
+
 
 def downgrade() -> None:
+    op.execute("DROP TABLE IF EXISTS engine_token_uses CASCADE")
     op.execute("DROP TABLE IF EXISTS engine_dispatch_tokens CASCADE")
