@@ -307,76 +307,82 @@ async def test_negative_control_broken_policy_leaks_rows(
     6. Clean up.
     """
     # ---- Break the policy ---------------------------------------------------
+    # After this point the schema is in a degraded state — every subsequent
+    # line MUST be inside try/finally so the restore runs no matter what.
     async with _rls_engine.begin() as conn_ddl:
         await conn_ddl.execute(sqlalchemy.text(_DROP_TENANT_POLICY))
         await conn_ddl.execute(sqlalchemy.text(_CREATE_PERMISSIVE_POLICY))
 
-    # ---- Seed data ----------------------------------------------------------
-    async with _rls_engine.connect() as conn_bypass:
-        await conn_bypass.execute(sqlalchemy.text("BEGIN"))
-        await conn_bypass.execute(
-            sqlalchemy.text("SET LOCAL app.bypass_rls = 'true'")
+    try:
+        # ---- Seed data ------------------------------------------------------
+        async with _rls_engine.connect() as conn_bypass:
+            await conn_bypass.execute(sqlalchemy.text("BEGIN"))
+            await conn_bypass.execute(
+                sqlalchemy.text("SET LOCAL app.bypass_rls = 'true'")
+            )
+            bypass_session = AsyncSession(bind=conn_bypass, expire_on_commit=False)
+
+            tenant_a = await create_test_client(bypass_session)
+            tenant_b = await create_test_client(bypass_session)
+            await bypass_session.flush()
+            user_a = await create_test_user(bypass_session, tenant_a.id)
+            await bypass_session.flush()
+            session_a_id = await _seed_session(bypass_session, tenant_a, user_a)
+            await bypass_session.flush()
+            await conn_bypass.execute(sqlalchemy.text("COMMIT"))
+
+        tenant_a_id = tenant_a.id
+        tenant_b_id = tenant_b.id
+
+        jti = uuid.uuid4()
+        async with _rls_engine.connect() as conn_a:
+            await conn_a.execute(sqlalchemy.text("BEGIN"))
+            await conn_a.execute(
+                sqlalchemy.text(f"SET LOCAL app.current_tenant = '{tenant_a_id}'")
+            )
+            await conn_a.execute(
+                sqlalchemy.text(
+                    "INSERT INTO engine_dispatch_tokens"
+                    " (jti, tenant_id, session_id, expires_at)"
+                    " VALUES (:jti, :tenant_id, :session_id, :expires_at)"
+                ),
+                {
+                    "jti": str(jti),
+                    "tenant_id": str(tenant_a_id),
+                    "session_id": str(session_a_id),
+                    "expires_at": datetime.now(UTC) + timedelta(minutes=10),
+                },
+            )
+            await conn_a.execute(sqlalchemy.text("COMMIT"))
+
+        # ---- SELECT under tenant B with broken policy → expect leak ---------
+        async with _rls_engine.connect() as conn_b:
+            await conn_b.execute(sqlalchemy.text("BEGIN"))
+            await conn_b.execute(sqlalchemy.text("SET LOCAL ROLE nexus_app"))
+            await conn_b.execute(
+                sqlalchemy.text(f"SET LOCAL app.current_tenant = '{tenant_b_id}'")
+            )
+            result = await conn_b.execute(
+                sqlalchemy.text("SELECT jti FROM engine_dispatch_tokens")
+            )
+            rows_broken = result.fetchall()
+            await conn_b.execute(sqlalchemy.text("ROLLBACK"))
+
+        # Broken policy MUST leak rows — this proves the positive test is meaningful.
+        assert rows_broken != [], (
+            "With a permissive policy, tenant B should see tenant A's rows "
+            f"(negative-control failure: got {rows_broken!r})"
         )
-        bypass_session = AsyncSession(bind=conn_bypass, expire_on_commit=False)
 
-        tenant_a = await create_test_client(bypass_session)
-        tenant_b = await create_test_client(bypass_session)
-        await bypass_session.flush()
-        user_a = await create_test_user(bypass_session, tenant_a.id)
-        await bypass_session.flush()
-        session_a_id = await _seed_session(bypass_session, tenant_a, user_a)
-        await bypass_session.flush()
-        await conn_bypass.execute(sqlalchemy.text("COMMIT"))
-
-    tenant_a_id = tenant_a.id
-    tenant_b_id = tenant_b.id
-
-    jti = uuid.uuid4()
-    async with _rls_engine.connect() as conn_a:
-        await conn_a.execute(sqlalchemy.text("BEGIN"))
-        await conn_a.execute(
-            sqlalchemy.text(f"SET LOCAL app.current_tenant = '{tenant_a_id}'")
-        )
-        await conn_a.execute(
-            sqlalchemy.text(
-                "INSERT INTO engine_dispatch_tokens"
-                " (jti, tenant_id, session_id, expires_at)"
-                " VALUES (:jti, :tenant_id, :session_id, :expires_at)"
-            ),
-            {
-                "jti": str(jti),
-                "tenant_id": str(tenant_a_id),
-                "session_id": str(session_a_id),
-                "expires_at": datetime.now(UTC) + timedelta(minutes=10),
-            },
-        )
-        await conn_a.execute(sqlalchemy.text("COMMIT"))
-
-    # ---- SELECT under tenant B with broken policy → expect leak -------------
-    async with _rls_engine.connect() as conn_b:
-        await conn_b.execute(sqlalchemy.text("BEGIN"))
-        await conn_b.execute(sqlalchemy.text("SET LOCAL ROLE nexus_app"))
-        await conn_b.execute(
-            sqlalchemy.text(f"SET LOCAL app.current_tenant = '{tenant_b_id}'")
-        )
-        result = await conn_b.execute(
-            sqlalchemy.text("SELECT jti FROM engine_dispatch_tokens")
-        )
-        rows_broken = result.fetchall()
-        await conn_b.execute(sqlalchemy.text("ROLLBACK"))
-
-    # Broken policy MUST leak rows — this proves the positive test is meaningful.
-    assert rows_broken != [], (
-        "With a permissive policy, tenant B should see tenant A's rows "
-        f"(negative-control failure: got {rows_broken!r})"
-    )
-
-    # ---- Restore the correct policy -----------------------------------------
-    async with _rls_engine.begin() as conn_ddl:
-        await conn_ddl.execute(sqlalchemy.text(_DROP_TENANT_POLICY))
-        await conn_ddl.execute(sqlalchemy.text(_CREATE_TENANT_POLICY))
+    finally:
+        # ---- Restore the correct policy — always runs -----------------------
+        async with _rls_engine.begin() as conn_ddl:
+            await conn_ddl.execute(sqlalchemy.text(_DROP_TENANT_POLICY))
+            await conn_ddl.execute(sqlalchemy.text(_CREATE_TENANT_POLICY))
 
     # ---- Verify isolation is restored ---------------------------------------
+    # After the finally block so a restore failure surfaces as a separate
+    # exception rather than being swallowed by the original assertion error.
     async with _rls_engine.connect() as conn_b2:
         await conn_b2.execute(sqlalchemy.text("BEGIN"))
         await conn_b2.execute(sqlalchemy.text("SET LOCAL ROLE nexus_app"))
