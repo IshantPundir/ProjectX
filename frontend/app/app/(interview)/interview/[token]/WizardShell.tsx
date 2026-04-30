@@ -1,20 +1,17 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-
 import dynamic from 'next/dynamic'
 
-import type { StartSessionResponse } from '@/lib/api/candidate-session'
+import { APP_CONFIG_DEFAULTS, type AppConfig } from '@/app-config'
 import { useCandidateSession } from '@/lib/hooks/use-candidate-session'
 
 import { CameraMicStep } from './CameraMicStep'
 import { ConsentStep } from './ConsentStep'
 import { OtpStep } from './OtpStep'
-import { StartStep } from './StartStep'
 
-const LiveSessionShell = dynamic(
-  () =>
-    import('./LiveSession/LiveSessionShell').then((m) => m.LiveSessionShell),
+const App = dynamic(
+  () => import('@/components/interview/app/app').then((m) => m.App),
   {
     ssr: false,
     loading: () => (
@@ -28,30 +25,34 @@ const LiveSessionShell = dynamic(
   },
 )
 
-type WizardStepKey =
-  | 'consent'
-  | 'otp'
-  | 'cam-mic'
-  | 'start'
-  | 'already-started'
-  | 'error'
+type WizardStepKey = 'consent' | 'otp' | 'cam-mic' | 'error'
 
 export function WizardShell({ token }: { token: string }) {
   const { data, isLoading, error } = useCandidateSession(token)
   const [camMicPassed, setCamMicPassed] = useState(false)
-  const [creds, setCreds] = useState<StartSessionResponse | null>(null)
 
   const currentStep = useMemo<WizardStepKey>(() => {
     if (!data) return 'error'
-    if (data.state === 'active') return 'already-started'
     if (data.state === 'cancelled' || data.state === 'error') return 'error'
     if (data.state === 'created' || data.state === 'pre_check') return 'consent'
     if (data.state === 'consented') {
       if (data.otp_required && !data.otp_verified_at) return 'otp'
       return 'cam-mic'
     }
-    return 'error'
+    return 'cam-mic'
   }, [data])
+
+  const appConfig = useMemo<AppConfig>(
+    () =>
+      data
+        ? {
+            ...APP_CONFIG_DEFAULTS,
+            companyName: data.company_name,
+            pageTitle: `${data.company_name} · Interview`,
+          }
+        : APP_CONFIG_DEFAULTS,
+    [data],
+  )
 
   if (isLoading) {
     return (
@@ -87,21 +88,14 @@ export function WizardShell({ token }: { token: string }) {
 
   if (!data) return null
 
-  // `creds` is set only by the StartStep success path (useStartSession resolves
-  // 200). At that point the backend has atomically transitioned state to
-  // 'active', but the cached /pre-check data updates via the mutation's
-  // setQueryData hook on a separate notify path, so adding && data.state ===
-  // 'active' here would introduce a one-render flash where the cached state
-  // has flipped but local creds haven't yet -- briefly routing through
-  // <AlreadyStartedPanel>. Trust creds alone.
-  if (creds) {
-    return (
-      <LiveSessionShell
-        livekitUrl={creds.livekit_url}
-        livekitToken={creds.livekit_token}
-        roomName={creds.room_name}
-      />
-    )
+  // Active session → rejoin path. Bypasses cam-mic + consent (already passed).
+  if (data.state === 'active') {
+    return <App appConfig={appConfig} token={token} preCheck={data} mode="rejoin" />
+  }
+
+  // Cam-mic passed → start path.
+  if (currentStep === 'cam-mic' && camMicPassed) {
+    return <App appConfig={appConfig} token={token} preCheck={data} mode="start" />
   }
 
   return (
@@ -112,7 +106,10 @@ export function WizardShell({ token }: { token: string }) {
     >
       <StepProgress current={currentStep} otpRequired={data.otp_required} />
 
-      <div className="mb-2 text-[11px] font-semibold uppercase" style={{ letterSpacing: '1.1px', color: 'var(--px-fg-4)' }}>
+      <div
+        className="mb-2 text-[11px] font-semibold uppercase"
+        style={{ letterSpacing: '1.1px', color: 'var(--px-fg-4)' }}
+      >
         {data.stage_name} · {data.duration_minutes} minutes
       </div>
       <h1
@@ -138,10 +135,6 @@ export function WizardShell({ token }: { token: string }) {
       {currentStep === 'cam-mic' && !camMicPassed && (
         <CameraMicStep onPass={() => setCamMicPassed(true)} />
       )}
-      {currentStep === 'cam-mic' && camMicPassed && (
-        <StartStep token={token} onStarted={setCreds} />
-      )}
-      {currentStep === 'already-started' && <AlreadyStartedPanel />}
     </WizardFrame>
   )
 }
@@ -159,7 +152,6 @@ function WizardFrame({
 }) {
   return (
     <div className="flex min-h-screen flex-col">
-      {/* Top bar — minimal, candidate-facing */}
       <div
         className="flex h-14 flex-shrink-0 items-center gap-3 border-b px-8"
         style={{
@@ -203,7 +195,6 @@ function StepProgress({
     { key: 'consent', label: 'Consent' },
     ...(otpRequired ? [{ key: 'otp' as const, label: 'Verify' }] : []),
     { key: 'cam-mic', label: 'Camera & mic' },
-    { key: 'start', label: 'Start' },
   ]
   const currentIdx = steps.findIndex((s) => s.key === current)
 
@@ -236,29 +227,6 @@ function StepProgress({
           </div>
         )
       })}
-    </div>
-  )
-}
-
-function AlreadyStartedPanel() {
-  return (
-    <div
-      className="rounded-[12px] border p-8 text-center"
-      style={{
-        background: 'var(--px-surface)',
-        borderColor: 'var(--px-hairline)',
-      }}
-    >
-      <h2
-        className="px-serif m-0 mb-3 text-[26px] font-normal"
-        style={{ color: 'var(--px-fg)' }}
-      >
-        Your session has already started
-      </h2>
-      <p className="text-sm" style={{ color: 'var(--px-fg-2)' }}>
-        If you were disconnected, the rejoin flow will be available in the next
-        release.
-      </p>
     </div>
   )
 }
