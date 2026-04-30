@@ -25,6 +25,7 @@ from app import pubsub
 from app.ai.client import get_openai_client
 from app.ai.config import ai_config
 from app.ai.prompts import prompt_loader
+from app.ai.tracing import set_llm_span_attributes
 from app.database import get_bypass_session
 from app.models import (
     JobPipelineInstance,
@@ -285,6 +286,17 @@ async def _generate_one_bank(
             "reasoning_effort": ai_config.question_bank_effort,
             "prompt_version": bank.prompt_version,
         },
+    )
+    set_llm_span_attributes(
+        prompt_name=f"question_bank_{stage.stage_type}",
+        prompt_version=bank.prompt_version,
+        tenant_id=str(bank.tenant_id),
+        bank_id=str(bank.id),
+        stage_id=str(stage.id),
+        stage_type=stage.stage_type,
+        job_posting_id=str(job.id),
+        model=ai_config.question_bank_model,
+        reasoning_effort=ai_config.question_bank_effort,
     )
 
     try:
@@ -953,6 +965,18 @@ async def _regenerate_one_question(
             "reasoning_effort": ai_config.question_bank_effort,
             "prompt_version": bank.prompt_version,
         },
+    )
+    set_llm_span_attributes(
+        prompt_name="question_bank_regenerate_one",
+        prompt_version=bank.prompt_version,
+        tenant_id=str(bank.tenant_id),
+        bank_id=str(bank.id),
+        stage_id=str(stage.id),
+        stage_type=stage.stage_type,
+        job_posting_id=str(job.id),
+        question_id=str(question.id),
+        model=ai_config.question_bank_model,
+        reasoning_effort=ai_config.question_bank_effort,
     )
 
     # Build prompt: common header + regenerate_one + rich user context

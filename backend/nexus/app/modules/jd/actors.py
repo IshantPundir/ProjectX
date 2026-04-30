@@ -29,6 +29,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.client import flush_langfuse, get_openai_client, langfuse_enabled
+from app.ai.tracing import set_llm_span_attributes
 from app.ai.config import ai_config
 from app.ai.prompts import prompt_loader
 from app.ai.schemas import (
@@ -186,6 +187,17 @@ async def _run_enrichment(
         },
     )
 
+    set_llm_span_attributes(
+        prompt_name="jd_enrichment",
+        prompt_version="v1",
+        tenant_id=tenant_id,
+        correlation_id=correlation_id,
+        job_posting_id=job_posting_id,
+        model=ai_config.extraction_model,
+        reasoning_effort=ai_config.extraction_effort,
+        retries_so_far=retries_so_far,
+    )
+
     client = get_openai_client()
     prompt = prompt_loader.get("jd_enrichment")
     user_message = _build_user_message(job, profile)
@@ -316,6 +328,18 @@ async def _run_signal_extraction(
             "source_jd": "enriched" if source_is_enriched else "raw",
             "retries_so_far": retries_so_far,
         },
+    )
+
+    set_llm_span_attributes(
+        prompt_name="jd_signal_extraction",
+        prompt_version="v1",
+        tenant_id=tenant_id,
+        correlation_id=correlation_id,
+        job_posting_id=job_posting_id,
+        model=ai_config.extraction_model,
+        reasoning_effort=ai_config.extraction_effort,
+        source_jd="enriched" if source_is_enriched else "raw",
+        retries_so_far=retries_so_far,
     )
 
     client = get_openai_client()
@@ -649,6 +673,17 @@ async def _run_reenrichment(
             "reasoning_effort": ai_config.reenrichment_effort,
             "retries_so_far": retries_so_far,
         },
+    )
+
+    set_llm_span_attributes(
+        prompt_name="jd_reenrichment",
+        prompt_version="v1",
+        tenant_id=tenant_id,
+        correlation_id=correlation_id,
+        job_posting_id=job_posting_id,
+        model=ai_config.reenrichment_model,
+        reasoning_effort=ai_config.reenrichment_effort,
+        retries_so_far=retries_so_far,
     )
 
     client = get_openai_client()

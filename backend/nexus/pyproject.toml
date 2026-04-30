@@ -44,9 +44,11 @@ dependencies = [
     # Logging & observability
     "structlog>=24.4,<25",
     "sentry-sdk[fastapi]>=2.19,<3",
-    "opentelemetry-api>=1.29,<2",
-    "opentelemetry-sdk>=1.29,<2",
-    "opentelemetry-instrumentation-fastapi>=0.50b,<1",
+    "opentelemetry-api>=1.41,<2",
+    "opentelemetry-sdk>=1.41,<2",
+    "opentelemetry-exporter-otlp>=1.41,<2",
+    "opentelemetry-instrumentation-fastapi>=0.61b,<1",
+    "opentelemetry-instrumentation-openai-v2>=2.3b0,<3",
 
     # LLM observability (self-hosted)
     "langfuse>=2.56,<3",

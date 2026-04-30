@@ -21,6 +21,12 @@ services:
       # this override every request fails with "Invalid issuer" 401.
       - SUPABASE_JWT_ISSUER=http://127.0.0.1:54321/auth/v1
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      # OpenTelemetry — both exporters off by default. Values flow from .env
+      # via env_file above; uncomment to override per-service. See
+      # app/ai/otel.py for the env-var contract.
+      # - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT}
+      # - OTEL_DEV_CONSOLE_EXPORTER=${OTEL_DEV_CONSOLE_EXPORTER}
+      # - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-nexus}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -43,6 +49,11 @@ services:
       - SUPABASE_JWKS_URL=http://host.docker.internal:54321/auth/v1/.well-known/jwks.json
       - SUPABASE_URL=http://host.docker.internal:54321
       - SUPABASE_JWT_ISSUER=http://127.0.0.1:54321/auth/v1
+      # OpenTelemetry — same contract as the nexus service. Worker is a
+      # separate process and runs its own TracerProvider (see app/worker.py).
+      # - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT}
+      # - OTEL_DEV_CONSOLE_EXPORTER=${OTEL_DEV_CONSOLE_EXPORTER}
+      # - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-nexus-worker}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
