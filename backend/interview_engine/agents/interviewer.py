@@ -91,6 +91,11 @@ class InterviewerAgent(Agent):
         self.state_machine.state.start()
         self._session_start_ms = int(time.monotonic() * 1000)
 
+        # Publish initial progress attributes so the candidate's
+        # ProgressBanner ("Q1 of N · X min remaining") is present
+        # before the agent's audio greeting starts.
+        await self._publish_progress_attributes()
+
         greeting = self.state_machine.get_greeting_instruction()
         first_q = self.state_machine.get_first_question_context()
 
@@ -176,6 +181,12 @@ class InterviewerAgent(Agent):
         action = self.state_machine.decide_next_action(observation)
         context_injection = self.state_machine.execute_action(action)
 
+        # Update participant attributes so the candidate's ProgressBanner
+        # advances on each turn. Skipped on CLOSE (interview is wrapping
+        # up; the next render will be the completion screen).
+        if action != Action.CLOSE:
+            await self._publish_progress_attributes()
+
         logger.info(
             "interview.turn",
             action=action.value,
@@ -192,6 +203,39 @@ class InterviewerAgent(Agent):
             await self._persist_result(result)
 
         return context_injection
+
+    # ------------------------------------------------------------------
+    # Progress publishing — drives the candidate-facing ProgressBanner
+    # ------------------------------------------------------------------
+
+    async def _publish_progress_attributes(self) -> None:
+        """Publish current interview progress as LiveKit participant
+        attributes.
+
+        The candidate's frontend ``useStageProgress`` hook reads these
+        three string-valued attributes from the agent participant and
+        renders ``Q{idx+1} of {total} · {min} min remaining`` in the
+        sticky ProgressBanner. Missing or unparseable values cause the
+        banner to hide cleanly, so this publish is best-effort: a
+        failure here must not abort the turn — the state machine
+        progression is the load-bearing thing.
+        """
+        state = self.state_machine.state
+        attrs = {
+            "current_question_index": str(state.current_question_index),
+            "total_questions": str(len(state.questions)),
+            "time_remaining_seconds": str(
+                max(0, round(state.time_remaining_seconds()))
+            ),
+        }
+        try:
+            await self.session.room.local_participant.set_attributes(attrs)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "interview.progress.publish_failed",
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
 
     # ------------------------------------------------------------------
     # Result compilation
