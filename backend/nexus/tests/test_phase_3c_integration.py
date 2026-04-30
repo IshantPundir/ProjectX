@@ -74,6 +74,7 @@ async def test_phase_3c_happy_path_with_otp(db):
             base_url="http://test",
             headers={"Authorization": f"Bearer {_TEST_BEARER}"},
         ) as ac:
+            mock_dispatch_agent = AsyncMock(return_value=None)
             with patch(
                 "app.modules.scheduler.service.send_email",
                 new=AsyncMock(side_effect=capture_email),
@@ -84,6 +85,15 @@ async def test_phase_3c_happy_path_with_otp(db):
                 "app.middleware.auth.get_bypass_session", _fake_bypass,
             ), patch(
                 "app.middleware.auth.verify_access_token", side_effect=_fake_verify,
+            ), patch(
+                "app.modules.session.service.mint_candidate_lk_token",
+                return_value="candidate-lk-token-stub",
+            ), patch(
+                "app.modules.session.service.dispatch_agent",
+                new=mock_dispatch_agent,
+            ), patch(
+                "app.modules.session.service.cancel_room",
+                new=AsyncMock(return_value=None),
             ):
                 # 1. Recruiter dispatches invite
                 invite = await ac.post(
@@ -142,10 +152,15 @@ async def test_phase_3c_happy_path_with_otp(db):
                 )
                 assert ver.status_code == 204
 
-                # 6. Start — 501 sentinel (LiveKit integration pending)
+                # 6. Start — 200 OK with LiveKit credentials
                 start = await ac.post(f"/api/candidate-session/{token}/start")
-                assert start.status_code == 501
-                assert start.json()["code"] == "LIVEKIT_INTEGRATION_PENDING"
+                assert start.status_code == 200, start.text
+                body = start.json()
+                assert isinstance(body["livekit_url"], str)
+                assert isinstance(body["livekit_token"], str)
+                assert isinstance(body["room_name"], str)
+                assert isinstance(body["session_id"], str)
+                mock_dispatch_agent.assert_awaited_once()
 
                 # 7. Replay — 409 TOKEN_ALREADY_USED
                 replay = await ac.post(f"/api/candidate-session/{token}/start")

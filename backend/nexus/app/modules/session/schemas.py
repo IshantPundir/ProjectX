@@ -60,13 +60,6 @@ class VerifyOtpErrorResponse(BaseModel):
     attempts_remaining: int
 
 
-class StartSessionPendingResponse(BaseModel):
-    """Shape for the 501 LIVEKIT_INTEGRATION_PENDING sentinel."""
-    code: Literal["LIVEKIT_INTEGRATION_PENDING"] = "LIVEKIT_INTEGRATION_PENDING"
-    detail: str
-    session_id: UUID
-
-
 class StartSessionResponse(BaseModel):
     """200 OK shape after /start successfully provisions LiveKit + dispatches agent."""
     model_config = ConfigDict(from_attributes=True)
