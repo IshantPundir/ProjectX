@@ -113,10 +113,27 @@ at `https://docs.livekit.io/mcp` provides browsing and search tools
 (`get_docs_overview`, `get_pages`) over search, and `docs_search`
 over `code_search`.
 
+## Graceful close + rejoin (shipped 2026-04-30)
+
+- The agent publishes a `session_outcome` participant attribute via
+  `set_attributes` immediately before shutdown. The candidate's frontend
+  reads this on the `Disconnected` event to route between
+  `CompletionScreen` (`outcome='completed'`) and `DisconnectError` with
+  code `ENGINE_ERROR` (`outcome='error'`). See
+  `agents/interviewer.py::_publish_session_outcome`.
+- Two paths reach close: (a) state machine emits `Action.CLOSE` →
+  `record_observation` persists + publishes; (b) candidate disconnects
+  mid-session → `session.on('close')` in `agent.py` persists a partial
+  result and publishes `'completed'` so Nexus transitions
+  `session.state` to `'completed'` and the wizard's pre-check on next
+  visit doesn't show the rejoin path for an effectively-ended session.
+- Mid-session rejoin: the candidate's frontend wizard sees
+  `state='active'` from `/pre-check`, mounts `<App mode='rejoin'>`,
+  which calls `POST /api/candidate-session/{token}/rejoin` (mints a
+  fresh LiveKit token for the same room without re-dispatching the
+  engine — see `app/modules/session/service.py::rejoin_session`).
+
 ## Out of scope (Phase 3D follow-ups)
 
-- Graceful-vs-error disconnect signal back to the frontend (so the
-  candidate sees DisconnectError vs CompletionScreen correctly).
-- Mid-session rejoin if the candidate's network drops.
 - LiveKit Egress recording pipeline.
 - Real-time scoring + probe selection (Phase 3D `analysis` module).

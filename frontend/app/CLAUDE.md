@@ -57,7 +57,9 @@ Both surfaces must be designed as **enterprise products**, not consumer apps. Cl
 
 ### Component Library — In-House `px/` Primitives
 
-There is **no shadcn/ui in this codebase**. The design system is a hand-rolled primitive library at `components/px/` built directly on `@base-ui-components/react`. The barrel export is `components/px/index.ts`.
+The dashboard surface uses **no shadcn/ui** — the design system is a hand-rolled primitive library at `components/px/` built directly on `@base-ui-components/react`. The barrel export is `components/px/index.ts`.
+
+> **Candidate-surface exception (Phase 3C.2 LiveKit port).** `app/(interview)/` imports from a sealed shadcn enclave at `components/{ui,agents-ui,ai-elements}/` plus `hooks/agents-ui/` — populated by the shadcn CLI from the `@agents-ui` and `@ai-elements` registries (you own the source). The enclave hosts LiveKit's Agents UI block (`<AgentSessionView_01>`), audio visualizers, control bar, and chat transcript. **Dashboard files MUST NOT import from this enclave.** `app/globals.css` already maps the shadcn semantic tokens (`--background`, `--foreground`, `--primary`, `--destructive`, …) to the `--px-*` palette under `:root`, so installed components inherit the warm-light palette automatically. To update components, run `npx shadcn@latest add @agents-ui/<name>`.
 
 | Primitive | File |
 |---|---|

@@ -71,7 +71,7 @@ Each subdirectory has its own `CLAUDE.md` with context-specific rules. Always re
 | 2C.2 | Question bank generation (per-stage LLM, adaptive coverage, mandatory demotion, bundling, SSE) | ✅ done |
 | 3B | Candidates module (CRUD, resume + S3, kanban, PII redaction gate) | ✅ done |
 | 3C.1 | Scheduler invites + supersession chain; session pre-check / consent / OTP; **single-use token enforcement** atomic on `/start` | ✅ done |
-| 3C.2 | LiveKit room + token provisioning on `/start`; `interview_runtime` internal API; engine worker container with structured-interview state machine; candidate live UI (LiveSessionShell, hooks, transcript, progress banner) | ✅ done |
+| 3C.2 | LiveKit room + token provisioning on `/start`; `interview_runtime` internal API; engine worker container with structured-interview state machine; candidate live UI ported to LiveKit's `agent-starter-react` template via `@agents-ui` shadcn enclave (`<AgentSessionView_01>`, audio visualizers, control bar); engine graceful-close attribute (`session_outcome`); mid-session rejoin endpoint (`POST /rejoin`); realtime tuning (preemptive generation, dynamic endpointing, adaptive interruption) | ✅ done |
 | 3D | Real-time `analysis` (scoring, probe selection) + `reporting` (post-session report) | 🟡 pending |
 | ATS | Ceipal polling, Greenhouse/Workday adapters, outbound sync | 🟡 stubbed |
 
