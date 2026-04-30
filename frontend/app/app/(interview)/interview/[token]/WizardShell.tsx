@@ -2,12 +2,31 @@
 
 import { useMemo, useState } from 'react'
 
+import dynamic from 'next/dynamic'
+
+import type { StartSessionResponse } from '@/lib/api/candidate-session'
 import { useCandidateSession } from '@/lib/hooks/use-candidate-session'
 
 import { CameraMicStep } from './CameraMicStep'
 import { ConsentStep } from './ConsentStep'
 import { OtpStep } from './OtpStep'
 import { StartStep } from './StartStep'
+
+const LiveSessionShell = dynamic(
+  () =>
+    import('./LiveSession/LiveSessionShell').then((m) => m.LiveSessionShell),
+  {
+    ssr: false,
+    loading: () => (
+      <div
+        className="grid min-h-screen place-items-center text-[14px]"
+        style={{ color: 'var(--px-fg-2)' }}
+      >
+        Connecting…
+      </div>
+    ),
+  },
+)
 
 type WizardStepKey =
   | 'consent'
@@ -20,6 +39,7 @@ type WizardStepKey =
 export function WizardShell({ token }: { token: string }) {
   const { data, isLoading, error } = useCandidateSession(token)
   const [camMicPassed, setCamMicPassed] = useState(false)
+  const [creds, setCreds] = useState<StartSessionResponse | null>(null)
 
   const currentStep = useMemo<WizardStepKey>(() => {
     if (!data) return 'error'
@@ -67,6 +87,16 @@ export function WizardShell({ token }: { token: string }) {
 
   if (!data) return null
 
+  if (data.state === 'active' && creds) {
+    return (
+      <LiveSessionShell
+        livekitUrl={creds.livekit_url}
+        livekitToken={creds.livekit_token}
+        roomName={creds.room_name}
+      />
+    )
+  }
+
   return (
     <WizardFrame
       companyName={data.company_name}
@@ -102,7 +132,7 @@ export function WizardShell({ token }: { token: string }) {
         <CameraMicStep onPass={() => setCamMicPassed(true)} />
       )}
       {currentStep === 'cam-mic' && camMicPassed && (
-        <StartStep token={token} />
+        <StartStep token={token} onStarted={setCreds} />
       )}
       {currentStep === 'already-started' && <AlreadyStartedPanel />}
     </WizardFrame>

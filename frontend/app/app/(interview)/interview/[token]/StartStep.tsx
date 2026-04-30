@@ -4,11 +4,15 @@ import { useState } from 'react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/px'
-import type { CandidateSessionError } from '@/lib/api/candidate-session'
+import type {
+  CandidateSessionError,
+  StartSessionResponse,
+} from '@/lib/api/candidate-session'
 import { useStartSession } from '@/lib/hooks/use-start-session'
 
 interface Props {
   token: string
+  onStarted: (creds: StartSessionResponse) => void
 }
 
 function asCandidateError(err: Error): CandidateSessionError | null {
@@ -18,13 +22,15 @@ function asCandidateError(err: Error): CandidateSessionError | null {
   return null
 }
 
-export function StartStep({ token }: Props) {
+export function StartStep({ token, onStarted }: Props) {
   const start = useStartSession(token)
-  const [outcome, setOutcome] = useState<'pending' | 'replay' | null>(null)
+  const [outcome, setOutcome] = useState<'replay' | null>(null)
 
   const onStart = () => {
     start.mutate(undefined, {
-      onSuccess: () => setOutcome('pending'),
+      onSuccess: (resp) => {
+        onStarted(resp)
+      },
       onError: (err) => {
         const ce = asCandidateError(err)
         if (ce?.status === 409 || ce?.code === 'TOKEN_ALREADY_USED') {
@@ -34,33 +40,6 @@ export function StartStep({ token }: Props) {
         }
       },
     })
-  }
-
-  if (outcome === 'pending') {
-    return (
-      <section
-        className="rounded-[12px] border p-10 text-center"
-        style={{
-          background: 'var(--px-surface)',
-          borderColor: 'var(--px-hairline)',
-        }}
-      >
-        <h2
-          className="px-serif m-0 mb-3 text-[28px] font-normal"
-          style={{ letterSpacing: '-0.5px', color: 'var(--px-fg)' }}
-        >
-          Interview coming soon
-        </h2>
-        <p
-          className="mx-auto max-w-md text-[14px]"
-          style={{ color: 'var(--px-fg-2)', lineHeight: 1.7 }}
-        >
-          We&apos;ve received your pre-check. The live interview experience
-          rolls out in the next release — we&apos;ll email you when it&apos;s
-          ready.
-        </p>
-      </section>
-    )
   }
 
   if (outcome === 'replay') {
