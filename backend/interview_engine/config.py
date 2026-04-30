@@ -48,3 +48,18 @@ class InterviewEngineConfig(BaseSettings):
     # On POST failure (3 retries exhausted), it writes JSON to this directory
     # so the result isn't lost. Alerted via structlog CRITICAL.
     results_fallback_dir: Path = Path("/tmp/interview_results")
+
+    # -- Audio pipeline observability --------------------------------------
+    # When True, emit structlog records for every STT/VAD/EOU/agent-state
+    # event during the session. Useful when debugging "the agent isn't
+    # hearing me" or "the transcripts look wrong" in noisy environments.
+    # Always logs the SHAPE of each event (state transitions, character
+    # counts, latency metrics). The actual transcript text is only logged
+    # when ``log_user_transcripts`` is also True (gated separately because
+    # raw transcripts are PII per the root CLAUDE.md PII discipline rule).
+    log_audio_events: bool = False
+
+    # When True, ``audio.stt.transcribed`` records include the verbatim
+    # transcript field. DEV / LOCAL ONLY -- raw transcripts are PII and
+    # must never be enabled in production. Implies ``log_audio_events``.
+    log_user_transcripts: bool = False

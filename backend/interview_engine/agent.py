@@ -20,9 +20,14 @@ import structlog
 from livekit.agents import (
     AgentServer,
     AgentSession,
+    AgentStateChangedEvent,
+    ErrorEvent,
     JobContext,
     JobProcess,
+    MetricsCollectedEvent,
     TurnHandlingOptions,
+    UserInputTranscribedEvent,
+    UserStateChangedEvent,
     cli,
     room_io,
 )
@@ -120,6 +125,9 @@ async def entrypoint(ctx: JobContext) -> None:
         ),
     )
 
+    if engine_cfg.log_audio_events:
+        _wire_audio_observability(session, log_transcripts=engine_cfg.log_user_transcripts)
+
     await session.start(
         agent=agent,
         room=ctx.room,
@@ -129,6 +137,79 @@ async def entrypoint(ctx: JobContext) -> None:
             ),
         ),
     )
+
+
+def _wire_audio_observability(
+    session: AgentSession, *, log_transcripts: bool
+) -> None:
+    """Attach structlog listeners to the AgentSession so an operator can see
+    what the audio pipeline is doing turn-by-turn.
+
+    The listeners are scoped to a single session (registered fresh each
+    entrypoint call). Each callback runs synchronously inside the
+    AgentSession event loop and contextvars (``session_id``,
+    ``correlation_id``) are still bound, so every emitted record carries
+    them automatically.
+
+    PII discipline: ``audio.stt.transcribed`` always logs character count
+    + finality flag, but the actual transcript text is gated behind
+    ``log_transcripts=True``. Raw transcripts are PII per the root
+    CLAUDE.md and must never be enabled outside dev / local.
+    """
+
+    @session.on("user_state_changed")
+    def _on_user_state(ev: UserStateChangedEvent) -> None:
+        # VAD-driven. listening -> speaking = candidate started talking;
+        # speaking -> listening = candidate stopped. If you never see this
+        # transition while you're talking, VAD isn't picking up your voice.
+        log.info(
+            "audio.user.state",
+            old_state=ev.old_state,
+            new_state=ev.new_state,
+        )
+
+    @session.on("agent_state_changed")
+    def _on_agent_state(ev: AgentStateChangedEvent) -> None:
+        # listening -> thinking = LLM call kicked off.
+        # thinking -> speaking = TTS playback started.
+        log.info(
+            "audio.agent.state",
+            old_state=ev.old_state,
+            new_state=ev.new_state,
+        )
+
+    @session.on("user_input_transcribed")
+    def _on_user_transcript(ev: UserInputTranscribedEvent) -> None:
+        kwargs: dict[str, object] = {
+            "is_final": ev.is_final,
+            "transcript_chars": len(ev.transcript),
+            "language": str(ev.language) if ev.language else None,
+        }
+        if log_transcripts:
+            kwargs["transcript"] = ev.transcript
+        log.info("audio.stt.transcribed", **kwargs)
+
+    @session.on("metrics_collected")
+    def _on_metrics(ev: MetricsCollectedEvent) -> None:
+        # Per-pipeline-stage metrics. The metrics object's ``type`` field
+        # is one of: vad_metrics, eou_metrics, stt_metrics, llm_metrics,
+        # tts_metrics. Discriminate on type so the resulting log records
+        # are easy to grep (e.g. ``grep audio.metrics.eou`` for EOU delays).
+        m = ev.metrics
+        try:
+            payload = m.model_dump(exclude={"timestamp", "metadata"})
+        except Exception:  # noqa: BLE001
+            payload = {"raw": str(m)}
+        log.info(f"audio.metrics.{m.type}", **payload)
+
+    @session.on("error")
+    def _on_error(ev: ErrorEvent) -> None:
+        log.error(
+            "audio.pipeline.error",
+            source=type(ev.source).__name__,
+            error=str(ev.error),
+            error_type=type(ev.error).__name__,
+        )
 
 
 if __name__ == "__main__":
