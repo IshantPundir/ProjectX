@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react'
 import dynamic from 'next/dynamic'
 
 import { APP_CONFIG_DEFAULTS, type AppConfig } from '@/app-config'
+import { CompletionScreen } from '@/components/interview/app/CompletionScreen'
 import { useCandidateSession } from '@/lib/hooks/use-candidate-session'
 
 import { CameraMicStep } from './CameraMicStep'
@@ -87,6 +88,11 @@ export function WizardShell({ token }: { token: string }) {
   }
 
   if (!data) return null
+
+  // Already completed → terminal screen, no rejoin button.
+  if (data.state === 'completed') {
+    return <CompletionScreen />
+  }
 
   // Active session → rejoin path. Bypasses cam-mic + consent (already passed).
   if (data.state === 'active') {

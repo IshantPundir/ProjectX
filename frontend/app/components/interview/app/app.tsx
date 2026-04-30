@@ -1,6 +1,5 @@
 'use client'
 
-import { ThemeProvider } from 'next-themes'
 import { Room, RoomEvent, TokenSource } from 'livekit-client'
 import type { DisconnectReason } from '@livekit/protocol'
 import { useSession } from '@livekit/components-react'
@@ -95,26 +94,24 @@ export function App({ appConfig, token, preCheck, mode }: Props) {
   }, [session])
 
   return (
-    <ThemeProvider attribute="class" forcedTheme="light">
-      <AgentSessionProvider session={session}>
-        <OutcomeWatcher
-          room={session.room}
-          onCompleted={onCompleted}
-          onError={setError}
-        />
-        <ViewController
-          appConfig={appConfig}
-          preCheck={preCheck}
-          mode={mode}
-          outcome={outcome}
-          errorCode={errorCode}
-          isStartPending={isStartPending}
-          onStart={onStart}
-          onError={setError}
-        />
-        <StartAudioButton label="Start audio" />
-      </AgentSessionProvider>
-    </ThemeProvider>
+    <AgentSessionProvider session={session}>
+      <OutcomeWatcher
+        room={session.room}
+        onCompleted={onCompleted}
+        onError={setError}
+      />
+      <ViewController
+        appConfig={appConfig}
+        preCheck={preCheck}
+        mode={mode}
+        outcome={outcome}
+        errorCode={errorCode}
+        isStartPending={isStartPending}
+        onStart={onStart}
+        onError={setError}
+      />
+      <StartAudioButton label="Start audio" />
+    </AgentSessionProvider>
   )
 }
 
