@@ -30,7 +30,7 @@
 - **Phase 2C.2** — done: question bank generation (adaptive coverage, mandatory demotion, per-stage LLM call, bundling discipline, SSE progress stream).
 - **Phase 3B** — done: candidates module (`candidates`, `candidate_job_assignments`, `candidate_stage_progress` tables; resume upload + S3; PII redaction gate; kanban board; created in migration 0013).
 - **Phase 3C.1** — done: scheduler invite/resend/revoke flow; candidate JWT mint + supersession chain; OTP code (CSPRNG + HMAC-SHA256 hash + constant-time verify); session pre-check / consent / OTP / start endpoints; **single-use token enforcement** via atomic `UPDATE … WHERE used_at IS NULL RETURNING` (`session/service.py:412–426`).
-- **Phase 3C.2** — pending: LiveKit room creation + token provisioning. `session.start` currently returns HTTP 501 `LIVEKIT_INTEGRATION_PENDING`.
+- **Phase 3C.2** — done: `/start` provisions a LiveKit room + mints candidate access token + dispatches the engine agent worker (`session/livekit.py`); new `interview_runtime` module exposes the internal API the engine reads `SessionConfig` from and posts `SessionResult` to (`/api/internal/sessions/{id}/{config,results}`). New tables `engine_dispatch_tokens` (tenant-scoped, RLS) and `engine_token_uses` (service-bypass, composite PK on `(jti, endpoint)` for atomic single-use enforcement) added in migration 0024.
 - **Phase 3D** — pending: real-time `analysis` (scoring, probe selection) and `reporting` (post-session report compilation).
 
 Stubbed modules (routers registered, no business logic yet): `ats`, `analysis`, `reporting`.
@@ -121,12 +121,17 @@ backend/nexus/
 │       │   ├── authz.py          ← require_scheduler_access
 │       │   └── errors.py
 │       ├── session/              ← Phase 3C — candidate session state machine + atomic single-use enforcement
-│       │   ├── router.py         ← candidate_session_router (/api/sessions/candidate/{token}/*) + session_router (/api/sessions/*)
-│       │   ├── service.py        ← pre_check, consent, request/verify OTP, start (501 for LiveKit), supersession + replay gates
+│       │   ├── router.py         ← candidate_session_router (/api/candidate-session/{token}/*) + session_router (/api/sessions/*)
+│       │   ├── service.py        ← pre_check, consent, request/verify OTP, start (LiveKit room + dispatch), supersession + replay gates
+│       │   ├── livekit.py        ← Phase 3C.2 — mint_candidate_lk_token, mint_engine_dispatch_jwt, dispatch_agent, cancel_room
 │       │   ├── state_machine.py  ← created → pre_check → consented → active → completed | cancelled | error
 │       │   ├── otp.py            ← CSPRNG generate_code + HMAC-SHA256 hash + constant-time verify
 │       │   ├── schemas.py
-│       │   └── errors.py         ← TokenAlreadyUsedError, TokenSupersededError, OtpInvalidError, etc.
+│       │   └── errors.py         ← TokenAlreadyUsedError, TokenSupersededError, OtpInvalidError, AgentDispatchFailedError
+│       ├── interview_runtime/    ← Phase 3C.2 — internal API for the engine container
+│       │   ├── router.py         ← /api/internal/sessions/{id}/config (GET) + /results (POST)
+│       │   ├── service.py        ← build_session_config, record_session_result, verify_engine_token
+│       │   └── schemas.py        ← SessionConfig, SessionResult, QuestionConfig, etc. (the wire contract)
 │       ├── ats/                  ← [Stub] Per-ATS adapters, polling, outbound sync
 │       ├── analysis/             ← [Stub] Real-time scoring, probe decision logic
 │       └── reporting/            ← [Stub] Report compilation, score aggregation
@@ -137,7 +142,7 @@ backend/nexus/
 │       ├── jd_reenrichment.txt      ← Call 2 — re-enrichment after signal edits
 │       ├── question_bank_common.txt ← Shared system prompt for question bank calls
 │       └── question_bank_<stage_type>.txt ← Per-stage-type system prompts
-├── migrations/                  ← Alembic — 23 revisions; head is `0023_tenant_hard_delete_cascade`
+├── migrations/                  ← Alembic — 24 revisions; head is `0024_engine_integration`
 │   └── versions/
 ├── tests/
 │   └── conftest.py              ← AsyncClient fixture
@@ -365,7 +370,8 @@ from openai import AsyncOpenAI
 | Module | What It Owns |
 |---|---|
 | `scheduler` | Invite send / resend / revoke. `send_invite` mints a candidate JWT (HS256) and inserts the matching `candidate_session_tokens` row (jti, tenant, session_id, expires_at). Resend creates a new token row and stamps `superseded_at + superseded_by` on the prior row, building a per-session supersession chain. Notification dispatch via the provider-agnostic notifications module. |
-| `session` | Two routers: `candidate_session_router` (candidate-facing, JWT in path) and `session_router` (recruiter-facing, read-only). State machine: `created → pre_check → consented → active → completed | cancelled | error`. OTP gate (CSPRNG 6-digit code, HMAC-SHA256 hash, 10-minute lifetime, max 3 attempts, 60s rate limit, constant-time compare). **Single-use token enforcement** is atomic on `/start` (`UPDATE … WHERE used_at IS NULL RETURNING`). `/start` currently returns HTTP 501 `LIVEKIT_INTEGRATION_PENDING` — Phase 3C.2 will wire LiveKit room creation + token provisioning. |
+| `session` | Two routers: `candidate_session_router` (candidate-facing, JWT in path) and `session_router` (recruiter-facing, read-only). State machine: `created → pre_check → consented → active → completed \| cancelled \| error`. OTP gate (CSPRNG 6-digit code, HMAC-SHA256 hash, 10-minute lifetime, max 3 attempts, 60s rate limit, constant-time compare). **Single-use token enforcement** is atomic on `/start` (`UPDATE … WHERE used_at IS NULL RETURNING`). Phase 3C.2 wired the LiveKit room + token provisioning: `/start` mints a candidate `room_join` token, mints + records an engine dispatch JWT, dispatches the agent, then atomically consumes the candidate token and transitions to `active` (502 `AGENT_DISPATCH_FAILED` if dispatch fails — token is NOT consumed in that case so the candidate can retry). LiveKit helpers live at `session/livekit.py`. |
+| `interview_runtime` | Phase 3C.2 internal API for the engine container. `verify_engine_token` validates the dispatch JWT (HS256 pinning, `purpose='engine_dispatch'` claim, atomic single-use INSERT into `engine_token_uses` per `(jti, endpoint)` with FK→IntegrityError translation). `build_session_config` walks session → assignment → candidate → job → stage → bank → snapshot → questions → ancestry-walked company profile to build the engine's `SessionConfig`. `record_session_result` atomically updates the session row gated on `state='active'`, idempotent on retry, writes an audit row. Router under `/api/internal/sessions/{id}/{config,results}` — auth middleware exempts `/api/internal/`. |
 
 ### Future Phases — Stubbed
 
@@ -486,7 +492,7 @@ Outbound emails (company admin invite, team invite, invite resend) build links p
 ## Database Migrations
 
 ### Current State
-The initial schema (6 tables, first-cut RLS policies, system role seeds, and the Supabase auth hook) lives in `backend/supabase/migrations/20260405000000_initial_schema.sql`. Every incremental change since Phase 2A has been an Alembic migration in `migrations/versions/`. Current head: `0023_tenant_hard_delete_cascade`.
+The initial schema (6 tables, first-cut RLS policies, system role seeds, and the Supabase auth hook) lives in `backend/supabase/migrations/20260405000000_initial_schema.sql`. Every incremental change since Phase 2A has been an Alembic migration in `migrations/versions/`. Current head: `0024_engine_integration`.
 
 Migrations so far:
 - `0001_phase_2b_columns` — signal editing + version columns
@@ -512,6 +518,7 @@ Migrations so far:
 - `0021_add_clients_blocked_at` — adds `clients.blocked_at TIMESTAMP NULL`. Pairs with `deleted_at` to define three tenant states (active / blocked / deleted) enforced at `/api/auth/login` and `get_current_user_roles`.
 - `0022_users_partial_unique_auth` — replaces the plain UNIQUE on `users.auth_user_id` with a partial unique index `WHERE deleted_at IS NULL`. Required so a re-invite after tenant soft-delete can re-bind the same Supabase Auth identity.
 - `0023_tenant_hard_delete_cascade` — drops `audit_log_tenant_id_fkey` + `audit_log_actor_id_fkey` (audit history outlives the rows it references); converts every other `tenant_id` FK to `ON DELETE CASCADE` so `DELETE FROM clients WHERE id = ?` propagates cleanly.
+- `0024_engine_integration` — **Phase 3C.2**: new `engine_dispatch_tokens` table (tenant-scoped, RLS pair with NULLIF) tracking issued engine JWTs per session; new `engine_token_uses` table (service-bypass-only, composite PK on `(jti, endpoint)`) providing atomic single-use enforcement for the engine's `/config` and `/results` calls. Adds 7 result columns to `sessions` (`livekit_room_name`, `agent_started_at`, `agent_completed_at`, `transcript`, `questions_asked`, `questions_skipped`, `total_probes_fired`).
 
 ### Going Forward
 - Future schema changes should use Alembic migrations in `migrations/versions/`.
