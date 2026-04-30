@@ -52,6 +52,29 @@ services:
       - .:/app
     command: dramatiq app.worker --processes 2 --threads 4
 
+  interview-engine:
+    build:
+      context: ..
+      dockerfile: interview_engine/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Engine talks to nexus on the compose network — not host.docker.internal.
+      - NEXUS_INTERNAL_BASE_URL=http://nexus:8000
+      # Supabase Postgres for any *direct* DB access (none today; engine only
+      # talks to nexus via HTTP). Kept here so engine debug shells can reach
+      # it without re-defining.
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@host.docker.internal:54322/postgres
+      - REDIS_URL=redis://redis:6379/0
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+      nexus:
+        condition: service_started
+
   redis:
     image: redis:7-alpine
     ports:

@@ -1,82 +1,92 @@
-# This is an example Dockerfile that builds a minimal container for running LK Agents
-# For more information on the build process, see https://docs.livekit.io/agents/ops/deployment/builds/
+# Phase 3C.2 — interview engine container.
+#
+# Build context = backend/ (set by docker-compose.yml so the COPY
+# commands below can reach both `nexus/` and `interview_engine/`).
+#
+# The engine installs nexus as a path-dep (see pyproject.toml) so it can
+# import:
+#   - app.modules.interview_runtime.schemas (wire contract)
+#   - app.ai.realtime  (LiveKit plugin factories)
+#   - app.ai.prompts   (interviewer prompt loader)
+#
+# Dependency isolation strategy
+# ─────────────────────────────
+# nexus pins openai<2 (via langfuse 2.x + instructor constraints).
+# livekit-agents>=1.5.4 requires openai>=2. A single shared site-packages
+# cannot satisfy both. Solution: two virtualenvs.
+#
+#   /venv/nexus  — nexus + its transitive deps (openai 1.x, langfuse 2.x)
+#   /venv/engine — livekit-agents + plugins + openai>=2
+#
+# At runtime PYTHONPATH is layered so that:
+#   1. /app/interview_engine  (engine source, editable-style)
+#   2. /app/nexus             (nexus source, editable-style)
+#   3. /venv/engine site-packages  (livekit, openai v2, …)
+#   4. /venv/nexus  site-packages  (langfuse, instructor, …)
+#
+# Because /venv/engine comes before /venv/nexus in PYTHONPATH, the engine's
+# openai v2 wins when `import openai` is resolved, while nexus-specific
+# packages (langfuse, instructor, asyncpg, sqlalchemy, …) resolve from the
+# nexus venv.
+#
 # syntax=docker/dockerfile:1
+FROM python:3.13-slim
 
-# Use the official UV Python base image with Python 3.13 on Debian Bookworm
-# UV is a fast Python package manager that provides better performance than pip
-# We use the slim variant to keep the image size smaller while still having essential tools
-ARG PYTHON_VERSION=3.13
-FROM ghcr.io/astral-sh/uv:python${PYTHON_VERSION}-bookworm-slim AS base
-
-# Keeps Python from buffering stdout and stderr to avoid situations where
-# the application crashes without emitting any logs due to buffering.
 ENV PYTHONUNBUFFERED=1
 
-# --- Build stage ---
-# Install dependencies, build native extensions, and prepare the application
-FROM base AS build
-
-# Install build dependencies required for Python packages with native extensions
-# gcc: C compiler needed for building Python packages with C extensions
-# g++: C++ compiler needed for building Python packages with C++ extensions
-# python3-dev: Python development headers needed for compilation
-# We clean up the apt cache after installation to keep the image size down
-RUN apt-get update && apt-get install -y \
-    gcc \
-    g++ \
-    python3-dev \
-  && rm -rf /var/lib/apt/lists/*
-
-# Create a new directory for our application code
-# And set it as the working directory
-WORKDIR /app
-
-# Copy just the dependency files first, for more efficient layer caching
-COPY pyproject.toml uv.lock ./
-RUN mkdir -p src
-
-# Install Python dependencies using UV's lock file
-# --locked ensures we use exact versions from uv.lock for reproducible builds
-# This creates a virtual environment and installs all dependencies
-# Ensure your uv.lock file is checked in for consistency across environments
-RUN uv sync --locked
-
-# Copy all remaining application files into the container
-# This includes source code, configuration files, and dependency specifications
-# (Excludes files specified in .dockerignore)
-COPY . .
-
-# Pre-download any ML models or files the agent needs
-# This ensures the container is ready to run immediately without downloading
-# dependencies at runtime, which improves startup time and reliability
-RUN uv run "agent.py" download-files
-
-# --- Production stage ---
-# Build tools (gcc, g++, python3-dev) are not included in the final image
-FROM base
-
-# Create a non-privileged user that the app will run under.
-# See https://docs.docker.com/build/building/best-practices/#user
-ARG UID=10001
-RUN adduser \
-    --disabled-password \
-    --gecos "" \
-    --home "/app" \
-    --shell "/sbin/nologin" \
-    --uid "${UID}" \
-    appuser
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy the application and virtual environment with correct ownership in a single layer
-# This avoids expensive recursive chown and excludes build tools from the final image
-COPY --from=build --chown=appuser:appuser /app /app
+# Copy both packages (both live in the backend/ build context).
+COPY nexus /app/nexus
+COPY interview_engine /app/interview_engine
 
-# Switch to the non-privileged user for all subsequent operations
-# This improves security by not running as root
+RUN pip install --no-cache-dir uv
+
+# ── nexus venv ─────────────────────────────────────────────────────────────
+# Install nexus + its full dependency tree into an isolated venv.
+# This satisfies nexus's openai<2 / langfuse<3 / instructor<2 constraints
+# without leaking them into the engine's package set.
+RUN uv venv /venv/nexus --python python3.13 \
+    && uv pip install --python /venv/nexus/bin/python -e /app/nexus
+
+# ── engine venv ─────────────────────────────────────────────────────────────
+# Install the engine's direct dependencies (excluding nexus itself — nexus
+# source is imported directly via PYTHONPATH). livekit-agents requires
+# openai>=2, which is incompatible with nexus's pin, so it lives here.
+RUN uv venv /venv/engine --python python3.13 \
+    && uv pip install --python /venv/engine/bin/python \
+        "livekit-agents[silero,turn-detector]>=1.5.4" \
+        "livekit-plugins-ai-coustics>=0.2.7" \
+        "livekit-plugins-noise-cancellation~=0.2" \
+        "livekit-plugins-deepgram>=1.5.4" \
+        "livekit-plugins-openai>=1.5.4" \
+        "livekit-plugins-cartesia>=1.5.4" \
+        "pydantic>=2.0" \
+        "pydantic-settings>=2.0" \
+        "python-dotenv>=1.2.2" \
+        "structlog>=24.0" \
+        "httpx>=0.27"
+
+WORKDIR /app/interview_engine
+
+# Drop privileges before runtime.
+RUN useradd --system --uid 10001 --home /app appuser \
+    && chown -R appuser:appuser /app /venv
 USER appuser
 
-# Run the application using UV
-# UV will activate the virtual environment and run the agent.
-# The "start" command tells the worker to connect to LiveKit and begin waiting for jobs.
-CMD ["uv", "run", "agent.py", "start"]
+# Runtime PYTHONPATH layer order (first wins on name collision):
+#   engine source → nexus source → engine site-packages → nexus site-packages
+#
+# This ensures:
+#   - agent.py / state_machine.py / etc resolve from /app/interview_engine
+#   - app.* imports resolve from /app/nexus
+#   - livekit / openai v2 resolve from /venv/engine
+#   - langfuse / instructor / asyncpg / sqlalchemy resolve from /venv/nexus
+ENV PYTHONPATH="/app/interview_engine:/app/nexus:/venv/engine/lib/python3.13/site-packages:/venv/nexus/lib/python3.13/site-packages"
+ENV PATH="/venv/engine/bin:/venv/nexus/bin:$PATH"
+
+CMD ["python", "agent.py", "start"]
