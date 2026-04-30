@@ -65,7 +65,7 @@ from tests.conftest import (
     create_test_client,
     create_test_user,
 )
-from tests.test_migration_0014 import _make_assignment_with_stage
+from tests.conftest import make_assignment_with_stage
 
 pytestmark = pytest.mark.asyncio
 
@@ -142,7 +142,7 @@ async def _seed_session(db: AsyncSession, tenant, user) -> uuid.UUID:
     """Build org_unit→job→instance→stage→candidate→assignment→session chain."""
     from app.models import Session as SessionModel
 
-    assignment, stage = await _make_assignment_with_stage(db, tenant, user)
+    assignment, stage = await make_assignment_with_stage(db, tenant, user)
     session = SessionModel(
         tenant_id=tenant.id,
         assignment_id=assignment.id,

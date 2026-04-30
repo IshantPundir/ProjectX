@@ -32,7 +32,7 @@ from app.main import app
 from app.models import CandidateSessionToken, Session
 from app.modules.auth.service import create_candidate_token
 from tests.conftest import create_test_client, create_test_user
-from tests.test_migration_0014 import _make_assignment_with_stage
+from tests.conftest import make_assignment_with_stage
 
 
 async def _make_session_and_token_row(
@@ -49,7 +49,7 @@ async def _make_session_and_token_row(
     await db.flush()
     user = await create_test_user(db, tenant.id)
     await db.flush()
-    assignment, stage = await _make_assignment_with_stage(db, tenant, user)
+    assignment, stage = await make_assignment_with_stage(db, tenant, user)
 
     session = Session(
         tenant_id=tenant.id,
