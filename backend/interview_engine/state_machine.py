@@ -11,7 +11,11 @@ import math
 import time
 from enum import StrEnum
 
-from models import QuestionConfig, SessionConfig, SteeringObservation
+from app.modules.interview_runtime.schemas import (
+    QuestionConfig,
+    SessionConfig,
+    SteeringObservation,
+)
 
 
 # ---------------------------------------------------------------------------
