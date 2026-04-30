@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     # Forward-declared so type checkers see the right return types without
     # forcing a runtime import. Only the engine container has these
     # packages installed.
-    from livekit.agents import TurnDetectionMode
+    from livekit.agents.voice.turn import TurnDetectionMode
     from livekit.plugins.ai_coustics import AudioEnhancement
     from livekit.plugins.cartesia import TTS
     from livekit.plugins.deepgram import STT
@@ -47,7 +47,10 @@ def build_llm_plugin() -> "LLM":
     """Construct the realtime OpenAI LLM plugin from AIConfig."""
     from livekit.plugins import openai
 
-    return openai.LLM(model=ai_config.interview_llm_model)
+    return openai.LLM(
+        model=ai_config.interview_llm_model,
+        reasoning_effort=ai_config.interview_reasoning_effort,
+    )
 
 
 def build_tts_plugin() -> "TTS":
@@ -64,9 +67,13 @@ def build_tts_plugin() -> "TTS":
 def build_turn_detector() -> "TurnDetectionMode":
     """Construct the LiveKit multilingual turn-detector model.
 
-    Currently no AIConfig knobs — the model is the only option in
-    livekit.plugins.turn_detector.multilingual today. If future versions
-    expose tunables, expose them on AIConfig and read here.
+    `MultilingualModel` accepts an `unlikely_threshold: float | None`
+    tunable that raises the EOU (end-of-utterance) confidence floor.
+    Useful in interview contexts where candidates pause to think and a
+    too-eager turn-end fires a probe before the candidate finishes the
+    answer. We don't expose this as an AIConfig knob yet — defer to the
+    plugin default until we have evidence a per-deploy override is
+    needed.
     """
     from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
