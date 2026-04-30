@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
@@ -21,6 +21,7 @@ from app.models import (
     CandidateJobAssignment,
     JobPipelineStage,
     JobPosting,
+    JobPostingSignalSnapshot,
     Session as SessionRow,
     StageQuestion,
     StageQuestionBank,
@@ -39,7 +40,6 @@ from app.modules.interview_runtime.schemas import (
     StageConfig,
 )
 from app.modules.org_units.service import find_company_profile_in_ancestry
-from app.modules.question_bank.service import get_latest_confirmed_snapshot
 
 _AI_STAGE_TYPES = frozenset({"ai_screening", "phone_screen"})
 
@@ -119,12 +119,23 @@ async def build_session_config(
             f"{getattr(bank, 'status', None)} stale={getattr(bank, 'is_stale', None)}"
         )
 
-    # Latest CONFIRMED signal snapshot — same predicate used in
-    # app/modules/question_bank/service.py (get_latest_confirmed_snapshot,
-    # lines 64-80) to find the snapshot that gates question-bank generation.
-    # role_summary, seniority_level, and signals all come from here, not
-    # from JobPosting (which has no such columns).
-    snapshot = await get_latest_confirmed_snapshot(db, job.id)
+    # Latest CONFIRMED signal snapshot. Inlined here (rather than delegating
+    # to the question_bank.service helper) so the explicit tenant_id filter
+    # is visible at the call site — spec Section 6.3 mandates explicit
+    # application-layer tenant scoping on every query in this module since
+    # the bypass session leaves RLS off.
+    snapshot = (
+        await db.execute(
+            select(JobPostingSignalSnapshot)
+            .where(
+                JobPostingSignalSnapshot.job_posting_id == job.id,
+                JobPostingSignalSnapshot.tenant_id == tenant_id,
+                JobPostingSignalSnapshot.confirmed_at.is_not(None),
+            )
+            .order_by(desc(JobPostingSignalSnapshot.version))
+            .limit(1)
+        )
+    ).scalar_one_or_none()
     if snapshot is None:
         raise ValueError(
             f"job {job.id} has no confirmed signal snapshot — bank.status='ready' was inconsistent"
