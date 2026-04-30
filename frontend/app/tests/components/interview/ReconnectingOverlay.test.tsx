@@ -17,17 +17,17 @@ describe('ReconnectingOverlay', () => {
   })
 
   it('renders when reconnecting and clears when reconnected', () => {
-    useSessionContextMock.mockReturnValue({ state: 'reconnecting' })
+    useSessionContextMock.mockReturnValue({ connectionState: 'reconnecting' })
     const { rerender } = render(<ReconnectingOverlay onTimeout={() => {}} />)
     expect(screen.getByText(/Reconnecting/i)).toBeInTheDocument()
 
-    useSessionContextMock.mockReturnValue({ state: 'connected' })
+    useSessionContextMock.mockReturnValue({ connectionState: 'connected' })
     rerender(<ReconnectingOverlay onTimeout={() => {}} />)
     expect(screen.queryByText(/Reconnecting/i)).toBeNull()
   })
 
   it('fires onTimeout after 30 seconds of reconnecting', () => {
-    useSessionContextMock.mockReturnValue({ state: 'reconnecting' })
+    useSessionContextMock.mockReturnValue({ connectionState: 'reconnecting' })
     const onTimeout = vi.fn()
     render(<ReconnectingOverlay onTimeout={onTimeout} />)
     act(() => {

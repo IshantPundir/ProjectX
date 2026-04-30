@@ -9,17 +9,19 @@ interface Props {
 }
 
 /**
- * Renders a dimming overlay while the LiveKit session is in 'reconnecting' state.
+ * Renders a dimming overlay while the LiveKit session is reconnecting.
  * Fires onTimeout after timeoutMs (default 30s) of continuous reconnect, so the
  * caller can route to DisconnectError with code RECONNECT_FAILED.
  *
- * Outcome state is owned by the parent <App>; this component is purely UI + a
- * timer. The state shape returned by useSessionContext is verified at runtime —
- * we read the literal string 'reconnecting' loosely.
+ * `connectionState` here is livekit-client's ConnectionState enum, exposed
+ * through useSessionContext's return value. Both 'reconnecting' and
+ * 'signalReconnecting' indicate an in-flight reconnect.
  */
 export function ReconnectingOverlay({ onTimeout, timeoutMs = 30_000 }: Props) {
-  const ctx = useSessionContext() as unknown as { state?: string }
-  const isReconnecting = ctx?.state === 'reconnecting'
+  const ctx = useSessionContext() as unknown as { connectionState?: string }
+  const isReconnecting =
+    ctx?.connectionState === 'reconnecting' ||
+    ctx?.connectionState === 'signalReconnecting'
   const firedRef = useRef(false)
 
   useEffect(() => {
