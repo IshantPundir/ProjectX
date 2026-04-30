@@ -117,7 +117,7 @@ async def build_session_config(
             )
         )
     ).scalar_one_or_none()
-    if bank is None or bank.status != "ready" or bank.is_stale:
+    if bank is None or bank.status != "confirmed" or bank.is_stale:
         raise QuestionBankNotReadyError(
             "bank state status="
             f"{getattr(bank, 'status', None)} stale={getattr(bank, 'is_stale', None)}"
@@ -142,7 +142,7 @@ async def build_session_config(
     ).scalar_one_or_none()
     if snapshot is None:
         raise ValueError(
-            f"job {job.id} has no confirmed signal snapshot — bank.status='ready' was inconsistent"
+            f"job {job.id} has no confirmed signal snapshot — bank.status='confirmed' was inconsistent"
         )
 
     questions = (

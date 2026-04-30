@@ -14,7 +14,13 @@ class StageNotAiDrivenError(Exception):
 
 
 class QuestionBankNotReadyError(Exception):
-    """409 — bank.status != 'ready' or is_stale."""
+    """409 — bank.status != 'confirmed' or is_stale.
+
+    'confirmed' is the recruiter-final terminal state in the question_bank
+    state machine (draft → generating → reviewing → confirmed). The engine
+    refuses to run an interview against a bank the recruiter hasn't
+    explicitly signed off on.
+    """
 
 
 class SessionNotActiveError(Exception):

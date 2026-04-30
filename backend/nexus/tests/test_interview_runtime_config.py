@@ -1,7 +1,7 @@
 """build_session_config — happy + reject paths.
 
 Verifies: stage-type allowlist (ai_screening + phone_screen), bank readiness
-gate (status='ready' AND is_stale=False), cross-tenant isolation, missing
+gate (status='confirmed' AND is_stale=False), cross-tenant isolation, missing
 company_profile rejection, mandatory-question ordering, and the PII
 guard (CandidateContext serialization has no email field).
 """
@@ -79,7 +79,7 @@ async def _seed_full_session_chain(
     db,
     *,
     stage_type: str = "ai_screening",
-    bank_status: str = "ready",
+    bank_status: str = "confirmed",
     bank_is_stale: bool = False,
     company_profile: object = None,
     snapshot_confirmed: bool = True,
@@ -327,7 +327,7 @@ async def test_bank_draft_rejected(db):
 
 async def test_bank_stale_rejected(db):
     session_id, tenant_id = await _seed_full_session_chain(
-        db, bank_status="ready", bank_is_stale=True,
+        db, bank_status="confirmed", bank_is_stale=True,
     )
     with pytest.raises(QuestionBankNotReadyError):
         await build_session_config(db, session_id=session_id, tenant_id=tenant_id)
