@@ -26,10 +26,17 @@ from livekit.agents import (
     cli,
     room_io,
 )
-# silero is the only `livekit.plugins.*` import allowed in this file —
-# VAD prewarm runs once at process startup, not per-session, so it does
-# not go through the app.ai.realtime factory layer.
+# Process-startup plugin imports. Each of these calls Plugin.register_plugin()
+# at module load time, which is what `python agent.py download-files`
+# discovers to prewarm model files at container build time. Per the
+# `app.ai.realtime` carve-out (see backend/nexus/CLAUDE.md): direct vendor
+# SDK imports are forbidden EXCEPT for process-startup model registration
+# of plugins that need local model files. Silero (VAD), turn_detector
+# (multilingual EOU), and ai_coustics (noise cancellation) all qualify.
+# Session-time instantiation still goes through `app.ai.realtime.build_*`.
+from livekit.plugins import ai_coustics  # noqa: F401  (download-files registration)
 from livekit.plugins import silero
+from livekit.plugins.turn_detector import multilingual as _turn_detector_multilingual  # noqa: F401
 
 from app.ai.realtime import (
     build_llm_plugin,
