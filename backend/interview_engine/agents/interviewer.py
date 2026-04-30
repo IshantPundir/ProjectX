@@ -201,6 +201,7 @@ class InterviewerAgent(Agent):
         if action == Action.CLOSE:
             result = self._build_session_result()
             await self._persist_result(result)
+            await self._publish_session_outcome("completed")
 
         return context_injection
 
@@ -239,6 +240,31 @@ class InterviewerAgent(Agent):
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "interview.progress.publish_failed",
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+
+    async def _publish_session_outcome(self, outcome: str) -> None:
+        """Publish the final session outcome on the agent's local participant.
+
+        The candidate's frontend ``useSessionOutcome`` hook reads this
+        attribute on the Disconnected event to route between
+        ``CompletionScreen`` (``outcome='completed'``) and
+        ``DisconnectError`` with code ``ENGINE_ERROR`` (``outcome='error'``).
+
+        Best-effort — a failure here must not abort shutdown; the frontend
+        falls back to ``UNEXPECTED_DISCONNECT`` in that case, which is still
+        better than crashing the agent on the way out.
+        """
+        try:
+            room = self.session.room_io.room
+            await room.local_participant.set_attributes(
+                {"session_outcome": outcome},
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "interview.outcome.publish_failed",
+                outcome=outcome,
                 error=str(exc),
                 error_type=type(exc).__name__,
             )
