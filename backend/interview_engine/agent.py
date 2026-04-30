@@ -1,17 +1,21 @@
 """ProjectX Interview Engine — LiveKit Agent entrypoint.
 
-Connects to LiveKit Cloud (or self-hosted), registers as an available
-agent worker, and waits to be dispatched into interview rooms. Each
-dispatch creates an InterviewerAgent that conducts a structured
-technical interview driven by a deterministic state machine.
-
-Uses direct provider API keys (Deepgram, OpenAI, Cartesia) instead of
-the LiveKit inference gateway — cheaper, no shared credit pool, no
-gateway rate limits. LiveKit is still used for WebRTC rooms/transport.
+Per-session entrypoint:
+  1. Parse dispatch metadata (session_id, engine_jwt, correlation_id).
+  2. Bind structlog contextvars so every log line carries them.
+  3. Fetch SessionConfig from nexus's /api/internal/sessions/{id}/config.
+  4. Build InterviewerAgent (state machine + system prompt + tool).
+  5. Build AgentSession using app.ai.realtime factories — the engine
+     never imports livekit.plugins.* directly except for VAD prewarm,
+     which is process-startup-only and not a session-time AI plugin.
+  6. Start the session.
 """
 
+from __future__ import annotations
+
+import json
+
 import structlog
-from dotenv import load_dotenv
 
 from livekit.agents import (
     AgentServer,
@@ -22,81 +26,91 @@ from livekit.agents import (
     cli,
     room_io,
 )
+# silero is the only `livekit.plugins.*` import allowed in this file —
+# VAD prewarm runs once at process startup, not per-session, so it does
+# not go through the app.ai.realtime factory layer.
 from livekit.plugins import silero
-from livekit.plugins.turn_detector.multilingual import MultilingualModel
-from livekit.plugins import ai_coustics
-from livekit.plugins import deepgram
-from livekit.plugins import openai
-from livekit.plugins import cartesia
 
-from config import InterviewEngineConfig
-from context_loader import load_session_config
+from app.ai.realtime import (
+    build_llm_plugin,
+    build_noise_cancellation,
+    build_stt_plugin,
+    build_turn_detector,
+    build_tts_plugin,
+)
 from agents.interviewer import InterviewerAgent
+from config import InterviewEngineConfig
+from nexus_client import fetch_session_config
 
-load_dotenv(".env")
 
-logger = structlog.get_logger("interview-engine")
-
-engine_config = InterviewEngineConfig()
-
+log = structlog.get_logger("interview-engine")
+engine_cfg = InterviewEngineConfig()
 server = AgentServer()
 
 
 def prewarm(proc: JobProcess) -> None:
-    """Prewarm: load Silero VAD at worker startup (not per-session)."""
+    """Load Silero VAD into shared process memory at worker startup."""
     proc.userdata["vad"] = silero.VAD.load()
 
 
 server.setup_fnc = prewarm
 
 
-@server.rtc_session(agent_name="Dakota-1785")
+@server.rtc_session(agent_name=engine_cfg.agent_name)
 async def entrypoint(ctx: JobContext) -> None:
     """Per-session entrypoint.
 
-    1. Load session config (fixture or room metadata)
-    2. Create InterviewerAgent (state machine + system prompt + tool)
-    3. Start AgentSession with direct provider STT/LLM/TTS
+    Reads dispatch metadata Nexus injected at /start time. The engine_jwt
+    is single-use per (jti, endpoint) — fetch_session_config consumes the
+    'config' slot; InterviewerAgent (Task 5.8) consumes the 'results' slot
+    on close.
     """
-    session_config = await load_session_config(engine_config)
+    metadata = json.loads(ctx.job.metadata or "{}")
 
-    logger.info(
-        "session.dispatched",
-        session_id=session_config.session_id,
-        job_title=session_config.job_title,
-        candidate=session_config.candidate.name,
-        question_count=len(session_config.stage.questions),
+    # Required keys. Missing keys will raise KeyError, which surfaces in
+    # logs as a worker error — desired loud failure if Nexus's dispatcher
+    # ever sends a malformed payload.
+    session_id = metadata["session_id"]
+    engine_jwt = metadata["engine_jwt"]
+    correlation_id = metadata.get("correlation_id", session_id)
+
+    structlog.contextvars.bind_contextvars(
+        session_id=session_id,
+        correlation_id=correlation_id,
+    )
+    log.info("engine.dispatch.received", agent_name=engine_cfg.agent_name)
+
+    config = await fetch_session_config(
+        session_id=session_id,
+        jwt=engine_jwt,
+        base_url=engine_cfg.nexus_internal_base_url,
+    )
+    log.info(
+        "engine.config.fetched",
+        question_count=len(config.stage.questions),
+        stage_type=config.stage.stage_type,
     )
 
     agent = InterviewerAgent(
-        session_config=session_config,
-        engine_config=engine_config,
+        session_config=config,
+        engine_config=engine_cfg,
+        nexus_jwt=engine_jwt,
+        nexus_base_url=engine_cfg.nexus_internal_base_url,
     )
 
     session = AgentSession(
-        # Direct provider plugins — each reads its API key from env:
-        #   DEEPGRAM_API_KEY, OPENAI_API_KEY, CARTESIA_API_KEY
-        stt=deepgram.STT(
-            model=engine_config.stt_model,
-            language=engine_config.stt_language,
-        ),
-        llm=openai.LLM(
-            model=engine_config.interview_llm_model,
-        ),
-        tts=cartesia.TTS(
-            model=engine_config.tts_model,
-            voice=engine_config.tts_voice,
-            language=engine_config.tts_language,
-        ),
+        stt=build_stt_plugin(),
+        llm=build_llm_plugin(),
+        tts=build_tts_plugin(),
+        vad=ctx.proc.userdata["vad"],
         turn_handling=TurnHandlingOptions(
-            turn_detection=MultilingualModel(),
+            turn_detection=build_turn_detector(),
             preemptive_generation={"enabled": False},
             endpointing={
-                "min_delay": engine_config.endpointing_min_delay,
-                "max_delay": engine_config.endpointing_max_delay,
+                "min_delay": engine_cfg.endpointing_min_delay,
+                "max_delay": engine_cfg.endpointing_max_delay,
             },
         ),
-        vad=ctx.proc.userdata["vad"],
     )
 
     await session.start(
@@ -104,9 +118,7 @@ async def entrypoint(ctx: JobContext) -> None:
         room=ctx.room,
         room_options=room_io.RoomOptions(
             audio_input=room_io.AudioInputOptions(
-                noise_cancellation=ai_coustics.audio_enhancement(
-                    model=ai_coustics.EnhancerModel.QUAIL_VF_L,
-                ),
+                noise_cancellation=build_noise_cancellation(),
             ),
         ),
     )
