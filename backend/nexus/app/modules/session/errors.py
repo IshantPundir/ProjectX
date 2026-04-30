@@ -6,7 +6,6 @@ HTTP mapping (applied by main.py exception handlers):
   409 — IllegalStartStateError, InvalidSessionStateError, TokenAlreadyUsedError
   422 — OtpRequiredError, OtpExpiredError, OtpMaxAttemptsReachedError, InvalidOtpError
   429 — OtpRateLimitedError
-  501 — LIVEKIT_INTEGRATION_PENDING (returned by service, not raised as exception)
   502 — AgentDispatchFailedError
 """
 
