@@ -77,5 +77,13 @@ class AIConfig:
     def interview_turn_detector_unlikely_threshold(self) -> float | None:
         return settings.interview_turn_detector_unlikely_threshold
 
+    @property
+    def interview_noise_cancellation_model(self) -> str:
+        return settings.interview_noise_cancellation_model
+
+    @property
+    def interview_noise_cancellation_level(self) -> float | None:
+        return settings.interview_noise_cancellation_level
+
 
 ai_config = AIConfig()

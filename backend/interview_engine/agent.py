@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 
 import structlog
 
@@ -33,7 +34,17 @@ from livekit.agents import (
     cli,
     room_io,
 )
-from livekit.agents.voice.events import CloseReason
+from livekit.agents.voice.events import (
+    AgentFalseInterruptionEvent,
+    CloseReason,
+    ConversationItemAddedEvent,
+    FunctionToolsExecutedEvent,
+    SessionUsageUpdatedEvent,
+    SpeechCreatedEvent,
+)
+from livekit.agents.inference.interruption import OverlappingSpeechEvent
+
+from app.ai.config import ai_config
 # Process-startup plugin imports. Each of these calls Plugin.register_plugin()
 # at module load time, which is what `python agent.py download-files`
 # discovers to prewarm model files at container build time. Per the
@@ -64,8 +75,25 @@ server = AgentServer()
 
 
 def prewarm(proc: JobProcess) -> None:
-    """Load Silero VAD into shared process memory at worker startup."""
-    proc.userdata["vad"] = silero.VAD.load()
+    """Load Silero VAD into shared process memory at worker startup.
+
+    Tuning knobs (``activation_threshold``, ``min_speech_duration``,
+    ``min_silence_duration``) come from ``InterviewEngineConfig`` so the
+    VAD sensitivity can be tuned per-deploy without a code change.
+    Lower ``activation_threshold`` makes VAD catch quieter speech at the
+    cost of occasional false-positive triggers from background noise.
+    """
+    proc.userdata["vad"] = silero.VAD.load(
+        activation_threshold=engine_cfg.silero_activation_threshold,
+        min_speech_duration=engine_cfg.silero_min_speech_duration,
+        min_silence_duration=engine_cfg.silero_min_silence_duration,
+    )
+    log.info(
+        "engine.vad.prewarmed",
+        activation_threshold=engine_cfg.silero_activation_threshold,
+        min_speech_duration=engine_cfg.silero_min_speech_duration,
+        min_silence_duration=engine_cfg.silero_min_silence_duration,
+    )
 
 
 server.setup_fnc = prewarm
@@ -105,6 +133,7 @@ async def entrypoint(ctx: JobContext) -> None:
         question_count=len(config.stage.questions),
         stage_type=config.stage.stage_type,
     )
+    _log_session_setup(config, engine_cfg)
 
     agent = InterviewerAgent(
         session_config=config,
@@ -154,7 +183,10 @@ async def entrypoint(ctx: JobContext) -> None:
     )
 
     if engine_cfg.log_audio_events:
-        _wire_audio_observability(session, log_transcripts=engine_cfg.log_user_transcripts)
+        _wire_session_observability(
+            session,
+            log_verbose_content=engine_cfg.log_user_transcripts,
+        )
 
     _wire_close_handler(session, agent)
 
@@ -169,23 +201,102 @@ async def entrypoint(ctx: JobContext) -> None:
     )
 
 
-def _wire_audio_observability(
-    session: AgentSession, *, log_transcripts: bool
-) -> None:
-    """Attach structlog listeners to the AgentSession so an operator can see
-    what the audio pipeline is doing turn-by-turn.
+def _log_session_setup(config, engine_cfg: InterviewEngineConfig) -> None:
+    """One-shot startup log written immediately after SessionConfig fetch.
 
-    The listeners are scoped to a single session (registered fresh each
-    entrypoint call). Each callback runs synchronously inside the
-    AgentSession event loop and contextvars (``session_id``,
-    ``correlation_id``) are still bound, so every emitted record carries
-    them automatically.
-
-    PII discipline: ``audio.stt.transcribed`` always logs character count
-    + finality flag, but the actual transcript text is gated behind
-    ``log_transcripts=True``. Raw transcripts are PII per the root
-    CLAUDE.md and must never be enabled outside dev / local.
+    Captures everything you'd want to compare across runs: model IDs (from
+    nexus's AIConfig), engine mechanics (probe budget, time-warning,
+    endpointing min/max), and the full question list (id, position,
+    mandatory flag, signals, estimated minutes). Without this log you
+    can't tell whether a regression came from a model change, an engine
+    knob change, or a content change in the question bank.
     """
+    log.info(
+        "engine.setup.models",
+        llm_model=ai_config.interview_llm_model,
+        llm_reasoning_effort=ai_config.interview_reasoning_effort,
+        stt_model=ai_config.interview_stt_model,
+        stt_language=ai_config.interview_stt_language,
+        tts_model=ai_config.interview_tts_model,
+        tts_voice=ai_config.interview_tts_voice,
+        tts_language=ai_config.interview_tts_language,
+        turn_detector_unlikely_threshold=ai_config.interview_turn_detector_unlikely_threshold,
+    )
+    log.info(
+        "engine.setup.tuning",
+        max_probes_per_question=engine_cfg.max_probes_per_question,
+        time_warning_threshold=engine_cfg.time_warning_threshold,
+        endpointing_min_delay=engine_cfg.endpointing_min_delay,
+        endpointing_max_delay=engine_cfg.endpointing_max_delay,
+        silero_activation_threshold=engine_cfg.silero_activation_threshold,
+        silero_min_speech_duration=engine_cfg.silero_min_speech_duration,
+        silero_min_silence_duration=engine_cfg.silero_min_silence_duration,
+        noise_cancellation_model=ai_config.interview_noise_cancellation_model,
+        noise_cancellation_level=ai_config.interview_noise_cancellation_level,
+    )
+    log.info(
+        "engine.setup.session",
+        session_id=config.session_id,
+        job_title=config.job_title,
+        seniority_level=config.seniority_level,
+        candidate_name=config.candidate.name,
+        company_industry=config.company.industry,
+        stage_type=config.stage.stage_type,
+        stage_name=config.stage.name,
+        duration_minutes=config.stage.duration_minutes,
+        difficulty=config.stage.difficulty,
+        total_questions=len(config.stage.questions),
+        mandatory_count=sum(1 for q in config.stage.questions if q.is_mandatory),
+        optional_count=sum(1 for q in config.stage.questions if not q.is_mandatory),
+        signals_total=len(config.signals),
+    )
+    for q in config.stage.questions:
+        log.info(
+            "engine.setup.question",
+            question_id=q.id,
+            position=q.position,
+            is_mandatory=q.is_mandatory,
+            estimated_minutes=q.estimated_minutes,
+            signal_values=q.signal_values,
+            text_chars=len(q.text),
+        )
+
+
+def _wire_session_observability(
+    session: AgentSession, *, log_verbose_content: bool
+) -> None:
+    """Attach structlog listeners covering every AgentSession event.
+
+    Each record carries ``elapsed_ms`` (relative to the first observed
+    event in this session) and ``wall_ms`` (event ``created_at`` rounded
+    to ms) so per-turn latency waterfalls can be reconstructed by
+    grepping for a session_id and sorting by ``elapsed_ms``.
+
+    The ``contextvars`` (``session_id``, ``correlation_id``) bound in
+    ``entrypoint`` flow through automatically, so every record is already
+    scoped to its session.
+
+    PII discipline:
+    - Always-on fields are metadata only (state names, finality flags,
+      character counts, token counts, latency numbers, error types).
+    - Verbose content (verbatim STT transcripts, LLM message bodies,
+      function-tool args/outputs) is gated behind ``log_verbose_content``
+      and must never be enabled in production. See root CLAUDE.md PII
+      discipline rule.
+    """
+    # Captured on the first event so elapsed_ms is meaningful for every
+    # subsequent record. Mutable container so the closure can write it.
+    state: dict[str, float | None] = {"t0_monotonic": None}
+
+    def _ts(ev_created_at: float) -> dict[str, int]:
+        now = time.monotonic()
+        if state["t0_monotonic"] is None:
+            state["t0_monotonic"] = now
+        elapsed_ms = int((now - state["t0_monotonic"]) * 1000)
+        return {
+            "elapsed_ms": elapsed_ms,
+            "wall_ms": int(ev_created_at * 1000),
+        }
 
     @session.on("user_state_changed")
     def _on_user_state(ev: UserStateChangedEvent) -> None:
@@ -196,16 +307,19 @@ def _wire_audio_observability(
             "audio.user.state",
             old_state=ev.old_state,
             new_state=ev.new_state,
+            **_ts(ev.created_at),
         )
 
     @session.on("agent_state_changed")
     def _on_agent_state(ev: AgentStateChangedEvent) -> None:
         # listening -> thinking = LLM call kicked off.
         # thinking -> speaking = TTS playback started.
+        # The gap between thinking and speaking is the LLM TTFT + TTS TTFB.
         log.info(
             "audio.agent.state",
             old_state=ev.old_state,
             new_state=ev.new_state,
+            **_ts(ev.created_at),
         )
 
     @session.on("user_input_transcribed")
@@ -214,23 +328,114 @@ def _wire_audio_observability(
             "is_final": ev.is_final,
             "transcript_chars": len(ev.transcript),
             "language": str(ev.language) if ev.language else None,
+            "speaker_id": ev.speaker_id,
         }
-        if log_transcripts:
+        if log_verbose_content:
             kwargs["transcript"] = ev.transcript
-        log.info("audio.stt.transcribed", **kwargs)
+        log.info("audio.stt.transcribed", **kwargs, **_ts(ev.created_at))
 
     @session.on("metrics_collected")
     def _on_metrics(ev: MetricsCollectedEvent) -> None:
         # Per-pipeline-stage metrics. The metrics object's ``type`` field
         # is one of: vad_metrics, eou_metrics, stt_metrics, llm_metrics,
-        # tts_metrics. Discriminate on type so the resulting log records
-        # are easy to grep (e.g. ``grep audio.metrics.eou`` for EOU delays).
+        # tts_metrics, realtime_model_metrics. Discriminate on type so
+        # the resulting log records are easy to grep
+        # (e.g. ``grep audio.metrics.llm`` for LLM TTFT and tokens).
         m = ev.metrics
         try:
             payload = m.model_dump(exclude={"timestamp", "metadata"})
         except Exception:  # noqa: BLE001
             payload = {"raw": str(m)}
-        log.info(f"audio.metrics.{m.type}", **payload)
+        log.info(f"audio.metrics.{m.type}", **payload, **_ts(ev.created_at))
+
+    @session.on("conversation_item_added")
+    def _on_conversation_item(ev: ConversationItemAddedEvent) -> None:
+        # Fired every time a chat message lands in the conversation
+        # history: user turns (post-STT-final) and assistant turns
+        # (LLM response, including any function-tool calls). The role
+        # + chars give shape; verbose content gives the actual body
+        # for prompt tuning.
+        item = ev.item
+        role = getattr(item, "role", None) or getattr(item, "type", None)
+        content_text = getattr(item, "text_content", None)
+        if callable(content_text):
+            try:
+                content_text = content_text()
+            except Exception:  # noqa: BLE001
+                content_text = None
+        kwargs: dict[str, object] = {
+            "role": role,
+            "item_type": getattr(item, "type", None),
+        }
+        if isinstance(content_text, str):
+            kwargs["content_chars"] = len(content_text)
+            if log_verbose_content:
+                kwargs["content"] = content_text
+        log.info("llm.message.added", **kwargs, **_ts(ev.created_at))
+
+    @session.on("function_tools_executed")
+    def _on_tools_executed(ev: FunctionToolsExecutedEvent) -> None:
+        # The LLM called one or more @function_tools. For us the only
+        # tool is record_observation, but log defensively in case more
+        # are added. The args + output are the load-bearing fields for
+        # debugging "did the LLM observe the right thing?" — they're
+        # PII-gated behind log_verbose_content.
+        for call, output in ev.zipped():
+            kwargs: dict[str, object] = {
+                "tool_name": call.name,
+                "tool_call_id": getattr(call, "call_id", None),
+                "has_output": output is not None,
+                "output_is_error": (
+                    bool(getattr(output, "is_error", False)) if output else None
+                ),
+            }
+            if log_verbose_content:
+                kwargs["arguments"] = getattr(call, "arguments", None)
+                kwargs["output"] = (
+                    getattr(output, "output", None) if output else None
+                )
+            log.info("llm.tool.executed", **kwargs, **_ts(ev.created_at))
+
+    @session.on("agent_false_interruption")
+    def _on_false_interruption(ev: AgentFalseInterruptionEvent) -> None:
+        # Adaptive interruption decided a sound burst (cough, background
+        # noise, brief candidate ack) wasn't a real interruption. resumed=
+        # True means the agent's speech kept going. False means it was
+        # cut off — adjust min_duration / interruption mode if you see
+        # too many of these.
+        log.info(
+            "audio.interruption.false",
+            resumed=ev.resumed,
+            **_ts(ev.created_at),
+        )
+
+    @session.on("overlapping_speech")
+    def _on_overlap(ev: OverlappingSpeechEvent) -> None:
+        log.info(
+            "audio.overlap",
+            **_ts(getattr(ev, "created_at", time.time())),
+        )
+
+    @session.on("session_usage_updated")
+    def _on_usage(ev: SessionUsageUpdatedEvent) -> None:
+        try:
+            usage = ev.usage.model_dump()
+        except Exception:  # noqa: BLE001
+            usage = {"raw": str(ev.usage)}
+        log.info("session.usage", **usage, **_ts(ev.created_at))
+
+    @session.on("speech_created")
+    def _on_speech_created(ev: SpeechCreatedEvent) -> None:
+        # source='generate_reply' = LLM-driven turn; source='say' = direct
+        # TTS injection (we use this for the greeting). user_initiated=
+        # True means our own code created it (vs an internal LiveKit-
+        # driven generation).
+        log.info(
+            "audio.speech.created",
+            source=ev.source,
+            user_initiated=ev.user_initiated,
+            **_ts(ev.created_at),
+        )
 
     @session.on("error")
     def _on_error(ev: ErrorEvent) -> None:
@@ -239,6 +444,7 @@ def _wire_audio_observability(
             source=type(ev.source).__name__,
             error=str(ev.error),
             error_type=type(ev.error).__name__,
+            **_ts(ev.created_at),
         )
 
 

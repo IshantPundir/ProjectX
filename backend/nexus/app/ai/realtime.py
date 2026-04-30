@@ -20,6 +20,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import structlog
+
 from app.ai.config import ai_config
 
 if TYPE_CHECKING:
@@ -32,11 +34,19 @@ if TYPE_CHECKING:
     from livekit.plugins.deepgram import STT
     from livekit.plugins.openai import LLM
 
+logger = structlog.get_logger("ai.realtime")
+
 
 def build_stt_plugin() -> "STT":
     """Construct the realtime Deepgram STT plugin from AIConfig."""
     from livekit.plugins import deepgram
 
+    logger.info(
+        "ai.realtime.stt.built",
+        provider="deepgram",
+        model=ai_config.interview_stt_model,
+        language=ai_config.interview_stt_language,
+    )
     return deepgram.STT(
         model=ai_config.interview_stt_model,
         language=ai_config.interview_stt_language,
@@ -44,19 +54,41 @@ def build_stt_plugin() -> "STT":
 
 
 def build_llm_plugin() -> "LLM":
-    """Construct the realtime OpenAI LLM plugin from AIConfig."""
+    """Construct the realtime OpenAI LLM plugin from AIConfig.
+
+    ``reasoning_effort`` is forwarded only when ``AIConfig.interview_reasoning_effort``
+    is non-empty. Per OpenAI's API contract, ``reasoning_effort`` is rejected
+    by non-reasoning chat models (``*-chat-latest``) — sending it returns
+    HTTP 400, which kills every LLM turn in the realtime pipeline. Reasoning
+    models (``gpt-5.1``, ``o3``, ``o4-mini``, ``gpt-5-pro``, …) accept the
+    parameter and benefit from the latency tuning it enables.
+    """
     from livekit.plugins import openai
 
-    return openai.LLM(
+    kwargs: dict[str, object] = {"model": ai_config.interview_llm_model}
+    if ai_config.interview_reasoning_effort:
+        kwargs["reasoning_effort"] = ai_config.interview_reasoning_effort
+
+    logger.info(
+        "ai.realtime.llm.built",
+        provider="openai",
         model=ai_config.interview_llm_model,
-        reasoning_effort=ai_config.interview_reasoning_effort,
+        reasoning_effort=ai_config.interview_reasoning_effort or None,
     )
+    return openai.LLM(**kwargs)
 
 
 def build_tts_plugin() -> "TTS":
     """Construct the realtime Cartesia TTS plugin from AIConfig."""
     from livekit.plugins import cartesia
 
+    logger.info(
+        "ai.realtime.tts.built",
+        provider="cartesia",
+        model=ai_config.interview_tts_model,
+        voice=ai_config.interview_tts_voice,
+        language=ai_config.interview_tts_language,
+    )
     return cartesia.TTS(
         model=ai_config.interview_tts_model,
         voice=ai_config.interview_tts_voice,
@@ -90,10 +122,41 @@ def build_turn_detector() -> "TurnDetectionMode":
 def build_noise_cancellation() -> "AudioEnhancement":
     """Construct the ai_coustics noise-cancellation enhancement.
 
-    Defaults to the Quail VF L model — the engine's existing choice.
-    Hoisted here for consistency; AIConfig knob can be added later if
-    we want to tune this per-deploy.
+    Model + ``enhancement_level`` are env-driven via ``AIConfig``. When the
+    level is None, the plugin's built-in default is used. Lowering the
+    level reduces how aggressively the model processes audio — important
+    when over-suppression attenuates a soft-spoken candidate's voice
+    enough that downstream Silero VAD never crosses its activation
+    threshold.
+
+    Model name is resolved against ``ai_coustics.EnhancerModel`` at call
+    time so config can name any model the plugin exposes (QUAIL_S,
+    QUAIL_L, QUAIL_VF_L, QUAIL_BV, …) without an engine code change.
     """
     from livekit.plugins import ai_coustics
 
-    return ai_coustics.audio_enhancement(model=ai_coustics.EnhancerModel.QUAIL_VF_L)
+    model_name = ai_config.interview_noise_cancellation_model
+    enhancement_level = ai_config.interview_noise_cancellation_level
+
+    try:
+        model = getattr(ai_coustics.EnhancerModel, model_name)
+    except AttributeError as exc:
+        raise ValueError(
+            f"Unknown ai_coustics enhancer model: {model_name!r}. "
+            f"Set INTERVIEW_NOISE_CANCELLATION_MODEL to one of the values "
+            f"in ai_coustics.EnhancerModel."
+        ) from exc
+
+    kwargs: dict[str, object] = {"model": model}
+    if enhancement_level is not None:
+        kwargs["model_parameters"] = ai_coustics.ModelParameters(
+            enhancement_level=enhancement_level,
+        )
+
+    logger.info(
+        "ai.realtime.noise_cancellation.built",
+        provider="ai_coustics",
+        model=model_name,
+        enhancement_level=enhancement_level,
+    )
+    return ai_coustics.audio_enhancement(**kwargs)

@@ -52,6 +52,31 @@ class InterviewEngineConfig(BaseSettings):
     endpointing_min_delay: float = 0.3
     endpointing_max_delay: float = 2.5
 
+    # -- Silero VAD --------------------------------------------------------
+    # Forwarded to silero.VAD.load() in agent.py::prewarm. Silero's own
+    # defaults are activation_threshold=0.5, min_speech_duration=0.05,
+    # min_silence_duration=0.55.
+    #
+    # activation_threshold = 0.3 (LiveKit default 0.5). Lower = more
+    #   sensitive detection. We override down to 0.3 because ai_coustics
+    #   noise cancellation runs *before* VAD and attenuates real voice
+    #   alongside noise; at 0.5 the cleaned signal often doesn't cross
+    #   the speech bar in real-world office environments. 0.3 also
+    #   aligns with the AssemblyAI-recommended VAD floor when downstream
+    #   STT does its own endpointing. Drop further (0.2-0.25) if even
+    #   0.3 misses your voice; raise back to 0.4-0.5 if VAD trips on
+    #   non-speech noise.
+    # min_speech_duration = 0.05 (Silero default). Minimum continuous
+    #   speech duration to start a speech chunk. Small so single-word
+    #   replies ("yes", "okay") aren't dropped.
+    # min_silence_duration = 0.55 (Silero default). Trailing silence
+    #   needed to declare the speech chunk complete. The dynamic
+    #   endpointing layer above stretches this further during real
+    #   pauses, so leave at default.
+    silero_activation_threshold: float = 0.3
+    silero_min_speech_duration: float = 0.05
+    silero_min_silence_duration: float = 0.55
+
     # -- Nexus internal API ------------------------------------------------
     # Compose-network hostname. Override via NEXUS_INTERNAL_BASE_URL env.
     nexus_internal_base_url: str = "http://nexus:8000"
@@ -63,16 +88,24 @@ class InterviewEngineConfig(BaseSettings):
     results_fallback_dir: Path = Path("/tmp/interview_results")
 
     # -- Audio pipeline observability --------------------------------------
-    # When True, emit structlog records for every STT/VAD/EOU/agent-state
-    # event during the session. Useful when debugging "the agent isn't
-    # hearing me" or "the transcripts look wrong" in noisy environments.
-    # Always logs the SHAPE of each event (state transitions, character
-    # counts, latency metrics). The actual transcript text is only logged
-    # when ``log_user_transcripts`` is also True (gated separately because
-    # raw transcripts are PII per the root CLAUDE.md PII discipline rule).
-    log_audio_events: bool = False
+    # When True, emit structlog records for every session event during the
+    # interview: VAD state transitions, STT finality, EOU decisions,
+    # agent-state changes, LLM/TTS metrics, function-tool calls, false
+    # interruptions, overlapping speech, session usage, errors, close.
+    # Each record carries ``elapsed_ms`` (relative to session start) and
+    # ``wall_ms`` (event ``created_at``) so per-turn latency waterfalls
+    # can be reconstructed from logs.
+    #
+    # Default ON because every field logged at this level is metadata only
+    # (state names, finality flags, character counts, token counts, latency
+    # numbers). No PII content is emitted from this flag alone.
+    log_audio_events: bool = True
 
-    # When True, ``audio.stt.transcribed`` records include the verbatim
-    # transcript field. DEV / LOCAL ONLY -- raw transcripts are PII and
-    # must never be enabled in production. Implies ``log_audio_events``.
+    # When True, verbose content fields are added to existing records:
+    # - ``audio.stt.transcribed`` includes the verbatim STT transcript
+    # - ``llm.message.added`` includes the assistant/user message body
+    # - ``llm.tool.executed`` includes the function-tool args + output
+    # DEV / LOCAL ONLY -- candidate transcripts and LLM I/O are PII per the
+    # root CLAUDE.md discipline. Must never be enabled in production.
+    # Implies ``log_audio_events``.
     log_user_transcripts: bool = False

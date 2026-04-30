@@ -190,15 +190,23 @@ class Settings(BaseSettings):
     # convention. Consumed by AIConfig (in app/ai/config.py) and the
     # plugin factories in app/ai/realtime.py.
     #
-    # reasoning_effort is "low" for the realtime LLM because medium/high
-    # reasoning effort adds 500ms-2s of first-token latency on every
-    # turn — fatal for sub-second conversational feel. The interview
-    # state machine is what actually drives interview rigor (probe
-    # selection, signal detection, mandatory-question coverage) — the
-    # LLM's job is to be a fluent conversationalist, which low effort
-    # handles cleanly.
+    # ``interview_reasoning_effort`` is forwarded to ``openai.LLM`` only
+    # when non-empty (see ``app/ai/realtime.py::build_llm_plugin``). Per
+    # OpenAI's API docs, ``reasoning_effort`` is **not supported for
+    # non-reasoning chat models** — sending it to ``*-chat-latest`` returns
+    # HTTP 400. Default is empty so the param is omitted, which is the
+    # correct contract for the default chat model below.
+    #
+    # When switching to a reasoning model (e.g. ``gpt-5.1``, ``o3``,
+    # ``o4-mini``, ``gpt-5-pro``), set ``INTERVIEW_REASONING_EFFORT`` to
+    # one of the model's documented values (``none|minimal|low|medium|
+    # high|xhigh`` — each model's allowed subset is in OpenAI's docs).
+    # Lower effort = lower first-token latency; ``low`` is a good default
+    # for the realtime conversational pipeline since the InterviewStateMachine
+    # — not the LLM — drives probe selection / signal detection / mandatory
+    # coverage. The LLM's job is to be a fluent conversationalist.
     interview_llm_model: str = "gpt-5.3-chat-latest"
-    interview_reasoning_effort: str = "low"
+    interview_reasoning_effort: str = ""
 
     # STT — Deepgram realtime
     interview_stt_model: str = "nova-3"
@@ -217,6 +225,23 @@ class Settings(BaseSettings):
     # trigger end-of-turn. Don't set blindly; tune from real session
     # latency data. Range: 0.0 – 1.0.
     interview_turn_detector_unlikely_threshold: float | None = None
+
+    # Noise cancellation — ai_coustics. Default is QUAIL_VF_L (Voice Focus
+    # Large, single-speaker isolation). Per LiveKit's published WER table,
+    # QUAIL_VF_L gives the best STT accuracy for agent pipelines (11.8%
+    # vs Krisp BVC's 23.5%). Other ai_coustics models: QUAIL_S (small,
+    # lightweight), QUAIL_L (background-noise suppression, less aggressive
+    # than VF_L), QUAIL_BV (broadband voice).
+    #
+    # ``interview_noise_cancellation_level`` (0.0–1.0) controls how
+    # aggressively the model processes audio. None = plugin built-in
+    # default. Lower = less aggressive (safer for soft-spoken candidates
+    # and quiet environments where over-suppression can attenuate real
+    # voice frames). LiveKit's docs use 0.8 in their published samples.
+    # 0.7 is a reasonable balance for office environments with HVAC noise
+    # without eating quieter speech.
+    interview_noise_cancellation_model: str = "QUAIL_VF_L"
+    interview_noise_cancellation_level: float | None = 0.7
 
     # Engine → Nexus internal API base URL. Read by the engine worker
     # (interview-engine container in docker-compose). Nexus itself does NOT

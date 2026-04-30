@@ -76,6 +76,17 @@ class InterviewerAgent(Agent):
         self.nexus_base_url = nexus_base_url
 
         system_prompt = build_system_prompt(session_config, engine_config)
+        logger.info(
+            "interview.system_prompt.built",
+            chars=len(system_prompt),
+            agent_name=engine_config.agent_name,
+            session_id=session_config.session_id,
+        )
+        if engine_config.log_user_transcripts:
+            logger.info(
+                "interview.system_prompt.body",
+                content=system_prompt,
+            )
 
         self._transcript: list[TranscriptEntry] = []
         self._session_start_ms: int = 0
@@ -102,6 +113,19 @@ class InterviewerAgent(Agent):
 
         greeting = self.state_machine.get_greeting_instruction()
         first_q = self.state_machine.get_first_question_context()
+
+        if self.engine_config.log_user_transcripts:
+            logger.info(
+                "interview.greeting.instruction",
+                greeting=greeting,
+                first_question_context=first_q,
+            )
+        else:
+            logger.info(
+                "interview.greeting.instruction",
+                greeting_chars=len(greeting),
+                first_question_context_chars=len(first_q),
+            )
 
         self.session.generate_reply(
             instructions=(
@@ -174,16 +198,25 @@ class InterviewerAgent(Agent):
             notes=notes,
         )
 
-        logger.info(
-            "observation.received",
-            summary=answer_summary[:120],
-            signals=signals_demonstrated,
-            wants_probe=wants_to_probe,
-            disengaged=candidate_disengaged,
-        )
+        observation_log: dict[str, object] = {
+            "summary": answer_summary[:120],
+            "signals": signals_demonstrated,
+            "wants_probe": wants_to_probe,
+            "disengaged": candidate_disengaged,
+        }
+        if self.engine_config.log_user_transcripts:
+            observation_log["full_summary"] = answer_summary
+            observation_log["notes"] = notes
+        logger.info("observation.received", **observation_log)
 
         action = self.state_machine.decide_next_action(observation)
         context_injection = self.state_machine.execute_action(action)
+        if self.engine_config.log_user_transcripts:
+            logger.info(
+                "interview.context_injection",
+                action=action.value,
+                content=context_injection,
+            )
 
         # Update participant attributes so the candidate's ProgressBanner
         # advances on each turn. Skipped on CLOSE (interview is wrapping

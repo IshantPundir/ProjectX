@@ -11,11 +11,15 @@ import math
 import time
 from enum import StrEnum
 
+import structlog
+
 from app.modules.interview_runtime.schemas import (
     QuestionConfig,
     SessionConfig,
     SteeringObservation,
 )
+
+logger = structlog.get_logger("interview-engine.state_machine")
 
 
 # ---------------------------------------------------------------------------
@@ -180,45 +184,83 @@ class InterviewStateMachine:
         """Decide what to do after the LLM reports an observation.
 
         This is the core decision function. Called after each candidate
-        answer has been summarised by the LLM.
+        answer has been summarised by the LLM. Emits a structlog
+        ``state_machine.decision`` record carrying the rule that fired
+        (``time_expired``, ``candidate_disengaged``, ``wants_probe``,
+        ``non_answer_skip_probe``, ``probes_exhausted``, ``time_critical``,
+        ``all_questions_done``, ``skip_optional_under_pressure``,
+        ``normal_advance``) so prompt + tuning regressions can be traced
+        back to the rule the candidate's answer triggered.
         """
         # Record the observation against the current question.
         q = self.state.current_question()
         if q:
             self.state.observations.setdefault(q.id, []).append(observation)
 
-        # 1. Hard stop — time expired.
+        action, reason = self._decide(observation)
+        logger.info(
+            "state_machine.decision",
+            action=action.value,
+            reason=reason,
+            question_id=q.id if q else None,
+            question_position=q.position if q else None,
+            probes_fired=self.state.probes_fired_for_current,
+            probes_max=self.max_probes_per_question,
+            elapsed_seconds=round(self.state.elapsed_seconds(), 2),
+            time_remaining_seconds=round(self.state.time_remaining_seconds(), 2),
+            is_time_critical=self.state.is_time_critical(),
+            mandatory_remaining=self.state.mandatory_remaining(),
+            wants_to_probe=observation.wants_to_probe,
+            candidate_disengaged=observation.candidate_disengaged,
+            signals_demonstrated=list(observation.signals_demonstrated),
+        )
+        return action
+
+    def _decide(
+        self, observation: SteeringObservation
+    ) -> tuple[Action, str]:
+        """Return ``(action, reason_tag)`` — pure function, no IO.
+
+        Mirrors the rules in ``decide_next_action`` but yields a
+        machine-readable tag for the rule that fired. Keeping this
+        separate from the structlog emission means tests can assert
+        decisions without intercepting log output.
+        """
         if self.state.is_time_expired():
-            return Action.CLOSE
+            return Action.CLOSE, "time_expired"
 
-        # 1b. Candidate explicitly wants to end the interview.
         if observation.candidate_disengaged:
-            return Action.CLOSE
+            return Action.CLOSE, "candidate_disengaged"
 
-        # 2. Probe — LLM wants deeper AND probes remaining AND time permits
-        #    AND the candidate actually gave a substantive (even if weak)
-        #    answer.  If the answer is a flat "I don't know" or similar
-        #    non-answer, probing is pointless — the follow-up questions
-        #    assume the candidate has SOME experience to dig into.
-        if (
-            observation.wants_to_probe
-            and self.state.probes_fired_for_current < self.max_probes_per_question
-            and not self.state.is_time_critical()
-            and not self._is_non_answer(observation)
-        ):
-            return Action.PROBE
+        if observation.wants_to_probe:
+            if self.state.probes_fired_for_current >= self.max_probes_per_question:
+                # Fall through to advance/skip below.
+                pass
+            elif self.state.is_time_critical():
+                pass
+            elif self._is_non_answer(observation):
+                pass
+            else:
+                return Action.PROBE, "wants_probe"
 
-        # 3. All questions done?
         next_q = self.state.peek_next_question()
         if next_q is None:
-            return Action.CLOSE
+            return Action.CLOSE, "all_questions_done"
 
-        # 4. Skip optional under time pressure.
         if not next_q.is_mandatory and self.state.should_skip_optional():
-            return Action.SKIP
+            return Action.SKIP, "skip_optional_under_pressure"
 
-        # 5. Normal advance.
-        return Action.ADVANCE
+        # Distinguish why we didn't probe so the log makes the next
+        # decision legible without re-reading the rules.
+        if observation.wants_to_probe:
+            if self.state.probes_fired_for_current >= self.max_probes_per_question:
+                return Action.ADVANCE, "probes_exhausted"
+            if self.state.is_time_critical():
+                return Action.ADVANCE, "time_critical"
+            if self._is_non_answer(observation):
+                return Action.ADVANCE, "non_answer_skip_probe"
+
+        return Action.ADVANCE, "normal_advance"
 
     def execute_action(self, action: Action) -> str:
         """Apply *action* to state and return a context string for the LLM."""
@@ -271,6 +313,15 @@ class InterviewStateMachine:
             return self._closing_instruction()
         self.state.questions_asked.append(q.id)
         self.state.phase = InterviewPhase.ASKING
+        logger.info(
+            "state_machine.question.selected",
+            origin="first",
+            question_id=q.id,
+            position=q.position,
+            is_mandatory=q.is_mandatory,
+            estimated_minutes=q.estimated_minutes,
+            signal_values=list(q.signal_values),
+        )
         return self._format_question_context(q)
 
     # -- private helpers -----------------------------------------------------
@@ -345,6 +396,16 @@ class InterviewStateMachine:
         q = self.state.current_question()
         assert q is not None, "Called _advance_to_next with no remaining questions"
         self.state.questions_asked.append(q.id)
+        logger.info(
+            "state_machine.question.selected",
+            origin="advance",
+            question_id=q.id,
+            position=q.position,
+            is_mandatory=q.is_mandatory,
+            estimated_minutes=q.estimated_minutes,
+            signal_values=list(q.signal_values),
+            time_remaining_seconds=round(self.state.time_remaining_seconds(), 2),
+        )
         return q
 
     def _skip_and_advance(self) -> tuple[QuestionConfig, QuestionConfig | None]:
@@ -361,6 +422,13 @@ class InterviewStateMachine:
         skipped_q = self.state.current_question()
         assert skipped_q is not None, "Called _skip_and_advance with nothing to skip"
         self.state.questions_skipped.append(skipped_q.id)
+        logger.info(
+            "state_machine.question.skipped",
+            question_id=skipped_q.id,
+            position=skipped_q.position,
+            is_mandatory=skipped_q.is_mandatory,
+            time_remaining_seconds=round(self.state.time_remaining_seconds(), 2),
+        )
 
         # Keep skipping consecutive optional questions while time is critical.
         while True:
@@ -373,10 +441,29 @@ class InterviewStateMachine:
             if next_q.is_mandatory or not self.state.should_skip_optional():
                 # Found a question we should actually ask.
                 self.state.questions_asked.append(next_q.id)
+                logger.info(
+                    "state_machine.question.selected",
+                    origin="post_skip",
+                    question_id=next_q.id,
+                    position=next_q.position,
+                    is_mandatory=next_q.is_mandatory,
+                    estimated_minutes=next_q.estimated_minutes,
+                    signal_values=list(next_q.signal_values),
+                    time_remaining_seconds=round(
+                        self.state.time_remaining_seconds(), 2
+                    ),
+                )
                 return skipped_q, next_q
             # Still optional + still time-critical: skip it too.
             skipped_q = next_q
             self.state.questions_skipped.append(next_q.id)
+            logger.info(
+                "state_machine.question.skipped",
+                question_id=skipped_q.id,
+                position=skipped_q.position,
+                is_mandatory=skipped_q.is_mandatory,
+                time_remaining_seconds=round(self.state.time_remaining_seconds(), 2),
+            )
 
     @staticmethod
     def _closing_instruction() -> str:

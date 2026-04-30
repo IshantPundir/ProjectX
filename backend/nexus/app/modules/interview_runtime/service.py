@@ -14,8 +14,11 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
+import structlog
 from sqlalchemy import desc, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = structlog.get_logger("interview_runtime")
 
 from app.models import (
     Candidate,
@@ -165,7 +168,7 @@ async def build_session_config(
             f"job {job.id} ancestry has no company_profile"
         )
 
-    return SessionConfig(
+    config = SessionConfig(
         session_id=str(session_id),
         job_title=job.title,
         role_summary=snapshot.role_summary,
@@ -206,6 +209,24 @@ async def build_session_config(
             for s in (snapshot.signals or [])
         ],
     )
+    logger.info(
+        "interview_runtime.session_config.built",
+        session_id=str(session_id),
+        tenant_id=str(tenant_id),
+        job_id=str(job.id),
+        job_title=job.title,
+        stage_id=str(stage.id),
+        stage_type=stage.stage_type,
+        bank_id=str(bank.id),
+        bank_pipeline_version=getattr(bank, "pipeline_version_at_generation", None),
+        question_count=len(config.stage.questions),
+        mandatory_count=sum(1 for q in config.stage.questions if q.is_mandatory),
+        optional_count=sum(1 for q in config.stage.questions if not q.is_mandatory),
+        duration_minutes=config.stage.duration_minutes,
+        signals_total=len(config.signals),
+        snapshot_version=snapshot.version,
+    )
+    return config
 
 
 async def record_session_result(
