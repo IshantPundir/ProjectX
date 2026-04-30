@@ -180,6 +180,36 @@ async def post_start_endpoint(
     )
 
 
+@candidate_session_router.post(
+    "/rejoin",
+    status_code=status.HTTP_200_OK,
+    response_model=StartSessionResponse,
+    summary="Rejoin an active interview session",
+)
+async def post_rejoin_endpoint(
+    request: Request,
+    token: str,  # consumed by middleware — declared so FastAPI routes correctly
+    db: AsyncSession = Depends(get_tenant_db),
+) -> StartSessionResponse:
+    """Mint a fresh LiveKit access token for a candidate rejoining mid-session.
+
+    No engine re-dispatch — the engine is already in the room. No state
+    transition — session remains 'active'. Idempotent on repeat calls within
+    the JWT lifetime.
+
+    Rate limit: 5/hour per token (token-scoped), 3/min per IP.
+    NOTE: No rate-limit infra is currently wired in the codebase (other
+    candidate-session endpoints are documented but not enforced). This limit
+    is declared here for tracking; it will be enforced once the rate-limiting
+    middleware layer is added.
+
+    Returns 409 SESSION_NOT_REJOINABLE when session.state != 'active'.
+    """
+    return await session_service.rejoin_session(
+        db, session_id=_candidate_session_id(request),
+    )
+
+
 # --- Recruiter-side read endpoints ------------------------------------------
 
 

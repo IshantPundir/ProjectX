@@ -46,6 +46,7 @@ from app.modules.session.errors import (
     OtpRateLimitedError,
     OtpRequiredError,
     SessionNotFoundError,
+    SessionNotRejoinableError,
     TokenAlreadyUsedError,
 )
 from app.modules.session.livekit import (
@@ -528,6 +529,74 @@ async def start_session(
         livekit_token=candidate_lk_token,
         room_name=room_name,
         session_id=sess.id,
+    )
+
+
+async def rejoin_session(
+    db: AsyncSession,
+    *,
+    session_id: UUID,
+) -> StartSessionResponse:
+    """Mint a fresh LiveKit access token for a candidate rejoining an active session.
+
+    Differences from start_session:
+      * No engine dispatch — engine is already in the room.
+      * No candidate-token state machine consume — that happened on /start.
+      * No state transition — session stays 'active'.
+      * Idempotent on repeat calls within the JWT lifetime.
+
+    Raises:
+        SessionNotRejoinableError: session.state != 'active'.
+
+    Rate limit (enforced at router): 5/hour per token, 3/min per IP.
+    """
+    session = await _load_session_or_404(db, session_id)
+
+    if session.state != SessionState.ACTIVE.value:
+        raise SessionNotRejoinableError(current_state=session.state)
+
+    # Load candidate to derive the same identity scheme used in start_session.
+    # start_session uses: identity=f"candidate-{candidate.id}"
+    # We must use the identical scheme so the rejoining participant matches the
+    # existing LiveKit identity — engine state re-attaches and
+    # DUPLICATE_IDENTITY fires correctly on multi-tab.
+    assignment = (await db.execute(
+        select(CandidateJobAssignment).where(
+            CandidateJobAssignment.id == session.assignment_id
+        )
+    )).scalar_one()
+    stage = (await db.execute(
+        select(JobPipelineStage).where(JobPipelineStage.id == session.stage_id)
+    )).scalar_one()
+    candidate = (await db.execute(
+        select(Candidate).where(Candidate.id == assignment.candidate_id)
+    )).scalar_one()
+
+    duration_minutes = stage.duration_minutes or 30
+
+    new_lk_token = mint_candidate_lk_token(
+        room_name=session.livekit_room_name,
+        identity=f"candidate-{candidate.id}",
+        name=candidate.name or "",
+        ttl_minutes=duration_minutes + 10,
+    )
+
+    await log_event(
+        db,
+        tenant_id=session.tenant_id,
+        actor_id=None,      # candidate-driven; no Supabase user
+        actor_email=None,
+        action="session.candidate_rejoined",
+        resource="session",
+        resource_id=session.id,
+        payload={},
+    )
+
+    return StartSessionResponse(
+        livekit_url=settings.livekit_url,
+        livekit_token=new_lk_token,
+        room_name=session.livekit_room_name,
+        session_id=session.id,
     )
 
 

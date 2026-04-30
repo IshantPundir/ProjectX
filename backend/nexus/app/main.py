@@ -551,6 +551,7 @@ def create_app() -> FastAPI:
         OtpRateLimitedError,
         OtpRequiredError,
         SessionNotFoundError,
+        SessionNotRejoinableError,
         TokenAlreadyUsedError,
         TokenSupersededError,
     )
@@ -723,6 +724,19 @@ def create_app() -> FastAPI:
             content={
                 "detail": str(exc) or "Token has already been used",
                 "code": "TOKEN_ALREADY_USED",
+            },
+        )
+
+    @application.exception_handler(SessionNotRejoinableError)
+    async def _session_not_rejoinable(
+        request: Request, exc: SessionNotRejoinableError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": str(exc),
+                "code": "SESSION_NOT_REJOINABLE",
+                "current_state": exc.current_state,
             },
         )
 
