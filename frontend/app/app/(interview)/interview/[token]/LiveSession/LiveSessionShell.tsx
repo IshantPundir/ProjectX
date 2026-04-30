@@ -2,7 +2,7 @@
 
 import '@livekit/components-styles'
 import { LiveKitRoom, RoomAudioRenderer } from '@livekit/components-react'
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 
 import { AgentTile } from './AgentTile'
 import { CandidateSelfView } from './CandidateSelfView'
@@ -24,6 +24,16 @@ export function LiveSessionShell({ livekitUrl, livekitToken, roomName }: Props) 
   const [outcome, setOutcome] = useState<Outcome>('active')
   const [errorCode, setErrorCode] = useState<string | null>(null)
 
+  const handleMediaLost = useCallback(() => {
+    setErrorCode('MEDIA_LOST')
+    setOutcome('error')
+  }, [])
+
+  const handleNoShow = useCallback(() => {
+    setErrorCode('AGENT_NO_SHOW')
+    setOutcome('error')
+  }, [])
+
   if (outcome === 'completed') return <CompletionScreen />
   if (outcome === 'error' && errorCode) return <DisconnectError code={errorCode} />
 
@@ -41,19 +51,9 @@ export function LiveSessionShell({ livekitUrl, livekitToken, roomName }: Props) 
       <ProgressBanner />
       <main className="grid grid-cols-1 md:grid-cols-2 gap-4 p-6">
         <AgentTile />
-        <CandidateSelfView
-          onMediaLost={() => {
-            setErrorCode('MEDIA_LOST')
-            setOutcome('error')
-          }}
-        />
+        <CandidateSelfView onMediaLost={handleMediaLost} />
       </main>
-      <GraceTimeoutBoundary
-        onNoShow={() => {
-          setErrorCode('AGENT_NO_SHOW')
-          setOutcome('error')
-        }}
-      />
+      <GraceTimeoutBoundary onNoShow={handleNoShow} />
       <TranscriptPane />
     </LiveKitRoom>
   )

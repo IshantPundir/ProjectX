@@ -17,5 +17,6 @@ export function useStageProgress(): StageProgress | null {
   const total = parseInt(a['total_questions'] ?? '')
   const tRemain = parseInt(a['time_remaining_seconds'] ?? '')
   if (Number.isNaN(cur) || Number.isNaN(total) || Number.isNaN(tRemain)) return null
+  if (cur < 0 || total <= 0 || tRemain < 0) return null
   return { currentQuestion: cur, totalQuestions: total, timeRemainingSeconds: tRemain }
 }

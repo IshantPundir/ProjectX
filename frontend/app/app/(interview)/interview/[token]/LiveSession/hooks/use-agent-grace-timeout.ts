@@ -9,17 +9,27 @@ interface Opts {
 
 export function useAgentGraceTimeout(onNoShow: () => void, { graceMs }: Opts) {
   const remotes = useRemoteParticipants()
+  const remotesRef = useRef(remotes)
   const firedRef = useRef(false)
 
   useEffect(() => {
-    if (firedRef.current) return
+    remotesRef.current = remotes
+  }, [remotes])
+
+  useEffect(() => {
     const t = setTimeout(() => {
-      const hasAgent = remotes.some((p) => p.identity.startsWith('agent-'))
+      if (firedRef.current) return
+      const hasAgent = remotesRef.current.some((p) =>
+        p.identity.startsWith('agent-'),
+      )
       if (!hasAgent) {
         firedRef.current = true
         onNoShow()
       }
     }, graceMs)
     return () => clearTimeout(t)
-  }, [graceMs, onNoShow, remotes])
+    // remotes intentionally omitted: read from remotesRef at fire-time so
+    // unrelated participant events don't reset the grace deadline.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graceMs, onNoShow])
 }
