@@ -71,12 +71,37 @@ RUN uv venv /venv/engine --python python3.13 \
         "structlog>=24.0" \
         "httpx>=0.27"
 
+# Pre-download AI plugin model files at build time so the running container
+# doesn't need network access on first dispatch. Especially load-bearing for
+# the multilingual turn-detector plugin which instantiates with
+# local_files_only=True and would otherwise crash with "Could not find file
+# 'languages.json'". agent.py registers all three plugins (silero,
+# turn-detector.multilingual, ai_coustics) at module import; livekit-agents'
+# `download-files` subcommand iterates registered plugins and pulls each
+# plugin's HF / onnx / model assets into ~/.cache (which on this image is
+# /app/.cache because appuser's HOME is /app).
+#
+# ENVIRONMENT=test bypasses the Settings()-level required-secret validator
+# (INTERVIEW_ENGINE_JWT_SECRET) — real env vars arrive at runtime via the
+# compose env_file. PYTHONPATH must be set inline because the runtime ENV
+# directives below haven't been declared yet at this build step.
+RUN ENVIRONMENT=test \
+    HF_HOME=/app/.cache/huggingface \
+    PYTHONPATH="/app/interview_engine:/app/nexus:/venv/engine/lib/python3.13/site-packages:/venv/nexus/lib/python3.13/site-packages" \
+    /venv/engine/bin/python /app/interview_engine/agent.py download-files
+
 WORKDIR /app/interview_engine
 
-# Drop privileges before runtime.
+# Drop privileges before runtime. The chown picks up /app/.cache from the
+# download-files step above so appuser can read the model files.
 RUN useradd --system --uid 10001 --home /app appuser \
     && chown -R appuser:appuser /app /venv
 USER appuser
+
+# HF_HOME tells huggingface_hub where to look for cached model files at
+# runtime — must match the path used at build time so the cached
+# turn-detector model is found via local_files_only=True.
+ENV HF_HOME=/app/.cache/huggingface
 
 # Runtime PYTHONPATH layer order (first wins on name collision):
 #   engine source → nexus source → engine site-packages → nexus site-packages

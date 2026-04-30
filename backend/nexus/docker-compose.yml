@@ -69,6 +69,12 @@ services:
       - REDIS_URL=redis://redis:6379/0
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      # Persist the HuggingFace / silero model cache across container
+      # recreations. The image bakes a baseline via `agent.py download-files`,
+      # but a named volume means subsequent rebuilds (or new model variants)
+      # don't re-download.
+      - hf-cache:/app/.cache/huggingface
     depends_on:
       redis:
         condition: service_healthy
@@ -91,3 +97,4 @@ services:
 
 volumes:
   redisdata:
+  hf-cache:
