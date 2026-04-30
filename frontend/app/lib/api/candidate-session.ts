@@ -110,4 +110,9 @@ export const candidateSessionApi = {
       'POST',
       `/api/candidate-session/${token}/start`,
     ),
+  rejoin: (token: string) =>
+    _call<StartSessionResponse>(
+      'POST',
+      `/api/candidate-session/${token}/rejoin`,
+    ),
 }
