@@ -14,7 +14,7 @@ vi.mock('@livekit/components-react', () => ({
   ],
 }))
 
-import { ProgressBanner } from '@/app/(interview)/interview/[token]/LiveSession/ProgressBanner'
+import { ProgressBanner } from '@/components/interview/app/ProgressBanner'
 
 describe('ProgressBanner', () => {
   it('renders Q3 of 9 with 11 min remaining when attributes are populated', () => {
