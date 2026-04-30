@@ -28,12 +28,17 @@ import structlog
 
 from livekit.agents import Agent, RunContext, function_tool
 
-from models import (
+from app.modules.interview_runtime.schemas import (
+    QuestionResult,
     SessionConfig,
     SessionResult,
-    QuestionResult,
     SteeringObservation,
     TranscriptEntry,
+)
+from nexus_client import (
+    ResultPostFailedError,
+    ResultRejectedError,
+    post_session_result,
 )
 from state_machine import InterviewStateMachine, Action
 from prompt_builder import build_system_prompt
@@ -54,8 +59,11 @@ class InterviewerAgent(Agent):
 
     def __init__(
         self,
+        *,
         session_config: SessionConfig,
         engine_config: InterviewEngineConfig,
+        nexus_jwt: str,
+        nexus_base_url: str,
     ) -> None:
         self.state_machine = InterviewStateMachine(
             session_config=session_config,
@@ -64,6 +72,8 @@ class InterviewerAgent(Agent):
         )
         self.session_config = session_config
         self.engine_config = engine_config
+        self.nexus_jwt = nexus_jwt
+        self.nexus_base_url = nexus_base_url
 
         system_prompt = build_system_prompt(session_config, engine_config)
 
@@ -179,7 +189,7 @@ class InterviewerAgent(Agent):
 
         if action == Action.CLOSE:
             result = self._build_session_result()
-            self._write_result(result)
+            await self._persist_result(result)
 
         return context_injection
 
@@ -230,19 +240,44 @@ class InterviewerAgent(Agent):
             completed_at=datetime.now(timezone.utc).isoformat(),
         )
 
-    def _write_result(self, result: SessionResult) -> None:
-        """Write session result to local JSON file."""
-        results_dir = Path(self.engine_config.results_dir)
-        results_dir.mkdir(parents=True, exist_ok=True)
+    async def _persist_result(self, result: SessionResult) -> None:
+        """Post the session result to nexus; fall back to local-disk write on
+        permanent failure.
 
-        output_path = results_dir / f"{result.session_id}.json"
+        Treats nexus's 204 (first success) and 409 (idempotent retry vs. an
+        already-completed session) the same — both end the engine's
+        persistence responsibility. The fallback path runs only when nexus
+        rejected the POST (auth, validation) or all retries on 5xx/network
+        were exhausted; in those cases we drop a JSON file in
+        ``engine_config.results_fallback_dir`` so the result isn't lost.
+        """
+        try:
+            await post_session_result(
+                session_id=result.session_id,
+                jwt=self.nexus_jwt,
+                result=result,
+                base_url=self.nexus_base_url,
+            )
+            logger.info("engine.result.posted", session_id=result.session_id)
+            return
+        except (ResultPostFailedError, ResultRejectedError) as exc:
+            logger.critical(
+                "engine.fallback.local_results_write",
+                session_id=result.session_id,
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+
+        # Fallback — drop a JSON file for forensics.
+        fallback_dir = self.engine_config.results_fallback_dir
+        fallback_dir.mkdir(parents=True, exist_ok=True)
+        output_path = fallback_dir / f"{result.session_id}.json"
         output_path.write_text(
             result.model_dump_json(indent=2),
             encoding="utf-8",
         )
-
-        logger.info(
-            "interview.result_written",
+        logger.warning(
+            "interview.result_fallback_written",
             path=str(output_path),
             session_id=result.session_id,
         )
