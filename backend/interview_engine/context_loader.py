@@ -1,71 +1,80 @@
-"""Session context loader.
+"""Session-config loader.
 
-The single seam that controls standalone vs. integrated operation.
-Phase 3A implements fixture mode only. Room metadata and Nexus API
-modes are stubs that raise NotImplementedError with clear messages
-about what Nexus needs to provide.
+Two modes:
+
+- ``fixture`` (engine pytest only) — load a SessionConfig from a JSON file
+  on disk. Used by interview-engine standalone tests, not by production.
+- ``nexus_api`` (production) — fetch SessionConfig from nexus's
+  /api/internal/sessions/{id}/config via httpx. The dispatch JWT signed
+  by nexus authenticates the call.
+
+Mode selection is implicit in the caller's argument set — pass
+``fixture_path`` for fixture mode, or ``session_id``/``jwt``/``base_url``
+for nexus_api mode. There is no env-driven mode flag.
+
+Note: production-path callers (``agent.py``) call
+``nexus_client.fetch_session_config`` directly. This module exists for the
+engine's pytest path that wants to bypass HTTP.
 """
+
+from __future__ import annotations
 
 import json
 from pathlib import Path
 
 import structlog
 
-from models import SessionConfig
-from config import InterviewEngineConfig
+from app.modules.interview_runtime.schemas import SessionConfig
+
+from nexus_client import fetch_session_config
 
 logger = structlog.get_logger(__name__)
 
 
-async def load_session_config(config: InterviewEngineConfig) -> SessionConfig:
-    """Load interview context based on config.context_source.
+async def load_session_config(
+    *,
+    session_id: str | None = None,
+    jwt: str | None = None,
+    base_url: str | None = None,
+    fixture_path: Path | None = None,
+) -> SessionConfig:
+    """Load a SessionConfig.
 
-    Modes:
-        fixture: Load from a local JSON file (Phase 3A standalone testing)
-        room_metadata: Deserialize from LiveKit room metadata (Phase 3B)
-        nexus_api: Fetch from Nexus API using session_id (Phase 3B)
+    Pass ``fixture_path`` for engine-pytest fixture mode; pass
+    ``session_id`` + ``jwt`` + ``base_url`` for nexus_api mode. Mixing
+    both is an error.
     """
-    match config.context_source:
-        case "fixture":
-            return _load_from_fixture(config.fixture_path)
-        case "room_metadata":
-            raise NotImplementedError(
-                "room_metadata mode requires Phase 3B integration. "
-                "Nexus must set room metadata with a JSON-serialized "
-                "SessionConfig when creating the LiveKit room. "
-                "See: backend/nexus/app/modules/session/service.py"
-            )
-        case "nexus_api":
-            raise NotImplementedError(
-                "nexus_api mode requires Phase 3B integration. "
-                "Nexus must expose GET /api/sessions/{session_id}/config "
-                "returning a SessionConfig-shaped JSON body. "
-                "See: backend/nexus/app/modules/session/router.py"
-            )
-        case _:
+    if fixture_path is not None:
+        if any(arg is not None for arg in (session_id, jwt, base_url)):
             raise ValueError(
-                f"Unknown context_source: {config.context_source!r}. "
-                f"Valid values: fixture, room_metadata, nexus_api"
+                "fixture_path cannot be combined with session_id/jwt/base_url"
             )
+        return _load_from_fixture(fixture_path)
 
-
-def _load_from_fixture(fixture_path: str) -> SessionConfig:
-    """Load and validate a SessionConfig from a local JSON fixture file."""
-    path = Path(fixture_path)
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Fixture file not found: {path.resolve()}. "
-            f"Create it at backend/interview_engine/fixtures/sample_session.json "
-            f"or set FIXTURE_PATH to a different location."
+    if not (session_id and jwt and base_url):
+        raise ValueError(
+            "nexus_api mode requires session_id + jwt + base_url"
         )
 
-    raw = json.loads(path.read_text())
+    return await fetch_session_config(
+        session_id=session_id, jwt=jwt, base_url=base_url
+    )
+
+
+def _load_from_fixture(fixture_path: Path) -> SessionConfig:
+    """Load and validate a SessionConfig from a local JSON fixture file."""
+    if not fixture_path.exists():
+        raise FileNotFoundError(
+            f"Fixture file not found: {fixture_path.resolve()}"
+        )
+
+    raw = json.loads(fixture_path.read_text())
     config = SessionConfig.model_validate(raw)
 
     logger.info(
         "session_config.loaded",
         source="fixture",
-        fixture_path=str(path),
+        fixture_path=str(fixture_path),
         session_id=config.session_id,
         job_title=config.job_title,
         question_count=len(config.stage.questions),
