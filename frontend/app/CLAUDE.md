@@ -78,9 +78,9 @@ There is **no shadcn/ui in this codebase**. The design system is a hand-rolled p
 
 When you need a new primitive, add it under `components/px/` and export it from `index.ts` — never reach for an external shadcn snippet or copy a Radix pattern from the internet without checking the actual `@base-ui-components/react` API.
 
-### Planned for Phase 3+
+### Currently Installed (Phase 3C.2)
 
-- **Real-time / WebRTC:** LiveKit React SDK (`@livekit/components-react`) — pairs with the backend's pending Phase 3C.2 LiveKit room provisioning (currently a 501 stub).
+- **Real-time / WebRTC:** `livekit-client` + `@livekit/components-react` + `@livekit/components-styles`. Used by the candidate-facing `LiveSessionShell` to join the LiveKit room provisioned by Nexus's `/start`. The SDK is loaded into the candidate surface only, gated behind a `next/dynamic` import inside `WizardShell.tsx` so the pre-check / consent / OTP / camera-mic steps never pull `livekit-client` into their bundles. The shell wraps `<LiveKitRoom>`; child tiles call `useVoiceAssistant`, `useChat`, `useRemoteParticipants`, `useParticipants`, `useLocalParticipant` for live state.
 
 ---
 
@@ -163,12 +163,25 @@ frontend/app/
 └── proxy.ts                              ← Next.js middleware: validates Supabase session + decodes JWT for tenant_id, gates dashboard routes
 ```
 
-### Pending UI work (Phase 3C.2 / Phase 3D)
+### Live interview UI (Phase 3C.2 — shipped)
 
-- **Live interview session UI** — `app/(interview)/interview/[token]/` currently only ships the pre-check WizardShell (Start → Consent → Camera/Mic → OTP). The live session surface (2×2 video grid, live transcript, AI Copilot panel, Q-progress indicator, mic/camera-loss blocker, completion screen) is not yet built. Pairs with backend Phase 3C.2 (LiveKit room provisioning).
+The candidate live-interview surface lives at `app/(interview)/interview/[token]/LiveSession/`:
+
+- `LiveSessionShell.tsx` — entry point. Wraps `<LiveKitRoom>` with audio + video publish, hosts the grace-timeout boundary, and routes between active / completed / error outcomes.
+- `AgentTile.tsx`, `CandidateSelfView.tsx` — the two video tiles.
+- `ProgressBanner.tsx` — sticky top banner ("Q3 of 9 · 11 min remaining") driven by participant attributes the engine publishes via `set_attributes`.
+- `TranscriptPane.tsx` — live transcript via `useChat`.
+- `CompletionScreen.tsx`, `DisconnectError.tsx` — end-state surfaces.
+- `hooks/use-agent-state.ts`, `hooks/use-agent-grace-timeout.ts`, `hooks/use-stage-progress.ts` — three hooks the components share.
+
+`WizardShell.tsx` lazy-loads `LiveSessionShell` via `next/dynamic` (`ssr:false`); the LiveKit SDK only enters the bundle once the candidate clicks Start.
+
+### Pending UI work (Phase 3D)
+
 - **`components/copilot/`** — AI Copilot panel components don't exist yet. Required for any human-in-the-loop session.
 - **`components/shared/`** — directory is reserved for cross-surface components; not yet populated.
 - **Reports view** — `app/(dashboard)/reports/page.tsx` is a placeholder. Pairs with backend Phase 3D (`reporting` module is still a stub).
+- **Mid-session rejoin** — when a candidate's network drops, the wizard currently shows a static `AlreadyStartedPanel`. Re-entering the live session needs a structured close signal from the engine (data message or room metadata) so the UI can distinguish error from completion.
 
 ---
 
@@ -268,8 +281,12 @@ When extending `components/px/`, add an export to `components/px/index.ts`. Alwa
 ### Legacy (Phase 1 pages still pending migration)
 Login, invite, and onboarding pages still use raw `useState` + `fetch`. Per convention: **migrate them when you touch them**, not as a standalone refactor.
 
-### Pending (Phase 3C.2)
-- **Interview session state machine** — once the live session UI lands, candidate consent state, current-question index, copilot buffer, and mic/camera readiness will likely warrant their own Zustand store under `stores/` (e.g. `stores/interview-session.ts`). Don't pre-create the store — wait until at least one component genuinely needs the shared state.
+### Live interview state (Phase 3C.2 — shipped)
+Per-session UI state during the live interview is held in two places:
+- **Component-local React state** in `LiveSessionShell` (`outcome`, `errorCode`) — the shell is short-lived (one mount per session) so this is appropriate.
+- **LiveKit participant attributes** for cross-participant state (current question index, total, time remaining). Read from the agent participant via `useStageProgress`. The engine writes them via `local_participant.set_attributes` on every state-machine turn.
+
+A Zustand store for the interview session was deferred — the existing primitives are sufficient for the current surface. Reach for one only when a state value genuinely needs to live outside `LiveSessionShell`'s subtree.
 
 ---
 
