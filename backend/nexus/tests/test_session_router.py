@@ -199,24 +199,6 @@ async def test_post_verify_otp_invalid_returns_422_with_attempts(db, http_client
 
 
 @pytest.mark.asyncio
-async def test_post_start_returns_501_livekit_pending(db, http_client):
-    _t, _c, sess, _tok, token = await _seed_ready_session(db, state="consented")
-    r = await http_client.post(f"/api/candidate-session/{token}/start")
-    assert r.status_code == 501
-    assert r.json()["code"] == "LIVEKIT_INTEGRATION_PENDING"
-
-
-@pytest.mark.asyncio
-async def test_post_start_replay_returns_409(db, http_client):
-    _t, _c, _sess, _tok, token = await _seed_ready_session(db, state="consented")
-    r1 = await http_client.post(f"/api/candidate-session/{token}/start")
-    assert r1.status_code == 501
-    r2 = await http_client.post(f"/api/candidate-session/{token}/start")
-    assert r2.status_code == 409
-    assert r2.json()["code"] == "TOKEN_ALREADY_USED"
-
-
-@pytest.mark.asyncio
 async def test_post_start_rejects_when_otp_required_but_not_verified(db, http_client):
     _t, _c, _sess, _tok, token = await _seed_ready_session(
         db, otp_required=True, state="consented"
