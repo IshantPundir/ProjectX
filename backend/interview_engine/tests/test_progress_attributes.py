@@ -9,7 +9,7 @@ them on enter and after each turn.
 These tests exercise the publish helper in isolation by patching the
 ``InterviewerAgent.session`` property. The full Agent lifecycle is not
 needed -- the helper's only side effect is awaiting
-``self.session.room.local_participant.set_attributes``.
+``self.session.room_io.room.local_participant.set_attributes``.
 """
 
 from __future__ import annotations
@@ -113,7 +113,7 @@ async def test_publish_progress_attributes_emits_initial_state():
 
     set_attrs = AsyncMock()
     fake_session = MagicMock()
-    fake_session.room.local_participant.set_attributes = set_attrs
+    fake_session.room_io.room.local_participant.set_attributes = set_attrs
 
     with patch.object(
         InterviewerAgent, "session", new_callable=PropertyMock, return_value=fake_session
@@ -152,7 +152,7 @@ async def test_publish_progress_attributes_advances_index_after_turn():
 
     set_attrs = AsyncMock()
     fake_session = MagicMock()
-    fake_session.room.local_participant.set_attributes = set_attrs
+    fake_session.room_io.room.local_participant.set_attributes = set_attrs
 
     with patch.object(
         InterviewerAgent, "session", new_callable=PropertyMock, return_value=fake_session
@@ -181,7 +181,7 @@ async def test_publish_progress_attributes_clamps_negative_remaining_to_zero():
 
     set_attrs = AsyncMock()
     fake_session = MagicMock()
-    fake_session.room.local_participant.set_attributes = set_attrs
+    fake_session.room_io.room.local_participant.set_attributes = set_attrs
 
     with patch.object(
         InterviewerAgent, "session", new_callable=PropertyMock, return_value=fake_session
@@ -201,7 +201,7 @@ async def test_publish_progress_attributes_swallows_publish_failure():
 
     set_attrs = AsyncMock(side_effect=RuntimeError("room not connected"))
     fake_session = MagicMock()
-    fake_session.room.local_participant.set_attributes = set_attrs
+    fake_session.room_io.room.local_participant.set_attributes = set_attrs
 
     with patch.object(
         InterviewerAgent, "session", new_callable=PropertyMock, return_value=fake_session

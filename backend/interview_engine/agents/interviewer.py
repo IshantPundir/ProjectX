@@ -229,7 +229,13 @@ class InterviewerAgent(Agent):
             ),
         }
         try:
-            await self.session.room.local_participant.set_attributes(attrs)
+            # AgentSession does not expose `room` directly; the room handle
+            # lives on the `room_io` helper that AgentSession.start spins up
+            # when started with a room. Going through `room_io.room` is the
+            # supported path to the underlying `rtc.Room` and its
+            # `local_participant` (the agent itself in this context).
+            room = self.session.room_io.room
+            await room.local_participant.set_attributes(attrs)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "interview.progress.publish_failed",
