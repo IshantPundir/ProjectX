@@ -87,7 +87,14 @@ export function WizardShell({ token }: { token: string }) {
 
   if (!data) return null
 
-  if (data.state === 'active' && creds) {
+  // `creds` is set only by the StartStep success path (useStartSession resolves
+  // 200). At that point the backend has atomically transitioned state to
+  // 'active', but the cached /pre-check data updates via the mutation's
+  // setQueryData hook on a separate notify path, so adding && data.state ===
+  // 'active' here would introduce a one-render flash where the cached state
+  // has flipped but local creds haven't yet -- briefly routing through
+  // <AlreadyStartedPanel>. Trust creds alone.
+  if (creds) {
     return (
       <LiveSessionShell
         livekitUrl={creds.livekit_url}
