@@ -282,6 +282,7 @@ def create_app() -> FastAPI:
         kanban_router as candidates_kanban_router,
         router as candidates_router,
     )
+    from app.modules.interview_runtime.router import interview_runtime_router
 
     application.include_router(auth_router)
     application.include_router(ats_router)
@@ -302,6 +303,8 @@ def create_app() -> FastAPI:
     application.include_router(scheduler_router)
     application.include_router(candidate_session_router)
     application.include_router(session_router)
+    # Phase 3C.2 — interview engine internal API
+    application.include_router(interview_runtime_router)
 
     # --- Exception handlers (Phase 2A — JD module) ---
     from fastapi import Request
