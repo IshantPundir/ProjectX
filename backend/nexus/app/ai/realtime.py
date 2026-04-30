@@ -71,13 +71,20 @@ def build_turn_detector() -> "TurnDetectionMode":
     tunable that raises the EOU (end-of-utterance) confidence floor.
     Useful in interview contexts where candidates pause to think and a
     too-eager turn-end fires a probe before the candidate finishes the
-    answer. We don't expose this as an AIConfig knob yet — defer to the
-    plugin default until we have evidence a per-deploy override is
-    needed.
+    answer, or in noisy environments where stray sound bursts can
+    prematurely trigger end-of-turn.
+
+    The threshold is sourced from `AIConfig.interview_turn_detector_unlikely_threshold`
+    (env: `INTERVIEW_TURN_DETECTOR_UNLIKELY_THRESHOLD`). Default is None,
+    which delegates to the plugin's own default — only set this when you
+    have real session data to tune against.
     """
     from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
-    return MultilingualModel()
+    threshold = ai_config.interview_turn_detector_unlikely_threshold
+    if threshold is None:
+        return MultilingualModel()
+    return MultilingualModel(unlikely_threshold=threshold)
 
 
 def build_noise_cancellation() -> "AudioEnhancement":

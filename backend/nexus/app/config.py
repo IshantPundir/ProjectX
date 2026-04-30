@@ -201,6 +201,15 @@ class Settings(BaseSettings):
     interview_tts_voice: str = "9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"
     interview_tts_language: str = "en"
 
+    # End-of-utterance confidence floor for the multilingual turn-detector
+    # plugin. None (default) lets the plugin choose. Raising this above the
+    # plugin default (~0.15 in current versions) makes the agent wait
+    # longer before deciding the candidate has finished speaking — useful
+    # in noisy environments where stray sound bursts can prematurely
+    # trigger end-of-turn. Don't set blindly; tune from real session
+    # latency data. Range: 0.0 – 1.0.
+    interview_turn_detector_unlikely_threshold: float | None = None
+
     # Engine → Nexus internal API base URL. Read by the engine worker
     # (interview-engine container in docker-compose). Nexus itself does NOT
     # consume this — it's a no-op field for the FastAPI process. Defaulted

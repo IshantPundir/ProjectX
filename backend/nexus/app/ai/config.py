@@ -73,5 +73,9 @@ class AIConfig:
     def interview_tts_language(self) -> str:
         return settings.interview_tts_language
 
+    @property
+    def interview_turn_detector_unlikely_threshold(self) -> float | None:
+        return settings.interview_turn_detector_unlikely_threshold
+
 
 ai_config = AIConfig()
