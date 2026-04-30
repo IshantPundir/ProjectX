@@ -15,7 +15,7 @@
   },
   "stage": {
     "stage_id": "6ff90d64-e02f-46d4-8a24-8eacf3a51708",
-    "stage_type": "ai_interview",
+    "stage_type": "ai_screening",
     "name": "Bot Screening",
     "duration_minutes": 20,
     "difficulty": "hard",
