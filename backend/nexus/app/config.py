@@ -164,10 +164,16 @@ class Settings(BaseSettings):
 
     # Observability
     sentry_dsn: str = ""
-    langfuse_host: str = ""           # Legacy — prefer LANGFUSE_BASE_URL
-    langfuse_base_url: str = ""       # e.g. https://cloud.langfuse.com (Langfuse v2+ convention)
-    langfuse_public_key: str = ""
-    langfuse_secret_key: str = ""
+
+    # OpenTelemetry — vendor-neutral tracing.
+    # Both exporters default to OFF. Set OTEL_DEV_CONSOLE_EXPORTER=true to dump
+    # spans to stdout for local dev visibility. Set OTEL_EXPORTER_OTLP_ENDPOINT
+    # to ship to a collector or backend (Sentry, Jaeger, Tempo, custom).
+    # When both unset: spans are created and finished but discarded silently
+    # (production-safe — no accidental data leak).
+    otel_exporter_otlp_endpoint: str = ""
+    otel_dev_console_exporter: bool = False
+    otel_service_name: str = "nexus"
 
     # CORS
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:3000", "http://127.0.0.1:3001"]

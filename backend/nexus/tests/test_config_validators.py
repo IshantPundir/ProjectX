@@ -49,3 +49,29 @@ def test_dry_run_false_always_allowed() -> None:
     for env in ("development", "test", "staging", "production"):
         s = _make(environment=env, notifications_dry_run=False)
         assert s.notifications_dry_run is False
+
+
+def test_otel_settings_default_to_off(monkeypatch):
+    """OTel exporter env vars default to empty / False so no traces ship by default."""
+    # Clear any inherited values
+    for var in ("OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_DEV_CONSOLE_EXPORTER", "OTEL_SERVICE_NAME"):
+        monkeypatch.delenv(var, raising=False)
+    from app.config import Settings
+
+    settings = Settings()
+    assert settings.otel_exporter_otlp_endpoint == ""
+    assert settings.otel_dev_console_exporter is False
+    assert settings.otel_service_name == "nexus"
+
+
+def test_otel_settings_read_from_env(monkeypatch):
+    """OTel settings are env-driven."""
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4317")
+    monkeypatch.setenv("OTEL_DEV_CONSOLE_EXPORTER", "true")
+    monkeypatch.setenv("OTEL_SERVICE_NAME", "nexus-test")
+    from app.config import Settings
+
+    settings = Settings()
+    assert settings.otel_exporter_otlp_endpoint == "http://collector:4317"
+    assert settings.otel_dev_console_exporter is True
+    assert settings.otel_service_name == "nexus-test"

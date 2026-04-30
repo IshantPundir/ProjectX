@@ -7,12 +7,10 @@ Dramatiq's scheduler — tests pass a transactional session directly and
 mock get_openai_client().
 
 Tracing:
-  Both phase coroutines are decorated with @observe() which creates
-  Langfuse child spans. The OpenAI calls (via langfuse.openai.AsyncOpenAI)
-  are auto-captured as nested generation spans, so each extraction job
-  produces a trace with two clearly labelled phase spans. Metadata
-  (tenant_id, correlation_id, job_posting_id, prompt_version) is
-  propagated to all child spans via langfuse_context.update_current_trace."""
+  Each phase coroutine's OpenAI call is auto-captured as an OTel span
+  by the OpenAI auto-instrumentor (registered at app startup). Prompt
+  metadata (tenant_id, correlation_id, job_posting_id, prompt_version)
+  is added to the active span via app.ai.tracing.set_llm_span_attributes."""
 
 import asyncio
 import json
@@ -24,11 +22,11 @@ import openai
 import structlog
 from dramatiq.middleware import CurrentMessage
 from instructor.core import InstructorRetryException
-from langfuse.decorators import langfuse_context, observe
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.client import flush_langfuse, get_openai_client, langfuse_enabled
+from app.ai.client import get_openai_client
+from app.ai.tracing import set_llm_span_attributes
 from app.ai.config import ai_config
 from app.ai.prompts import prompt_loader
 from app.ai.schemas import (
@@ -120,7 +118,6 @@ async def _persist_signal_snapshot(
     db.add(snapshot)
 
 
-@observe(name="jd_enrichment_phase")
 async def _run_enrichment(
     db: AsyncSession,
     *,
@@ -171,19 +168,15 @@ async def _run_enrichment(
         )
         return
 
-    langfuse_context.update_current_trace(
-        session_id=job_posting_id,
-        tags=["jd_enrichment", f"retry:{retries_so_far}"],
-        metadata={
-            "correlation_id": correlation_id,
-            "job_posting_id": job_posting_id,
-            "tenant_id": tenant_id,
-            "prompt_name": "jd_enrichment",
-            "prompt_version": "v1",
-            "model": ai_config.extraction_model,
-            "reasoning_effort": ai_config.extraction_effort,
-            "retries_so_far": retries_so_far,
-        },
+    set_llm_span_attributes(
+        prompt_name="jd_enrichment",
+        prompt_version="v1",
+        tenant_id=tenant_id,
+        correlation_id=correlation_id,
+        job_posting_id=job_posting_id,
+        model=ai_config.extraction_model,
+        reasoning_effort=ai_config.extraction_effort,
+        retries_so_far=retries_so_far,
     )
 
     client = get_openai_client()
@@ -248,7 +241,6 @@ async def _run_enrichment(
     log.info("jd.enrichment.completed")
 
 
-@observe(name="jd_signal_extraction_phase")
 async def _run_signal_extraction(
     db: AsyncSession,
     *,
@@ -298,24 +290,16 @@ async def _run_signal_extraction(
     )
     source_jd = job.description_enriched if source_is_enriched else job.description_raw
 
-    langfuse_context.update_current_trace(
-        session_id=job_posting_id,
-        tags=[
-            "jd_signal_extraction",
-            f"retry:{retries_so_far}",
-            "source:enriched" if source_is_enriched else "source:raw",
-        ],
-        metadata={
-            "correlation_id": correlation_id,
-            "job_posting_id": job_posting_id,
-            "tenant_id": tenant_id,
-            "prompt_name": "jd_signal_extraction",
-            "prompt_version": "v1",
-            "model": ai_config.extraction_model,
-            "reasoning_effort": ai_config.extraction_effort,
-            "source_jd": "enriched" if source_is_enriched else "raw",
-            "retries_so_far": retries_so_far,
-        },
+    set_llm_span_attributes(
+        prompt_name="jd_signal_extraction",
+        prompt_version="v1",
+        tenant_id=tenant_id,
+        correlation_id=correlation_id,
+        job_posting_id=job_posting_id,
+        model=ai_config.extraction_model,
+        reasoning_effort=ai_config.extraction_effort,
+        source_jd="enriched" if source_is_enriched else "raw",
+        retries_so_far=retries_so_far,
     )
 
     client = get_openai_client()
@@ -515,9 +499,6 @@ async def extract_and_enhance_jd(
                 else:
                     await db.rollback()
                 _exc_to_reraise = exc
-            finally:
-                if langfuse_enabled():
-                    await asyncio.to_thread(flush_langfuse)
 
         if phase_1_committed:
             await _publish_status(job_posting_id, tenant_id, correlation_id)
@@ -546,9 +527,6 @@ async def extract_and_enhance_jd(
             else:
                 await db.rollback()
             _exc_to_reraise = exc
-        finally:
-            if langfuse_enabled():
-                await asyncio.to_thread(flush_langfuse)
 
     if phase_2_committed:
         await _publish_status(job_posting_id, tenant_id, correlation_id)
@@ -587,7 +565,6 @@ def _build_reenrich_user_message(
     return "\n".join(parts)
 
 
-@observe(name="jd_reenrichment_call2")
 async def _run_reenrichment(
     db: AsyncSession,
     *,
@@ -598,8 +575,8 @@ async def _run_reenrichment(
 ) -> None:
     """Core re-enrichment logic — unit-testable without Dramatiq.
 
-    @observe() creates a Langfuse trace. The OpenAI call is auto-captured
-    as a nested generation span."""
+    The OpenAI call is auto-captured as an OTel span by the OpenAI
+    auto-instrumentor."""
     log = logger.bind(
         job_posting_id=job_posting_id,
         correlation_id=correlation_id,
@@ -636,19 +613,15 @@ async def _run_reenrichment(
         job.enrichment_error = "Company profile missing — cannot re-enrich"
         return
 
-    langfuse_context.update_current_trace(
-        session_id=job_posting_id,
-        tags=["jd_reenrichment", f"retry:{retries_so_far}"],
-        metadata={
-            "correlation_id": correlation_id,
-            "job_posting_id": job_posting_id,
-            "tenant_id": tenant_id,
-            "prompt_name": "jd_reenrichment",
-            "prompt_version": "v1",
-            "model": ai_config.reenrichment_model,
-            "reasoning_effort": ai_config.reenrichment_effort,
-            "retries_so_far": retries_so_far,
-        },
+    set_llm_span_attributes(
+        prompt_name="jd_reenrichment",
+        prompt_version="v1",
+        tenant_id=tenant_id,
+        correlation_id=correlation_id,
+        job_posting_id=job_posting_id,
+        model=ai_config.reenrichment_model,
+        reasoning_effort=ai_config.reenrichment_effort,
+        retries_so_far=retries_so_far,
     )
 
     client = get_openai_client()
@@ -759,9 +732,6 @@ async def reenrich_jd(
             else:
                 await db.rollback()
             _exc_to_reraise = exc
-        finally:
-            if langfuse_enabled():
-                await asyncio.to_thread(flush_langfuse)
 
     # Post-commit publish — identical pattern to extract_and_enhance_jd.
     if _committed:

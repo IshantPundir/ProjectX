@@ -198,6 +198,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     )
     logger.info("nexus.startup", environment=settings.environment)
 
+    # OpenTelemetry bootstrap. Both exporters are off by default; setting
+    # OTEL_DEV_CONSOLE_EXPORTER=true or OTEL_EXPORTER_OTLP_ENDPOINT=<url>
+    # turns them on. See app/ai/otel.py for env-var contract.
+    from opentelemetry import trace
+    from app.ai.otel import bootstrap_tracer_provider, instrument_openai
+
+    _otel_provider = bootstrap_tracer_provider()
+    trace.set_tracer_provider(_otel_provider)
+    instrument_openai()
+
     # Block startup if any tenant-scoped table is missing an RLS policy.
     # This is the last line of defence against a deploy that ships a
     # migration which forgot to enable RLS or forgot the WITH CHECK
@@ -213,10 +223,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # Shutdown — reverse order of startup.
     await pubsub.shutdown()
 
-    from app.ai.client import shutdown_langfuse
     from app.database import engine
 
-    shutdown_langfuse()
+    # OTel shutdown: flush + close any in-flight span batches before exit.
+    _otel_provider.shutdown()
     await engine.dispose()
     logger.info("nexus.shutdown")
 

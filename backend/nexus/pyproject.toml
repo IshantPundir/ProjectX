@@ -44,12 +44,18 @@ dependencies = [
     # Logging & observability
     "structlog>=24.4,<25",
     "sentry-sdk[fastapi]>=2.19,<3",
-    "opentelemetry-api>=1.29,<2",
-    "opentelemetry-sdk>=1.29,<2",
-    "opentelemetry-instrumentation-fastapi>=0.50b,<1",
-
-    # LLM observability (self-hosted)
-    "langfuse>=2.56,<3",
+    # OTel core. Pinned to the 1.37 / 0.58b0 line because that's what
+    # opentelemetry-instrumentation-openai-v2 2.3b0 transitively requires
+    # (api~=1.37, instrumentation~=0.58b0, wrapt<2). Pinning explicitly so a
+    # transitive resolver doesn't drift forward into incompatible 0.62b+ /
+    # wrapt 2.x territory (the wrap_function_wrapper signature changed
+    # between wrapt 1.x and 2.x, breaking the OpenAI instrumentor).
+    "opentelemetry-api>=1.37,<2",
+    "opentelemetry-sdk>=1.37,<2",
+    "opentelemetry-exporter-otlp>=1.37,<2",
+    "opentelemetry-instrumentation-fastapi>=0.58b0,<0.59",
+    "opentelemetry-instrumentation-openai-v2>=2.3b0,<3",
+    "wrapt>=1.17,<2",
 
     # --- Real-time video infrastructure (Phase 3C.2) ---
     "livekit-api>=1.0,<2",
