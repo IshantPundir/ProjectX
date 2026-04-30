@@ -51,6 +51,9 @@ dependencies = [
     # LLM observability (self-hosted)
     "langfuse>=2.56,<3",
 
+    # --- Real-time video infrastructure (Phase 3C.2) ---
+    "livekit-api>=1.0,<2",
+
     # --- AI provider (Phase 2A) ---
     "openai>=1.60,<2",
     "instructor>=1.7,<2",
