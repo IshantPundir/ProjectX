@@ -1,8 +1,7 @@
 'use client'
 
 import { ThemeProvider } from 'next-themes'
-import { TokenSource } from 'livekit-client'
-import { RoomEvent } from 'livekit-client'
+import { Room, RoomEvent, TokenSource } from 'livekit-client'
 import type { DisconnectReason } from '@livekit/protocol'
 import { useSession } from '@livekit/components-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -87,45 +86,7 @@ export function App({ appConfig, token, preCheck, mode }: Props) {
 
   const session = useSession(tokenSource)
 
-  // Engine-published session_outcome attribute. Held in a ref so it survives
-  // the agent participant's removal at the moment of disconnect.
-  const lastOutcome = useSessionOutcome()
-
-  // Listen for disconnects on the underlying room and route to the right
-  // outcome. SessionEvent doesn't expose Disconnected directly; the room does.
-  const lastOutcomeRef = useRef(lastOutcome)
-  lastOutcomeRef.current = lastOutcome
-
-  useEffect(() => {
-    const room = session.room
-    if (!room) return
-
-    const onDisconnected = (reason?: DisconnectReason) => {
-      const o = lastOutcomeRef.current
-      if (o === 'completed') {
-        setOutcome('completed')
-        return
-      }
-      if (o === 'error') {
-        setError('ENGINE_ERROR')
-        return
-      }
-      // No engine-published outcome — fall back to the disconnect reason.
-      const reasonName = reasonToName(reason)
-      if (reasonName === 'CLIENT_INITIATED') {
-        setOutcome('completed')
-      } else if (reasonName === 'DUPLICATE_IDENTITY') {
-        setError('DUPLICATE_SESSION')
-      } else {
-        setError('UNEXPECTED_DISCONNECT')
-      }
-    }
-
-    room.on(RoomEvent.Disconnected, onDisconnected)
-    return () => {
-      room.off(RoomEvent.Disconnected, onDisconnected)
-    }
-  }, [session.room, setError])
+  const onCompleted = useCallback(() => setOutcome('completed'), [])
 
   const onStart = useCallback(() => {
     void session.start().catch(() => {
@@ -136,6 +97,11 @@ export function App({ appConfig, token, preCheck, mode }: Props) {
   return (
     <ThemeProvider attribute="class" forcedTheme="light">
       <AgentSessionProvider session={session}>
+        <OutcomeWatcher
+          room={session.room}
+          onCompleted={onCompleted}
+          onError={setError}
+        />
         <ViewController
           appConfig={appConfig}
           preCheck={preCheck}
@@ -150,6 +116,49 @@ export function App({ appConfig, token, preCheck, mode }: Props) {
       </AgentSessionProvider>
     </ThemeProvider>
   )
+}
+
+/**
+ * Lives inside AgentSessionProvider so the LiveKit hooks (which require Room
+ * context) work. Captures the engine-published `session_outcome` attribute and
+ * subscribes to room.on(Disconnected) to route between completed and error
+ * outcomes. The agent's published outcome takes precedence; falls back to
+ * DisconnectReason when the engine didn't publish anything (crash, network drop).
+ */
+function OutcomeWatcher({
+  room,
+  onCompleted,
+  onError,
+}: {
+  room: Room | undefined
+  onCompleted: () => void
+  onError: (code: string) => void
+}) {
+  const lastOutcome = useSessionOutcome()
+  const lastOutcomeRef = useRef<string | null>(lastOutcome)
+  lastOutcomeRef.current = lastOutcome
+
+  useEffect(() => {
+    if (!room) return
+
+    const onDisconnected = (reason?: DisconnectReason) => {
+      const o = lastOutcomeRef.current
+      if (o === 'completed') return onCompleted()
+      if (o === 'error') return onError('ENGINE_ERROR')
+
+      const reasonName = reasonToName(reason)
+      if (reasonName === 'CLIENT_INITIATED') return onCompleted()
+      if (reasonName === 'DUPLICATE_IDENTITY') return onError('DUPLICATE_SESSION')
+      onError('UNEXPECTED_DISCONNECT')
+    }
+
+    room.on(RoomEvent.Disconnected, onDisconnected)
+    return () => {
+      room.off(RoomEvent.Disconnected, onDisconnected)
+    }
+  }, [room, onCompleted, onError])
+
+  return null
 }
 
 /**
