@@ -542,6 +542,7 @@ def create_app() -> FastAPI:
         SessionAlreadyStartedError,
     )
     from app.modules.session.errors import (
+        AgentDispatchFailedError,
         IllegalStartStateError,
         InvalidOtpError,
         InvalidSessionStateError,
@@ -609,6 +610,18 @@ def create_app() -> FastAPI:
             content={
                 "detail": str(exc) or "Token has been superseded",
                 "code": "TOKEN_SUPERSEDED",
+            },
+        )
+
+    @application.exception_handler(AgentDispatchFailedError)
+    async def _agent_dispatch_failed(
+        request: Request, exc: AgentDispatchFailedError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=502,
+            content={
+                "detail": exc.detail or "Agent dispatch failed",
+                "code": "AGENT_DISPATCH_FAILED",
             },
         )
 
