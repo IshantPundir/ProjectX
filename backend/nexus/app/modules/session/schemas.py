@@ -67,6 +67,15 @@ class StartSessionPendingResponse(BaseModel):
     session_id: UUID
 
 
+class StartSessionResponse(BaseModel):
+    """200 OK shape after /start successfully provisions LiveKit + dispatches agent."""
+    model_config = ConfigDict(from_attributes=True)
+    livekit_url: str
+    livekit_token: str
+    room_name: str
+    session_id: UUID
+
+
 class SessionDetailResponse(BaseModel):
     """Recruiter-side session detail view."""
     model_config = ConfigDict(from_attributes=True)

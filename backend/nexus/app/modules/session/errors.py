@@ -7,6 +7,7 @@ HTTP mapping (applied by main.py exception handlers):
   422 — OtpRequiredError, OtpExpiredError, OtpMaxAttemptsReachedError, InvalidOtpError
   429 — OtpRateLimitedError
   501 — LIVEKIT_INTEGRATION_PENDING (returned by service, not raised as exception)
+  502 — AgentDispatchFailedError
 """
 
 
@@ -54,3 +55,11 @@ class InvalidOtpError(Exception):
 
 class TokenAlreadyUsedError(Exception):
     """409 — POST /start on a token already consumed by a prior /start."""
+
+
+class AgentDispatchFailedError(Exception):
+    """502 — LiveKit dispatch raised; token NOT consumed; candidate can retry."""
+
+    def __init__(self, detail: str) -> None:
+        self.detail = detail
+        super().__init__(detail)
