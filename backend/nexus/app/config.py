@@ -164,10 +164,6 @@ class Settings(BaseSettings):
 
     # Observability
     sentry_dsn: str = ""
-    langfuse_host: str = ""           # Legacy — prefer LANGFUSE_BASE_URL
-    langfuse_base_url: str = ""       # e.g. https://cloud.langfuse.com (Langfuse v2+ convention)
-    langfuse_public_key: str = ""
-    langfuse_secret_key: str = ""
 
     # OpenTelemetry — vendor-neutral tracing.
     # Both exporters default to OFF. Set OTEL_DEV_CONSOLE_EXPORTER=true to dump

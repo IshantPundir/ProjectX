@@ -52,7 +52,9 @@ backend/nexus/
 │   │   └── tenant.py            ← Binds tenant_id to structlog context
 │   ├── ai/                      ← Provider-agnostic AI layer (Phase 2A)
 │   │   ├── config.py            ← AIConfig — env-driven model IDs and reasoning_effort
-│   │   ├── client.py            ← get_openai_client() — instructor.AsyncInstructor + langfuse.openai factory
+│   │   ├── client.py            ← get_openai_client() — instructor.AsyncInstructor + plain openai.AsyncOpenAI
+│   │   ├── otel.py              ← TracerProvider bootstrap, OpenAI auto-instrumentor
+│   │   ├── tracing.py           ← set_llm_span_attributes() — adds prompt metadata to active OTel span
 │   │   ├── prompts.py           ← PromptLoader — versioned prompt file reader, in-memory cache
 │   │   └── schemas.py           ← EnrichmentOutput, SignalExtractionOutput, ReEnrichmentOutput — structured output schemas with provenance validators
 │   └── modules/
@@ -272,10 +274,10 @@ Phase 2A introduces `app/ai/` as the provider-agnostic AI layer.
 
 - **AIConfig** (`app/ai/config.py`) — env-driven model IDs and `reasoning_effort`. Never hardcode. Swapping a model for a task is a single `.env` change.
 - **PromptLoader** (`app/ai/prompts.py`) — reads versioned prompts from `prompts/v{N}/<name>.txt`, cached in memory. Prompt updates are file changes, not code deploys.
-- **OpenAI client factory** (`app/ai/client.py`) — returns an `instructor.AsyncInstructor` wrapped around `langfuse.openai.AsyncOpenAI`. Langfuse tracing is a drop-in — no-op when `LANGFUSE_HOST` is empty.
+- **OpenAI client factory** (`app/ai/client.py`) — returns an `instructor.AsyncInstructor` wrapped around `openai.AsyncOpenAI`. OpenTelemetry tracing is wired separately at app startup via `app/ai/otel.py` — the OpenAI auto-instrumentor captures every `chat.completions.create` call as a span. Both exporters (Console for dev, OTLP for production) are off by default — see `.env.example` for the contract.
 - **EnrichmentOutput** and **SignalExtractionOutput** schemas (`app/ai/schemas.py`) — strict Pydantic models for the two-phase JD pipeline. Phase 1 produces an enriched JD; Phase 2 produces signals + seniority + role_summary with provenance metadata. `source=ai_inferred` requires `inference_basis`; `ai_extracted` requires it to be null.
 
-Business logic imports `get_openai_client()` and `prompt_loader` from `app.ai.*` — never openai/instructor/langfuse directly. This is the single swap point for a future provider change.
+Business logic imports `get_openai_client()` and `prompt_loader` from `app.ai.*` — never openai/instructor directly. This is the single swap point for a future provider change.
 
 ```python
 # CORRECT — provider-agnostic interface
@@ -290,9 +292,8 @@ from openai import AsyncOpenAI
 **Documented carve-outs (allowed):**
 - `app/modules/jd/errors.py` and `app/modules/jd/actors.py` import `openai` and `instructor.core.InstructorRetryException` *as types*, exclusively for retry/permanent-error classification (`_PERMANENT_EXCEPTIONS`) and user-safe error message mapping (`_SAFE_MESSAGES`). They never call the SDK. If the provider changes, this exception map moves with the new SDK; nothing else changes.
 - `app/ai/realtime.py` is the second blessed import site for vendor SDKs. It owns LiveKit plugin instantiation (`livekit.plugins.openai`, `deepgram`, `cartesia`, `silero`, `turn_detector`, `ai_coustics`) so the interview-engine worker never touches them directly. Reads model IDs / voices / effort from `AIConfig` — never from env or settings. (Engine-integration mechanics — `interview_engine_jwt_secret`, `interview_agent_name`, `nexus_internal_base_url` — are deliberately NOT in `AIConfig`; the engine worker reads those directly from `settings`. AIConfig is for AI provider config only.) Lazy imports inside each factory keep the FastAPI nexus process free of the realtime plugin packages (which are installed only in the interview-engine container).
-- `langfuse.decorators.observe` is allowed anywhere actors run — it is the tracing scaffold, not a business-logic dependency.
 - A future cleanup is to lift the JD exception map into `app/ai/errors.py` and re-export typed sentinels so module code never references vendor exception classes by name. Tracked as tech-debt; not blocking.
-- The interview-engine container (Phase 3C.2 Chunk 5) installs nexus + livekit-agents into **two separate venvs** with `PYTHONPATH` layered to prefer the engine venv. Reason: `langfuse>=2.56,<3` (nexus pin) constrains `openai<2`, while `livekit-agents>=1.5.4` requires `openai>=2`. Single-venv install fails resolution. Unblocked when `langfuse>=3` lands (its module layout changed — `app/ai/client.py` would need to switch from `langfuse.openai` + `langfuse.decorators.observe` to the v3 equivalents). Tracked as tech-debt; not blocking.
+- The interview-engine container (Phase 3C.2 Chunk 5) installs nexus + livekit-agents into **two separate venvs** with `PYTHONPATH` layered to prefer the engine venv. Reason: nexus pins `openai<2` (instructor 1.x constraint), while `livekit-agents>=1.5.4` requires `openai>=2`. Single-venv install fails resolution. Will be unblocked in Phase 2 of the modular-monolith spec by lifting both `openai` and `instructor` to 2.x. Tracked as tech-debt for now; not blocking.
 
 ### RBAC Enforcement
 - Auth middleware extracts JWT and attaches `token_payload` to `request.state` before any route handler runs.
@@ -334,7 +335,7 @@ from openai import AsyncOpenAI
 
 | Module | What It Owns |
 |---|---|
-| `ai` | Provider-agnostic AI layer. `AIConfig` (env-driven model/effort), `PromptLoader` (versioned prompts, in-memory cache), `get_openai_client()` (instructor + langfuse.openai factory with self-hosted-only guard — `_is_langfuse_cloud_host()` raises outside dev), `EnrichmentOutput` + `SignalExtractionOutput` schemas (split in the JD creation flow refinement) with provenance validators. (The original combined `ExtractionOutput` landed in Phase 2A; subsequently split into the two-phase form on 2026-04-28 — see docs/superpowers/specs/2026-04-28-jd-creation-flow-refinement-design.md.) |
+| `ai` | Provider-agnostic AI layer. `AIConfig` (env-driven model/effort), `PromptLoader` (versioned prompts, in-memory cache), `get_openai_client()` (instructor + plain openai.AsyncOpenAI), `tracing.py` + `otel.py` (OpenTelemetry auto-instrumentation + prompt-attribute helper), `EnrichmentOutput` + `SignalExtractionOutput` schemas (split in the JD creation flow refinement) with provenance validators. (The original combined `ExtractionOutput` landed in Phase 2A; subsequently split into the two-phase form on 2026-04-28 — see docs/superpowers/specs/2026-04-28-jd-creation-flow-refinement-design.md.) |
 | `jd` | JD pipeline full implementation. `create_job_posting` with company profile ancestry gate, `extract_and_enhance_jd` + `reenrich_jd` Dramatiq actors (Call 1 + Call 2), state machine with audit trail, `require_job_access` ancestry-walking authz, SSE status stream via `get_tenant_session` (Batch F RLS fix), `x-correlation-id` header validation (Batch D), router with create/get/list/stream/re-enrich/confirm-signals endpoints. |
 | `org_units` (extended) | `CompanyProfile` strict Pydantic schema, `find_company_profile_in_ancestry()` helper, `_validate_and_normalize_company_profile()` hook in create/update, `company_profile_completed_at/by` tracking stamps. |
 | `audit` | Append-only audit log with tenant-scoped RLS (migration 0008 added the missing `FOR INSERT WITH CHECK` policy that was silently dropping tenant-scoped writes). |
@@ -357,7 +358,7 @@ from openai import AsyncOpenAI
 
 | Module | What It Owns |
 |---|---|
-| `question_bank` | Per-stage question bank generation via Dramatiq actor. Adaptive coverage (mandatory-fits-session validation, mandatory demotion auto-correction, duration as session time limit not generation budget), bundling discipline, per-stage-type prompts, coverage notes persistence for audit trail. `list_banks` GET is read-idempotent (Batch G — returns placeholder entries for stages without banks, does NOT create drafts on poll). State machine raises typed exceptions (`IllegalTransitionError`, `ReorderMismatchError`). Bulk `get_banks_for_pipeline` uses 4 constant queries instead of 1+2N. `refine.py` handles per-question draft + refine LLM calls. `@observe` decorators on actors wire Langfuse trace metadata. Bank staleness is tracked via `pipeline_version_at_generation` + `is_stale` (added in 0018) so pipeline edits invalidate banks deterministically. |
+| `question_bank` | Per-stage question bank generation via Dramatiq actor. Adaptive coverage (mandatory-fits-session validation, mandatory demotion auto-correction, duration as session time limit not generation budget), bundling discipline, per-stage-type prompts, coverage notes persistence for audit trail. `list_banks` GET is read-idempotent (Batch G — returns placeholder entries for stages without banks, does NOT create drafts on poll). State machine raises typed exceptions (`IllegalTransitionError`, `ReorderMismatchError`). Bulk `get_banks_for_pipeline` uses 4 constant queries instead of 1+2N. `refine.py` handles per-question draft + refine LLM calls. `set_llm_span_attributes()` calls on actors wire OTel span metadata (prompt name+version, bank id, stage id, tenant id). Bank staleness is tracked via `pipeline_version_at_generation` + `is_stale` (added in 0018) so pipeline edits invalidate banks deterministically. |
 
 ### Phase 3B — Implemented
 
@@ -438,7 +439,7 @@ Tasks that must be async (never block the request cycle):
 - **Idempotency is mandatory.** Every actor must be safe to re-run. Use a database row-state check (e.g. `enrichment_status`, `bank_status`) at the top of the actor and short-circuit if the work is already done or in progress.
 - **Retry policy is explicit.** Permanent errors (validation failures, missing rows, API 4xx that won't change on retry) raise a typed exception listed in `_PERMANENT_EXCEPTIONS`; Dramatiq does not retry those. Transient errors (network, 5xx, rate limits) retry with exponential backoff up to the actor's declared `max_retries`.
 - **Dead-letter queue (DLQ).** Tasks that exhaust retries land in the DLQ — not the main broker. The DLQ is monitored; SEV3 fires if it fills above 0 for >24h.
-- **Tracing.** Every actor uses `@observe` (Langfuse) for LLM calls and writes its `correlation_id` into structured logs at every hop. The correlation ID flows from the request that enqueued the task through to any downstream call.
+- **Tracing.** Each actor's LLM call is auto-captured as an OpenTelemetry span by the OpenAI instrumentor. Actors call `set_llm_span_attributes()` from `app/ai/tracing.py` to add prompt name+version, tenant id, and correlation id. The correlation ID also flows through structured logs at every hop, so log-grep and trace-search produce the same picture.
 - **No PII in actor arguments.** Pass IDs (job_id, candidate_id, session_id), not bodies. The actor reloads from Postgres under the right RLS context.
 - **Bypass-RLS sessions in actors.** Worker tasks run outside a request — they don't have `app.current_tenant` set. Use `get_bypass_db()` and re-establish the tenant scope explicitly via `SET LOCAL app.current_tenant` if the actor needs RLS, or stay bypass-only for cross-tenant batch work.
 
@@ -466,8 +467,8 @@ Real-time latency budget:
 
 TTS TTFB is the highest-leverage variable. Benchmark Cartesia Sonic vs ElevenLabs under realistic concurrent load before building the session engine.
 
-### Langfuse — Self-Hosted Only
-Langfuse traces every LLM call including candidate response text. This is sensitive candidate evaluation data. **Never use managed Langfuse cloud.** Self-host using the official Docker Compose setup. Set `LANGFUSE_HOST` in environment config.
+### OpenTelemetry — Vendor-Neutral by Design
+LLM traces flow through OpenTelemetry instrumentation, not a vendor-specific SDK. The `opentelemetry-instrumentation-openai-v2` auto-instrumentor captures every `chat.completions.create` call as a span; `app/ai/tracing.set_llm_span_attributes()` adds prompt metadata. Two opt-in exporters (`OTEL_DEV_CONSOLE_EXPORTER` for stdout, `OTEL_EXPORTER_OTLP_ENDPOINT` for production); both off by default. Spans contain candidate evaluation data, so the OTLP endpoint MUST point at a sink the operator controls — never a third-party-hosted backend without a signed sub-processor agreement.
 
 ---
 

@@ -17,7 +17,6 @@ from uuid import UUID
 import dramatiq
 import orjson
 import structlog
-from langfuse.decorators import langfuse_context, observe
 from sqlalchemy import select
 from sqlalchemy.sql import text
 
@@ -248,7 +247,6 @@ def _build_user_message(
 # Core generation function (shared by the stage and pipeline actors)
 # ---------------------------------------------------------------------------
 
-@observe(name="question_bank_generate")
 async def _generate_one_bank(
     db,
     *,
@@ -264,29 +262,12 @@ async def _generate_one_bank(
     Caller must commit or rollback.
 
     Tracing:
-      @observe creates a Langfuse trace named 'question_bank_generate'.
-      The OpenAI call inside (via langfuse.openai.AsyncOpenAI) is
-      auto-captured as a nested generation span. Trace metadata includes
-      bank_id, stage_id, tenant_id, and model/effort so traces are
-      searchable per-bank in the Langfuse dashboard. session_id groups
-      all retries of the same bank into one Langfuse session (matching
-      jd/actors.py). (B13 wiring.)
+      The OpenAI call is auto-captured as an OTel span by the OpenAI
+      auto-instrumentor. set_llm_span_attributes() adds bank_id, stage_id,
+      tenant_id, model/effort, and prompt name+version so spans are
+      searchable per-bank in any OTel-compatible observability backend.
     """
-    # Attach trace metadata for Langfuse dashboard search / grouping.
-    langfuse_context.update_current_trace(
-        session_id=str(bank.id),
-        tags=["question_bank_generate", f"stage_type:{stage.stage_type}"],
-        metadata={
-            "bank_id": str(bank.id),
-            "stage_id": str(stage.id),
-            "stage_type": stage.stage_type,
-            "tenant_id": str(bank.tenant_id),
-            "job_posting_id": str(job.id),
-            "model": ai_config.question_bank_model,
-            "reasoning_effort": ai_config.question_bank_effort,
-            "prompt_version": bank.prompt_version,
-        },
-    )
+    # Attach OTel span attributes for prompt metadata.
     set_llm_span_attributes(
         prompt_name=f"question_bank_{stage.stage_type}",
         prompt_version=bank.prompt_version,
@@ -933,7 +914,6 @@ async def generate_question_bank_pipeline(
 # Actor: single question regeneration
 # ---------------------------------------------------------------------------
 
-@observe(name="question_bank_regenerate")
 async def _regenerate_one_question(
     db,
     *,
@@ -946,26 +926,12 @@ async def _regenerate_one_question(
 ) -> None:
     """Inner helper for regenerate_question that owns the LLM + DB write.
 
-    Separated from the Dramatiq actor so @observe() can wrap only the
-    observable path (not the actor's session bootstrap). Matches the
-    jd/actors.py inner-coroutine pattern (e.g., `_run_reenrichment`). (B13 wiring.)
+    Separated from the Dramatiq actor so the LLM call is the only thing
+    inside the auto-instrumented OTel span (not the actor's session
+    bootstrap). Matches the jd/actors.py inner-coroutine pattern (e.g.,
+    `_run_reenrichment`).
     """
-    # Attach trace metadata for Langfuse dashboard search / grouping.
-    langfuse_context.update_current_trace(
-        session_id=str(bank.id),
-        tags=["question_bank_regenerate", f"stage_type:{stage.stage_type}"],
-        metadata={
-            "bank_id": str(bank.id),
-            "stage_id": str(stage.id),
-            "stage_type": stage.stage_type,
-            "tenant_id": str(bank.tenant_id),
-            "job_posting_id": str(job.id),
-            "question_id": str(question.id),
-            "model": ai_config.question_bank_model,
-            "reasoning_effort": ai_config.question_bank_effort,
-            "prompt_version": bank.prompt_version,
-        },
-    )
+    # Attach OTel span attributes for prompt metadata.
     set_llm_span_attributes(
         prompt_name="question_bank_regenerate_one",
         prompt_version=bank.prompt_version,
@@ -1117,9 +1083,9 @@ async def regenerate_question(
     """Regenerate a single question slot, preserving its UUID.
 
     Uses the regenerate-one prompt which takes other questions in the bank
-    as 'do not duplicate' context. Delegates the observable LLM + DB write
-    path to `_regenerate_one_question` so @observe() wraps just that
-    portion (matching jd/actors.py).
+    as 'do not duplicate' context. Delegates the LLM + DB write path to
+    `_regenerate_one_question` so the OTel span wraps just that portion
+    (matching jd/actors.py).
 
     Publishes bank.question_updated post-commit. Actors don't have FastAPI
     BackgroundTasks so publish is called inline after the session commits.

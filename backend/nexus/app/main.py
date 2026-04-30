@@ -223,10 +223,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # Shutdown — reverse order of startup.
     await pubsub.shutdown()
 
-    from app.ai.client import shutdown_langfuse
     from app.database import engine
 
-    shutdown_langfuse()
     # OTel shutdown: flush + close any in-flight span batches before exit.
     _otel_provider.shutdown()
     await engine.dispose()

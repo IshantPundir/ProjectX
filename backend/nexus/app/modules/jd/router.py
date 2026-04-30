@@ -56,7 +56,7 @@ def _get_correlation_id(request: Request) -> str:
     """Extract x-correlation-id or mint a fresh uuid4.
 
     The header is untrusted input, so we validate before propagating it to
-    logs, Langfuse tags, and actor kwargs:
+    logs, OTel span attributes, and actor kwargs:
       - must be non-empty and <= 128 chars
       - must be printable ASCII (no control chars, no unicode)
     Invalid values are discarded and replaced with a fresh uuid4 so a
