@@ -526,16 +526,16 @@ Goal: factories exist; no observable change to JD / question bank flows.
 - [ ] **Step 1: Append fields to the `Settings` class in `config.py`**
 
 ```python
-    # --- Phase 3C.2 — interview engine (realtime LLM/STT/TTS + auth) ---
+    # --- Interview engine — realtime LLM/STT/TTS + auth (Phase 3C.2) ---
     interview_engine_jwt_secret: str = ""           # HS256 signing key, 32 random bytes; required outside test env
     interview_agent_name: str = "Dakota-1785"
     interview_llm_model: str = "gpt-5.3-chat-latest"
     interview_reasoning_effort: str = "medium"
-    stt_model: str = "nova-3"
-    stt_language: str = "en"
-    tts_model: str = "sonic-2"
-    tts_voice: str = "9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"
-    tts_language: str = "en"
+    interview_stt_model: str = "nova-3"
+    interview_stt_language: str = "en"
+    interview_tts_model: str = "sonic-2"
+    interview_tts_voice: str = "9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"
+    interview_tts_language: str = "en"
     nexus_internal_base_url: str = "http://nexus:8000"  # Used by the engine — Nexus itself ignores it
 ```
 
@@ -549,17 +549,17 @@ INTERVIEW_ENGINE_JWT_SECRET=
 INTERVIEW_AGENT_NAME=Dakota-1785
 INTERVIEW_LLM_MODEL=gpt-5.3-chat-latest
 INTERVIEW_REASONING_EFFORT=medium
-STT_MODEL=nova-3
-STT_LANGUAGE=en
-TTS_MODEL=sonic-2
-TTS_VOICE=9626c31c-bec5-4cca-baa8-f8ba9e84c8bc
-TTS_LANGUAGE=en
+INTERVIEW_STT_MODEL=nova-3
+INTERVIEW_STT_LANGUAGE=en
+INTERVIEW_TTS_MODEL=sonic-2
+INTERVIEW_TTS_VOICE=9626c31c-bec5-4cca-baa8-f8ba9e84c8bc
+INTERVIEW_TTS_LANGUAGE=en
 NEXUS_INTERNAL_BASE_URL=http://nexus:8000
 ```
 
 - [ ] **Step 3: Smoke that settings load**
 
-Run: `docker compose run --rm nexus python -c "from app.config import settings; print(settings.interview_agent_name, settings.stt_model)"`
+Run: `docker compose run --rm nexus python -c "from app.config import settings; print(settings.interview_agent_name, settings.interview_stt_model)"`
 Expected: prints `Dakota-1785 nova-3`.
 
 - [ ] **Step 4: Commit**
@@ -579,7 +579,7 @@ git commit -m "feat(config): add interview engine settings (LLM/STT/TTS + JWT se
 - [ ] **Step 1: Append five `@property` accessors to `AIConfig`**
 
 ```python
-    # --- Phase 3C.2 — Interview engine (realtime) ---
+    # --- Interview engine — realtime (Phase 3C.2) ---
     @property
     def interview_llm_model(self) -> str:
         return settings.interview_llm_model
@@ -589,29 +589,29 @@ git commit -m "feat(config): add interview engine settings (LLM/STT/TTS + JWT se
         return settings.interview_reasoning_effort
 
     @property
-    def stt_model(self) -> str:
-        return settings.stt_model
+    def interview_stt_model(self) -> str:
+        return settings.interview_stt_model
 
     @property
-    def stt_language(self) -> str:
-        return settings.stt_language
+    def interview_stt_language(self) -> str:
+        return settings.interview_stt_language
 
     @property
-    def tts_model(self) -> str:
-        return settings.tts_model
+    def interview_tts_model(self) -> str:
+        return settings.interview_tts_model
 
     @property
-    def tts_voice(self) -> str:
-        return settings.tts_voice
+    def interview_tts_voice(self) -> str:
+        return settings.interview_tts_voice
 
     @property
-    def tts_language(self) -> str:
-        return settings.tts_language
+    def interview_tts_language(self) -> str:
+        return settings.interview_tts_language
 ```
 
 - [ ] **Step 2: Smoke**
 
-Run: `docker compose run --rm nexus python -c "from app.ai.config import ai_config; print(ai_config.interview_llm_model, ai_config.tts_voice)"`
+Run: `docker compose run --rm nexus python -c "from app.ai.config import ai_config; print(ai_config.interview_llm_model, ai_config.interview_tts_voice)"`
 Expected: prints the configured values.
 
 - [ ] **Step 3: Commit**
