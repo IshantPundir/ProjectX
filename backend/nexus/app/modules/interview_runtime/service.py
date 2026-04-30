@@ -12,8 +12,9 @@ claim — every query in this module MUST filter explicitly by tenant_id.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
@@ -26,9 +27,11 @@ from app.models import (
     StageQuestion,
     StageQuestionBank,
 )
+from app.modules.audit.service import log_event
 from app.modules.interview_runtime.errors import (
     CompanyProfileMissingError,
     QuestionBankNotReadyError,
+    SessionNotActiveError,
     StageNotAiDrivenError,
 )
 from app.modules.interview_runtime.schemas import (
@@ -37,6 +40,7 @@ from app.modules.interview_runtime.schemas import (
     QuestionConfig,
     QuestionRubric,
     SessionConfig,
+    SessionResult,
     StageConfig,
 )
 from app.modules.org_units.service import find_company_profile_in_ancestry
@@ -201,4 +205,81 @@ async def build_session_config(
             s["value"] if isinstance(s, dict) and "value" in s else str(s)
             for s in (snapshot.signals or [])
         ],
+    )
+
+
+async def record_session_result(
+    db: AsyncSession,
+    *,
+    session_id: uuid.UUID,
+    tenant_id: uuid.UUID,
+    result: SessionResult,
+    jti: uuid.UUID,
+) -> None:
+    """Persist the engine's SessionResult and transition the session to completed.
+
+    Atomic on the active->completed transition: a single UPDATE gated on
+    state='active' decides whether the engine's result wins. On rowcount=0
+    the function distinguishes idempotent retry (already completed) from a
+    real state violation:
+
+    * row missing               -> ValueError('session not found')
+    * row exists, completed     -> silent no-op (idempotent retry)
+    * row exists, any other     -> SessionNotActiveError
+
+    Audit row written on successful first transition only — the idempotent
+    silent-no-op branch does NOT write a duplicate audit entry.
+
+    Caller MUST be on a bypass-RLS session AND must have already verified
+    that the engine JWT's tenant_id matches the ``tenant_id`` argument.
+    """
+    derived_status = "ok" if result.questions_asked > 0 else "partial"
+    now = datetime.now(UTC)
+
+    res = await db.execute(
+        update(SessionRow)
+        .where(
+            SessionRow.id == session_id,
+            SessionRow.tenant_id == tenant_id,
+            SessionRow.state == "active",
+        )
+        .values(
+            raw_result_json=result.model_dump(mode="json"),
+            transcript=[t.model_dump(mode="json") for t in result.full_transcript],
+            questions_asked=result.questions_asked,
+            probes_fired=result.total_probes_fired,
+            agent_completed_at=now,
+            result_status=derived_status,
+            state="completed",
+            state_changed_at=now,
+        )
+    )
+    if res.rowcount == 0:
+        existing = (
+            await db.execute(
+                select(SessionRow).where(
+                    SessionRow.id == session_id,
+                    SessionRow.tenant_id == tenant_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            raise ValueError(f"session {session_id} not found")
+        if existing.state == "completed" and existing.agent_completed_at is not None:
+            return  # idempotent — engine retried after a successful first post
+        raise SessionNotActiveError(f"session {session_id} state={existing.state}")
+
+    await log_event(
+        db,
+        tenant_id=tenant_id,
+        actor_id=None,
+        actor_email=None,
+        action="engine.session.completed",
+        resource="session",
+        resource_id=session_id,
+        payload={
+            "jti_prefix": str(jti)[:8],
+            "questions_asked": result.questions_asked,
+            "result_status": derived_status,
+        },
     )
