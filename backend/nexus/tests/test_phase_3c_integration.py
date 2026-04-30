@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from app.database import get_tenant_db
 from app.main import app
-from app.models import CandidateSessionToken, Session
+from app.models import CandidateSessionToken, EngineDispatchToken, Session
 from app.modules.auth.context import RoleAssignment, UserContext, get_current_user_roles
 from app.modules.auth.schemas import TokenPayload
 from tests.test_scheduler_service import _seed
@@ -158,9 +158,17 @@ async def test_phase_3c_happy_path_with_otp(db):
                 body = start.json()
                 assert isinstance(body["livekit_url"], str)
                 assert isinstance(body["livekit_token"], str)
-                assert isinstance(body["room_name"], str)
-                assert isinstance(body["session_id"], str)
+                assert body["room_name"] == f"session-{session_id}"
+                assert body["session_id"] == session_id
                 mock_dispatch_agent.assert_awaited_once()
+
+                rows = (await db.execute(
+                    select(EngineDispatchToken).where(
+                        EngineDispatchToken.session_id == uuid.UUID(session_id)
+                    )
+                )).scalars().all()
+                assert len(rows) == 1
+                assert rows[0].revoked_at is None
 
                 # 7. Replay — 409 TOKEN_ALREADY_USED
                 replay = await ac.post(f"/api/candidate-session/{token}/start")
