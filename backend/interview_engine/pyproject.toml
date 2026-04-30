@@ -13,4 +13,6 @@ dependencies = [
     "pydantic-settings>=2.0",
     "python-dotenv>=1.2.2",
     "structlog>=24.0",
+    "httpx>=0.27",
+    "nexus @ file:///app/nexus",
 ]
