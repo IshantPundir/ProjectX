@@ -13,6 +13,7 @@ Per-session entrypoint:
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import structlog
@@ -21,6 +22,7 @@ from livekit.agents import (
     AgentServer,
     AgentSession,
     AgentStateChangedEvent,
+    CloseEvent,
     ErrorEvent,
     JobContext,
     JobProcess,
@@ -31,6 +33,7 @@ from livekit.agents import (
     cli,
     room_io,
 )
+from livekit.agents.voice.events import CloseReason
 # Process-startup plugin imports. Each of these calls Plugin.register_plugin()
 # at module load time, which is what `python agent.py download-files`
 # discovers to prewarm model files at container build time. Per the
@@ -128,6 +131,8 @@ async def entrypoint(ctx: JobContext) -> None:
     if engine_cfg.log_audio_events:
         _wire_audio_observability(session, log_transcripts=engine_cfg.log_user_transcripts)
 
+    _wire_close_handler(session, agent)
+
     await session.start(
         agent=agent,
         room=ctx.room,
@@ -210,6 +215,72 @@ def _wire_audio_observability(
             error=str(ev.error),
             error_type=type(ev.error).__name__,
         )
+
+
+def _wire_close_handler(
+    session: AgentSession, agent: InterviewerAgent
+) -> None:
+    """Attach the close-event handler that persists a final result + publishes
+    the session_outcome attribute when the AgentSession ends.
+
+    Two paths reach close:
+
+    1. State machine emits Action.CLOSE → ``record_observation`` already
+       persisted + published ``session_outcome='completed'`` and set
+       ``agent._persisted=True``. The close handler is a no-op in that case
+       because ``_persist_result`` is idempotent on the Nexus side and we
+       don't want to overwrite the prior completed outcome with another
+       'completed' (harmless but noisy).
+    2. Candidate disconnects mid-session — clicks End Call, refreshes the
+       page (which closes their old room session), or network drops past
+       the SDK's reconnect window. ``close_on_disconnect=True`` (default)
+       fires the AgentSession close with ``reason=PARTICIPANT_DISCONNECTED``.
+       The state machine never reached CLOSE; we persist a partial result
+       here so Nexus transitions session.state → 'completed' and the
+       candidate's wizard pre-check on next visit doesn't show
+       'Rejoin your interview' for an effectively-ended session.
+
+    ``ERROR`` reason (LLM/STT/TTS plugin error) routes outcome='error' so the
+    frontend's ``useSessionOutcome`` hook surfaces ``DisconnectError`` with
+    ``ENGINE_ERROR`` rather than ``CompletionScreen``.
+    """
+
+    @session.on("close")
+    def _on_close(ev: CloseEvent) -> None:
+        # Spawn an asyncio task — the close event is emitted before room IO
+        # tears down, so the LiveKit room is still alive long enough to
+        # publish the outcome attribute.
+        asyncio.create_task(_handle_close(ev, agent))
+
+
+async def _handle_close(ev: CloseEvent, agent: InterviewerAgent) -> None:
+    """Async body of the close-event handler. See ``_wire_close_handler`` docstring."""
+    log = structlog.get_logger("interview-engine")
+    log.info(
+        "session.close",
+        reason=ev.reason.value,
+        has_error=bool(ev.error),
+        already_persisted=agent._persisted,
+    )
+
+    outcome = "error" if ev.reason == CloseReason.ERROR else "completed"
+
+    # Persist a final/partial result if the state machine didn't already.
+    if not agent._persisted:
+        try:
+            result = agent._build_session_result()
+            await agent._persist_result(result)
+            agent._persisted = True
+        except Exception as exc:  # noqa: BLE001
+            log.error(
+                "session.close.persist_failed",
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+
+    # Publish session_outcome so the candidate's frontend
+    # useSessionOutcome hook reads it on the Disconnected event.
+    await agent._publish_session_outcome(outcome)
 
 
 if __name__ == "__main__":

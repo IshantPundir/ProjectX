@@ -79,6 +79,10 @@ class InterviewerAgent(Agent):
 
         self._transcript: list[TranscriptEntry] = []
         self._session_start_ms: int = 0
+        # Set after _persist_result has been called via Action.CLOSE so the
+        # close-event handler in agent.py knows not to double-persist when
+        # the candidate ended the session manually after a clean CLOSE.
+        self._persisted: bool = False
 
         super().__init__(instructions=system_prompt)
 
@@ -201,6 +205,7 @@ class InterviewerAgent(Agent):
         if action == Action.CLOSE:
             result = self._build_session_result()
             await self._persist_result(result)
+            self._persisted = True
             await self._publish_session_outcome("completed")
 
         return context_injection
