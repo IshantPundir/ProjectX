@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
-import { CompletionScreen } from '@/app/(interview)/interview/[token]/LiveSession/CompletionScreen'
+import { CompletionScreen } from '@/components/interview/app/CompletionScreen'
 
 describe('CompletionScreen', () => {
   it('renders the thank-you copy and contains no navigation links', () => {
