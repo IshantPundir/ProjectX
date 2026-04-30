@@ -1,54 +1,50 @@
-"""Interview engine configuration.
+"""Engine-mechanics config.
 
-All settings are env-driven.  The interview engine runs as a separate
-process from Nexus with its own .env file.
+LLM / STT / TTS / model IDs / API keys are NOT here — they live in
+nexus's ``app.ai.config.AIConfig`` and are read via the
+``app.ai.realtime`` factory functions. This file only owns engine
+mechanics: agent name, probe budget, time-warning threshold,
+endpointing delays, the nexus internal API base URL, and the
+results-fallback directory used when POSTing results to nexus fails.
 """
 
 from __future__ import annotations
 
-from typing import Literal
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class InterviewEngineConfig(BaseSettings):
-    """Singleton-style settings object loaded from environment / .env."""
+    """Singleton-style settings object loaded from environment / .env.
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    All fields here describe how the engine *behaves* mid-session, not
+    which AI providers it talks to. Provider config is in
+    ``nexus.app.ai.config.AIConfig``.
+    """
 
-    # -- Context source ----------------------------------------------------
-    context_source: Literal["fixture", "room_metadata", "nexus_api"] = "fixture"
-    fixture_path: str = "fixtures/sample_session.json"
+    model_config = SettingsConfigDict(env_file=None, extra="ignore")
 
-    # -- Results output ----------------------------------------------------
-    results_dir: str = "results"
+    # -- Agent identity ----------------------------------------------------
+    # Must match the value nexus's dispatcher passes as `agent_name` on
+    # CreateAgentDispatchRequest (see app/config.py::interview_agent_name).
+    agent_name: str = "Dakota-1785"
 
-    # -- LLM (direct OpenAI API via OPENAI_API_KEY) -------------------------
-    # gpt-5.3-chat-latest: proven reliable with function tool calls
-    # (every turn in prior testing). gpt-4o-mini freestyled the entire
-    # interview without calling the tool once. Don't downgrade.
-    interview_llm_model: str = "gpt-5.3-chat-latest"
-    interview_reasoning_effort: str = "low"
-
-    # -- TTS (direct Cartesia API via CARTESIA_API_KEY) --------------------
-    tts_model: str = "sonic-2024-10-19"
-    tts_voice: str = "9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"
-    tts_language: str = "en"
-
-    # -- STT (direct Deepgram API via DEEPGRAM_API_KEY) --------------------
-    stt_model: str = "nova-3"
-    stt_language: str = "en"
-
-    # -- Interview constraints ---------------------------------------------
-    max_probes_per_question: int = 2
+    # -- Interview state machine -------------------------------------------
+    max_probes_per_question: int = 3
     time_warning_threshold: float = 0.8  # warn at 80% elapsed
 
     # -- Turn detection / endpointing --------------------------------------
     # Interview-tuned: candidates pause to think mid-answer.
-    # Minimum silence (seconds) before committing a turn.
-    endpointing_min_delay: float = 1.5
-    # Maximum silence before forcing a turn commit.
-    endpointing_max_delay: float = 4.0
+    endpointing_min_delay: float = 0.5
+    endpointing_max_delay: float = 6.0
 
-    # -- Agent identity ----------------------------------------------------
-    agent_name: str = "Dakota"
+    # -- Nexus internal API ------------------------------------------------
+    # Compose-network hostname. Override via NEXUS_INTERNAL_BASE_URL env.
+    nexus_internal_base_url: str = "http://nexus:8000"
+
+    # -- Results fallback --------------------------------------------------
+    # The engine POSTs SessionResult to nexus's /api/internal/sessions/{id}/results.
+    # On POST failure (3 retries exhausted), it writes JSON to this directory
+    # so the result isn't lost. Alerted via structlog CRITICAL.
+    results_fallback_dir: Path = Path("/tmp/interview_results")
