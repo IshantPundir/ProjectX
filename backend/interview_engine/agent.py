@@ -120,10 +120,35 @@ async def entrypoint(ctx: JobContext) -> None:
         vad=ctx.proc.userdata["vad"],
         turn_handling=TurnHandlingOptions(
             turn_detection=build_turn_detector(),
-            preemptive_generation={"enabled": False},
+            # Preemptive generation = LLM starts inferring before EOU is
+            # confirmed, then commits/discards based on final transcript.
+            # LiveKit's Agent Builder doc recommends this for all voice
+            # agents — the first-token latency drop is significant
+            # (often 200-500ms) on conversational turns. Recommended
+            # default per docs/agents/multimodality/audio § preemptive
+            # generation.
+            preemptive_generation={"enabled": True},
+            # Dynamic endpointing adapts the delay between min_delay and
+            # max_delay based on the candidate's pause statistics across
+            # the session. Interview-tuned: candidates pause to think
+            # mid-answer, but we don't want to wait the full 2.5s after
+            # every short reply. Dynamic mode learns the candidate's
+            # rhythm and shortens snappy turns while still tolerating
+            # longer thinking pauses on hard questions.
             endpointing={
+                "mode": "dynamic",
                 "min_delay": engine_cfg.endpointing_min_delay,
                 "max_delay": engine_cfg.endpointing_max_delay,
+            },
+            # Adaptive interruption is the LiveKit-recommended mode when
+            # a turn detector + STT with aligned transcripts are present
+            # (Deepgram nova-3 qualifies). Resumes the agent's speech if
+            # the interruption turns out to be a false trigger (cough,
+            # background noise) within the timeout window.
+            interruption={
+                "mode": "adaptive",
+                "min_duration": 0.5,
+                "resume_false_interruption": True,
             },
         ),
     )

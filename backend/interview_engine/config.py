@@ -35,9 +35,22 @@ class InterviewEngineConfig(BaseSettings):
     time_warning_threshold: float = 0.8  # warn at 80% elapsed
 
     # -- Turn detection / endpointing --------------------------------------
-    # Interview-tuned: candidates pause to think mid-answer.
-    endpointing_min_delay: float = 0.5
-    endpointing_max_delay: float = 6.0
+    # Interview-tuned: candidates pause to think mid-answer, but we want
+    # snappy turn-taking on short replies. With dynamic endpointing
+    # enabled in agent.py, these are the lower/upper bounds — the engine
+    # adapts within this range based on observed pause statistics.
+    #
+    # min_delay = 0.3 — minimum wait after VAD silence before declaring
+    #   the turn complete. Lower than the LiveKit default of 0.5 because
+    #   interview turns tend to be punchy (yes/no, "let me think...",
+    #   short factual answers); too long a floor feels sluggish on those.
+    # max_delay = 2.5 — upper bound for "is the candidate still
+    #   thinking?" pauses. Was 6.0 originally which made the agent feel
+    #   unresponsive when the candidate had finished but the VAD wasn't
+    #   confident. 2.5s is the LiveKit-doc recommended ceiling for
+    #   conversational agents.
+    endpointing_min_delay: float = 0.3
+    endpointing_max_delay: float = 2.5
 
     # -- Nexus internal API ------------------------------------------------
     # Compose-network hostname. Override via NEXUS_INTERNAL_BASE_URL env.

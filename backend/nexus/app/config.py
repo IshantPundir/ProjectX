@@ -189,8 +189,16 @@ class Settings(BaseSettings):
     # Realtime model selection — env-driven, mirrors the JD/question-bank
     # convention. Consumed by AIConfig (in app/ai/config.py) and the
     # plugin factories in app/ai/realtime.py.
+    #
+    # reasoning_effort is "low" for the realtime LLM because medium/high
+    # reasoning effort adds 500ms-2s of first-token latency on every
+    # turn — fatal for sub-second conversational feel. The interview
+    # state machine is what actually drives interview rigor (probe
+    # selection, signal detection, mandatory-question coverage) — the
+    # LLM's job is to be a fluent conversationalist, which low effort
+    # handles cleanly.
     interview_llm_model: str = "gpt-5.3-chat-latest"
-    interview_reasoning_effort: str = "medium"
+    interview_reasoning_effort: str = "low"
 
     # STT — Deepgram realtime
     interview_stt_model: str = "nova-3"
