@@ -10,8 +10,10 @@ interface Props {
 
 export function CandidateSelfView({ onMediaLost }: Props) {
   const { localParticipant } = useLocalParticipant()
-  const camTrack = localParticipant.getTrackPublication(Track.Source.Camera)?.track
-  const micTrack = localParticipant.getTrackPublication(Track.Source.Microphone)?.track
+  const camPub = localParticipant.getTrackPublication(Track.Source.Camera)
+  const micPub = localParticipant.getTrackPublication(Track.Source.Microphone)
+  const camTrack = camPub?.track
+  const micTrack = micPub?.track
 
   useEffect(() => {
     if (!camTrack || !micTrack) return
@@ -31,12 +33,12 @@ export function CandidateSelfView({ onMediaLost }: Props) {
 
   return (
     <div className="rounded-2xl bg-zinc-900 overflow-hidden aspect-video">
-      {camTrack ? (
+      {camTrack && camPub ? (
         <VideoTrack
           trackRef={{
             participant: localParticipant,
             source: Track.Source.Camera,
-            publication: localParticipant.getTrackPublication(Track.Source.Camera)!,
+            publication: camPub,
           }}
         />
       ) : (
