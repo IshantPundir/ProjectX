@@ -1,6 +1,7 @@
 """Auth schemas — JWT payload, invite/me responses."""
 
 import uuid
+from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -35,6 +36,22 @@ class CandidateTokenPayload(BaseModel):
     tenant_id: uuid.UUID
     exp: int = 0
     iat: int = 0
+
+
+class EngineTokenPayload(BaseModel):
+    """Decoded claims of a Nexus-minted engine dispatch JWT (HS256, single-use).
+
+    Issued by Nexus on /start, consumed by the interview-engine worker on
+    /api/internal/sessions/{id}/config and /results. Single-use per
+    (jti, endpoint) — see verify_engine_token for the atomic gate.
+    """
+
+    sub: uuid.UUID            # session_id
+    tenant_id: uuid.UUID
+    purpose: Literal["interview_engine"]
+    iat: int
+    exp: int
+    jti: uuid.UUID
 
 
 class VerifyInviteResponse(BaseModel):
