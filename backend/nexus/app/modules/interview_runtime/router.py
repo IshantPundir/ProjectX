@@ -8,6 +8,13 @@ The auth middleware skips this prefix entirely (see _PUBLIC_PREFIXES in
 app/middleware/auth.py) — without that exemption every request would be
 rejected before reaching this router because the engine sends an HS256
 bearer, not a Supabase ES256 token.
+
+TODO(rate-limit): Spec Section 6.2 calls for 60/min per source IP on this
+endpoint family. The project has no rate-limiting middleware installed
+(no slowapi / fastapi-limiter). Single-use per (jti, endpoint) provides
+an implicit per-jti cap, but per-IP volume control on failed-auth attempts
+is currently a known gap. Track with the broader "introduce rate limiting"
+work item — does not block Phase 3C.2 ship.
 """
 
 from __future__ import annotations

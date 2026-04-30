@@ -249,6 +249,13 @@ async def verify_engine_token(
     # was already enforced by jwt.decode via the exp claim; this check
     # only catches admin-revocation, which can happen between issuance
     # and use.
+    #
+    # Ordering note: the INSERT into engine_token_uses commits before this
+    # SELECT runs. If a concurrent admin revoke commits in that window, the
+    # use row stays in engine_token_uses and we still reject this request
+    # ("revoked"). A subsequent retry with the same (jti, endpoint) hits
+    # rowcount=0 and is rejected as "already used." Both rejections are
+    # correct — the leftover use row is benign.
     parent = (
         await db.execute(
             select(EngineDispatchToken).where(EngineDispatchToken.jti == payload.jti)

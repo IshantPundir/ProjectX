@@ -1059,7 +1059,15 @@ async def find_company_profile_in_ancestry(
 
     Used by create_job_posting() to validate that a JD can be created under
     a given org unit, and by the Dramatiq actor's _build_user_message() to
-    pass company context into Call 1."""
+    pass company context into Call 1.
+
+    Tenant scoping: this helper does NOT filter by tenant_id. The caller
+    is responsible for ensuring ``org_unit_id`` belongs to the expected
+    tenant. Today's callers all derive ``org_unit_id`` from a row that was
+    already tenant-filtered (e.g. ``job.org_unit_id`` after the job row
+    was loaded with a tenant_id check), so the walk stays inside one
+    tenant's tree by transitivity. Bypass-session callers in particular
+    must verify this invariant — RLS is not a backstop here."""
     current_id: UUID | None = org_unit_id
     seen: set[UUID] = set()
     while current_id is not None:
