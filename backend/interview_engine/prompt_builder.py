@@ -5,8 +5,9 @@ from __future__ import annotations
 import re
 from string import Template
 
+from app.ai.prompts import prompt_loader
+from app.modules.interview_runtime.schemas import SessionConfig
 from config import InterviewEngineConfig
-from models import SessionConfig
 
 # Matches the first capitalized multi-word name at the start of the about text.
 # Examples: "Vectra Pay is …" -> "Vectra Pay", "Acme Corp is …" -> "Acme Corp"
@@ -14,23 +15,14 @@ _COMPANY_NAME_RE = re.compile(r"^((?:[A-Z][a-zA-Z0-9]*(?:\s+|$)){1,4})")
 
 
 def _load_prompt_template() -> str:
-    """Load the interviewer prompt template.
+    """Load the interviewer prompt template via nexus's prompt_loader.
 
-    NOTE (Phase 3C.2 — Chunk 2): The prompt source moved to
-    `backend/nexus/prompts/v1/interview/interviewer.txt` (commit 099bd17).
-    Chunk 5 Task 5.9 rewrites this module to read via nexus's
-    `prompt_loader.get("interview/interviewer")`. Until then, this engine
-    is intentionally non-functional — running the worker against a real
-    LiveKit dispatch will raise this NotImplementedError on the first
-    session, which is the desired loud failure.
+    The template lives at backend/nexus/prompts/v1/interview/interviewer.txt
+    (moved there in Phase 3C.2 Chunk 2, commit 099bd17). The engine reads
+    it through the path-installed nexus package — same code path that
+    nexus's question-bank actors use for their per-stage prompts.
     """
-    raise NotImplementedError(
-        "interview_engine prompt loading is broken between Phase 3C.2 "
-        "Chunks 2 and 5. The prompt file was moved to nexus's prompt_loader "
-        "convention; this module will be rewritten in Chunk 5 Task 5.9 to "
-        "use prompt_loader.get('interview/interviewer'). Do not run the "
-        "engine container until Chunk 5 lands."
-    )
+    return prompt_loader.get("interview/interviewer")
 
 
 def _extract_company_name(about: str) -> str:
@@ -50,14 +42,11 @@ def build_system_prompt(
 ) -> str:
     """Assemble the interviewer system prompt.
 
-    Loads the template from nexus's prompt_loader and fills in
-    dynamic fields from the session and engine configs.
+    Loads the template via nexus's prompt_loader and fills in dynamic
+    fields from the session and engine configs.
 
     Uses :class:`string.Template` (``$variable`` syntax) so that the
     JSON examples in the prompt don't need ``{{`` / ``}}`` escaping.
-
-    NOTE (Phase 3C.2 — Chunk 2): Prompt loading is intentionally broken
-    until Chunk 5 Task 5.9 rewrites this module. See `_load_prompt_template`.
     """
     template = Template(_load_prompt_template())
 
