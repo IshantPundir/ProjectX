@@ -13,7 +13,12 @@ The candidate live-interview UI at `app/(interview)/interview/[token]/LiveSessio
 
 LiveKit ships a full reference frontend — `agent-starter-react` — built around the new Agents UI shadcn registry. We want to port that template into ProjectX as a *baseline*, then customize on top. The end state of this port is: the candidate surface looks and feels like the LiveKit reference, ready for the next phase of UI/UX customization.
 
-This is a **dev-branch transplant**, not a customer-facing release. Buttons that don't make product sense in a proctored interview (mute, camera toggle, screen-share) are surfaced for now and trimmed later.
+This is a **dev-branch transplant** running alongside two correctness improvements that the current shell papers over:
+
+1. **Graceful-vs-error disconnect signalling.** Today every disconnect routes to `CompletionScreen` because the engine sends no structured signal. Half the time that's wrong.
+2. **Mid-session rejoin.** Today `<AlreadyStartedPanel>` is a dead end ("rejoin will be available in the next release"). LiveKit's SDK already handles transient drops natively; hard rejoin (page refresh, tab close) needs a new backend endpoint.
+
+Buttons that don't make product sense in a proctored interview (mute, camera toggle, screen-share) are surfaced for now and trimmed later.
 
 ---
 
@@ -248,13 +253,14 @@ return <AgentSessionView_01 … />
 
 | Trigger | Source | Resulting outcome | errorCode |
 |---|---|---|---|
-| Engine `Action.CLOSE` → engine disconnects → `Disconnected` event | `useSession` lifecycle: `session.on('disconnected', reason)` if reason is normal | `'completed'` | — |
-| Candidate clicks End Call | `AgentDisconnectButton` → `session.end()` → same path | `'completed'` | — |
+| Engine reaches `Action.CLOSE` and publishes `session_outcome='completed'` before shutdown | `agent.attributes['session_outcome']` read on `Disconnected` event | `'completed'` | — |
+| Candidate clicks End Call | `AgentDisconnectButton` → `session.end()` → `Disconnected` with reason `CLIENT_INITIATED` | `'completed'` | — |
+| Engine publishes `session_outcome='error'` (engine-side error before shutdown) | `agent.attributes['session_outcome']` read on `Disconnected` event | `'error'` | `ENGINE_ERROR` |
 | Camera/mic dies mid-session | `AgentControlBar`'s `onDeviceError` | `'error'` | `MEDIA_LOST` |
 | 30 s grace timeout, no agent participant | `useAgentGraceTimeout` (overlay hook in `ViewController`) | `'error'` | `AGENT_NO_SHOW` |
-| `TokenSource.custom` callback rejects | caught in `useSession`'s start failure / 409 from `/start` | `'error'` | `SESSION_ALREADY_STARTED` (409) / `SESSION_START_FAILED` (other) |
-
-Graceful-vs-error disconnect signalling from the engine is still a Phase 3D follow-up tracked in `interview_engine/AGENTS.md`. After the port any non-error disconnect routes to `CompletionScreen`, matching current behaviour.
+| `TokenSource.custom` callback rejects (`/start` 409, `/rejoin` 4xx, network) | caught in `useSession`'s start failure | `'error'` | `SESSION_ALREADY_STARTED` (409 from `/start`) / `SESSION_START_FAILED` (other) / `REJOIN_REJECTED` (4xx from `/rejoin`) |
+| Hard disconnect with no `session_outcome` attribute and non-clean reason (`JOIN_FAILURE`, etc.) | `Disconnected` event with reason ≠ `CLIENT_INITIATED` and no outcome attribute | `'error'` | `UNEXPECTED_DISCONNECT` |
+| Transient drop (ICE restart or signaling reconnect) | `Reconnecting` event from session lifecycle | **outcome stays `'live'`**, overlay banner renders | — (banner only) |
 
 ### Domain overlays — what survives moving
 
@@ -265,6 +271,172 @@ Graceful-vs-error disconnect signalling from the engine is still a Phase 3D foll
 | `useStageProgress` | `components/interview/app/hooks/use-stage-progress.ts` | reads engine attributes |
 | `CompletionScreen` | `components/interview/app/CompletionScreen.tsx` | unchanged copy |
 | `DisconnectError` | `components/interview/app/DisconnectError.tsx` | extend `COPY` map |
+| `useSessionOutcome` (NEW) | `components/interview/app/hooks/use-session-outcome.ts` | reads agent participant's `session_outcome` attribute on disconnect; this is the new graceful-vs-error router |
+| `ReconnectingOverlay` (NEW) | `components/interview/app/ReconnectingOverlay.tsx` | renders during the SDK's transient `Reconnecting` state — outcome stays `'live'`, just a UI hint |
+
+---
+
+## Graceful disconnect signal
+
+### Engine side
+
+`backend/interview_engine/agents/interviewer.py` — when the state machine returns `Action.CLOSE`, before calling agent shutdown, publish a structured outcome attribute on the agent's local participant:
+
+```python
+# inside the CLOSE handler, before session.shutdown()
+await self._room_io.room.local_participant.set_attributes({
+    "session_outcome": "completed",
+})
+# now shut down
+```
+
+For engine-side errors (config fetch failure, invalid state machine transition, OpenAI hard error), publish `session_outcome="error"` instead before shutdown.
+
+The `set_attributes` mechanism is already used by the engine for `current_question_index` / `total_questions` / `time_remaining_seconds` — same path, new key. Attribute writes are propagated to remote participants via the LiveKit signaling channel before the participant disconnects, so the candidate's frontend reads it on the same event tick.
+
+### Frontend side
+
+`useSessionOutcome` hook listens to the `Disconnected` event and reads the agent participant's last-seen `session_outcome` attribute (held in a ref so it survives the moment the participant is removed from `useParticipants()`).
+
+Routing logic inside `app.tsx`:
+
+```ts
+const onDisconnect = useCallback((reason?: DisconnectReason) => {
+  const outcome = agentOutcomeRef.current  // 'completed' | 'error' | undefined
+
+  if (outcome === 'completed') {
+    setOutcome('completed')
+  } else if (outcome === 'error') {
+    setOutcome('error', 'ENGINE_ERROR')
+  } else if (reason === DisconnectReason.CLIENT_INITIATED) {
+    // Candidate clicked End Call.
+    setOutcome('completed')
+  } else {
+    // No outcome attribute, non-clean reason. Treat as error.
+    setOutcome('error', 'UNEXPECTED_DISCONNECT')
+  }
+}, [])
+```
+
+`agentOutcomeRef` is updated by a `useEffect` watching the agent participant's `attributes['session_outcome']` — captured on the way down, before the participant disappears from the participants list.
+
+---
+
+## Mid-session reconnect — two cases
+
+### Case A — Transient reconnect (no backend work)
+
+The LiveKit SDK already handles WiFi switches, brief network loss, and ICE restarts automatically. It reuses the same JWT and emits `Reconnecting` → `Reconnected` events on the session.
+
+Frontend work:
+
+- `<ReconnectingOverlay />` mounts inside `ViewController` and reads `useSessionContext().state` (or equivalent — exact API depends on `useSession` return shape; verified in implementation phase). When the session is reconnecting, the overlay covers the page with: spinner + "Reconnecting…" + a 30 s countdown after which we route to `DisconnectError` with code `RECONNECT_FAILED`.
+- The 30 s ceiling matches the existing grace timeout. After that, we treat the connection as dead.
+
+The outcome state stays `'live'` during reconnect — the overlay is just a UI hint. If the SDK fails the reconnect, it will emit `Disconnected` and we route through the normal error path.
+
+### Case B — Hard rejoin (new backend endpoint + WizardShell branch)
+
+Triggered when:
+- Candidate refreshes the page mid-session, OR
+- Candidate's network drops for longer than the JWT TTL or the SDK's reconnect window, OR
+- Candidate closes and reopens the tab.
+
+In all three, the candidate JWT is still valid (72-hour scheduling-link expiry), the session row is in `state='active'`, but the LiveKit JWT was atomically consumed at `/start`. They need a *new* LiveKit JWT for the same room.
+
+#### Backend: `POST /api/candidate-session/{token}/rejoin`
+
+```python
+# backend/nexus/app/modules/session/router.py
+@router.post("/api/candidate-session/{token}/rejoin", response_model=StartSessionResponse)
+async def rejoin(token: str, request: Request, db: AsyncSession = Depends(get_tenant_db)):
+    # 1. Verify candidate JWT (same path as /start uses).
+    payload = verify_candidate_token(token)
+
+    # 2. Fetch session row.
+    session = await session_repo.get_by_id(db, payload.session_id)
+
+    # 3. Gate: must be in 'active' state. 'completed' / 'cancelled' / 'error' → 409.
+    if session.state != SessionState.ACTIVE:
+        raise HTTPException(409, detail="Session not in active state", code="SESSION_NOT_REJOINABLE")
+
+    # 4. Optional: check engine has not signalled completion.
+    #    (We could also rely solely on the session.state column; engine writes that
+    #    on graceful close via the internal results endpoint.)
+
+    # 5. Mint a new LiveKit access token for the SAME room, same identity.
+    new_lk_token = mint_livekit_token(
+        identity=session.candidate_identity,
+        room_name=session.room_name,
+        agents=[],  # Engine is already in the room — no re-dispatch.
+    )
+
+    # 6. Audit log entry.
+    await audit.log(
+        db,
+        action="candidate_session.rejoin",
+        actor_id=payload.candidate_id,
+        tenant_id=session.tenant_id,
+        resource_type="session",
+        resource_id=session.id,
+        correlation_id=session.correlation_id,
+    )
+
+    return StartSessionResponse(
+        livekit_url=settings.LIVEKIT_URL,
+        livekit_token=new_lk_token,
+        room_name=session.room_name,
+        session_id=session.id,
+    )
+```
+
+**Critical differences from `/start`:**
+- No engine dispatch (engine is already in the room — re-dispatching would crash with duplicate-agent-instance behaviour).
+- No `engine_token_uses` row (the engine dispatch token isn't re-issued).
+- No state transition (session stays `active`).
+- Token is *not* atomically single-use — multiple successful rejoins are allowed within the JWT lifetime, gated by rate limit.
+
+**Rate limiting:** per the root `CLAUDE.md` rate-limit table, this endpoint is in the "all other authenticated" class. We tighten it to 5/hour per token, 3/min per IP — rejoin should be rare.
+
+**Single-tab enforcement at LiveKit level:** if a candidate has two tabs open with two valid rejoin tokens connecting to the same room with the same identity, LiveKit emits `DUPLICATE_IDENTITY` and disconnects the older session. That's the right behaviour — last-rejoin wins.
+
+#### Frontend: WizardShell active-state branch + rejoin TokenSource
+
+```tsx
+// inside WizardShell.tsx
+if (data.state === 'active') {
+  return <App appConfig={resolved} token={token} preCheck={data} mode="rejoin" />
+}
+```
+
+`<App>` accepts a `mode: 'start' | 'rejoin'` prop. The `TokenSource.custom` callback branches on it:
+
+```ts
+const tokenSource = useMemo(() => TokenSource.custom(async () => {
+  if (cachedRef.current) return cachedRef.current
+  const creds = mode === 'rejoin'
+    ? await candidateSessionApi.rejoin(token)
+    : await candidateSessionApi.start(token)
+  cachedRef.current = { serverUrl: creds.livekit_url, participantToken: creds.livekit_token }
+  return cachedRef.current
+}), [token, mode])
+```
+
+The `WelcomeView` copy adapts to `mode`:
+- `mode='start'`: "Start interview" (current copy).
+- `mode='rejoin'`: "Rejoin your interview" + "You were disconnected. Click rejoin to continue where you left off." copy.
+
+The interview engine's progress (Q3 of 9 etc) is published via participant attributes, so when the rejoining candidate's session connects, `ProgressBanner` updates immediately to the latest state. Time elapsed during the disconnect counts against the candidate — the engine's clock doesn't pause. This is intentional (no clock-stopping abuse).
+
+#### Edge cases
+
+| Case | Behaviour |
+|---|---|
+| Candidate rejoins after engine has already CLOSEd the session | `session.state` is `completed`. `/rejoin` returns 409 `SESSION_NOT_REJOINABLE`. Frontend surfaces `DisconnectError` with code `SESSION_ALREADY_COMPLETED`. |
+| Candidate opens a second tab while the first is still connected | LiveKit emits `DUPLICATE_IDENTITY` on the older tab. Older tab routes to `DisconnectError` with code `DUPLICATE_SESSION`. |
+| Candidate's JWT expires mid-session (72-hour TTL elapsed) | `/rejoin` returns 401. Frontend surfaces `DisconnectError` with code `TOKEN_EXPIRED`. |
+| Candidate rejoins and engine has crashed (room exists but no agent participant) | The 30 s grace timeout fires after rejoin, routing to `AGENT_NO_SHOW` as today. |
+| Candidate rejoins 5+ times within an hour | Rate limit fires, `/rejoin` returns 429. Frontend surfaces `DisconnectError` with code `REJOIN_RATE_LIMITED`. |
 
 ---
 
@@ -272,18 +444,38 @@ Graceful-vs-error disconnect signalling from the engine is still a Phase 3D foll
 
 Each step independently testable; do not skip ordering.
 
+### Phase 1 — Frontend port
+
 1. **Add the missing deps + scaffolding.** Install `motion`, `class-variance-authority`, `@phosphor-icons/react`, `next-themes`, `tw-animate-css`, `ai`, `media-chrome`, `embla-carousel-react`, `cmdk`, `streamdown`, plus the eight Radix primitives the agents-ui registry pulls in transitively. Add `components.json` (shadcn config matching the starter's), `lib/shadcn/utils.ts` (`cn()` helper). **Verification:** `npm run build` passes, no other route broken.
 2. **Run shadcn install.** Mirror the starter's `pnpm shadcn:install`: `npx shadcn@latest add @agents-ui/agent-{audio-visualizer-bar,grid,radial,wave,aura,control-bar,session-provider,track-control,track-toggle,chat-transcript,chat-indicator,disconnect-button,session-view-01} @agents-ui/start-audio-button @ai-elements/{conversation,message}`. Populates `components/agents-ui/`, `components/ai-elements/`, `components/ui/`, `hooks/agents-ui/`. **Verification:** every file written, no manual edits yet.
 3. **Build `app-config.ts`** — port the starter's file with our defaults.
-4. **Build `components/interview/app/app.tsx`** — `useMemo` builds `TokenSource.custom` wrapping `candidateSessionApi.start(token)`; cache result in a closure ref. Owns the `outcome` state. Wraps `<AgentSessionProvider>`.
-5. **Build `view-controller.tsx`** — port the starter's, swap `<AgentSessionView_01>` import path, layer `ProgressBanner` on top, install `useAgentGraceTimeout` here.
-6. **Build `welcome-view.tsx`** — port the starter's. Replace static copy with `appConfig.companyName` + `data.duration_minutes`. Keep the start button.
-7. **Move + adapt `ProgressBanner`, `CompletionScreen`, `DisconnectError`, hooks** — copy-paste, update imports, extend `DisconnectError` COPY map.
-8. **Update `WizardShell.tsx`** — drop `creds`, drop `StartStep` import, render `<App>` after cam-mic.
-9. **Delete** `app/(interview)/interview/[token]/StartStep.tsx`, `app/(interview)/interview/[token]/LiveSession/`.
-10. **Update tests:** delete `StartStep.test.tsx` and `LiveSessionShell.test.tsx`. Replace the latter with a test on the new `app.tsx` exercising the grace timeout against the new mock surface (`useSessionContext`, `useSession`). Update import paths in `ProgressBanner.test.tsx` and `CompletionScreen.test.tsx`. Add jsdom stubs for `ResizeObserver`, `IntersectionObserver`, `matchMedia` in `tests/setup.ts`.
-11. **Force light theme.** Wrap `<App>` in `<ThemeProvider attribute="class" forcedTheme="light">`. No toggle, no dark-mode variants exercised.
-12. **End-to-end smoke** locally: real candidate JWT, real engine dispatch. Walk Wizard → Welcome → Connect → Speak → End. Confirm `CompletionScreen` renders.
+4. **Build `components/interview/app/app.tsx`** — accepts `mode: 'start' | 'rejoin'`. `useMemo` builds `TokenSource.custom` wrapping the matching API call; cache result in a closure ref. Owns the `outcome` state. Wraps `<AgentSessionProvider>`.
+5. **Build `view-controller.tsx`** — port the starter's, swap `<AgentSessionView_01>` import path, layer `ProgressBanner` on top, install `useAgentGraceTimeout` here, mount `<ReconnectingOverlay />`.
+6. **Build `welcome-view.tsx`** — port the starter's. Replace static copy with `appConfig.companyName` + `data.duration_minutes`. Branch copy on `mode='start'` vs `mode='rejoin'`.
+7. **Move + adapt `ProgressBanner`, `CompletionScreen`, `DisconnectError`, hooks** — copy-paste, update imports, extend `DisconnectError` COPY map with all new codes (`ENGINE_ERROR`, `UNEXPECTED_DISCONNECT`, `RECONNECT_FAILED`, `SESSION_ALREADY_COMPLETED`, `DUPLICATE_SESSION`, `TOKEN_EXPIRED`, `REJOIN_RATE_LIMITED`, `REJOIN_REJECTED`).
+8. **Build `useSessionOutcome` hook** — listens to agent participant attributes, tracks `session_outcome` in a ref that survives the participant's removal from the participants list.
+9. **Build `<ReconnectingOverlay />`** — reads session reconnect state, renders dimming overlay with spinner + 30 s countdown.
+
+### Phase 2 — Backend rejoin endpoint
+
+10. **Add `POST /api/candidate-session/{token}/rejoin`** in `backend/nexus/app/modules/session/router.py`. Verifies candidate JWT (reuses `verify_candidate_token`), checks `session.state == 'active'`, mints a new LiveKit JWT for the same room (no agent dispatch), audit-logs the rejoin.
+11. **Add rate limit declaration** at the route: 5/hour per token, 3/min per IP.
+12. **Add backend test:** rejoin happy path, `session.state != 'active'` 409, expired JWT 401, rate limit 429.
+13. **Update `lib/api/candidate-session.ts`** with `rejoin()` method.
+
+### Phase 3 — Engine graceful close signal
+
+14. **Update `backend/interview_engine/agents/interviewer.py`** — before each shutdown path (CLOSE action; engine-side error handlers), publish `session_outcome` attribute on the agent's local participant. Covers both successful completion and known error states.
+15. **Add engine test:** state-machine reaches CLOSE → `set_attributes` called with `session_outcome='completed'` before shutdown.
+
+### Phase 4 — Wiring + cleanup
+
+16. **Update `WizardShell.tsx`** — drop `creds`, drop `StartStep` import, render `<App>` after cam-mic with `mode='start'`. Add `state === 'active'` branch that renders `<App mode='rejoin' />` instead of `<AlreadyStartedPanel>`.
+17. **Delete** `app/(interview)/interview/[token]/StartStep.tsx`, `app/(interview)/interview/[token]/LiveSession/`, the `<AlreadyStartedPanel>` function inside `WizardShell.tsx`.
+18. **Update tests:** delete `StartStep.test.tsx` and `LiveSessionShell.test.tsx`. Replace with: `app.test.tsx` (grace timeout + outcome routing in start mode), `app-rejoin.test.tsx` (rejoin TokenSource path), `useSessionOutcome.test.tsx`. Update import paths in `ProgressBanner.test.tsx` and `CompletionScreen.test.tsx`. Add jsdom stubs for `ResizeObserver`, `IntersectionObserver`, `matchMedia` in `tests/setup.ts`.
+19. **Force light theme.** Wrap `<App>` in `<ThemeProvider attribute="class" forcedTheme="light">`. No toggle, no dark-mode variants exercised.
+20. **Update CLAUDE.md / AGENTS.md** — root, `frontend/app/`, and `interview_engine/` to reflect the shadcn enclave, the rejoin endpoint, and the graceful-close attribute contract.
+21. **End-to-end smoke** locally: real candidate JWT, real engine dispatch. Walk Wizard → Welcome → Connect → Speak → End. Confirm `CompletionScreen` renders. Refresh mid-session → confirm rejoin flow → confirm progress banner picks up where it left off. Kill the engine container mid-session → confirm `DisconnectError` with `UNEXPECTED_DISCONNECT`.
 
 ---
 
@@ -298,7 +490,11 @@ Each step independently testable; do not skip ordering.
 | `CLAUDE.md` says "no shadcn/ui in this codebase" — after this PR that's untrue for the candidate surface | Documentation | Update `frontend/app/CLAUDE.md` and `frontend/app/AGENTS.md` to describe the shadcn enclave at `components/{ui,agents-ui,ai-elements}/`, sealed to `app/(interview)/`. |
 | Bundle size: agents-ui block + Radix + motion ≈ +60–100 KB gzipped | Low (route exempt from JS budget per CLAUDE.md) | Lazy-load `<App>` via `next/dynamic` in `WizardShell` — same pattern as today's `LiveSessionShell`. |
 | `AgentSessionView_01` source not browseable on GitHub (registry-generated, not committed in raw form) | Low | Trust the registry. The rest of the agents-ui chain (provider, control bar, transcript) reads cleanly. |
-| Engine "graceful close" signal still missing | Low (matches existing behaviour) | Out of scope for this port. |
+| Engine attribute write race — `set_attributes('session_outcome')` may not propagate before the participant disconnects | Medium | `set_attributes` returns when the signaling write is acknowledged. Engine awaits the write before calling `agent.shutdown()`. Frontend captures attribute in a ref via `useEffect` so it survives participant removal. Verified via test: simulate participant attribute change followed by disconnect — outcome reads correctly. |
+| Rejoin endpoint abuse — repeated rejoin to extend session past intended duration | Medium | Engine's clock keeps running during disconnects (no clock-stopping). Rate limit at 5/hour per token, 3/min per IP. Audit log every rejoin so investigation is possible. |
+| Multi-tab rejoin → DUPLICATE_IDENTITY race | Low | LiveKit auto-disconnects the older session. Older tab routes to `DisconnectError` with `DUPLICATE_SESSION`. Tested as part of the rejoin test suite. |
+| Engine survives candidate disconnect indefinitely (zombie engines) | Low | Out of scope for this PR — engine has its own idle/timeout heuristics already in `state_machine.py`. Note for follow-up: consider engine-side "no candidate for N minutes → CLOSE" guard. |
+| Backend `/rejoin` touches the session module — needs human review per root `CLAUDE.md` § "Human Review Required For" (session state machine transitions) | Medium | Rejoin doesn't transition state — session stays `active`. But the audit log entry, rate limit, and security headers are non-trivial. Mark for senior reviewer in PR description. |
 
 ---
 
@@ -314,15 +510,16 @@ Each step independently testable; do not skip ordering.
 
 - Tenant-driven branding (logo, accent) — separate ticket; touches DB schema + onboarding + asset upload.
 - Trimming `AgentControlBar` to the proctored-interview minimum (drop mute, camera toggle, screen-share, chat input) — happens during the user's UI/UX customization phase, post-port.
-- Engine `Action.CLOSE` → distinct "graceful disconnect" signal back to the frontend.
-- Mid-session rejoin if the candidate's network drops.
 - LiveKit Egress recording pipeline.
 - Real-time scoring / probe selection (Phase 3D `analysis` module).
 - AI Copilot panel (`components/copilot/`) for human participants.
+- Engine-side zombie-cleanup ("no candidate for N minutes → CLOSE") — engine already has timing logic in `state_machine.py`; tighten if needed in a follow-up.
 
 ---
 
 ## Acceptance criteria
+
+### Frontend port (Phase 1)
 
 - The candidate completes the wizard (consent → otp? → cam-mic), sees the LiveKit `WelcomeView` with `companyName` + duration, clicks *Start*, the room connects, the agent joins, the candidate speaks, the agent responds.
 - The `AgentSessionView_01` block renders with the bar audio visualizer, transcript, and `AgentControlBar` (all five default controls visible).
@@ -330,7 +527,27 @@ Each step independently testable; do not skip ordering.
 - 30 s with no agent participant → `DisconnectError` renders with `AGENT_NO_SHOW`.
 - Camera/mic loss mid-session → `DisconnectError` with `MEDIA_LOST`.
 - Backend `/start` 409 (token already used) → `DisconnectError` with `SESSION_ALREADY_STARTED`.
-- Engine `Action.CLOSE` → `CompletionScreen`.
 - Candidate clicks End Call → `CompletionScreen`.
+
+### Graceful close (Phase 3)
+
+- Engine reaches `Action.CLOSE` → publishes `session_outcome='completed'` → frontend reads attribute on `Disconnected` → `CompletionScreen`.
+- Engine errors mid-session (config fetch fails, OpenAI hard error) → publishes `session_outcome='error'` → frontend renders `DisconnectError` with `ENGINE_ERROR`.
+- Engine container killed without publishing outcome → frontend renders `DisconnectError` with `UNEXPECTED_DISCONNECT` (default for non-clean disconnect with no attribute).
+
+### Reconnect / rejoin (Phase 2 + parts of Phase 1)
+
+- Transient drop (WiFi switch) → `<ReconnectingOverlay />` covers the screen, session reconnects within 30 s, overlay clears, candidate continues from where they left off, outcome stays `'live'`.
+- Reconnect fails after 30 s → `DisconnectError` with `RECONNECT_FAILED`.
+- Hard refresh mid-session → wizard's pre-check returns `state='active'` → `<App mode='rejoin'>` mounts → `WelcomeView` shows rejoin copy → candidate clicks *Rejoin* → `/rejoin` mints fresh LiveKit JWT → reconnects to same room as same identity → engine still in room → `ProgressBanner` shows current Q index (no reset).
+- Rejoin after engine has CLOSEd the session → `/rejoin` returns 409 → `DisconnectError` with `SESSION_ALREADY_COMPLETED`.
+- Two tabs both rejoining → older tab gets `DUPLICATE_IDENTITY` → routes to `DisconnectError` with `DUPLICATE_SESSION`.
+- `>5` rejoin attempts within an hour → `/rejoin` returns 429 → `DisconnectError` with `REJOIN_RATE_LIMITED`.
+- Audit log entry created for every rejoin (action `candidate_session.rejoin`, with `actor_id`, `tenant_id`, `correlation_id`).
+
+### CI / regression
+
 - `npm run build`, `npm run lint`, `npm run type-check`, `npm run test` all pass.
+- Backend: `pytest backend/nexus/tests/modules/session/test_rejoin.py` passes.
+- Engine: `pytest backend/interview_engine/tests/test_graceful_close.py` passes.
 - No regressions on the dashboard surface (no `components/{ui,agents-ui,ai-elements}/` imports outside `app/(interview)/`).
