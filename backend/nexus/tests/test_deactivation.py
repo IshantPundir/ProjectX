@@ -4,7 +4,12 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import OrganizationalUnit, Role, User, UserRoleAssignment
+from app.modules.auth.models import (
+    User,
+    UserRoleAssignment,
+)
+from app.modules.org_units.models import OrganizationalUnit
+from app.modules.roles.models import Role
 from tests.conftest import create_test_client, create_test_org_unit, create_test_user
 
 

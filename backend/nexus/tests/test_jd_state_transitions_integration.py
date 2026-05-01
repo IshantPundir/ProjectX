@@ -4,7 +4,8 @@ Verifies that transitions write audit_log rows and respect legality."""
 import pytest
 from sqlalchemy import select
 
-from app.models import AuditLog, JobPosting
+from app.modules.audit.models import AuditLog
+from app.modules.jd.models import JobPosting
 from app.modules.jd.errors import IllegalTransitionError
 from app.modules.jd.state_machine import transition
 from tests.conftest import (

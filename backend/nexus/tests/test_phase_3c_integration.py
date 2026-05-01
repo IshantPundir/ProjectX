@@ -10,7 +10,10 @@ from sqlalchemy import select
 
 from app.database import get_tenant_db
 from app.main import app
-from app.models import CandidateSessionToken, Session
+from app.modules.session.models import (
+    CandidateSessionToken,
+    Session,
+)
 from app.modules.auth.context import RoleAssignment, UserContext, get_current_user_roles
 from app.modules.auth.schemas import TokenPayload
 from tests.test_scheduler_service import _seed

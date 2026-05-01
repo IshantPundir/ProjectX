@@ -15,8 +15,7 @@ if TYPE_CHECKING:
     from app.modules.auth.admin.base import SessionTokens
 
 from app.database import get_bypass_db
-from app.modules.audit import actions as audit_actions
-from app.modules.audit.service import log_event
+from app.modules.audit import actions as audit_actions, log_event
 from app.modules.auth.admin import (
     AuthProvider,
     AuthProviderError,
@@ -39,7 +38,7 @@ from app.modules.auth.schemas import (
     VerifyInviteResponse,
 )
 from app.modules.auth.service import verify_access_token
-from app.modules.org_units.models import Client, OrganizationalUnit
+from app.modules.org_units import Client, OrganizationalUnit
 
 logger = structlog.get_logger()
 
@@ -228,7 +227,7 @@ async def accept_invite(
             # form's "Website" field (`metadata.website`).
             root_metadata = {"website": client_domain} if client_domain else None
 
-            from app.modules.org_units.service import create_org_unit as _create_root_unit
+            from app.modules.org_units import create_org_unit as _create_root_unit
 
             root_unit = await _create_root_unit(
                 db=db,

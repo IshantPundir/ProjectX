@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import AuditLog
+from app.modules.audit.models import AuditLog
 from app.modules.audit.actions import ORG_UNIT_CREATED, USER_INVITED
 from app.modules.audit.service import log_event
 from tests.conftest import create_test_client, create_test_user

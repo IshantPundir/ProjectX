@@ -13,17 +13,17 @@ import structlog
 from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import (
-    CandidateJobAssignment,
+from app.modules.auth import User
+from app.modules.candidates import CandidateJobAssignment
+from app.modules.jd import JobPosting
+from app.modules.pipelines.models import (
     JobPipelineInstance,
     JobPipelineStage,
-    JobPosting,
     PipelineStageParticipant,
     PipelineTemplate,
     PipelineTemplateStage,
-    StageQuestionBank,
-    User,
 )
+from app.modules.question_bank import StageQuestionBank, recompute_and_persist_stale
 from app.modules.pipelines.errors import (
     CannotDeleteDefaultError,
     JobNotInConfirmedStateError,
@@ -49,7 +49,6 @@ from app.modules.pipelines.starter_pack import (
     STARTER_TEMPLATES,
     SYSTEM_FALLBACK_STARTER,
 )
-from app.modules.question_bank.service import recompute_and_persist_stale
 
 logger = structlog.get_logger()
 

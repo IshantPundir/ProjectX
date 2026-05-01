@@ -12,11 +12,10 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Client, OrganizationalUnit, Role, User, UserInvite, UserRoleAssignment
-from app.modules.audit import actions as audit_actions
-from app.modules.audit.service import log_event
-from app.modules.auth.admin import AuthProviderError, get_auth_provider
-from app.modules.org_units.service import nullify_deletable_by_for_user
+from app.modules.audit import actions as audit_actions, log_event
+from app.modules.auth import AuthProviderError, User, UserInvite, UserRoleAssignment, get_auth_provider
+from app.modules.org_units import Client, OrganizationalUnit, nullify_deletable_by_for_user
+from app.modules.roles import Role
 
 logger = structlog.get_logger()
 

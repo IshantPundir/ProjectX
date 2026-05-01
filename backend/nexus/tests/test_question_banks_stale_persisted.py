@@ -16,13 +16,15 @@ import pytest
 import sqlalchemy
 from sqlalchemy import select
 
-from app.models import (
-    JobPipelineInstance,
-    JobPipelineStage,
+from app.modules.jd.models import (
     JobPosting,
     JobPostingSignalSnapshot,
-    StageQuestionBank,
 )
+from app.modules.pipelines.models import (
+    JobPipelineInstance,
+    JobPipelineStage,
+)
+from app.modules.question_bank.models import StageQuestionBank
 from app.modules.question_bank.service import recompute_and_persist_stale
 from app.modules.question_bank.state_machine import transition_to_confirmed
 from tests.conftest import (

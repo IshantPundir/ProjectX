@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_tenant_db
 from app.main import app
-from app.models import Candidate
+from app.modules.candidates.models import Candidate
 from app.modules.auth.context import RoleAssignment, UserContext, get_current_user_roles
 from app.modules.auth.schemas import TokenPayload
 from app.modules.candidates.router import kanban_router, router as candidates_router
@@ -324,11 +324,11 @@ async def test_get_candidate_assignments_empty_when_none(db: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_get_candidate_assignments_lists_enriched(db: AsyncSession):
-    from app.models import (
-        CandidateJobAssignment,
+    from app.modules.candidates.models import CandidateJobAssignment
+    from app.modules.jd.models import JobPosting
+    from app.modules.pipelines.models import (
         JobPipelineInstance,
         JobPipelineStage,
-        JobPosting,
     )
     from tests.conftest import create_test_org_unit
 
@@ -447,7 +447,11 @@ async def test_redact_pii_super_admin_succeeds(db: AsyncSession):
 
 async def _make_job_with_pipeline(db, tenant_id, user_id, org_unit_id, *, status="active"):
     """Create a JobPosting + pipeline instance + one stage. Returns (job, pipeline)."""
-    from app.models import JobPipelineInstance, JobPipelineStage, JobPosting
+    from app.modules.jd.models import JobPosting
+    from app.modules.pipelines.models import (
+        JobPipelineInstance,
+        JobPipelineStage,
+    )
 
     job = JobPosting(
         tenant_id=tenant_id,

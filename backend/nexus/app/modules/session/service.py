@@ -23,19 +23,13 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models import (
-    Candidate,
-    CandidateJobAssignment,
-    CandidateSessionToken,
-    JobPipelineStage,
-    JobPosting,
-    OrganizationalUnit,
-    Session,
-)
-from app.modules.audit.service import log_event
-from app.modules.auth.context import UserContext
-from app.modules.auth.service import create_candidate_token
-from app.modules.org_units.service import find_company_profile_in_ancestry
+from app.modules.audit import log_event
+from app.modules.auth import UserContext, create_candidate_token
+from app.modules.candidates import Candidate, CandidateJobAssignment
+from app.modules.jd import JobPosting
+from app.modules.org_units import OrganizationalUnit, find_company_profile_in_ancestry
+from app.modules.pipelines import JobPipelineStage
+from app.modules.session.models import CandidateSessionToken, Session
 from app.modules.session.errors import (
     AgentDispatchFailedError,
     IllegalStartStateError,

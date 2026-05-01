@@ -11,18 +11,19 @@ import structlog
 from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import (
+from app.modules.audit import actions as audit_actions, log_event
+from app.modules.auth import User
+from app.modules.jd.models import JobPosting, JobPostingSignalSnapshot
+from app.modules.org_units import OrganizationalUnit, find_company_profile_in_ancestry
+from app.modules.pipelines import (
     JobPipelineInstance,
     JobPipelineStage,
-    JobPosting,
-    JobPostingSignalSnapshot,
-    OrganizationalUnit,
     PipelineStageParticipant,
-    StageQuestionBank,
-    User,
+    bank_eligible_stage_types,
+    human_led_stage_types,
+    middle_stage_types_for_activation,
 )
-from app.modules.audit import actions as audit_actions
-from app.modules.audit.service import log_event
+from app.modules.question_bank import StageQuestionBank, recompute_and_persist_stale
 from app.modules.jd.errors import (
     ActivationPredicateFailure,
     ActivationPredicatesFailed,
@@ -35,13 +36,6 @@ from app.modules.jd.schemas import (
     SaveSignalsRequest,
 )
 from app.modules.jd.state_machine import transition
-from app.modules.org_units.service import find_company_profile_in_ancestry
-from app.modules.pipelines.categories import (
-    bank_eligible_stage_types,
-    human_led_stage_types,
-    middle_stage_types_for_activation,
-)
-from app.modules.question_bank.service import recompute_and_persist_stale
 
 logger = structlog.get_logger()
 

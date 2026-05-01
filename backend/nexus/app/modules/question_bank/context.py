@@ -14,14 +14,10 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import (
-    JobPipelineInstance,
-    JobPipelineStage,
-    JobPosting,
-    StageQuestion,
-    StageQuestionBank,
-)
-from app.modules.org_units.service import find_company_profile_in_ancestry
+from app.modules.jd import JobPosting
+from app.modules.org_units import find_company_profile_in_ancestry
+from app.modules.pipelines import JobPipelineInstance, JobPipelineStage
+from app.modules.question_bank.models import StageQuestion, StageQuestionBank
 
 
 @dataclass

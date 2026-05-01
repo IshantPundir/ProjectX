@@ -26,8 +26,8 @@ from botocore.exceptions import ClientError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.modules.audit.service import log_event
-from app.modules.auth.context import UserContext
+from app.modules.audit import log_event
+from app.modules.auth import UserContext
 from app.modules.candidates.errors import (
     InvalidResumeContentTypeError,
     ResumeNotFoundInS3Error,

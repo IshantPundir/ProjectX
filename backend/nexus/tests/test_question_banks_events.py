@@ -31,13 +31,15 @@ from tests.conftest import (
     create_test_org_unit,
     create_test_user,
 )
-from app.models import (
-    JobPipelineInstance,
-    JobPipelineStage,
+from app.modules.jd.models import (
     JobPosting,
     JobPostingSignalSnapshot,
-    StageQuestionBank,
 )
+from app.modules.pipelines.models import (
+    JobPipelineInstance,
+    JobPipelineStage,
+)
+from app.modules.question_bank.models import StageQuestionBank
 from datetime import UTC, datetime
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession

@@ -10,13 +10,10 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import (
-    JobPipelineInstance,
-    JobPosting,
-    PipelineTemplate,
-)
-from app.modules.auth.context import UserContext
-from app.modules.org_units.service import get_org_unit_ancestry
+from app.modules.auth import UserContext
+from app.modules.jd import JobPosting
+from app.modules.org_units import get_org_unit_ancestry
+from app.modules.pipelines.models import JobPipelineInstance, PipelineTemplate
 
 
 async def require_template_access(

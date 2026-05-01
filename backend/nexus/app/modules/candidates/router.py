@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_tenant_db
-from app.modules.auth.context import UserContext, get_current_user_roles
+from app.modules.auth import UserContext, get_current_user_roles
 from app.modules.candidates import resume_service, service
 from app.modules.candidates.authz import require_candidate_access
 from app.modules.candidates.errors import JobNotActiveError
@@ -34,7 +34,7 @@ from app.modules.candidates.schemas import (
     StageTransitionRequest,
 )
 from app.modules.candidates.sources import ManualSource
-from app.modules.jd.authz import require_job_access
+from app.modules.jd import require_job_access
 
 router = APIRouter(prefix="/api/candidates", tags=["candidates"])
 kanban_router = APIRouter(prefix="/api/jobs", tags=["candidates"])

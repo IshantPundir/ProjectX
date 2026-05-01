@@ -16,15 +16,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_tenant_db, get_tenant_session
-from app.models import (
-    JobPipelineInstance,
-    JobPipelineStage,
-    JobPosting,
-    JobPostingSignalSnapshot,
-    StageQuestion,
-    StageQuestionBank,
-)
-from app.modules.auth.context import UserContext, get_current_user_roles
+from app.modules.auth import UserContext, get_current_user_roles
+from app.modules.jd import JobPosting, JobPostingSignalSnapshot
+from app.modules.pipelines import JobPipelineInstance, JobPipelineStage
+from app.modules.question_bank.models import StageQuestion, StageQuestionBank
 from app.modules.question_bank import actors as bank_actors
 from app.modules.question_bank.actors import STAGE_TYPE_TO_PROMPT
 from app.modules.question_bank.authz import (

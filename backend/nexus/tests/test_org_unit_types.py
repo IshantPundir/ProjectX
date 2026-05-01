@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import OrganizationalUnit
+from app.modules.org_units.models import OrganizationalUnit
 from app.modules.org_units.service import create_org_unit, delete_org_unit, update_org_unit
 from tests.conftest import create_test_client, create_test_user
 

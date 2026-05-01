@@ -15,11 +15,15 @@ import pytest
 import sqlalchemy
 from fastapi import HTTPException
 
-from app.models import (
-    JobPipelineInstance,
-    JobPipelineStage,
+from app.modules.jd.models import (
     JobPosting,
     JobPostingSignalSnapshot,
+)
+from app.modules.pipelines.models import (
+    JobPipelineInstance,
+    JobPipelineStage,
+)
+from app.modules.question_bank.models import (
     StageQuestion,
     StageQuestionBank,
 )

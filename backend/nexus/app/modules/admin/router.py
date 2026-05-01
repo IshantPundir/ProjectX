@@ -25,9 +25,8 @@ from app.modules.admin.service import (
     provision_client,
     unblock_client,
 )
-from app.modules.audit import actions as audit_actions
-from app.modules.audit.service import log_event
-from app.modules.auth.service import require_projectx_admin
+from app.modules.audit import actions as audit_actions, log_event
+from app.modules.auth import require_projectx_admin
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 

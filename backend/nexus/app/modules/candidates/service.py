@@ -21,17 +21,16 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import (
+from app.modules.audit import log_event
+from app.modules.auth import UserContext
+from app.modules.candidates.models import (
     Candidate,
     CandidateJobAssignment,
     CandidateStageProgress,
-    JobPipelineInstance,
-    JobPipelineStage,
-    JobPosting,
-    Session,
 )
-from app.modules.audit.service import log_event
-from app.modules.auth.context import UserContext
+from app.modules.jd import JobPosting
+from app.modules.pipelines import JobPipelineInstance, JobPipelineStage
+from app.modules.session import Session
 from app.modules.candidates.errors import (
     AssignmentAlreadyExistsError,
     CandidateNotFoundError,

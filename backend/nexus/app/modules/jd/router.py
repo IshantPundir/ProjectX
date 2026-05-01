@@ -15,8 +15,8 @@ from sse_starlette.sse import EventSourceResponse
 
 from app import pubsub
 from app.database import get_tenant_db, get_tenant_session
-from app.modules.audit.service import log_event
-from app.modules.auth.context import UserContext, get_current_user_roles
+from app.modules.audit import log_event
+from app.modules.auth import UserContext, get_current_user_roles
 from app.modules.jd.actors import extract_and_enhance_jd, reenrich_jd
 from app.modules.jd.authz import require_job_access
 from app.modules.jd.models import JobPosting, JobPostingSignalSnapshot
@@ -46,8 +46,7 @@ from app.modules.jd.service import (
 )
 from app.modules.jd.state_machine import transition
 from app.modules.jd.sse import job_status_event_generator
-from app.modules.org_units.models import OrganizationalUnit
-from app.modules.org_units.service import get_org_unit_ancestry
+from app.modules.org_units import OrganizationalUnit, get_org_unit_ancestry
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 _log = structlog.get_logger()

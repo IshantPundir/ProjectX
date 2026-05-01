@@ -6,7 +6,8 @@ that apply to the invite-dispatch path.
 """
 from __future__ import annotations
 
-from app.models import CandidateJobAssignment, JobPipelineStage
+from app.modules.candidates import CandidateJobAssignment
+from app.modules.pipelines import JobPipelineStage
 from app.modules.scheduler.errors import (
     AssignmentNotActiveError,
     InvalidStageTypeForInviteError,

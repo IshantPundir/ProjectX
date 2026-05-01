@@ -4,13 +4,13 @@ Owns pipeline templates (per org unit) and job pipeline instances (per job).
 Called from jd.confirm_signals() via auto_apply_pipeline_on_confirmation().
 
 Public surface for cross-module callers.
-
-NOTE: ``auto_apply_pipeline_on_confirmation`` and the
-``categories`` helpers are DEFERRED to Stage E.2 (sub-commit 4d-2).
-They cannot be eagerly imported here while ``app/models.py`` is still
-a re-export shim — see auth/__init__.py for the cycle explanation.
-Removing the shim in 4d-2 lets us add them.
 """
+from app.modules.pipelines.categories import (
+    bank_eligible_stage_types,
+    human_led_stage_types,
+    is_paused,
+    middle_stage_types_for_activation,
+)
 from app.modules.pipelines.models import (
     JobPipelineInstance,
     JobPipelineStage,
@@ -18,6 +18,7 @@ from app.modules.pipelines.models import (
     PipelineTemplate,
     PipelineTemplateStage,
 )
+from app.modules.pipelines.service import auto_apply_pipeline_on_confirmation
 
 __all__ = [
     "JobPipelineInstance",
@@ -25,4 +26,9 @@ __all__ = [
     "PipelineStageParticipant",
     "PipelineTemplate",
     "PipelineTemplateStage",
+    "auto_apply_pipeline_on_confirmation",
+    "bank_eligible_stage_types",
+    "human_led_stage_types",
+    "is_paused",
+    "middle_stage_types_for_activation",
 ]

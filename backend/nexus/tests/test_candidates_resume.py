@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from botocore.exceptions import ClientError
 
-from app.models import Candidate
+from app.modules.candidates.models import Candidate
 from app.modules.auth.context import UserContext
 from app.modules.candidates.errors import (
     InvalidResumeContentTypeError,

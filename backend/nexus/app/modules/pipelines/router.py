@@ -23,9 +23,9 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_tenant_db
-from app.modules.auth.context import UserContext, get_current_user_roles
-from app.modules.jd.state_machine import transition as jd_transition
-from app.modules.org_units.service import get_org_unit_ancestry
+from app.modules.auth import UserContext, get_current_user_roles
+from app.modules.jd import transition as jd_transition
+from app.modules.org_units import get_org_unit_ancestry
 from app.modules.pipelines.authz import (
     require_instance_access,
     require_template_access,

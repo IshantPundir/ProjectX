@@ -29,17 +29,21 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.main import app
-from app.models import (
-    JobPipelineInstance,
-    JobPipelineStage,
-    JobPosting,
-    JobPostingSignalSnapshot,
-    OrganizationalUnit,
-    PipelineStageParticipant,
-    Role,
+from app.modules.auth.models import (
     User,
     UserRoleAssignment,
 )
+from app.modules.jd.models import (
+    JobPosting,
+    JobPostingSignalSnapshot,
+)
+from app.modules.org_units.models import OrganizationalUnit
+from app.modules.pipelines.models import (
+    JobPipelineInstance,
+    JobPipelineStage,
+    PipelineStageParticipant,
+)
+from app.modules.roles.models import Role
 from app.modules.auth.context import UserContext, get_current_user_roles
 from app.modules.auth.schemas import TokenPayload
 from app.database import get_tenant_db

@@ -342,7 +342,7 @@ def create_app() -> FastAPI:
     from fastapi import Request
     from fastapi.responses import JSONResponse
 
-    from app.modules.auth.errors import AccountSuspendedError, suspended_response
+    from app.modules.auth import AccountSuspendedError, suspended_response
     from app.modules.jd.errors import (
         CompanyProfileIncompleteError,
         IllegalTransitionError,

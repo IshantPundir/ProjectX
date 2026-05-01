@@ -1,10 +1,5 @@
-"""Question bank module — per-stage AI-generated question banks.
-
-NOTE: ``recompute_and_persist_stale`` export is DEFERRED to Stage E.2
-(sub-commit 4d-2). It cannot be eagerly imported here while
-``app/models.py`` is still a re-export shim — see auth/__init__.py for
-the cycle explanation. Removing the shim in 4d-2 lets us add it.
-"""
+"""Question bank module — per-stage AI-generated question banks."""
 from app.modules.question_bank.models import StageQuestion, StageQuestionBank
+from app.modules.question_bank.service import recompute_and_persist_stale
 
-__all__ = ["StageQuestion", "StageQuestionBank"]
+__all__ = ["StageQuestion", "StageQuestionBank", "recompute_and_persist_stale"]

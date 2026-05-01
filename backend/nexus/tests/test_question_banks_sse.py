@@ -34,13 +34,15 @@ from unittest.mock import patch
 from app import pubsub
 from app.database import get_tenant_db
 from app.main import app
-from app.models import (
-    JobPipelineInstance,
-    JobPipelineStage,
+from app.modules.jd.models import (
     JobPosting,
     JobPostingSignalSnapshot,
-    StageQuestionBank,
 )
+from app.modules.pipelines.models import (
+    JobPipelineInstance,
+    JobPipelineStage,
+)
+from app.modules.question_bank.models import StageQuestionBank
 from app.modules.auth.context import UserContext, get_current_user_roles
 from app.modules.auth.schemas import TokenPayload
 from app.modules.question_bank import sse

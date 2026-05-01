@@ -21,13 +21,17 @@ from httpx import ASGITransport, AsyncClient
 
 from app.database import get_tenant_db
 from app.main import app
-from app.models import (
+from app.modules.candidates.models import (
     Candidate,
     CandidateJobAssignment,
-    CandidateSessionToken,
+)
+from app.modules.jd.models import JobPosting
+from app.modules.pipelines.models import (
     JobPipelineInstance,
     JobPipelineStage,
-    JobPosting,
+)
+from app.modules.session.models import (
+    CandidateSessionToken,
     Session,
 )
 from app.modules.auth.service import create_candidate_token

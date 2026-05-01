@@ -29,15 +29,10 @@ from opentelemetry.trace import Status, StatusCode
 
 from app.ai.tracing import set_llm_span_attributes
 from app.database import get_bypass_session
-from app.models import (
-    JobPipelineInstance,
-    JobPipelineStage,
-    JobPosting,
-    JobPostingSignalSnapshot,
-    StageQuestion,
-    StageQuestionBank,
-)
-from app.modules.audit.service import log_event
+from app.modules.jd import JobPosting, JobPostingSignalSnapshot
+from app.modules.pipelines import JobPipelineInstance, JobPipelineStage
+from app.modules.question_bank.models import StageQuestion, StageQuestionBank
+from app.modules.audit import log_event
 from app.modules.question_bank.schemas import (
     SingleQuestionOutput,
     StageQuestionBankOutput,
