@@ -164,13 +164,113 @@ class Settings(BaseSettings):
 
     # Observability
     sentry_dsn: str = ""
-    langfuse_host: str = ""           # Legacy — prefer LANGFUSE_BASE_URL
-    langfuse_base_url: str = ""       # e.g. https://cloud.langfuse.com (Langfuse v2+ convention)
-    langfuse_public_key: str = ""
-    langfuse_secret_key: str = ""
+
+    # OpenTelemetry — vendor-neutral tracing.
+    # Both exporters default to OFF. Set OTEL_DEV_CONSOLE_EXPORTER=true to dump
+    # spans to stdout for local dev visibility. Set OTEL_EXPORTER_OTLP_ENDPOINT
+    # to ship to a collector or backend (Sentry, Jaeger, Tempo, custom).
+    # When both unset: spans are created and finished but discarded silently
+    # (production-safe — no accidental data leak).
+    otel_exporter_otlp_endpoint: str = ""
+    otel_dev_console_exporter: bool = False
+    otel_service_name: str = "nexus"
 
     # CORS
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:3000", "http://127.0.0.1:3001"]
+
+    # --- Interview engine (in-process, Phase 3 merged) ---
+    # The engine no longer runs as a separate Docker image with its own
+    # config. These fields are read directly by app/modules/interview_engine.
+    # `interview_engine_jwt_secret` is retained for now because Task 9 of
+    # Phase 3 deletes its only consumer (mint_engine_dispatch_jwt). When that
+    # task lands, this field can be removed.
+    interview_engine_jwt_secret: str = ""
+
+    engine_agent_name: str = "Dakota-1785"
+    # State machine
+    engine_max_probes_per_question: int = 3
+    engine_time_warning_threshold: float = 0.8
+    # Turn detection / endpointing (forwarded to AgentSession)
+    engine_endpointing_min_delay: float = 0.3
+    engine_endpointing_max_delay: float = 2.5
+    # Silero VAD prewarm
+    engine_silero_activation_threshold: float = 0.3
+    engine_silero_min_speech_duration: float = 0.05
+    engine_silero_min_silence_duration: float = 0.55
+    # Observability
+    engine_log_audio_events: bool = True
+    engine_log_user_transcripts: bool = False
+
+    # Realtime model selection — env-driven, mirrors the JD/question-bank
+    # convention. Consumed by AIConfig (in app/ai/config.py) and the
+    # plugin factories in app/ai/realtime.py.
+    #
+    # ``interview_reasoning_effort`` is forwarded to ``openai.LLM`` only
+    # when non-empty (see ``app/ai/realtime.py::build_llm_plugin``). Per
+    # OpenAI's API docs, ``reasoning_effort`` is **not supported for
+    # non-reasoning chat models** — sending it to ``*-chat-latest`` returns
+    # HTTP 400. Default is empty so the param is omitted, which is the
+    # correct contract for the default chat model below.
+    #
+    # When switching to a reasoning model (e.g. ``gpt-5.1``, ``o3``,
+    # ``o4-mini``, ``gpt-5-pro``), set ``INTERVIEW_REASONING_EFFORT`` to
+    # one of the model's documented values (``none|minimal|low|medium|
+    # high|xhigh`` — each model's allowed subset is in OpenAI's docs).
+    # Lower effort = lower first-token latency; ``low`` is a good default
+    # for the realtime conversational pipeline since the InterviewStateMachine
+    # — not the LLM — drives probe selection / signal detection / mandatory
+    # coverage. The LLM's job is to be a fluent conversationalist.
+    interview_llm_model: str = "gpt-5.3-chat-latest"
+    interview_reasoning_effort: str = ""
+
+    # STT — Deepgram realtime
+    interview_stt_model: str = "nova-3"
+    interview_stt_language: str = "en"
+
+    # TTS — Cartesia realtime
+    interview_tts_model: str = "sonic-2"
+    interview_tts_voice: str = "9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"
+    interview_tts_language: str = "en"
+
+    # End-of-utterance confidence floor for the multilingual turn-detector
+    # plugin. None (default) lets the plugin choose. Raising this above the
+    # plugin default (~0.15 in current versions) makes the agent wait
+    # longer before deciding the candidate has finished speaking — useful
+    # in noisy environments where stray sound bursts can prematurely
+    # trigger end-of-turn. Don't set blindly; tune from real session
+    # latency data. Range: 0.0 – 1.0.
+    interview_turn_detector_unlikely_threshold: float | None = None
+
+    # Noise cancellation — ai_coustics. Default is QUAIL_VF_L (Voice Focus
+    # Large, single-speaker isolation). Per LiveKit's published WER table,
+    # QUAIL_VF_L gives the best STT accuracy for agent pipelines (11.8%
+    # vs Krisp BVC's 23.5%). Other ai_coustics models: QUAIL_S (small,
+    # lightweight), QUAIL_L (background-noise suppression, less aggressive
+    # than VF_L), QUAIL_BV (broadband voice).
+    #
+    # ``interview_noise_cancellation_level`` (0.0–1.0) controls how
+    # aggressively the model processes audio. None = plugin built-in
+    # default. Lower = less aggressive (safer for soft-spoken candidates
+    # and quiet environments where over-suppression can attenuate real
+    # voice frames). LiveKit's docs use 0.8 in their published samples.
+    # 0.7 is a reasonable balance for office environments with HVAC noise
+    # without eating quieter speech.
+    interview_noise_cancellation_model: str = "QUAIL_VF_L"
+    interview_noise_cancellation_level: float | None = 0.7
+
+    @field_validator("interview_engine_jwt_secret")
+    @classmethod
+    def _engine_secret_required(cls, v: str, info) -> str:
+        env = info.data.get("environment", "development")
+        if not v and env != "test":
+            raise ValueError(
+                "INTERVIEW_ENGINE_JWT_SECRET is required (generate with: "
+                "`openssl rand -hex 32`). This signs the engine dispatch JWT "
+                "embedded in LiveKit dispatch metadata and authenticates the "
+                "interview-engine worker against /api/internal/sessions/*. "
+                "Set ENVIRONMENT=test to skip this check in the test suite."
+            )
+        return v
 
     # Frontend base URL — used to build invite/confirmation links in emails.
     # Previously hardcoded with a `debug ? localhost : app.projectx.com`

@@ -9,7 +9,7 @@
 
 **Nexus** is the FastAPI backend — a single deployable Docker container with clean internal module boundaries. It is a **modular monolith**, not microservices. No module is extracted into a standalone service unless it demonstrably requires independent scaling and a real client requirement triggers it.
 
-- **Language:** Python 3.12
+- **Language:** Python 3.13
 - **Framework:** FastAPI (async throughout)
 - **DB driver:** asyncpg (direct PostgreSQL connection — NOT PostgREST)
 - **ORM:** SQLAlchemy async (asyncpg driver)
@@ -30,7 +30,7 @@
 - **Phase 2C.2** — done: question bank generation (adaptive coverage, mandatory demotion, per-stage LLM call, bundling discipline, SSE progress stream).
 - **Phase 3B** — done: candidates module (`candidates`, `candidate_job_assignments`, `candidate_stage_progress` tables; resume upload + S3; PII redaction gate; kanban board; created in migration 0013).
 - **Phase 3C.1** — done: scheduler invite/resend/revoke flow; candidate JWT mint + supersession chain; OTP code (CSPRNG + HMAC-SHA256 hash + constant-time verify); session pre-check / consent / OTP / start endpoints; **single-use token enforcement** via atomic `UPDATE … WHERE used_at IS NULL RETURNING` (`session/service.py:412–426`).
-- **Phase 3C.2** — pending: LiveKit room creation + token provisioning. `session.start` currently returns HTTP 501 `LIVEKIT_INTEGRATION_PENDING`.
+- **Phase 3C.2** — done: `/start` provisions a LiveKit room + mints candidate access token + dispatches the engine agent worker (`session/livekit.py`); new `interview_runtime` module exposes the internal API the engine reads `SessionConfig` from and posts `SessionResult` to (`/api/internal/sessions/{id}/{config,results}`). New tables `engine_dispatch_tokens` (tenant-scoped, RLS) and `engine_token_uses` (service-bypass, composite PK on `(jti, endpoint)` for atomic single-use enforcement) added in migration 0024.
 - **Phase 3D** — pending: real-time `analysis` (scoring, probe selection) and `reporting` (post-session report compilation).
 
 Stubbed modules (routers registered, no business logic yet): `ats`, `analysis`, `reporting`.
@@ -52,7 +52,9 @@ backend/nexus/
 │   │   └── tenant.py            ← Binds tenant_id to structlog context
 │   ├── ai/                      ← Provider-agnostic AI layer (Phase 2A)
 │   │   ├── config.py            ← AIConfig — env-driven model IDs and reasoning_effort
-│   │   ├── client.py            ← get_openai_client() — instructor.AsyncInstructor + langfuse.openai factory
+│   │   ├── client.py            ← get_openai_client() — instructor.AsyncInstructor + plain openai.AsyncOpenAI
+│   │   ├── otel.py              ← TracerProvider bootstrap, OpenAI auto-instrumentor
+│   │   ├── tracing.py           ← set_llm_span_attributes() — adds prompt metadata to active OTel span
 │   │   ├── prompts.py           ← PromptLoader — versioned prompt file reader, in-memory cache
 │   │   └── schemas.py           ← EnrichmentOutput, SignalExtractionOutput, ReEnrichmentOutput — structured output schemas with provenance validators
 │   └── modules/
@@ -121,12 +123,17 @@ backend/nexus/
 │       │   ├── authz.py          ← require_scheduler_access
 │       │   └── errors.py
 │       ├── session/              ← Phase 3C — candidate session state machine + atomic single-use enforcement
-│       │   ├── router.py         ← candidate_session_router (/api/sessions/candidate/{token}/*) + session_router (/api/sessions/*)
-│       │   ├── service.py        ← pre_check, consent, request/verify OTP, start (501 for LiveKit), supersession + replay gates
+│       │   ├── router.py         ← candidate_session_router (/api/candidate-session/{token}/*) + session_router (/api/sessions/*)
+│       │   ├── service.py        ← pre_check, consent, request/verify OTP, start (LiveKit room + dispatch), supersession + replay gates
+│       │   ├── livekit.py        ← Phase 3C.2 — mint_candidate_lk_token, mint_engine_dispatch_jwt, dispatch_agent, cancel_room
 │       │   ├── state_machine.py  ← created → pre_check → consented → active → completed | cancelled | error
 │       │   ├── otp.py            ← CSPRNG generate_code + HMAC-SHA256 hash + constant-time verify
 │       │   ├── schemas.py
-│       │   └── errors.py         ← TokenAlreadyUsedError, TokenSupersededError, OtpInvalidError, etc.
+│       │   └── errors.py         ← TokenAlreadyUsedError, TokenSupersededError, OtpInvalidError, AgentDispatchFailedError
+│       ├── interview_runtime/    ← Phase 3C.2 — internal API for the engine container
+│       │   ├── router.py         ← /api/internal/sessions/{id}/config (GET) + /results (POST)
+│       │   ├── service.py        ← build_session_config, record_session_result, verify_engine_token
+│       │   └── schemas.py        ← SessionConfig, SessionResult, QuestionConfig, etc. (the wire contract)
 │       ├── ats/                  ← [Stub] Per-ATS adapters, polling, outbound sync
 │       ├── analysis/             ← [Stub] Real-time scoring, probe decision logic
 │       └── reporting/            ← [Stub] Report compilation, score aggregation
@@ -137,7 +144,7 @@ backend/nexus/
 │       ├── jd_reenrichment.txt      ← Call 2 — re-enrichment after signal edits
 │       ├── question_bank_common.txt ← Shared system prompt for question bank calls
 │       └── question_bank_<stage_type>.txt ← Per-stage-type system prompts
-├── migrations/                  ← Alembic — 23 revisions; head is `0023_tenant_hard_delete_cascade`
+├── migrations/                  ← Alembic — 24 revisions; head is `0024_engine_integration`
 │   └── versions/
 ├── tests/
 │   └── conftest.py              ← AsyncClient fixture
@@ -267,10 +274,10 @@ Phase 2A introduces `app/ai/` as the provider-agnostic AI layer.
 
 - **AIConfig** (`app/ai/config.py`) — env-driven model IDs and `reasoning_effort`. Never hardcode. Swapping a model for a task is a single `.env` change.
 - **PromptLoader** (`app/ai/prompts.py`) — reads versioned prompts from `prompts/v{N}/<name>.txt`, cached in memory. Prompt updates are file changes, not code deploys.
-- **OpenAI client factory** (`app/ai/client.py`) — returns an `instructor.AsyncInstructor` wrapped around `langfuse.openai.AsyncOpenAI`. Langfuse tracing is a drop-in — no-op when `LANGFUSE_HOST` is empty.
+- **OpenAI client factory** (`app/ai/client.py`) — returns an `instructor.AsyncInstructor` wrapped around `openai.AsyncOpenAI`. OpenTelemetry tracing is wired separately at app startup via `app/ai/otel.py` — the OpenAI auto-instrumentor captures every `chat.completions.create` call as a span. Both exporters (Console for dev, OTLP for production) are off by default — see `.env.example` for the contract.
 - **EnrichmentOutput** and **SignalExtractionOutput** schemas (`app/ai/schemas.py`) — strict Pydantic models for the two-phase JD pipeline. Phase 1 produces an enriched JD; Phase 2 produces signals + seniority + role_summary with provenance metadata. `source=ai_inferred` requires `inference_basis`; `ai_extracted` requires it to be null.
 
-Business logic imports `get_openai_client()` and `prompt_loader` from `app.ai.*` — never openai/instructor/langfuse directly. This is the single swap point for a future provider change.
+Business logic imports `get_openai_client()` and `prompt_loader` from `app.ai.*` — never openai/instructor directly. This is the single swap point for a future provider change.
 
 ```python
 # CORRECT — provider-agnostic interface
@@ -284,8 +291,9 @@ from openai import AsyncOpenAI
 
 **Documented carve-outs (allowed):**
 - `app/modules/jd/errors.py` and `app/modules/jd/actors.py` import `openai` and `instructor.core.InstructorRetryException` *as types*, exclusively for retry/permanent-error classification (`_PERMANENT_EXCEPTIONS`) and user-safe error message mapping (`_SAFE_MESSAGES`). They never call the SDK. If the provider changes, this exception map moves with the new SDK; nothing else changes.
-- `langfuse.decorators.observe` is allowed anywhere actors run — it is the tracing scaffold, not a business-logic dependency.
+- `app/ai/realtime.py` is the second blessed import site for vendor SDKs. It owns LiveKit plugin instantiation (`livekit.plugins.openai`, `deepgram`, `cartesia`, `silero`, `turn_detector`, `ai_coustics`) so the interview-engine worker never touches them directly. Reads model IDs / voices / effort from `AIConfig` — never from env or settings. (Engine-integration mechanics — `interview_engine_jwt_secret`, `interview_agent_name`, `nexus_internal_base_url` — are deliberately NOT in `AIConfig`; the engine worker reads those directly from `settings`. AIConfig is for AI provider config only.) Lazy imports inside each factory keep the FastAPI nexus process free of the realtime plugin packages (which are installed only in the interview-engine container).
 - A future cleanup is to lift the JD exception map into `app/ai/errors.py` and re-export typed sentinels so module code never references vendor exception classes by name. Tracked as tech-debt; not blocking.
+- The interview-engine container (Phase 3C.2 Chunk 5) currently still installs nexus + livekit-agents into **two separate venvs** with `PYTHONPATH` layering. The original blocker — nexus pinning `openai<2` while `livekit-agents>=1.5.4` requires `openai>=2` — was resolved by Phase 2 of the modular-monolith spec (openai 2.x + instructor 1.15.x). The two-venv layout remains in place because the engine container itself ships independently until Phase 3 merges its source tree into nexus and consolidates onto a single image. Removing the two-venv layout is Phase 3's responsibility.
 
 ### RBAC Enforcement
 - Auth middleware extracts JWT and attaches `token_payload` to `request.state` before any route handler runs.
@@ -327,7 +335,7 @@ from openai import AsyncOpenAI
 
 | Module | What It Owns |
 |---|---|
-| `ai` | Provider-agnostic AI layer. `AIConfig` (env-driven model/effort), `PromptLoader` (versioned prompts, in-memory cache), `get_openai_client()` (instructor + langfuse.openai factory with self-hosted-only guard — `_is_langfuse_cloud_host()` raises outside dev), `EnrichmentOutput` + `SignalExtractionOutput` schemas (split in the JD creation flow refinement) with provenance validators. (The original combined `ExtractionOutput` landed in Phase 2A; subsequently split into the two-phase form on 2026-04-28 — see docs/superpowers/specs/2026-04-28-jd-creation-flow-refinement-design.md.) |
+| `ai` | Provider-agnostic AI layer. `AIConfig` (env-driven model/effort), `PromptLoader` (versioned prompts, in-memory cache), `get_openai_client()` (instructor + plain openai.AsyncOpenAI), `tracing.py` + `otel.py` (OpenTelemetry auto-instrumentation + prompt-attribute helper), `EnrichmentOutput` + `SignalExtractionOutput` schemas (split in the JD creation flow refinement) with provenance validators. (The original combined `ExtractionOutput` landed in Phase 2A; subsequently split into the two-phase form on 2026-04-28 — see docs/superpowers/specs/2026-04-28-jd-creation-flow-refinement-design.md.) |
 | `jd` | JD pipeline full implementation. `create_job_posting` with company profile ancestry gate, `extract_and_enhance_jd` + `reenrich_jd` Dramatiq actors (Call 1 + Call 2), state machine with audit trail, `require_job_access` ancestry-walking authz, SSE status stream via `get_tenant_session` (Batch F RLS fix), `x-correlation-id` header validation (Batch D), router with create/get/list/stream/re-enrich/confirm-signals endpoints. |
 | `org_units` (extended) | `CompanyProfile` strict Pydantic schema, `find_company_profile_in_ancestry()` helper, `_validate_and_normalize_company_profile()` hook in create/update, `company_profile_completed_at/by` tracking stamps. |
 | `audit` | Append-only audit log with tenant-scoped RLS (migration 0008 added the missing `FOR INSERT WITH CHECK` policy that was silently dropping tenant-scoped writes). |
@@ -350,7 +358,7 @@ from openai import AsyncOpenAI
 
 | Module | What It Owns |
 |---|---|
-| `question_bank` | Per-stage question bank generation via Dramatiq actor. Adaptive coverage (mandatory-fits-session validation, mandatory demotion auto-correction, duration as session time limit not generation budget), bundling discipline, per-stage-type prompts, coverage notes persistence for audit trail. `list_banks` GET is read-idempotent (Batch G — returns placeholder entries for stages without banks, does NOT create drafts on poll). State machine raises typed exceptions (`IllegalTransitionError`, `ReorderMismatchError`). Bulk `get_banks_for_pipeline` uses 4 constant queries instead of 1+2N. `refine.py` handles per-question draft + refine LLM calls. `@observe` decorators on actors wire Langfuse trace metadata. Bank staleness is tracked via `pipeline_version_at_generation` + `is_stale` (added in 0018) so pipeline edits invalidate banks deterministically. |
+| `question_bank` | Per-stage question bank generation via Dramatiq actor. Adaptive coverage (mandatory-fits-session validation, mandatory demotion auto-correction, duration as session time limit not generation budget), bundling discipline, per-stage-type prompts, coverage notes persistence for audit trail. `list_banks` GET is read-idempotent (Batch G — returns placeholder entries for stages without banks, does NOT create drafts on poll). State machine raises typed exceptions (`IllegalTransitionError`, `ReorderMismatchError`). Bulk `get_banks_for_pipeline` uses 4 constant queries instead of 1+2N. `refine.py` handles per-question draft + refine LLM calls. `set_llm_span_attributes()` calls on actors wire OTel span metadata (prompt name+version, bank id, stage id, tenant id). Bank staleness is tracked via `pipeline_version_at_generation` + `is_stale` (added in 0018) so pipeline edits invalidate banks deterministically. |
 
 ### Phase 3B — Implemented
 
@@ -363,7 +371,8 @@ from openai import AsyncOpenAI
 | Module | What It Owns |
 |---|---|
 | `scheduler` | Invite send / resend / revoke. `send_invite` mints a candidate JWT (HS256) and inserts the matching `candidate_session_tokens` row (jti, tenant, session_id, expires_at). Resend creates a new token row and stamps `superseded_at + superseded_by` on the prior row, building a per-session supersession chain. Notification dispatch via the provider-agnostic notifications module. |
-| `session` | Two routers: `candidate_session_router` (candidate-facing, JWT in path) and `session_router` (recruiter-facing, read-only). State machine: `created → pre_check → consented → active → completed | cancelled | error`. OTP gate (CSPRNG 6-digit code, HMAC-SHA256 hash, 10-minute lifetime, max 3 attempts, 60s rate limit, constant-time compare). **Single-use token enforcement** is atomic on `/start` (`UPDATE … WHERE used_at IS NULL RETURNING`). `/start` currently returns HTTP 501 `LIVEKIT_INTEGRATION_PENDING` — Phase 3C.2 will wire LiveKit room creation + token provisioning. |
+| `session` | Two routers: `candidate_session_router` (candidate-facing, JWT in path) and `session_router` (recruiter-facing, read-only). State machine: `created → pre_check → consented → active → completed \| cancelled \| error`. OTP gate (CSPRNG 6-digit code, HMAC-SHA256 hash, 10-minute lifetime, max 3 attempts, 60s rate limit, constant-time compare). **Single-use token enforcement** is atomic on `/start` (`UPDATE … WHERE used_at IS NULL RETURNING`). Phase 3C.2 wired the LiveKit room + token provisioning: `/start` mints a candidate `room_join` token, mints + records an engine dispatch JWT, dispatches the agent, then atomically consumes the candidate token and transitions to `active` (502 `AGENT_DISPATCH_FAILED` if dispatch fails — token is NOT consumed in that case so the candidate can retry). LiveKit helpers live at `session/livekit.py`. |
+| `interview_runtime` | Phase 3C.2 internal API for the engine container. `verify_engine_token` validates the dispatch JWT (HS256 pinning, `purpose='engine_dispatch'` claim, atomic single-use INSERT into `engine_token_uses` per `(jti, endpoint)` with FK→IntegrityError translation). `build_session_config` walks session → assignment → candidate → job → stage → bank → snapshot → questions → ancestry-walked company profile to build the engine's `SessionConfig`. `record_session_result` atomically updates the session row gated on `state='active'`, idempotent on retry, writes an audit row. Router under `/api/internal/sessions/{id}/{config,results}` — auth middleware exempts `/api/internal/`. |
 
 ### Future Phases — Stubbed
 
@@ -430,7 +439,7 @@ Tasks that must be async (never block the request cycle):
 - **Idempotency is mandatory.** Every actor must be safe to re-run. Use a database row-state check (e.g. `enrichment_status`, `bank_status`) at the top of the actor and short-circuit if the work is already done or in progress.
 - **Retry policy is explicit.** Permanent errors (validation failures, missing rows, API 4xx that won't change on retry) raise a typed exception listed in `_PERMANENT_EXCEPTIONS`; Dramatiq does not retry those. Transient errors (network, 5xx, rate limits) retry with exponential backoff up to the actor's declared `max_retries`.
 - **Dead-letter queue (DLQ).** Tasks that exhaust retries land in the DLQ — not the main broker. The DLQ is monitored; SEV3 fires if it fills above 0 for >24h.
-- **Tracing.** Every actor uses `@observe` (Langfuse) for LLM calls and writes its `correlation_id` into structured logs at every hop. The correlation ID flows from the request that enqueued the task through to any downstream call.
+- **Tracing.** Each actor's LLM call is auto-captured as an OpenTelemetry span by the OpenAI instrumentor. Actors call `set_llm_span_attributes()` from `app/ai/tracing.py` to add prompt name+version, tenant id, and correlation id. The correlation ID also flows through structured logs at every hop, so log-grep and trace-search produce the same picture.
 - **No PII in actor arguments.** Pass IDs (job_id, candidate_id, session_id), not bodies. The actor reloads from Postgres under the right RLS context.
 - **Bypass-RLS sessions in actors.** Worker tasks run outside a request — they don't have `app.current_tenant` set. Use `get_bypass_db()` and re-establish the tenant scope explicitly via `SET LOCAL app.current_tenant` if the actor needs RLS, or stay bypass-only for cross-tenant batch work.
 
@@ -458,8 +467,8 @@ Real-time latency budget:
 
 TTS TTFB is the highest-leverage variable. Benchmark Cartesia Sonic vs ElevenLabs under realistic concurrent load before building the session engine.
 
-### Langfuse — Self-Hosted Only
-Langfuse traces every LLM call including candidate response text. This is sensitive candidate evaluation data. **Never use managed Langfuse cloud.** Self-host using the official Docker Compose setup. Set `LANGFUSE_HOST` in environment config.
+### OpenTelemetry — Vendor-Neutral by Design
+LLM traces flow through OpenTelemetry instrumentation, not a vendor-specific SDK. The `opentelemetry-instrumentation-openai-v2` auto-instrumentor captures every `chat.completions.create` call as a span; `app/ai/tracing.set_llm_span_attributes()` adds prompt metadata. Two opt-in exporters (`OTEL_DEV_CONSOLE_EXPORTER` for stdout, `OTEL_EXPORTER_OTLP_ENDPOINT` for production); both off by default. Spans contain candidate evaluation data, so the OTLP endpoint MUST point at a sink the operator controls — never a third-party-hosted backend without a signed sub-processor agreement.
 
 ---
 
@@ -484,7 +493,7 @@ Outbound emails (company admin invite, team invite, invite resend) build links p
 ## Database Migrations
 
 ### Current State
-The initial schema (6 tables, first-cut RLS policies, system role seeds, and the Supabase auth hook) lives in `backend/supabase/migrations/20260405000000_initial_schema.sql`. Every incremental change since Phase 2A has been an Alembic migration in `migrations/versions/`. Current head: `0023_tenant_hard_delete_cascade`.
+The initial schema (6 tables, first-cut RLS policies, system role seeds, and the Supabase auth hook) lives in `backend/supabase/migrations/20260405000000_initial_schema.sql`. Every incremental change since Phase 2A has been an Alembic migration in `migrations/versions/`. Current head: `0024_engine_integration`.
 
 Migrations so far:
 - `0001_phase_2b_columns` — signal editing + version columns
@@ -510,6 +519,7 @@ Migrations so far:
 - `0021_add_clients_blocked_at` — adds `clients.blocked_at TIMESTAMP NULL`. Pairs with `deleted_at` to define three tenant states (active / blocked / deleted) enforced at `/api/auth/login` and `get_current_user_roles`.
 - `0022_users_partial_unique_auth` — replaces the plain UNIQUE on `users.auth_user_id` with a partial unique index `WHERE deleted_at IS NULL`. Required so a re-invite after tenant soft-delete can re-bind the same Supabase Auth identity.
 - `0023_tenant_hard_delete_cascade` — drops `audit_log_tenant_id_fkey` + `audit_log_actor_id_fkey` (audit history outlives the rows it references); converts every other `tenant_id` FK to `ON DELETE CASCADE` so `DELETE FROM clients WHERE id = ?` propagates cleanly.
+- `0024_engine_integration` — **Phase 3C.2**: new `engine_dispatch_tokens` table (tenant-scoped, RLS pair with NULLIF) tracking issued engine JWTs per session; new `engine_token_uses` table (service-bypass-only, composite PK on `(jti, endpoint)`) providing atomic single-use enforcement for the engine's `/config` and `/results` calls. Adds 7 result columns to `sessions` (`livekit_room_name`, `agent_started_at`, `agent_completed_at`, `transcript`, `questions_asked`, `questions_skipped`, `total_probes_fired`).
 
 ### Going Forward
 - Future schema changes should use Alembic migrations in `migrations/versions/`.
@@ -525,7 +535,7 @@ Migrations so far:
 
 > Cross-cutting enterprise standards (rate limiting, supply chain, secrets rotation, logging/PII, audit, code review, incident response, threat model) are defined **once in the root `CLAUDE.md` → Enterprise Operating Standards**. The rules below are backend-specific implementation details on top of those.
 
-- **Python 3.12** — use modern syntax (match/case, `X | Y` unions, etc.)
+- **Python 3.13** — use modern syntax (match/case, `X | Y` unions, etc.)
 - **Type hints required everywhere** — no untyped function signatures
 - **Async throughout** — no sync blocking calls in async context. Use `asyncio.to_thread()` if a library is sync-only.
 - **Pydantic v2** for all request/response schemas and config

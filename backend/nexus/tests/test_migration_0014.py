@@ -13,85 +13,14 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.models import (
-    Candidate,
-    CandidateJobAssignment,
     CandidateSessionToken,
-    JobPipelineInstance,
-    JobPipelineStage,
-    JobPosting,
     Session,
 )
-from tests.conftest import create_test_client, create_test_org_unit, create_test_user
-
-
-async def _make_assignment_with_stage(db, tenant, user, otp_default: bool = False):
-    """Build the minimum graph (org_unit -> job_posting -> pipeline instance ->
-    stage -> candidate -> assignment) and return the assignment + stage.
-
-    ``otp_default`` controls ``JobPipelineStage.otp_required_default`` for the
-    created stage so tests can verify both the default-false and explicit-true
-    branches.
-    """
-    org_unit = await create_test_org_unit(db, tenant.id)
-    await db.flush()
-
-    job = JobPosting(
-        tenant_id=tenant.id,
-        org_unit_id=org_unit.id,
-        title="Senior Engineer",
-        description_raw="R" * 60,
-        created_by=user.id,
-        status="draft",
-    )
-    db.add(job)
-    await db.flush()
-
-    instance = JobPipelineInstance(
-        tenant_id=tenant.id,
-        job_posting_id=job.id,
-    )
-    db.add(instance)
-    await db.flush()
-
-    stage_kwargs = dict(
-        tenant_id=tenant.id,
-        instance_id=instance.id,
-        position=0,
-        name="Phone Screen",
-        stage_type="ai_interview",
-        duration_minutes=30,
-        difficulty="medium",
-        signal_filter={},
-        pass_criteria={},
-        advance_behavior="manual",
-    )
-    if otp_default:
-        stage_kwargs["otp_required_default"] = True
-    stage = JobPipelineStage(**stage_kwargs)
-    db.add(stage)
-    await db.flush()
-
-    candidate = Candidate(
-        tenant_id=tenant.id,
-        name="Charlie",
-        email=f"charlie-{uuid.uuid4()}@example.com",
-        source="manual",
-        created_by=user.id,
-    )
-    db.add(candidate)
-    await db.flush()
-
-    assignment = CandidateJobAssignment(
-        tenant_id=tenant.id,
-        candidate_id=candidate.id,
-        job_posting_id=job.id,
-        current_stage_id=stage.id,
-        assigned_by=user.id,
-    )
-    db.add(assignment)
-    await db.flush()
-
-    return assignment, stage
+from tests.conftest import (
+    create_test_client,
+    create_test_user,
+    make_assignment_with_stage,
+)
 
 
 @pytest.mark.asyncio
@@ -101,7 +30,7 @@ async def test_session_round_trip(db):
     await db.flush()
     user = await create_test_user(db, tenant.id)
     await db.flush()
-    assignment, stage = await _make_assignment_with_stage(db, tenant, user)
+    assignment, stage = await make_assignment_with_stage(db, tenant, user)
 
     session = Session(
         tenant_id=tenant.id,
@@ -138,7 +67,7 @@ async def test_candidate_session_token_round_trip(db):
     await db.flush()
     user = await create_test_user(db, tenant.id)
     await db.flush()
-    assignment, stage = await _make_assignment_with_stage(db, tenant, user)
+    assignment, stage = await make_assignment_with_stage(db, tenant, user)
 
     session = Session(
         tenant_id=tenant.id,
@@ -180,7 +109,7 @@ async def test_stage_otp_required_default_defaults_to_false(db):
     await db.flush()
     user = await create_test_user(db, tenant.id)
     await db.flush()
-    _, stage = await _make_assignment_with_stage(db, tenant, user, otp_default=False)
+    _, stage = await make_assignment_with_stage(db, tenant, user, otp_default=False)
 
     await db.refresh(stage)
     assert stage.otp_required_default is False
@@ -193,7 +122,7 @@ async def test_stage_otp_required_default_can_be_set_true(db):
     await db.flush()
     user = await create_test_user(db, tenant.id)
     await db.flush()
-    _, stage = await _make_assignment_with_stage(db, tenant, user, otp_default=True)
+    _, stage = await make_assignment_with_stage(db, tenant, user, otp_default=True)
 
     await db.refresh(stage)
     assert stage.otp_required_default is True

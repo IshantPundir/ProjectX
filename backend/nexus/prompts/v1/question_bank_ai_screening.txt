@@ -1,45 +1,38 @@
-## Stage type: AI Technical Interview
+## Stage type: AI Screening
 
-Long-form deep interview (target: 30–60 minutes). The conductor is an AI bot
-with strong probing behavior. This is the technical depth stage.
+Long-form deep interview delivered by an AI bot. This is the technical depth stage that catches candidates who passed the phone screen on a verification answer but cannot defend the underlying skill at depth.
 
 ### Question style
+
 - Open-ended, hypothesis-verify flow.
 - "Walk me through...", "How would you approach...", "Describe a time..."
-- Technical depth focused. Probe HOW the candidate thinks, not just WHAT
-  they know.
-- Re-probe signals from phone screen at greater depth (anti-lie invariant).
+- Technical depth focused. Probe HOW the candidate thinks, not just WHAT they know.
+- Re-probe signals from the phone screen at greater depth (anti-lie invariant).
 
-### Question count and coverage
+### Question count and budget
 
-Generate the FULL menu for maximum signal coverage. Do NOT cap to duration budget. Typical output sizes:
-  - 30 min stage: 8–12 questions (3–5 mandatory + 5–7 optional depth probes)
-  - 45 min stage: 10–14 questions (4–6 mandatory + 6–8 optional depth probes)
-  - 60 min stage: 12–15 questions (5–7 mandatory + 7–8 optional depth probes)
+Use the `BUDGET FOR THIS STAGE` block in the user message as your hard cap. The general shape, derived from the budget:
 
-Mandatory total must fit within stage duration with 20–30% headroom. Optional questions can exceed the stage duration in aggregate — the session bot skips them under time pressure. Err on the side of MORE optional questions: unused content is cheap; missing content is expensive.
+  - **Mandatory** = one per knockout signal in scope, each ~3–5 minutes (deeper than the phone screen's verification asks). Budget for these FIRST; if `mandatory_total` would exceed `duration_minutes`, reduce optional content rather than dropping a knockout.
+  - **Optional depth probes** = weight=2 signals at mastery depth (~5–8 min each), and a second-angle re-probe of each knockout (~5 min each), added only while `total_minutes` stays within `duration_minutes + 5`.
+  - weight=1: skip unless every higher-weight signal has been covered AND the optional buffer still has room.
+
+For a 30-min stage with 3 knockouts, expect ~3 mandatory (~12 min) + ~3–4 optional depth probes (~18 min) = ~6–7 questions total. Shorter stages produce smaller banks — under-using budget is fine; padding is rejected.
 
 ### Depth target: DEEP
-- Follow-ups are multi-level drill-downs, not clarifications
-- Example: "Walk me through debugging a production 5xx storm through an
-  Apigee proxy" → "What tools did you use to trace the request?" →
-  "How did you distinguish between backend slowness and proxy overhead?"
-- Follow-ups should be ready for the common answers — pre-written for the
-  AI bot to fire based on what the candidate says.
+
+- Follow-ups are multi-level drill-downs, not clarifications.
+- Example: "Walk me through debugging a production 5xx storm through an Apigee proxy" → "What tools did you use to trace the request?" → "How did you distinguish between backend slowness and proxy overhead?"
+- Follow-ups should be ready for the common answers — pre-written for the AI bot to fire based on what the candidate says.
 
 ### Allocation
 
-- **Knockouts (weight=3 + knockout=true):** Generate 2 questions per knockout. The FIRST (mandatory, lower position) is a re-verification at greater depth than phone screen — a design question, scenario, or walk-through that an unqualified candidate cannot fake. The SECOND (optional, higher position) is a depth probe at a DIFFERENT angle (e.g., if Q1 is a design task, Q2 is a debugging scenario on the same signal). Mark the first mandatory, the second optional.
-
-- **weight=2 signals:** Generate AT LEAST 1 depth question per w=2 signal, regardless of whether it was covered at phone screen level. The phone screen probed them at verification depth; the AI interview probes at mastery depth. These questions are OPTIONAL (not mandatory) so the bot can skip them under time pressure for a strong candidate who fits mandatory time or a weak candidate who needs to be cut short. Place them after all knockout questions (mandatory + optional) in the position order.
-
-- **weight=1 signals:** Generate 0–1 optional questions each. These are bonus probes the bot fires only for strong candidates who complete mandatory fast with time to spare. Keep them at the end of the position order.
-
-- Skip behavioral signals entirely — those belong in human/panel stages regardless of budget.
+- **Knockouts (weight=3 + knockout=true):** First question per knockout = mandatory, deeper than the phone screen's verification (a design question, scenario, or walk-through that an unqualified candidate cannot fake). If the optional budget allows, add a SECOND question on the same knockout at a DIFFERENT angle (e.g., if Q1 is a design task, Q2 is a debugging scenario on the same signal). Mark the second optional.
+- **weight=2 signals:** Add 1 optional depth question per signal while the optional budget allows. Place after all knockout questions in the position order.
+- **weight=1 signals:** Optional bonus probes only if every weight=2 signal has been covered AND optional budget remains.
+- Skip behavioral signals entirely — those belong in human interview stages regardless of budget.
 
 ### Evidence style
-- Positive evidence should be substantial: "demonstrates understanding of
-  tradeoffs", "names specific tools AND explains why they chose them",
-  "walks through failure modes and mitigations"
-- Red flags: "surface-level answers without specifics", "cannot defend
-  design choices", "memorized textbook answers without application context"
+
+- Positive evidence should be substantial: "demonstrates understanding of tradeoffs", "names specific tools AND explains why they chose them", "walks through failure modes and mitigations".
+- Red flags: "surface-level answers without specifics", "cannot defend design choices", "memorized textbook answers without application context".

@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { AlertCircle, Check, Loader2 } from 'lucide-react'
 
 import { toast } from 'sonner'
@@ -13,7 +14,8 @@ import {
   useSwapJobPipeline,
   useUpdateSourceTemplate,
 } from '@/lib/hooks/use-save-job-pipeline'
-import { useActivateJob } from '@/lib/hooks/use-activate-job'
+// `useActivateJob` is consumed by the layout-level JobActivationBanner —
+// the funnel no longer renders the Activate button itself.
 import { usePipelineClassify } from '@/lib/hooks/use-pipeline-classify'
 import { useBanksOverview } from '@/lib/hooks/use-banks-overview'
 import type {
@@ -34,9 +36,12 @@ import { participantSlotsFor, stageCategory } from '@/lib/pipelines/categories'
 import { useGenerateAllQuestions } from '@/lib/hooks/use-generate-questions'
 import { useQuestionsStatusStream } from '@/lib/hooks/use-questions-status-stream'
 import { SourcePill } from './SourcePill'
-import { ActivationGate } from './ActivationGate'
+// ActivationGate is now rendered as a layout-level banner above the
+// title (components/dashboard/job/JobActivationBanner.tsx) — kept on
+// disk for now in case we want to repurpose its inline-detail variant
+// for the recruiter-facing per-stage drill-down. Not imported here
+// because the funnel no longer renders it.
 import { EditCategoryWarningModal } from './EditCategoryWarningModal'
-import { computeActivationFailures } from '@/lib/pipelines/activation'
 
 const AUTOSAVE_DEBOUNCE_MS = 800
 
@@ -293,7 +298,7 @@ export function JobPipelineFunnel({ job, pipeline, jobId }: Props) {
   const swapMutation = useSwapJobPipeline(jobId)
   const saveAsTemplateMutation = useSaveAsTemplate(jobId)
   const updateSourceMutation = useUpdateSourceTemplate(jobId)
-  const activateMutation = useActivateJob(jobId)
+  // activateMutation moved to JobActivationBanner.
   const classifyMutation = usePipelineClassify(jobId)
   const { data: overview } = useBanksOverview(jobId)
 
@@ -303,6 +308,24 @@ export function JobPipelineFunnel({ job, pipeline, jobId }: Props) {
   // Sheet is hidden by default — no stage is selected on mount. Users
   // click (or right-click) a slice to open the config panel.
   const [activeId, setActiveId] = useState<string | null>(null)
+
+  // URL-driven stage focus. The layout-level activation banner (and
+  // anything else that wants to deep-link a specific stage) appends
+  // `?stage=<uuid>` to the Pipeline tab URL. We pick that up on mount
+  // and on subsequent navigations, focus the matching stage, and clear
+  // the param so the URL stays clean for back-navigation.
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  useEffect(() => {
+    const requested = searchParams.get('stage')
+    if (!requested) return
+    setActiveId(requested)
+    // Strip the param without triggering a full navigation. router.replace
+    // with the bare pathname keeps the tab + scroll position intact.
+    const url = new URL(window.location.href)
+    url.searchParams.delete('stage')
+    router.replace(url.pathname + (url.search ? `?${url.searchParams.toString()}` : ''))
+  }, [searchParams, router])
   const [pickerOpen, setPickerOpen] = useState(false)
   const [isDirty, setIsDirty] = useState(false)
   const [dragIdx, setDragIdx] = useState<number | null>(null)
@@ -670,8 +693,13 @@ export function JobPipelineFunnel({ job, pipeline, jobId }: Props) {
         </div>
       </div>
 
-      {/* ─── Source pill + ActivationGate ─── */}
-      <div className="mb-4 space-y-3">
+      {/* ─── Source pill ───
+          The activation gate (ActivationGate) used to live here; it has
+          been promoted to a layout-level banner above the title that
+          renders on every tab (JD / Pipeline / Questions). Stage focus
+          from the banner arrives via the `?stage=<id>` search param —
+          see the URL-driven activeId effect below. */}
+      <div className="mb-4">
         <SourcePill
           sourceTemplateId={pipeline.source_template_id}
           sourceTemplateName={pipeline.source_template_name}
@@ -689,11 +717,6 @@ export function JobPipelineFunnel({ job, pipeline, jobId }: Props) {
             })
           }
           onUpdateSourceTemplate={() => updateSourceMutation.mutate()}
-        />
-        <ActivationGate
-          failures={computeActivationFailures(pipeline, banks)}
-          onActivate={() => activateMutation.mutate()}
-          onFocusStage={(stageId) => setActiveId(stageId)}
         />
       </div>
 

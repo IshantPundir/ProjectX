@@ -76,3 +76,31 @@ if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
     dispatchEvent: () => false,
   }) as unknown as MediaQueryList
 }
+
+/**
+ * `ResizeObserver` and `IntersectionObserver` polyfills. jsdom doesn't
+ * implement these, but @radix-ui primitives and motion/react both call
+ * them on mount — without stubs, every test that mounts a Radix-backed
+ * component throws.
+ */
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  } as unknown as typeof ResizeObserver
+}
+
+if (typeof globalThis.IntersectionObserver === 'undefined') {
+  globalThis.IntersectionObserver = class {
+    readonly root = null
+    readonly rootMargin = ''
+    readonly thresholds: ReadonlyArray<number> = []
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+    takeRecords(): IntersectionObserverEntry[] {
+      return []
+    }
+  } as unknown as typeof IntersectionObserver
+}

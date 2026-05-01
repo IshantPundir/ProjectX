@@ -39,9 +39,10 @@ export interface VerifyOtpBody {
   code: string
 }
 
-export interface StartSessionPendingResponse {
-  code: 'LIVEKIT_INTEGRATION_PENDING'
-  detail: string
+export interface StartSessionResponse {
+  livekit_url: string
+  livekit_token: string
+  room_name: string
   session_id: string
 }
 
@@ -105,8 +106,13 @@ export const candidateSessionApi = {
   verifyOtp: (token: string, body: VerifyOtpBody) =>
     _call<void>('POST', `/api/candidate-session/${token}/verify-otp`, body),
   start: (token: string) =>
-    _call<StartSessionPendingResponse>(
+    _call<StartSessionResponse>(
       'POST',
       `/api/candidate-session/${token}/start`,
+    ),
+  rejoin: (token: string) =>
+    _call<StartSessionResponse>(
+      'POST',
+      `/api/candidate-session/${token}/rejoin`,
     ),
 }

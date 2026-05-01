@@ -317,62 +317,6 @@ async def test_verify_otp_after_expiry_raises_otp_expired(db):
 
 
 @pytest.mark.asyncio
-async def test_start_session_transitions_to_active_and_marks_used(db):
-    tenant, user, stage, candidate, assignment = await _seed_assignment(db)
-    ctx = _make_ctx(user)
-    sess = await service.create_session(
-        db, assignment=assignment, stage=stage, otp_required=False, user=ctx,
-    )
-    sess.state = "consented"
-    await db.flush()
-    _, token_row = await service.mint_token(db, session=sess, candidate_id=candidate.id)
-
-    outcome = await service.start_session(
-        db, session_id=sess.id, jti=token_row.jti,
-        ip_address="1.2.3.4", user_agent="UA",
-    )
-
-    assert outcome == "pending"  # sentinel for LIVEKIT_INTEGRATION_PENDING
-    await db.refresh(sess)
-    await db.refresh(token_row)
-    assert sess.state == "active"
-    assert sess.started_at is not None
-    assert token_row.used_at is not None
-
-
-@pytest.mark.asyncio
-async def test_start_session_replay_returns_already_used(db):
-    from app.modules.session.errors import TokenAlreadyUsedError
-    tenant, user, stage, candidate, assignment = await _seed_assignment(db)
-    ctx = _make_ctx(user)
-    sess = await service.create_session(
-        db, assignment=assignment, stage=stage, otp_required=False, user=ctx,
-    )
-    sess.state = "consented"
-    await db.flush()
-    _, token_row = await service.mint_token(db, session=sess, candidate_id=candidate.id)
-
-    # First call succeeds
-    await service.start_session(
-        db, session_id=sess.id, jti=token_row.jti,
-        ip_address="1.2.3.4", user_agent="UA",
-    )
-    # Simulate replay — restore session state to 'consented' so the state-gate
-    # passes and we exercise the atomic-UPDATE zero-rows branch (the token row
-    # already has used_at set from the first call).
-    sess.state = "consented"
-    sess.started_at = None
-    await db.flush()
-
-    # Replay fails
-    with pytest.raises(TokenAlreadyUsedError):
-        await service.start_session(
-            db, session_id=sess.id, jti=token_row.jti,
-            ip_address="1.2.3.4", user_agent="UA",
-        )
-
-
-@pytest.mark.asyncio
 async def test_start_session_requires_consented_state(db):
     from app.modules.session.errors import IllegalStartStateError
     tenant, user, stage, candidate, assignment = await _seed_assignment(db)

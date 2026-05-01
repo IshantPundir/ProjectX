@@ -98,7 +98,7 @@ async def test_post_invite_returns_201_with_session_id(db, http_client):
 
 @pytest.mark.asyncio
 async def test_post_invite_422_for_non_ai_stage(db, http_client):
-    _t, user, _stage, _cand, assignment = await _seed(db, stage_type="manual_review")
+    _t, user, _stage, _cand, assignment = await _seed(db, stage_type="human_interview")
     app.dependency_overrides[get_current_user_roles] = lambda: _ctx(user)
 
     with patch("app.modules.scheduler.service.send_email", new=AsyncMock()):

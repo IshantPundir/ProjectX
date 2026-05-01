@@ -3,10 +3,10 @@
 HTTP mapping (applied by main.py exception handlers):
   404 — SessionNotFoundError
   401 — TokenSupersededError
-  409 — IllegalStartStateError, InvalidSessionStateError, TokenAlreadyUsedError
+  409 — IllegalStartStateError, InvalidSessionStateError, TokenAlreadyUsedError, SessionNotRejoinableError
   422 — OtpRequiredError, OtpExpiredError, OtpMaxAttemptsReachedError, InvalidOtpError
   429 — OtpRateLimitedError
-  501 — LIVEKIT_INTEGRATION_PENDING (returned by service, not raised as exception)
+  502 — AgentDispatchFailedError
 """
 
 
@@ -54,3 +54,19 @@ class InvalidOtpError(Exception):
 
 class TokenAlreadyUsedError(Exception):
     """409 — POST /start on a token already consumed by a prior /start."""
+
+
+class AgentDispatchFailedError(Exception):
+    """502 — LiveKit dispatch raised; token NOT consumed; candidate can retry."""
+
+    def __init__(self, detail: str) -> None:
+        self.detail = detail
+        super().__init__(detail)
+
+
+class SessionNotRejoinableError(Exception):
+    """409 — POST /rejoin called on a session whose state != 'active'."""
+
+    def __init__(self, current_state: str) -> None:
+        self.current_state = current_state
+        super().__init__(f"Session not rejoinable in state {current_state}")

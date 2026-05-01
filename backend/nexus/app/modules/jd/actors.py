@@ -7,12 +7,11 @@ Dramatiq's scheduler — tests pass a transactional session directly and
 mock get_openai_client().
 
 Tracing:
-  Both phase coroutines are decorated with @observe() which creates
-  Langfuse child spans. The OpenAI calls (via langfuse.openai.AsyncOpenAI)
-  are auto-captured as nested generation spans, so each extraction job
-  produces a trace with two clearly labelled phase spans. Metadata
-  (tenant_id, correlation_id, job_posting_id, prompt_version) is
-  propagated to all child spans via langfuse_context.update_current_trace."""
+  Each phase coroutine's OpenAI call is wrapped in an explicit
+  ``with _tracer.start_as_current_span("openai.chat.completions.create")``
+  block. set_llm_span_attributes() inside that block adds prompt metadata
+  (tenant_id, correlation_id, job_posting_id, prompt_version) to the active
+  span. Exceptions tag the span with StatusCode.ERROR before the re-raise."""
 
 import asyncio
 import json
@@ -24,11 +23,14 @@ import openai
 import structlog
 from dramatiq.middleware import CurrentMessage
 from instructor.core import InstructorRetryException
-from langfuse.decorators import langfuse_context, observe
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.client import flush_langfuse, get_openai_client, langfuse_enabled
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+
+from app.ai.client import get_openai_client
+from app.ai.tracing import set_llm_span_attributes
 from app.ai.config import ai_config
 from app.ai.prompts import prompt_loader
 from app.ai.schemas import (
@@ -46,6 +48,7 @@ from app.modules.jd.state_machine import transition
 from app.modules.org_units.service import find_company_profile_in_ancestry
 
 logger = structlog.get_logger()
+_tracer = trace.get_tracer("nexus.ai.openai")
 
 # --- Retry classification ---------------------------------------------------
 # Permanent exceptions will never succeed on retry — the input is bad, the
@@ -120,7 +123,6 @@ async def _persist_signal_snapshot(
     db.add(snapshot)
 
 
-@observe(name="jd_enrichment_phase")
 async def _run_enrichment(
     db: AsyncSession,
     *,
@@ -171,21 +173,6 @@ async def _run_enrichment(
         )
         return
 
-    langfuse_context.update_current_trace(
-        session_id=job_posting_id,
-        tags=["jd_enrichment", f"retry:{retries_so_far}"],
-        metadata={
-            "correlation_id": correlation_id,
-            "job_posting_id": job_posting_id,
-            "tenant_id": tenant_id,
-            "prompt_name": "jd_enrichment",
-            "prompt_version": "v1",
-            "model": ai_config.extraction_model,
-            "reasoning_effort": ai_config.extraction_effort,
-            "retries_so_far": retries_so_far,
-        },
-    )
-
     client = get_openai_client()
     prompt = prompt_loader.get("jd_enrichment")
     user_message = _build_user_message(job, profile)
@@ -198,45 +185,62 @@ async def _run_enrichment(
         user_message_chars=len(user_message),
     )
     call_started_at = time.monotonic()
-    try:
-        enrichment: EnrichmentOutput = await client.chat.completions.create(
+    with _tracer.start_as_current_span("openai.chat.completions.create"):
+        set_llm_span_attributes(
+            prompt_name="jd_enrichment",
+            prompt_version="v1",
+            tenant_id=tenant_id,
+            correlation_id=correlation_id,
+            job_posting_id=job_posting_id,
             model=ai_config.extraction_model,
             reasoning_effort=ai_config.extraction_effort,
-            response_model=EnrichmentOutput,
-            messages=[
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": user_message},
-            ],
-            name="jd_enrichment_call",
-            metadata={
-                "correlation_id": correlation_id,
-                "job_posting_id": job_posting_id,
-                "tenant_id": tenant_id,
-                "prompt_version": "v1",
-            },
-        )
-    except Exception as exc:
-        duration_sec = time.monotonic() - call_started_at
-        is_permanent = isinstance(exc, _PERMANENT_EXCEPTIONS)
-        log.error(
-            "jd.llm_call.failed", call_type="enrichment",
-            duration_sec=round(duration_sec, 2),
-            error_type=type(exc).__name__,
-            error_message=str(exc)[:500],
-            permanent=is_permanent,
             retries_so_far=retries_so_far,
-            exc_info=exc,
         )
-        if is_permanent or retries_so_far >= 2:
-            job.enrichment_status = "failed"
-            job.status_error = sanitize_error_for_user(exc)
-            await transition(
-                db, job, to_state="signals_extraction_failed",
-                actor_id=None, correlation_id=correlation_id,
+        try:
+            enrichment: EnrichmentOutput = await client.chat.completions.create(
+                model=ai_config.extraction_model,
+                reasoning_effort=ai_config.extraction_effort,
+                response_model=EnrichmentOutput,
+                messages=[
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                name="jd_enrichment_call",
+                metadata={
+                    "correlation_id": correlation_id,
+                    "job_posting_id": job_posting_id,
+                    "tenant_id": tenant_id,
+                    "prompt_version": "v1",
+                },
             )
-            if is_permanent:
-                return
-        raise
+        except Exception as exc:
+            # Tag the active span with error status so failed LLM calls
+            # render as errors in OTel backends (the auto-instrumentor
+            # we replaced did this automatically).
+            _span = trace.get_current_span()
+            _span.record_exception(exc)
+            _span.set_status(Status(StatusCode.ERROR, type(exc).__name__))
+            duration_sec = time.monotonic() - call_started_at
+            is_permanent = isinstance(exc, _PERMANENT_EXCEPTIONS)
+            log.error(
+                "jd.llm_call.failed", call_type="enrichment",
+                duration_sec=round(duration_sec, 2),
+                error_type=type(exc).__name__,
+                error_message=str(exc)[:500],
+                permanent=is_permanent,
+                retries_so_far=retries_so_far,
+                exc_info=exc,
+            )
+            if is_permanent or retries_so_far >= 2:
+                job.enrichment_status = "failed"
+                job.status_error = sanitize_error_for_user(exc)
+                await transition(
+                    db, job, to_state="signals_extraction_failed",
+                    actor_id=None, correlation_id=correlation_id,
+                )
+                if is_permanent:
+                    return
+            raise
 
     duration_sec = time.monotonic() - call_started_at
     log.info(
@@ -248,7 +252,6 @@ async def _run_enrichment(
     log.info("jd.enrichment.completed")
 
 
-@observe(name="jd_signal_extraction_phase")
 async def _run_signal_extraction(
     db: AsyncSession,
     *,
@@ -298,26 +301,6 @@ async def _run_signal_extraction(
     )
     source_jd = job.description_enriched if source_is_enriched else job.description_raw
 
-    langfuse_context.update_current_trace(
-        session_id=job_posting_id,
-        tags=[
-            "jd_signal_extraction",
-            f"retry:{retries_so_far}",
-            "source:enriched" if source_is_enriched else "source:raw",
-        ],
-        metadata={
-            "correlation_id": correlation_id,
-            "job_posting_id": job_posting_id,
-            "tenant_id": tenant_id,
-            "prompt_name": "jd_signal_extraction",
-            "prompt_version": "v1",
-            "model": ai_config.extraction_model,
-            "reasoning_effort": ai_config.extraction_effort,
-            "source_jd": "enriched" if source_is_enriched else "raw",
-            "retries_so_far": retries_so_far,
-        },
-    )
-
     client = get_openai_client()
     prompt = prompt_loader.get("jd_signal_extraction")
     # Build the user message with whichever JD applies.
@@ -342,44 +325,62 @@ async def _run_signal_extraction(
         user_message_chars=len(user_message),
     )
     call_started_at = time.monotonic()
-    try:
-        signal_output: SignalExtractionOutput = await client.chat.completions.create(
+    with _tracer.start_as_current_span("openai.chat.completions.create"):
+        set_llm_span_attributes(
+            prompt_name="jd_signal_extraction",
+            prompt_version="v1",
+            tenant_id=tenant_id,
+            correlation_id=correlation_id,
+            job_posting_id=job_posting_id,
             model=ai_config.extraction_model,
             reasoning_effort=ai_config.extraction_effort,
-            response_model=SignalExtractionOutput,
-            messages=[
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": user_message},
-            ],
-            name="jd_signal_extraction_call",
-            metadata={
-                "correlation_id": correlation_id,
-                "job_posting_id": job_posting_id,
-                "tenant_id": tenant_id,
-                "prompt_version": "v1",
-            },
-        )
-    except Exception as exc:
-        duration_sec = time.monotonic() - call_started_at
-        is_permanent = isinstance(exc, _PERMANENT_EXCEPTIONS)
-        log.error(
-            "jd.llm_call.failed", call_type="signal_extraction",
-            duration_sec=round(duration_sec, 2),
-            error_type=type(exc).__name__,
-            error_message=str(exc)[:500],
-            permanent=is_permanent,
+            source_jd="enriched" if source_is_enriched else "raw",
             retries_so_far=retries_so_far,
-            exc_info=exc,
         )
-        if is_permanent or retries_so_far >= 2:
-            job.status_error = sanitize_error_for_user(exc)
-            await transition(
-                db, job, to_state="signals_extraction_failed",
-                actor_id=None, correlation_id=correlation_id,
+        try:
+            signal_output: SignalExtractionOutput = await client.chat.completions.create(
+                model=ai_config.extraction_model,
+                reasoning_effort=ai_config.extraction_effort,
+                response_model=SignalExtractionOutput,
+                messages=[
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                name="jd_signal_extraction_call",
+                metadata={
+                    "correlation_id": correlation_id,
+                    "job_posting_id": job_posting_id,
+                    "tenant_id": tenant_id,
+                    "prompt_version": "v1",
+                },
             )
-            if is_permanent:
-                return
-        raise
+        except Exception as exc:
+            # Tag the active span with error status so failed LLM calls
+            # render as errors in OTel backends (the auto-instrumentor
+            # we replaced did this automatically).
+            _span = trace.get_current_span()
+            _span.record_exception(exc)
+            _span.set_status(Status(StatusCode.ERROR, type(exc).__name__))
+            duration_sec = time.monotonic() - call_started_at
+            is_permanent = isinstance(exc, _PERMANENT_EXCEPTIONS)
+            log.error(
+                "jd.llm_call.failed", call_type="signal_extraction",
+                duration_sec=round(duration_sec, 2),
+                error_type=type(exc).__name__,
+                error_message=str(exc)[:500],
+                permanent=is_permanent,
+                retries_so_far=retries_so_far,
+                exc_info=exc,
+            )
+            if is_permanent or retries_so_far >= 2:
+                job.status_error = sanitize_error_for_user(exc)
+                await transition(
+                    db, job, to_state="signals_extraction_failed",
+                    actor_id=None, correlation_id=correlation_id,
+                )
+                if is_permanent:
+                    return
+            raise
 
     duration_sec = time.monotonic() - call_started_at
     log.info(
@@ -515,9 +516,6 @@ async def extract_and_enhance_jd(
                 else:
                     await db.rollback()
                 _exc_to_reraise = exc
-            finally:
-                if langfuse_enabled():
-                    await asyncio.to_thread(flush_langfuse)
 
         if phase_1_committed:
             await _publish_status(job_posting_id, tenant_id, correlation_id)
@@ -546,9 +544,6 @@ async def extract_and_enhance_jd(
             else:
                 await db.rollback()
             _exc_to_reraise = exc
-        finally:
-            if langfuse_enabled():
-                await asyncio.to_thread(flush_langfuse)
 
     if phase_2_committed:
         await _publish_status(job_posting_id, tenant_id, correlation_id)
@@ -587,7 +582,6 @@ def _build_reenrich_user_message(
     return "\n".join(parts)
 
 
-@observe(name="jd_reenrichment_call2")
 async def _run_reenrichment(
     db: AsyncSession,
     *,
@@ -598,8 +592,11 @@ async def _run_reenrichment(
 ) -> None:
     """Core re-enrichment logic — unit-testable without Dramatiq.
 
-    @observe() creates a Langfuse trace. The OpenAI call is auto-captured
-    as a nested generation span."""
+    The OpenAI call is wrapped in an explicit
+    ``with _tracer.start_as_current_span("openai.chat.completions.create")``
+    block. set_llm_span_attributes() inside that block adds prompt
+    metadata; exceptions tag the span with StatusCode.ERROR before the
+    re-raise."""
     log = logger.bind(
         job_posting_id=job_posting_id,
         correlation_id=correlation_id,
@@ -636,21 +633,6 @@ async def _run_reenrichment(
         job.enrichment_error = "Company profile missing — cannot re-enrich"
         return
 
-    langfuse_context.update_current_trace(
-        session_id=job_posting_id,
-        tags=["jd_reenrichment", f"retry:{retries_so_far}"],
-        metadata={
-            "correlation_id": correlation_id,
-            "job_posting_id": job_posting_id,
-            "tenant_id": tenant_id,
-            "prompt_name": "jd_reenrichment",
-            "prompt_version": "v1",
-            "model": ai_config.reenrichment_model,
-            "reasoning_effort": ai_config.reenrichment_effort,
-            "retries_so_far": retries_so_far,
-        },
-    )
-
     client = get_openai_client()
     prompt = prompt_loader.get("jd_reenrichment")
     user_message = _build_reenrich_user_message(job, profile, snapshot)
@@ -664,43 +646,60 @@ async def _run_reenrichment(
         user_message_chars=len(user_message),
     )
     call_started_at = time.monotonic()
-    try:
-        reenriched: ReEnrichmentOutput = await client.chat.completions.create(
+    with _tracer.start_as_current_span("openai.chat.completions.create"):
+        set_llm_span_attributes(
+            prompt_name="jd_reenrichment",
+            prompt_version="v1",
+            tenant_id=tenant_id,
+            correlation_id=correlation_id,
+            job_posting_id=job_posting_id,
             model=ai_config.reenrichment_model,
             reasoning_effort=ai_config.reenrichment_effort,
-            response_model=ReEnrichmentOutput,
-            messages=[
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": user_message},
-            ],
-            name="jd_reenrichment_call2",
-            metadata={
-                "correlation_id": correlation_id,
-                "job_posting_id": job_posting_id,
-                "tenant_id": tenant_id,
-                "prompt_version": "v1",
-            },
-        )
-    except Exception as exc:
-        duration_sec = time.monotonic() - call_started_at
-        is_permanent = isinstance(exc, _PERMANENT_EXCEPTIONS)
-        log.error(
-            "jd.llm_call.failed",
-            call_type="reenrichment",
-            duration_sec=round(duration_sec, 2),
-            error_type=type(exc).__name__,
-            error_message=str(exc)[:500],
-            permanent=is_permanent,
             retries_so_far=retries_so_far,
-            exc_info=exc,
         )
+        try:
+            reenriched: ReEnrichmentOutput = await client.chat.completions.create(
+                model=ai_config.reenrichment_model,
+                reasoning_effort=ai_config.reenrichment_effort,
+                response_model=ReEnrichmentOutput,
+                messages=[
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                name="jd_reenrichment_call2",
+                metadata={
+                    "correlation_id": correlation_id,
+                    "job_posting_id": job_posting_id,
+                    "tenant_id": tenant_id,
+                    "prompt_version": "v1",
+                },
+            )
+        except Exception as exc:
+            # Tag the active span with error status so failed LLM calls
+            # render as errors in OTel backends (the auto-instrumentor
+            # we replaced did this automatically).
+            _span = trace.get_current_span()
+            _span.record_exception(exc)
+            _span.set_status(Status(StatusCode.ERROR, type(exc).__name__))
+            duration_sec = time.monotonic() - call_started_at
+            is_permanent = isinstance(exc, _PERMANENT_EXCEPTIONS)
+            log.error(
+                "jd.llm_call.failed",
+                call_type="reenrichment",
+                duration_sec=round(duration_sec, 2),
+                error_type=type(exc).__name__,
+                error_message=str(exc)[:500],
+                permanent=is_permanent,
+                retries_so_far=retries_so_far,
+                exc_info=exc,
+            )
 
-        if is_permanent or retries_so_far >= 1:
-            job.enrichment_status = "failed"
-            job.enrichment_error = sanitize_error_for_user(exc)
-            if is_permanent:
-                return
-        raise  # Transient error — Dramatiq retries with backoff
+            if is_permanent or retries_so_far >= 1:
+                job.enrichment_status = "failed"
+                job.enrichment_error = sanitize_error_for_user(exc)
+                if is_permanent:
+                    return
+            raise  # Transient error — Dramatiq retries with backoff
 
     # Success path
     duration_sec = time.monotonic() - call_started_at
@@ -759,9 +758,6 @@ async def reenrich_jd(
             else:
                 await db.rollback()
             _exc_to_reraise = exc
-        finally:
-            if langfuse_enabled():
-                await asyncio.to_thread(flush_langfuse)
 
     # Post-commit publish — identical pattern to extract_and_enhance_jd.
     if _committed:

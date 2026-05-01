@@ -1,6 +1,7 @@
 """Auth schemas — JWT payload, invite/me responses."""
 
 import uuid
+from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -35,6 +36,23 @@ class CandidateTokenPayload(BaseModel):
     tenant_id: uuid.UUID
     exp: int = 0
     iat: int = 0
+
+
+class EngineTokenPayload(BaseModel):
+    """Decoded claims of a Nexus-minted engine dispatch JWT (HS256, single-use).
+
+    Previously consumed by the interview-engine worker via the retired
+    /api/internal/* HTTP boundary. Kept here until the ORM models and
+    migration that drop engine_dispatch_tokens / engine_token_uses land
+    (Phase 3 Task 14).
+    """
+
+    sub: uuid.UUID            # session_id
+    tenant_id: uuid.UUID
+    purpose: Literal["interview_engine"]
+    iat: int
+    exp: int
+    jti: uuid.UUID
 
 
 class VerifyInviteResponse(BaseModel):

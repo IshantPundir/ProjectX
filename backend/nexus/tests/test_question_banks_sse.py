@@ -161,7 +161,10 @@ async def test_sse_forwards_pubsub_events(db: AsyncSession, monkeypatch):
     tenant_id = str(bank.tenant_id)
 
     # Slow the backstop so the fast path is the only realistic delivery path.
+    # Patch both cadences — the gating in _poll_loop picks one based on
+    # observed bank statuses, and we want both branches to be slow here.
     monkeypatch.setattr(sse, "POLL_INTERVAL_SEC", 60.0)
+    monkeypatch.setattr(sse, "POLL_INTERVAL_IDLE_SEC", 60.0)
 
     # Patch get_tenant_session in sse so the backstop (if it ever runs) uses
     # the test DB session rather than the production engine.
@@ -246,8 +249,12 @@ async def test_sse_backstop_emits_when_pubsub_unavailable(db: AsyncSession, monk
 
     monkeypatch.setattr(pubsub, "subscribe", _broken_subscribe)
 
-    # Speed up the backstop for the test (production default: 5s).
+    # Speed up the backstop for the test. Patch both cadences so the test
+    # is robust to the seed bank's status — _build_seed_bank currently sets
+    # status="generating" (fast cadence applies), but patching both means
+    # this test stays green if that seed default ever changes.
     monkeypatch.setattr(sse, "POLL_INTERVAL_SEC", 0.2)
+    monkeypatch.setattr(sse, "POLL_INTERVAL_IDLE_SEC", 0.2)
 
     # Route the backstop's DB access through the test session so it can see
     # flushed-but-not-committed data within the per-test connection transaction.
@@ -425,7 +432,11 @@ async def test_e2e_mutation_to_sse_happy_path(db: AsyncSession, monkeypatch):
 
     # ── SSE generator configuration ───────────────────────────────────────────
     # Slow backstop so the fast path is the only realistic delivery route.
+    # Bank is in `reviewing` (terminal) here, so _poll_loop picks the IDLE
+    # cadence — must patch BOTH constants or the default 30s IDLE cadence
+    # would let the backstop fire inside the 5s test timeout.
     monkeypatch.setattr(sse, "POLL_INTERVAL_SEC", 60.0)
+    monkeypatch.setattr(sse, "POLL_INTERVAL_IDLE_SEC", 60.0)
 
     # Route the backstop's DB access through the test session so it doesn't
     # open a real tenant session (which would need a committed tenant row).
@@ -485,4 +496,111 @@ async def test_e2e_mutation_to_sse_happy_path(db: AsyncSession, monkeypatch):
     )
     assert any("correlation_id" in f for f in received), (
         f"correlation_id not preserved in SSE frames: {received}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T20: backstop cadence is gated on bank.status == "generating"
+# ---------------------------------------------------------------------------
+
+
+async def test_sse_backstop_uses_idle_cadence_when_no_bank_generating(
+    db: AsyncSession, monkeypatch
+):
+    """When no bank is in `generating`, the backstop must use POLL_INTERVAL_IDLE_SEC.
+
+    This test inverts the patch values: the fast cadence (POLL_INTERVAL_SEC)
+    is set slow (60s) and the idle cadence (POLL_INTERVAL_IDLE_SEC) is set
+    fast (0.2s). Bank is in `draft` (not generating, not terminal). If the
+    gating works, the backstop polls every 0.2s and detects the question
+    INSERT within the test timeout. If the gating is broken (or absent —
+    i.e. the production code reverts to always sleeping POLL_INTERVAL_SEC),
+    the test would block on the 60s cadence and the timeout would fire.
+    """
+    from sqlalchemy import text
+
+    bank = await _build_seed_bank(db)
+    # Override seed default ("generating") with "draft" so any_generating=False.
+    bank.status = "draft"
+    await db.flush()
+
+    job_id = bank.job_posting_id
+    tenant_id = str(bank.tenant_id)
+
+    # Replace fast path with an async generator that sleeps forever — same
+    # pattern as T18, isolates the backstop as the only delivery route.
+    async def _broken_subscribe(*_channels):
+        while True:
+            await asyncio.sleep(30.0)
+            yield  # unreachable; required for async-generator shape
+
+    monkeypatch.setattr(pubsub, "subscribe", _broken_subscribe)
+
+    # Inverted cadences: fast slow, idle fast. If the gating logic
+    # ever regresses to "always use POLL_INTERVAL_SEC", this test fails.
+    monkeypatch.setattr(sse, "POLL_INTERVAL_SEC", 60.0)
+    monkeypatch.setattr(sse, "POLL_INTERVAL_IDLE_SEC", 0.2)
+
+    @asynccontextmanager
+    async def _fake_tenant_session(_tid: str):
+        yield db
+
+    monkeypatch.setattr(sse, "get_tenant_session", _fake_tenant_session)
+
+    received: list[str] = []
+
+    async def consume():
+        async for frame in sse._sse_generator(
+            tenant_id=tenant_id,
+            job_id=job_id,
+        ):
+            received.append(frame)
+            if "bank." in frame:
+                break
+
+    consumer = asyncio.create_task(consume())
+
+    # First silent poll establishes baseline state. With idle cadence at
+    # 0.2s, this completes well within 0.5s.
+    await asyncio.sleep(0.5)
+
+    # INSERT a question to trigger a state change the backstop should detect.
+    await db.execute(
+        text("""
+            INSERT INTO stage_questions (
+                id, tenant_id, bank_id, position, source, text,
+                signal_values, estimated_minutes, is_mandatory,
+                follow_ups, positive_evidence, red_flags, rubric,
+                evaluation_hint, edited_by_recruiter
+            )
+            VALUES (
+                gen_random_uuid(), :tid, :bid, 1, 'generated',
+                'idle-cadence test question',
+                ARRAY['signal_one']::text[], 3.0, false,
+                '[]'::jsonb, '[]'::jsonb, '[]'::jsonb,
+                '{}'::jsonb,
+                'hint', false
+            )
+        """),
+        {"tid": bank.tenant_id, "bid": bank.id},
+    )
+    await db.flush()
+
+    try:
+        # Generous 5s timeout — at the idle cadence of 0.2s, the next poll
+        # fires within 0.2-0.4s of the INSERT. If the gating regressed to
+        # the 60s fast cadence, the timeout fires instead.
+        await asyncio.wait_for(consumer, timeout=5.0)
+    except asyncio.TimeoutError:
+        consumer.cancel()
+        pytest.fail(
+            "Backstop did not emit at the IDLE cadence — gating logic may be "
+            "using POLL_INTERVAL_SEC unconditionally."
+        )
+    finally:
+        consumer.cancel()
+        await asyncio.gather(consumer, return_exceptions=True)
+
+    assert any(pubsub.Events.BANK_QUESTION_UPDATED in f for f in received), (
+        f"Expected bank.question_updated, got: {received}"
     )

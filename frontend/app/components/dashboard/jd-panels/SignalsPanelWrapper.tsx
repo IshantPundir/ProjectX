@@ -129,7 +129,12 @@ export function SignalsPanelWrapper({
 
       {canManage && (
         <div
-          className="border-t px-4 py-3"
+          // `id` is the scroll-target for the layout-level activation
+          // banner: when the JD tab is open and status === 'signals_extracted',
+          // the banner renders a "Lock signals" link with href="#confirm-signals-cta"
+          // that scrolls the user straight to this button.
+          id="confirm-signals-cta"
+          className="border-t px-4 py-3 scroll-mt-24"
           style={{ borderColor: 'var(--px-hairline)' }}
         >
           <ConfirmBar

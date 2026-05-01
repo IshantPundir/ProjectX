@@ -116,7 +116,9 @@ async def get_bypass_db() -> AsyncGenerator[AsyncSession, None]:
     """FastAPI dependency — yields a session with RLS bypass.
 
     Use with: Depends(get_bypass_db)
-    Only for: admin routes, accept-invite, onboarding completion.
+    Only for: admin routes, accept-invite, onboarding completion,
+    interview_runtime (engine-JWT-gated internal API — Phase 3C.2; tenant
+    scope is enforced application-side via the JWT's tenant_id claim).
     """
     async with async_session_factory() as session:
         async with session.begin():

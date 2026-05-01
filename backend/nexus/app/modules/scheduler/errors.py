@@ -7,7 +7,7 @@ HTTP mapping (via main.py handlers):
 
 
 class InvalidStageTypeForInviteError(Exception):
-    """422 — assignment.current_stage.stage_type != 'ai_interview'."""
+    """422 — assignment.current_stage.stage_type != 'ai_screening'."""
     def __init__(self, stage_type: str) -> None:
         super().__init__(f"Cannot send interview invite for stage_type={stage_type!r}")
         self.stage_type = stage_type

@@ -12,8 +12,10 @@ import jwt
 from jwt import PyJWKClient
 
 from app.config import settings
-from app.modules.auth.schemas import CandidateTokenPayload, TokenPayload
-
+from app.modules.auth.schemas import (
+    CandidateTokenPayload,
+    TokenPayload,
+)
 logger = structlog.get_logger()
 
 # Module-level singleton — PyJWKClient handles key caching internally
@@ -166,3 +168,5 @@ def require_projectx_admin():
         return payload
 
     return Depends(_check)
+
+

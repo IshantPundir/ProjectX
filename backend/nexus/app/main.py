@@ -28,6 +28,9 @@ logger = structlog.get_logger()
 # Update it whenever a new tenant-scoped table lands — the startup
 # assertion below will fail loudly if the corresponding migration forgets
 # to add the two policies.
+#
+# A small number of internal tables have NO `tenant_id` and only carry a
+# `service_bypass` policy. Those go in `_BYPASS_ONLY_TABLES` below.
 _TENANT_SCOPED_TABLES: tuple[str, ...] = (
     "clients",
     "users",
@@ -54,8 +57,34 @@ _TENANT_SCOPED_TABLES: tuple[str, ...] = (
 )
 
 
+# Tables intentionally excluded from `_TENANT_SCOPED_TABLES` because they
+# have NO `tenant_id` column and therefore NO `tenant_isolation` policy.
+# They are RLS-enabled but service-bypass only — tenant scope is enforced
+# at the application layer (e.g. via JWT claim) instead of in the policy.
+# Each such table MUST still carry a `service_bypass` policy so the table
+# is reachable from the bypass-RLS internal API; this assertion verifies
+# that.
+#
+# DO NOT add a tenant-scoped table here, and DO NOT move a bypass-only table
+# into `_TENANT_SCOPED_TABLES` — the migration intentionally omits the
+# tenant_isolation policy and the assertion would fail.
+_BYPASS_ONLY_TABLES: tuple[str, ...] = (
+    # Phase 3 retired engine_token_uses (along with engine_dispatch_tokens)
+    # — the engine no longer mints a JWT or reaches over HTTP. The list is
+    # left as an empty tuple so future bypass-only tables can be added here.
+)
+
+
 async def _assert_rls_completeness() -> None:
-    """Verify every tenant-scoped table has both tenant_isolation + service_bypass.
+    """Verify RLS completeness for all tracked tables at startup.
+
+    Tenant-scoped tables (``_TENANT_SCOPED_TABLES``) must carry both a
+    ``tenant_isolation`` policy (with a non-NULL WITH CHECK) and a
+    ``service_bypass`` policy.
+
+    Bypass-only tables (``_BYPASS_ONLY_TABLES``) have no ``tenant_id`` column
+    and therefore no ``tenant_isolation`` policy; they must carry at least a
+    ``service_bypass`` policy.
 
     Runs once at startup. If any table is missing either policy — or if
     tenant_isolation has a NULL WITH CHECK, which is the 'FOR SELECT
@@ -106,6 +135,7 @@ async def _assert_rls_completeness() -> None:
     missing_isolation: list[str] = []
     missing_check: list[str] = []
     missing_bypass: list[str] = []
+    missing_bypass_only: list[str] = []  # bypass-only tables missing service_bypass
 
     for table in _TENANT_SCOPED_TABLES:
         if table not in found_tenant_isolation:
@@ -120,26 +150,34 @@ async def _assert_rls_completeness() -> None:
         if table not in found_service_bypass:
             missing_bypass.append(table)
 
-    if missing_isolation or missing_check or missing_bypass:
+    for table in _BYPASS_ONLY_TABLES:
+        if table not in found_service_bypass:
+            missing_bypass_only.append(table)
+
+    if missing_isolation or missing_check or missing_bypass or missing_bypass_only:
         logger.critical(
             "rls.completeness_check_failed",
             missing_tenant_isolation=missing_isolation,
             missing_with_check=missing_check,
             missing_service_bypass=missing_bypass,
+            missing_bypass_only_service_bypass=missing_bypass_only,
             tenant_scoped_tables=list(_TENANT_SCOPED_TABLES),
+            bypass_only_tables=list(_BYPASS_ONLY_TABLES),
         )
         raise RuntimeError(
             "RLS completeness check failed — refusing to start. "
             f"missing tenant_isolation: {missing_isolation!r}; "
             f"tenant_isolation without WITH CHECK: {missing_check!r}; "
-            f"missing service_bypass: {missing_bypass!r}. "
+            f"missing service_bypass (tenant-scoped): {missing_bypass!r}; "
+            f"missing service_bypass (bypass-only): {missing_bypass_only!r}. "
             "This means a migration shipped partially-applied RLS — fix "
             "the corresponding migration and redeploy."
         )
 
     logger.info(
         "rls.completeness_check_ok",
-        tables_verified=len(_TENANT_SCOPED_TABLES),
+        tenant_scoped_tables_verified=len(_TENANT_SCOPED_TABLES),
+        bypass_only_tables_verified=len(_BYPASS_ONLY_TABLES),
     )
 
 
@@ -159,6 +197,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     )
     logger.info("nexus.startup", environment=settings.environment)
 
+    # OpenTelemetry bootstrap. Both exporters are off by default; setting
+    # OTEL_DEV_CONSOLE_EXPORTER=true or OTEL_EXPORTER_OTLP_ENDPOINT=<url>
+    # turns them on. See app/ai/otel.py for env-var contract.
+    # Phase 3 dropped the OpenAI auto-instrumentor; LLM call sites use
+    # explicit start_as_current_span blocks. set_llm_span_attributes still
+    # works against those manual spans.
+    from opentelemetry import trace
+    from app.ai.otel import bootstrap_tracer_provider
+
+    _otel_provider = bootstrap_tracer_provider()
+    trace.set_tracer_provider(_otel_provider)
+
     # Block startup if any tenant-scoped table is missing an RLS policy.
     # This is the last line of defence against a deploy that ships a
     # migration which forgot to enable RLS or forgot the WITH CHECK
@@ -174,10 +224,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # Shutdown — reverse order of startup.
     await pubsub.shutdown()
 
-    from app.ai.client import shutdown_langfuse
     from app.database import engine
 
-    shutdown_langfuse()
+    # OTel shutdown: flush + close any in-flight span batches before exit.
+    _otel_provider.shutdown()
     await engine.dispose()
     logger.info("nexus.shutdown")
 
@@ -263,6 +313,8 @@ def create_app() -> FastAPI:
     application.include_router(scheduler_router)
     application.include_router(candidate_session_router)
     application.include_router(session_router)
+    # Phase 3 retired the interview_runtime HTTP router — the engine now
+    # calls build_session_config / record_session_result in-process.
 
     # --- Exception handlers (Phase 2A — JD module) ---
     from fastapi import Request
@@ -500,6 +552,7 @@ def create_app() -> FastAPI:
         SessionAlreadyStartedError,
     )
     from app.modules.session.errors import (
+        AgentDispatchFailedError,
         IllegalStartStateError,
         InvalidOtpError,
         InvalidSessionStateError,
@@ -508,6 +561,7 @@ def create_app() -> FastAPI:
         OtpRateLimitedError,
         OtpRequiredError,
         SessionNotFoundError,
+        SessionNotRejoinableError,
         TokenAlreadyUsedError,
         TokenSupersededError,
     )
@@ -567,6 +621,18 @@ def create_app() -> FastAPI:
             content={
                 "detail": str(exc) or "Token has been superseded",
                 "code": "TOKEN_SUPERSEDED",
+            },
+        )
+
+    @application.exception_handler(AgentDispatchFailedError)
+    async def _agent_dispatch_failed(
+        request: Request, exc: AgentDispatchFailedError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=502,
+            content={
+                "detail": exc.detail or "Agent dispatch failed",
+                "code": "AGENT_DISPATCH_FAILED",
             },
         )
 
@@ -668,6 +734,19 @@ def create_app() -> FastAPI:
             content={
                 "detail": str(exc) or "Token has already been used",
                 "code": "TOKEN_ALREADY_USED",
+            },
+        )
+
+    @application.exception_handler(SessionNotRejoinableError)
+    async def _session_not_rejoinable(
+        request: Request, exc: SessionNotRejoinableError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": str(exc),
+                "code": "SESSION_NOT_REJOINABLE",
+                "current_state": exc.current_state,
             },
         )
 

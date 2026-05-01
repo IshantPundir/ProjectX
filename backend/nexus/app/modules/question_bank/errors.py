@@ -64,9 +64,10 @@ class KnockoutUnprobedError(Exception):
 class MandatoryOverrunError(Exception):
     """Sum of mandatory questions' estimated_minutes exceeds the stage duration.
 
-    Only mandatory questions count — optional depth probes may exceed duration
-    in aggregate. The session bot skips optional questions when the clock runs out,
-    but it cannot skip mandatory questions, so mandatory total must fit.
+    Raised by `validate_mandatory_fits_session` at confirm time as the final
+    safety net. Generation-time enforcement uses `BudgetExceededError`
+    instead so the retry loop can feed the violation back into the LLM
+    context without conflating with confirm-time semantics.
     """
 
     def __init__(
@@ -84,6 +85,55 @@ class MandatoryOverrunError(Exception):
             f"cannot skip mandatory questions — either shorten mandatory questions, "
             f"demote some to optional, or increase the stage duration."
         )
+
+
+class BudgetExceededError(Exception):
+    """LLM output violated the generation-time budget contract.
+
+    Two flavours, distinguished by `kind`:
+      - `kind="mandatory"` — `mandatory_total` exceeds `duration_minutes`
+      - `kind="total"`     — full bank exceeds `duration_minutes + margin_min`
+
+    The error message is fed back into the LLM as a follow-up user message
+    on the retry attempt, so it must be self-contained, blameless, and
+    actionable. Distinct from `MandatoryOverrunError` (confirm-time path)
+    because the generation-time path retries with feedback rather than
+    asking a recruiter to fix the bank.
+    """
+
+    def __init__(
+        self,
+        *,
+        kind: str,  # "mandatory" | "total"
+        observed_minutes: float,
+        cap_minutes: float,
+        duration_minutes: int,
+        margin_min: int,
+    ):
+        self.kind = kind
+        self.observed_minutes = observed_minutes
+        self.cap_minutes = cap_minutes
+        self.duration_minutes = duration_minutes
+        self.margin_min = margin_min
+        if kind == "mandatory":
+            msg = (
+                f"Budget violation (mandatory): mandatory questions sum to "
+                f"{observed_minutes:g} min, which exceeds the stage duration "
+                f"of {duration_minutes} min. Reduce mandatory time by "
+                f"shortening per-question estimated_minutes or demoting "
+                f"questions to is_mandatory=false."
+            )
+        elif kind == "total":
+            msg = (
+                f"Budget violation (total): all questions combined sum to "
+                f"{observed_minutes:g} min, which exceeds the cap of "
+                f"{cap_minutes:g} min (stage duration {duration_minutes} min "
+                f"+ {margin_min} min optional buffer). Drop the lowest-priority "
+                f"optional questions until total fits."
+            )
+        else:
+            msg = f"Budget violation ({kind}): {observed_minutes:g} > {cap_minutes:g}"
+        super().__init__(msg)
 
 
 class SignalValueNotInSnapshotError(Exception):

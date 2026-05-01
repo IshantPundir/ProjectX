@@ -1,47 +1,37 @@
 ## Stage type: Phone Screen
 
-This is a SHORT SCREENING CALL (target: 5–15 minutes). The conductor is an
-AI bot. The candidate is being vetted for basic qualification before investing
-human time.
+This is a SHORT SCREENING CALL. The conductor is an AI bot. The candidate is being vetted for basic qualification before investing human time.
 
 ### Question style
+
 - Short and direct. 1–2 sentences per question.
-- Closed or semi-closed. "Do you have X?" / "What's your experience with Y?"
-  Not "Walk me through..."
-- Verification-focused. Goal is to confirm the candidate isn't bluffing basics,
-  not to probe for mastery.
+- Closed or semi-closed. "Do you have X?" / "What's your experience with Y?" — not "Walk me through..."
+- Verification-focused. Goal is to confirm the candidate isn't bluffing basics, NOT to probe for mastery.
 - Knockout-heavy. Most questions should map to knockout or weight=3 signals.
-  Skip weight=1 unless budget is open.
 
-### Question count and coverage
+### Question count and budget
 
-Generate a FULL menu of verification questions covering every relevant knockout + weight=3 + weight=2 signal. You may include a few weight=1 bonus questions if the snapshot has room. The session bot will adaptively pick which to actually ask based on candidate signals and remaining time — you generate the material, it does the selection.
+Use the `BUDGET FOR THIS STAGE` block in the user message as your hard cap. The general shape:
 
-Typical output sizes (mandatory + optional combined):
-  - 5 min stage: 4–6 questions (3 mandatory + 1–3 optional)
-  - 10 min stage: 6–10 questions (4–5 mandatory + 2–5 optional)
-  - 15 min stage: 8–12 questions (5–7 mandatory + 3–5 optional)
+  - Mandatory questions: one per knockout signal (after `include_types` filter), each ~1–3 minutes.
+  - Optional questions: weight=2 verification probes, each ~1–3 minutes — added only while `total_minutes` stays within `duration_minutes + 5`.
+  - weight=1: skip entirely unless every higher-weight signal has been covered AND the optional buffer still has room.
 
-Mandatory total must fit within stage duration with 20–30% headroom. Optional questions can exceed the stage duration in aggregate; the bot skips them.
+A typical phone screen is short enough that **3–6 total questions is the realistic shape, not 10**. Under-using the budget by 1–2 minutes is fine; padding to fill it is rejected (banned patterns rule 6).
 
 ### Depth target: SHALLOW
-- Follow-ups are 1–2 quick clarifications, not deep probes
-- Example: "Have you worked with Kubernetes in production?" → follow-up:
-  "What was your cluster size roughly?"
-- NOT: "Describe your approach to Kubernetes capacity planning at scale."
-  (That's ai_interview territory.)
+
+- Follow-ups are 1–2 quick clarifications, not deep probes.
+- Example: "Have you worked with Kubernetes in production?" → follow-up: "What was your cluster size roughly?"
+- NOT: "Describe your approach to Kubernetes capacity planning at scale." (That's ai_screening territory.)
 
 ### Evidence style for phone screen
-- Positive evidence items should be observable in 30 seconds of answer:
-  "names specific cluster size", "mentions production deployment",
-  "describes a specific incident handled".
-- Red flags: "cannot name specific tooling", "only tutorial experience",
-  "vague 'we used Kubernetes' with no specifics".
 
-### Mandatory
+- Positive evidence items should be observable in 30 seconds of answer: "names specific cluster size", "mentions production deployment", "describes a specific incident handled".
+- Red flags: "cannot name specific tooling", "only tutorial experience", "vague 'we used Kubernetes' with no specifics".
 
-- Every knockout signal must have EXACTLY ONE mandatory verification question here. Phone screen is the first line of defense — no knockout should be un-verified before an unqualified candidate reaches a more expensive AI interview.
+### Mandatory rules (override the common prompt)
 
-- **OVERRIDE of the common prompt's 2-questions-per-knockout rule:** phone screen uses EXACTLY ONE question per knockout. The AI interview (next stage) handles depth re-probing. Do NOT generate a second question on the same knockout signal at this stage — even as an optional one. The phone screen's purpose is verification breadth, not knockout depth.
-
-- Optional questions (non-mandatory) cover weight=2 signals with verification-level asks. Keep them as short and specific as the mandatory ones — the bot picks them up if time allows.
+- Every knockout signal in scope (after `include_types` filter) gets EXACTLY ONE mandatory verification question. Phone screen is the first line of defense — no knockout reaches a more expensive stage un-verified.
+- **OVERRIDE of the common prompt's "depth re-probe per knockout" rule:** phone screen uses EXACTLY ONE question per knockout. The AI screening (next stage) handles depth re-probing. Do NOT generate a second question on the same knockout signal at this stage — even as an optional one.
+- Optional questions cover weight=2 signals with verification-level asks. Keep them as short and specific as the mandatory ones.

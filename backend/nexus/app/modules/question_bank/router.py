@@ -110,12 +110,18 @@ async def _safe_dispatch_generate_stage(
     bank_id: UUID,
     tenant_id: UUID,
     user_id: UUID,
+    correlation_id: str = "",
 ) -> None:
     """Enqueue generate_question_bank_stage; on failure, flip the bank to
-    'failed' with an operator-friendly error so the UI stops spinning."""
+    'failed' with an operator-friendly error so the UI stops spinning.
+
+    `correlation_id` is forwarded so the actor's pub/sub publishes carry
+    the originating request's correlation ID end-to-end (required by
+    CLAUDE.md observability standards).
+    """
     try:
         bank_actors.generate_question_bank_stage.send(
-            str(bank_id), str(tenant_id), str(user_id)
+            str(bank_id), str(tenant_id), str(user_id), correlation_id
         )
     except Exception as exc:
         _log.error(
@@ -157,6 +163,7 @@ async def _safe_dispatch_generate_pipeline(
     instance_id: UUID,
     tenant_id: UUID,
     user_id: UUID,
+    correlation_id: str = "",
 ) -> None:
     """Enqueue generate_question_bank_pipeline. The endpoint pre-marks the first
     eligible bank as 'generating' before calling this helper, but that commit has
@@ -164,10 +171,15 @@ async def _safe_dispatch_generate_pipeline(
     The first bank is left in 'generating'; if the actor never runs it will stay
     stuck. Acceptable: the actor has max_retries=0, so a Redis outage is logged
     loudly and the user can retry via the single-stage endpoint. Log loudly and
-    raise 503."""
+    raise 503.
+
+    `correlation_id` is forwarded so per-stage and pipeline-completion
+    pub/sub events carry the originating request's correlation ID
+    end-to-end (CLAUDE.md observability standards).
+    """
     try:
         bank_actors.generate_question_bank_pipeline.send(
-            str(instance_id), str(tenant_id), str(user_id)
+            str(instance_id), str(tenant_id), str(user_id), correlation_id
         )
     except Exception as exc:
         _log.error(
@@ -388,13 +400,28 @@ async def get_bank(
 async def generate_stage_questions(
     job_id: UUID,
     stage_id: UUID,
+    request: Request,
     db: AsyncSession = Depends(get_tenant_db),
     user: UserContext = Depends(get_current_user_roles),
 ) -> GenerateResponse:
     """Trigger single-stage generation. Returns 202 with bank id."""
+    correlation_id = _get_correlation_id(request)
     bank, stage, job = await require_bank_access_by_stage(
         db, job_id, stage_id, user, "manage"
     )
+    # Guard: only the stage types in STAGE_TYPE_TO_PROMPT are eligible for
+    # AI generation. Mirrors the same check `generate_all_questions` runs at
+    # pipeline level — keeps the 400 error consistent regardless of entry
+    # point and prevents the actor from raising a less-helpful runtime error
+    # later when the prompt-file lookup fails.
+    if stage.stage_type not in STAGE_TYPE_TO_PROMPT:
+        raise HTTPException(
+            400,
+            detail=(
+                f"Stage type '{stage.stage_type}' does not support AI question "
+                "generation. Add questions manually."
+            ),
+        )
     if bank is None:
         bank = await ensure_bank_exists(db, stage=stage, job=job)
 
@@ -414,6 +441,7 @@ async def generate_stage_questions(
         bank_id=bank_id,
         tenant_id=bank_tenant_id,
         user_id=user.user.id,
+        correlation_id=correlation_id,
     )
     return GenerateResponse(bank_id=bank_id, status="generating")
 
@@ -425,10 +453,12 @@ async def generate_stage_questions(
 )
 async def generate_all_questions(
     job_id: UUID,
+    request: Request,
     db: AsyncSession = Depends(get_tenant_db),
     user: UserContext = Depends(get_current_user_roles),
 ) -> GenerateResponse:
     """Trigger sequential generation for all stages in the pipeline."""
+    correlation_id = _get_correlation_id(request)
     instance, job = await require_pipeline_access(db, job_id, user, "manage")
 
     # Acquire a row-level lock on the pipeline instance BEFORE the 409 check
@@ -497,6 +527,7 @@ async def generate_all_questions(
         instance_id=instance_id,
         tenant_id=tenant_id,
         user_id=user.user.id,
+        correlation_id=correlation_id,
     )
     return GenerateResponse(bank_id=None, status="generating")
 

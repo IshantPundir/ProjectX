@@ -18,6 +18,6 @@ def assert_assignment_active(assignment: CandidateJobAssignment) -> None:
         raise AssignmentNotActiveError()
 
 
-def assert_stage_is_ai_interview(stage: JobPipelineStage) -> None:
-    if stage.stage_type != "ai_interview":
+def assert_stage_is_ai_screening(stage: JobPipelineStage) -> None:
+    if stage.stage_type != "ai_screening":
         raise InvalidStageTypeForInviteError(stage_type=stage.stage_type)

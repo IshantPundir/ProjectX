@@ -21,6 +21,12 @@ services:
       # this override every request fails with "Invalid issuer" 401.
       - SUPABASE_JWT_ISSUER=http://127.0.0.1:54321/auth/v1
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      # OpenTelemetry — both exporters off by default. Values flow from .env
+      # via env_file above; uncomment to override per-service. See
+      # app/ai/otel.py for the env-var contract.
+      # - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT}
+      # - OTEL_DEV_CONSOLE_EXPORTER=${OTEL_DEV_CONSOLE_EXPORTER}
+      # - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-nexus}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -43,6 +49,11 @@ services:
       - SUPABASE_JWKS_URL=http://host.docker.internal:54321/auth/v1/.well-known/jwks.json
       - SUPABASE_URL=http://host.docker.internal:54321
       - SUPABASE_JWT_ISSUER=http://127.0.0.1:54321/auth/v1
+      # OpenTelemetry — same contract as the nexus service. Worker is a
+      # separate process and runs its own TracerProvider (see app/worker.py).
+      # - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT}
+      # - OTEL_DEV_CONSOLE_EXPORTER=${OTEL_DEV_CONSOLE_EXPORTER}
+      # - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-nexus-worker}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -51,6 +62,46 @@ services:
     volumes:
       - .:/app
     command: dramatiq app.worker --processes 2 --threads 4
+
+  nexus-engine:
+    # Phase 3 — engine merged into nexus. Runs from the same Docker image as
+    # nexus and nexus-worker, just with `python -m app.modules.interview_engine`
+    # as the command. Reads SessionConfig + writes SessionResult in-process via
+    # build_session_config / record_session_result; no HTTP boundary, no JWT.
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@host.docker.internal:54322/postgres
+      - REDIS_URL=redis://redis:6379/0
+      # OpenTelemetry — same contract as nexus + nexus-worker. The engine
+      # process runs its own TracerProvider (mirrors app/main.py's bootstrap).
+      # - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT}
+      # - OTEL_DEV_CONSOLE_EXPORTER=${OTEL_DEV_CONSOLE_EXPORTER}
+      # - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-nexus-engine}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - .:/app
+      # Persist the HuggingFace / silero model cache across container
+      # recreations.
+      - hf-cache:/app/.cache/huggingface
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # AgentServer's built-in HTTP probe at port 8081/. Returns 200 when
+      # the worker is registered with LiveKit, 503 otherwise. See
+      # https://docs.livekit.io/agents/server/options/#health-check
+      test: ["CMD", "python", "-c", "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8081/', timeout=3).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    command: python -m app.modules.interview_engine start
 
   redis:
     image: redis:7-alpine
@@ -68,3 +119,4 @@ services:
 
 volumes:
   redisdata:
+  hf-cache:

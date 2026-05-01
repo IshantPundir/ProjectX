@@ -32,7 +32,7 @@ from app.modules.session.schemas import (
     PreCheckResponse,
     SessionDetailResponse,
     SessionListPage,
-    StartSessionPendingResponse,
+    StartSessionResponse,
     VerifyOtpRequest,
 )
 
@@ -153,37 +153,60 @@ async def post_verify_otp_endpoint(
 
 @candidate_session_router.post(
     "/start",
-    status_code=status.HTTP_501_NOT_IMPLEMENTED,
-    response_model=StartSessionPendingResponse,
+    status_code=status.HTTP_200_OK,
+    response_model=StartSessionResponse,
 )
 async def post_start_endpoint(
     request: Request,
     token: str,
     db: AsyncSession = Depends(get_tenant_db),
-) -> StartSessionPendingResponse:
-    """Consume the single-use token + transition session → active.
+) -> StartSessionResponse:
+    """Provision LiveKit room, dispatch agent, atomically consume the
+    single-use token, transition session → active.
 
-    Returns 501 LIVEKIT_INTEGRATION_PENDING — the single-use check succeeded
-    but LiveKit room provisioning is a Phase 3D deliverable. Replay on the
-    same JTI raises TokenAlreadyUsedError → 409 TOKEN_ALREADY_USED via the
-    global exception handler in main.py.
+    Order-of-operations gives the candidate a usable retry window when
+    LiveKit dispatch fails (token NOT consumed → 502 AGENT_DISPATCH_FAILED).
+    Replay or race on the consume yields 409 TOKEN_ALREADY_USED.
     """
     payload = request.state.candidate_token_payload
     ip = request.client.host if request.client else None
     ua = request.headers.get("user-agent")
-    await session_service.start_session(
+    return await session_service.start_session(
         db,
         session_id=payload.session_id,
         jti=payload.jti,
         ip_address=ip,
         user_agent=ua,
     )
-    return StartSessionPendingResponse(
-        detail=(
-            "LiveKit integration ships in Phase 3D. "
-            "The single-use token check succeeded and the session is marked active."
-        ),
-        session_id=payload.session_id,
+
+
+@candidate_session_router.post(
+    "/rejoin",
+    status_code=status.HTTP_200_OK,
+    response_model=StartSessionResponse,
+    summary="Rejoin an active interview session",
+)
+async def post_rejoin_endpoint(
+    request: Request,
+    token: str,  # consumed by middleware — declared so FastAPI routes correctly
+    db: AsyncSession = Depends(get_tenant_db),
+) -> StartSessionResponse:
+    """Mint a fresh LiveKit access token for a candidate rejoining mid-session.
+
+    No engine re-dispatch — the engine is already in the room. No state
+    transition — session remains 'active'. Idempotent on repeat calls within
+    the JWT lifetime.
+
+    Rate limit: 5/hour per token (token-scoped), 3/min per IP.
+    NOTE: No rate-limit infra is currently wired in the codebase (other
+    candidate-session endpoints are documented but not enforced). This limit
+    is declared here for tracking; it will be enforced once the rate-limiting
+    middleware layer is added.
+
+    Returns 409 SESSION_NOT_REJOINABLE when session.state != 'active'.
+    """
+    return await session_service.rejoin_session(
+        db, session_id=_candidate_session_id(request),
     )
 
 

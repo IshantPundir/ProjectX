@@ -561,9 +561,13 @@ async def test_get_banks_overview_does_not_create_draft_rows(
     assert await _count_banks() == 0
 
     data = resp2.json()
-    assert len(data["banks"]) == 3
-    stage_ids = {str(stage_a.id), str(stage_b.id), str(stage_c.id)}
-    assert {b["stage_id"] for b in data["banks"]} == stage_ids
+    # Only phone_screen + ai_screening are AI-eligible (STAGE_TYPE_TO_PROMPT).
+    # The human_interview stage_c is intentionally hidden by list_banks —
+    # those questions are authored manually, not generated.
+    assert len(data["banks"]) == 2
+    expected_visible = {str(stage_a.id), str(stage_b.id)}
+    assert {b["stage_id"] for b in data["banks"]} == expected_visible
+    assert str(stage_c.id) not in {b["stage_id"] for b in data["banks"]}
     for entry in data["banks"]:
         assert entry["status"] == "not_generated"
         assert entry["question_count"] == 0

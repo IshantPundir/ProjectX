@@ -44,5 +44,46 @@ class AIConfig:
     def max_schema_retries(self) -> int:
         return settings.openai_max_retries
 
+    # Phase 3C.2 — Interview engine (realtime LLM/STT/TTS)
+    @property
+    def interview_llm_model(self) -> str:
+        return settings.interview_llm_model
+
+    @property
+    def interview_reasoning_effort(self) -> str:
+        return settings.interview_reasoning_effort
+
+    @property
+    def interview_stt_model(self) -> str:
+        return settings.interview_stt_model
+
+    @property
+    def interview_stt_language(self) -> str:
+        return settings.interview_stt_language
+
+    @property
+    def interview_tts_model(self) -> str:
+        return settings.interview_tts_model
+
+    @property
+    def interview_tts_voice(self) -> str:
+        return settings.interview_tts_voice
+
+    @property
+    def interview_tts_language(self) -> str:
+        return settings.interview_tts_language
+
+    @property
+    def interview_turn_detector_unlikely_threshold(self) -> float | None:
+        return settings.interview_turn_detector_unlikely_threshold
+
+    @property
+    def interview_noise_cancellation_model(self) -> str:
+        return settings.interview_noise_cancellation_model
+
+    @property
+    def interview_noise_cancellation_level(self) -> float | None:
+        return settings.interview_noise_cancellation_level
+
 
 ai_config = AIConfig()

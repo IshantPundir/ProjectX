@@ -11,6 +11,15 @@ import os
 # check. Production deployments must set CANDIDATE_JWT_SECRET explicitly.
 os.environ.setdefault("ENVIRONMENT", "test")
 
+# Provide a dummy engine JWT secret for tests so the _engine_secret_required
+# validator (Phase 3C.2) doesn't fire when ENVIRONMENT is already set to
+# "development" in the container .env. The validator only skips in ENVIRONMENT=test;
+# if the container .env wins over os.environ.setdefault above, the validator
+# would raise before conftest finishes loading. Setting a non-empty dummy
+# value here sidesteps the check unconditionally — safe in tests because
+# the secret is never used against a real interview-engine worker.
+os.environ.setdefault("INTERVIEW_ENGINE_JWT_SECRET", "test-engine-secret-placeholder-32chars")
+
 # Force DB_RUNTIME_ROLE empty in tests regardless of what .env says. The
 # test database uses SQLAlchemy Base.metadata.create_all (see _create_tables
 # below), not real alembic migrations, so the `nexus_app` role that
@@ -33,7 +42,16 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.database import Base
 from app.main import app
-from app.models import Client, OrganizationalUnit, User
+from app.models import (
+    Candidate,
+    CandidateJobAssignment,
+    Client,
+    JobPipelineInstance,
+    JobPipelineStage,
+    JobPosting,
+    OrganizationalUnit,
+    User,
+)
 
 # Default targets host.docker.internal so that `docker compose run --rm nexus pytest`
 # Just Works without an env var override. The host alias is provided by the
@@ -203,3 +221,84 @@ def capture_publishes(monkeypatch) -> list[CapturedPublish]:
 
     monkeypatch.setattr(pubsub, "publish", stub_publish)
     return captured
+
+
+# ---------------------------------------------------------------------------
+# Graph-builder helper — reusable across migration + interview-runtime tests
+# ---------------------------------------------------------------------------
+
+
+async def make_assignment_with_stage(
+    db: AsyncSession,
+    tenant: Client,
+    user: User,
+    *,
+    otp_default: bool = False,
+    stage_type: str = "ai_screening",
+) -> tuple[CandidateJobAssignment, JobPipelineStage]:
+    """Build the minimum graph to attach a session to.
+
+    org_unit -> job_posting -> pipeline instance -> stage -> candidate -> assignment.
+    Returns (assignment, stage). ``stage_type`` defaults to ``ai_screening`` (v5);
+    pass ``"human_interview"`` etc. for negative-path tests.
+    """
+    org_unit = await create_test_org_unit(db, tenant.id)
+    await db.flush()
+
+    job = JobPosting(
+        tenant_id=tenant.id,
+        org_unit_id=org_unit.id,
+        title="Senior Engineer",
+        description_raw="R" * 60,
+        created_by=user.id,
+        status="draft",
+    )
+    db.add(job)
+    await db.flush()
+
+    instance = JobPipelineInstance(
+        tenant_id=tenant.id,
+        job_posting_id=job.id,
+    )
+    db.add(instance)
+    await db.flush()
+
+    stage_kwargs = dict(
+        tenant_id=tenant.id,
+        instance_id=instance.id,
+        position=0,
+        name="Phone Screen",
+        stage_type=stage_type,
+        duration_minutes=30,
+        difficulty="medium",
+        signal_filter={},
+        pass_criteria={},
+        advance_behavior="manual",
+    )
+    if otp_default:
+        stage_kwargs["otp_required_default"] = True
+    stage = JobPipelineStage(**stage_kwargs)
+    db.add(stage)
+    await db.flush()
+
+    candidate = Candidate(
+        tenant_id=tenant.id,
+        name="Charlie",
+        email=f"charlie-{uuid.uuid4()}@example.com",
+        source="manual",
+        created_by=user.id,
+    )
+    db.add(candidate)
+    await db.flush()
+
+    assignment = CandidateJobAssignment(
+        tenant_id=tenant.id,
+        candidate_id=candidate.id,
+        job_posting_id=job.id,
+        current_stage_id=stage.id,
+        assigned_by=user.id,
+    )
+    db.add(assignment)
+    await db.flush()
+
+    return assignment, stage

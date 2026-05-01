@@ -14,6 +14,7 @@ Rules (per Phase 3B lessons-learned):
 """
 from __future__ import annotations
 
+import contextlib
 import uuid
 from datetime import datetime, timedelta, UTC
 from uuid import UUID
@@ -21,6 +22,7 @@ from uuid import UUID
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.models import (
     Candidate,
     CandidateJobAssignment,
@@ -35,6 +37,7 @@ from app.modules.auth.context import UserContext
 from app.modules.auth.service import create_candidate_token
 from app.modules.org_units.service import find_company_profile_in_ancestry
 from app.modules.session.errors import (
+    AgentDispatchFailedError,
     IllegalStartStateError,
     InvalidOtpError,
     InvalidSessionStateError,
@@ -43,7 +46,13 @@ from app.modules.session.errors import (
     OtpRateLimitedError,
     OtpRequiredError,
     SessionNotFoundError,
+    SessionNotRejoinableError,
     TokenAlreadyUsedError,
+)
+from app.modules.session.livekit import (
+    cancel_room,
+    dispatch_agent,
+    mint_candidate_lk_token,
 )
 from app.modules.session.otp import generate_code, hash_code, verify_code
 from app.modules.session.schemas import (
@@ -51,6 +60,7 @@ from app.modules.session.schemas import (
     SessionDetailResponse,
     SessionListPage,
     SessionState,
+    StartSessionResponse,
 )
 from app.modules.session.state_machine import advance_on_pre_check_load, transition
 
@@ -364,25 +374,32 @@ async def start_session(
     jti: uuid.UUID,
     ip_address: str | None,
     user_agent: str | None,
-) -> str:
-    """Atomic single-use start.
+) -> StartSessionResponse:
+    """Atomic LiveKit-provisioning start.
 
-    Returns 'pending' — the router converts this to a 501 LIVEKIT_INTEGRATION_PENDING.
-    When LiveKit wires in Phase 3D, this function returns room credentials instead.
+    Order-of-operations (Phase 3 simplified — no engine JWT):
+        1. Load + state-gate + OTP-gate the session.
+        2. Mint LiveKit candidate JWT (sync, no DB).
+        3. Dispatch agent to LiveKit. On failure → AgentDispatchFailedError;
+           no DB rollback needed since no engine token row was ever written.
+           Candidate token unconsumed; candidate can retry.
+        4. Atomically consume candidate_session_tokens.used_at. On rowcount=0
+           (concurrent /start consumed it first), best-effort cancel_room
+           and raise TokenAlreadyUsedError.
+        5. Transition session → active, stamp livekit_room_name +
+           started_at, audit 'session.token_used'.
 
     Raises:
-        IllegalStartStateError — state != 'consented'
-        OtpRequiredError        — otp_required but otp_verified_at is None
-        TokenAlreadyUsedError   — atomic UPDATE matched 0 rows (replay or expired/superseded)
+        SessionNotFoundError    — session_id not found.
+        IllegalStartStateError  — state != 'consented' AND token not yet used.
+        TokenAlreadyUsedError   — state != 'consented' AND token already used,
+                                  OR atomic consume races and loses.
+        OtpRequiredError        — otp_required=True but otp_verified_at is None.
+        AgentDispatchFailedError — LiveKit dispatch raised. Token preserved.
     """
     sess = await _load_session_or_404(db, session_id)
 
-    # Replay disambiguation: if the session has already progressed past
-    # 'consented' *and* this exact token row has `used_at` set, the caller
-    # is re-posting a previously-consumed single-use token. That is a
-    # distinct failure mode from "wrong state for this action" — surface
-    # it as TOKEN_ALREADY_USED (409) rather than INVALID_SESSION_STATE
-    # so clients can distinguish the two on the wire.
+    # Replay disambiguation — preserved from the prior implementation.
     if sess.state != SessionState.CONSENTED.value:
         token_row = (await db.execute(
             select(CandidateSessionToken).where(CandidateSessionToken.jti == jti)
@@ -398,9 +415,6 @@ async def start_session(
                 resource_id=sess.id,
                 payload={"jti": str(jti), "ip": ip_address, "ua": user_agent},
             )
-            # Commit the audit row before raising — the outer session.begin()
-            # rolls back on exception, which would otherwise discard the
-            # audit trail of the replay attempt.
             await db.commit()
             raise TokenAlreadyUsedError()
         raise IllegalStartStateError()
@@ -408,7 +422,41 @@ async def start_session(
     if sess.otp_required and sess.otp_verified_at is None:
         raise OtpRequiredError()
 
-    # Atomic single-use — the load-bearing invariant
+    # Load candidate (for AccessToken display name) and stage (for TTL math).
+    assignment = (await db.execute(
+        select(CandidateJobAssignment).where(
+            CandidateJobAssignment.id == sess.assignment_id
+        )
+    )).scalar_one()
+    candidate = (await db.execute(
+        select(Candidate).where(Candidate.id == assignment.candidate_id)
+    )).scalar_one()
+    stage = (await db.execute(
+        select(JobPipelineStage).where(JobPipelineStage.id == sess.stage_id)
+    )).scalar_one()
+
+    correlation_id = str(uuid.uuid4())
+    room_name = f"session-{sess.id}"
+    duration_minutes = stage.duration_minutes or 30
+
+    candidate_lk_token = mint_candidate_lk_token(
+        room_name=room_name,
+        identity=f"candidate-{candidate.id}",
+        name=candidate.name or "",
+        ttl_minutes=duration_minutes + 10,
+    )
+    try:
+        await dispatch_agent(
+            room_name=room_name,
+            session_id=sess.id,
+            tenant_id=sess.tenant_id,
+            correlation_id=correlation_id,
+        )
+    except Exception as exc:
+        # Transaction will roll back on raise. Candidate token unconsumed.
+        raise AgentDispatchFailedError(detail=str(exc)) from exc
+
+    # Atomic single-use consume — load-bearing invariant.
     result = await db.execute(
         update(CandidateSessionToken)
         .where(
@@ -424,8 +472,11 @@ async def start_session(
         )
         .returning(CandidateSessionToken.jti)
     )
-    updated_jti = result.scalar_one_or_none()
-    if updated_jti is None:
+    if result.scalar_one_or_none() is None:
+        # Race lost — another /start consumed the token between our state
+        # gate and this UPDATE. Best-effort room cleanup.
+        with contextlib.suppress(Exception):
+            await cancel_room(room_name)
         await log_event(
             db,
             tenant_id=sess.tenant_id,
@@ -436,14 +487,14 @@ async def start_session(
             resource_id=sess.id,
             payload={"jti": str(jti), "ua": user_agent, "ip": ip_address},
         )
-        # Commit the audit row before raising — see rationale above.
         await db.commit()
         raise TokenAlreadyUsedError()
 
-    # Transition → active
+    # Transition → active.
     sess.state = transition(SessionState.CONSENTED, SessionState.ACTIVE).value
     sess.started_at = datetime.now(UTC)
     sess.state_changed_at = datetime.now(UTC)
+    sess.livekit_room_name = room_name
     await db.flush()
 
     await log_event(
@@ -456,7 +507,81 @@ async def start_session(
         resource_id=sess.id,
         payload={"jti": str(jti), "ip": ip_address},
     )
-    return "pending"
+
+    return StartSessionResponse(
+        livekit_url=settings.livekit_url,
+        livekit_token=candidate_lk_token,
+        room_name=room_name,
+        session_id=sess.id,
+    )
+
+
+async def rejoin_session(
+    db: AsyncSession,
+    *,
+    session_id: UUID,
+) -> StartSessionResponse:
+    """Mint a fresh LiveKit access token for a candidate rejoining an active session.
+
+    Differences from start_session:
+      * No engine dispatch — engine is already in the room.
+      * No candidate-token state machine consume — that happened on /start.
+      * No state transition — session stays 'active'.
+      * Idempotent on repeat calls within the JWT lifetime.
+
+    Raises:
+        SessionNotRejoinableError: session.state != 'active'.
+
+    Rate limit (enforced at router): 5/hour per token, 3/min per IP.
+    """
+    session = await _load_session_or_404(db, session_id)
+
+    if session.state != SessionState.ACTIVE.value:
+        raise SessionNotRejoinableError(current_state=session.state)
+
+    # Load candidate to derive the same identity scheme used in start_session.
+    # start_session uses: identity=f"candidate-{candidate.id}"
+    # We must use the identical scheme so the rejoining participant matches the
+    # existing LiveKit identity — engine state re-attaches and
+    # DUPLICATE_IDENTITY fires correctly on multi-tab.
+    assignment = (await db.execute(
+        select(CandidateJobAssignment).where(
+            CandidateJobAssignment.id == session.assignment_id
+        )
+    )).scalar_one()
+    stage = (await db.execute(
+        select(JobPipelineStage).where(JobPipelineStage.id == session.stage_id)
+    )).scalar_one()
+    candidate = (await db.execute(
+        select(Candidate).where(Candidate.id == assignment.candidate_id)
+    )).scalar_one()
+
+    duration_minutes = stage.duration_minutes or 30
+
+    new_lk_token = mint_candidate_lk_token(
+        room_name=session.livekit_room_name,
+        identity=f"candidate-{candidate.id}",
+        name=candidate.name or "",
+        ttl_minutes=duration_minutes + 10,
+    )
+
+    await log_event(
+        db,
+        tenant_id=session.tenant_id,
+        actor_id=None,      # candidate-driven; no Supabase user
+        actor_email=None,
+        action="session.candidate_rejoined",
+        resource="session",
+        resource_id=session.id,
+        payload={},
+    )
+
+    return StartSessionResponse(
+        livekit_url=settings.livekit_url,
+        livekit_token=new_lk_token,
+        room_name=session.livekit_room_name,
+        session_id=session.id,
+    )
 
 
 async def get_session(

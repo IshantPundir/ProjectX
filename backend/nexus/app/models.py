@@ -7,7 +7,7 @@ Tables: clients, users, organizational_units, roles,
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, text, UniqueConstraint
 from sqlalchemy import text as sql_text
 from sqlalchemy.dialects.postgresql import ARRAY, INET, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -570,6 +570,13 @@ class Session(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     livekit_room_name: Mapped[str | None] = mapped_column(Text)
     recording_s3_key: Mapped[str | None] = mapped_column(Text)
+    raw_result_json: Mapped[dict | None] = mapped_column(JSONB)
+    transcript: Mapped[list | None] = mapped_column(JSONB)
+    questions_asked: Mapped[int | None] = mapped_column(Integer)
+    probes_fired: Mapped[int | None] = mapped_column(Integer)
+    agent_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    result_status: Mapped[str | None] = mapped_column(Text)
+    error_code: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
@@ -757,3 +764,9 @@ class CandidateSessionToken(Base):
     superseded_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("candidate_session_tokens.jti")
     )
+
+
+# Phase 3 retired the EngineDispatchToken + EngineTokenUse ORM classes.
+# The HTTP boundary at /api/internal/* and the engine-dispatch JWT both
+# went away when the engine merged into nexus on a single venv; the
+# tables were dropped by alembic migration 0025.

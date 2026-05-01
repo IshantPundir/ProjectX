@@ -32,7 +32,7 @@ from app.modules.notifications.service import render_template, send_email
 from app.modules.org_units.service import find_company_profile_in_ancestry
 from app.modules.scheduler.authz import (
     assert_assignment_active,
-    assert_stage_is_ai_interview,
+    assert_stage_is_ai_screening,
 )
 from app.modules.scheduler.errors import SessionAlreadyStartedError
 from app.modules.scheduler.schemas import InviteCreateRequest, InviteResponse
@@ -51,7 +51,7 @@ async def send_invite(
     Resolution order:
       1. Load assignment (404 if missing) — FK RLS handles tenant scope.
       2. Guard assignment.status == 'active' (422 ASSIGNMENT_NOT_ACTIVE).
-      3. Load current stage; guard stage_type == 'ai_interview'.
+      3. Load current stage; guard stage_type == 'ai_screening'.
       4. Resolve otp_required: request-body override > stage default.
       5. Create session row + mint token.
       6. Dispatch invite email via notifications module.
@@ -70,7 +70,7 @@ async def send_invite(
     stage = (await db.execute(
         select(JobPipelineStage).where(JobPipelineStage.id == assignment.current_stage_id)
     )).scalar_one()
-    assert_stage_is_ai_interview(stage)
+    assert_stage_is_ai_screening(stage)
 
     otp_required = (
         request.otp_required if request.otp_required is not None
