@@ -44,8 +44,8 @@ backend/nexus/
 ├── app/
 │   ├── main.py                  ← FastAPI app factory, middleware + router registration, _assert_rls_completeness startup check
 │   ├── config.py                ← Settings via pydantic-settings (env vars only)
-│   ├── database.py              ← SQLAlchemy async engine, 3 session types (tenant/bypass/raw); SET LOCAL ROLE nexus_app on every request
-│   ├── models.py                ← All ORM models (Phase 1 + Phase 2 + Phase 3 tables)
+│   ├── database.py              ← SQLAlchemy async engine + Base; 3 session types (tenant/bypass/raw); SET LOCAL ROLE nexus_app on every request
+│   │                              (ORM classes live in per-module models.py — see "Module public API" below; Base.registry.configure() runs at lifespan startup)
 │   ├── worker.py                ← Dramatiq worker entrypoint — imports all actor modules to register with broker
 │   ├── middleware/
 │   │   ├── auth.py              ← JWT extraction via JWKS, attaches token_payload to request.state
@@ -568,6 +568,42 @@ Migrations so far:
 
 - The cascade configured in migration 0023 is the contract. New tenant-scoped tables must declare `ON DELETE CASCADE` on `tenant_id` (audit_log is the documented exception).
 - Deletion order matters: app code soft-deletes first (`deleted_at`), and only the admin endpoint hard-deletes via PG cascade. Never delete tenants from a request handler.
+
+---
+
+## Module public API
+
+Phase 4 of the modular-monolith refactor (umbrella spec at `docs/superpowers/specs/2026-05-01-drop-langfuse-modular-monolith-design.md`) split the monolithic `app/models.py` per module and introduced public-API discipline at the module boundary. The previous shim is gone; every domain module under `app/modules/<m>/` declares its public surface via `__init__.py` + `__all__`.
+
+**Cross-module callers MUST import through the destination module's public API**, never through internal files:
+
+```python
+# CORRECT — public API
+from app.modules.org_units import OrganizationalUnit, get_org_unit_ancestry
+from app.modules.audit import log_event, actions
+from app.modules.jd import require_job_access, transition
+
+# WRONG — cross-module deep import
+from app.modules.org_units.service import get_org_unit_ancestry
+from app.modules.audit.service import log_event
+```
+
+**Rule scope:**
+- Applies to imports CROSSING module boundaries (`from app.modules.<other> import X`).
+- INTRA-module deep imports are fine (`from app.modules.jd.service import X` inside any file under `app/modules/jd/`).
+- Routers and Dramatiq actors are deep-imported by `app/main.py` and `app/worker.py` — those callers live outside `app/modules/` and do not trip the rule.
+
+**Documented exceptions (each rationalized inline at the call site):**
+
+1. **Cross-module `from app.modules.<m>.models import X`** is permitted for ORM data-class imports — the AST lint test (`tests/test_module_boundaries.py`) explicitly allows the `models` submodule cross-module. This carve-out exists because (a) data-class imports do not introduce business-logic dependencies, and (b) some legitimate cycle-breaking patterns (`auth.context` ↔ `org_units.service` ↔ `roles.models`) cannot route through the module's `__init__.py` without re-entering a partially initialized package. See the inline NOTE comments in `app/modules/auth/context.py` and `app/modules/org_units/service.py`.
+
+2. **`auth → org_units` invite-acceptance edge.** `auth/router.py` imports `create_org_unit` from `org_units` (via the public API: `from app.modules.org_units import create_org_unit`) to seed the root company unit during invite acceptance. The foundational-module trio (auth/audit/notifications) nominally should not reach upward into a domain module, but this single site is preserved because (a) it's acyclic, (b) the alternative (post-invite-accept hook registry) is disproportionate to the boundary purity gain. If the call-site list ever grows beyond invite acceptance, extract an orchestrator module (e.g. `onboarding/`) that depends on both auth and org_units.
+
+3. **Lazy intra-module imports** (function-body, intentional): `auth/admin/__init__.py:39` and `auth/admin/_factory.py:14` are lazy by design (singleton factory + circular config-import avoidance). `auth/router.py` keeps a small number of intra-module function-body imports for test mockability. All have inline comments explaining the rationale.
+
+**Enforcement:** `tests/test_module_boundaries.py` walks the AST of every `app/modules/<m>/*.py` file and asserts no cross-module deep import remains (other than the `models` allowance). Adding a new domain module? Add its name to `KNOWN_DOMAIN_MODULES` in that file. Adding a new exception is NOT permitted — extend the destination module's `__all__` instead.
+
+**Why:** every module ends up depending on a small set of well-named re-exports (`from app.modules.org_units import OrganizationalUnit`), so refactoring inside a module (renaming a service file, splitting a schemas file) doesn't ripple across the codebase. The rule also catches accidentally-deep imports introduced during PR review — they're a flashing-red asymmetric trip wire, not a "clean it up later" item.
 
 ---
 
