@@ -42,15 +42,19 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.database import Base
 from app.main import app
-from app.models import (
+from app.modules.auth.models import User
+from app.modules.candidates.models import (
     Candidate,
     CandidateJobAssignment,
+)
+from app.modules.jd.models import JobPosting
+from app.modules.org_units.models import (
     Client,
+    OrganizationalUnit,
+)
+from app.modules.pipelines.models import (
     JobPipelineInstance,
     JobPipelineStage,
-    JobPosting,
-    OrganizationalUnit,
-    User,
 )
 
 # Default targets host.docker.internal so that `docker compose run --rm nexus pytest`

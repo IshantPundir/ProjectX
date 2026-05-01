@@ -5,7 +5,7 @@ import uuid as uuid_mod
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import AuditLog
+from app.modules.audit.models import AuditLog
 
 logger = structlog.get_logger()
 

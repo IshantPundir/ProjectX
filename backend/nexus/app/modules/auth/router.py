@@ -15,10 +15,19 @@ if TYPE_CHECKING:
     from app.modules.auth.admin.base import SessionTokens
 
 from app.database import get_bypass_db
-from app.models import Client, OrganizationalUnit, User, UserInvite
-from app.modules.audit import actions as audit_actions
-from app.modules.audit.service import log_event
+from app.modules.audit import actions as audit_actions, log_event
+from app.modules.auth.admin import (
+    AuthProvider,
+    AuthProviderError,
+    InvalidCredentialsError,
+    SessionTokens,
+    UserAlreadyExistsError,
+    UserIdentity,
+    UserNotFoundError,
+)
 from app.modules.auth.context import UserContext, get_current_user_roles
+from app.modules.auth.errors import AccountSuspendedError
+from app.modules.auth.models import User, UserInvite
 from app.modules.auth.schemas import (
     AcceptInviteRequest,
     AcceptInviteResponse,
@@ -29,6 +38,7 @@ from app.modules.auth.schemas import (
     VerifyInviteResponse,
 )
 from app.modules.auth.service import verify_access_token
+from app.modules.org_units import Client, OrganizationalUnit
 
 logger = structlog.get_logger()
 
@@ -62,8 +72,6 @@ async def verify_invite(
     # Tenant-lifecycle gate. A blocked or deleted tenant must not have
     # outstanding invites accepted into it.
     if client.deleted_at is not None or client.blocked_at is not None:
-        from app.modules.auth.errors import AccountSuspendedError
-
         suspension_status = "deleted" if client.deleted_at is not None else "blocked"
         raise AccountSuspendedError(status=suspension_status)
 
@@ -85,12 +93,7 @@ async def accept_invite(
     Compensation on DB failure: any auth user created inside this
     handler is deleted if the subsequent DB writes fail.
     """
-    from app.modules.auth.admin import (
-        AuthProviderError,
-        InvalidCredentialsError,
-        UserAlreadyExistsError,
-        get_auth_provider,
-    )
+    from app.modules.auth.admin import get_auth_provider
 
     provider = get_auth_provider()
 
@@ -117,8 +120,6 @@ async def accept_invite(
     # suspended in the interim — the user would end up with a working
     # auth identity that immediately can't reach the dashboard.
     if _client_row.deleted_at is not None or _client_row.blocked_at is not None:
-        from app.modules.auth.errors import AccountSuspendedError
-
         suspension_status = "deleted" if _client_row.deleted_at is not None else "blocked"
         raise AccountSuspendedError(status=suspension_status)
 
@@ -226,9 +227,7 @@ async def accept_invite(
             # form's "Website" field (`metadata.website`).
             root_metadata = {"website": client_domain} if client_domain else None
 
-            from app.modules.org_units.service import (
-                create_org_unit as _create_root_unit,
-            )
+            from app.modules.org_units import create_org_unit as _create_root_unit
 
             root_unit = await _create_root_unit(
                 db=db,
@@ -315,11 +314,7 @@ async def login(
       the caller's own user + client row (lookup-by-email then
       lookup-by-id) — no cross-tenant surface.
     """
-    from app.modules.auth.admin import (
-        InvalidCredentialsError,
-        UserNotFoundError,
-        get_auth_provider,
-    )
+    from app.modules.auth.admin import get_auth_provider
 
     provider = get_auth_provider()
 
@@ -407,8 +402,6 @@ async def login(
             status=suspension_status,
         )
         await _revoke_quietly(provider, tokens)
-        from app.modules.auth.errors import AccountSuspendedError
-
         raise AccountSuspendedError(status=suspension_status)
 
     is_super_admin = client.super_admin_id == user.id
@@ -444,8 +437,6 @@ async def _revoke_quietly(
     response, but it MUST be surfaced in structured logs at error level
     for ops.
     """
-    from app.modules.auth.admin import AuthProviderError
-
     try:
         await provider.sign_out(tokens)
     except AuthProviderError:

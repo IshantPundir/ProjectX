@@ -14,7 +14,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_bypass_db
-from app.models import Client, OrganizationalUnit, Role, User, UserRoleAssignment
+from app.modules.auth.models import User, UserRoleAssignment
+# NOTE: org_units.models and roles.models are deep-path imports (NOT through
+# their public __init__) to break the auth → org_units → auth circular
+# __init__ chain. Using the module-level public API here would re-enter auth
+# while it's partially initialized and crash with "cannot import name
+# UserContext from partially initialized module 'app.modules.auth'".
+# These are model-only imports (no business logic dependency), so the deep
+# path is safe and acceptable per Phase 4's documented exception.
+from app.modules.org_units.models import Client, OrganizationalUnit
+from app.modules.roles.models import Role
 from app.modules.auth.errors import AccountSuspendedError
 
 logger = structlog.get_logger()

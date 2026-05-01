@@ -12,14 +12,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_tenant_db
 from app.main import app
-from app.models import (
-    JobPipelineInstance,
-    JobPipelineStage,
+from app.modules.jd.models import (
     JobPosting,
     JobPostingSignalSnapshot,
-    PipelineStageParticipant,
-    StageQuestionBank,
 )
+from app.modules.pipelines.models import (
+    JobPipelineInstance,
+    JobPipelineStage,
+    PipelineStageParticipant,
+)
+from app.modules.question_bank.models import StageQuestionBank
 from app.modules.auth.context import UserContext, get_current_user_roles
 from app.modules.auth.schemas import TokenPayload
 from tests.conftest import (
@@ -439,7 +441,7 @@ async def _active_job_with_pipeline(db: AsyncSession):
 async def _make_auth_client(db: AsyncSession, job: JobPosting):
     """Build an AsyncClient with auth overrides based on job's tenant."""
     from sqlalchemy import select as _select
-    from app.models import User
+    from app.modules.auth.models import User
 
     user_result = await db.execute(
         _select(User).where(User.tenant_id == job.tenant_id).limit(1)

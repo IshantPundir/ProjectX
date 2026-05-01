@@ -24,17 +24,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = structlog.get_logger("interview_runtime")
 
-from app.models import (
-    Candidate,
-    CandidateJobAssignment,
-    JobPipelineStage,
-    JobPosting,
-    JobPostingSignalSnapshot,
-    Session as SessionRow,
-    StageQuestion,
-    StageQuestionBank,
-)
-from app.modules.audit.service import log_event
+from app.modules.audit import log_event
+from app.modules.candidates import Candidate, CandidateJobAssignment
+from app.modules.jd import JobPosting, JobPostingSignalSnapshot
+from app.modules.org_units import find_company_profile_in_ancestry
+from app.modules.pipelines import JobPipelineStage
+from app.modules.question_bank import StageQuestion, StageQuestionBank
+from app.modules.session import Session as SessionRow
 from app.modules.interview_runtime.errors import (
     CompanyProfileMissingError,
     QuestionBankNotReadyError,
@@ -50,7 +46,6 @@ from app.modules.interview_runtime.schemas import (
     SessionResult,
     StageConfig,
 )
-from app.modules.org_units.service import find_company_profile_in_ancestry
 
 _AI_STAGE_TYPES = frozenset({"ai_screening", "phone_screen"})
 

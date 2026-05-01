@@ -110,7 +110,7 @@ async def test_run_enrichment_emits_span_with_prompt_attributes(in_memory_export
     from sqlalchemy import func, select
 
     from app.ai.schemas import EnrichmentOutput
-    from app.models import JobPosting
+    from app.modules.jd.models import JobPosting
     from app.modules.jd.actors import _run_enrichment
     from tests.conftest import (
         create_test_client,

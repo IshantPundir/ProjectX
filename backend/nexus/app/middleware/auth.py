@@ -5,9 +5,12 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from app.database import get_bypass_session
-from app.modules.auth.errors import suspended_response
-from app.modules.auth.lifecycle import load_tenant_status
-from app.modules.auth.service import verify_access_token, verify_candidate_token
+from app.modules.auth import (
+    load_tenant_status,
+    suspended_response,
+    verify_access_token,
+    verify_candidate_token,
+)
 
 logger = structlog.get_logger()
 

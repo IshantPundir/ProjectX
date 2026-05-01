@@ -13,7 +13,7 @@ from enum import StrEnum
 
 import structlog
 
-from app.modules.interview_runtime.schemas import (
+from app.modules.interview_runtime import (
     QuestionConfig,
     SessionConfig,
     SteeringObservation,

@@ -10,7 +10,10 @@ import pytest
 from sqlalchemy import func, select
 
 from app.ai.schemas import EnrichmentOutput, ExtractedSignals, SignalExtractionOutput, SignalItemV2
-from app.models import JobPosting, JobPostingSignalSnapshot
+from app.modules.jd.models import (
+    JobPosting,
+    JobPostingSignalSnapshot,
+)
 from app.modules.jd.actors import _run_enrichment, _run_signal_extraction
 from tests.conftest import (
     create_test_client,

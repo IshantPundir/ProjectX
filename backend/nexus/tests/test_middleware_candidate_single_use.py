@@ -29,7 +29,10 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.main import app
-from app.models import CandidateSessionToken, Session
+from app.modules.session.models import (
+    CandidateSessionToken,
+    Session,
+)
 from app.modules.auth.service import create_candidate_token
 from tests.conftest import create_test_client, create_test_user
 from tests.conftest import make_assignment_with_stage

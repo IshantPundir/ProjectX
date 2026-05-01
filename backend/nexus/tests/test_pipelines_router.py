@@ -21,10 +21,10 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.main import app
-from app.models import (
+from app.modules.jd.models import JobPosting
+from app.modules.pipelines.models import (
     JobPipelineInstance,
     JobPipelineStage,
-    JobPosting,
     PipelineTemplate,
     PipelineTemplateStage,
 )

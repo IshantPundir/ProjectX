@@ -12,9 +12,10 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Client, OrganizationalUnit, Role, User, UserInvite, UserRoleAssignment
-from app.modules.audit import actions as audit_actions
-from app.modules.audit.service import log_event
+from app.modules.audit import actions as audit_actions, log_event
+from app.modules.auth import AuthProviderError, User, UserInvite, UserRoleAssignment, get_auth_provider
+from app.modules.org_units import Client, OrganizationalUnit, nullify_deletable_by_for_user
+from app.modules.roles import Role
 
 logger = structlog.get_logger()
 
@@ -242,8 +243,6 @@ async def deactivate_team_user(
     ip_address: str | None = None,
 ) -> str:
     """Deactivate a user. Returns auth_user_id for background Supabase cleanup."""
-    from app.modules.org_units.service import nullify_deletable_by_for_user
-
     result = await db.execute(
         select(User).where(
             User.id == user_id,
@@ -321,8 +320,6 @@ async def _delete_auth_user(auth_user_id: str) -> None:
     settings/router.py stay one-line. New code should call
     `get_auth_provider().delete_user(...)` directly.
     """
-    from app.modules.auth.admin import AuthProviderError, get_auth_provider
-
     provider = get_auth_provider()
     try:
         await provider.delete_user(auth_user_id)

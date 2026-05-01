@@ -7,7 +7,8 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-from app.models import AuditLog, Candidate
+from app.modules.audit.models import AuditLog
+from app.modules.candidates.models import Candidate
 from app.modules.auth.context import RoleAssignment, UserContext
 from app.modules.candidates import service
 from app.modules.candidates.errors import (
@@ -289,11 +290,11 @@ async def test_list_candidates_pagination(db):
     assert {c.id for c in page1.items}.isdisjoint({c.id for c in page2.items})
 
 
-from app.models import (
-    CandidateStageProgress,
+from app.modules.candidates.models import CandidateStageProgress
+from app.modules.jd.models import JobPosting
+from app.modules.pipelines.models import (
     JobPipelineInstance,
     JobPipelineStage,
-    JobPosting,
 )
 
 
@@ -566,7 +567,7 @@ async def test_kanban_board_places_candidate_in_current_stage(db):
 
 @pytest.mark.asyncio
 async def test_kanban_board_surfaces_latest_session_state(db):
-    from app.models import Session
+    from app.modules.session.models import Session
     from app.modules.candidates.service import (
         create_assignment, get_kanban_board,
     )
@@ -656,7 +657,7 @@ async def test_kanban_board_excludes_non_active_assignments(db):
 
 @pytest.mark.asyncio
 async def test_redact_pii_nulls_personal_fields_and_stamps_audit(db):
-    from app.models import AuditLog
+    from app.modules.audit.models import AuditLog
     from app.modules.candidates.service import redact_pii
 
     tenant = await create_test_client(db)

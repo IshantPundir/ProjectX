@@ -18,15 +18,10 @@ import structlog
 from sqlalchemy import delete, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import (
-    JobPipelineInstance,
-    JobPipelineStage,
-    JobPosting,
-    JobPostingSignalSnapshot,
-    StageQuestion,
-    StageQuestionBank,
-)
-from app.modules.audit.service import log_event
+from app.modules.audit import log_event
+from app.modules.jd import JobPosting, JobPostingSignalSnapshot
+from app.modules.pipelines import JobPipelineInstance, JobPipelineStage
+from app.modules.question_bank.models import StageQuestion, StageQuestionBank
 from app.modules.question_bank.errors import (
     BudgetExceededError,
     KnockoutUnprobedError,

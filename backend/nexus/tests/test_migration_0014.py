@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.models import (
+from app.modules.session.models import (
     CandidateSessionToken,
     Session,
 )

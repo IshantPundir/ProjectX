@@ -19,16 +19,10 @@ from app.ai.client import get_openai_client
 from app.ai.config import AIConfig
 from app.ai.prompts import prompt_loader
 from app.database import get_tenant_db
-from app.models import (
-    JobPipelineInstance,
-    JobPipelineStage,
-    JobPosting,
-    JobPostingSignalSnapshot,
-    StageQuestion,
-    StageQuestionBank,
-)
-from app.modules.auth.context import UserContext, get_current_user_roles
-from app.modules.jd.authz import require_job_access
+from app.modules.auth import UserContext, get_current_user_roles
+from app.modules.jd import JobPosting, JobPostingSignalSnapshot, require_job_access
+from app.modules.pipelines import JobPipelineInstance, JobPipelineStage
+from app.modules.question_bank.models import StageQuestion, StageQuestionBank
 from app.modules.question_bank.context import build_question_context
 from app.modules.question_bank.service import get_latest_confirmed_snapshot
 

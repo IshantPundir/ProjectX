@@ -1,13 +1,15 @@
 """Smoke test for the Candidate / CandidateJobAssignment / CandidateStageProgress ORM models."""
 import pytest
 
-from app.models import (
+from app.modules.candidates.models import (
     Candidate,
     CandidateJobAssignment,
     CandidateStageProgress,
+)
+from app.modules.jd.models import JobPosting
+from app.modules.pipelines.models import (
     JobPipelineInstance,
     JobPipelineStage,
-    JobPosting,
 )
 from tests.conftest import create_test_client, create_test_org_unit, create_test_user
 

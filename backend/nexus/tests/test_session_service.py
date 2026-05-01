@@ -5,9 +5,18 @@ from datetime import datetime, UTC
 import pytest
 from sqlalchemy import select
 
-from app.models import (
-    Candidate, CandidateJobAssignment, CandidateSessionToken,
-    JobPipelineInstance, JobPipelineStage, JobPosting, Session,
+from app.modules.candidates.models import (
+    Candidate,
+    CandidateJobAssignment,
+)
+from app.modules.jd.models import JobPosting
+from app.modules.pipelines.models import (
+    JobPipelineInstance,
+    JobPipelineStage,
+)
+from app.modules.session.models import (
+    CandidateSessionToken,
+    Session,
 )
 from app.modules.auth.context import UserContext
 from app.modules.session import service

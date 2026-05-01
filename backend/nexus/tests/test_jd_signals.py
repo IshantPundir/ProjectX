@@ -22,7 +22,10 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.main import app
-from app.models import JobPosting, JobPostingSignalSnapshot
+from app.modules.jd.models import (
+    JobPosting,
+    JobPostingSignalSnapshot,
+)
 from app.modules.auth.context import UserContext, get_current_user_roles
 from app.modules.auth.schemas import TokenPayload
 from tests.conftest import (

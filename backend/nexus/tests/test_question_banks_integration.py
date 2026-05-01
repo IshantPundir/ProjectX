@@ -25,11 +25,15 @@ import sqlalchemy
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import (
-    JobPipelineInstance,
-    JobPipelineStage,
+from app.modules.jd.models import (
     JobPosting,
     JobPostingSignalSnapshot,
+)
+from app.modules.pipelines.models import (
+    JobPipelineInstance,
+    JobPipelineStage,
+)
+from app.modules.question_bank.models import (
     StageQuestion,
     StageQuestionBank,
 )

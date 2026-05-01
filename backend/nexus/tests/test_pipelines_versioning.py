@@ -18,11 +18,13 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.main import app
-from app.models import (
-    JobPipelineInstance,
-    JobPipelineStage,
+from app.modules.jd.models import (
     JobPosting,
     JobPostingSignalSnapshot,
+)
+from app.modules.pipelines.models import (
+    JobPipelineInstance,
+    JobPipelineStage,
     PipelineTemplate,
     PipelineTemplateStage,
 )

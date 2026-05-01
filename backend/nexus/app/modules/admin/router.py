@@ -3,7 +3,7 @@ import uuid as uuid_mod
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_bypass_db
+from app.database import get_bypass_db, get_bypass_session
 from app.modules.admin.schemas import (
     ClientListItem,
     ClientStatusResponse,
@@ -25,7 +25,8 @@ from app.modules.admin.service import (
     provision_client,
     unblock_client,
 )
-from app.modules.auth.service import require_projectx_admin
+from app.modules.audit import actions as audit_actions, log_event
+from app.modules.auth import require_projectx_admin
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -207,10 +208,6 @@ async def hard_delete_client_endpoint(
     if failed:
         # Open a fresh bypass session for the partial-success audit event.
         # The original session has already exited the context manager.
-        from app.database import get_bypass_session
-        from app.modules.audit import actions as audit_actions
-        from app.modules.audit.service import log_event
-
         async with get_bypass_session() as audit_db:
             await log_event(
                 audit_db,

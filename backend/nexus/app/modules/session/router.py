@@ -23,9 +23,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_tenant_db
-from app.models import Candidate, CandidateJobAssignment, Session as SessionRow
-from app.modules.auth.context import UserContext, get_current_user_roles
-from app.modules.notifications.service import render_template, send_email
+from app.modules.auth import UserContext, get_current_user_roles
+from app.modules.candidates import Candidate, CandidateJobAssignment
+from app.modules.notifications import render_template, send_email
+from app.modules.session.models import Session as SessionRow
 from app.modules.session import service as session_service
 from app.modules.session.schemas import (
     ConsentRequest,

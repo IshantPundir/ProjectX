@@ -197,6 +197,28 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     )
     logger.info("nexus.startup", environment=settings.environment)
 
+    # Force every per-module models.py to load so Base.registry sees every
+    # mapper before configure() runs. Without these imports, a module whose
+    # router never references its own ORM classes (rare but possible) would
+    # not register its tables, and the first cross-module query would fail
+    # at runtime with "Could not resolve string FK".
+    #
+    # Phase 4 of the modular-monolith refactor split app/models.py per
+    # module. Every model module is imported here so configure() resolves
+    # every string FK at boot, not at first request.
+    import app.modules.auth.models  # noqa: F401
+    import app.modules.audit.models  # noqa: F401
+    import app.modules.candidates.models  # noqa: F401
+    import app.modules.jd.models  # noqa: F401
+    import app.modules.org_units.models  # noqa: F401
+    import app.modules.pipelines.models  # noqa: F401
+    import app.modules.question_bank.models  # noqa: F401
+    import app.modules.roles.models  # noqa: F401
+    import app.modules.session.models  # noqa: F401
+
+    from app.database import Base
+    Base.registry.configure()
+
     # OpenTelemetry bootstrap. Both exporters are off by default; setting
     # OTEL_DEV_CONSOLE_EXPORTER=true or OTEL_EXPORTER_OTLP_ENDPOINT=<url>
     # turns them on. See app/ai/otel.py for env-var contract.
@@ -320,7 +342,7 @@ def create_app() -> FastAPI:
     from fastapi import Request
     from fastapi.responses import JSONResponse
 
-    from app.modules.auth.errors import AccountSuspendedError, suspended_response
+    from app.modules.auth import AccountSuspendedError, suspended_response
     from app.modules.jd.errors import (
         CompanyProfileIncompleteError,
         IllegalTransitionError,

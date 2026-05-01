@@ -14,9 +14,9 @@ import pytest
 import sqlalchemy
 from sqlalchemy import select
 
-from app.models import (
+from app.modules.jd.models import JobPosting
+from app.modules.pipelines.models import (
     JobPipelineStage,
-    JobPosting,
     PipelineTemplate,
     PipelineTemplateStage,
 )

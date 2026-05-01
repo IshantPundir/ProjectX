@@ -9,7 +9,8 @@ import pytest
 import sqlalchemy
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import AuditLog, Client
+from app.modules.audit.models import AuditLog
+from app.modules.org_units.models import Client
 from app.modules.admin.service import (
     ConfirmationMismatchError,
     InvalidClientStateError,
@@ -99,7 +100,7 @@ async def test_hard_delete_purges_users_and_invites_preserves_audit(
 ):
     """Soft-delete then hard-delete; verify users + invites are gone,
     audit_log row for the hard-delete event survives."""
-    from app.models import User, UserInvite
+    from app.modules.auth.models import User, UserInvite
 
     client = await create_test_client(db)
     user = User(

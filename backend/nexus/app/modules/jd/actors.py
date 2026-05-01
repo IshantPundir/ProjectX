@@ -41,11 +41,11 @@ from app.ai.schemas import (
 )
 from app import pubsub
 from app.database import get_bypass_session
-from app.models import JobPosting, JobPostingSignalSnapshot
 from app.modules.jd.errors import sanitize_error_for_user
+from app.modules.jd.models import JobPosting, JobPostingSignalSnapshot
 from app.modules.jd.service import get_job_status
 from app.modules.jd.state_machine import transition
-from app.modules.org_units.service import find_company_profile_in_ancestry
+from app.modules.org_units import find_company_profile_in_ancestry
 
 logger = structlog.get_logger()
 _tracer = trace.get_tracer("nexus.ai.openai")

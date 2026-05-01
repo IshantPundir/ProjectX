@@ -5,7 +5,7 @@ import uuid
 import pytest
 from fastapi import HTTPException
 
-from app.models import JobPosting
+from app.modules.jd.models import JobPosting
 from app.modules.auth.context import RoleAssignment, UserContext
 from app.modules.jd.authz import require_job_access
 from tests.conftest import create_test_client, create_test_org_unit, create_test_user

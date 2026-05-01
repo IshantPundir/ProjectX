@@ -14,11 +14,11 @@ import pytest
 import sqlalchemy
 from sqlalchemy import select
 
-from app.models import (
-    JobPipelineInstance,
+from app.modules.jd.models import (
     JobPosting,
     JobPostingSignalSnapshot,
 )
+from app.modules.pipelines.models import JobPipelineInstance
 from app.modules.jd.service import confirm_signals
 from app.modules.pipelines import service as pipelines_service
 from app.modules.pipelines.schemas import (

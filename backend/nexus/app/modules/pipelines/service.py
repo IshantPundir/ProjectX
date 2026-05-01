@@ -13,14 +13,17 @@ import structlog
 from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import (
-    CandidateJobAssignment,
+from app.modules.auth import User
+from app.modules.candidates import CandidateJobAssignment
+from app.modules.jd import JobPosting
+from app.modules.pipelines.models import (
     JobPipelineInstance,
     JobPipelineStage,
-    JobPosting,
+    PipelineStageParticipant,
     PipelineTemplate,
     PipelineTemplateStage,
 )
+from app.modules.question_bank import StageQuestionBank, recompute_and_persist_stale
 from app.modules.pipelines.errors import (
     CannotDeleteDefaultError,
     JobNotInConfirmedStateError,
@@ -436,8 +439,6 @@ async def get_job_pipeline_with_stages(
     # Bulk-load participants joined with users for display fields.
     participants_by_stage: dict[UUID, list[dict]] = {s.id: [] for s in stages}
     if stages:
-        from app.models import PipelineStageParticipant, User
-
         stage_ids = [s.id for s in stages]
         part_result = await db.execute(
             select(PipelineStageParticipant, User)
@@ -841,9 +842,6 @@ async def _recompute_stale_for_config_changed_stages(
 ) -> None:
     """Recompute is_stale for every matched stage whose signal_filter or
     difficulty changed. Lazy import avoids a circular import chain."""
-    from app.models import StageQuestionBank
-    from app.modules.question_bank.service import recompute_and_persist_stale
-
     for stage in existing_list:
         if stage.id not in incoming_by_id:
             continue

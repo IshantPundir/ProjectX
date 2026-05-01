@@ -18,9 +18,10 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Candidate, CandidateJobAssignment, JobPosting
-from app.modules.auth.context import UserContext
-from app.modules.org_units.service import get_org_unit_ancestry
+from app.modules.auth import UserContext
+from app.modules.candidates.models import Candidate, CandidateJobAssignment
+from app.modules.jd import JobPosting
+from app.modules.org_units import get_org_unit_ancestry
 
 
 async def require_candidate_access(

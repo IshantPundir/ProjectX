@@ -7,9 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_tenant_db
-from app.models import Client
-from app.modules.auth.context import UserContext, get_current_user_roles, require_super_admin
-from app.modules.notifications.service import render_template, send_email
+from app.modules.auth import UserContext, get_current_user_roles, require_super_admin
+from app.modules.notifications import render_template, send_email
+from app.modules.org_units import Client
 from app.modules.settings.schemas import (
     ResendInviteResponse,
     TeamInviteRequest,

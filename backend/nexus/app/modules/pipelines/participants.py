@@ -25,16 +25,11 @@ from fastapi import HTTPException
 from sqlalchemy import and_, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import (
-    JobPipelineStage,
-    JobPosting,
-    OrganizationalUnit,
-    PipelineStageParticipant,
-    Role,
-    User,
-    UserRoleAssignment,
-)
-from app.modules.org_units.service import get_org_unit_ancestry
+from app.modules.auth import User, UserRoleAssignment
+from app.modules.jd import JobPosting
+from app.modules.org_units import OrganizationalUnit, get_org_unit_ancestry
+from app.modules.pipelines.models import JobPipelineStage, PipelineStageParticipant
+from app.modules.roles import Role
 from app.modules.pipelines.schemas import (
     ParticipantRole,
     StageParticipantInput,

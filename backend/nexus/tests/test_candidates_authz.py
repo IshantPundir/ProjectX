@@ -5,12 +5,14 @@ import uuid
 import pytest
 from fastapi import HTTPException
 
-from app.models import (
+from app.modules.candidates.models import (
     Candidate,
     CandidateJobAssignment,
+)
+from app.modules.jd.models import JobPosting
+from app.modules.pipelines.models import (
     JobPipelineInstance,
     JobPipelineStage,
-    JobPosting,
 )
 from app.modules.auth.context import RoleAssignment, UserContext
 from app.modules.candidates.authz import require_candidate_access

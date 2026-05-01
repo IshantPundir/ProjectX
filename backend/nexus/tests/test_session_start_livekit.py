@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy import select, update
 
-from app.models import (
+from app.modules.session.models import (
     CandidateSessionToken,
     Session as SessionRow,
 )

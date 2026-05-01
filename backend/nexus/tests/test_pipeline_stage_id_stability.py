@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import select
 
-from app.models import JobPipelineStage
+from app.modules.pipelines.models import JobPipelineStage
 from app.modules.pipelines.schemas import (
     PassCriteriaKnockout,
     PipelineStageInput,

@@ -13,12 +13,12 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from app.models import (
+from app.modules.auth.models import User
+from app.modules.jd.models import JobPosting
+from app.modules.pipelines.models import (
     JobPipelineInstance,
     JobPipelineStage,
-    JobPosting,
     PipelineStageParticipant,
-    User,
 )
 from tests.conftest import create_test_client, create_test_org_unit, create_test_user
 

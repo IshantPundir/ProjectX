@@ -9,16 +9,17 @@ from uuid import UUID
 
 import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from sqlalchemy import select as sa_select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from app import pubsub
 from app.database import get_tenant_db, get_tenant_session
-from app.models import JobPostingSignalSnapshot
-from app.modules.auth.context import UserContext, get_current_user_roles
-from app.modules.jd.actors import extract_and_enhance_jd
+from app.modules.audit import log_event
+from app.modules.auth import UserContext, get_current_user_roles
+from app.modules.jd.actors import extract_and_enhance_jd, reenrich_jd
 from app.modules.jd.authz import require_job_access
-from app.modules.org_units.service import get_org_unit_ancestry
+from app.modules.jd.models import JobPosting, JobPostingSignalSnapshot
 from app.modules.jd.schemas import (
     JobPostingCreate,
     JobPostingSummary,
@@ -26,6 +27,7 @@ from app.modules.jd.schemas import (
     SaveSignalsRequest,
     SignalItemResponse,
     SignalSnapshotResponse,
+    default_evaluation_method,
 )
 from app.modules.jd.errors import ActivationPredicatesFailed, IllegalTransitionError
 from app.modules.jd.service import (
@@ -33,6 +35,7 @@ from app.modules.jd.service import (
     activate_job,
     confirm_signals,
     create_job_posting,
+    delete_job_posting,
     enrich_job_summaries,
     get_job_posting_with_latest_snapshot,
     get_job_status,
@@ -43,6 +46,7 @@ from app.modules.jd.service import (
 )
 from app.modules.jd.state_machine import transition
 from app.modules.jd.sse import job_status_event_generator
+from app.modules.org_units import OrganizationalUnit, get_org_unit_ancestry
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 _log = structlog.get_logger()
@@ -73,8 +77,6 @@ def _snapshot_to_response(
 ) -> SignalSnapshotResponse | None:
     if snap is None:
         return None
-
-    from app.modules.jd.schemas import default_evaluation_method
 
     response_signals = []
     for item in snap.signals:
@@ -173,10 +175,6 @@ async def _safe_dispatch_extraction(
         )
         # Open a new session to transition the job to failed — the request's
         # session is already closed by the time BackgroundTasks run.
-        from sqlalchemy import select as sa_select
-
-        from app.models import JobPosting
-
         async with get_tenant_session(tenant_id) as db:
             result = await db.execute(
                 sa_select(JobPosting).where(JobPosting.id == UUID(job_posting_id))
@@ -204,8 +202,6 @@ async def _safe_dispatch_reenrichment(
     """Enqueue the reenrich_jd Dramatiq actor, setting enrichment_status to
     'failed' if Redis is unreachable. Same pattern as _safe_dispatch_extraction."""
     try:
-        from app.modules.jd.actors import reenrich_jd
-
         reenrich_jd.send(
             job_posting_id=job_posting_id,
             tenant_id=tenant_id,
@@ -217,10 +213,6 @@ async def _safe_dispatch_reenrichment(
             job_posting_id=job_posting_id,
             exc_info=exc,
         )
-        from sqlalchemy import select as sa_select
-
-        from app.models import JobPosting
-
         async with get_tenant_session(tenant_id) as db:
             result = await db.execute(
                 sa_select(JobPosting).where(JobPosting.id == UUID(job_posting_id))
@@ -232,8 +224,6 @@ async def _safe_dispatch_reenrichment(
                     "Failed to dispatch re-enrichment job — please retry. "
                     "If this persists, contact support."
                 )
-                from app.modules.audit.service import log_event
-
                 await log_event(
                     db,
                     tenant_id=job.tenant_id,
@@ -267,10 +257,6 @@ async def _expand_with_descendants(
     descendants (children, grandchildren, etc.) by walking the tree."""
     if not unit_ids:
         return []
-
-    from sqlalchemy import select as sa_select
-
-    from app.models import OrganizationalUnit
 
     # Load all units in the tenant (already RLS-scoped by the session)
     result = await db.execute(sa_select(OrganizationalUnit))
@@ -653,8 +639,6 @@ async def delete_job(
     db: AsyncSession = Depends(get_tenant_db),
     user: UserContext = Depends(get_current_user_roles),
 ) -> dict[str, str]:
-    from app.modules.jd.service import delete_job_posting
-
     job = await require_job_access(db, job_id, user, "manage")
     try:
         await delete_job_posting(

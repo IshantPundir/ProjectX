@@ -26,7 +26,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_bypass_db
 from app.main import app
-from app.models import Client, OrganizationalUnit, User, UserInvite
+from app.modules.auth.models import (
+    User,
+    UserInvite,
+)
+from app.modules.org_units.models import (
+    Client,
+    OrganizationalUnit,
+)
 from app.modules.auth.admin.base import (
     AuthProviderError,
     SessionTokens,
@@ -333,7 +340,7 @@ async def test_accept_invite_db_failure_triggers_compensation(db: AsyncSession):
         with patch(
             "app.modules.auth.admin.get_auth_provider", return_value=provider
         ), patch(
-            "app.modules.org_units.service.create_org_unit",
+            "app.modules.org_units.create_org_unit",
             new=AsyncMock(side_effect=_raise),
         ):
             async with AsyncClient(

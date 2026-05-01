@@ -48,12 +48,8 @@ from sqlalchemy import select
 
 from app import pubsub
 from app.database import get_tenant_session
-from app.models import (
-    JobPipelineInstance,
-    JobPipelineStage,
-    StageQuestion,
-    StageQuestionBank,
-)
+from app.modules.pipelines import JobPipelineInstance, JobPipelineStage
+from app.modules.question_bank.models import StageQuestion, StageQuestionBank
 
 logger = structlog.get_logger()
 

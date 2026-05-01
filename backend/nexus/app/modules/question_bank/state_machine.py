@@ -14,7 +14,7 @@ from datetime import datetime, UTC
 from typing import Literal
 from uuid import UUID
 
-from app.models import StageQuestionBank
+from app.modules.question_bank.models import StageQuestionBank
 from app.modules.question_bank.errors import (
     BankAlreadyGeneratingError,
     BankNotInReviewingError,

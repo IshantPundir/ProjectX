@@ -27,10 +27,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_tenant_db
 from app.main import app
-from app.models import (
+from app.modules.jd.models import JobPosting
+from app.modules.pipelines.models import (
     JobPipelineInstance,
     JobPipelineStage,
-    JobPosting,
 )
 from app.modules.auth.context import RoleAssignment, UserContext, get_current_user_roles
 from app.modules.auth.schemas import TokenPayload
@@ -327,7 +327,7 @@ async def test_candidate_resume_upload_flow(db: AsyncSession):
                 assert r.status_code == 204, r.text
 
                 # 3. Verify the DB state.
-                from app.models import Candidate
+                from app.modules.candidates.models import Candidate
 
                 cand = (
                     await db.execute(
@@ -392,7 +392,7 @@ async def test_candidate_redact_pii_flow(db: AsyncSession):
             assert r.status_code == 204, r.text
 
             # Verify columns nulled and pii_redacted_at is stamped.
-            from app.models import Candidate
+            from app.modules.candidates.models import Candidate
 
             cand = (
                 await db.execute(

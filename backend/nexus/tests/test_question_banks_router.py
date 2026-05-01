@@ -32,14 +32,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.main import app
-from app.models import (
-    JobPipelineInstance,
-    JobPipelineStage,
+from app.modules.auth.models import User
+from app.modules.jd.models import (
     JobPosting,
     JobPostingSignalSnapshot,
+)
+from app.modules.pipelines.models import (
+    JobPipelineInstance,
+    JobPipelineStage,
+)
+from app.modules.question_bank.models import (
     StageQuestion,
     StageQuestionBank,
-    User,
 )
 from app.modules.auth.context import UserContext, get_current_user_roles
 from app.modules.auth.schemas import TokenPayload
