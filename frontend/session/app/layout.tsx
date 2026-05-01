@@ -49,7 +49,18 @@ export default function RootLayout({
       data-px-theme="warm-light"
       data-px-density="comfortable"
     >
-      <body className="min-h-full flex flex-col bg-background text-foreground font-sans">
+      {/*
+       * suppressHydrationWarning silences the benign warning fired by
+       * browser extensions (Grammarly, LanguageTool, password managers)
+       * that inject attributes into <body> before React hydrates.
+       * Suppression is scoped to a single element and only affects
+       * attribute mismatches, not children — real hydration bugs in
+       * the children below still surface normally.
+       */}
+      <body
+        className="min-h-full flex flex-col bg-background text-foreground font-sans"
+        suppressHydrationWarning
+      >
         <InterviewProviders>
           <div
             className="min-h-screen w-full"
