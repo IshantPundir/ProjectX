@@ -1,5 +1,5 @@
 import path from 'path'
-import { defineConfig } from 'vitest/config'
+import { coverageConfigDefaults, defineConfig } from 'vitest/config'
 
 export default defineConfig({
   test: {
@@ -34,9 +34,7 @@ export default defineConfig({
         'hooks/**/*.{ts,tsx}',
       ],
       exclude: [
-        '**/*.d.ts',
-        '**/node_modules/**',
-        '**/.next/**',
+        ...coverageConfigDefaults.exclude,
         '**/components/ui/**',
         '**/components/agents-ui/**',
         '**/components/ai-elements/**',
