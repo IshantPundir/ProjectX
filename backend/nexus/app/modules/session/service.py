@@ -53,7 +53,6 @@ from app.modules.session.livekit import (
     cancel_room,
     dispatch_agent,
     mint_candidate_lk_token,
-    mint_engine_dispatch_jwt,
 )
 from app.modules.session.otp import generate_code, hash_code, verify_code
 from app.modules.session.schemas import (
@@ -378,23 +377,16 @@ async def start_session(
 ) -> StartSessionResponse:
     """Atomic LiveKit-provisioning start.
 
-    Order-of-operations (spec Q7a Option 2):
+    Order-of-operations (Phase 3 simplified — no engine JWT):
         1. Load + state-gate + OTP-gate the session.
         2. Mint LiveKit candidate JWT (sync, no DB).
-        3. Mint engine dispatch JWT (DB INSERT — same transaction).
-        4. Dispatch agent to LiveKit. On failure → AgentDispatchFailedError;
-           transaction rolls back and the engine_dispatch_tokens row is
-           undone. Candidate token unconsumed; candidate can retry.
-        5. Atomically consume candidate_session_tokens.used_at. On rowcount=0
+        3. Dispatch agent to LiveKit. On failure → AgentDispatchFailedError;
+           no DB rollback needed since no engine token row was ever written.
+           Candidate token unconsumed; candidate can retry.
+        4. Atomically consume candidate_session_tokens.used_at. On rowcount=0
            (concurrent /start consumed it first), best-effort cancel_room
-           and raise TokenAlreadyUsedError. Note: this leaves a dangling
-           engine_dispatch_tokens row from step 3 because the audit-row
-           commit also persists it. The dangling row is benign — verify_
-           engine_token's single-use gate prevents reuse and the session
-           never transitioned to 'active' so /results would also be
-           rejected. Acceptable tradeoff for keeping the audit trail of
-           the replay attempt.
-        6. Transition session → active, stamp livekit_room_name +
+           and raise TokenAlreadyUsedError.
+        5. Transition session → active, stamp livekit_room_name +
            started_at, audit 'session.token_used'.
 
     Raises:
@@ -453,23 +445,15 @@ async def start_session(
         name=candidate.name or "",
         ttl_minutes=duration_minutes + 10,
     )
-    engine_jwt = await mint_engine_dispatch_jwt(
-        db,
-        session_id=sess.id,
-        tenant_id=sess.tenant_id,
-        ttl_minutes=min(duration_minutes + 5, 90),
-    )
     try:
         await dispatch_agent(
             room_name=room_name,
             session_id=sess.id,
             tenant_id=sess.tenant_id,
-            engine_jwt=engine_jwt,
             correlation_id=correlation_id,
         )
     except Exception as exc:
-        # Transaction will roll back on raise — engine_dispatch_tokens
-        # INSERT is undone. Candidate token unconsumed.
+        # Transaction will roll back on raise. Candidate token unconsumed.
         raise AgentDispatchFailedError(detail=str(exc)) from exc
 
     # Atomic single-use consume — load-bearing invariant.

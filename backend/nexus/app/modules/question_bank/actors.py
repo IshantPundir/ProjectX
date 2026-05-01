@@ -24,6 +24,9 @@ from app import pubsub
 from app.ai.client import get_openai_client
 from app.ai.config import ai_config
 from app.ai.prompts import prompt_loader
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+
 from app.ai.tracing import set_llm_span_attributes
 from app.database import get_bypass_session
 from app.models import (
@@ -59,6 +62,7 @@ from app.modules.question_bank.context import (
 from app.modules.question_bank.state_machine import auto_revert_on_edit
 
 logger = structlog.get_logger()
+_tracer = trace.get_tracer("nexus.ai.openai")
 
 
 # ---------------------------------------------------------------------------
@@ -262,24 +266,14 @@ async def _generate_one_bank(
     Caller must commit or rollback.
 
     Tracing:
-      The OpenAI call is auto-captured as an OTel span by the OpenAI
-      auto-instrumentor. set_llm_span_attributes() adds bank_id, stage_id,
-      tenant_id, model/effort, and prompt name+version so spans are
-      searchable per-bank in any OTel-compatible observability backend.
+      Each per-attempt OpenAI call is wrapped in an explicit
+      ``with _tracer.start_as_current_span("openai.chat.completions.create")``
+      block. set_llm_span_attributes() inside that block adds bank_id,
+      stage_id, tenant_id, model/effort, prompt name+version, and the
+      per-attempt budget_attempt counter so spans are searchable per-bank
+      in any OTel-compatible observability backend. Exceptions are tagged
+      with StatusCode.ERROR before the re-raise.
     """
-    # Attach OTel span attributes for prompt metadata.
-    set_llm_span_attributes(
-        prompt_name=f"question_bank_{stage.stage_type}",
-        prompt_version=bank.prompt_version,
-        tenant_id=str(bank.tenant_id),
-        bank_id=str(bank.id),
-        stage_id=str(stage.id),
-        stage_type=stage.stage_type,
-        job_posting_id=str(job.id),
-        model=ai_config.question_bank_model,
-        reasoning_effort=ai_config.question_bank_effort,
-    )
-
     try:
         ctx = await build_question_context(db, job=job, instance=instance, stage=stage)
 
@@ -330,38 +324,60 @@ async def _generate_one_bank(
                 feedback_messages=len(feedback_history),
             )
             call_started_at = time.monotonic()
-            try:
-                result: StageQuestionBankOutput = await client.chat.completions.create(
-                    model=ai_config.question_bank_model,
-                    reasoning_effort=ai_config.question_bank_effort,
-                    response_model=StageQuestionBankOutput,
-                    messages=messages,
-                    max_retries=1,
-                    name="question_bank_generate_call1",
-                    metadata={
-                        "bank_id": str(bank.id),
-                        "stage_id": str(stage.id),
-                        "stage_type": stage.stage_type,
-                        "tenant_id": str(bank.tenant_id),
-                        "job_posting_id": str(job.id),
-                        "prompt_version": bank.prompt_version,
-                        "budget_attempt": attempt + 1,
-                    },
-                )
-            except Exception as llm_exc:
-                duration_sec = time.monotonic() - call_started_at
-                logger.error(
-                    "question_bank.llm_call.failed",
+            with _tracer.start_as_current_span("openai.chat.completions.create"):
+                # Attach OTel span attributes for prompt metadata. Inside the
+                # with-block so they tag THIS span (the helper uses
+                # trace.get_current_span()). budget_attempt is per-iteration.
+                set_llm_span_attributes(
+                    prompt_name=f"question_bank_{stage.stage_type}",
+                    prompt_version=bank.prompt_version,
+                    tenant_id=str(bank.tenant_id),
                     bank_id=str(bank.id),
                     stage_id=str(stage.id),
                     stage_type=stage.stage_type,
-                    duration_sec=round(duration_sec, 2),
-                    error_type=type(llm_exc).__name__,
-                    error_message=str(llm_exc)[:500],
-                    attempt=attempt + 1,
-                    exc_info=True,
+                    job_posting_id=str(job.id),
+                    model=ai_config.question_bank_model,
+                    reasoning_effort=ai_config.question_bank_effort,
+                    budget_attempt=attempt + 1,
                 )
-                raise
+                try:
+                    result: StageQuestionBankOutput = await client.chat.completions.create(
+                        model=ai_config.question_bank_model,
+                        reasoning_effort=ai_config.question_bank_effort,
+                        response_model=StageQuestionBankOutput,
+                        messages=messages,
+                        max_retries=1,
+                        name="question_bank_generate_call1",
+                        metadata={
+                            "bank_id": str(bank.id),
+                            "stage_id": str(stage.id),
+                            "stage_type": stage.stage_type,
+                            "tenant_id": str(bank.tenant_id),
+                            "job_posting_id": str(job.id),
+                            "prompt_version": bank.prompt_version,
+                            "budget_attempt": attempt + 1,
+                        },
+                    )
+                except Exception as llm_exc:
+                    # Tag the active span with error status so failed LLM calls
+                    # render as errors in OTel backends (the auto-instrumentor
+                    # we replaced did this automatically).
+                    _span = trace.get_current_span()
+                    _span.record_exception(llm_exc)
+                    _span.set_status(Status(StatusCode.ERROR, type(llm_exc).__name__))
+                    duration_sec = time.monotonic() - call_started_at
+                    logger.error(
+                        "question_bank.llm_call.failed",
+                        bank_id=str(bank.id),
+                        stage_id=str(stage.id),
+                        stage_type=stage.stage_type,
+                        duration_sec=round(duration_sec, 2),
+                        error_type=type(llm_exc).__name__,
+                        error_message=str(llm_exc)[:500],
+                        attempt=attempt + 1,
+                        exc_info=True,
+                    )
+                    raise
 
             duration_sec = time.monotonic() - call_started_at
             logger.info(
@@ -931,20 +947,6 @@ async def _regenerate_one_question(
     bootstrap). Matches the jd/actors.py inner-coroutine pattern (e.g.,
     `_run_reenrichment`).
     """
-    # Attach OTel span attributes for prompt metadata.
-    set_llm_span_attributes(
-        prompt_name="question_bank_regenerate_one",
-        prompt_version=bank.prompt_version,
-        tenant_id=str(bank.tenant_id),
-        bank_id=str(bank.id),
-        stage_id=str(stage.id),
-        stage_type=stage.stage_type,
-        job_posting_id=str(job.id),
-        question_id=str(question.id),
-        model=ai_config.question_bank_model,
-        reasoning_effort=ai_config.question_bank_effort,
-    )
-
     # Build prompt: common header + regenerate_one + rich user context
     system_prompt = prompt_loader.load_pair(
         "question_bank_common", "question_bank_regenerate_one"
@@ -1005,40 +1007,59 @@ async def _regenerate_one_question(
         user_message_chars=sum(len(p) for p in user_parts),
     )
     call_started_at = time.monotonic()
-    try:
-        result: SingleQuestionOutput = await client.chat.completions.create(
+    with _tracer.start_as_current_span("openai.chat.completions.create"):
+        set_llm_span_attributes(
+            prompt_name="question_bank_regenerate_one",
+            prompt_version=bank.prompt_version,
+            tenant_id=str(bank.tenant_id),
+            bank_id=str(bank.id),
+            stage_id=str(stage.id),
+            stage_type=stage.stage_type,
+            job_posting_id=str(job.id),
+            question_id=str(question.id),
             model=ai_config.question_bank_model,
             reasoning_effort=ai_config.question_bank_effort,
-            response_model=SingleQuestionOutput,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": "".join(user_parts)},
-            ],
-            max_retries=1,
-            name="question_bank_regenerate_call1",
-            metadata={
-                "bank_id": str(bank.id),
-                "stage_id": str(stage.id),
-                "stage_type": stage.stage_type,
-                "tenant_id": str(bank.tenant_id),
-                "job_posting_id": str(job.id),
-                "question_id": str(question.id),
-                "prompt_version": bank.prompt_version,
-            },
         )
-    except Exception as llm_exc:
-        duration_sec = time.monotonic() - call_started_at
-        logger.error(
-            "question_bank.llm_call.failed",
-            call_type="regenerate_question",
-            question_id=str(question.id),
-            bank_id=str(bank.id),
-            duration_sec=round(duration_sec, 2),
-            error_type=type(llm_exc).__name__,
-            error_message=str(llm_exc)[:500],
-            exc_info=True,
-        )
-        raise
+        try:
+            result: SingleQuestionOutput = await client.chat.completions.create(
+                model=ai_config.question_bank_model,
+                reasoning_effort=ai_config.question_bank_effort,
+                response_model=SingleQuestionOutput,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": "".join(user_parts)},
+                ],
+                max_retries=1,
+                name="question_bank_regenerate_call1",
+                metadata={
+                    "bank_id": str(bank.id),
+                    "stage_id": str(stage.id),
+                    "stage_type": stage.stage_type,
+                    "tenant_id": str(bank.tenant_id),
+                    "job_posting_id": str(job.id),
+                    "question_id": str(question.id),
+                    "prompt_version": bank.prompt_version,
+                },
+            )
+        except Exception as llm_exc:
+            # Tag the active span with error status so failed LLM calls
+            # render as errors in OTel backends (the auto-instrumentor
+            # we replaced did this automatically).
+            _span = trace.get_current_span()
+            _span.record_exception(llm_exc)
+            _span.set_status(Status(StatusCode.ERROR, type(llm_exc).__name__))
+            duration_sec = time.monotonic() - call_started_at
+            logger.error(
+                "question_bank.llm_call.failed",
+                call_type="regenerate_question",
+                question_id=str(question.id),
+                bank_id=str(bank.id),
+                duration_sec=round(duration_sec, 2),
+                error_type=type(llm_exc).__name__,
+                error_message=str(llm_exc)[:500],
+                exc_info=True,
+            )
+            raise
 
     duration_sec = time.monotonic() - call_started_at
     logger.info(

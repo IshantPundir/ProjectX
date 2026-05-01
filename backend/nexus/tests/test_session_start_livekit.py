@@ -12,7 +12,6 @@ from sqlalchemy import select, update
 
 from app.models import (
     CandidateSessionToken,
-    EngineDispatchToken,
     Session as SessionRow,
 )
 from app.modules.session import service as session_service
@@ -40,9 +39,9 @@ def livekit_stubs(monkeypatch):
     which binds the names as attributes of the service module. Patching
     livekit.<helper> would not affect the call sites.
 
-    Does NOT stub ``mint_engine_dispatch_jwt`` — the real function INSERTs
-    the engine_dispatch_tokens row using the placeholder secret from
-    conftest, which lets us assert the row exists after the happy path.
+    Phase 3 retired ``mint_engine_dispatch_jwt`` and the engine_dispatch_tokens
+    table; the engine now uses RLS + explicit-tenant filters as the defense
+    layer. Tests no longer assert that an engine token row was created.
     """
     stubs = {
         "mint_candidate_lk_token": lambda **kw: "candidate-jwt-stub",
@@ -111,21 +110,6 @@ async def test_happy_path_returns_creds_and_marks_active(db, livekit_stubs):
     assert sess.started_at is not None
 
 
-async def test_happy_path_persists_engine_dispatch_token(db, livekit_stubs):
-    session_id, jti = await _seed_consented_session(db)
-    await session_service.start_session(
-        db, session_id=session_id, jti=jti,
-        ip_address="127.0.0.1", user_agent="ua",
-    )
-
-    rows = (await db.execute(
-        select(EngineDispatchToken).where(EngineDispatchToken.session_id == session_id)
-    )).scalars().all()
-    assert len(rows) == 1
-    assert rows[0].revoked_at is None
-    assert rows[0].expires_at > datetime.now(UTC)
-
-
 async def test_happy_path_consumes_candidate_token(db, livekit_stubs):
     session_id, jti = await _seed_consented_session(db)
     await session_service.start_session(
@@ -171,32 +155,8 @@ async def test_dispatch_failure_does_not_consume_token(db, livekit_stubs):
     assert tok.used_at is None
 
 
-async def test_dispatch_failure_rolls_back_engine_dispatch_token(db, livekit_stubs):
-    """The engine_dispatch_tokens INSERT happens before dispatch — on dispatch
-    failure, the surrounding transaction rolls back and the row is undone."""
-    livekit_stubs["dispatch_agent"].side_effect = RuntimeError("livekit down")
-    session_id, jti = await _seed_consented_session(db)
-
-    with contextlib.suppress(AgentDispatchFailedError):
-        await session_service.start_session(
-            db, session_id=session_id, jti=jti,
-            ip_address="127.0.0.1", user_agent="ua",
-        )
-
-    # Note: the test fixture's transaction is still open at this point; we
-    # need the rollback semantics of get_tenant_db's session.begin(), which
-    # the test fixture doesn't replicate exactly. The implementation relies
-    # on the outer transaction rolling back; here we just confirm no extra
-    # row was created in the *test* transaction via flush+select.
-    rows = (await db.execute(
-        select(EngineDispatchToken).where(EngineDispatchToken.session_id == session_id)
-    )).scalars().all()
-    # In the test fixture, exceptions don't trigger a rollback before this
-    # SELECT — so the row may still be present in the test session's view.
-    # The production rollback semantics are exercised by the real
-    # get_tenant_db dependency at the router layer; this test is a smoke
-    # for the in-flow ordering only. Document the assertion accordingly:
-    assert len(rows) <= 1, "expected at most one row from the failed flow"
+# Phase 3 retired test_dispatch_failure_rolls_back_engine_dispatch_token —
+# the engine_dispatch_tokens table is gone, so there's nothing to roll back.
 
 
 # ---------------------------------------------------------------------------

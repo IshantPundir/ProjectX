@@ -1,10 +1,14 @@
-"""Phase 2 contract tests — pin the openai/instructor/Python uplift.
+"""Phase 2 + Phase 3 contract tests — pin the dep cluster these phases shaped.
 
 These tests assert the *interfaces* business code depends on still resolve:
 - instructor.from_openai factory shape
 - instructor.core.InstructorRetryException path
 - openai exception classes used by _PERMANENT_EXCEPTIONS / _SAFE_MESSAGES
-- OpenAI auto-instrumentor still attaches to chat.completions.create
+
+Phase 3 dropped the OpenAI auto-instrumentor (replaced with explicit
+start_as_current_span wrappers in jd/actors.py + question_bank/actors.py)
+and lifted the wrapt<2 pin alongside it; the corresponding tests were
+removed.
 
 Failures here indicate a vendor library moved out from under us — the fix
 goes in app/ai/* or app/modules/jd/errors.py, not in this test."""
@@ -88,30 +92,3 @@ def test_openai_rate_limit_error_constructor_shape():
     assert isinstance(exc, openai.APIStatusError)
 
 
-def test_phase_1_otel_instrumentor_still_attached():
-    """Phase 1 wired OpenAIInstrumentor at app startup. The 2.3b0 instrumentor
-    + openai 2.x must remain compatible — if the instrumentor stops attaching,
-    every chat.completions.create span vanishes silently."""
-    from opentelemetry.instrumentation.openai_v2 import OpenAIInstrumentor
-
-    instr = OpenAIInstrumentor()
-    # We don't actually call .instrument() here (app/ai/otel.py owns that
-    # idempotently). Just assert the class loads and exposes the contract.
-    assert callable(instr.instrument)
-    assert callable(instr.uninstrument)
-    # instrumentation_dependencies returns the openai package range it covers.
-    deps = instr.instrumentation_dependencies()
-    assert any("openai" in d for d in deps), deps
-
-
-def test_wrapt_is_under_2():
-    """opentelemetry-instrumentation 0.58b0 caps wrapt<2. If a transitive
-    bumps wrapt to 2.x, the OpenAI auto-instrumentor's wrap_function_wrapper
-    call breaks at runtime. Catch it at test time, not at first LLM call."""
-    import wrapt
-
-    major = int(wrapt.__version__.split(".", 1)[0])
-    assert major < 2, (
-        f"wrapt is at {wrapt.__version__}; OTel openai-v2 instrumentor "
-        f"requires <2. Check uv.lock and the Phase 1 transitive constraints."
-    )

@@ -54,8 +54,6 @@ _TENANT_SCOPED_TABLES: tuple[str, ...] = (
     "candidate_stage_progress",
     # Phase 3C — scheduler + session
     "candidate_session_tokens",
-    # Phase 3C.2 — interview engine integration
-    "engine_dispatch_tokens",
 )
 
 
@@ -71,8 +69,9 @@ _TENANT_SCOPED_TABLES: tuple[str, ...] = (
 # into `_TENANT_SCOPED_TABLES` — the migration intentionally omits the
 # tenant_isolation policy and the assertion would fail.
 _BYPASS_ONLY_TABLES: tuple[str, ...] = (
-    # Phase 3C.2 — single-use enforcement record per (jti, endpoint).
-    "engine_token_uses",
+    # Phase 3 retired engine_token_uses (along with engine_dispatch_tokens)
+    # — the engine no longer mints a JWT or reaches over HTTP. The list is
+    # left as an empty tuple so future bypass-only tables can be added here.
 )
 
 
@@ -201,12 +200,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # OpenTelemetry bootstrap. Both exporters are off by default; setting
     # OTEL_DEV_CONSOLE_EXPORTER=true or OTEL_EXPORTER_OTLP_ENDPOINT=<url>
     # turns them on. See app/ai/otel.py for env-var contract.
+    # Phase 3 dropped the OpenAI auto-instrumentor; LLM call sites use
+    # explicit start_as_current_span blocks. set_llm_span_attributes still
+    # works against those manual spans.
     from opentelemetry import trace
-    from app.ai.otel import bootstrap_tracer_provider, instrument_openai
+    from app.ai.otel import bootstrap_tracer_provider
 
     _otel_provider = bootstrap_tracer_provider()
     trace.set_tracer_provider(_otel_provider)
-    instrument_openai()
 
     # Block startup if any tenant-scoped table is missing an RLS policy.
     # This is the last line of defence against a deploy that ships a
@@ -292,7 +293,6 @@ def create_app() -> FastAPI:
         kanban_router as candidates_kanban_router,
         router as candidates_router,
     )
-    from app.modules.interview_runtime.router import interview_runtime_router
 
     application.include_router(auth_router)
     application.include_router(ats_router)
@@ -313,8 +313,8 @@ def create_app() -> FastAPI:
     application.include_router(scheduler_router)
     application.include_router(candidate_session_router)
     application.include_router(session_router)
-    # Phase 3C.2 — interview engine internal API
-    application.include_router(interview_runtime_router)
+    # Phase 3 retired the interview_runtime HTTP router — the engine now
+    # calls build_session_config / record_session_result in-process.
 
     # --- Exception handlers (Phase 2A — JD module) ---
     from fastapi import Request

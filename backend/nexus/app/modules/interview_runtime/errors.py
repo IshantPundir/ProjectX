@@ -1,10 +1,6 @@
 """Typed errors for interview_runtime — mapped to HTTP codes by app/main.py."""
 
 
-class EngineTokenInvalidError(Exception):
-    """401 — JWT signature/algorithm/claim/expiry/replay failure."""
-
-
 class StageNotAiDrivenError(Exception):
     """422 — stage_type not in (ai_screening, phone_screen)."""
 

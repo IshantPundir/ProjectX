@@ -1,9 +1,9 @@
 """ProjectX Interview Engine — LiveKit Agent entrypoint.
 
 Per-session entrypoint:
-  1. Parse dispatch metadata (session_id, engine_jwt, correlation_id).
+  1. Parse dispatch metadata (session_id, tenant_id, correlation_id).
   2. Bind structlog contextvars so every log line carries them.
-  3. Fetch SessionConfig from nexus's /api/internal/sessions/{id}/config.
+  3. Fetch SessionConfig in-process via build_session_config (no HTTP).
   4. Build InterviewerAgent (state machine + system prompt + tool).
   5. Build AgentSession using app.ai.realtime factories — the engine
      never imports livekit.plugins.* directly except for VAD prewarm,
@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import uuid
 
 import structlog
 
@@ -64,14 +65,18 @@ from app.ai.realtime import (
     build_turn_detector,
     build_tts_plugin,
 )
-from agents.interviewer import InterviewerAgent
-from config import InterviewEngineConfig
-from nexus_client import fetch_session_config
+from app.config import settings
+from app.database import get_bypass_session
+from app.modules.interview_engine.interviewer import InterviewerAgent
+from app.modules.interview_runtime.service import build_session_config
 
 
 log = structlog.get_logger("interview-engine")
-engine_cfg = InterviewEngineConfig()
-server = AgentServer()
+# AgentServer with explicit health-check port. LiveKit Agents auto-spawns
+# a health endpoint at host:port/ — 200 when registered with LiveKit,
+# 503 otherwise. Locking the port (vs the default random in dev mode)
+# so docker-compose's healthcheck: directive can probe a deterministic URL.
+server = AgentServer(host="0.0.0.0", port=8081)
 
 
 def prewarm(proc: JobProcess) -> None:
@@ -84,62 +89,66 @@ def prewarm(proc: JobProcess) -> None:
     cost of occasional false-positive triggers from background noise.
     """
     proc.userdata["vad"] = silero.VAD.load(
-        activation_threshold=engine_cfg.silero_activation_threshold,
-        min_speech_duration=engine_cfg.silero_min_speech_duration,
-        min_silence_duration=engine_cfg.silero_min_silence_duration,
+        activation_threshold=settings.engine_silero_activation_threshold,
+        min_speech_duration=settings.engine_silero_min_speech_duration,
+        min_silence_duration=settings.engine_silero_min_silence_duration,
     )
     log.info(
         "engine.vad.prewarmed",
-        activation_threshold=engine_cfg.silero_activation_threshold,
-        min_speech_duration=engine_cfg.silero_min_speech_duration,
-        min_silence_duration=engine_cfg.silero_min_silence_duration,
+        activation_threshold=settings.engine_silero_activation_threshold,
+        min_speech_duration=settings.engine_silero_min_speech_duration,
+        min_silence_duration=settings.engine_silero_min_silence_duration,
     )
 
 
 server.setup_fnc = prewarm
 
 
-@server.rtc_session(agent_name=engine_cfg.agent_name)
+@server.rtc_session(agent_name=settings.engine_agent_name)
 async def entrypoint(ctx: JobContext) -> None:
     """Per-session entrypoint.
 
-    Reads dispatch metadata Nexus injected at /start time. The engine_jwt
-    is single-use per (jti, endpoint) — fetch_session_config consumes the
-    'config' slot; InterviewerAgent (Task 5.8) consumes the 'results' slot
-    on close.
+    Reads dispatch metadata Nexus injected at /start time. Config is
+    fetched in-process via build_session_config; InterviewerAgent
+    persists the session result on close.
     """
     metadata = json.loads(ctx.job.metadata or "{}")
 
-    # Required keys. Missing keys will raise KeyError, which surfaces in
-    # logs as a worker error — desired loud failure if Nexus's dispatcher
-    # ever sends a malformed payload.
+    # Phase 3 metadata shape: session_id + tenant_id + correlation_id.
+    # engine_jwt is gone — RLS + explicit-tenant-filter at the
+    # application layer is the new defense.
     session_id = metadata["session_id"]
-    engine_jwt = metadata["engine_jwt"]
+    tenant_id_str = metadata["tenant_id"]
     correlation_id = metadata.get("correlation_id", session_id)
+    tenant_uuid = uuid.UUID(tenant_id_str)
 
     structlog.contextvars.bind_contextvars(
         session_id=session_id,
+        tenant_id=tenant_id_str,
         correlation_id=correlation_id,
     )
-    log.info("engine.dispatch.received", agent_name=engine_cfg.agent_name)
+    log.info("engine.dispatch.received", agent_name=settings.engine_agent_name)
 
-    config = await fetch_session_config(
-        session_id=session_id,
-        jwt=engine_jwt,
-        base_url=engine_cfg.nexus_internal_base_url,
-    )
+    # In-process config fetch. build_session_config runs on a bypass-RLS
+    # session and filters every query by tenant_id explicitly — see
+    # app/modules/interview_runtime/service.py docstring.
+    async with get_bypass_session() as db:
+        config = await build_session_config(
+            db,
+            session_id=uuid.UUID(session_id),
+            tenant_id=tenant_uuid,
+        )
     log.info(
         "engine.config.fetched",
         question_count=len(config.stage.questions),
         stage_type=config.stage.stage_type,
     )
-    _log_session_setup(config, engine_cfg)
+    _log_session_setup(config)
 
     agent = InterviewerAgent(
         session_config=config,
-        engine_config=engine_cfg,
-        nexus_jwt=engine_jwt,
-        nexus_base_url=engine_cfg.nexus_internal_base_url,
+        tenant_id=tenant_uuid,
+        correlation_id=correlation_id,
     )
 
     session = AgentSession(
@@ -166,8 +175,8 @@ async def entrypoint(ctx: JobContext) -> None:
             # longer thinking pauses on hard questions.
             endpointing={
                 "mode": "dynamic",
-                "min_delay": engine_cfg.endpointing_min_delay,
-                "max_delay": engine_cfg.endpointing_max_delay,
+                "min_delay": settings.engine_endpointing_min_delay,
+                "max_delay": settings.engine_endpointing_max_delay,
             },
             # Adaptive interruption is the LiveKit-recommended mode when
             # a turn detector + STT with aligned transcripts are present
@@ -182,10 +191,10 @@ async def entrypoint(ctx: JobContext) -> None:
         ),
     )
 
-    if engine_cfg.log_audio_events:
+    if settings.engine_log_audio_events:
         _wire_session_observability(
             session,
-            log_verbose_content=engine_cfg.log_user_transcripts,
+            log_verbose_content=settings.engine_log_user_transcripts,
         )
 
     _wire_close_handler(session, agent)
@@ -201,7 +210,7 @@ async def entrypoint(ctx: JobContext) -> None:
     )
 
 
-def _log_session_setup(config, engine_cfg: InterviewEngineConfig) -> None:
+def _log_session_setup(config) -> None:
     """One-shot startup log written immediately after SessionConfig fetch.
 
     Captures everything you'd want to compare across runs: model IDs (from
@@ -224,13 +233,13 @@ def _log_session_setup(config, engine_cfg: InterviewEngineConfig) -> None:
     )
     log.info(
         "engine.setup.tuning",
-        max_probes_per_question=engine_cfg.max_probes_per_question,
-        time_warning_threshold=engine_cfg.time_warning_threshold,
-        endpointing_min_delay=engine_cfg.endpointing_min_delay,
-        endpointing_max_delay=engine_cfg.endpointing_max_delay,
-        silero_activation_threshold=engine_cfg.silero_activation_threshold,
-        silero_min_speech_duration=engine_cfg.silero_min_speech_duration,
-        silero_min_silence_duration=engine_cfg.silero_min_silence_duration,
+        max_probes_per_question=settings.engine_max_probes_per_question,
+        time_warning_threshold=settings.engine_time_warning_threshold,
+        endpointing_min_delay=settings.engine_endpointing_min_delay,
+        endpointing_max_delay=settings.engine_endpointing_max_delay,
+        silero_activation_threshold=settings.engine_silero_activation_threshold,
+        silero_min_speech_duration=settings.engine_silero_min_speech_duration,
+        silero_min_silence_duration=settings.engine_silero_min_silence_duration,
         noise_cancellation_model=ai_config.interview_noise_cancellation_model,
         noise_cancellation_level=ai_config.interview_noise_cancellation_level,
     )
@@ -512,7 +521,3 @@ async def _handle_close(ev: CloseEvent, agent: InterviewerAgent) -> None:
     # Publish session_outcome so the candidate's frontend
     # useSessionOutcome hook reads it on the Disconnected event.
     await agent._publish_session_outcome(outcome)
-
-
-if __name__ == "__main__":
-    cli.run_app(server)

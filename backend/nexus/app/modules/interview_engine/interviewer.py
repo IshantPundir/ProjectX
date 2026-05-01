@@ -21,13 +21,15 @@ acknowledgment and the next question.
 from __future__ import annotations
 
 import time
+import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 
 import structlog
 
 from livekit.agents import Agent, RunContext, function_tool
 
+from app.config import settings
+from app.database import get_bypass_session
 from app.modules.interview_runtime.schemas import (
     QuestionResult,
     SessionConfig,
@@ -35,14 +37,9 @@ from app.modules.interview_runtime.schemas import (
     SteeringObservation,
     TranscriptEntry,
 )
-from nexus_client import (
-    ResultPostFailedError,
-    ResultRejectedError,
-    post_session_result,
-)
-from state_machine import InterviewStateMachine, Action
-from prompt_builder import build_system_prompt
-from config import InterviewEngineConfig
+from app.modules.interview_runtime.service import record_session_result
+from app.modules.interview_engine.state_machine import InterviewStateMachine, Action
+from app.modules.interview_engine.prompt_builder import build_system_prompt
 
 logger = structlog.get_logger(__name__)
 
@@ -61,28 +58,26 @@ class InterviewerAgent(Agent):
         self,
         *,
         session_config: SessionConfig,
-        engine_config: InterviewEngineConfig,
-        nexus_jwt: str,
-        nexus_base_url: str,
+        tenant_id: uuid.UUID,
+        correlation_id: str,
     ) -> None:
         self.state_machine = InterviewStateMachine(
             session_config=session_config,
-            max_probes_per_question=engine_config.max_probes_per_question,
-            time_warning_threshold=engine_config.time_warning_threshold,
+            max_probes_per_question=settings.engine_max_probes_per_question,
+            time_warning_threshold=settings.engine_time_warning_threshold,
         )
         self.session_config = session_config
-        self.engine_config = engine_config
-        self.nexus_jwt = nexus_jwt
-        self.nexus_base_url = nexus_base_url
+        self.tenant_id = tenant_id
+        self.correlation_id = correlation_id
 
-        system_prompt = build_system_prompt(session_config, engine_config)
+        system_prompt = build_system_prompt(session_config)
         logger.info(
             "interview.system_prompt.built",
             chars=len(system_prompt),
-            agent_name=engine_config.agent_name,
+            agent_name=settings.engine_agent_name,
             session_id=session_config.session_id,
         )
-        if engine_config.log_user_transcripts:
+        if settings.engine_log_user_transcripts:
             logger.info(
                 "interview.system_prompt.body",
                 content=system_prompt,
@@ -114,7 +109,7 @@ class InterviewerAgent(Agent):
         greeting = self.state_machine.get_greeting_instruction()
         first_q = self.state_machine.get_first_question_context()
 
-        if self.engine_config.log_user_transcripts:
+        if settings.engine_log_user_transcripts:
             logger.info(
                 "interview.greeting.instruction",
                 greeting=greeting,
@@ -204,14 +199,14 @@ class InterviewerAgent(Agent):
             "wants_probe": wants_to_probe,
             "disengaged": candidate_disengaged,
         }
-        if self.engine_config.log_user_transcripts:
+        if settings.engine_log_user_transcripts:
             observation_log["full_summary"] = answer_summary
             observation_log["notes"] = notes
         logger.info("observation.received", **observation_log)
 
         action = self.state_machine.decide_next_action(observation)
         context_injection = self.state_machine.execute_action(action)
-        if self.engine_config.log_user_transcripts:
+        if settings.engine_log_user_transcripts:
             logger.info(
                 "interview.context_injection",
                 action=action.value,
@@ -355,43 +350,24 @@ class InterviewerAgent(Agent):
         )
 
     async def _persist_result(self, result: SessionResult) -> None:
-        """Post the session result to nexus; fall back to local-disk write on
-        permanent failure.
+        """Persist the session result via in-process call to nexus's
+        interview_runtime.service. No HTTP boundary, no JWT — Phase 3
+        merged engine and nexus into a single venv.
 
-        Treats nexus's 204 (first success) and 409 (idempotent retry vs. an
-        already-completed session) the same — both end the engine's
-        persistence responsibility. The fallback path runs only when nexus
-        rejected the POST (auth, validation) or all retries on 5xx/network
-        were exhausted; in those cases we drop a JSON file in
-        ``engine_config.results_fallback_dir`` so the result isn't lost.
-        """
-        try:
-            await post_session_result(
-                session_id=result.session_id,
-                jwt=self.nexus_jwt,
+        Tenant scope is enforced application-side via the explicit
+        tenant_id filter in record_session_result; the bypass-RLS
+        session is necessary because the engine has no Supabase user
+        context to bind ``app.current_tenant`` against."""
+        async with get_bypass_session() as db:
+            await record_session_result(
+                db,
+                session_id=uuid.UUID(self.session_config.session_id),
+                tenant_id=self.tenant_id,
                 result=result,
-                base_url=self.nexus_base_url,
+                correlation_id=self.correlation_id,
             )
-            logger.info("engine.result.posted", session_id=result.session_id)
-            return
-        except (ResultPostFailedError, ResultRejectedError) as exc:
-            logger.critical(
-                "engine.fallback.local_results_write",
-                session_id=result.session_id,
-                error=str(exc),
-                error_type=type(exc).__name__,
-            )
-
-        # Fallback — drop a JSON file for forensics.
-        fallback_dir = self.engine_config.results_fallback_dir
-        fallback_dir.mkdir(parents=True, exist_ok=True)
-        output_path = fallback_dir / f"{result.session_id}.json"
-        output_path.write_text(
-            result.model_dump_json(indent=2),
-            encoding="utf-8",
-        )
-        logger.warning(
-            "interview.result_fallback_written",
-            path=str(output_path),
-            session_id=result.session_id,
+            await db.commit()
+        logger.info(
+            "interview.result.persisted",
+            session_id=self.session_config.session_id,
         )

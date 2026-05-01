@@ -6,8 +6,8 @@ import re
 from string import Template
 
 from app.ai.prompts import prompt_loader
+from app.config import settings
 from app.modules.interview_runtime.schemas import SessionConfig
-from config import InterviewEngineConfig
 
 # Matches the first capitalized multi-word name at the start of the about text.
 # Examples: "Vectra Pay is …" -> "Vectra Pay", "Acme Corp is …" -> "Acme Corp"
@@ -36,14 +36,11 @@ def _extract_company_name(about: str) -> str:
     return "the company"
 
 
-def build_system_prompt(
-    session_config: SessionConfig,
-    engine_config: InterviewEngineConfig,
-) -> str:
+def build_system_prompt(session_config: SessionConfig) -> str:
     """Assemble the interviewer system prompt.
 
     Loads the template via nexus's prompt_loader and fills in dynamic
-    fields from the session and engine configs.
+    fields from the session config and nexus settings.
 
     Uses :class:`string.Template` (``$variable`` syntax) so that the
     JSON examples in the prompt don't need ``{{`` / ``}}`` escaping.
@@ -55,7 +52,7 @@ def build_system_prompt(
     optional_count = len(questions) - mandatory_count
 
     return template.substitute(
-        agent_name=engine_config.agent_name,
+        agent_name=settings.engine_agent_name,
         company_name=_extract_company_name(session_config.company.about),
         company_about=session_config.company.about,
         company_industry=session_config.company.industry,

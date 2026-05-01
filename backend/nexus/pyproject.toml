@@ -44,21 +44,35 @@ dependencies = [
     # Logging & observability
     "structlog>=24.4,<25",
     "sentry-sdk[fastapi]>=2.19,<3",
-    # OTel core. Pinned to the 1.37 / 0.58b0 line because that's what
-    # opentelemetry-instrumentation-openai-v2 2.3b0 transitively requires
-    # (api~=1.37, instrumentation~=0.58b0, wrapt<2). Pinning explicitly so a
-    # transitive resolver doesn't drift forward into incompatible 0.62b+ /
-    # wrapt 2.x territory (the wrap_function_wrapper signature changed
-    # between wrapt 1.x and 2.x, breaking the OpenAI instrumentor).
-    "opentelemetry-api>=1.37,<2",
-    "opentelemetry-sdk>=1.37,<2",
-    "opentelemetry-exporter-otlp>=1.37,<2",
-    "opentelemetry-instrumentation-fastapi>=0.58b0,<0.59",
-    "opentelemetry-instrumentation-openai-v2>=2.3b0,<3",
-    "wrapt>=1.17,<2",
+    # OTel core. Phase 3 lifted these from the 1.37 / 0.58b0 line because
+    # livekit-agents>=1.5.4 (absorbed into nexus when the engine merged)
+    # requires opentelemetry-api>=1.39.0,<1.40.dev0. The Phase 1 auto-instrumentor
+    # `opentelemetry-instrumentation-openai-v2` was incompatible with that
+    # constraint and has been replaced by explicit
+    # `tracer.start_as_current_span("openai.chat.completions.create")`
+    # wrappers at every chat.completions.create call site (see
+    # app/modules/jd/actors.py + app/modules/question_bank/actors.py).
+    # instrumentation-fastapi 0.60b0/0.60b1 pairs with semantic-conventions
+    # 0.60b0/0.60b1 which requires api==1.39.0 or 1.39.1 respectively —
+    # both within livekit-agents' api<1.40.dev0 constraint.
+    "opentelemetry-api>=1.39,<1.40.dev0",
+    "opentelemetry-sdk>=1.39,<1.40.dev0",
+    "opentelemetry-exporter-otlp>=1.39,<1.40.dev0",
+    "opentelemetry-instrumentation-fastapi>=0.60b0,<0.61",
 
-    # --- Real-time video infrastructure (Phase 3C.2) ---
+    # --- Real-time video infrastructure (Phase 3C.2 + Phase 3 engine merge) ---
     "livekit-api>=1.0,<2",
+    # livekit-agents and plugins. Bringing the engine into nexus on a single
+    # venv (Phase 3 of the modular-monolith spec) absorbs the engine's deps
+    # here. Pin versions inherited from the (about-to-be-deleted)
+    # backend/interview_engine/pyproject.toml — they're already verified
+    # against openai 2.x via Phase 2.
+    "livekit-agents[silero,turn-detector]>=1.5.4,<2",
+    "livekit-plugins-openai>=1.5.4,<2",
+    "livekit-plugins-deepgram>=1.5.4,<2",
+    "livekit-plugins-cartesia>=1.5.4,<2",
+    "livekit-plugins-ai-coustics>=0.2.7,<1",
+    "livekit-plugins-noise-cancellation~=0.2",
 
     # --- AI provider (Phase 2A) ---
     # openai 2.x: livekit-agents>=1.5.4 requires openai>=2; instructor>=1.15
