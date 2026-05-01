@@ -12,7 +12,14 @@ import type { NextConfig } from "next";
 //
 // connect-src includes the LiveKit Cloud wildcard. For self-hosted
 // LiveKit deployments, parameterize via env at that point.
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_URL = process.env.NEXT_PUBLIC_API_URL;
+if (!API_URL) {
+  throw new Error(
+    "NEXT_PUBLIC_API_URL must be set at build time — it is embedded in the Content-Security-Policy header. " +
+    "For Docker builds: pass --build-arg NEXT_PUBLIC_API_URL=https://api.example.com. " +
+    "For local builds: source .env.local before running next build.",
+  );
+}
 
 const CSP = [
   "default-src 'self'",
