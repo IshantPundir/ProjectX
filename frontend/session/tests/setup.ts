@@ -1,4 +1,5 @@
 import '@testing-library/jest-dom/vitest'
+import { vi } from 'vitest'
 
 /**
  * In-memory `Storage` polyfill for the test environment.
@@ -111,8 +112,6 @@ if (typeof globalThis.IntersectionObserver === 'undefined') {
  * touch it on mount; tests that don't explicitly exercise device
  * selection get a sane no-op default and can override per-test.
  */
-import { vi } from 'vitest'
-
 if (typeof navigator !== 'undefined' && !navigator.mediaDevices) {
   Object.defineProperty(navigator, 'mediaDevices', {
     value: {
