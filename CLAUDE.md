@@ -26,8 +26,9 @@ ProjectX is an enterprise-grade B2B SaaS platform that replaces recruiter phone 
 ProjectX/
 ├── CLAUDE.md                  ← you are here
 ├── frontend/
-│   ├── app/                   ← Next.js 16 App Router — recruiter dashboard + candidate interview surface
-│   └── admin/                 ← Next.js 16 App Router — internal ProjectX-operator console (provision tenants)
+│   ├── app/                   ← Next.js 16 App Router — recruiter dashboard ONLY
+│   ├── admin/                 ← Next.js 16 App Router — internal ProjectX-operator console (provision tenants)
+│   └── session/               ← Next.js 16 App Router — candidate interview surface (token-gated, no Supabase auth)
 └── backend/
     └── nexus/                 ← FastAPI, Python 3.12, Docker, Modular Monolith
 ```
@@ -71,7 +72,7 @@ Each subdirectory has its own `CLAUDE.md` with context-specific rules. Always re
 | 2C.2 | Question bank generation (per-stage LLM, adaptive coverage, mandatory demotion, bundling, SSE) | ✅ done |
 | 3B | Candidates module (CRUD, resume + S3, kanban, PII redaction gate) | ✅ done |
 | 3C.1 | Scheduler invites + supersession chain; session pre-check / consent / OTP; **single-use token enforcement** atomic on `/start` | ✅ done |
-| 3C.2 | LiveKit room + token provisioning on `/start`; engine worker (now `nexus-engine` compose service from the same image after Phase 3 merge) with structured-interview state machine; candidate live UI ported to LiveKit's `agent-starter-react` template via `@agents-ui` shadcn enclave (`<AgentSessionView_01>`, audio visualizers, control bar); engine graceful-close attribute (`session_outcome`); mid-session rejoin endpoint (`POST /rejoin`); realtime tuning (preemptive generation, dynamic endpointing, adaptive interruption). **Phase 3 of the modular-monolith spec merged the engine source into nexus, retired the `/api/internal/*` HTTP boundary + engine-dispatch JWT, and switched to in-process `build_session_config` / `record_session_result` calls (RLS-only defense layer).** | ✅ done |
+| 3C.2 | LiveKit room + token provisioning on `/start`; engine worker (now `nexus-engine` compose service from the same image after Phase 3 merge) with structured-interview state machine; candidate live UI ported to LiveKit's `agent-starter-react` template via `@agents-ui` shadcn enclave (`<AgentSessionView_01>`, audio visualizers, control bar); engine graceful-close attribute (`session_outcome`); mid-session rejoin endpoint (`POST /rejoin`); realtime tuning (preemptive generation, dynamic endpointing, adaptive interruption). **Phase 3 of the modular-monolith spec merged the engine source into nexus, retired the `/api/internal/*` HTTP boundary + engine-dispatch JWT, and switched to in-process `build_session_config` / `record_session_result` calls (RLS-only defense layer).** (extracted to frontend/session 2026-05-01; see docs/superpowers/specs/2026-05-01-frontend-session-extract-design.md) | ✅ done |
 | 3D | Real-time `analysis` (scoring, probe selection) + `reporting` (post-session report) | 🟡 pending |
 | ATS | Ceipal polling, Greenhouse/Workday adapters, outbound sync | 🟡 stubbed |
 
@@ -90,6 +91,7 @@ Subdirectory CLAUDE.md files are the source of truth for module-level detail. Th
 - Tenant isolation is enforced at the PostgreSQL RLS layer — never in application code alone.
 - **RLS is actually enforced at runtime** via a dedicated `nexus_app` role (`NOBYPASSRLS`, created by migration 0010). Every `get_tenant_db` / `get_bypass_db` session runs `SET LOCAL ROLE nexus_app` before any query. The default `postgres` Supabase role has `rolbypassrls=true` and would otherwise silently skip every policy. See `backend/nexus/CLAUDE.md` → "RLS runtime role" for the full model.
 - The app verifies its RLS state at boot via a startup assertion (`_assert_rls_completeness` in `app/main.py`) that queries `pg_policies` and aborts on any missing policy.
+- The candidate session app (`frontend/session`) MUST NOT depend on `@supabase/*` packages or read `NEXT_PUBLIC_SUPABASE_*` env vars. The recruiter dashboard app (`frontend/app`) MUST NOT depend on `livekit-*` packages or import from a `components/agents-ui/` or `components/ai-elements/` path. Pre-merge gate today: manual `grep livekit frontend/app/package.json` and `grep @supabase frontend/session/package.json` (CI gate when CI lands).
 
 ### Auth Abstraction — Load-Bearing
 - FastAPI must verify JWTs through a **provider-agnostic interface**. Never call the Supabase SDK directly in business logic.
@@ -118,6 +120,8 @@ Subdirectory CLAUDE.md files are the source of truth for module-level detail. Th
 ## Enterprise Operating Standards
 
 These apply to **every** subdirectory and surface (backend, recruiter app, admin app). A leaf CLAUDE.md may be stricter; it must never be looser. "Internal" surfaces (e.g. the admin app) are not exempt — operator surfaces have the highest blast radius.
+
+- When CI infrastructure is added (`.github/workflows/`), the matrix MUST include `frontend/session` alongside `frontend/app` and `frontend/admin`. The dependency-check rule above must be enforced in CI.
 
 ### Reliability Targets
 
@@ -182,6 +186,9 @@ PRs touching these paths without test deltas are rejected:
 - `app/modules/session/{otp.py,service.py}` — CSPRNG, HMAC compare, attempt cap, atomic single-use consume, supersession chain.
 - Any new tenant-scoped table — cross-tenant read must return 0 rows.
 - `frontend/app/proxy.ts` and `frontend/admin/proxy.ts` — auth gating + redirect allowlist.
+- `frontend/session/lib/api/candidate-session.ts` — 100% branch coverage (root candidate-session gate).
+- `frontend/session/lib/env.ts` — env validation must pass on valid input and reject invalid input.
+- `frontend/session/next.config.ts` `headers()` — every header from the design spec must be present (manual `curl -I` assertion until CI lands).
 
 Project-wide line coverage target: 80%. Auth, RLS, candidate-session, and admin-app paths target **100% branch**.
 
@@ -280,6 +287,13 @@ npm run dev          # Start dev server (localhost:3001)
 npm run build
 npm run lint
 
+# Candidate session app (from frontend/session/, port 3002)
+npm run dev          # Start dev server (localhost:3002)
+npm run build        # Production build
+npm run lint
+npm run type-check
+npm run test         # Vitest — includes 100%-branch gate on candidate-session.ts
+
 # Local Supabase (Postgres on 54322, Studio on 54323, Inbucket on 54324)
 supabase start
 ```
@@ -324,5 +338,6 @@ Require explicit human review before merging changes to:
 - OpenTelemetry for distributed tracing: WebRTC join → STT → LLM → scoring → report.
 - Sentry for error tracking.
 - Langfuse **self-hosted** for LLM observability. Do NOT use managed Langfuse cloud — it would make candidate evaluation data flow through a third-party sub-processor.
+- When Sentry is wired across all three frontend apps (separate PR), each app uses its own DSN. The candidate-session DSN's `beforeSend` MUST scrub `/interview/[^/]+` from URL/breadcrumb/stack data and drop events whose payloads pattern-match a JWT (`eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`). Until Sentry is wired, the candidate surface logs nothing to a third party.
 
 ---
