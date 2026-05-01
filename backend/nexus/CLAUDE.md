@@ -9,7 +9,7 @@
 
 **Nexus** is the FastAPI backend — a single deployable Docker container with clean internal module boundaries. It is a **modular monolith**, not microservices. No module is extracted into a standalone service unless it demonstrably requires independent scaling and a real client requirement triggers it.
 
-- **Language:** Python 3.12
+- **Language:** Python 3.13
 - **Framework:** FastAPI (async throughout)
 - **DB driver:** asyncpg (direct PostgreSQL connection — NOT PostgREST)
 - **ORM:** SQLAlchemy async (asyncpg driver)
@@ -293,7 +293,7 @@ from openai import AsyncOpenAI
 - `app/modules/jd/errors.py` and `app/modules/jd/actors.py` import `openai` and `instructor.core.InstructorRetryException` *as types*, exclusively for retry/permanent-error classification (`_PERMANENT_EXCEPTIONS`) and user-safe error message mapping (`_SAFE_MESSAGES`). They never call the SDK. If the provider changes, this exception map moves with the new SDK; nothing else changes.
 - `app/ai/realtime.py` is the second blessed import site for vendor SDKs. It owns LiveKit plugin instantiation (`livekit.plugins.openai`, `deepgram`, `cartesia`, `silero`, `turn_detector`, `ai_coustics`) so the interview-engine worker never touches them directly. Reads model IDs / voices / effort from `AIConfig` — never from env or settings. (Engine-integration mechanics — `interview_engine_jwt_secret`, `interview_agent_name`, `nexus_internal_base_url` — are deliberately NOT in `AIConfig`; the engine worker reads those directly from `settings`. AIConfig is for AI provider config only.) Lazy imports inside each factory keep the FastAPI nexus process free of the realtime plugin packages (which are installed only in the interview-engine container).
 - A future cleanup is to lift the JD exception map into `app/ai/errors.py` and re-export typed sentinels so module code never references vendor exception classes by name. Tracked as tech-debt; not blocking.
-- The interview-engine container (Phase 3C.2 Chunk 5) installs nexus + livekit-agents into **two separate venvs** with `PYTHONPATH` layered to prefer the engine venv. Reason: nexus pins `openai<2` (instructor 1.x constraint), while `livekit-agents>=1.5.4` requires `openai>=2`. Single-venv install fails resolution. Will be unblocked in Phase 2 of the modular-monolith spec by lifting both `openai` and `instructor` to 2.x. Tracked as tech-debt for now; not blocking.
+- The interview-engine container (Phase 3C.2 Chunk 5) currently still installs nexus + livekit-agents into **two separate venvs** with `PYTHONPATH` layering. The original blocker — nexus pinning `openai<2` while `livekit-agents>=1.5.4` requires `openai>=2` — was resolved by Phase 2 of the modular-monolith spec (openai 2.x + instructor 1.15.x). The two-venv layout remains in place because the engine container itself ships independently until Phase 3 merges its source tree into nexus and consolidates onto a single image. Removing the two-venv layout is Phase 3's responsibility.
 
 ### RBAC Enforcement
 - Auth middleware extracts JWT and attaches `token_payload` to `request.state` before any route handler runs.
@@ -535,7 +535,7 @@ Migrations so far:
 
 > Cross-cutting enterprise standards (rate limiting, supply chain, secrets rotation, logging/PII, audit, code review, incident response, threat model) are defined **once in the root `CLAUDE.md` → Enterprise Operating Standards**. The rules below are backend-specific implementation details on top of those.
 
-- **Python 3.12** — use modern syntax (match/case, `X | Y` unions, etc.)
+- **Python 3.13** — use modern syntax (match/case, `X | Y` unions, etc.)
 - **Type hints required everywhere** — no untyped function signatures
 - **Async throughout** — no sync blocking calls in async context. Use `asyncio.to_thread()` if a library is sync-only.
 - **Pydantic v2** for all request/response schemas and config
