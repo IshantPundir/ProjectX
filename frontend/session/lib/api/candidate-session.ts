@@ -6,7 +6,9 @@
  * attach a recruiter Supabase bearer to candidate-surface requests.
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
+import { env } from '@/lib/env'
+
+const API_BASE = env.NEXT_PUBLIC_API_URL
 
 export type SessionState =
   | 'created'

@@ -1,4 +1,6 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+import { env } from "@/lib/env";
+
+const API_URL = env.NEXT_PUBLIC_API_URL;
 
 /**
  * Error thrown by apiFetch when the backend returns a non-OK response.
