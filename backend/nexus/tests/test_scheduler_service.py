@@ -210,3 +210,66 @@ async def test_revoke_invite_cancels_session_and_supersedes_token(db):
         select(CandidateSessionToken).where(CandidateSessionToken.session_id == resp.session_id)
     )).scalar_one()
     assert token.superseded_at is not None
+
+
+@pytest.mark.asyncio
+async def test_send_invite_uses_candidate_session_base_url(db, monkeypatch):
+    """The interview invite email must link to candidate_session_base_url,
+    NOT frontend_base_url. Distinct hostnames in the test guarantee a
+    regression that wires the wrong setting fails the assertion.
+    """
+    monkeypatch.setattr(
+        "app.modules.scheduler.service.settings.frontend_base_url",
+        "https://recruiter.example.com",
+    )
+    monkeypatch.setattr(
+        "app.modules.scheduler.service.settings.candidate_session_base_url",
+        "https://candidate.example.com",
+    )
+
+    tenant, user, _stage, _cand, assignment = await _seed(db)
+    ctx = _make_ctx(user)
+    req = InviteCreateRequest(assignment_id=assignment.id)
+
+    captured: dict[str, str] = {}
+
+    async def fake_send(*, to, subject, html):
+        captured["html"] = html
+
+    with patch("app.modules.scheduler.service.send_email", new=AsyncMock(side_effect=fake_send)):
+        await service.send_invite(db, req, ctx)
+
+    assert "https://candidate.example.com/interview/" in captured["html"]
+    assert "https://recruiter.example.com" not in captured["html"]
+
+
+@pytest.mark.asyncio
+async def test_resend_invite_uses_candidate_session_base_url(db, monkeypatch):
+    """Same guarantee for resend_invite as send_invite."""
+    monkeypatch.setattr(
+        "app.modules.scheduler.service.settings.frontend_base_url",
+        "https://recruiter.example.com",
+    )
+    monkeypatch.setattr(
+        "app.modules.scheduler.service.settings.candidate_session_base_url",
+        "https://candidate.example.com",
+    )
+
+    tenant, user, _stage, _cand, assignment = await _seed(db)
+    ctx = _make_ctx(user)
+
+    captured: dict[str, str] = {}
+
+    async def fake_send(*, to, subject, html):
+        captured["html"] = html
+
+    with patch("app.modules.scheduler.service.send_email", new=AsyncMock(side_effect=fake_send)):
+        first = await service.send_invite(
+            db, InviteCreateRequest(assignment_id=assignment.id), ctx,
+        )
+        # Clear the captured html from send_invite so we only verify resend.
+        captured.clear()
+        await service.resend_invite(db, session_id=first.session_id, user=ctx)
+
+    assert "https://candidate.example.com/interview/" in captured["html"]
+    assert "https://recruiter.example.com" not in captured["html"]

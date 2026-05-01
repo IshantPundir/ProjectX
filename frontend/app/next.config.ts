@@ -8,9 +8,10 @@ import type { NextConfig } from "next";
 // work is a follow-up. Until then, these header-level mitigations give us
 // clickjacking, MIME-sniffing, referrer-leak, and feature-policy defense.
 //
-// The Permissions-Policy allows camera + microphone from same-origin
-// because candidate interview sessions require them; geolocation is
-// explicitly denied.
+// The Permissions-Policy allows camera + microphone from same-origin for
+// the Phase 3D AI Copilot panel (human interviewers join live sessions
+// from this surface). Geolocation is explicitly denied. The candidate
+// interview surface itself moved to frontend/session/.
 const SECURITY_HEADERS = [
   { key: "X-Frame-Options", value: "DENY" },
   { key: "X-Content-Type-Options", value: "nosniff" },

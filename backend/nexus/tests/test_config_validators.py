@@ -75,3 +75,28 @@ def test_otel_settings_read_from_env(monkeypatch):
     assert settings.otel_exporter_otlp_endpoint == "http://collector:4317"
     assert settings.otel_dev_console_exporter is True
     assert settings.otel_service_name == "nexus-test"
+
+
+def test_candidate_session_base_url_strips_trailing_slash():
+    """Mirrors frontend_base_url's normalizer — trailing slash is removed."""
+    from app.config import Settings
+
+    s = Settings(candidate_session_base_url="http://localhost:3002/")
+    assert s.candidate_session_base_url == "http://localhost:3002"
+
+
+def test_candidate_session_base_url_default_is_localhost_3002():
+    """Guard against accidentally changing the local-dev default."""
+    from app.config import Settings
+
+    s = Settings()
+    assert s.candidate_session_base_url == "http://localhost:3002"
+
+
+def test_cors_origins_default_includes_3002():
+    """Guard against accidentally dropping the new candidate-session port from CORS."""
+    from app.config import Settings
+
+    s = Settings()
+    assert "http://localhost:3002" in s.cors_origins
+    assert "http://127.0.0.1:3002" in s.cors_origins

@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 
-import { OtpStep } from '@/app/(interview)/interview/[token]/OtpStep'
+import { OtpStep } from '@/app/interview/[token]/OtpStep'
 
 function renderWithClient(ui: React.ReactElement) {
   const client = new QueryClient({

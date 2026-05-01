@@ -12,7 +12,27 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import type { FileUIPart, UIMessage } from "ai";
+
+/**
+ * Local copies of `ai` (Vercel AI SDK) types — kept here because the
+ * candidate session app forbids the `ai` package per CLAUDE.md
+ * (forbidden-deps list). Only the type shapes the message component
+ * uses are inlined; if other consumers need richer types, expand the
+ * shapes here rather than reintroducing the `ai` dependency.
+ */
+type UIMessageRole = "user" | "assistant" | "system";
+
+interface UIMessage {
+  id: string;
+  role: UIMessageRole;
+}
+
+interface FileUIPart {
+  type: "file";
+  mediaType?: string;
+  filename?: string;
+  url: string;
+}
 import {
   ChevronLeftIcon,
   ChevronRightIcon,

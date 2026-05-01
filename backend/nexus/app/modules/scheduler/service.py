@@ -99,7 +99,7 @@ async def send_invite(
         job_title=job.title,
         stage_name=stage.name,
         duration_minutes=stage.duration_minutes,
-        invite_url=f"{settings.frontend_base_url}/interview/{token_str}",
+        invite_url=f"{settings.candidate_session_base_url}/interview/{token_str}",
         expires_at_pretty=f"in {settings.candidate_jwt_ttl_hours} hours",
     )
     await send_email(
@@ -200,7 +200,7 @@ async def resend_invite(
         job_title=job.title,
         stage_name=stage.name,
         duration_minutes=stage.duration_minutes,
-        invite_url=f"{settings.frontend_base_url}/interview/{token_str}",
+        invite_url=f"{settings.candidate_session_base_url}/interview/{token_str}",
         expires_at_pretty=f"in {settings.candidate_jwt_ttl_hours} hours",
     )
     await send_email(
