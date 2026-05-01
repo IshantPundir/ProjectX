@@ -1,5 +1,5 @@
 # --- Stage 1: Build dependencies ---
-FROM python:3.12-slim AS deps
+FROM python:3.13-slim AS deps
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends gcc libpq-dev \
@@ -9,7 +9,7 @@ COPY pyproject.toml ./
 RUN pip install --no-cache-dir ".[dev]"
 
 # --- Stage 2: Production image ---
-FROM python:3.12-slim AS runner
+FROM python:3.13-slim AS runner
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends libpq5 \
@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends libpq5 \
 RUN groupadd --system --gid 1001 nexus && \
     useradd --system --uid 1001 --gid nexus nexus
 
-COPY --from=deps /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=deps /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
 COPY --from=deps /usr/local/bin /usr/local/bin
 
 COPY . .
