@@ -1,5 +1,18 @@
 import path from 'path'
+import { loadEnv } from 'vite'
 import { coverageConfigDefaults, defineConfig } from 'vitest/config'
+
+// Mirror Next.js: `.env.local` is the source of truth for local env values.
+// Vitest does not auto-populate `process.env` from `.env.local`, so any
+// module that reads `process.env.NEXT_PUBLIC_*` at top-level (e.g.
+// `lib/env.ts`, which throws on missing) would crash before any test
+// runs. Load `.env.local` (and `.env`) into `process.env` here.
+const env = loadEnv('test', __dirname, '')
+for (const [key, value] of Object.entries(env)) {
+  if (process.env[key] === undefined) {
+    process.env[key] = value
+  }
+}
 
 export default defineConfig({
   test: {
