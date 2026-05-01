@@ -143,7 +143,7 @@ export function OtpStep({ token, otpIssuedAt }: Props) {
           </Button>
         </div>
         {attemptsRemaining !== null && (
-          <p className="mt-2 text-sm" style={{ color: 'var(--px-danger)' }}>
+          <p className="mt-2 text-sm" style={{ color: 'var(--px-danger)' }} role="alert" aria-live="polite">
             {attemptsRemaining === 0
               ? 'No attempts remaining — please request a new code.'
               : `Invalid code. ${attemptsRemaining} attempt${attemptsRemaining === 1 ? '' : 's'} remaining.`}
