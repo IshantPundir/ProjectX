@@ -1525,11 +1525,11 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "alembic", specifier = ">=1.14,<2" },
-    { name = "asyncpg", specifier = ">=0.30,<1" },
-    { name = "boto3", specifier = ">=1.35,<2" },
-    { name = "dramatiq", extras = ["redis"], specifier = ">=1.17,<2" },
-    { name = "fastapi", specifier = ">=0.115,<1" },
+    { name = "alembic", specifier = ">=1.18,<2" },
+    { name = "asyncpg", specifier = ">=0.31,<1" },
+    { name = "boto3", specifier = ">=1.43,<2" },
+    { name = "dramatiq", extras = ["redis"], specifier = ">=1.18,<2" },
+    { name = "fastapi", specifier = ">=0.136,<1" },
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "httpx", marker = "extra == 'dev'" },
     { name = "instructor", specifier = ">=1.15,<2" },
@@ -1541,27 +1541,27 @@ requires-dist = [
     { name = "livekit-plugins-deepgram", specifier = ">=1.5.4,<2" },
     { name = "livekit-plugins-noise-cancellation", specifier = "~=0.2" },
     { name = "livekit-plugins-openai", specifier = ">=1.5.4,<2" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.14,<2" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.20,<2" },
     { name = "openai", specifier = ">=2.10,<3" },
     { name = "opentelemetry-api", specifier = ">=1.39,<1.40.dev0" },
     { name = "opentelemetry-exporter-otlp", specifier = ">=1.39,<1.40.dev0" },
     { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.60b0,<0.61" },
     { name = "opentelemetry-sdk", specifier = ">=1.39,<1.40.dev0" },
-    { name = "orjson", specifier = ">=3.10,<4" },
-    { name = "pydantic", extras = ["email"], specifier = ">=2.10,<3" },
-    { name = "pydantic-settings", specifier = ">=2.7,<3" },
-    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.10,<3" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3,<9" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.25,<1" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.0,<7" },
-    { name = "redis", specifier = ">=5.2,<6" },
-    { name = "resend", specifier = ">=2.0,<3" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8,<1" },
-    { name = "sentry-sdk", extras = ["fastapi"], specifier = ">=2.19,<3" },
+    { name = "orjson", specifier = ">=3.11,<4" },
+    { name = "pydantic", extras = ["email"], specifier = ">=2.13,<3" },
+    { name = "pydantic-settings", specifier = ">=2.14,<3" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.12,<3" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.4,<9" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.26,<1" },
+    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.3,<7" },
+    { name = "redis", specifier = ">=5.3,<6" },
+    { name = "resend", specifier = ">=2.29,<3" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15,<1" },
+    { name = "sentry-sdk", extras = ["fastapi"], specifier = ">=2.58,<3" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0,<3" },
-    { name = "sse-starlette", specifier = ">=2.1,<3" },
-    { name = "structlog", specifier = ">=24.4,<25" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.34,<1" },
+    { name = "sse-starlette", specifier = ">=2.4,<3" },
+    { name = "structlog", specifier = ">=25.5,<26" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.46,<1" },
 ]
 provides-extras = ["dev"]
 
@@ -2615,11 +2615,11 @@ wheels = [
 
 [[package]]
 name = "structlog"
-version = "24.4.0"
+version = "25.5.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/78/a3/e811a94ac3853826805253c906faa99219b79951c7d58605e89c79e65768/structlog-24.4.0.tar.gz", hash = "sha256:b27bfecede327a6d2da5fbc96bd859f114ecc398a6389d664f62085ee7ae6fc4", size = 1348634, upload-time = "2024-07-17T12:38:43.483Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ef/52/9ba0f43b686e7f3ddfeaa78ac3af750292662284b3661e91ad5494f21dbc/structlog-25.5.0.tar.gz", hash = "sha256:098522a3bebed9153d4570c6d0288abf80a031dfdb2048d59a49e9dc2190fc98", size = 1460830, upload-time = "2025-10-27T08:28:23.028Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/bf/65/813fc133609ebcb1299be6a42e5aea99d6344afb35ccb43f67e7daaa3b92/structlog-24.4.0-py3-none-any.whl", hash = "sha256:597f61e80a91cc0749a9fd2a098ed76715a1c8a01f73e336b746504d1aad7610", size = 67180, upload-time = "2024-07-17T12:38:41.043Z" },
+    { url = "https://files.pythonhosted.org/packages/a8/45/a132b9074aa18e799b891b91ad72133c98d8042c70f6240e4c5f9dabee2f/structlog-25.5.0-py3-none-any.whl", hash = "sha256:a8453e9b9e636ec59bd9e79bbd4a72f025981b3ba0f5837aebf48f02f37a7f9f", size = 72510, upload-time = "2025-10-27T08:28:21.535Z" },
 ]
 
 [[package]]
