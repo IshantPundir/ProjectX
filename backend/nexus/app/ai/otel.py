@@ -4,7 +4,18 @@ Exposes:
 - ``bootstrap_tracer_provider()`` — builds a TracerProvider with exporters
   controlled by env vars. Returns the provider so callers can register it
   as the global provider and call ``.shutdown()`` at process exit.
-- ``instrument_openai()`` — wires the OpenAI auto-instrumentor. Idempotent.
+
+Phase 1 originally wired ``opentelemetry-instrumentation-openai-v2`` as an
+auto-instrumentor here. Phase 3 dropped it because livekit-agents>=1.5.4
+(absorbed when the engine merged into nexus) requires opentelemetry-api>=1.39
+and the auto-instrumentor pinned api==1.37.0 via its semantic-conventions
+transitive. LLM calls are now wrapped in explicit
+``tracer.start_as_current_span("openai.chat.completions.create")`` blocks
+at every chat.completions.create call site (see ``app/modules/jd/actors.py``
+and ``app/modules/question_bank/actors.py``). Span attributes still flow
+through ``app.ai.tracing.set_llm_span_attributes()`` — that helper tags
+whatever span is currently active, so it works against the manual spans
+identically.
 
 Env-var contract (read via app.config.settings):
 - ``OTEL_EXPORTER_OTLP_ENDPOINT`` set → wire OTLPSpanExporter (BatchSpanProcessor)
@@ -28,8 +39,6 @@ from opentelemetry.sdk.trace.export import (
 from app.config import settings
 
 logger = structlog.get_logger()
-
-_instrumented = False  # OpenAIInstrumentor — only call .instrument() once
 
 
 def bootstrap_tracer_provider() -> TracerProvider:
@@ -73,16 +82,3 @@ def bootstrap_tracer_provider() -> TracerProvider:
         logger.info("otel.no_exporter_configured", reason="all env vars empty")
 
     return provider
-
-
-def instrument_openai() -> None:
-    """Register the OpenAI auto-instrumentor. Idempotent — safe to call
-    multiple times across API and worker process bootstraps."""
-    global _instrumented
-    if _instrumented:
-        return
-    from opentelemetry.instrumentation.openai_v2 import OpenAIInstrumentor
-
-    OpenAIInstrumentor().instrument()
-    _instrumented = True
-    logger.info("otel.openai_instrumented")

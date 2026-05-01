@@ -6,26 +6,16 @@ Candidate tokens still use HS256 with a separate signing key.
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Literal
 
 import structlog
 import jwt
 from jwt import PyJWKClient
-from pydantic import ValidationError
-from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models import EngineDispatchToken, EngineTokenUse
 from app.modules.auth.schemas import (
     CandidateTokenPayload,
-    EngineTokenPayload,
     TokenPayload,
 )
-from app.modules.interview_runtime.errors import EngineTokenInvalidError
-
 logger = structlog.get_logger()
 
 # Module-level singleton — PyJWKClient handles key caching internally
@@ -180,88 +170,3 @@ def require_projectx_admin():
     return Depends(_check)
 
 
-async def verify_engine_token(
-    token: str,
-    db: AsyncSession,
-    *,
-    expected_session_id: uuid.UUID,
-    endpoint: Literal["config", "results"],
-    used_ip: str | None = None,
-) -> EngineTokenPayload:
-    """Verify a single-use engine dispatch JWT.
-
-    On success, atomically records (jti, endpoint) in engine_token_uses
-    and returns the decoded payload. Raises EngineTokenInvalidError on any
-    failure — algorithm rejection, claim shape, purpose mismatch, session_id
-    mismatch, expiry, replay, unknown parent jti, revoked parent.
-
-    The caller MUST be on a bypass-RLS session — both engine_token_uses
-    (bypass-only by design) and the cross-tenant engine_dispatch_tokens
-    lookup require it.
-
-    Algorithm is hardcoded to ["HS256"]. Never read it from config — a
-    misconfigured env must not be able to weaken verification.
-    """
-    try:
-        decoded = jwt.decode(
-            token,
-            settings.interview_engine_jwt_secret,
-            algorithms=["HS256"],
-            options={"verify_exp": True},
-        )
-    except jwt.PyJWTError as exc:
-        raise EngineTokenInvalidError(f"jwt decode failed: {exc}") from exc
-
-    try:
-        payload = EngineTokenPayload.model_validate(decoded)
-    except ValidationError as exc:
-        raise EngineTokenInvalidError(f"claim shape mismatch: {exc}") from exc
-
-    # purpose is enforced by the Literal in EngineTokenPayload (validation
-    # rejects any other value), but make the check explicit here too —
-    # belt + suspenders for a security-critical claim.
-    if payload.purpose != "interview_engine":
-        raise EngineTokenInvalidError("purpose claim mismatch")
-    if payload.sub != expected_session_id:
-        raise EngineTokenInvalidError("session_id mismatch")
-
-    # Atomic single-use INSERT. ON CONFLICT DO NOTHING returns 0 rows on
-    # replay; the FK to engine_dispatch_tokens(jti) raises IntegrityError
-    # if the parent row doesn't exist (unknown jti).
-    insert_stmt = (
-        pg_insert(EngineTokenUse)
-        .values(jti=payload.jti, endpoint=endpoint, used_ip=used_ip)
-        .on_conflict_do_nothing(index_elements=["jti", "endpoint"])
-    )
-    try:
-        result = await db.execute(insert_stmt)
-    except IntegrityError as exc:
-        # FK violation — token's jti has no row in engine_dispatch_tokens.
-        # Ensure the bypass session is rolled back to a usable state for
-        # the caller's subsequent queries; the caller's transaction
-        # boundary owns commit/rollback for the request.
-        raise EngineTokenInvalidError("token unknown") from exc
-
-    if result.rowcount == 0:
-        raise EngineTokenInvalidError("token already used for this endpoint")
-
-    # Defense-in-depth: confirm the parent token is not revoked. Expiry
-    # was already enforced by jwt.decode via the exp claim; this check
-    # only catches admin-revocation, which can happen between issuance
-    # and use.
-    #
-    # Ordering note: the INSERT into engine_token_uses commits before this
-    # SELECT runs. If a concurrent admin revoke commits in that window, the
-    # use row stays in engine_token_uses and we still reject this request
-    # ("revoked"). A subsequent retry with the same (jti, endpoint) hits
-    # rowcount=0 and is rejected as "already used." Both rejections are
-    # correct — the leftover use row is benign.
-    parent = (
-        await db.execute(
-            select(EngineDispatchToken).where(EngineDispatchToken.jti == payload.jti)
-        )
-    ).scalar_one_or_none()
-    if parent is None or parent.revoked_at is not None:
-        raise EngineTokenInvalidError("token unknown or revoked")
-
-    return payload

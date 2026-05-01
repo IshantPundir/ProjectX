@@ -42,12 +42,14 @@ structlog.configure(
 # --- OpenTelemetry init (mirrors app/main.py lifespan) ---
 # Worker is a separate process and needs its own TracerProvider. Spans
 # emitted by Dramatiq actors (jd, question_bank) flow through this provider.
+# Phase 3 replaced the OpenAI auto-instrumentor with explicit
+# start_as_current_span wrappers at the LLM call sites — see
+# app/modules/jd/actors.py and app/modules/question_bank/actors.py.
 from opentelemetry import trace  # noqa: E402
-from app.ai.otel import bootstrap_tracer_provider, instrument_openai  # noqa: E402
+from app.ai.otel import bootstrap_tracer_provider  # noqa: E402
 
 _otel_provider = bootstrap_tracer_provider()
 trace.set_tracer_provider(_otel_provider)
-instrument_openai()
 
 # Broker setup — MUST be imported before any actor module
 from app import brokers  # noqa: F401, E402

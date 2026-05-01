@@ -13,17 +13,16 @@ test_progress_attributes.py.
 
 from __future__ import annotations
 
-from pathlib import Path
+import uuid
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
-from agents.interviewer import InterviewerAgent
+from app.modules.interview_engine.interviewer import InterviewerAgent
 from app.modules.interview_runtime.schemas import (
     QuestionConfig,
     SessionConfig,
 )
-from config import InterviewEngineConfig
 
 
 def _make_question(idx: int) -> QuestionConfig:
@@ -84,13 +83,8 @@ def _make_session_config() -> SessionConfig:
 def _build_agent() -> InterviewerAgent:
     return InterviewerAgent(
         session_config=_make_session_config(),
-        engine_config=InterviewEngineConfig(
-            max_probes_per_question=2,
-            time_warning_threshold=120,
-            results_fallback_dir=Path("/tmp/engine-results-test"),
-        ),
-        nexus_jwt="fake-jwt",
-        nexus_base_url="http://nexus:8000",
+        tenant_id=uuid.UUID("00000000-0000-0000-0000-000000000002"),
+        correlation_id="test-corr-graceful-close",
     )
 
 

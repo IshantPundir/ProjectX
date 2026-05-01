@@ -1,12 +1,16 @@
 """interview_runtime service — assembles SessionConfig + records SessionResult.
 
-The two halves of the engine ↔ Nexus internal API:
-- ``build_session_config`` powers GET /api/internal/sessions/{id}/config.
-- ``record_session_result`` (Task 3.7) powers POST /api/internal/sessions/{id}/results.
+The two helpers nexus and the merged interview_engine call in-process:
+- ``build_session_config`` returns a SessionConfig given (session_id, tenant_id).
+- ``record_session_result`` atomically transitions the session to completed
+  given (session_id, tenant_id, result, correlation_id).
 
 Both run on a bypass-RLS session (the engine has no Supabase user context).
-Tenant scope is enforced at the application layer via the JWT's tenant_id
-claim — every query in this module MUST filter explicitly by tenant_id.
+Tenant scope is enforced at the application layer via the explicit
+``tenant_id`` parameter — every query in this module MUST filter by it.
+This is the post-Phase-3 contract: the HTTP boundary at /api/internal/*
+and the engine-dispatch JWT both retired; RLS bypass + explicit-tenant
+filtering is the new defense layer.
 """
 
 from __future__ import annotations
@@ -235,7 +239,7 @@ async def record_session_result(
     session_id: uuid.UUID,
     tenant_id: uuid.UUID,
     result: SessionResult,
-    jti: uuid.UUID,
+    correlation_id: str,
 ) -> None:
     """Persist the engine's SessionResult and transition the session to completed.
 
@@ -251,8 +255,10 @@ async def record_session_result(
     Audit row written on successful first transition only — the idempotent
     silent-no-op branch does NOT write a duplicate audit entry.
 
-    Caller MUST be on a bypass-RLS session AND must have already verified
-    that the engine JWT's tenant_id matches the ``tenant_id`` argument.
+    Caller MUST be on a bypass-RLS session. The ``tenant_id`` argument
+    (sourced from the LiveKit dispatch metadata in the engine, or from
+    request.state in nexus's own callers) is filter-applied to every
+    query — cross-tenant access returns "not found".
     """
     derived_status = "ok" if result.questions_asked > 0 else "partial"
     now = datetime.now(UTC)
@@ -299,7 +305,7 @@ async def record_session_result(
         resource="session",
         resource_id=session_id,
         payload={
-            "jti_prefix": str(jti)[:8],
+            "correlation_id": correlation_id,
             "questions_asked": result.questions_asked,
             "result_status": derived_status,
         },

@@ -14,18 +14,17 @@ needed -- the helper's only side effect is awaiting
 
 from __future__ import annotations
 
-from pathlib import Path
+import uuid
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
-from agents.interviewer import InterviewerAgent
+from app.modules.interview_engine.interviewer import InterviewerAgent
+from app.modules.interview_engine.state_machine import Action, SteeringObservation
 from app.modules.interview_runtime.schemas import (
     QuestionConfig,
     SessionConfig,
 )
-from config import InterviewEngineConfig
-from state_machine import Action, SteeringObservation
 
 
 def _make_question(idx: int) -> QuestionConfig:
@@ -85,12 +84,9 @@ def _make_session_config(*, n_questions: int, duration_minutes: int) -> SessionC
     )
 
 
-def _make_engine_config() -> InterviewEngineConfig:
-    return InterviewEngineConfig(
-        max_probes_per_question=2,
-        time_warning_threshold=120,
-        results_fallback_dir=Path("/tmp/engine-results-test"),
-    )
+# `_make_engine_config` was removed in Phase 3. The InterviewerAgent
+# now reads its tuning knobs from app.config.settings.engine_*; tests
+# don't need to construct an engine config object.
 
 
 def _build_agent(*, n_questions: int = 9, duration_minutes: int = 15) -> InterviewerAgent:
@@ -98,9 +94,8 @@ def _build_agent(*, n_questions: int = 9, duration_minutes: int = 15) -> Intervi
         session_config=_make_session_config(
             n_questions=n_questions, duration_minutes=duration_minutes
         ),
-        engine_config=_make_engine_config(),
-        nexus_jwt="fake-jwt",
-        nexus_base_url="http://nexus:8000",
+        tenant_id=uuid.UUID("00000000-0000-0000-0000-000000000002"),
+        correlation_id="test-corr-progress-attrs",
     )
 
 

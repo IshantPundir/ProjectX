@@ -178,19 +178,28 @@ class Settings(BaseSettings):
     # CORS
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:3000", "http://127.0.0.1:3001"]
 
-    # --- Interview engine — realtime LLM/STT/TTS + auth (Phase 3C.2) ---
-    # HS256 signing key for the engine dispatch JWT minted by /start and
-    # consumed by the interview-engine worker on /api/internal/sessions/*.
-    # Required in non-test environments — see _engine_secret_required below.
-    # Generate with: openssl rand -hex 32. Treat with the same sensitivity
-    # as candidate_jwt_secret (rotate every 90 days, on personnel change,
-    # or on incident).
+    # --- Interview engine (in-process, Phase 3 merged) ---
+    # The engine no longer runs as a separate Docker image with its own
+    # config. These fields are read directly by app/modules/interview_engine.
+    # `interview_engine_jwt_secret` is retained for now because Task 9 of
+    # Phase 3 deletes its only consumer (mint_engine_dispatch_jwt). When that
+    # task lands, this field can be removed.
     interview_engine_jwt_secret: str = ""
 
-    # The agent_name used by the worker's @server.rtc_session decorator AND
-    # by Nexus's create_dispatch call. They MUST match for explicit dispatch
-    # to find the right worker pool.
-    interview_agent_name: str = "Dakota-1785"
+    engine_agent_name: str = "Dakota-1785"
+    # State machine
+    engine_max_probes_per_question: int = 3
+    engine_time_warning_threshold: float = 0.8
+    # Turn detection / endpointing (forwarded to AgentSession)
+    engine_endpointing_min_delay: float = 0.3
+    engine_endpointing_max_delay: float = 2.5
+    # Silero VAD prewarm
+    engine_silero_activation_threshold: float = 0.3
+    engine_silero_min_speech_duration: float = 0.05
+    engine_silero_min_silence_duration: float = 0.55
+    # Observability
+    engine_log_audio_events: bool = True
+    engine_log_user_transcripts: bool = False
 
     # Realtime model selection — env-driven, mirrors the JD/question-bank
     # convention. Consumed by AIConfig (in app/ai/config.py) and the
@@ -248,12 +257,6 @@ class Settings(BaseSettings):
     # without eating quieter speech.
     interview_noise_cancellation_model: str = "QUAIL_VF_L"
     interview_noise_cancellation_level: float | None = 0.7
-
-    # Engine → Nexus internal API base URL. Read by the engine worker
-    # (interview-engine container in docker-compose). Nexus itself does NOT
-    # consume this — it's a no-op field for the FastAPI process. Defaulted
-    # to the docker-compose service hostname.
-    nexus_internal_base_url: str = "http://nexus:8000"
 
     @field_validator("interview_engine_jwt_secret")
     @classmethod

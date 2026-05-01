@@ -766,58 +766,7 @@ class CandidateSessionToken(Base):
     )
 
 
-class EngineDispatchToken(Base):
-    """Phase 3C.2 — JWT minted by /start and embedded in agent dispatch metadata.
-
-    Single-use per (jti, endpoint) is enforced by the sibling
-    EngineTokenUse table. tenant_isolation + service_bypass RLS pair.
-    """
-
-    __tablename__ = "engine_dispatch_tokens"
-
-    jti: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
-    tenant_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("clients.id", ondelete="CASCADE"), nullable=False
-    )
-    session_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False
-    )
-    issued_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=sql_text("NOW()")
-    )
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-
-
-class EngineTokenUse(Base):
-    """Phase 3C.2 — atomic single-use record per (jti, endpoint).
-
-    INSERT ON CONFLICT DO NOTHING is the enforcement primitive.
-    Service-bypass-only RLS — no tenant_id column; tenant scope is
-    inherited via the FK to engine_dispatch_tokens and re-asserted at
-    the application layer via the JWT claim.
-
-    The ``service_bypass`` policy covers both ``USING`` and ``WITH CHECK``
-    so bypass-role INSERTs are also gated on the bypass flag (different
-    from engine_dispatch_tokens whose service_bypass is USING-only — that
-    table is INSERTed under tenant context, this one always under bypass).
-    """
-
-    __tablename__ = "engine_token_uses"
-    __table_args__ = (
-        CheckConstraint(
-            "endpoint IN ('config', 'results')",
-            name="engine_token_uses_endpoint_check",
-        ),
-    )
-
-    jti: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("engine_dispatch_tokens.jti", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    endpoint: Mapped[str] = mapped_column(Text, primary_key=True)
-    used_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=sql_text("NOW()")
-    )
-    used_ip: Mapped[str | None] = mapped_column(INET)
+# Phase 3 retired the EngineDispatchToken + EngineTokenUse ORM classes.
+# The HTTP boundary at /api/internal/* and the engine-dispatch JWT both
+# went away when the engine merged into nexus on a single venv; the
+# tables were dropped by alembic migration 0025.

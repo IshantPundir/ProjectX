@@ -28,12 +28,6 @@ _PUBLIC_PREFIXES: tuple[str, ...] = (
     "/api/auth/verify-invite",  # Public — invite token verification
     "/api/auth/accept-invite",  # Public — raw invite token proves possession
     "/api/auth/login",  # Public — credential exchange for session tokens
-    # Phase 3C.2 — interview engine internal API. The engine sends an HS256
-    # bearer (not a Supabase ES256 access token), so the dashboard JWT check
-    # would reject it. Auth is enforced at the router via verify_engine_token,
-    # which is single-use per (jti, endpoint). The reverse proxy is also
-    # configured not to route this prefix from the public hostname.
-    "/api/internal/",
 )
 
 

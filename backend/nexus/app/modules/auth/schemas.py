@@ -41,9 +41,10 @@ class CandidateTokenPayload(BaseModel):
 class EngineTokenPayload(BaseModel):
     """Decoded claims of a Nexus-minted engine dispatch JWT (HS256, single-use).
 
-    Issued by Nexus on /start, consumed by the interview-engine worker on
-    /api/internal/sessions/{id}/config and /results. Single-use per
-    (jti, endpoint) — see verify_engine_token for the atomic gate.
+    Previously consumed by the interview-engine worker via the retired
+    /api/internal/* HTTP boundary. Kept here until the ORM models and
+    migration that drop engine_dispatch_tokens / engine_token_uses land
+    (Phase 3 Task 14).
     """
 
     sub: uuid.UUID            # session_id
