@@ -1,5 +1,17 @@
 import type { NextConfig } from "next";
 
+// Build-time guard: NEXT_PUBLIC_API_URL is the candidate-session backend
+// origin. proxy.ts also throws at request time, but failing here surfaces
+// misconfiguration during `next build` (Docker / Railway / ECS) rather than
+// in production logs after deploy.
+if (!process.env.NEXT_PUBLIC_API_URL) {
+  throw new Error(
+    "NEXT_PUBLIC_API_URL must be set at build time. " +
+    "For Docker builds: pass --build-arg NEXT_PUBLIC_API_URL=https://api.example.com. " +
+    "For local builds: source .env.local before running next build.",
+  );
+}
+
 // STATIC security headers applied to every response.
 //
 // CSP is NOT here — it lives in proxy.ts because it requires a
