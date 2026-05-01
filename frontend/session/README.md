@@ -16,5 +16,5 @@ npm run dev   # localhost:3002
 
 ```bash
 npm run test
-npm run test:coverage   # enforces 100% branch on candidate-session paths
+npm run test:coverage   # coverage gates (current floors; see CLAUDE.md for 100%-branch aspirational targets)
 ```
