@@ -15,12 +15,9 @@ Per `AGENTS.md` in this directory: **this Next.js version has breaking changes f
 
 ## What This Surface Is
 
-The Next.js app serves **two distinct user surfaces** within a single codebase:
+This Next.js app serves the **recruiter dashboard ONLY**. It is the surface for Recruiters, Hiring Managers, Interviewers, Admins, and Observers. Authentication is Supabase email + password; data flows through Nexus (`apiFetch` + `getFreshSupabaseToken`).
 
-1. **Dashboard** — Recruiter, Hiring Manager, Interviewer, Admin. Configure pipelines, review candidates, manage reports, run the kanban board, join live sessions as a human participant.
-2. **Candidate Interview UI** — Candidate-facing. Branded, JWT-accessed (no login). Camera + mic required. 2×2 video grid. Pre-check flow → live session → completion screen.
-
-Both surfaces must be designed as **enterprise products**, not consumer apps. Clients are Fortune 500 companies. The UI represents their brand to candidates.
+**The candidate interview surface lives in a separate app** at `frontend/session/`. Do NOT add candidate-facing routes, LiveKit code, or `@/components/{ui,agents-ui,ai-elements}/` imports to this app. The pre-merge dependency-check grep (`grep livekit package.json`) is the gate; CI rule lands later.
 
 ---
 
@@ -59,8 +56,6 @@ Both surfaces must be designed as **enterprise products**, not consumer apps. Cl
 
 The dashboard surface uses **no shadcn/ui** — the design system is a hand-rolled primitive library at `components/px/` built directly on `@base-ui-components/react`. The barrel export is `components/px/index.ts`.
 
-> **Candidate-surface exception (Phase 3C.2 LiveKit port).** `app/(interview)/` imports from a sealed shadcn enclave at `components/{ui,agents-ui,ai-elements}/` plus `hooks/agents-ui/` — populated by the shadcn CLI from the `@agents-ui` and `@ai-elements` registries (you own the source). The enclave hosts LiveKit's Agents UI block (`<AgentSessionView_01>`), audio visualizers, control bar, and chat transcript. **Dashboard files MUST NOT import from this enclave.** `app/globals.css` already maps the shadcn semantic tokens (`--background`, `--foreground`, `--primary`, `--destructive`, …) to the `--px-*` palette under `:root`, so installed components inherit the warm-light palette automatically. To update components, run `npx shadcn@latest add @agents-ui/<name>`.
-
 | Primitive | File |
 |---|---|
 | `Button`, `ButtonVariant`, `ButtonSize` | `components/px/Button.tsx` |
@@ -80,9 +75,21 @@ The dashboard surface uses **no shadcn/ui** — the design system is a hand-roll
 
 When you need a new primitive, add it under `components/px/` and export it from `index.ts` — never reach for an external shadcn snippet or copy a Radix pattern from the internet without checking the actual `@base-ui-components/react` API.
 
-### Currently Installed (Phase 3C.2)
+### Code shared by duplication with `frontend/session`
 
-- **Real-time / WebRTC:** `livekit-client` + `@livekit/components-react` + `@livekit/components-styles`. Used by the candidate-facing `LiveSessionShell` to join the LiveKit room provisioned by Nexus's `/start`. The SDK is loaded into the candidate surface only, gated behind a `next/dynamic` import inside `WizardShell.tsx` so the pre-check / consent / OTP / camera-mic steps never pull `livekit-client` into their bundles. The shell wraps `<LiveKitRoom>`; child tiles call `useVoiceAssistant`, `useChat`, `useRemoteParticipants`, `useParticipants`, `useLocalParticipant` for live state.
+The following files exist verbatim in both apps and must be kept in sync. There is no shared package — duplication was the deliberate choice (small surface, stable APIs, physical isolation between recruiter and candidate origins).
+
+| File | Reason kept identical |
+|---|---|
+| `lib/utils.ts` | `cn` helper — never diverges |
+| `lib/api/errors.ts` | Error narrowing shape used by hooks in both apps |
+| `components/px/Button.tsx` | Visual + a11y identity must match across surfaces |
+| `components/px/Input.tsx` | Same |
+| `components/px/Toaster.tsx` | Same (sonner config) |
+| `public/projectx-logo.svg` | Brand identity |
+| Shadcn → px CSS-variable token mapping in `app/globals.css` | Visual consistency |
+
+Any change to one of these files in either app MUST be applied to the other in the same PR, or the PR description must explicitly call out the deliberate divergence with a one-line rationale.
 
 ---
 
@@ -122,22 +129,11 @@ frontend/app/
 │   │   ├── reports/page.tsx              ← Reports landing (Phase 3D — placeholder)
 │   │   └── settings/
 │   │       ├── team/page.tsx             ← Team management, invites, resend, revoke, deactivate
-│   │       └── org-units/
-│   │           ├── page.tsx              ← Org unit infinite-canvas tree + create
-│   │           └── [unitId]/page.tsx     ← Unit detail: members, roles, sub-units, delete
-│   └── (interview)/
-│       └── interview/[token]/
-│           ├── page.tsx                  ← WizardShell host (pre-check stepper)
-│           ├── error/page.tsx            ← Token error fallback
-│           ├── WizardShell.tsx
-│           ├── StartStep.tsx
-│           ├── ConsentStep.tsx
-│           ├── OtpStep.tsx
-│           └── CameraMicStep.tsx
+│       └── org-units/
+│           ├── page.tsx              ← Org unit infinite-canvas tree + create
+│           └── [unitId]/page.tsx     ← Unit detail: members, roles, sub-units, delete
 ├── components/
 │   ├── px/                               ← In-house design-system primitives (Button, Input, Dialog, Tooltip, …)
-│   ├── interview/
-│   │   └── providers.tsx                 ← QueryClientProvider + Toaster mount for the interview surface
 │   └── dashboard/
 │       ├── AppShell.tsx                  ← Sidebar nav + header
 │       ├── SessionGuard.tsx              ← Client-side session presence check
@@ -152,7 +148,7 @@ frontend/app/
 ├── stores/
 │   └── job-edit.ts                       ← Zustand: editable signal state with isDirty tracking
 ├── lib/
-│   ├── api/                              ← Typed API namespaces: client, jobs, candidates, pipelines, question-banks, questions, scheduler, candidate-session, team, org-units, auth, errors
+│   ├── api/                              ← Typed API namespaces: client, jobs, candidates, pipelines, question-banks, questions, scheduler, team, org-units, auth, errors
 │   ├── auth/                             ← getFreshSupabaseToken, handle-error (global 401 sink)
 │   ├── hooks/                            ← 50+ TanStack Query hooks (use-jobs, use-candidates, use-banks, use-pipeline-templates, use-job-status-stream, use-questions-status-stream, …)
 │   ├── pipelines/                        ← Pipeline-specific helpers (e.g. classification, stage rules)
@@ -165,25 +161,13 @@ frontend/app/
 └── proxy.ts                              ← Next.js middleware: validates Supabase session + decodes JWT for tenant_id, gates dashboard routes
 ```
 
-### Live interview UI (Phase 3C.2 — shipped)
-
-The candidate live-interview surface lives at `app/(interview)/interview/[token]/LiveSession/`:
-
-- `LiveSessionShell.tsx` — entry point. Wraps `<LiveKitRoom>` with audio + video publish, hosts the grace-timeout boundary, and routes between active / completed / error outcomes.
-- `AgentTile.tsx`, `CandidateSelfView.tsx` — the two video tiles.
-- `ProgressBanner.tsx` — sticky top banner ("Q3 of 9 · 11 min remaining") driven by participant attributes the engine publishes via `set_attributes`.
-- `TranscriptPane.tsx` — live transcript via `useChat`.
-- `CompletionScreen.tsx`, `DisconnectError.tsx` — end-state surfaces.
-- `hooks/use-agent-state.ts`, `hooks/use-agent-grace-timeout.ts`, `hooks/use-stage-progress.ts` — three hooks the components share.
-
-`WizardShell.tsx` lazy-loads `LiveSessionShell` via `next/dynamic` (`ssr:false`); the LiveKit SDK only enters the bundle once the candidate clicks Start.
+Candidate interview surface lives at frontend/session/. See frontend/session/CLAUDE.md.
 
 ### Pending UI work (Phase 3D)
 
 - **`components/copilot/`** — AI Copilot panel components don't exist yet. Required for any human-in-the-loop session.
 - **`components/shared/`** — directory is reserved for cross-surface components; not yet populated.
 - **Reports view** — `app/(dashboard)/reports/page.tsx` is a placeholder. Pairs with backend Phase 3D (`reporting` module is still a stub).
-- **Mid-session rejoin** — when a candidate's network drops, the wizard currently shows a static `AlreadyStartedPanel`. Re-entering the live session needs a structured close signal from the engine (data message or room metadata) so the UI can distinguish error from completion.
 
 ---
 
@@ -213,10 +197,9 @@ The Supabase client on the frontend is used **only** for Auth (session managemen
 |---|---|
 | In-house design-system primitives | `components/px/` (Button, Input, Dialog, Tooltip, …) |
 | Dashboard composite components | `components/dashboard/<feature>/` |
-| Candidate interview surface | `components/interview/` (currently providers only) |
 | AI Copilot panel | `components/copilot/` (not yet built) |
 | Cross-surface shared components | `components/shared/` (reserved, empty) |
-| Page-local components | Inside the relevant `app/(dashboard)/<route>/` or `app/(interview)/<route>/` folder |
+| Page-local components | Inside the relevant `app/(dashboard)/<route>/` folder |
 
 Do not drop components at the root of `components/` without a subdirectory.
 
@@ -231,12 +214,12 @@ When extending `components/px/`, add an export to `components/px/index.ts`. Alwa
 **Current state (Phase 2A):** React Hook Form + Zod are installed. Phase 1 pages still use raw `useState` — migrate them when touching those pages.
 
 ### Secrets
-- **Never put API keys, secrets, or tokens in client-side code or environment variables prefixed with `NEXT_PUBLIC_`** unless that value is genuinely intended to be public (e.g., a LiveKit server URL).
+- **Never put API keys, secrets, or tokens in client-side code or environment variables prefixed with `NEXT_PUBLIC_`** unless that value is genuinely intended to be public (e.g., the Nexus base URL).
 - Sensitive operations (e.g., ATS credential storage) go through the backend — never touch the frontend.
 
 ---
 
-## Two Surfaces — Design Constraints
+## Dashboard Design Constraints
 
 ### Dashboard Surface
 - Enterprise SaaS aesthetic — clean, data-dense, professional.
@@ -245,28 +228,10 @@ When extending `components/px/`, add an export to `components/px/index.ts`. Alwa
 - Borderline candidates display a clear visual indicator and cannot be advanced/rejected without explicit action.
 - The recruiter's daily action items dashboard must be the default landing view post-login.
 
-### Candidate Interview Surface
-- Minimal UI. Candidate should not be confused or distracted.
-- Branded — company name, logo, and configured bot tone/name from the job setup.
-- No navigation. No sidebar. Full-viewport video experience.
-- **2×2 video grid layout:** candidate (camera on), AI bot tile (avatar/no camera), human participant tiles if present, empty slot.
-- Session progress indicator: "Q3 of 9 · 11 min remaining" — always visible.
-- Pre-check flow is blocking — camera test, mic test, identity confirm, OTP verification must all pass before the session begins.
-- Camera and microphone are required throughout. If either is lost mid-session, surface a clear blocking error.
-
 ### AI Copilot Panel (`components/copilot/`)
 - Renders automatically for any human (non-candidate) in a session — never toggled off.
 - Shows: live transcript with speaker labels, real-time signal cards per exchange, bot's next planned probe (before it fires), question coverage tracker.
 - This panel must be visually distinct from the main video grid — secondary panel, not overlaid.
-
----
-
-## LiveKit Integration
-
-- Use `@livekit/components-react` for all WebRTC session UI.
-- Never implement raw WebRTC — use LiveKit abstractions.
-- LiveKit token is provisioned by Nexus (`/api/sessions/{id}/token`). Never generate LiveKit tokens on the frontend.
-- Recordings: LiveKit Egress writes to S3 — no frontend involvement. Recordings are accessed via pre-signed URLs from Nexus.
 
 ---
 
@@ -283,13 +248,6 @@ When extending `components/px/`, add an export to `components/px/index.ts`. Alwa
 ### Legacy (Phase 1 pages still pending migration)
 Login, invite, and onboarding pages still use raw `useState` + `fetch`. Per convention: **migrate them when you touch them**, not as a standalone refactor.
 
-### Live interview state (Phase 3C.2 — shipped)
-Per-session UI state during the live interview is held in two places:
-- **Component-local React state** in `LiveSessionShell` (`outcome`, `errorCode`) — the shell is short-lived (one mount per session) so this is appropriate.
-- **LiveKit participant attributes** for cross-participant state (current question index, total, time remaining). Read from the agent participant via `useStageProgress`. The engine writes them via `local_participant.set_attributes` on every state-machine turn.
-
-A Zustand store for the interview session was deferred — the existing primitives are sufficient for the current surface. Reach for one only when a state value genuinely needs to live outside `LiveSessionShell`'s subtree.
-
 ---
 
 ## Auth Flow
@@ -302,12 +260,7 @@ A Zustand store for the interview session was deferred — the existing primitiv
 - `/api/auth/me` response (fetched server-side via `React.cache()`) drives the onboarding redirect: `is_super_admin && !onboarding_complete → /onboarding`.
 - Roles are NOT in the JWT. They are fetched per-request from the database. The frontend uses `is_super_admin` and `assignments` from `/api/auth/me` for conditional UI rendering — **never as the sole access control**.
 
-### Candidates (Token-Based — No Supabase Auth) [Phase 2+]
-- Candidate enters via a JWT-signed scheduling link (72-hour expiry).
-- OTP verification (configurable per JD) is the pre-session gate.
-- No account creation. No password. No persistent session.
-- Route: `app/(interview)/[token]/` — the token is in the URL path.
-- Token is verified by Nexus on every API call from the candidate session.
+Candidates have no auth on this surface — they use frontend/session/.
 
 ---
 
@@ -344,7 +297,6 @@ Each backend module has a co-located `lib/api/<module>.ts` file with response ty
 | `question-banks.ts`, `questions.ts` | `/api/jobs/{id}/banks/*` and per-question CRUD |
 | `candidates.ts` | `/api/candidates/*` + kanban |
 | `scheduler.ts` | `/api/scheduler/*` (invite send/resend/revoke) |
-| `candidate-session.ts` | `/api/sessions/candidate/{token}/*` (uses candidate JWT, not Supabase) |
 | `client.ts`, `errors.ts` | Shared transport + error mapping |
 
 When adding endpoints for a new backend module, create a new file under `lib/api/` and follow the existing pattern. Keep response types co-located with their fetcher; there is no central `types/` directory.
@@ -378,8 +330,8 @@ When adding endpoints for a new backend module, create a new file under `lib/api
 
 > Cross-cutting standards (rate limiting, supply chain, secrets rotation, logging/PII, audit, code review, incident response) are defined **once in the root `CLAUDE.md` → Enterprise Operating Standards**. The rules below are frontend-specific implementation details on top of those.
 
-- **Security headers** are set in `next.config.ts` `headers()`: `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`. The dashboard surface also exposes `Permissions-Policy: camera=(self), microphone=(self), geolocation=()` for the upcoming candidate session video flow.
-- **Content-Security-Policy** is a planned follow-up (nonce-based) and tracked as a hard requirement before GA. When wired, the CSP must forbid `unsafe-eval`, allow `https://api.projectx.com` + LiveKit/Cartesia/Deepgram origins explicitly, and use a per-request nonce on inline scripts. No `unsafe-inline` for scripts.
+- **Security headers** are set in `next.config.ts` `headers()`: `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`.
+- **Content-Security-Policy** is a planned follow-up (nonce-based) and tracked as a hard requirement before GA. When wired, the CSP must forbid `unsafe-eval`, allow `https://api.projectx.com` explicitly, and use a per-request nonce on inline scripts. No `unsafe-inline` for scripts.
 - **Post-auth redirects must be allowlisted.** Any `router.push(urlFromBackend)` where the URL is controlled by a mutation response must validate that the value starts with `/` (and does not start with `//`) before navigating. Without this, a compromised or MITM'd response creates an open redirect. The invite completion flow in `app/(auth)/invite/page.tsx` does this; any new post-auth redirect must follow suit.
 - **No `dangerouslySetInnerHTML`** for backend-returned strings. Render as text content with `whitespace-pre-wrap` instead.
 - **No `localStorage` for auth tokens.** Only non-sensitive UI preferences live in localStorage (e.g. `pipeline-inspector-tab`).
@@ -388,8 +340,7 @@ When adding endpoints for a new backend module, create a new file under `lib/api
 ### Browser-Side PII & Telemetry
 
 - **No raw PII in browser logs or Sentry events.** Forbidden in `console.*`, in Sentry breadcrumbs, and in any third-party analytics: candidate emails, resume contents, full JWT bearer values, OTP codes, transcripts.
-- Sentry's `beforeSend` strips request bodies and headers by default; do not whitelist `Authorization`, `Cookie`, or candidate-session payloads back in.
-- Analytics on the **candidate interview surface** is forbidden — no Sentry session replay, no third-party trackers, no heatmaps. The candidate surface is a sealed environment.
+- Sentry's `beforeSend` strips request bodies and headers by default; do not whitelist `Authorization` or `Cookie` headers back in.
 - Analytics on the **dashboard surface** is allowlisted to a single endpoint (Sentry), not arbitrary third parties. Adding a new telemetry destination requires a threat-model update.
 
 ### Form & Input Hygiene
@@ -404,8 +355,8 @@ When adding endpoints for a new backend module, create a new file under `lib/api
 
 - **Lockfile is authoritative.** `package-lock.json` is committed; `npm ci` is the only install command CI runs. Mismatched lockfile blocks merge.
 - **`npm audit --omit=dev`** runs on every PR. Critical CVE blocks merge; high CVE blocks merge unless waived in the PR description with a CVE exception note.
-- **Bundle budget per route**: dashboard pages target < 250 KB gzipped first-load JS; candidate interview pages target < 180 KB gzipped (pre-LiveKit); LiveKit-bearing routes are exempt from the JS budget but must lazy-load the SDK.
-- **Performance targets** (Lighthouse on production build): LCP < 2.5s on dashboard, < 2.0s on candidate pre-check; TTI < 3.5s; CLS < 0.1. Regressions block merge.
+- **Bundle budget per route**: dashboard pages target < 250 KB gzipped first-load JS.
+- **Performance targets** (Lighthouse on production build): LCP < 2.5s on dashboard; TTI < 3.5s; CLS < 0.1. Regressions block merge.
 - **Error boundaries** are required around every top-level route segment. The boundary surfaces a recovery action, never a silent blank screen.
 - **Hydration discipline**: no `Date.now()`, `Math.random()`, or `window` access during render. Use `useEffect` for client-only side effects.
 - **Suspense + loading.tsx** for every async route segment. No raw `<Spinner>` placeholder pages.
@@ -432,8 +383,6 @@ The Vitest suite (~30 files under `tests/`) covers API client error mapping, for
 
 - Any change to `middleware.ts` (route protection logic)
 - Any change to auth token handling in `lib/auth/`
-- Any component in `app/(interview)/` that touches the session state or pre-check flow
 - Any change to the Borderline candidate display or advancement logic
-- Any change to how candidate consent is captured and surfaced
 
 ---
