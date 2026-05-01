@@ -64,13 +64,20 @@ import recruiter-side modules or add Supabase auth here.
   `/api/candidate-session/{token}/*` call.
 
 ### Security headers always on
-- `next.config.ts` `headers()` is the single source of truth.
-- Includes Strict-Transport-Security, X-Frame-Options DENY,
-  X-Content-Type-Options nosniff, Referrer-Policy: no-referrer,
-  Permissions-Policy (camera + microphone scoped to `self`),
-  Cross-Origin-Opener-Policy: same-origin, Cross-Origin-Resource-Policy:
-  same-origin, AND a strict CSP including `frame-ancestors 'none'`.
+- Two-layer setup:
+  - **Static headers** (HSTS, X-Frame-Options DENY, X-Content-Type-Options
+    nosniff, Referrer-Policy: no-referrer, Permissions-Policy, COOP, CORP)
+    live in `next.config.ts` `headers()`.
+  - **Content-Security-Policy** lives in `proxy.ts` because it requires
+    a per-request nonce (`'nonce-${nonce}' 'strict-dynamic'`) — Next.js
+    emits inline bootstrap scripts that a static `script-src 'self'`
+    would block. Per Next 16 CSP guide.
+- Dev mode CSP includes `'unsafe-eval'` (React debugger) and
+  `'unsafe-inline'` style fallback (Tailwind runtime). Production drops
+  both — strict nonce only.
 - Loosening any header requires a threat-model update in `docs/security/`.
+- The root layout sets `export const dynamic = "force-dynamic"` so every
+  route is dynamically rendered (required for nonce injection).
 
 ### Env validation
 - `lib/env.ts` parses `process.env` through a zod schema at module load.
@@ -210,7 +217,7 @@ has no Supabase session and must not send any `Authorization` header.
 > root `CLAUDE.md` → Enterprise Operating Standards.
 
 App-specific notes:
-- The CSP in `next.config.ts` is the boundary contract. Adding a new
+- The CSP in `proxy.ts` is the boundary contract. Adding a new
   third-party origin to `connect-src` requires a threat-model update.
 - For self-hosted LiveKit deployments, parameterize the `wss://*.livekit.cloud`
   entries via env at that point.
@@ -245,7 +252,8 @@ npm run test:coverage
 
 ## Human Review Required For
 
-- Any change to `next.config.ts` `headers()` (security headers + CSP)
+- Any change to `proxy.ts` (CSP nonce + connect-src origins)
+- Any change to `next.config.ts` `headers()` (static security headers)
 - Any change to `lib/api/candidate-session.ts` (sole API surface)
 - Any new `Authorization` header sent from the candidate surface
 - Any change that adds a third-party origin to CSP `connect-src`

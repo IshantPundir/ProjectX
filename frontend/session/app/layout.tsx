@@ -6,6 +6,13 @@ import { InterviewProviders } from "@/components/interview/providers";
 
 import "./globals.css";
 
+// CSP nonce in proxy.ts requires dynamic rendering — static-rendered
+// pages have no request headers, so the nonce can't reach Next's
+// emitted bootstrap scripts. Forcing dynamic on the layout applies to
+// every route under it. The candidate flow is per-request anyway
+// (token in URL, no caching desired).
+export const dynamic = "force-dynamic";
+
 const inter = Inter({
   variable: "--font-sans",
   subsets: ["latin"],
