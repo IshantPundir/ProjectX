@@ -370,7 +370,7 @@ from openai import AsyncOpenAI
 
 | Module | What It Owns |
 |---|---|
-| `scheduler` | Invite send / resend / revoke. `send_invite` mints a candidate JWT (HS256) and inserts the matching `candidate_session_tokens` row (jti, tenant, session_id, expires_at). Resend creates a new token row and stamps `superseded_at + superseded_by` on the prior row, building a per-session supersession chain. Notification dispatch via the provider-agnostic notifications module. |
+| `scheduler` | Invite send / resend / revoke. `send_invite` mints a candidate JWT (HS256) and inserts the matching `candidate_session_tokens` row (jti, tenant, session_id, expires_at). Resend creates a new token row and stamps `superseded_at + superseded_by` on the prior row, building a per-session supersession chain. Notification dispatch via the provider-agnostic notifications module — notification dispatch reads settings.candidate_session_base_url (NOT frontend_base_url). |
 | `session` | Two routers: `candidate_session_router` (candidate-facing, JWT in path) and `session_router` (recruiter-facing, read-only). State machine: `created → pre_check → consented → active → completed \| cancelled \| error`. OTP gate (CSPRNG 6-digit code, HMAC-SHA256 hash, 10-minute lifetime, max 3 attempts, 60s rate limit, constant-time compare). **Single-use token enforcement** is atomic on `/start` (`UPDATE … WHERE used_at IS NULL RETURNING`). Phase 3C.2 wired the LiveKit room + token provisioning: `/start` mints a candidate `room_join` token, mints + records an engine dispatch JWT, dispatches the agent, then atomically consumes the candidate token and transitions to `active` (502 `AGENT_DISPATCH_FAILED` if dispatch fails — token is NOT consumed in that case so the candidate can retry). LiveKit helpers live at `session/livekit.py`. |
 | `interview_runtime` | Phase 3C.2 internal API for the engine container. `verify_engine_token` validates the dispatch JWT (HS256 pinning, `purpose='engine_dispatch'` claim, atomic single-use INSERT into `engine_token_uses` per `(jti, endpoint)` with FK→IntegrityError translation). `build_session_config` walks session → assignment → candidate → job → stage → bank → snapshot → questions → ancestry-walked company profile to build the engine's `SessionConfig`. `record_session_result` atomically updates the session row gated on `state='active'`, idempotent on retry, writes an audit row. Router under `/api/internal/sessions/{id}/{config,results}` — auth middleware exempts `/api/internal/`. |
 
@@ -486,7 +486,18 @@ import resend
 
 ### Invite / confirmation link URLs
 
-Outbound emails (company admin invite, team invite, invite resend) build links pointing at the frontend. **Read `settings.frontend_base_url`** — do NOT hardcode or branch on `settings.debug`. The old pattern `"http://localhost:3000" if settings.debug else "https://app.projectx.com"` silently sent staging invites to production when staging deployed with `DEBUG=false`. Every environment must set `FRONTEND_BASE_URL` in its `.env` explicitly.
+Outbound emails build links pointing at one of two frontends. There are two distinct settings — pick the right one per email type:
+
+| Email type | Setting | Frontend app |
+|---|---|---|
+| Company admin invite, team invite, team-invite resend | `settings.frontend_base_url` | `frontend/app` (recruiter dashboard) |
+| Candidate interview invite, interview resend | `settings.candidate_session_base_url` | `frontend/session` (candidate interview surface) |
+
+Pointing a candidate-bound email at `frontend_base_url` would land the candidate on the recruiter login page — the wrong surface entirely. The historical pattern `f"{settings.frontend_base_url}/interview/{token_str}"` was correct only because both surfaces lived in the same app; after the 2026-05-01 split, that pattern is a bug.
+
+**Anti-regression grep**: `grep -rn "frontend_base_url.*interview\|frontend_base_url.*candidate-session" app/` must return zero matches. Pre-merge gate today; CI gate when CI lands.
+
+Every environment must set BOTH settings explicitly. The localhost defaults are local-dev convenience only.
 
 ---
 
@@ -550,6 +561,7 @@ Migrations so far:
 - Use redactors: log `candidate_id` not email; log `session_id` + `jti_prefix=<first 8>` not the full JWT; log lengths and hashes, not bodies.
 - Errors raised from validation must scrub user input from the message before reaching the log handler. The `errors.py` per-module file is the single place to map raw exceptions to user-safe messages.
 - `correlation_id` is required on every log record on every request path. Middleware injects it; never overwrite or strip it inside a handler.
+- The candidate JWT (`token` path param in `/api/candidate-session/{token}/*`) MUST NOT appear in any structured log field, error message, or audit row. Use `jti_prefix=<first 8 chars of jti>` from the verified token's payload, never the raw bearer string.
 
 ### Rate Limiting
 
