@@ -58,23 +58,21 @@ Three independent Next.js 16 apps:
 
 ```
 frontend/session/
-├── package.json                    ← Next 16 + LiveKit + TanStack + zod + sentry; NO Supabase
-├── next.config.ts                  ← poweredByHeader: false, productionBrowserSourceMaps: false, output: standalone
-├── tsconfig.json                   ← strict: true, noUncheckedIndexedAccess: true, noImplicitOverride: true
+├── package.json                    ← Next 16 + LiveKit + TanStack + zod; NO Supabase
+├── next.config.ts                  ← output: standalone, headers() with full security headers + CSP
+├── tsconfig.json                   ← matches frontend/app exactly (strict: true, target ES2017, @/* path alias)
 ├── postcss.config.mjs              ← Tailwind v4
-├── eslint.config.mjs               ← inherits eslint-config-next; adds no-console (warn)
+├── eslint.config.mjs               ← inherits eslint-config-next
 ├── vitest.config.ts                ← coverage thresholds: 80% global, 100% branch on three enumerated files
 ├── components.json                 ← shadcn registries: @agents-ui, @ai-elements
 ├── app-config.ts                   ← moved from frontend/app
-├── proxy.ts                        ← Next.js middleware: security headers (CSP, HSTS, Referrer-Policy, etc.)
-├── instrumentation.ts              ← Sentry init with PII scrubbing (strips /interview/[^/]+ from URLs)
-├── Dockerfile                      ← multi-stage; non-root user; pinned base image digest
-├── docker-compose.yml              ← port 3002, dev + prod profiles
-├── .env.local.example              ← NEXT_PUBLIC_API_URL, NEXT_PUBLIC_LIVEKIT_HOST_PATTERN
+├── Dockerfile                      ← matches frontend/admin pattern: node:22-alpine, multi-stage, non-root, port 3002
+├── docker-compose.yml              ← port 3002, dev + prod profiles (mirrors frontend/app pattern)
+├── .env.local.example              ← NEXT_PUBLIC_API_URL only
 ├── .gitignore, .dockerignore
 ├── README.md, CLAUDE.md, AGENTS.md
 ├── app/
-│   ├── layout.tsx                  ← merged with the old (interview)/layout.tsx
+│   ├── layout.tsx                  ← MERGED: recruiter root layout + interview layout (see "Layout merge" below)
 │   ├── page.tsx                    ← "private interview link" landing copy
 │   ├── not-found.tsx               ← same friendly copy
 │   ├── globals.css                 ← duplicated px tokens + shadcn → px mapping
@@ -98,10 +96,10 @@ frontend/session/
 │   └── hooks/
 │       └── use-{candidate-session,consent,request-otp,verify-otp}.ts  ← MOVED
 ├── public/
+│   └── projectx-logo.svg           ← DUPLICATED (referenced by app-config.ts)
 └── tests/
     ├── setup.ts                    ← DUPLICATED + getUserMedia polyfill added
     ├── _utils/render.tsx           ← DUPLICATED verbatim
-    ├── proxy.test.ts               ← NEW: verifies every security header
     ├── lib/
     │   ├── env.test.ts             ← NEW: zod schema rejects invalid env
     │   └── api/candidate-session.test.ts  ← MOVED
@@ -114,56 +112,78 @@ frontend/session/
         └── use-session-outcome.test.tsx
 ```
 
-### Security middleware (mandatory, not optional)
+### Layout merge (`app/layout.tsx`)
 
-`proxy.ts` sets these headers on every response:
+The new app's root layout merges two existing layouts:
 
-```
-Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
-Content-Security-Policy:
-  default-src 'self';
-  script-src 'self';
-  style-src 'self' 'unsafe-inline';
-  img-src 'self' data: blob:;
-  media-src 'self' blob: mediastream:;
-  connect-src 'self' <NEXT_PUBLIC_API_URL> wss://*.livekit.cloud https://*.livekit.cloud;
-  frame-ancestors 'none';
-  base-uri 'self';
-  form-action 'self';
-  object-src 'none';
-  upgrade-insecure-requests
-Referrer-Policy: no-referrer
-X-Content-Type-Options: nosniff
-X-Frame-Options: DENY
-Permissions-Policy: camera=(self), microphone=(self), geolocation=(), interest-cohort=()
-Cross-Origin-Opener-Policy: same-origin
-Cross-Origin-Resource-Policy: same-origin
+1. From `frontend/app/app/layout.tsx`: the `<html>` shell with `next/font/google` Inter + Fraunces + JetBrains_Mono variables, `data-px-theme="warm-light"` and `data-px-density="comfortable"` attributes, the `<body>` with `font-sans` + `bg-background text-foreground`. The `data-px-*` attributes are load-bearing for the px primitives.
+2. From `frontend/app/app/(interview)/layout.tsx`: the `<InterviewProviders>` wrapper (QueryClient + Toaster) and the `min-h-screen w-full` shell with `var(--px-bg)` / `var(--px-fg)` background.
+
+The metadata block updates to `title: "ProjectX Interview"`, `description: "AI-led interview session"`. The candidate-surface `<html lang="en">` stays lang-en for now (i18n is out of scope).
+
+### Security headers (next.config.ts `headers()`)
+
+The new app extends the existing `frontend/app/next.config.ts` security pattern with a real CSP. CSP is feasible here because the candidate surface has no Supabase, no React Query devtools, and no inline-bootstrap-script complexity that blocked CSP in the recruiter app.
+
+```ts
+// next.config.ts (sketch — full diff in implementation plan)
+const SECURITY_HEADERS = [
+  { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
+  { key: "X-Frame-Options", value: "DENY" },
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "Referrer-Policy", value: "no-referrer" },  // load-bearing: prevents JWT-in-URL leak
+  { key: "Permissions-Policy", value: "camera=(self), microphone=(self), geolocation=(), interest-cohort=()" },
+  { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+  { key: "Cross-Origin-Resource-Policy", value: "same-origin" },
+  {
+    key: "Content-Security-Policy",
+    value: [
+      "default-src 'self'",
+      "script-src 'self'",
+      "style-src 'self' 'unsafe-inline'",  // Tailwind runtime-injected styles
+      "img-src 'self' data: blob:",
+      "media-src 'self' blob: mediastream:",
+      // NEXT_PUBLIC_API_URL must be added at build time via the Docker ARG.
+      // wss://*.livekit.cloud covers the LiveKit Cloud project (per backend/nexus/livekit.toml).
+      `connect-src 'self' ${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"} wss://*.livekit.cloud https://*.livekit.cloud`,
+      "frame-ancestors 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "object-src 'none'",
+      "upgrade-insecure-requests",
+    ].join("; "),
+  },
+];
 ```
 
 `Referrer-Policy: no-referrer` is the load-bearing one — it prevents the candidate JWT (in URL path) from leaking via `Referer` headers when the page navigates externally.
 
-The CSP is generated from `NEXT_PUBLIC_API_URL` and `NEXT_PUBLIC_LIVEKIT_HOST_PATTERN` env values. Hardcoded hosts are forbidden.
+If a future scenario requires self-hosted LiveKit, the `wss://*.livekit.cloud` entries are parameterized via env at that point. Hardcoded for now.
 
 ### Env validation
 
-`lib/env.ts` parses `process.env` through a zod schema at module load. Required vars: `NEXT_PUBLIC_API_URL` (URL), `NEXT_PUBLIC_LIVEKIT_HOST_PATTERN` (string). Invalid config crashes the app at boot — no fallback, no warning-and-continue.
+`lib/env.ts` parses `process.env` through a zod schema at module load. Required vars: `NEXT_PUBLIC_API_URL` (URL). Invalid config crashes the app at boot — no fallback, no warning-and-continue. Discipline mirrors backend `pydantic-settings`.
 
-### Sentry with PII scrubbing
+### Sentry — deferred
 
-`instrumentation.ts` initializes Sentry with a `beforeSend` hook that:
-- Replaces `/interview/[^/]+` in `request.url`, `breadcrumb.data.url`, and `error.stack` with `/interview/<redacted>`.
-- Strips `Authorization` headers (defense in depth — candidate flow doesn't send any).
-- Drops events whose tags pattern-match a JWT (`eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`).
-
-Separate Sentry DSN from the recruiter app — dashboards stay clean per-surface.
+Sentry is NOT installed in `frontend/app` today (despite CLAUDE.md aspirational mentions). Adding it in this PR is out of scope. The CLAUDE.md updates document the requirement so when Sentry is wired (a separate PR that touches all three frontend apps), the candidate-session DSN MUST scrub `/interview/[^/]+` from URL/breadcrumb/stack data and drop events with raw JWT pattern matches. Until then, the candidate surface logs nothing to a third party — `console.*` calls in production are flagged by ESLint `no-console` (warn).
 
 ### Dependencies
 
-Runtime: `next` 16.2.4, `react` 19.2.5, `react-dom` 19.2.5, `livekit-client`, `@livekit/components-react`, `@livekit/components-styles`, `@tanstack/react-query`, `react-hook-form`, `@hookform/resolvers`, `zod`, `sonner`, `clsx`, `tailwind-merge`, `lucide-react`, `class-variance-authority`, `motion`, `@sentry/nextjs`.
+Runtime: `next` 16.2.4, `react` 19.2.5, `react-dom` 19.2.5, `livekit-client`, `@livekit/components-react`, `@livekit/components-styles`, `@livekit/protocol`, `@tanstack/react-query`, `react-hook-form`, `@hookform/resolvers`, `zod`, `sonner`, `clsx`, `tailwind-merge`, `lucide-react`, `class-variance-authority`, `motion`.
 
 Dev: `vitest`, `@vitest/coverage-v8`, `jsdom`, `@testing-library/{react,jest-dom,user-event}`, `tailwindcss` v4, `@tailwindcss/postcss`, `eslint`, `eslint-config-next`, `typescript`, `@types/*`.
 
-**Forbidden dependencies** (CI-enforced): `@supabase/*`, `@dnd-kit/*`, `gsap`, `@dagrejs/dagre`, `cmdk`, `embla-carousel-react`, `media-chrome`, `@microsoft/fetch-event-source`, `ai`.
+**Forbidden dependencies** (documented in CLAUDE.md; CI-enforced when CI lands): `@supabase/*`, `@dnd-kit/*`, `gsap`, `@dagrejs/dagre`, `cmdk`, `embla-carousel-react`, `media-chrome`, `@microsoft/fetch-event-source`, `ai`.
+
+### Dockerfile
+
+Matches the `frontend/admin/Dockerfile` pattern verbatim, just with `PORT=3002` and `EXPOSE 3002`:
+- Base image: `node:22-alpine` (unpinned digest, matching the precedent — pinning all three Dockerfiles' digests is a follow-up improvement, not blocking this PR)
+- Multi-stage: `deps` → `builder` → `runner`
+- Non-root user: `nextjs:nodejs` (UID/GID 1001)
+- `output: "standalone"` minimal image
+- Build arg: `NEXT_PUBLIC_API_URL` baked at build time (required for the CSP `connect-src` to be correct in the production bundle)
 
 ---
 
@@ -204,12 +224,13 @@ Tests:
 
 | File | Reason kept identical |
 |---|---|
-| `lib/utils.ts` | `cn` helper — never diverges |
+| `lib/utils.ts` | `cn` helper — never diverges (used 22 times in candidate code) |
 | `lib/api/errors.ts` | Error narrowing shape used by hooks in both apps |
 | `components/px/Button.tsx` | Visual + a11y identity must match across surfaces |
 | `components/px/Input.tsx` | Same |
 | `components/px/Toaster.tsx` | Same (sonner config) |
 | Shadcn → px token mapping in `app/globals.css` | Visual consistency |
+| `public/projectx-logo.svg` | Referenced by `app-config.ts` (default `logo` field) |
 | `tests/setup.ts` | Polyfills (`Storage`, `matchMedia`, `ResizeObserver`, `IntersectionObserver`) |
 | `tests/_utils/render.tsx` | QueryClient harness for composition tests |
 
@@ -302,7 +323,7 @@ The two settings must hold distinct hostnames in the test, otherwise a regressio
 grep -rn "frontend_base_url.*interview\|frontend_base_url.*candidate-session" backend/nexus/app/
 ```
 
-Must return zero matches. CI runs this as a guard.
+Must return zero matches. Documented as a pre-merge grep guard in `backend/nexus/CLAUDE.md`; CI gate when CI lands.
 
 ---
 
@@ -347,7 +368,7 @@ If the `registries` object becomes empty, delete the key.
 
 - `app/(interview)/` whole tree
 - `components/agents-ui/`, `components/interview/`, `components/ui/`, `components/ai-elements/`
-- `hooks/agents-ui/` (and `hooks/` if empty)
+- `hooks/agents-ui/` AND the `hooks/` parent dir (verified: `hooks/` only contains `agents-ui/`)
 - `lib/hooks/use-{candidate-session,consent,request-otp,verify-otp,start-session}.ts`
 - `lib/api/candidate-session.ts`
 - `app-config.ts`
@@ -419,7 +440,7 @@ coverage: {
 }
 ```
 
-The 100%-branch threshold per file makes any drop in candidate-path test coverage a CI failure.
+The 100%-branch threshold per file makes any drop in candidate-path test coverage cause `npm run test` to exit non-zero (CI gate when CI lands).
 
 ### `tests/setup.ts`
 
@@ -448,16 +469,19 @@ Copied verbatim — already minimal (just `QueryClientProvider` with retries off
 
 The moved tests already mock `@livekit/components-react`, `livekit-client`, and `agents-ui` providers inline. They keep these mocks unchanged after the move — the new app installs the same SDKs.
 
-### CI
+### CI — deferred
 
-Add `frontend/session` to the GitHub Actions matrix. Add a dependency-check rule that fails CI if:
+No `.github/workflows/` exists in the repo today. CI integration of `frontend/session` is documented in the root + new-app CLAUDE.md as a requirement for whoever wires CI later. The same docs enumerate the dependency-check rule that should fail the build if:
 - `frontend/app/package.json` lists any `livekit-*` package, OR
 - `frontend/session/package.json` lists any `@supabase/*` package.
 
+Until CI exists, these are pre-merge manual greps documented in the build sequence's verification gates.
+
 ### New tests added with the move
 
-- `tests/proxy.test.ts` — verifies every security header from `proxy.ts` is set and the candidate JWT in URL is not stripped or modified.
 - `tests/lib/env.test.ts` — verifies the zod env schema rejects missing/invalid input.
+
+(A test for `next.config.ts` `headers()` is deferred — Next 16 doesn't expose the headers config in a unit-testable form without spinning up the dev server. Header coverage falls to the manual smoke gate in Phase 6 + a curl assertion in Phase 1.)
 
 ---
 
@@ -467,10 +491,11 @@ Add `frontend/session` to the GitHub Actions matrix. Add a dependency-check rule
 
 - Add `frontend/session/` row to Monorepo Structure.
 - Update Phase 3C.2 row to note the 2026-05-01 extract.
-- Add `frontend/session/proxy.ts`, `frontend/session/lib/api/candidate-session.ts`, `frontend/session/lib/env.ts` to Test Coverage Gates.
+- Add `frontend/session/lib/api/candidate-session.ts`, `frontend/session/lib/env.ts`, and `frontend/session/next.config.ts headers()` to Test Coverage Gates.
 - Add a `frontend/session` block to Dev Commands.
-- Add a hard rule under Security: `frontend/session` MUST NOT depend on `@supabase/*`; `frontend/app` MUST NOT depend on `livekit-*` or import from `components/{agents-ui,ai-elements}/`. CI-enforced.
-- Add an Observability bullet: each frontend app uses its own Sentry DSN; the candidate-session DSN's `beforeSend` scrubs `/interview/[^/]+`.
+- Add a hard rule under Security: `frontend/session` MUST NOT depend on `@supabase/*`; `frontend/app` MUST NOT depend on `livekit-*` or import from `components/{agents-ui,ai-elements}/`. Manual grep gate today; CI-enforced when CI lands.
+- Add a deferred-work note: when Sentry is wired across all three frontend apps, the candidate-session DSN's `beforeSend` MUST scrub `/interview/[^/]+` from URL/breadcrumb/stack data and drop events with raw JWT pattern matches.
+- Add a deferred-work note: when CI lands, the matrix MUST include `frontend/session` and the dependency-check rule above.
 
 ### `frontend/app/CLAUDE.md`
 
@@ -498,11 +523,13 @@ Replace the "Two design systems" block with a "One design system" block. Next.js
 
 ### `backend/nexus/CLAUDE.md`
 
-Rewrite "Notifications Abstraction → Invite / confirmation link URLs" to split `frontend_base_url` (recruiter emails) from `candidate_session_base_url` (candidate emails). Add the anti-regression grep as a CI gate. Add the candidate JWT logging discipline ("never log raw token; use `jti_prefix` only").
+Rewrite "Notifications Abstraction → Invite / confirmation link URLs" to split `frontend_base_url` (recruiter emails) from `candidate_session_base_url` (candidate emails). Document the anti-regression grep as a pre-merge gate (CI gate when CI lands). Add the candidate JWT logging discipline ("never log raw token; use `jti_prefix` only").
 
 ### NEW `frontend/session/CLAUDE.md`
 
-Full new file modeled on the existing CLAUDE.md style. Sections: What This Surface Is, Tech Stack, Absolute Rules (token handling, no Supabase, security headers always on, env validation, no analytics, two-app drift discipline), Directory Structure, Candidate JWT Rules, API Client, LiveKit Integration, Tailwind Standards, Accessibility, Security, Production Operating Rules, Dev Commands, Human Review Required For.
+Full new file modeled on the existing CLAUDE.md style. Sections: What This Surface Is, Tech Stack, Absolute Rules (token handling, no Supabase, security headers in next.config.ts always on, env validation, no analytics until Sentry+scrubbers wired, two-app drift discipline), Directory Structure, Candidate JWT Rules, API Client, LiveKit Integration, Tailwind Standards, Accessibility, Security, Production Operating Rules, Dev Commands, Human Review Required For.
+
+The forbidden-deps list is enumerated explicitly. Adding `@supabase/*` or any of the recruiter-only packages to `frontend/session/package.json` is a CLAUDE.md-documented merge-blocker (and a CI gate when CI lands).
 
 ### NEW `frontend/session/AGENTS.md`
 
@@ -512,33 +539,30 @@ Three short blocks: Next.js 16 warning, "One purpose" (don't add recruiter featu
 
 ## Build Sequence
 
-Seven phases. Phases 1–3 are additive; phase 4 is the breaking cut. Each phase has a verification gate.
+Six phases. Phases 1–3 are additive; phase 4 is the breaking cut. Each phase has a verification gate.
 
 ### Phase 0 — Pre-flight
 Clean working tree, branch off `main`, baseline build snapshot.
 
 ### Phase 1 — Scaffold `frontend/session` (additive)
-Create the new app with empty shell. Build, test, healthz, security headers verified. `frontend/app` unchanged.
+Create the new app with empty shell. Build, test, healthz reachable, security headers verified via `curl -I http://localhost:3002/`. `frontend/app` unchanged.
 
 ### Phase 2 — Backend changes (additive)
 Add `candidate_session_base_url`, extend CORS, update scheduler.py, add tests. Old `frontend_base_url` paths still exist (will be removed in phase 4 cleanup of frontend/app).
 
 ### Phase 3 — Move + duplicate (additive)
-`git mv` candidate code from `frontend/app` to `frontend/session`. Duplicate the 6 shared primitives. Both apps now have the candidate code; frontend/app still works.
+`git mv` candidate code from `frontend/app` to `frontend/session`. Duplicate the 6 shared primitives + `public/projectx-logo.svg`. Both apps now have the candidate code; frontend/app still works.
 
 Manual smoke: hit a real `/interview/{token}` URL in `frontend/session` end-to-end (pre-check → OTP → camera/mic → LiveKit join). This is the gate before phase 4.
 
 ### Phase 4 — Cleanup `frontend/app` (breaking cut)
-Delete moved files + dead code (`use-start-session.ts`); strip `proxy.ts`; remove deps from `package.json`; drop registries from `components.json`. Run grep gauntlet (every command returns zero matches). Build + test green. Bundle size delta recorded.
+Delete moved files + dead code (`use-start-session.ts`); strip `proxy.ts` `/interview` branch; remove deps from `package.json`; drop registries from `components.json`. Run grep gauntlet (every command returns zero matches). Build + test green. Bundle size delta recorded.
 
 ### Phase 5 — Documentation
-Update the four CLAUDE.md files + AGENTS.md per Section 7. Verify no candidate references remain in `frontend/app` docs.
+Update the four CLAUDE.md files + AGENTS.md per § Documentation Updates. Verify no candidate references remain in `frontend/app` docs. Document the deferred Sentry + CI requirements in root CLAUDE.md so the gaps are explicit.
 
-### Phase 6 — CI integration
-Add `frontend/session` to the matrix. Add the dependency-check rule. Verify on draft PR.
-
-### Phase 7 — Final verification
-Run all four services together. End-to-end manual smoke: recruiter sends invite → email link is `localhost:3002/interview/<jti>` → candidate completes session → CompletionScreen renders. Lighthouse, Sentry smoke, coverage report excerpt in PR description.
+### Phase 6 — Final verification
+Run all four services together. End-to-end manual smoke: recruiter sends invite → email link is `localhost:3002/interview/<jti>` → candidate completes session → CompletionScreen renders. Lighthouse on candidate pre-check, coverage report excerpt in PR description, manual run of the dependency-check greps from § Documentation Updates.
 
 ### Deploy ordering (production)
 
@@ -553,33 +577,36 @@ Run all four services together. End-to-end manual smoke: recruiter sends invite 
 
 ## Out of Scope
 
-- E2E tests (Playwright). Candidate flow has no E2E coverage today; adding it is its own project.
-- Visual regression testing.
-- Shared workspace package for px primitives. Duplication is the deliberate choice; revisit only if drift becomes a real problem.
-- Removing the shadcn → px token mapping from `frontend/app/app/globals.css`. Harmless without consumers; removing it intersects with the px palette block — safer to leave as a follow-up.
-- Schema migrations. None required.
-- Threat-model rewrite. Trust boundary unchanged (single-use HS256 in URL, atomic consume). One-line note in the existing entry is appropriate; no STRIDE pass needed.
-- Ceipal / ATS work.
-- Phase 3D scoring/reporting work.
+- **Sentry installation.** No Sentry in the codebase today (despite CLAUDE.md aspirational mentions). Wiring Sentry across all three frontend apps is a separate PR. The CLAUDE.md updates here document what the candidate-session DSN MUST do (PII scrubbing) when that work happens.
+- **CI infrastructure.** No `.github/workflows/` exists. Adding `frontend/session` to a CI matrix is impossible until the matrix exists. The CLAUDE.md updates here enumerate the requirement and the dependency-check rule for whoever wires CI later.
+- **Dockerfile digest pinning.** All three Dockerfiles use unpinned `node:22-alpine`. Pinning is an enterprise improvement that touches all three apps consistently — separate PR.
+- **E2E tests (Playwright).** Candidate flow has no E2E coverage today; adding it is its own project.
+- **Visual regression testing.**
+- **Shared workspace package for px primitives.** Duplication is the deliberate choice; revisit only if drift becomes a real problem.
+- **Removing the shadcn → px token mapping from `frontend/app/app/globals.css`.** Harmless without consumers; removing it intersects with the px palette block — safer to leave as a follow-up.
+- **Schema migrations.** None required.
+- **Threat-model rewrite.** Trust boundary unchanged (single-use HS256 in URL, atomic consume). One-line note in the existing entry is appropriate; no STRIDE pass needed.
+- **Ceipal / ATS work.**
+- **Phase 3D scoring/reporting work.**
 
 ---
 
 ## Risks & Mitigations
 
 ### Risk: production candidate emails point at the wrong origin
-Mitigation: deploy ordering step 1 sets `CANDIDATE_SESSION_BASE_URL` before backend deploys. Phase 7 step 2 smoke test verifies the rendered link in staging before production cutover. Anti-regression grep blocks any new `frontend_base_url + /interview` pairing.
+Mitigation: deploy ordering step 1 sets `CANDIDATE_SESSION_BASE_URL` before backend deploys. Phase 6 step 2 smoke test verifies the rendered link in staging before production cutover. Anti-regression grep blocks any new `frontend_base_url + /interview` pairing.
 
 ### Risk: a duplicated primitive drifts between apps without anyone noticing
 Mitigation: drift discipline checklist in both CLAUDE.md files. Code review gate. The duplicated set is intentionally small (3 px components + 2 lib files + token mapping) so accidental drift is visible.
 
 ### Risk: a recruiter-side dependency creeps back into `frontend/session` (or vice versa)
-Mitigation: CI dependency-check rule fails the build. Forbidden lists are enumerated in both CLAUDE.md files.
+Mitigation: forbidden-deps lists enumerated in both CLAUDE.md files. Pre-merge `grep livekit frontend/app/package.json` and `grep @supabase frontend/session/package.json` are documented gates (in the build-sequence verification table and in both CLAUDE.md files). CI rule when CI lands.
 
-### Risk: candidate JWT logged or sent to Sentry
-Mitigation: `instrumentation.ts` `beforeSend` scrubs `/interview/[^/]+` from URL/breadcrumb/stack. JWT pattern detector drops events with raw bearer values. Test in `tests/instrumentation` (added in implementation plan, not in spec) verifies the scrubber on representative payloads. Backend CLAUDE.md adds the `jti_prefix=<first 8>` discipline rule.
+### Risk: candidate JWT logged or sent to Sentry (when Sentry lands)
+Mitigation: Sentry is OUT OF SCOPE for this PR. The new `frontend/session/CLAUDE.md` documents the requirement that when Sentry is wired, the candidate-session DSN's `beforeSend` MUST scrub `/interview/[^/]+` from URL/breadcrumb/stack and drop events with raw JWT pattern matches. Backend `CLAUDE.md` already adds the `jti_prefix=<first 8>` discipline rule for backend logs.
 
-### Risk: `proxy.ts` security headers loosened during a debugging session and not restored
-Mitigation: `tests/proxy.test.ts` asserts every header. Coverage gate. Human Review Required for any change to `proxy.ts`.
+### Risk: `next.config.ts` security headers loosened during a debugging session and not restored
+Mitigation: Phase 1 verification gate is a `curl -I` assertion that every header is set. Phase 6 final smoke re-runs the same check. Human Review Required for any change to `next.config.ts headers()` (documented in `frontend/session/CLAUDE.md`).
 
 ### Risk: bundle size of `frontend/session` is larger than expected
 Mitigation: bundle budget in CLAUDE.md (< 180 KB pre-LiveKit; LiveKit-bearing routes exempt but lazy-loaded). `@next/bundle-analyzer` wired but off by default for periodic audits.
@@ -595,7 +622,7 @@ Mitigation: phases 1–3 are additive — both apps work in parallel after phase
 |---|---|---|
 | Baseline build | All three frontends + backend green on `main` | 0 |
 | Session app boots | `npm run build && npm run test && curl /healthz` green | 1 |
-| Security headers set | `curl -I` shows every header from § Security middleware | 1 |
+| Security headers set | `curl -I http://localhost:3002/` shows every header from § Security headers | 1 |
 | Backend tests green | `pytest -k "config or scheduler"` | 2 |
 | No `frontend_base_url + /interview` | grep returns zero matches | 2 |
 | Session app coverage | 100% branch on `candidate-session.ts`, OtpStep, app.tsx | 3 |
@@ -603,9 +630,9 @@ Mitigation: phases 1–3 are additive — both apps work in parallel after phase
 | Cleanup grep gauntlet | All five greps return zero matches | 4 |
 | frontend/app build green | `lint && type-check && test && build` | 4 |
 | Bundle size delta | Measurable reduction recorded in PR description | 4 |
-| Docs free of candidate refs | `grep -ri "livekit\|interview\|...\|"` in frontend/app/CLAUDE.md returns 0 | 5 |
-| CI dependency rule fires | Verified by deliberately adding a forbidden dep then reverting | 6 |
-| Final smoke | Recruiter → invite → candidate → CompletionScreen | 7 |
+| Docs free of candidate refs | `grep -ri "livekit\|interview\|wizardshell\|agents-ui\|ai-elements\|candidate-session"` in `frontend/app/CLAUDE.md` returns 0 (other than one-line pointer to `frontend/session/`) | 5 |
+| Manual dep-check greps | `grep livekit frontend/app/package.json` and `grep @supabase frontend/session/package.json` both return 0 | 5 |
+| Final smoke | Recruiter → invite → candidate → CompletionScreen | 6 |
 
 ---
 
