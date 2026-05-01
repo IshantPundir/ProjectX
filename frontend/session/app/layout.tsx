@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Inter, Fraunces, JetBrains_Mono } from "next/font/google";
 import type { ReactNode } from "react";
 
+import { InterviewProviders } from "@/components/interview/providers";
+
 import "./globals.css";
 
 const inter = Inter({
@@ -41,15 +43,17 @@ export default function RootLayout({
       data-px-density="comfortable"
     >
       <body className="min-h-full flex flex-col bg-background text-foreground font-sans">
-        <div
-          className="min-h-screen w-full"
-          style={{
-            background: "var(--px-bg)",
-            color: "var(--px-fg)",
-          }}
-        >
-          {children}
-        </div>
+        <InterviewProviders>
+          <div
+            className="min-h-screen w-full"
+            style={{
+              background: "var(--px-bg)",
+              color: "var(--px-fg)",
+            }}
+          >
+            {children}
+          </div>
+        </InterviewProviders>
       </body>
     </html>
   );
