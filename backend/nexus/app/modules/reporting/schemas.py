@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 
-from app.modules.analysis.schemas import SignalScore
+from app.modules.analysis import SignalScore
 
 
 class QuestionScorecard(BaseModel):

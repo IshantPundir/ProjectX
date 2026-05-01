@@ -68,7 +68,7 @@ from app.ai.realtime import (
 from app.config import settings
 from app.database import get_bypass_session
 from app.modules.interview_engine.interviewer import InterviewerAgent
-from app.modules.interview_runtime.service import build_session_config
+from app.modules.interview_runtime import build_session_config
 
 
 log = structlog.get_logger("interview-engine")

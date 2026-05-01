@@ -7,7 +7,7 @@ from string import Template
 
 from app.ai.prompts import prompt_loader
 from app.config import settings
-from app.modules.interview_runtime.schemas import SessionConfig
+from app.modules.interview_runtime import SessionConfig
 
 # Matches the first capitalized multi-word name at the start of the about text.
 # Examples: "Vectra Pay is …" -> "Vectra Pay", "Acme Corp is …" -> "Acme Corp"

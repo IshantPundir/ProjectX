@@ -5,3 +5,27 @@ in-process by the merged interview_engine worker. The /api/internal/*
 HTTP boundary and the engine dispatch JWT were retired in Phase 3 of
 the modular-monolith uplift.
 """
+
+from app.modules.interview_runtime.schemas import (
+    QuestionConfig,
+    QuestionResult,
+    SessionConfig,
+    SessionResult,
+    SteeringObservation,
+    TranscriptEntry,
+)
+from app.modules.interview_runtime.service import (
+    build_session_config,
+    record_session_result,
+)
+
+__all__ = [
+    "QuestionConfig",
+    "QuestionResult",
+    "SessionConfig",
+    "SessionResult",
+    "SteeringObservation",
+    "TranscriptEntry",
+    "build_session_config",
+    "record_session_result",
+]

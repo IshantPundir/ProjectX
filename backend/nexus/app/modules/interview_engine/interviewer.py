@@ -30,14 +30,14 @@ from livekit.agents import Agent, RunContext, function_tool
 
 from app.config import settings
 from app.database import get_bypass_session
-from app.modules.interview_runtime.schemas import (
+from app.modules.interview_runtime import (
     QuestionResult,
     SessionConfig,
     SessionResult,
     SteeringObservation,
     TranscriptEntry,
+    record_session_result,
 )
-from app.modules.interview_runtime.service import record_session_result
 from app.modules.interview_engine.state_machine import InterviewStateMachine, Action
 from app.modules.interview_engine.prompt_builder import build_system_prompt
 
