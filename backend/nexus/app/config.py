@@ -176,7 +176,14 @@ class Settings(BaseSettings):
     otel_service_name: str = "nexus"
 
     # CORS
-    cors_origins: list[str] = ["http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:3000", "http://127.0.0.1:3001"]
+    cors_origins: list[str] = [
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://localhost:3002",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
+        "http://127.0.0.1:3002",
+    ]
 
     # --- Interview engine (in-process, Phase 3 merged) ---
     # The engine no longer runs as a separate Docker image with its own
@@ -282,6 +289,19 @@ class Settings(BaseSettings):
     @field_validator("frontend_base_url")
     @classmethod
     def _strip_trailing_slash(cls, v: str) -> str:
+        return v.rstrip("/")
+
+    # Candidate session base URL — used to build interview invite links in
+    # scheduler emails. Kept SEPARATE from frontend_base_url so the two
+    # surfaces (recruiter dashboard vs. candidate session app) can be
+    # deployed at different origins. Every environment must set
+    # CANDIDATE_SESSION_BASE_URL explicitly. Defaulting both to the same
+    # host masked the split during Phase 1; we are not repeating that mistake.
+    candidate_session_base_url: str = "http://localhost:3002"
+
+    @field_validator("candidate_session_base_url")
+    @classmethod
+    def _strip_candidate_session_trailing_slash(cls, v: str) -> str:
         return v.rstrip("/")
 
 
