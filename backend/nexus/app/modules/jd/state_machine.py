@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 # IllegalTransitionError is defined in app/modules/jd/errors.py — exception
 # handlers and other modules can import it without pulling in the state machine.
+from app.modules.audit.service import log_event
 from app.modules.jd.errors import IllegalTransitionError
 
 logger = structlog.get_logger()
@@ -67,9 +68,6 @@ async def transition(
         raise IllegalTransitionError(from_state, to_state)
 
     job.status = to_state
-
-    # Lazy import to avoid circular dependency between jd and audit modules.
-    from app.modules.audit.service import log_event
 
     await log_event(
         db,

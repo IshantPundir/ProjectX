@@ -28,6 +28,7 @@ from app.models import (
 )
 from app.modules.audit.service import log_event
 from app.modules.auth.context import UserContext
+from app.modules.candidates.errors import CandidateNotFoundError
 from app.modules.notifications.service import render_template, send_email
 from app.modules.org_units.service import find_company_profile_in_ancestry
 from app.modules.scheduler.authz import (
@@ -37,6 +38,7 @@ from app.modules.scheduler.authz import (
 from app.modules.scheduler.errors import SessionAlreadyStartedError
 from app.modules.scheduler.schemas import InviteCreateRequest, InviteResponse
 from app.modules.session import service as session_service
+from app.modules.session.errors import SessionNotFoundError
 from app.modules.session.schemas import SessionState
 from app.modules.session.state_machine import transition
 
@@ -62,7 +64,6 @@ async def send_invite(
         .where(CandidateJobAssignment.id == request.assignment_id)
     )).scalar_one_or_none()
     if assignment is None:
-        from app.modules.candidates.errors import CandidateNotFoundError
         raise CandidateNotFoundError()  # reused 404 — assignment missing ≡ candidate-scope miss
 
     assert_assignment_active(assignment)
@@ -145,7 +146,6 @@ async def resend_invite(
         select(Session).where(Session.id == session_id)
     )).scalar_one_or_none()
     if sess is None:
-        from app.modules.session.errors import SessionNotFoundError
         raise SessionNotFoundError()
     if sess.state in {"active", "completed", "cancelled", "error"}:
         raise SessionAlreadyStartedError()
@@ -241,7 +241,6 @@ async def revoke_invite(
         select(Session).where(Session.id == session_id)
     )).scalar_one_or_none()
     if sess is None:
-        from app.modules.session.errors import SessionNotFoundError
         raise SessionNotFoundError()
 
     # Find + supersede live token (no successor — this is a revoke, not a replacement)

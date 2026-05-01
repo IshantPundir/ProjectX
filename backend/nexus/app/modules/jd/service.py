@@ -11,8 +11,24 @@ import structlog
 from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import JobPipelineInstance, JobPosting, JobPostingSignalSnapshot, OrganizationalUnit, User
-from app.modules.jd.errors import CompanyProfileIncompleteError, IllegalTransitionError
+from app.models import (
+    JobPipelineInstance,
+    JobPipelineStage,
+    JobPosting,
+    JobPostingSignalSnapshot,
+    OrganizationalUnit,
+    PipelineStageParticipant,
+    StageQuestionBank,
+    User,
+)
+from app.modules.audit import actions as audit_actions
+from app.modules.audit.service import log_event
+from app.modules.jd.errors import (
+    ActivationPredicateFailure,
+    ActivationPredicatesFailed,
+    CompanyProfileIncompleteError,
+    IllegalTransitionError,
+)
 from app.modules.jd.schemas import (
     JobPostingSummary,
     JobStatusEvent,
@@ -20,6 +36,12 @@ from app.modules.jd.schemas import (
 )
 from app.modules.jd.state_machine import transition
 from app.modules.org_units.service import find_company_profile_in_ancestry
+from app.modules.pipelines.categories import (
+    bank_eligible_stage_types,
+    human_led_stage_types,
+    middle_stage_types_for_activation,
+)
+from app.modules.question_bank.service import recompute_and_persist_stale
 
 logger = structlog.get_logger()
 
@@ -386,8 +408,6 @@ async def _recompute_stale_for_job_banks(db: AsyncSession, job: JobPosting) -> N
     confirmed snapshot remain marked stale after the edit. Import is lazy to
     avoid a circular import chain (jd ← question_bank ← jd).
     """
-    from app.modules.question_bank.service import recompute_and_persist_stale
-
     instance_result = await db.execute(
         select(JobPipelineInstance).where(
             JobPipelineInstance.job_posting_id == job.id
@@ -396,8 +416,6 @@ async def _recompute_stale_for_job_banks(db: AsyncSession, job: JobPosting) -> N
     instance = instance_result.scalar_one_or_none()
     if instance is None:
         return  # no pipeline yet; nothing to recompute
-
-    from app.models import StageQuestionBank, JobPipelineStage
 
     banks_result = await db.execute(
         select(StageQuestionBank)
@@ -490,18 +508,10 @@ async def evaluate_activation_predicates(
 ) -> list:
     """Run the activation gate predicates. Returns a list of ActivationPredicateFailure
     objects (empty list means ready to activate)."""
-    from app.models import PipelineStageParticipant, StageQuestionBank
-    from app.modules.jd.errors import ActivationPredicateFailure
-    from app.modules.pipelines.categories import (
-        bank_eligible_stage_types,
-        human_led_stage_types,
-        middle_stage_types_for_activation,
-    )
-
     failures: list = []
 
     # Predicate 1: pipeline instance exists
-    from sqlalchemy import select as _select
+    _select = select
 
     instance_result = await db.execute(
         _select(JobPipelineInstance).where(
@@ -513,8 +523,6 @@ async def evaluate_activation_predicates(
         return [ActivationPredicateFailure(code="no_pipeline", message="Pipeline not yet built")]
 
     # Load all stages ordered by position
-    from app.models import JobPipelineStage
-
     stages_result = await db.execute(
         _select(JobPipelineStage)
         .where(JobPipelineStage.instance_id == instance.id)
@@ -631,8 +639,6 @@ async def activate_job(
         IllegalTransitionError: if job is not in pipeline_built (or already active).
         ActivationPredicatesFailed: if one or more predicates fail.
     """
-    from app.modules.jd.errors import ActivationPredicatesFailed
-
     if job.status != "pipeline_built":
         raise IllegalTransitionError(from_state=job.status, to_state="active")
 
@@ -673,9 +679,6 @@ async def delete_job_posting(
         raise ValueError("Cannot delete a job while signals are being extracted")
     if job.enrichment_status == "streaming":
         raise ValueError("Cannot delete a job while re-enrichment is in progress")
-
-    from app.modules.audit import actions as audit_actions
-    from app.modules.audit.service import log_event
 
     await log_event(
         db,
