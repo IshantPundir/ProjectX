@@ -65,6 +65,9 @@ from app.ai.realtime import (
     build_turn_detector,
     build_tts_plugin,
 )
+from app.ai.otel import bootstrap_tracer_provider
+from opentelemetry.trace import set_tracer_provider as _otel_set_global_provider
+
 from app.config import settings
 from app.database import get_bypass_session
 from app.modules.interview_engine.interviewer import InterviewerAgent
@@ -80,7 +83,14 @@ server = AgentServer(host="0.0.0.0", port=8081)
 
 
 def prewarm(proc: JobProcess) -> None:
-    """Load Silero VAD into shared process memory at worker startup.
+    """Process-startup hook.
+
+    1. Bootstrap a TracerProvider so livekit-agents' built-in spans plus
+       any explicit spans we add later (Phase 2 tasks) actually ship to
+       an aggregator. Production-safe default: no env vars set -> spans
+       go nowhere. Setting OTEL_EXPORTER_OTLP_ENDPOINT (Langfuse / Sentry
+       / generic OTLP) flips the engine on.
+    2. Load Silero VAD into shared process memory.
 
     Tuning knobs (``activation_threshold``, ``min_speech_duration``,
     ``min_silence_duration``) come from ``InterviewEngineConfig`` so the
@@ -88,6 +98,11 @@ def prewarm(proc: JobProcess) -> None:
     Lower ``activation_threshold`` makes VAD catch quieter speech at the
     cost of occasional false-positive triggers from background noise.
     """
+    provider = bootstrap_tracer_provider()
+    _otel_set_global_provider(provider)
+    proc.userdata["otel_provider"] = provider
+    log.info("engine.otel.bootstrapped", service_name=settings.otel_service_name)
+
     proc.userdata["vad"] = silero.VAD.load(
         activation_threshold=settings.engine_silero_activation_threshold,
         min_speech_duration=settings.engine_silero_min_speech_duration,
