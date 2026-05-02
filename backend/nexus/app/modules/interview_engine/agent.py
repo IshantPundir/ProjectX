@@ -71,6 +71,7 @@ from opentelemetry.trace import set_tracer_provider as _otel_set_global_provider
 
 from app.config import settings
 from app.database import get_bypass_session
+from app.modules.interview_engine.controller import InterviewController
 from app.modules.interview_engine.interviewer import InterviewerAgent
 from app.modules.interview_runtime import build_session_config
 from app.modules.interview_engine.event_log import (
@@ -171,11 +172,21 @@ async def entrypoint(ctx: JobContext) -> None:
     # ENGINE_EVENT_LOG_SINK=none) and a per-session collector that the
     # observability listeners feed via append().
     event_sink: EventLogSink | None = build_sink_from_settings()
+    # Phase 2 — controller.txt is the live system prompt for InterviewController;
+    # task_prompt_hashes is keyed by question_id because the controller dispatches
+    # one QuestionTask per question. Phase 2 ships only TechnicalDepthTask, so
+    # every question hashes the same task_technical_depth.txt body. When more
+    # task kinds land (Phase 3+), build_task_for(...) will determine per-question
+    # prompt selection and the hash dict here should mirror that mapping.
     event_collector = EventCollector(
         session_id=session_id,
         tenant_id=tenant_id_str,
         correlation_id=correlation_id,
-        controller_prompt_hash=hash_prompt_file("interview/interviewer.txt"),
+        controller_prompt_hash=hash_prompt_file("interview/controller.txt"),
+        task_prompt_hashes={
+            q.id: hash_prompt_file("interview/task_technical_depth.txt")
+            for q in config.stage.questions
+        },
         model_versions={
             "llm": ai_config.interview_llm_model,
             "stt": ai_config.interview_stt_model,
@@ -196,10 +207,29 @@ async def entrypoint(ctx: JobContext) -> None:
         redaction=settings.engine_event_log_redaction,
     )
 
-    agent = InterviewerAgent(
+    # Phase 2 — controller-and-tasks architecture. SessionBudget is seeded
+    # with monotonic() at construction; on_enter() resets it to the actual
+    # session-start monotonic before the question loop runs, so the value
+    # passed here is just a placeholder.
+    from app.modules.interview_engine.budget import SessionBudget
+    from app.modules.interview_engine.idle_nudge import IdleNudgeConfig
+
+    agent = InterviewController(
         session_config=config,
         tenant_id=tenant_uuid,
         correlation_id=correlation_id,
+        collector=event_collector,
+        idle_nudge_config=IdleNudgeConfig(
+            first_nudge_seconds=settings.engine_idle_first_nudge_seconds,
+            second_nudge_seconds=settings.engine_idle_second_nudge_seconds,
+            give_up_seconds=settings.engine_idle_give_up_seconds,
+        ),
+        budget=SessionBudget(
+            started_at_monotonic=time.monotonic(),
+            duration_limit_seconds=config.stage.duration_minutes * 60.0,
+            overhead_seconds=settings.engine_task_budget_overhead_seconds,
+        ),
+        tenant_policy="record_only",
     )
 
     session = AgentSession(
@@ -244,6 +274,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
     _wire_session_observability(
         session,
+        agent=agent,
         collector=event_collector,
         log_verbose_content=settings.engine_log_user_transcripts,
         log_audio_events=settings.engine_log_audio_events,
@@ -326,6 +357,7 @@ def _log_session_setup(config) -> None:
 def _wire_session_observability(
     session: AgentSession,
     *,
+    agent: "InterviewerAgent | InterviewController",
     collector: EventCollector,
     log_verbose_content: bool,
     log_audio_events: bool,
@@ -373,6 +405,11 @@ def _wire_session_observability(
             {"old_state": ev.old_state, "new_state": ev.new_state},
             ev.created_at,
         )
+        # Phase 2: drive the InterviewController's idle-nudge state machine.
+        # InterviewerAgent (the legacy class still exported during cutover)
+        # does not implement this method, so we feature-detect.
+        if hasattr(agent, "on_user_state_changed"):
+            agent.on_user_state_changed(ev.new_state)
 
     @session.on("agent_state_changed")
     def _on_agent_state(ev: AgentStateChangedEvent) -> None:
@@ -492,28 +529,32 @@ def _wire_session_observability(
 
 def _wire_close_handler(
     session: AgentSession,
-    agent: InterviewerAgent,
+    agent: "InterviewerAgent | InterviewController",
     *,
     collector: EventCollector,
     sink: EventLogSink | None,
 ) -> None:
     """Attach the close-event handler that:
-    1. persists the SessionResult (existing behavior)
-    2. publishes the session_outcome attribute (existing behavior)
-    3. closes the EventCollector and writes the envelope to the sink (Phase 1 NEW)
+    1. persists the SessionResult (legacy InterviewerAgent path only — the
+       InterviewController's ``_terminate`` already persisted before reaching
+       close)
+    2. publishes the session_outcome attribute (legacy path only — same reason)
+    3. closes the EventCollector and writes the envelope to the sink (always)
 
     Two paths reach close:
 
-    1. State machine emits Action.CLOSE → ``record_observation`` already
-       persisted + published ``session_outcome='completed'`` and set
-       ``agent._persisted=True``. The close handler is a no-op for the
-       SessionResult path; the envelope is still written here.
+    1. Normal end — InterviewController's ``_terminate`` already persisted +
+       published ``session_outcome`` and set ``agent._persisted=True``. The
+       close handler is a no-op for the SessionResult path; the envelope is
+       still written here.
     2. Candidate disconnects mid-session — clicks End Call, refreshes the
        page (which closes their old room session), or network drops past
        the SDK's reconnect window. ``close_on_disconnect=True`` (default)
        fires the AgentSession close with ``reason=PARTICIPANT_DISCONNECTED``.
-       The state machine never reached CLOSE; we persist a partial result
-       here, AND we write a partial envelope.
+       The controller's ``on_enter`` task is still running (or was cancelled
+       by the disconnect). For InterviewController we still attempt a
+       persist via ``_persist_session_result(outcome)`` so a candidate that
+       drops mid-session has a partial row written.
 
     ``ERROR`` reason (LLM/STT/TTS plugin error) routes outcome='error' so the
     frontend's ``useSessionOutcome`` hook surfaces ``DisconnectError`` with
@@ -532,7 +573,7 @@ def _wire_close_handler(
 
 async def _handle_close(
     ev: CloseEvent,
-    agent: InterviewerAgent,
+    agent: "InterviewerAgent | InterviewController",
     collector: EventCollector,
     sink: EventLogSink | None,
 ) -> None:
@@ -545,16 +586,20 @@ async def _handle_close(
         already_persisted=agent._persisted,
     )
 
-    # Phase 1 — also append session.close to the audit envelope so the
-    # on-disk JSON has a terminal event marking how the session ended.
-    # knockout_failures_count is 0 in Phase 1; Phase 2's controller will
-    # populate it with the real count.
+    # Append session.close to the audit envelope so the on-disk JSON has a
+    # terminal event marking how the session ended. For the InterviewController
+    # we surface knockout_failures_count from the live record.
+    knockout_count = (
+        len(getattr(agent, "_knockout_failures", []))
+        if isinstance(agent, InterviewController)
+        else 0
+    )
     collector.append(
         kind="session.close",
         payload={
             "reason": ev.reason.value,
             "persisted": agent._persisted,
-            "knockout_failures_count": 0,
+            "knockout_failures_count": knockout_count,
             "has_error": bool(ev.error),
         },
         wall_ms=int(time.time() * 1000),
@@ -562,12 +607,31 @@ async def _handle_close(
 
     outcome = "error" if ev.reason == CloseReason.ERROR else "completed"
 
-    # 1. Persist the SessionResult (existing behavior).
+    # 1. Persist the SessionResult — branched per agent type.
+    #
+    # InterviewController._terminate() already persists + publishes BEFORE
+    # the AgentSession close fires for the normal-end path, so this branch
+    # is only meaningful when the controller never reached _terminate
+    # (mid-session disconnect / error). The signature for the controller is
+    # `_persist_session_result(outcome: SessionOutcome)`, which differs from
+    # the legacy `_build_session_result()` + `_persist_result(result)` pair.
     if not agent._persisted:
         try:
-            result = agent._build_session_result()
-            await agent._persist_result(result)
-            agent._persisted = True
+            if isinstance(agent, InterviewController):
+                # SessionOutcome is a closed Literal (completed / knockout_closed
+                # / time_expired / candidate_ended / candidate_unresponsive /
+                # error). The close handler only fires for paths the controller
+                # didn't reach _terminate on — disconnect / error. Map ERROR to
+                # "error"; everything else to "completed" since we can't know
+                # the controller's intended outcome at this point.
+                controller_outcome = (
+                    "error" if ev.reason == CloseReason.ERROR else "completed"
+                )
+                await agent._persist_session_result(controller_outcome)
+            else:
+                result = agent._build_session_result()
+                await agent._persist_result(result)
+                agent._persisted = True
         except Exception as exc:  # noqa: BLE001
             log.error(
                 "session.close.persist_failed",
@@ -575,10 +639,10 @@ async def _handle_close(
                 error_type=type(exc).__name__,
             )
 
-    # 2. Publish session_outcome (existing behavior).
+    # 2. Publish session_outcome (existing behavior; both classes implement it).
     await agent._publish_session_outcome(outcome)
 
-    # 3. Phase 1 — close the EventCollector and write the envelope.
+    # 3. Close the EventCollector and write the envelope.
     if sink is not None:
         envelope = collector.close(
             closed_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
