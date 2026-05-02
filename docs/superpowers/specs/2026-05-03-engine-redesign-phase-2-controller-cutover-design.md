@@ -120,6 +120,18 @@ class InterviewController(Agent):
         self._idle_nudge_tick_task: asyncio.Task | None = None
         # Pure-logic state machine driven by _idle_nudge_loop.
         self._idle_nudge_state = IdleNudgeStateMachine(idle_nudge_config)
+        # Session-relative wall clock origin. Set in on_enter so transcript timestamps
+        # in audit-log payloads are consistent with the existing Phase 1 t_ms semantics.
+        self._session_start_ms: int = 0
+        # Stored config for use by _terminate (closing instructions need company context)
+        # and prompt assembly. Naming: `_config` rather than `_session_config` per the
+        # legacy InterviewerAgent pattern is fine; implementation plan pins one name.
+        self._config: SessionConfig = session_config
+        # Tenant policy is stored from day one for forward-compat with Phase 5. Phase 2
+        # never reads it — _handle_task_result keeps the record_only behavior unconditionally.
+        # Phase 5 wires the close_polite branch in _handle_task_result and changes the
+        # caller (agent.py) to source this from tenant_settings instead of hardcoding.
+        self._tenant_policy: KnockoutPolicy = tenant_policy
         super().__init__(instructions=build_controller_prompt(session_config))
 
     async def _idle_nudge_loop(self) -> None:
@@ -162,6 +174,7 @@ class InterviewController(Agent):
             return  # _terminate cancelled us — clean exit
 
     async def on_enter(self) -> None:
+        self._session_start_ms = int(time.time() * 1000)
         await self._publish_progress_attributes()  # Phase 1 behavior preserved
         self._idle_nudge_tick_task = asyncio.create_task(self._idle_nudge_loop())
 
@@ -298,6 +311,21 @@ class InterviewController(Agent):
         if self._current_task_run is not None and not self._current_task_run.done():
             self._current_task_run.cancel()
 
+        # Wait for any in-flight LLM/TTS turn to finish before composing the closing.
+        # This handles the candidate_ended race: end_interview_early fires while the
+        # LLM is mid-turn; the LLM then speaks the tool-return acknowledgment. We must
+        # not start a second generate_reply on top of in-flight speech.
+        # Bounded wait so a stuck pipeline doesn't deadlock teardown.
+        try:
+            in_flight = self.session.current_speech
+            if in_flight is not None:
+                await asyncio.wait_for(
+                    in_flight.wait_for_playout(),
+                    timeout=settings.engine_closing_drain_timeout_seconds,
+                )
+        except (asyncio.TimeoutError, Exception) as exc:
+            log.warning("controller.close.in_flight_drain_failed", error=str(exc), outcome=outcome)
+
         # Compose and queue the closing line.
         closing_handle: SpeechHandle | None = None
         try:
@@ -350,7 +378,11 @@ class InterviewController(Agent):
         self._end_outcome = "candidate_ended"
         if self._current_task_run is not None and not self._current_task_run.done():
             self._current_task_run.cancel()
-        return "Acknowledged. Briefly thank them for their time; the interview will wrap up after this turn."
+        # Return a SHORT instruction. The full closing line is composed by _terminate
+        # via closing_instructions_for("candidate_ended", config). If we return a long
+        # instruction here, the LLM speaks a long acknowledgment that pre-empts and
+        # duplicates the controller-composed closing.
+        return "Reply with a brief 'Okay.' — the interview will wrap up after this turn."
 
     @function_tool()
     async def flag_safety_concern(
@@ -452,6 +484,29 @@ The terminal tool `complete_question()` sets a `_done_event` that `await self.ru
 waiting on. `force_complete` is called by the controller's watchdog path; it builds a
 partial `TaskResult` from whatever observations the LLM had recorded so far.
 
+### 1.2.1 In-memory types referenced by the controller
+
+```python
+# Lives alongside controller.py (module-private types, not exported).
+
+KnockoutPolicy = Literal["record_only", "close_polite"]
+# Phase 2 hardcodes "record_only" at the call site (agent.py). Phase 5 starts
+# sourcing this from tenant_settings.engine_knockout_policy.
+
+@dataclass
+class KnockoutFailureRecord:
+    question_id: str
+    reason: str                # LLM-authored, redaction-gated in audit log
+    signal_values: list[str]   # signals the failure invalidated
+    occurred_at_ms: int        # ms since session start (relative to _session_start_ms)
+```
+
+`KnockoutFailureRecord` is the **in-memory shape only**. The persisted `KnockoutFailure`
+pydantic model (and the `sessions.knockout_failures` JSONB column) lands in Phase 5.
+Phase 2 keeps these accumulated in `self._knockout_failures` for the duration of the
+session; they're written into the audit-log envelope via `disqualify.knockout` events
+but not persisted to the DB. Phase 5 wires the persistence path.
+
 ### 1.3 Idle-nudge state machine
 
 ```python
@@ -490,15 +545,19 @@ class IdleNudgeStateMachine:
     def on_tick(self, now_seconds: float) -> IdleNudgeOutput: ...
 ```
 
-Wiring inside the controller:
+Wiring inside the controller (see `_idle_nudge_loop` in §1.1):
 - `UserStateChangedEvent("away")` → `state_machine.on_user_state("away")` and
-  store `now_seconds` as the silence-start time.
+  store `now_seconds` as the silence-start time. Wired in agent.py's
+  `_wire_session_observability` (Phase 1) by adding a one-line call into the
+  controller's idle-nudge state machine.
 - `UserStateChangedEvent("speaking")` → `state_machine.on_user_state("speaking")` —
   resets the silence timer regardless of which state we were in.
 - A periodic 1Hz timer task in the controller (started in `on_enter`, cancelled in
   `_terminate`) calls `state_machine.on_tick(monotonic())` and reacts to the output:
-  - `NUDGE_ONE` / `NUDGE_TWO` → `session.generate_reply(instructions=…)`
-  - `END_UNRESPONSIVE` → `await self._terminate("candidate_unresponsive")`
+  - `NUDGE_ONE` / `NUDGE_TWO` → `session.generate_reply(instructions=…)` (fire-and-forget)
+  - `END_UNRESPONSIVE` → set `self._end_outcome = "candidate_unresponsive"` and cancel
+    `self._current_task_run`. The outer loop's post-loop convergence point calls
+    `_terminate` exactly once. (Same flag-and-cancel pattern as `end_interview_early`.)
 
 The 1Hz tick is cheap and gives us deterministic timing. We don't trust LiveKit's internal
 clock for state-machine boundaries — we use `time.monotonic()` directly.
@@ -568,7 +627,7 @@ Per-outcome instructions (sketch — final wording reviewed at prompt-signoff ti
 
 | Layer | Tool | Args | Effect | Audit event kind |
 |---|---|---|---|---|
-| Controller (`@function_tool`) | `end_interview_early` | `reason: Literal["candidate_request"]` | Schedules `_terminate("candidate_ended")` as a background task | `controller.intent.end_early` |
+| Controller (`@function_tool`) | `end_interview_early` | `reason: Literal["candidate_request"]` | Sets `_end_outcome="candidate_ended"`, cancels in-flight task. Outer-loop convergence point invokes `_terminate` exactly once. | `controller.intent.end_early` |
 | Controller (`@function_tool`) | `flag_safety_concern` | `category: Literal[…5 values…]`, `note: str` | Logs event; interview continues normally | `controller.intent.flag_safety_concern` |
 | Controller (`@function_tool`) | `report_technical_issue` | `description: str` | Logs event; LLM follows up with brief acknowledgement to candidate | `controller.intent.report_technical_issue` |
 | Controller (private, no @function_tool) | `_terminate` | `outcome: SessionOutcome` | Idempotent teardown: cancel current task, compose closing, persist, drain, publish, shutdown | n/a (terminal events ride existing `session.close`) |
@@ -580,23 +639,37 @@ Per-outcome instructions (sketch — final wording reviewed at prompt-signoff ti
 
 ## 3 — Audit events (delta from overview spec §3.4)
 
-New event kinds added to the canonical list:
+Two groups: **Phase 2 begins emitting** these (already listed in overview §3.4 — anticipated
+during the original brainstorm), and **Phase 2 introduces** these (new kinds, not yet in the
+overview list).
 
-- `controller.intent.end_early` — payload `{reason}`. Always logged in metadata mode.
-- `controller.intent.flag_safety_concern` — payload `{category, note_chars[, note]}`. `note` only present in `full` mode.
-- `controller.intent.report_technical_issue` — payload `{description_chars[, description]}`. `description` only present in `full` mode.
-- `controller.intent.signal_disclaim_skip` — payload `{question_id, subsumed_signals}`. Always logged.
-- `controller.intent.idle_nudge` — payload `{nudge_number: 1 | 2}`. Always logged. (Replaces overview spec's vaguer `controller.intent.idle_nudge` description.)
-- `controller.skip.budget` — payload `{question_id, remaining_seconds}`. Always logged.
+**Phase 2 begins emitting (already canonical):**
+
 - `task.entered` — payload `{question_id, kind, watchdog_seconds, max_probes}`. Always logged.
 - `task.completed` — payload `{question_id, result_kind, forced[, result]}`. `result` only in `full` mode.
 - `task.timeout` — payload `{question_id, elapsed_seconds}`. Always logged.
-- `task.observation.recorded` — payload (see TechnicalDepthTask tool args; content-gated).
+- `controller.intent.end_early` — payload `{reason}`. Always logged.
+- `controller.intent.idle_nudge` — payload `{nudge_number: 1 | 2}`. Always logged.
+- `disqualify.knockout` — payload `{question_id, reason_chars[, reason]}`. `reason` only in `full` mode.
+
+**Phase 2 introduces (new kinds, append to overview §3.4):**
+
+- `controller.intent.flag_safety_concern` — payload `{category, note_chars[, note]}`. `note` only present in `full` mode.
+- `controller.intent.report_technical_issue` — payload `{description_chars[, description]}`. `description` only present in `full` mode.
+- `controller.intent.signal_disclaim_skip` — payload `{question_id, subsumed_signals}`. Always logged.
+- `controller.skip.budget` — payload `{question_id, remaining_seconds}`. Always logged.
+- `task.observation.recorded` — payload `{question_id, tier, evidence_keys, non_answer, signals_lacked, probes_fired}`. All non-content fields always logged; LLM-authored summary text (if any) `full`-mode only.
 - `task.probe.fired` — payload `{question_id, probe_number}`. Always logged.
 - `task.request_clarification` — payload `{question_id}`. Always logged.
 
 Redaction module (`event_log/redaction.py`) gets a small extension for the new content-gated
-fields (`note`, `description`); same pattern as Phase 1's existing transcript / arguments gate.
+fields (`note`, `description`, `reason`); same pattern as Phase 1's existing transcript /
+arguments gate.
+
+**Phase 1 redaction tests must be extended** to cover the new content-gated fields. The
+existing `tests/interview_engine/event_log/test_event_log_redaction.py` (moved to its new
+home) gets new cases asserting `note` / `description` / `reason` are absent in `metadata`
+mode and present in `full` mode.
 
 ## 4 — Phase 2 module layout
 
@@ -629,10 +702,21 @@ backend/nexus/app/config.py
   ;   ENGINE_IDLE_GIVE_UP_SECONDS (default 30)
   ;   ENGINE_TASK_BUDGET_OVERHEAD_SECONDS (default 5)
   ;   ENGINE_CLOSING_DRAIN_TIMEOUT_SECONDS (default 8)
-  ; engine_max_probes_per_question — DELETED. Per-kind probe budgets live as class
-  ;   attributes on the per-kind task subclass (Phase 2: TechnicalDepthTask.max_probes = 1).
-  ; engine_time_warning_threshold — DELETED. Per-iteration budget check in
-  ;   budget.py replaces the threshold concept.
+  ; Preserved from Phase 1 (no behavior change in Phase 2):
+  ;   engine_log_user_transcripts, engine_log_audio_events
+  ;     (gates verbatim content in structlog; unchanged — _wire_session_observability
+  ;      still uses these. The audit-log envelope's redaction is independent of these
+  ;      structlog gates and is governed by ENGINE_EVENT_LOG_REDACTION.)
+  ;   engine_silero_*, engine_endpointing_min_delay, engine_endpointing_max_delay
+  ;     (unchanged — VAD + turn-detection knobs)
+  ;   engine_event_log_sink, engine_event_log_redaction, ENGINE_EVENT_LOG_DIR
+  ;     (Phase 1 sink config — unchanged)
+  ;   engine_agent_name (unchanged — Phase 5 migrates to tenant_settings)
+  ; Retired in Phase 2:
+  ;   engine_max_probes_per_question — Per-kind probe budgets live as class attributes
+  ;     on the per-kind task subclass (Phase 2: TechnicalDepthTask.max_probes = 1).
+  ;   engine_time_warning_threshold — Per-iteration budget check in budget.py
+  ;     replaces the threshold concept.
 
 backend/nexus/tests/interview_engine/  (REORGANIZED)
 ├── unit/                              ; pure Python, no AgentSession, no LLM
@@ -772,8 +856,8 @@ async def test_ignore_instructions(agent_session, llm):
 ```
 
 Suite-by-suite case lists are in P2-15's table. All eight must be green for the prompt
-files to merge — the senior-reviewer signoff in P2-18 is the human gate; these tests are
-the deterministic gate.
+files to merge — the senior-reviewer signoff per overview Decision #18 is the human gate;
+these tests are the deterministic gate.
 
 ### 5.4 Manual e2e checklist
 
@@ -828,7 +912,7 @@ Required for the prompt files in this phase:
 Reviewer checklist (per root `CLAUDE.md` "Compliance Anchors"):
 - No biased phrasing.
 - No protected-class signals in tool argument schemas (already verified by the schemas in
-  §2 — `category` enum is bounded; `note` is free-form but redaction is metadata-default).
+  §2 — `category` enum is bounded; `note` is free-form but redaction is metadata-default per §3).
 - Knockout reasons must be factual self-disclosures, not AI-inferred personality traits.
 - Borderline candidates remain human-reviewable; engine never auto-advances or auto-rejects.
 - Persona maintenance cases pass (covered by `prompt_quality/test_persona_maintenance.py`).
