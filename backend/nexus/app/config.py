@@ -210,6 +210,24 @@ class Settings(BaseSettings):
     engine_log_audio_events: bool = True
     engine_log_user_transcripts: bool = False
 
+    # Phase 2 (engine redesign — controller cutover) — idle-nudge timing.
+    # 30/30/30 chosen to balance against thinking pauses on hard technical
+    # questions while still detecting a candidate who walked away within
+    # ~90s. Tunable per-deploy without redeploy.
+    engine_idle_first_nudge_seconds: float = 30.0
+    engine_idle_second_nudge_seconds: float = 30.0
+    engine_idle_give_up_seconds: float = 30.0
+
+    # Phase 2 — task watchdog overhead. Padding on `estimated_minutes * 60`
+    # so a clean task on the wire (one that fires its terminal tool right
+    # at the budget boundary) doesn't trip the timer mid-tool-call.
+    engine_task_budget_overhead_seconds: float = 5.0
+
+    # Phase 2 — closing TTS drain timeout. Bounds how long the controller
+    # waits for the closing line to play before forcing shutdown. Avoids
+    # deadlocking teardown on a stuck TTS pipeline.
+    engine_closing_drain_timeout_seconds: float = 8.0
+
     # Phase 1 (engine redesign) — event log sink config. The engine writes a
     # per-session JSON envelope at session close; the sink chosen here decides
     # where it lands. Production runs `metadata` redaction (no PII content);
