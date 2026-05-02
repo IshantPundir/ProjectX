@@ -38,8 +38,13 @@ class LocalFileSink:
         _validate_session_id_for_path(envelope.session_id)
         os.makedirs(self._directory, exist_ok=True)
         path = self._directory / f"{envelope.session_id}.json"
-        # model_dump_json gives us the canonical pydantic serialization;
-        # write_text is atomic-enough on POSIX for our scale.
+        # Idempotency model: each session writes its envelope exactly once at
+        # close. write_text() overwrites in place, so a retry (the close
+        # handler in agent.py may run twice on certain shutdown paths) simply
+        # replaces any partial state with the complete envelope. We do not
+        # need a tmp-file + rename dance because there is no concurrent
+        # reader during the write window — audit-replay tooling reads only
+        # closed sessions.
         path.write_text(envelope.model_dump_json(), encoding="utf-8")
         logger.info(
             "event_log.local.written",
