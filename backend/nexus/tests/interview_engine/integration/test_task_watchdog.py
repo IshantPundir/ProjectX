@@ -111,6 +111,11 @@ async def test_watchdog_force_completes_when_task_exceeds_timeout(monkeypatch):
     # force_complete called with task_timeout reason.
     fake_task.force_complete.assert_called_once_with(reason="task_timeout")
 
+    # task.completed must have fired with forced=True (timeout path).
+    completed_events = collector.events_of_kind("task.completed")
+    assert len(completed_events) == 1
+    assert completed_events[0].payload["forced"] is True
+
 
 async def test_watchdog_does_not_fire_when_task_completes_promptly(monkeypatch):
     """Sanity inverse: a task that finishes quickly emits no timeout."""

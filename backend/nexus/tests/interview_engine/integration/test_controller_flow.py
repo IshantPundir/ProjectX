@@ -151,6 +151,14 @@ async def test_six_question_flow_completes_cleanly_and_persists_once(
     assert collector.events_of_kind("controller.intent.end_early") == []
     assert collector.events_of_kind("disqualify.knockout") == []
 
+    # task.completed fires once per question, all forced=False (clean run).
+    completed_events = collector.events_of_kind("task.completed")
+    assert len(completed_events) == 6
+    question_ids = {q.id for q in ctrl._config.stage.questions}
+    for ev in completed_events:
+        assert ev.payload["question_id"] in question_ids
+        assert ev.payload["forced"] is False
+
     # Persistence ran exactly once.
     assert patch_persistence.call_count == 1
     assert ctrl._persisted is True

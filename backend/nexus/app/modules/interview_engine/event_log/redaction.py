@@ -27,7 +27,7 @@ _CONTENT_FIELDS_BY_KIND: dict[str, tuple[str, ...]] = {
     "audio.pipeline.error": ("error",),
     "controller.intent.flag_safety_concern": ("note",),
     "controller.intent.report_technical_issue": ("description",),
-    # Phase 2 will add: task.completed (result_dict), controller.intent.end_early (summary)
+    "task.completed": ("result",),
 }
 
 

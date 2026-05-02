@@ -285,6 +285,16 @@ class InterviewController(Agent):
         finally:
             self._current_task_run = None
 
+        self._collector.append(
+            kind="task.completed",
+            payload={
+                "question_id": q.id,
+                "result_kind": result.kind,
+                "forced": result.forced,
+                "result": result.model_dump(),
+            },
+            wall_ms=now_ms(),
+        )
         self._handle_task_result(q, result)
 
     def _handle_task_result(self, q: QuestionConfig, result: TaskResult) -> None:

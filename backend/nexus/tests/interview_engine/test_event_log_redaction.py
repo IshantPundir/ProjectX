@@ -155,3 +155,35 @@ class TestPhase2ContentGatedFields:
             mode="full",
         )
         assert out["reason"] == "no UK shift availability"
+
+
+class TestTaskCompletedRedaction:
+    """Phase 2 added task.completed (controller emits after each task run).
+    The full TaskResult dict is content; metadata mode strips it."""
+
+    def test_task_completed_result_stripped_in_metadata(self) -> None:
+        from app.modules.interview_engine.event_log.redaction import redact_payload
+
+        raw = {
+            "question_id": "q-1",
+            "result_kind": "technical_depth",
+            "forced": False,
+            "result": {"tier": "strong", "evidence_keys": ["k1"]},
+        }
+        out = redact_payload(kind="task.completed", payload=raw, mode="metadata")
+        assert "result" not in out
+        assert out["question_id"] == "q-1"
+        assert out["result_kind"] == "technical_depth"
+        assert out["forced"] is False
+
+    def test_task_completed_result_kept_in_full(self) -> None:
+        from app.modules.interview_engine.event_log.redaction import redact_payload
+
+        raw = {
+            "question_id": "q-1",
+            "result_kind": "technical_depth",
+            "forced": False,
+            "result": {"tier": "strong"},
+        }
+        out = redact_payload(kind="task.completed", payload=raw, mode="full")
+        assert out["result"] == {"tier": "strong"}
