@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from app.modules.interview_engine.tasks.base import (
     QuestionTask,
@@ -99,8 +100,7 @@ class TestTaskResultPhase3Fields:
         assert result.kind == "compliance_binary"
 
     def test_kind_rejects_unknown_value(self) -> None:
-        import pytest
-        with pytest.raises(Exception):  # pydantic ValidationError
+        with pytest.raises(ValidationError):
             TaskResult(question_id="q-1", kind="open_culture")  # type: ignore[arg-type]
 
     def test_star_components_default_none(self) -> None:
@@ -118,6 +118,7 @@ class TestTaskResultPhase3Fields:
                 "result": None,
             },
         )
+        assert result.star_components is not None
         assert result.star_components["situation"] == "Last year at my prior job"
         assert result.star_components["action"] is None
 
