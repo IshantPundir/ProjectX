@@ -89,3 +89,69 @@ def test_metadata_mode_strips_pipeline_error_message() -> None:
 def test_invalid_mode_raises() -> None:
     with pytest.raises(ValueError):
         redact_payload("audio.stt.transcribed", {}, mode="enterprise")  # type: ignore[arg-type]
+
+
+class TestPhase2ContentGatedFields:
+    """Phase 2 added flag_safety_concern.note, report_technical_issue.description,
+    and disqualify_knockout.reason. All must be absent in metadata mode and
+    present in full mode."""
+
+    def test_flag_safety_concern_note_stripped_in_metadata(self) -> None:
+        from app.modules.interview_engine.event_log.redaction import redact_payload
+
+        raw = {"category": "harassment", "note_chars": 42, "note": "candidate said X"}
+        out = redact_payload(
+            kind="controller.intent.flag_safety_concern",
+            payload=raw,
+            mode="metadata",
+        )
+        assert "note" not in out
+        assert out["category"] == "harassment"
+        assert out["note_chars"] == 42
+
+    def test_flag_safety_concern_note_kept_in_full(self) -> None:
+        from app.modules.interview_engine.event_log.redaction import redact_payload
+
+        raw = {"category": "harassment", "note_chars": 42, "note": "candidate said X"}
+        out = redact_payload(
+            kind="controller.intent.flag_safety_concern",
+            payload=raw,
+            mode="full",
+        )
+        assert out["note"] == "candidate said X"
+
+    def test_report_technical_issue_description_stripped_in_metadata(self) -> None:
+        from app.modules.interview_engine.event_log.redaction import redact_payload
+
+        raw = {"description_chars": 13, "description": "audio is broken"}
+        out = redact_payload(
+            kind="controller.intent.report_technical_issue",
+            payload=raw,
+            mode="metadata",
+        )
+        assert "description" not in out
+        assert out["description_chars"] == 13
+
+    def test_disqualify_knockout_reason_stripped_in_metadata(self) -> None:
+        from app.modules.interview_engine.event_log.redaction import redact_payload
+
+        raw = {"question_id": "q-1", "reason_chars": 18, "reason": "no UK shift availability"}
+        out = redact_payload(
+            kind="disqualify.knockout",
+            payload=raw,
+            mode="metadata",
+        )
+        assert "reason" not in out
+        assert out["question_id"] == "q-1"
+        assert out["reason_chars"] == 18
+
+    def test_disqualify_knockout_reason_kept_in_full(self) -> None:
+        from app.modules.interview_engine.event_log.redaction import redact_payload
+
+        raw = {"question_id": "q-1", "reason_chars": 18, "reason": "no UK shift availability"}
+        out = redact_payload(
+            kind="disqualify.knockout",
+            payload=raw,
+            mode="full",
+        )
+        assert out["reason"] == "no UK shift availability"
