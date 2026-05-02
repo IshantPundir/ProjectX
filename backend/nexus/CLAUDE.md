@@ -32,6 +32,14 @@
 - **Phase 3B** — done: candidates module (`candidates`, `candidate_job_assignments`, `candidate_stage_progress` tables; resume upload + S3; PII redaction gate; kanban board; created in migration 0013).
 - **Phase 3C.1** — done: scheduler invite/resend/revoke flow; candidate JWT mint + supersession chain; OTP code (CSPRNG + HMAC-SHA256 hash + constant-time verify); session pre-check / consent / OTP / start endpoints; **single-use token enforcement** via atomic `UPDATE … WHERE used_at IS NULL RETURNING` (`session/service.py:412–426`).
 - **Phase 3C.2** — done: `/start` provisions a LiveKit room + mints candidate access token + dispatches the engine agent worker (`session/livekit.py`); new `interview_runtime` module exposes the internal API the engine reads `SessionConfig` from and posts `SessionResult` to (`/api/internal/sessions/{id}/{config,results}`). New tables `engine_dispatch_tokens` (tenant-scoped, RLS) and `engine_token_uses` (service-bypass, composite PK on `(jti, endpoint)` for atomic single-use enforcement) added in migration 0024.
+- **Phase 3D.engine-redesign-2** — done: InterviewerAgent + state_machine.py
+  retired in favor of InterviewController + QuestionTask base + TechnicalDepthTask
+  (`app/modules/interview_engine/{controller.py,tasks/}`). Per-task asyncio
+  watchdog (sibling timer + AgentTask awaitable; terminal `complete()`
+  resolves the await), idle-nudge state machine, end_interview_early
+  intent tool, three meta tools (flag_safety_concern, report_technical_issue,
+  disqualify_knockout — record_only in Phase 2). See spec
+  `docs/superpowers/specs/2026-05-03-engine-redesign-phase-2-controller-cutover-design.md`.
 - **Phase 3D** — pending: real-time `analysis` (scoring, probe selection) and `reporting` (post-session report compilation).
 
 Stubbed modules (routers registered, no business logic yet): `ats`, `analysis`, `reporting`.

@@ -196,9 +196,6 @@ class Settings(BaseSettings):
     interview_engine_jwt_secret: str = ""
 
     engine_agent_name: str = "Dakota-1785"
-    # State machine
-    engine_max_probes_per_question: int = 3
-    engine_time_warning_threshold: float = 0.8
     # Turn detection / endpointing (forwarded to AgentSession)
     engine_endpointing_min_delay: float = 0.3
     engine_endpointing_max_delay: float = 2.5

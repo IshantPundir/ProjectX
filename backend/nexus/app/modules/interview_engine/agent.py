@@ -4,7 +4,8 @@ Per-session entrypoint:
   1. Parse dispatch metadata (session_id, tenant_id, correlation_id).
   2. Bind structlog contextvars so every log line carries them.
   3. Fetch SessionConfig in-process via build_session_config (no HTTP).
-  4. Build InterviewerAgent (state machine + system prompt + tool).
+  4. Build InterviewController (per-task watchdog, idle-nudge state
+     machine, end_interview_early intent + meta tools).
   5. Build AgentSession using app.ai.realtime factories — the engine
      never imports livekit.plugins.* directly except for VAD prewarm,
      which is process-startup-only and not a session-time AI plugin.
@@ -72,7 +73,6 @@ from opentelemetry.trace import set_tracer_provider as _otel_set_global_provider
 from app.config import settings
 from app.database import get_bypass_session
 from app.modules.interview_engine.controller import InterviewController
-from app.modules.interview_engine.interviewer import InterviewerAgent
 from app.modules.interview_runtime import build_session_config
 from app.modules.interview_engine.event_log import (
     EventCollector,
@@ -132,8 +132,9 @@ async def entrypoint(ctx: JobContext) -> None:
     """Per-session entrypoint.
 
     Reads dispatch metadata Nexus injected at /start time. Config is
-    fetched in-process via build_session_config; InterviewerAgent
-    persists the session result on close.
+    fetched in-process via build_session_config; InterviewController
+    persists the session result on close (or via _terminate before
+    close, on the normal-end path).
     """
     metadata = json.loads(ctx.job.metadata or "{}")
 
@@ -316,13 +317,16 @@ def _log_session_setup(config) -> None:
     )
     log.info(
         "engine.setup.tuning",
-        max_probes_per_question=settings.engine_max_probes_per_question,
-        time_warning_threshold=settings.engine_time_warning_threshold,
         endpointing_min_delay=settings.engine_endpointing_min_delay,
         endpointing_max_delay=settings.engine_endpointing_max_delay,
         silero_activation_threshold=settings.engine_silero_activation_threshold,
         silero_min_speech_duration=settings.engine_silero_min_speech_duration,
         silero_min_silence_duration=settings.engine_silero_min_silence_duration,
+        idle_first_nudge_seconds=settings.engine_idle_first_nudge_seconds,
+        idle_second_nudge_seconds=settings.engine_idle_second_nudge_seconds,
+        idle_give_up_seconds=settings.engine_idle_give_up_seconds,
+        task_budget_overhead_seconds=settings.engine_task_budget_overhead_seconds,
+        closing_drain_timeout_seconds=settings.engine_closing_drain_timeout_seconds,
         noise_cancellation_model=ai_config.interview_noise_cancellation_model,
         noise_cancellation_level=ai_config.interview_noise_cancellation_level,
     )
@@ -357,7 +361,7 @@ def _log_session_setup(config) -> None:
 def _wire_session_observability(
     session: AgentSession,
     *,
-    agent: "InterviewerAgent | InterviewController",
+    agent: InterviewController,
     collector: EventCollector,
     log_verbose_content: bool,
     log_audio_events: bool,
@@ -406,10 +410,7 @@ def _wire_session_observability(
             ev.created_at,
         )
         # Phase 2: drive the InterviewController's idle-nudge state machine.
-        # InterviewerAgent (the legacy class still exported during cutover)
-        # does not implement this method, so we feature-detect.
-        if hasattr(agent, "on_user_state_changed"):
-            agent.on_user_state_changed(ev.new_state)
+        agent.on_user_state_changed(ev.new_state)
 
     @session.on("agent_state_changed")
     def _on_agent_state(ev: AgentStateChangedEvent) -> None:
@@ -529,17 +530,16 @@ def _wire_session_observability(
 
 def _wire_close_handler(
     session: AgentSession,
-    agent: "InterviewerAgent | InterviewController",
+    agent: InterviewController,
     *,
     collector: EventCollector,
     sink: EventLogSink | None,
 ) -> None:
     """Attach the close-event handler that:
-    1. persists the SessionResult (legacy InterviewerAgent path only — the
-       InterviewController's ``_terminate`` already persisted before reaching
-       close)
-    2. publishes the session_outcome attribute (legacy path only — same reason)
-    3. closes the EventCollector and writes the envelope to the sink (always)
+    1. persists the SessionResult on the disconnect/error path (the
+       normal-end path persists earlier, in ``_terminate``)
+    2. publishes the ``session_outcome`` attribute
+    3. closes the EventCollector and writes the envelope to the sink
 
     Two paths reach close:
 
@@ -552,9 +552,9 @@ def _wire_close_handler(
        the SDK's reconnect window. ``close_on_disconnect=True`` (default)
        fires the AgentSession close with ``reason=PARTICIPANT_DISCONNECTED``.
        The controller's ``on_enter`` task is still running (or was cancelled
-       by the disconnect). For InterviewController we still attempt a
-       persist via ``_persist_session_result(outcome)`` so a candidate that
-       drops mid-session has a partial row written.
+       by the disconnect). We attempt a persist via
+       ``_persist_session_result(outcome)`` so a candidate that drops
+       mid-session still has a partial row written.
 
     ``ERROR`` reason (LLM/STT/TTS plugin error) routes outcome='error' so the
     frontend's ``useSessionOutcome`` hook surfaces ``DisconnectError`` with
@@ -573,7 +573,7 @@ def _wire_close_handler(
 
 async def _handle_close(
     ev: CloseEvent,
-    agent: "InterviewerAgent | InterviewController",
+    agent: InterviewController,
     collector: EventCollector,
     sink: EventLogSink | None,
 ) -> None:
@@ -587,13 +587,9 @@ async def _handle_close(
     )
 
     # Append session.close to the audit envelope so the on-disk JSON has a
-    # terminal event marking how the session ended. For the InterviewController
-    # we surface knockout_failures_count from the live record.
-    knockout_count = (
-        len(getattr(agent, "_knockout_failures", []))
-        if isinstance(agent, InterviewController)
-        else 0
-    )
+    # terminal event marking how the session ended. Surface
+    # knockout_failures_count from the live controller record.
+    knockout_count = len(getattr(agent, "_knockout_failures", []))
     collector.append(
         kind="session.close",
         payload={
@@ -607,31 +603,23 @@ async def _handle_close(
 
     outcome = "error" if ev.reason == CloseReason.ERROR else "completed"
 
-    # 1. Persist the SessionResult — branched per agent type.
+    # 1. Persist the SessionResult on the disconnect / error path.
     #
     # InterviewController._terminate() already persists + publishes BEFORE
     # the AgentSession close fires for the normal-end path, so this branch
     # is only meaningful when the controller never reached _terminate
-    # (mid-session disconnect / error). The signature for the controller is
-    # `_persist_session_result(outcome: SessionOutcome)`, which differs from
-    # the legacy `_build_session_result()` + `_persist_result(result)` pair.
+    # (mid-session disconnect / error). SessionOutcome is a closed Literal
+    # (completed / knockout_closed / time_expired / candidate_ended /
+    # candidate_unresponsive / error). The close handler only fires for
+    # paths the controller didn't reach _terminate on — disconnect / error.
+    # Map ERROR to "error"; everything else to "completed" since we can't
+    # know the controller's intended outcome at this point.
     if not agent._persisted:
         try:
-            if isinstance(agent, InterviewController):
-                # SessionOutcome is a closed Literal (completed / knockout_closed
-                # / time_expired / candidate_ended / candidate_unresponsive /
-                # error). The close handler only fires for paths the controller
-                # didn't reach _terminate on — disconnect / error. Map ERROR to
-                # "error"; everything else to "completed" since we can't know
-                # the controller's intended outcome at this point.
-                controller_outcome = (
-                    "error" if ev.reason == CloseReason.ERROR else "completed"
-                )
-                await agent._persist_session_result(controller_outcome)
-            else:
-                result = agent._build_session_result()
-                await agent._persist_result(result)
-                agent._persisted = True
+            controller_outcome = (
+                "error" if ev.reason == CloseReason.ERROR else "completed"
+            )
+            await agent._persist_session_result(controller_outcome)
         except Exception as exc:  # noqa: BLE001
             log.error(
                 "session.close.persist_failed",
