@@ -9,7 +9,9 @@ real LLM was high in early local runs.
 This stubbed variant exercises the same controller surface — entered/
 completed event ordering, signal accumulation, terminate path, single
 shutdown — by patching ``build_task_for`` so each task immediately
-resolves via ``await task.run()`` with a deterministic ``TaskResult``.
+resolves the controller's ``await task`` with a deterministic
+``TaskResult`` (AgentTask is awaitable directly; ``.complete(result)``
+resolves it).
 The LLM never participates. Real-LLM verification is left for the
 prompt-quality suite (Task 13) and the end-to-end checklist (Task 16),
 where flakiness is acceptable and the cost amortizes.
@@ -39,6 +41,54 @@ from app.modules.interview_engine.tasks.base import TaskResult
 from tests.interview_engine.fixtures.mock_session_config import (
     load_live_data_session_config,
 )
+
+
+class _AwaitableFakeTask:
+    """Minimal AgentTask drop-in: awaitable, .complete() resolves the
+    await, plus the surface the controller pokes (.kind, .max_probes,
+    .force_complete, .done, .cancel)."""
+
+    def __init__(self, *, question_id: str, default_result: TaskResult):
+        self.kind = "technical_depth"
+        self.max_probes = 1
+        self._fut: asyncio.Future = asyncio.Future()
+        self._default_result = default_result
+        self.id = question_id
+        self.force_complete_calls: list[dict] = []
+
+    def __await__(self):
+        return self._fut.__await__()
+
+    def done(self) -> bool:
+        return self._fut.done()
+
+    def complete(self, result) -> None:
+        if self._fut.done():
+            raise RuntimeError("already completed")
+        if isinstance(result, Exception):
+            self._fut.set_exception(result)
+        else:
+            self._fut.set_result(result)
+
+    def cancel(self) -> None:
+        if self._fut.done():
+            return
+        self._fut.set_exception(RuntimeError("cancelled"))
+
+    def force_complete(self, *, reason: str) -> TaskResult:
+        self.force_complete_calls.append({"reason": reason})
+        return self._default_result.model_copy(
+            update={"forced": True, "forced_reason": reason}
+        )
+
+
+def _make_awaitable_fake_task(question_id: str, result: TaskResult) -> _AwaitableFakeTask:
+    """Make an awaitable fake task that resolves with the provided result
+    on the next event loop tick."""
+    task = _AwaitableFakeTask(question_id=question_id, default_result=result)
+    loop = asyncio.get_event_loop()
+    loop.call_soon(lambda: task.complete(result) if not task.done() else None)
+    return task
 
 
 pytestmark = pytest.mark.asyncio
@@ -115,23 +165,15 @@ async def test_six_question_flow_completes_cleanly_and_persists_once(
     # Each fake task immediately resolves with a "strong" TaskResult so
     # no signals are disqualified, no skips, no knockouts.
     def fake_build(q, *, controller, disqualified_signals):
-        task = MagicMock()
-        task.kind = "technical_depth"
-        task.max_probes = 1
-
-        async def run():
-            return TaskResult(
-                question_id=q.id,
-                kind="technical_depth",
-                tier="strong",
-                evidence_keys=["e1", "e2"],
-                signals_lacked=[],
-                non_answer=False,
-            )
-
-        task.run = run
-        task.force_complete = MagicMock()
-        return task
+        result = TaskResult(
+            question_id=q.id,
+            kind="technical_depth",
+            tier="strong",
+            evidence_keys=["e1", "e2"],
+            signals_lacked=[],
+            non_answer=False,
+        )
+        return _make_awaitable_fake_task(q.id, result)
 
     monkeypatch.setattr(
         "app.modules.interview_engine.controller.build_task_for", fake_build
@@ -177,23 +219,16 @@ async def test_signals_lacked_propagates_across_questions(monkeypatch):
 
     def fake_build(q, *, controller, disqualified_signals):
         seen_disq[q.id] = set(disqualified_signals)
-        task = MagicMock()
-        task.kind = "technical_depth"
-        task.max_probes = 1
-
-        async def run():
-            if q.id == "q-0":
-                return TaskResult(
-                    question_id=q.id,
-                    kind="technical_depth",
-                    tier="below_bar",
-                    signals_lacked=["uk_shift_availability"],
-                )
-            return TaskResult(question_id=q.id, kind="technical_depth", tier="strong")
-
-        task.run = run
-        task.force_complete = MagicMock()
-        return task
+        if q.id == "q-0":
+            result = TaskResult(
+                question_id=q.id,
+                kind="technical_depth",
+                tier="below_bar",
+                signals_lacked=["uk_shift_availability"],
+            )
+        else:
+            result = TaskResult(question_id=q.id, kind="technical_depth", tier="strong")
+        return _make_awaitable_fake_task(q.id, result)
 
     monkeypatch.setattr(
         "app.modules.interview_engine.controller.build_task_for", fake_build
@@ -218,16 +253,10 @@ async def test_outcome_completed_emitted_when_loop_exits_naturally(monkeypatch):
     ctrl, collector, fake_session = _make_controller_with_fake_session()
 
     def fake_build(q, *, controller, disqualified_signals):
-        task = MagicMock()
-        task.kind = "technical_depth"
-        task.max_probes = 1
-
-        async def run():
-            return TaskResult(question_id=q.id, kind="technical_depth", tier="strong")
-
-        task.run = run
-        task.force_complete = MagicMock()
-        return task
+        return _make_awaitable_fake_task(
+            q.id,
+            TaskResult(question_id=q.id, kind="technical_depth", tier="strong"),
+        )
 
     monkeypatch.setattr(
         "app.modules.interview_engine.controller.build_task_for", fake_build

@@ -1,14 +1,14 @@
-"""Integration test: per-task watchdog (asyncio.wait_for) timeout.
+"""Integration test: per-task watchdog timeout.
 
-The controller wraps each task.run() in ``asyncio.wait_for(...,
-timeout=watchdog_seconds)``. When the task takes longer than the
-watchdog, the controller force-completes the task with a forced
-TaskResult and emits ``task.timeout``.
+The controller awaits each AgentTask directly (it is awaitable via
+``__await__``) and runs a sibling watchdog asyncio.Task that calls
+``task.force_complete(reason='task_timeout')`` + ``task.complete(...)``
+after watchdog_seconds. The forced TaskResult resolves the controller's
+``await``; ``task.timeout`` is emitted to the audit log.
 
 We exercise the watchdog logic directly via ``_dispatch_task`` with a
-TechnicalDepthTask whose ``run()`` is patched to sleep. The controller's
-session attribute must be present for downstream calls (``self.session``
-on the task base via run_chain). We use a MagicMock session.
+fake awaitable task whose future is never auto-resolved — only the
+controller's watchdog can complete it.
 """
 
 from __future__ import annotations
@@ -61,23 +61,49 @@ def _make_controller():
     return ctrl, collector
 
 
+class _AwaitableSlowTask:
+    """Awaitable fake that NEVER resolves on its own — the controller's
+    watchdog must call .complete() to unblock the await, mirroring
+    AgentTask's contract."""
+
+    def __init__(self, *, question_id: str, forced_result: TaskResult):
+        self.kind = "technical_depth"
+        self.max_probes = 1
+        self.id = question_id
+        self._fut: asyncio.Future = asyncio.Future()
+        self._forced_result = forced_result
+        self.force_complete_call_count = 0
+        self.last_force_complete_kwargs: dict | None = None
+
+    def __await__(self):
+        return self._fut.__await__()
+
+    def done(self) -> bool:
+        return self._fut.done()
+
+    def complete(self, result) -> None:
+        if self._fut.done():
+            raise RuntimeError("already completed")
+        if isinstance(result, Exception):
+            self._fut.set_exception(result)
+        else:
+            self._fut.set_result(result)
+
+    def cancel(self) -> None:
+        if self._fut.done():
+            return
+        self._fut.set_exception(RuntimeError("cancelled"))
+
+    def force_complete(self, *, reason: str) -> TaskResult:
+        self.force_complete_call_count += 1
+        self.last_force_complete_kwargs = {"reason": reason}
+        return self._forced_result
+
+
 async def test_watchdog_force_completes_when_task_exceeds_timeout(monkeypatch):
     ctrl, collector = _make_controller()
     cfg = ctrl._config
     q0 = next(q for q in cfg.stage.questions if q.id == "q-0")
-
-    # Patch build_task_for to return a fake task whose run() never completes
-    # within the watchdog window. The fake task must satisfy the surface
-    # the controller uses: .kind, .max_probes, .run(), .force_complete(...)
-    fake_task = MagicMock()
-    fake_task.kind = "technical_depth"
-    fake_task.max_probes = 1
-
-    async def slow_run():
-        await asyncio.sleep(2.0)
-        return TaskResult(question_id=q0.id, kind="technical_depth")
-
-    fake_task.run = slow_run
 
     forced_result = TaskResult(
         question_id=q0.id,
@@ -85,7 +111,7 @@ async def test_watchdog_force_completes_when_task_exceeds_timeout(monkeypatch):
         forced=True,
         forced_reason="task_timeout",
     )
-    fake_task.force_complete = MagicMock(return_value=forced_result)
+    fake_task = _AwaitableSlowTask(question_id=q0.id, forced_result=forced_result)
 
     monkeypatch.setattr(
         "app.modules.interview_engine.controller.build_task_for",
@@ -109,7 +135,8 @@ async def test_watchdog_force_completes_when_task_exceeds_timeout(monkeypatch):
     assert timeouts[0].payload["elapsed_seconds"] == 0  # int(0.1) == 0
 
     # force_complete called with task_timeout reason.
-    fake_task.force_complete.assert_called_once_with(reason="task_timeout")
+    assert fake_task.force_complete_call_count == 1
+    assert fake_task.last_force_complete_kwargs == {"reason": "task_timeout"}
 
     # task.completed must have fired with forced=True (timeout path).
     completed_events = collector.events_of_kind("task.completed")
@@ -123,16 +150,11 @@ async def test_watchdog_does_not_fire_when_task_completes_promptly(monkeypatch):
     cfg = ctrl._config
     q0 = next(q for q in cfg.stage.questions if q.id == "q-0")
 
-    fake_task = MagicMock()
-    fake_task.kind = "technical_depth"
-    fake_task.max_probes = 1
-
-    async def fast_run():
-        await asyncio.sleep(0.001)
-        return TaskResult(question_id=q0.id, kind="technical_depth", tier="strong")
-
-    fake_task.run = fast_run
-    fake_task.force_complete = MagicMock()
+    expected = TaskResult(question_id=q0.id, kind="technical_depth", tier="strong")
+    fake_task = _AwaitableSlowTask(question_id=q0.id, forced_result=expected)
+    # Pre-resolve on the next loop tick so the await returns immediately.
+    loop = asyncio.get_event_loop()
+    loop.call_soon(lambda: fake_task.complete(expected) if not fake_task.done() else None)
 
     monkeypatch.setattr(
         "app.modules.interview_engine.controller.build_task_for",
@@ -143,4 +165,4 @@ async def test_watchdog_does_not_fire_when_task_completes_promptly(monkeypatch):
 
     assert len(collector.events_of_kind("task.entered")) == 1
     assert len(collector.events_of_kind("task.timeout")) == 0
-    fake_task.force_complete.assert_not_called()
+    assert fake_task.force_complete_call_count == 0

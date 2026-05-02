@@ -125,6 +125,12 @@ class InterviewController(Agent):
         self._knockout_failures: list[KnockoutFailureRecord] = []
         self._end_outcome: SessionOutcome | None = None
         self._current_task_run: asyncio.Task | None = None
+        # Reference to the in-flight QuestionTask (a livekit AgentTask),
+        # held so end_interview_early / idle_nudge can resolve its
+        # awaitable by calling _complete_inflight_task() — they can't
+        # cancel a livekit-managed inline task by cancelling an
+        # asyncio.Task wrapper because there is no wrapper task.
+        self._current_question_task = None  # type: ignore[var-annotated]
         self._terminated: bool = False
         self._idle_nudge_tick_task: asyncio.Task | None = None
         self._session_start_ms: int = 0
@@ -238,6 +244,7 @@ class InterviewController(Agent):
                     )
                 elif output is IdleNudgeOutput.END_UNRESPONSIVE:
                     self._end_outcome = "candidate_unresponsive"
+                    self._complete_inflight_task(reason="task_timeout")
                     if self._current_task_run is not None and not self._current_task_run.done():
                         self._current_task_run.cancel()
                     return
@@ -253,6 +260,42 @@ class InterviewController(Agent):
     # ------------------------------------------------------------------
     # Task dispatch + result handling
     # ------------------------------------------------------------------
+
+    def _complete_inflight_task(self, *, reason: Literal["task_timeout"]) -> None:
+        """Resolve the in-flight QuestionTask's awaitable, if any.
+
+        Used by external short-circuit paths (end_interview_early,
+        idle_nudge END_UNRESPONSIVE, _terminate defensive cancel) to
+        unblock the on_enter loop's `await task` without cancelling the
+        on_enter coroutine itself. force_complete builds a forced
+        TaskResult; AgentTask.complete() resolves the await with it.
+        Tolerates any of: no in-flight task, task already completed, or
+        a completed-mid-call race.
+        """
+        task = self._current_question_task
+        if task is None:
+            return
+        # Subclasses of livekit AgentTask expose .done() and .complete();
+        # the QuestionTask base also exposes force_complete(reason=...).
+        try:
+            if task.done():
+                return
+        except AttributeError:  # pragma: no cover — defensive
+            return
+        try:
+            forced = task.force_complete(reason=reason)
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "controller.task.force_complete_failed",
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            return
+        try:
+            task.complete(forced)
+        except RuntimeError:
+            # Race: terminal tool resolved between done() and complete().
+            return
 
     async def _dispatch_task(self, q: QuestionConfig, *, watchdog_seconds: float) -> None:
         task = build_task_for(
@@ -270,20 +313,92 @@ class InterviewController(Agent):
             },
             wall_ms=now_ms(),
         )
-        self._current_task_run = asyncio.create_task(task.run())
+
+        # AgentTask is awaitable directly — `await task` enters
+        # AgentTask.__await__, which dispatches the inline task via the
+        # current AgentSession. A terminal @function_tool resolves the
+        # await by calling `self.complete(result)`.
+        #
+        # The inline-task contract requires the task to be awaited from
+        # the on_enter coroutine directly, NOT wrapped in a separate
+        # asyncio.Task — `_get_activity_task_info(asyncio.current_task())`
+        # only carries `inline_task=True` for the on_enter task itself.
+        # That's why the previous `asyncio.create_task(task.run())`
+        # pattern raised AttributeError: AgentTask has no `run` method
+        # (and even if it did, the wrapper task would fail the inline
+        # contract). See livekit.agents.voice.agent.AgentTask.__await_impl.
+        #
+        # Watchdog: a sibling timer asyncio.Task calls
+        # `task.complete(<forced TaskResult>)` after watchdog_seconds if
+        # the terminal tool hasn't fired yet. That resolves the inline
+        # await with the forced result; no asyncio.wait_for needed.
+        # Same pattern is used by external cancel paths
+        # (end_interview_early, idle_nudge END_UNRESPONSIVE) — they
+        # call _complete_inflight_task() to resolve the await early.
+        forced_holder: dict[str, TaskResult] = {}
+        timed_out = asyncio.Event()
+        self._current_question_task = task
+
+        async def _watchdog() -> None:
+            try:
+                await asyncio.sleep(watchdog_seconds)
+            except asyncio.CancelledError:
+                return
+            if task.done():
+                return
+            forced = task.force_complete(reason="task_timeout")
+            forced_holder["forced"] = forced
+            timed_out.set()
+            try:
+                task.complete(forced)
+            except RuntimeError:
+                # Race: terminal tool resolved between done() and complete().
+                pass
+
+        watchdog_task = asyncio.create_task(_watchdog())
+        # _current_task_run preserves the existing surface: external
+        # callers (and tests) inject an asyncio.Task here and call
+        # cancel() on it to request early termination of the in-flight
+        # question. We aim that cancel at the watchdog timer; the
+        # external paths that need to actually short-circuit the inline
+        # AgentTask call _complete_inflight_task() to resolve its await.
+        self._current_task_run = watchdog_task
         try:
-            result = await asyncio.wait_for(self._current_task_run, timeout=watchdog_seconds)
-        except asyncio.TimeoutError:
+            result = await task  # AgentTask is awaitable; complete() resolves it.
+        except asyncio.CancelledError:
+            # The on_enter task itself got cancelled (e.g. session
+            # closing). Outer loop won't run again — propagate.
+            raise
+        except Exception as exc:  # noqa: BLE001
+            # ToolError-based cancel path (task.cancel()) raises here.
+            # Treat as a forced completion so the controller can move on.
+            log.warning(
+                "controller.task.await_raised",
+                question_id=q.id,
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
             result = task.force_complete(reason="task_timeout")
+        finally:
+            if not watchdog_task.done():
+                watchdog_task.cancel()
+                try:
+                    await watchdog_task
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                    pass
+            self._current_task_run = None
+            self._current_question_task = None
+
+        if timed_out.is_set():
+            # Watchdog fired — emit task.timeout. `force_complete`
+            # already built the forced result; prefer it so downstream
+            # sees forced=True regardless of what the await resolved to.
+            result = forced_holder.get("forced", result)
             self._collector.append(
                 kind="task.timeout",
                 payload={"question_id": q.id, "elapsed_seconds": int(watchdog_seconds)},
                 wall_ms=now_ms(),
             )
-        except asyncio.CancelledError:
-            return  # End-intent or idle-nudge cancelled us; outer loop converges via _end_outcome
-        finally:
-            self._current_task_run = None
 
         self._collector.append(
             kind="task.completed",
@@ -346,6 +461,7 @@ class InterviewController(Agent):
             self._idle_nudge_tick_task.cancel()
 
         # Cancel any still-running task (defensive).
+        self._complete_inflight_task(reason="task_timeout")
         if self._current_task_run is not None and not self._current_task_run.done():
             self._current_task_run.cancel()
 
@@ -532,6 +648,7 @@ class InterviewController(Agent):
             wall_ms=now_ms(),
         )
         self._end_outcome = "candidate_ended"
+        self._complete_inflight_task(reason="task_timeout")
         if self._current_task_run is not None and not self._current_task_run.done():
             self._current_task_run.cancel()
         return "Reply with a brief 'Okay.' — the interview will wrap up after this turn."

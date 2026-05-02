@@ -6,7 +6,7 @@ ComplianceBinaryTask + question_kind-based routing.
 Tools:
   * record_answer_assessment — observation; returns probes-remaining instr
   * request_probe — fires the follow-up; bumps probe counter
-  * complete_question — terminal; resolves await Task().run()
+  * complete_question — terminal; resolves the controller's `await task`
   * (inherited) disqualify_knockout, request_clarification
 """
 
@@ -36,14 +36,16 @@ class TechnicalDepthTask(QuestionTask):
     """Per-question task for technical-depth questions.
 
     Lifecycle:
-      1. Controller dispatches: `await asyncio.wait_for(task.run(), timeout=...)`
+      1. Controller dispatches: `result = await task` (with sibling
+         watchdog asyncio.Task that force-completes on timeout).
       2. AgentTask boots; the LLM reads task instructions + chat ctx and
          speaks an in-flow ≤25-word phrasing of the question.
       3. Candidate answers.
       4. LLM calls record_answer_assessment with tier/evidence_keys/non_answer/signals_lacked.
       5. The tool returns "probes remaining: N" so the LLM can decide.
       6. LLM either calls request_probe (and re-listens) or complete_question.
-      7. Terminal tool resolves run() with a TaskResult.
+      7. Terminal tool calls self.complete(result), which resolves the
+         controller's `await task` with a TaskResult.
     """
 
     kind = "technical_depth"
@@ -162,7 +164,7 @@ class TechnicalDepthTask(QuestionTask):
         """Terminal tool — ends this question's task.
 
         Builds a TaskResult from recorded state and resolves the
-        outer await Task().run() in the controller.
+        controller's outer ``await task`` via ``self.complete(result)``.
         """
         result = TaskResult(
             question_id=self.question_config.id,
@@ -184,6 +186,7 @@ class TechnicalDepthTask(QuestionTask):
             probes_fired=self._probes_fired,
         )
         # `complete()` is the LiveKit AgentTask method that resolves
-        # await self.run() with the value. Subclasses don't override run().
+        # the controller's `await task` with the result. AgentTask is
+        # awaitable directly via __await__ — there is no `run()` method.
         self.complete(result)
         return "Question complete. The controller will dispatch the next."

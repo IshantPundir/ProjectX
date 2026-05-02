@@ -8,7 +8,8 @@ A QuestionTask is a LiveKit AgentTask dedicated to one question:
 
 The controller dispatches sequentially via:
   task = build_task_for(question, controller, disqualified_signals)
-  result = await asyncio.wait_for(task.run(), timeout=watchdog_seconds)
+  result = await task        # AgentTask is awaitable; .complete() resolves it
+A sibling watchdog asyncio.Task force-completes after watchdog_seconds.
 """
 
 from __future__ import annotations
@@ -74,9 +75,9 @@ class QuestionTask(AgentTask, abc.ABC):
       * `kind` class attribute (e.g. "technical_depth")
       * `max_probes` class attribute
       * `build_task_instructions()` — the prompt body for this task
-      * `run()` — typically the LiveKit AgentTask default; the terminal
-        tool calls `self.complete(result)` which makes await Task().run()
-        resolve.
+      * No `run()` method — AgentTask is awaitable directly via
+        `__await__`; the terminal tool calls `self.complete(result)`,
+        which resolves the controller's `await task`.
 
     Shared tools available to every subclass:
       * disqualify_knockout(reason: str) — record_only in Phase 2
@@ -115,9 +116,11 @@ class QuestionTask(AgentTask, abc.ABC):
     def force_complete(self, *, reason: Literal["task_timeout"]) -> TaskResult:
         """Build a TaskResult from whatever the LLM had recorded so far.
 
-        Called by the controller's watchdog path when asyncio.wait_for
-        times out. Does NOT call self.complete() (the AgentTask is being
-        cancelled; there's no run() to resolve).
+        Called by the controller's watchdog (or external short-circuit)
+        path when the terminal tool hasn't fired in time. Does NOT call
+        self.complete() — the caller pairs this with a separate
+        ``task.complete(forced)`` invocation to resolve the inline
+        AgentTask awaitable with the forced result.
         """
         return TaskResult(
             question_id=self.question_config.id,

@@ -104,24 +104,65 @@ def _make_handle():
     return h
 
 
-def _make_fake_task(question_id: str, **task_result_kwargs):
-    """Build a fake task that's drop-in for asyncio.wait_for(task.run(), ...).
+class _AwaitableFakeTask:
+    """Drop-in fake for AgentTask: awaitable, with .complete() resolving
+    the await, plus the controller's other surface (.kind, .max_probes,
+    .force_complete, .done, .cancel).
 
-    Returns a MagicMock with .kind / .max_probes / .run() coroutine and
-    .force_complete().
+    The controller does ``await task`` and may also call
+    ``task.complete(...)`` from a watchdog or short-circuit path. This
+    fake mirrors AgentTask's contract by holding an asyncio.Future that
+    .complete() / .force_complete-then-complete() resolves.
     """
-    task = MagicMock()
-    task.kind = "technical_depth"
-    task.max_probes = 1
+
+    def __init__(self, *, question_id: str, default_result: "TaskResult"):
+        self.kind = "technical_depth"
+        self.max_probes = 1
+        self._fut: asyncio.Future["TaskResult"] = asyncio.Future()
+        self._default_result = default_result
+        self.force_complete_calls: list[dict] = []
+        self.id = question_id
+
+    def __await__(self):
+        return self._fut.__await__()
+
+    def done(self) -> bool:
+        return self._fut.done()
+
+    def complete(self, result) -> None:
+        if self._fut.done():
+            raise RuntimeError("already completed")
+        if isinstance(result, Exception):
+            self._fut.set_exception(result)
+        else:
+            self._fut.set_result(result)
+
+    def cancel(self) -> None:
+        if self._fut.done():
+            return
+        self._fut.set_exception(RuntimeError("cancelled"))
+
+    def force_complete(self, *, reason: str):
+        self.force_complete_calls.append({"reason": reason})
+        return self._default_result.model_copy(
+            update={"forced": True, "forced_reason": reason}
+        )
+
+
+def _make_fake_task(question_id: str, **task_result_kwargs):
+    """Build a fake task that's awaitable and resolves immediately with
+    the requested TaskResult. The controller awaits it directly; we
+    schedule a ``set_result`` on the next event loop tick so the
+    watchdog has no chance to fire first.
+    """
     expected_result = TaskResult(
         question_id=question_id, kind="technical_depth", **task_result_kwargs
     )
-
-    async def run():
-        return expected_result
-
-    task.run = run
-    task.force_complete = MagicMock(return_value=expected_result)
+    task = _AwaitableFakeTask(question_id=question_id, default_result=expected_result)
+    # Resolve on the next loop tick so the controller's `await task`
+    # pulls the prepared result without blocking.
+    loop = asyncio.get_event_loop()
+    loop.call_soon(lambda: task.complete(expected_result) if not task.done() else None)
     return task
 
 

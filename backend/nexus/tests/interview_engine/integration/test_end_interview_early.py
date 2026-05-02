@@ -33,6 +33,112 @@ from tests.interview_engine.fixtures.mock_session_config import (
 )
 
 
+class _AwaitableSimpleTask:
+    """Awaitable AgentTask drop-in. Resolves on the next loop tick with
+    the supplied default result."""
+
+    def __init__(self, *, default_result: TaskResult):
+        self.kind = "technical_depth"
+        self.max_probes = 1
+        self.id = default_result.question_id
+        self._fut: asyncio.Future = asyncio.Future()
+        self._default_result = default_result
+        loop = asyncio.get_event_loop()
+        loop.call_soon(self._resolve)
+
+    def _resolve(self) -> None:
+        if not self._fut.done():
+            self._fut.set_result(self._default_result)
+
+    def __await__(self):
+        return self._fut.__await__()
+
+    def done(self) -> bool:
+        return self._fut.done()
+
+    def complete(self, result) -> None:
+        if self._fut.done():
+            raise RuntimeError("already completed")
+        if isinstance(result, Exception):
+            self._fut.set_exception(result)
+        else:
+            self._fut.set_result(result)
+
+    def cancel(self) -> None:
+        if self._fut.done():
+            return
+        self._fut.set_exception(RuntimeError("cancelled"))
+
+    def force_complete(self, *, reason: str) -> TaskResult:
+        return self._default_result.model_copy(
+            update={"forced": True, "forced_reason": reason}
+        )
+
+
+class _AwaitableEndingTask:
+    """Awaitable task that, on first await, fires end_interview_early on
+    the controller and then resolves. Mirrors a question-task whose LLM
+    detected end-intent mid-question. When end_interview_early calls
+    _complete_inflight_task (which calls force_complete + complete), the
+    forced result is what the controller's await resolves to.
+    """
+
+    def __init__(self, *, controller, default_result: TaskResult):
+        self.kind = "technical_depth"
+        self.max_probes = 1
+        self.id = default_result.question_id
+        self._controller = controller
+        self._default_result = default_result
+        self._fut: asyncio.Future = asyncio.Future()
+        # Schedule end_interview_early on the next loop tick. The
+        # controller's tool call sequence: end_interview_early ->
+        # _complete_inflight_task -> task.force_complete -> task.complete
+        # which resolves the future.
+        loop = asyncio.get_event_loop()
+        loop.call_soon(self._fire_end_intent)
+
+    def _fire_end_intent(self) -> None:
+        # end_interview_early is async — schedule it as a task, but do
+        # so synchronously so its body executes before the controller
+        # awaits the question task.
+        async def _runner():
+            fake_ctx = MagicMock()
+            await self._controller.end_interview_early(
+                fake_ctx, reason="candidate_request"
+            )
+            # If _complete_inflight_task didn't resolve it (e.g. the
+            # controller hadn't bound _current_question_task yet), we
+            # resolve directly so the test doesn't hang.
+            if not self._fut.done():
+                self._fut.set_result(self._default_result)
+
+        asyncio.create_task(_runner())
+
+    def __await__(self):
+        return self._fut.__await__()
+
+    def done(self) -> bool:
+        return self._fut.done()
+
+    def complete(self, result) -> None:
+        if self._fut.done():
+            return  # tolerate double-complete from concurrent paths
+        if isinstance(result, Exception):
+            self._fut.set_exception(result)
+        else:
+            self._fut.set_result(result)
+
+    def cancel(self) -> None:
+        if self._fut.done():
+            return
+        self._fut.set_exception(RuntimeError("cancelled"))
+
+    def force_complete(self, *, reason: str) -> TaskResult:
+        return self._default_result.model_copy(
+            update={"forced": True, "forced_reason": reason}
+        )
+
+
 pytestmark = pytest.mark.asyncio
 
 
@@ -134,30 +240,15 @@ async def test_full_on_enter_loop_converges_after_end_early(monkeypatch, patch_p
     """
     ctrl, collector, fake_session = _make_controller_with_fake_session()
 
-    # Build a fake task for q-0 that, when run(), fires end_interview_early
-    # via the controller and returns a TaskResult.
-    async def first_task_run():
-        fake_ctx = MagicMock()
-        await ctrl.end_interview_early(fake_ctx, reason="candidate_request")
-        return TaskResult(question_id="q-0", kind="technical_depth", tier="strong")
+    # Build a fake task for q-0 that, on first await, schedules
+    # end_interview_early and resolves with a TaskResult. The
+    # controller's `await task` resolves immediately when the future
+    # completes, so we resolve it on the next loop tick.
+    expected = TaskResult(question_id="q-0", kind="technical_depth", tier="strong")
+    fake_task = _AwaitableEndingTask(controller=ctrl, default_result=expected)
 
-    fake_task = MagicMock()
-    fake_task.kind = "technical_depth"
-    fake_task.max_probes = 1
-    fake_task.run = first_task_run
-    fake_task.force_complete = MagicMock(
-        return_value=TaskResult(question_id="q-0", kind="technical_depth")
-    )
-
-    other_task = MagicMock()
-    other_task.kind = "technical_depth"
-    other_task.max_probes = 1
-
-    async def other_run():
-        return TaskResult(question_id="q-other", kind="technical_depth")
-
-    other_task.run = other_run
-    other_task.force_complete = MagicMock()
+    other_default = TaskResult(question_id="q-other", kind="technical_depth")
+    other_task = _AwaitableSimpleTask(default_result=other_default)
 
     def fake_build(q, *, controller, disqualified_signals):
         if q.id == "q-0":
