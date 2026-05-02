@@ -220,6 +220,17 @@ class Settings(BaseSettings):
     engine_event_log_redaction: Literal["metadata", "full"] = "metadata"
     aws_s3_bucket_engine_events: str = ""
 
+    @field_validator("aws_s3_bucket_engine_events")
+    @classmethod
+    def _s3_bucket_required_when_sink_is_s3(cls, v: str, info) -> str:
+        sink = info.data.get("engine_event_log_sink", "local")
+        if sink == "s3" and not v:
+            raise ValueError(
+                "AWS_S3_BUCKET_ENGINE_EVENTS is required when "
+                "ENGINE_EVENT_LOG_SINK=s3. Provide an S3 bucket name."
+            )
+        return v
+
     # Realtime model selection — env-driven, mirrors the JD/question-bank
     # convention. Consumed by AIConfig (in app/ai/config.py) and the
     # plugin factories in app/ai/realtime.py.
