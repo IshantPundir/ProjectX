@@ -12,6 +12,31 @@
 
 ---
 
+## Cold-start preamble (read first if this is a fresh Claude session)
+
+Before executing any task in this plan:
+
+1. `Read` the overview spec end-to-end:
+   `docs/superpowers/specs/2026-05-02-interview-engine-redesign-overview-design.md`.
+   The 21 locked decisions there are non-negotiable and underpin every code shape in
+   this plan. Do not relitigate them mid-execution; if a task seems wrong against the
+   spec, raise the conflict to the user before changing course.
+
+2. Check the Phase status index in the overview spec to confirm Phase 1 has not
+   already shipped. If it has, this plan is historical — do not re-execute.
+
+3. Working directory is `/home/ishant/Projects/ProjectX/` (the monorepo root). All
+   paths in this plan are relative to it. The Python project for backend work lives
+   at `backend/nexus/`; commands use `cd backend/nexus && uv run …`.
+
+4. Stay on `main`. No feature branches. Each task ends in a commit on `main`.
+
+5. After the final task ships and tests pass, **update the overview spec's Phase
+   status index** in the same commit (or a follow-up commit) to flag Phase 1 as ✅
+   shipped with links to the relevant artifacts.
+
+---
+
 ## File structure
 
 | File | Purpose |

@@ -26,6 +26,56 @@ Out of scope for this arc: Phase 3D analysis (post-session scoring + hire/no-hir
 recommendation), report-PDF generation, Sentry beforeSend wiring, recruiter-dashboard UI
 changes to surface `question_kind`.
 
+## Resuming this arc in a fresh Claude session
+
+This document is the single source of truth across multiple Claude sessions. To resume:
+
+**Step 1.** Open Claude Code in this repo, then `Read` this file end-to-end. The 21
+decisions in §"Decisions locked in brainstorming" are **non-negotiable** — they were
+validated in the original brainstorm and may not be re-opened in a per-phase brainstorm
+unless the user explicitly says "I want to revisit decision N".
+
+**Step 2.** Check §"Phase status index" below to find the next un-shipped phase. Each
+phase has its own artifacts (when written) at:
+- spec: `docs/superpowers/specs/YYYY-MM-DD-engine-redesign-phase-N-<slug>-design.md`
+- plan: `docs/superpowers/plans/YYYY-MM-DD-engine-redesign-phase-N-<slug>.md`
+
+**Step 3.** Pick the right entry point for the next phase:
+- **No spec yet** → invoke `superpowers:brainstorming` and use this kickoff prompt:
+  > "Phase N of the engine redesign per
+  > `docs/superpowers/specs/2026-05-02-interview-engine-redesign-overview-design.md`.
+  > Open questions for this phase are in §"Open questions reserved for per-phase
+  > brainstorm". Lead the brainstorm to nail those, write the phase spec, then hand
+  > to writing-plans."
+- **Spec written, no plan** → invoke `superpowers:writing-plans` pointing at the phase spec.
+- **Spec + plan written** → invoke `superpowers:subagent-driven-development` (preferred) or
+  `superpowers:executing-plans` to implement.
+
+**Step 4.** Update the phase status index (§"Phase status index") in the same commit
+that ships the phase artifact. A fresh session must see ground truth, not stale state.
+
+**Step 5.** Stay on `main`. No feature branches. Each per-phase plan specifies
+per-task commits.
+
+### Live data this arc was designed against
+
+The original brainstorm fetched the actual `stage_questions` rows for stage
+`7d96c5d1-57bd-430c-bd98-8b359e47b105` (bank `1fb039b8-63bb-4a81-b004-aab1266f0473`)
+from the local Supabase Postgres. The proposed `question_kind` ascription is in §4.
+To re-fetch in a fresh session:
+
+```bash
+docker exec supabase_db_backend psql -U postgres -d postgres -c \
+  "SELECT position, is_mandatory, signal_values, text
+   FROM stage_questions
+   WHERE bank_id = '1fb039b8-63bb-4a81-b004-aab1266f0473'
+   ORDER BY position;"
+```
+
+If the bank has been edited or regenerated since 2026-05-02, re-derive the
+`question_kind` ascription from the new contents and note any divergence in the
+relevant phase's spec.
+
 ## Decisions locked in brainstorming
 
 | # | Decision | Choice |
@@ -51,6 +101,28 @@ changes to surface `question_kind`.
 | 19 | Tenant configurability | Per-tenant `agent_name` and `knockout_policy` are **data-model-ready from day one** (column on `tenant_settings`); UI to edit them is post-arc. |
 | 20 | Test gates | Phase 2 must include integration tests using LiveKit's `RunResult` / `session.run()`; a `test_jailbreak.py` suite is mandatory for prompt-injection regression. |
 | 21 | Phase 4 backwards compat | `question_kind` migration uses column DEFAULT for existing rows; bank-gen prompt update is **additive** — re-run is opt-in (recruiter clicks regenerate). Existing `confirmed` banks are not auto-touched. |
+
+## Phase status index
+
+Maintained as each phase ships. **The session that ships a phase MUST update this
+table** in the same commit. Status legend: ⚪ not started · 🟡 brainstorm open ·
+🟠 spec written, plan pending · 🔵 plan written, impl pending · 🟢 impl in progress
+· ✅ shipped (tests green, on `main`).
+
+| Phase | Spec | Plan | Status |
+|---|---|---|---|
+| Overview | [`2026-05-02-…overview-design.md`](2026-05-02-interview-engine-redesign-overview-design.md) | n/a | ✅ shipped |
+| 1 — Audit log + engine OTel | _consolidated into overview §3.3, §3.4, §5.2, §5.3, §6_ | [`2026-05-02-…phase-1-event-log-and-otel.md`](../plans/2026-05-02-engine-redesign-phase-1-event-log-and-otel.md) | 🔵 plan written |
+| 2 — Controller cutover | _pending_ | _pending_ | ⚪ not started |
+| 3 — Per-kind tasks | _pending_ | _pending_ | ⚪ not started |
+| 4 — `question_kind` schema | _pending_ | _pending_ | ⚪ not started |
+| 5 — Knockout policy | _pending_ | _pending_ | ⚪ not started |
+| 6 — Audio authority + e2e | _pending_ | _pending_ | ⚪ not started |
+
+Phase 1 has no separate phase-spec file because the overview already pins the data
+shapes (envelope, redaction, sink interface) at full fidelity. Phases 2–6 each get
+their own per-phase spec because they introduce surface that is not yet locked here
+(prompt bodies, tool signatures, migration shapes, frontend deltas).
 
 ## 1 — Architectural shape
 
@@ -600,7 +672,93 @@ The arc is "done" when:
    `question_kind` out of the recruiter API response schema; surfacing it in the dashboard
    is a separate, post-arc frontend ticket.
 
-## 12 — Glossary
+## 12 — Open questions reserved for per-phase brainstorm
+
+The 21 locked decisions cover cross-cutting architecture; each phase still has open
+questions for its own brainstorm to nail. Listed here so a fresh Claude session
+opening this file can hit the ground running. The questions below are the **only**
+items legitimately re-opened in a per-phase brainstorm; anything in §"Decisions
+locked in brainstorming" stays locked unless the user explicitly reopens it.
+
+### Phase 1 — Audit log + engine OTel
+
+**No open questions.** Fully specified by the plan at
+`docs/superpowers/plans/2026-05-02-engine-redesign-phase-1-event-log-and-otel.md`.
+A fresh session executes the 11 plan tasks in order via
+`superpowers:subagent-driven-development` or `superpowers:executing-plans`.
+
+### Phase 2 — Controller cutover (the big one)
+
+1. **Controller `on_enter` exact shape.** §1.1 is pseudocode; the brainstorm fills in:
+   how `signals_already_disclaimed` is computed from prior task results, exact
+   closing-line composition, where `await session.drain()` fits before
+   `session.shutdown()`.
+2. **Spoken-form derivation strategy.** Decision #5 says "runtime LLM derivation,
+   cached"; brainstorm pins one of: batched-at-session-start (parallel ~200ms total)
+   vs lazy-per-task (~50ms each, paid in-line). Test impact + cost tracking.
+3. **`controller.txt` prompt body.** Senior reviewer sign-off required (Decision #18).
+4. **Tool surface.** `end_interview_early(reason: enum)` exact pydantic / function
+   signature; any meta tools (`flag_safety_concern`, etc.).
+5. **Idle-nudge timing constants.** §6.2 says "30s silence triggers nudge"; finalize
+   the constants and whether they're env-tunable.
+6. **Test scaffolding.** Which LiveKit testing primitives (`RunResult`, `session.run()`)
+   cover the controller flow; how to fake the LLM in tests.
+
+### Phase 3 — Per-kind task subclasses
+
+1. **Three task prompt bodies.** `task_technical_depth.txt`, `task_behavioral.txt`,
+   `task_compliance_binary.txt`. Senior reviewer sign-off required.
+2. **Evidence-key matching for `record_answer_assessment`.** Fuzzy string match? exact?
+   LLM-judged?
+3. **STAR-component detection.** Heuristic vs LLM-judged. §1.2 says "the candidate
+   doesn't have to use those labels — your job is to detect the shape" but doesn't
+   pin the mechanism.
+4. **`OpenCultureTask` placeholder.** §1.2 reserves the kind but defers implementation.
+   Brainstorm: stub class, or omit until the bank-generator emits this kind?
+5. **Probe budget edge cases.** First-answer-already-excellent path; non-answer with
+   probe budget remaining; probe-then-non-answer.
+
+### Phase 4 — `question_kind` schema + bank-generator
+
+1. **Bank-generator prompt edits.** Exact diff to `prompts/v1/question_bank_*.txt`
+   to make the generator emit `question_kind`. Includes guidance for the generator on
+   which kind fits which signal class.
+2. **Backfill strategy for old banks.** Decision #21 commits to opt-in regenerate
+   (recruiter-triggered); brainstorm verifies that's still the right call once the
+   bank-gen prompt is concrete.
+3. **Migration ordering.** Bank-generator update + Alembic column add — same revision
+   or sequential?
+
+### Phase 5 — Knockout policy + tenant settings
+
+1. **Does `tenant_settings` table exist already?** §7.2 assumes a tenant-settings
+   table. Verify; if missing, the brainstorm specs a migration that creates it.
+2. **`engine_agent_name` env→tenant migration.** Backwards compat: env value is the
+   fallback when the tenant column is null.
+3. **`session_outcome` frontend rendering.** Exact UI per state in
+   `useSessionOutcome` hook + `DisconnectError` / `CompletionScreen` routing.
+   Confirm against current `frontend/session/components/interview/` code.
+4. **`KnockoutFailure.reason` redaction policy.** Event-log redaction module already
+   covers the in-envelope copy. `SessionResult.knockout_failures` lands in DB
+   outside the event log — confirm the persist-time redaction policy (or non-policy).
+
+### Phase 6 — Audio authority + e2e gate
+
+1. **Browser compat matrix.** Does Safari respect
+   `audioCaptureDefaults: {echoCancellation: false, …}`? Mobile Chrome? Final tested
+   matrix.
+2. **LiveKit `Room` construction site.** Exact code edit point in
+   `frontend/session/components/interview/app/app.tsx` — the file uses `useSession`
+   which constructs the Room internally; brainstorm confirms whether
+   `audioCaptureDefaults` flows through or needs a different injection.
+3. **Threat-model entry for `frontend/session/CLAUDE.md`.** The audio change is in
+   the "Human Review Required For" list; the PR needs a threat-model update reference
+   under `docs/security/`. Brainstorm drafts the entry.
+4. **`docs/onboarding/` end-to-end test checklist format.** Exact checklist shape;
+   which test cases (soft-spoken, noisy room, mobile Safari, mobile Chrome, network
+   degradation).
+
+## 13 — Glossary
 
 - **Spoken form**: the natural ≤25-word ask the agent says aloud, derived from
   `QuestionConfig.text` at session start. The full `text` is the rubric, not the script.
