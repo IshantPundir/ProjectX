@@ -89,6 +89,73 @@ class TestForceComplete:
         assert result.signals_lacked == ["python"]
 
 
+class TestTaskResultPhase3Fields:
+    def test_kind_accepts_behavioral_star(self) -> None:
+        result = TaskResult(question_id="q-1", kind="behavioral_star")
+        assert result.kind == "behavioral_star"
+
+    def test_kind_accepts_compliance_binary(self) -> None:
+        result = TaskResult(question_id="q-1", kind="compliance_binary")
+        assert result.kind == "compliance_binary"
+
+    def test_kind_rejects_unknown_value(self) -> None:
+        import pytest
+        with pytest.raises(Exception):  # pydantic ValidationError
+            TaskResult(question_id="q-1", kind="open_culture")  # type: ignore[arg-type]
+
+    def test_star_components_default_none(self) -> None:
+        result = TaskResult(question_id="q-1", kind="behavioral_star")
+        assert result.star_components is None
+
+    def test_star_components_accepts_partial_dict(self) -> None:
+        result = TaskResult(
+            question_id="q-1",
+            kind="behavioral_star",
+            star_components={
+                "situation": "Last year at my prior job",
+                "task": "Lead the migration",
+                "action": None,
+                "result": None,
+            },
+        )
+        assert result.star_components["situation"] == "Last year at my prior job"
+        assert result.star_components["action"] is None
+
+    def test_compliance_fields_default_none_and_false(self) -> None:
+        result = TaskResult(question_id="q-1", kind="compliance_binary")
+        assert result.compliance_confirmed is None
+        assert result.compliance_reason_or_example is None
+        assert result.compliance_clarification_used is False
+
+    def test_compliance_fields_settable(self) -> None:
+        result = TaskResult(
+            question_id="q-1",
+            kind="compliance_binary",
+            compliance_confirmed=True,
+            compliance_reason_or_example="Confirmed without further context",
+            compliance_clarification_used=True,
+        )
+        assert result.compliance_confirmed is True
+        assert result.compliance_reason_or_example == "Confirmed without further context"
+        assert result.compliance_clarification_used is True
+
+    def test_existing_technical_depth_serialization_unchanged(self) -> None:
+        """Phase 2 callers must still produce the same shape."""
+        result = TaskResult(
+            question_id="q-1",
+            kind="technical_depth",
+            tier="strong",
+            evidence_keys=["e1"],
+            non_answer=False,
+        )
+        assert result.kind == "technical_depth"
+        assert result.tier == "strong"
+        # New fields default cleanly.
+        assert result.star_components is None
+        assert result.compliance_confirmed is None
+        assert result.compliance_clarification_used is False
+
+
 @pytest.fixture
 def sample_question():
     from app.modules.interview_runtime.schemas import (

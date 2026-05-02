@@ -39,7 +39,7 @@ class TaskResult(BaseModel):
     """
 
     question_id: str
-    kind: Literal["technical_depth"]  # extended in Phase 3
+    kind: Literal["technical_depth", "behavioral_star", "compliance_binary"]
     tier: Literal["excellent", "strong", "at_bar", "below_bar"] | None = None
     evidence_keys: list[str] = []
     non_answer: bool = False
@@ -49,6 +49,14 @@ class TaskResult(BaseModel):
     forced: bool = False
     forced_reason: Literal["task_timeout"] | None = None
     probes_fired: int = 0
+    # Phase 3 — behavioral observation fields (None for non-behavioral)
+    star_components: dict[
+        Literal["situation", "task", "action", "result"], str | None
+    ] | None = None
+    # Phase 3 — compliance observation fields (None for non-compliance)
+    compliance_confirmed: bool | None = None
+    compliance_reason_or_example: str | None = None
+    compliance_clarification_used: bool = False
 
 
 @dataclass
