@@ -17,6 +17,7 @@ import asyncio
 import json
 import time
 import uuid
+from datetime import datetime, timezone
 
 import structlog
 
@@ -72,6 +73,12 @@ from app.config import settings
 from app.database import get_bypass_session
 from app.modules.interview_engine.interviewer import InterviewerAgent
 from app.modules.interview_runtime import build_session_config
+from app.modules.interview_engine.event_log import (
+    EventCollector,
+    EventLogSink,
+    build_sink_from_settings,
+)
+from app.modules.interview_engine.prompt_hash import hash_prompt_file
 
 
 log = structlog.get_logger("interview-engine")
@@ -160,6 +167,35 @@ async def entrypoint(ctx: JobContext) -> None:
     )
     _log_session_setup(config)
 
+    # Phase 1 — audit event log. Build the sink from settings (None when
+    # ENGINE_EVENT_LOG_SINK=none) and a per-session collector that the
+    # observability listeners feed via append().
+    event_sink: EventLogSink | None = build_sink_from_settings()
+    event_collector = EventCollector(
+        session_id=session_id,
+        tenant_id=tenant_id_str,
+        correlation_id=correlation_id,
+        controller_prompt_hash=hash_prompt_file("interview/interviewer.txt"),
+        model_versions={
+            "llm": ai_config.interview_llm_model,
+            "stt": ai_config.interview_stt_model,
+            "tts": ai_config.interview_tts_model,
+            "turn_detector_unlikely_threshold": str(
+                ai_config.interview_turn_detector_unlikely_threshold
+            ),
+            "noise_cancellation_model": ai_config.interview_noise_cancellation_model,
+            "noise_cancellation_level": str(
+                ai_config.interview_noise_cancellation_level
+            ),
+        },
+        redaction_mode=settings.engine_event_log_redaction,
+    )
+    log.info(
+        "engine.event_log.opened",
+        sink=settings.engine_event_log_sink,
+        redaction=settings.engine_event_log_redaction,
+    )
+
     agent = InterviewerAgent(
         session_config=config,
         tenant_id=tenant_uuid,
@@ -206,13 +242,14 @@ async def entrypoint(ctx: JobContext) -> None:
         ),
     )
 
-    if settings.engine_log_audio_events:
-        _wire_session_observability(
-            session,
-            log_verbose_content=settings.engine_log_user_transcripts,
-        )
+    _wire_session_observability(
+        session,
+        collector=event_collector,
+        log_verbose_content=settings.engine_log_user_transcripts,
+        log_audio_events=settings.engine_log_audio_events,
+    )
 
-    _wire_close_handler(session, agent)
+    _wire_close_handler(session, agent, collector=event_collector, sink=event_sink)
 
     await session.start(
         agent=agent,
@@ -287,29 +324,30 @@ def _log_session_setup(config) -> None:
 
 
 def _wire_session_observability(
-    session: AgentSession, *, log_verbose_content: bool
+    session: AgentSession,
+    *,
+    collector: EventCollector,
+    log_verbose_content: bool,
+    log_audio_events: bool,
 ) -> None:
-    """Attach structlog listeners covering every AgentSession event.
+    """Attach structlog + EventCollector listeners covering every AgentSession event.
 
-    Each record carries ``elapsed_ms`` (relative to the first observed
-    event in this session) and ``wall_ms`` (event ``created_at`` rounded
-    to ms) so per-turn latency waterfalls can be reconstructed by
-    grepping for a session_id and sorting by ``elapsed_ms``.
-
-    The ``contextvars`` (``session_id``, ``correlation_id``) bound in
-    ``entrypoint`` flow through automatically, so every record is already
-    scoped to its session.
+    Two destinations:
+    1. structlog stdout — live debugging, gated behind ``log_audio_events``
+       so production can quiet it without losing the durable artifact.
+    2. EventCollector — durable per-session audit envelope, always fed
+       so a session that crashes mid-flight still has a partial record
+       on disk (whatever was written before the crash).
 
     PII discipline:
-    - Always-on fields are metadata only (state names, finality flags,
-      character counts, token counts, latency numbers, error types).
+    - Always-on payload fields are metadata only (state names, finality
+      flags, character counts, token counts, latency numbers, error types).
     - Verbose content (verbatim STT transcripts, LLM message bodies,
-      function-tool args/outputs) is gated behind ``log_verbose_content``
-      and must never be enabled in production. See root CLAUDE.md PII
-      discipline rule.
+      function-tool args/outputs) is gated TWICE: structlog by
+      ``log_verbose_content``, and the EventCollector by its own
+      ``redaction_mode``. Production runs both at minimum (audio events
+      on, verbose off, metadata redaction).
     """
-    # Captured on the first event so elapsed_ms is meaningful for every
-    # subsequent record. Mutable container so the closure can write it.
     state: dict[str, float | None] = {"t0_monotonic": None}
 
     def _ts(ev_created_at: float) -> dict[str, int]:
@@ -322,63 +360,51 @@ def _wire_session_observability(
             "wall_ms": int(ev_created_at * 1000),
         }
 
+    def _emit(kind: str, payload: dict[str, object], ev_created_at: float) -> None:
+        wall_ms = int(ev_created_at * 1000)
+        collector.append(kind=kind, payload=dict(payload), wall_ms=wall_ms)
+        if log_audio_events:
+            log.info(kind, **payload, **_ts(ev_created_at))
+
     @session.on("user_state_changed")
     def _on_user_state(ev: UserStateChangedEvent) -> None:
-        # VAD-driven. listening -> speaking = candidate started talking;
-        # speaking -> listening = candidate stopped. If you never see this
-        # transition while you're talking, VAD isn't picking up your voice.
-        log.info(
+        _emit(
             "audio.user.state",
-            old_state=ev.old_state,
-            new_state=ev.new_state,
-            **_ts(ev.created_at),
+            {"old_state": ev.old_state, "new_state": ev.new_state},
+            ev.created_at,
         )
 
     @session.on("agent_state_changed")
     def _on_agent_state(ev: AgentStateChangedEvent) -> None:
-        # listening -> thinking = LLM call kicked off.
-        # thinking -> speaking = TTS playback started.
-        # The gap between thinking and speaking is the LLM TTFT + TTS TTFB.
-        log.info(
+        _emit(
             "audio.agent.state",
-            old_state=ev.old_state,
-            new_state=ev.new_state,
-            **_ts(ev.created_at),
+            {"old_state": ev.old_state, "new_state": ev.new_state},
+            ev.created_at,
         )
 
     @session.on("user_input_transcribed")
     def _on_user_transcript(ev: UserInputTranscribedEvent) -> None:
-        kwargs: dict[str, object] = {
+        payload: dict[str, object] = {
             "is_final": ev.is_final,
             "transcript_chars": len(ev.transcript),
             "language": str(ev.language) if ev.language else None,
             "speaker_id": ev.speaker_id,
         }
         if log_verbose_content:
-            kwargs["transcript"] = ev.transcript
-        log.info("audio.stt.transcribed", **kwargs, **_ts(ev.created_at))
+            payload["transcript"] = ev.transcript
+        _emit("audio.stt.transcribed", payload, ev.created_at)
 
     @session.on("metrics_collected")
     def _on_metrics(ev: MetricsCollectedEvent) -> None:
-        # Per-pipeline-stage metrics. The metrics object's ``type`` field
-        # is one of: vad_metrics, eou_metrics, stt_metrics, llm_metrics,
-        # tts_metrics, realtime_model_metrics. Discriminate on type so
-        # the resulting log records are easy to grep
-        # (e.g. ``grep audio.metrics.llm`` for LLM TTFT and tokens).
         m = ev.metrics
         try:
             payload = m.model_dump(exclude={"timestamp", "metadata"})
         except Exception:  # noqa: BLE001
             payload = {"raw": str(m)}
-        log.info(f"audio.metrics.{m.type}", **payload, **_ts(ev.created_at))
+        _emit(f"audio.metrics.{m.type}", payload, ev.created_at)
 
     @session.on("conversation_item_added")
     def _on_conversation_item(ev: ConversationItemAddedEvent) -> None:
-        # Fired every time a chat message lands in the conversation
-        # history: user turns (post-STT-final) and assistant turns
-        # (LLM response, including any function-tool calls). The role
-        # + chars give shape; verbose content gives the actual body
-        # for prompt tuning.
         item = ev.item
         role = getattr(item, "role", None) or getattr(item, "type", None)
         content_text = getattr(item, "text_content", None)
@@ -387,25 +413,20 @@ def _wire_session_observability(
                 content_text = content_text()
             except Exception:  # noqa: BLE001
                 content_text = None
-        kwargs: dict[str, object] = {
+        payload: dict[str, object] = {
             "role": role,
             "item_type": getattr(item, "type", None),
         }
         if isinstance(content_text, str):
-            kwargs["content_chars"] = len(content_text)
+            payload["content_chars"] = len(content_text)
             if log_verbose_content:
-                kwargs["content"] = content_text
-        log.info("llm.message.added", **kwargs, **_ts(ev.created_at))
+                payload["content"] = content_text
+        _emit("llm.message.added", payload, ev.created_at)
 
     @session.on("function_tools_executed")
     def _on_tools_executed(ev: FunctionToolsExecutedEvent) -> None:
-        # The LLM called one or more @function_tools. For us the only
-        # tool is record_observation, but log defensively in case more
-        # are added. The args + output are the load-bearing fields for
-        # debugging "did the LLM observe the right thing?" — they're
-        # PII-gated behind log_verbose_content.
         for call, output in ev.zipped():
-            kwargs: dict[str, object] = {
+            payload: dict[str, object] = {
                 "tool_name": call.name,
                 "tool_call_id": getattr(call, "call_id", None),
                 "has_output": output is not None,
@@ -413,32 +434,29 @@ def _wire_session_observability(
                     bool(getattr(output, "is_error", False)) if output else None
                 ),
             }
+            # Always include the *keys* of arguments (no values) so audit
+            # replay can see which args the LLM produced without leaking
+            # their content.
+            try:
+                arg_keys = list(getattr(call, "arguments", {}) or {})
+            except Exception:  # noqa: BLE001
+                arg_keys = []
+            payload["argument_keys"] = arg_keys
             if log_verbose_content:
-                kwargs["arguments"] = getattr(call, "arguments", None)
-                kwargs["output"] = (
+                payload["arguments"] = getattr(call, "arguments", None)
+                payload["output"] = (
                     getattr(output, "output", None) if output else None
                 )
-            log.info("llm.tool.executed", **kwargs, **_ts(ev.created_at))
+            _emit("llm.tool.executed", payload, ev.created_at)
 
     @session.on("agent_false_interruption")
     def _on_false_interruption(ev: AgentFalseInterruptionEvent) -> None:
-        # Adaptive interruption decided a sound burst (cough, background
-        # noise, brief candidate ack) wasn't a real interruption. resumed=
-        # True means the agent's speech kept going. False means it was
-        # cut off — adjust min_duration / interruption mode if you see
-        # too many of these.
-        log.info(
-            "audio.interruption.false",
-            resumed=ev.resumed,
-            **_ts(ev.created_at),
-        )
+        _emit("audio.interruption.false", {"resumed": ev.resumed}, ev.created_at)
 
     @session.on("overlapping_speech")
     def _on_overlap(ev: OverlappingSpeechEvent) -> None:
-        log.info(
-            "audio.overlap",
-            **_ts(getattr(ev, "created_at", time.time())),
-        )
+        ev_created = getattr(ev, "created_at", time.time())
+        _emit("audio.overlap", {}, ev_created)
 
     @session.on("session_usage_updated")
     def _on_usage(ev: SessionUsageUpdatedEvent) -> None:
@@ -446,69 +464,74 @@ def _wire_session_observability(
             usage = ev.usage.model_dump()
         except Exception:  # noqa: BLE001
             usage = {"raw": str(ev.usage)}
-        log.info("session.usage", **usage, **_ts(ev.created_at))
+        _emit("session.usage", usage, ev.created_at)
 
     @session.on("speech_created")
     def _on_speech_created(ev: SpeechCreatedEvent) -> None:
-        # source='generate_reply' = LLM-driven turn; source='say' = direct
-        # TTS injection (we use this for the greeting). user_initiated=
-        # True means our own code created it (vs an internal LiveKit-
-        # driven generation).
-        log.info(
+        _emit(
             "audio.speech.created",
-            source=ev.source,
-            user_initiated=ev.user_initiated,
-            **_ts(ev.created_at),
+            {"source": ev.source, "user_initiated": ev.user_initiated},
+            ev.created_at,
         )
 
     @session.on("error")
     def _on_error(ev: ErrorEvent) -> None:
-        log.error(
-            "audio.pipeline.error",
-            source=type(ev.source).__name__,
-            error=str(ev.error),
-            error_type=type(ev.error).__name__,
-            **_ts(ev.created_at),
+        payload = {
+            "source": type(ev.source).__name__,
+            "error": str(ev.error),
+            "error_type": type(ev.error).__name__,
+        }
+        # Errors bypass the log_audio_events gate — always log.
+        log.error("audio.pipeline.error", **payload, **_ts(ev.created_at))
+        collector.append(
+            kind="audio.pipeline.error",
+            payload=payload,
+            wall_ms=int(ev.created_at * 1000),
         )
 
 
 def _wire_close_handler(
-    session: AgentSession, agent: InterviewerAgent
+    session: AgentSession,
+    agent: InterviewerAgent,
+    *,
+    collector: EventCollector,
+    sink: EventLogSink | None,
 ) -> None:
-    """Attach the close-event handler that persists a final result + publishes
-    the session_outcome attribute when the AgentSession ends.
+    """Attach the close-event handler that:
+    1. persists the SessionResult (existing behavior)
+    2. publishes the session_outcome attribute (existing behavior)
+    3. closes the EventCollector and writes the envelope to the sink (Phase 1 NEW)
 
     Two paths reach close:
 
     1. State machine emits Action.CLOSE → ``record_observation`` already
        persisted + published ``session_outcome='completed'`` and set
-       ``agent._persisted=True``. The close handler is a no-op in that case
-       because ``_persist_result`` is idempotent on the Nexus side and we
-       don't want to overwrite the prior completed outcome with another
-       'completed' (harmless but noisy).
+       ``agent._persisted=True``. The close handler is a no-op for the
+       SessionResult path; the envelope is still written here.
     2. Candidate disconnects mid-session — clicks End Call, refreshes the
        page (which closes their old room session), or network drops past
        the SDK's reconnect window. ``close_on_disconnect=True`` (default)
        fires the AgentSession close with ``reason=PARTICIPANT_DISCONNECTED``.
        The state machine never reached CLOSE; we persist a partial result
-       here so Nexus transitions session.state → 'completed' and the
-       candidate's wizard pre-check on next visit doesn't show
-       'Rejoin your interview' for an effectively-ended session.
+       here, AND we write a partial envelope.
 
     ``ERROR`` reason (LLM/STT/TTS plugin error) routes outcome='error' so the
     frontend's ``useSessionOutcome`` hook surfaces ``DisconnectError`` with
-    ``ENGINE_ERROR`` rather than ``CompletionScreen``.
+    ``ENGINE_ERROR`` rather than ``CompletionScreen``. The envelope is still
+    written for forensic review.
     """
 
     @session.on("close")
     def _on_close(ev: CloseEvent) -> None:
-        # Spawn an asyncio task — the close event is emitted before room IO
-        # tears down, so the LiveKit room is still alive long enough to
-        # publish the outcome attribute.
-        asyncio.create_task(_handle_close(ev, agent))
+        asyncio.create_task(_handle_close(ev, agent, collector, sink))
 
 
-async def _handle_close(ev: CloseEvent, agent: InterviewerAgent) -> None:
+async def _handle_close(
+    ev: CloseEvent,
+    agent: InterviewerAgent,
+    collector: EventCollector,
+    sink: EventLogSink | None,
+) -> None:
     """Async body of the close-event handler. See ``_wire_close_handler`` docstring."""
     log = structlog.get_logger("interview-engine")
     log.info(
@@ -520,7 +543,7 @@ async def _handle_close(ev: CloseEvent, agent: InterviewerAgent) -> None:
 
     outcome = "error" if ev.reason == CloseReason.ERROR else "completed"
 
-    # Persist a final/partial result if the state machine didn't already.
+    # 1. Persist the SessionResult (existing behavior).
     if not agent._persisted:
         try:
             result = agent._build_session_result()
@@ -533,6 +556,20 @@ async def _handle_close(ev: CloseEvent, agent: InterviewerAgent) -> None:
                 error_type=type(exc).__name__,
             )
 
-    # Publish session_outcome so the candidate's frontend
-    # useSessionOutcome hook reads it on the Disconnected event.
+    # 2. Publish session_outcome (existing behavior).
     await agent._publish_session_outcome(outcome)
+
+    # 3. Phase 1 — close the EventCollector and write the envelope.
+    if sink is not None:
+        envelope = collector.close(
+            closed_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        )
+        try:
+            target = await asyncio.to_thread(sink.write, envelope)
+            log.info("session.close.event_log_written", target=target)
+        except Exception as exc:  # noqa: BLE001
+            log.error(
+                "session.close.event_log_failed",
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
