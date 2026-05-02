@@ -67,6 +67,12 @@ class QuestionConfig(BaseModel):
     red_flags: list[str] = Field(min_length=2, max_length=3)
     rubric: QuestionRubric
     evaluation_hint: str = Field(min_length=10, max_length=200)
+    question_kind: Literal[
+        "technical_depth",
+        "behavioral_star",
+        "compliance_binary",
+        "open_culture",
+    ] = "technical_depth"
 
 
 class CompanyContext(BaseModel):
