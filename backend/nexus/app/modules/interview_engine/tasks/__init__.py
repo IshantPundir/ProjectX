@@ -11,6 +11,9 @@ from app.modules.interview_engine.tasks.base import (
     QuestionTask,
     TaskResult,
 )
+from app.modules.interview_engine.tasks.behavioral import (
+    BehavioralStarTask,
+)
 from app.modules.interview_engine.tasks.factory import (
     build_task_for,
     effective_budget_seconds_for,
@@ -20,6 +23,7 @@ from app.modules.interview_engine.tasks.technical_depth import (
 )
 
 __all__ = [
+    "BehavioralStarTask",
     "QuestionTask",
     "TaskResult",
     "TechnicalDepthTask",
