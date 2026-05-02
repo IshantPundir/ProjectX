@@ -24,6 +24,7 @@ _CONTENT_FIELDS_BY_KIND: dict[str, tuple[str, ...]] = {
     "llm.message.added": ("content",),
     "llm.tool.executed": ("arguments", "output"),
     "disqualify.knockout": ("reason",),
+    "audio.pipeline.error": ("error",),
     # Phase 2 will add: task.completed (result_dict), controller.intent.end_early (summary)
 }
 

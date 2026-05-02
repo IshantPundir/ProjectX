@@ -72,6 +72,20 @@ def test_unknown_kind_passes_through_in_metadata_mode() -> None:
     assert out == payload
 
 
+def test_metadata_mode_strips_pipeline_error_message() -> None:
+    """Plugin error strings can leak LLM response excerpts or partial STT
+    transcripts. Stripped in metadata; preserved in full for forensic review."""
+    payload = {
+        "source": "DeepgramSTT",
+        "error": "openai response: 'I cannot share the answer'",
+        "error_type": "PluginError",
+    }
+    out = redact_payload("audio.pipeline.error", payload, mode="metadata")
+    assert "error" not in out
+    assert out["source"] == "DeepgramSTT"
+    assert out["error_type"] == "PluginError"
+
+
 def test_invalid_mode_raises() -> None:
     with pytest.raises(ValueError):
         redact_payload("audio.stt.transcribed", {}, mode="enterprise")  # type: ignore[arg-type]

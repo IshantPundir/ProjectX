@@ -521,9 +521,13 @@ def _wire_close_handler(
     written for forensic review.
     """
 
+    _bg_tasks: set[asyncio.Task[None]] = set()
+
     @session.on("close")
     def _on_close(ev: CloseEvent) -> None:
-        asyncio.create_task(_handle_close(ev, agent, collector, sink))
+        task = asyncio.create_task(_handle_close(ev, agent, collector, sink))
+        _bg_tasks.add(task)
+        task.add_done_callback(_bg_tasks.discard)
 
 
 async def _handle_close(
@@ -539,6 +543,21 @@ async def _handle_close(
         reason=ev.reason.value,
         has_error=bool(ev.error),
         already_persisted=agent._persisted,
+    )
+
+    # Phase 1 — also append session.close to the audit envelope so the
+    # on-disk JSON has a terminal event marking how the session ended.
+    # knockout_failures_count is 0 in Phase 1; Phase 2's controller will
+    # populate it with the real count.
+    collector.append(
+        kind="session.close",
+        payload={
+            "reason": ev.reason.value,
+            "persisted": agent._persisted,
+            "knockout_failures_count": 0,
+            "has_error": bool(ev.error),
+        },
+        wall_ms=int(time.time() * 1000),
     )
 
     outcome = "error" if ev.reason == CloseReason.ERROR else "completed"

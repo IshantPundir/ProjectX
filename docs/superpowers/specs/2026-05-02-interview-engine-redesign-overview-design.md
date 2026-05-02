@@ -112,7 +112,7 @@ table** in the same commit. Status legend: ⚪ not started · 🟡 brainstorm op
 | Phase | Spec | Plan | Status |
 |---|---|---|---|
 | Overview | [`2026-05-02-…overview-design.md`](2026-05-02-interview-engine-redesign-overview-design.md) | n/a | ✅ shipped |
-| 1 — Audit log + engine OTel | _consolidated into overview §3.3, §3.4, §5.2, §5.3, §6_ | [`2026-05-02-…phase-1-event-log-and-otel.md`](../plans/2026-05-02-engine-redesign-phase-1-event-log-and-otel.md) | 🔵 plan written |
+| 1 — Audit log + engine OTel | _consolidated into overview §3.3, §3.4, §5.2, §5.3, §6_ | [`2026-05-02-…phase-1-event-log-and-otel.md`](../plans/2026-05-02-engine-redesign-phase-1-event-log-and-otel.md) | ✅ shipped |
 | 2 — Controller cutover | _pending_ | _pending_ | ⚪ not started |
 | 3 — Per-kind tasks | _pending_ | _pending_ | ⚪ not started |
 | 4 — `question_kind` schema | _pending_ | _pending_ | ⚪ not started |
