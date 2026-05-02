@@ -14,5 +14,12 @@ from app.modules.interview_engine.event_log.envelope import (
     EventLogEnvelope,
     EventLogEvent,
 )
+from app.modules.interview_engine.event_log.factory import build_sink_from_settings
+from app.modules.interview_engine.event_log.sink import EventLogSink
 
-__all__ = ["EventLogEnvelope", "EventLogEvent"]
+__all__ = [
+    "EventLogEnvelope",
+    "EventLogEvent",
+    "EventLogSink",
+    "build_sink_from_settings",
+]
