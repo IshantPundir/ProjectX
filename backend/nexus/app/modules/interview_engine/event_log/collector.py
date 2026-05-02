@@ -73,6 +73,12 @@ class EventCollector:
             )
         )
 
+    def events_of_kind(self, kind: str) -> list[EventLogEvent]:
+        """Return all currently-collected events with ``kind == <kind>``.
+
+        Test helper. Not part of the production data path."""
+        return [e for e in self._events if e.kind == kind]
+
     def set_task_prompt_hash(self, *, question_id: str, sha: str) -> None:
         """Phase 2 will populate this per QuestionTask construction.
 
