@@ -10,6 +10,7 @@ Phase 1 of the engine redesign. Provides:
 See docs/superpowers/specs/2026-05-02-interview-engine-redesign-overview-design.md §3.3-§3.4.
 """
 
+from app.modules.interview_engine.event_log.collector import EventCollector
 from app.modules.interview_engine.event_log.envelope import (
     EventLogEnvelope,
     EventLogEvent,
@@ -18,6 +19,7 @@ from app.modules.interview_engine.event_log.factory import build_sink_from_setti
 from app.modules.interview_engine.event_log.sink import EventLogSink
 
 __all__ = [
+    "EventCollector",
     "EventLogEnvelope",
     "EventLogEvent",
     "EventLogSink",
