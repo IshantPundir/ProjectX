@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -207,6 +209,16 @@ class Settings(BaseSettings):
     # Observability
     engine_log_audio_events: bool = True
     engine_log_user_transcripts: bool = False
+
+    # Phase 1 (engine redesign) — event log sink config. The engine writes a
+    # per-session JSON envelope at session close; the sink chosen here decides
+    # where it lands. Production runs `metadata` redaction (no PII content);
+    # `full` is consent-gated audit replay only and must never be the default.
+    # `none` disables the writer entirely (smoke tests, ephemeral envs).
+    engine_event_log_sink: Literal["local", "s3", "none"] = "local"
+    engine_event_log_dir: str = "/tmp/engine-events"
+    engine_event_log_redaction: Literal["metadata", "full"] = "metadata"
+    aws_s3_bucket_engine_events: str = ""
 
     # Realtime model selection — env-driven, mirrors the JD/question-bank
     # convention. Consumed by AIConfig (in app/ai/config.py) and the
