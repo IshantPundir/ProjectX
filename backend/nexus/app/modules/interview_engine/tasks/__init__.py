@@ -14,6 +14,9 @@ from app.modules.interview_engine.tasks.base import (
 from app.modules.interview_engine.tasks.behavioral import (
     BehavioralStarTask,
 )
+from app.modules.interview_engine.tasks.compliance_binary import (
+    ComplianceBinaryTask,
+)
 from app.modules.interview_engine.tasks.factory import (
     build_task_for,
     effective_budget_seconds_for,
@@ -24,6 +27,7 @@ from app.modules.interview_engine.tasks.technical_depth import (
 
 __all__ = [
     "BehavioralStarTask",
+    "ComplianceBinaryTask",
     "QuestionTask",
     "TaskResult",
     "TechnicalDepthTask",

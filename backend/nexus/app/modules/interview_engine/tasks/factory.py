@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 from app.config import settings
 from app.modules.interview_engine.tasks.base import QuestionTask
 from app.modules.interview_engine.tasks.behavioral import BehavioralStarTask
+from app.modules.interview_engine.tasks.compliance_binary import ComplianceBinaryTask
 from app.modules.interview_engine.tasks.technical_depth import TechnicalDepthTask
 
 if TYPE_CHECKING:
@@ -27,10 +28,8 @@ if TYPE_CHECKING:
 _ROUTING_TABLE: dict[str, type[QuestionTask]] = {
     "technical_depth": TechnicalDepthTask,
     "behavioral_star": BehavioralStarTask,
-    # Phase 3 will add compliance_binary entry next.
-    # open_culture stays mapped to TechnicalDepthTask permanently — see
-    # overview spec §1.2.
-    "open_culture": TechnicalDepthTask,
+    "compliance_binary": ComplianceBinaryTask,
+    "open_culture": TechnicalDepthTask,  # deferred — see overview spec §1.2
 }
 
 
