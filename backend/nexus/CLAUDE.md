@@ -3,6 +3,7 @@
 
 > Read the root `CLAUDE.md` first. This file contains backend-specific rules that extend it.
 
+@AGENTS.md
 ---
 
 ## What Nexus Is
