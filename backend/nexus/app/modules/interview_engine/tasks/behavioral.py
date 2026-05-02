@@ -64,11 +64,12 @@ class BehavioralStarTask(QuestionTask):
             rubric_internal=rubric_internal,
         )
         self._probes_fired: int = 0
+        # Snapshot of filled-component count at the moment the last probe fired —
+        # used to detect Q5 case C (probe-then-no-progress) and refuse the next probe.
         self._last_filled_component_count: int = 0
-        # Initialize star_components on the partial state.
-        self._partial.star_components = {
-            "situation": None, "task": None, "action": None, "result": None,
-        }
+        # Initialize star_components on the partial state. Single source of truth
+        # for the four valid keys is _STAR_COMPONENTS at module level.
+        self._partial.star_components = {k: None for k in _STAR_COMPONENTS}
 
     def build_task_instructions(self) -> str:
         """Load the prompt template and substitute the question's data."""

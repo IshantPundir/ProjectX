@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import MagicMock
 
 import pytest
@@ -196,7 +195,6 @@ class TestCompleteQuestion:
         )
         # Capture the complete() call by stubbing it.
         captured: dict = {}
-        original_complete = t.complete
 
         def fake_complete(result):
             captured["result"] = result
