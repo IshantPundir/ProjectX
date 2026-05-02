@@ -74,6 +74,8 @@ class _PartialState:
     knockout: bool = False
     knockout_reason: str | None = None
     probes_fired: int = 0
+    # Phase 3 — behavioral STAR components (None for non-behavioral tasks)
+    star_components: dict[str, str | None] | None = None
 
 
 class QuestionTask(AgentTask, abc.ABC):
@@ -142,6 +144,11 @@ class QuestionTask(AgentTask, abc.ABC):
             forced=True,
             forced_reason=reason,
             probes_fired=self._partial.probes_fired,
+            star_components=(
+                dict(self._partial.star_components)
+                if self._partial.star_components is not None
+                else None
+            ),
         )
 
     # Helper used by subclasses' record_answer_assessment-style tools.
