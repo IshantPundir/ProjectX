@@ -132,6 +132,9 @@ class QuestionTask(AgentTask, abc.ABC):
         ``task.complete(forced)`` invocation to resolve the inline
         AgentTask awaitable with the forced result.
         """
+        # Compliance fields are read off the subclass via getattr so the
+        # base method doesn't need a typed coupling to ComplianceBinaryTask.
+        clarification_used = getattr(self, "_clarification_used", False)
         return TaskResult(
             question_id=self.question_config.id,
             kind=self.kind,  # type: ignore[arg-type]
@@ -149,6 +152,7 @@ class QuestionTask(AgentTask, abc.ABC):
                 if self._partial.star_components is not None
                 else None
             ),
+            compliance_clarification_used=clarification_used,
         )
 
     # Helper used by subclasses' record_answer_assessment-style tools.
