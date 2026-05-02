@@ -50,7 +50,7 @@ The Phase 2 InterviewController exposes three controller-level
     24 hours.
   * `category="threats_to_others"` — same 1-hour SLA; security ops
     notified in parallel.
-  * `category="harassment"` / `inappropriate_request"` — recruiter
+  * `category="harassment"` / `category="inappropriate_request"` — recruiter
     notified at next business day; no SEV.
   * `category="other"` — appears on the recruiter's session report; no
     proactive notification.
