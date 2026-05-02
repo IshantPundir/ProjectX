@@ -43,7 +43,7 @@ from app.modules.interview_engine.outcome_close import (
     SessionOutcome,
     closing_instructions_for,
 )
-from app.modules.interview_engine.tasks import build_task_for
+from app.modules.interview_engine.tasks import build_task_for, effective_budget_seconds_for
 from app.modules.interview_engine.tasks.base import TaskResult
 from app.modules.interview_runtime import (
     QuestionConfig,
@@ -195,7 +195,10 @@ class InterviewController(Agent):
                     if trimmed <= 0:
                         self._end_outcome = "time_expired"
                         break
-                    await self._dispatch_task(q, watchdog_seconds=trimmed)
+                    await self._dispatch_task(
+                        q,
+                        watchdog_seconds=min(trimmed, effective_budget_seconds_for(q)),
+                    )
                 else:
                     self._collector.append(
                         kind="controller.skip.budget",
@@ -209,8 +212,7 @@ class InterviewController(Agent):
             else:
                 await self._dispatch_task(
                     q,
-                    watchdog_seconds=q.estimated_minutes * 60.0
-                        + settings.engine_task_budget_overhead_seconds,
+                    watchdog_seconds=effective_budget_seconds_for(q),
                 )
 
         # 3. Single convergence point — terminate exactly once.
