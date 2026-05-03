@@ -35,3 +35,7 @@ A typical phone screen is short enough that **3–6 total questions is the reali
 - Every knockout signal in scope (after `include_types` filter) gets EXACTLY ONE mandatory verification question. Phone screen is the first line of defense — no knockout reaches a more expensive stage un-verified.
 - **OVERRIDE of the common prompt's "depth re-probe per knockout" rule:** phone screen uses EXACTLY ONE question per knockout. The AI screening (next stage) handles depth re-probing. Do NOT generate a second question on the same knockout signal at this stage — even as an optional one.
 - Optional questions cover weight=2 signals with verification-level asks. Keep them as short and specific as the mandatory ones.
+
+### Question kind selection (this stage)
+
+Phone screen is the natural home for `compliance_binary`: short, binary, knockout-gating attestations. Expect 0-2 `compliance_binary` questions per bank — exactly one per binary knockout signal in scope (UK shift, work auth, willingness to relocate, hard credential check). All other questions should be `technical_depth` shallow verifications. `behavioral_star` is not expected at this stage — the phone screen's depth target is shallow verification, not narrative. If a behavioral signal is in scope and you must probe it, emit `technical_depth` framed as a closed verification ("Have you ever had to give negative feedback to a peer in writing?") rather than a STAR-shaped narrative.

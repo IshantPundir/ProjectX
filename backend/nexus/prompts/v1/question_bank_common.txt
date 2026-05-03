@@ -103,3 +103,19 @@ The bank is a TEMPLATE for downstream systems — there are no fields for "why I
 # CRITICAL: signal_values rule
 
 Each question has a `signal_values` field listing which signals it probes. These MUST be exact string matches to values in the snapshot's signals array. Do NOT paraphrase. Do NOT invent new signal values. The system will reject any question that references a signal value that doesn't exist in the pinned snapshot. If a signal value in the snapshot is "Kubernetes production deployment" then your `signal_values` entry must be exactly "Kubernetes production deployment" — not "K8s production," not "Kubernetes deployments," not "production Kubernetes." Copy the string verbatim from the snapshot. The snapshot is pinned: it will not change between when you generate the bank and when the conductor runs the interview. Trust the snapshot strings as the canonical IDs.
+
+# 6. Question kind — choose the engine task subclass
+
+Each question MUST declare a `question_kind` field that tells the live screening AI which task subclass to dispatch. Three values, exactly one per question:
+
+  - `compliance_binary` — yes/no attestation about a candidate-self-disclosed eligibility fact. The answer is binary; a "no" is a knockout against the signal. ≤60s to ask and answer. Examples: "Can you work the UK shift (1pm-9pm UK time)?", "Are you legally authorized to work in the United States without sponsorship?", "Are you willing to relocate to Bangalore for this role?", "Do you currently hold an active AWS Solutions Architect Professional certification?". Strong fit when: the underlying signal has `knockout=true` AND the substance is a fact about the candidate's situation, eligibility, or credentials (NOT a skill they must demonstrate at depth).
+
+  - `behavioral_star` — past-experience narrative that fits Situation / Task / Action / Result shape. The candidate is describing one specific event from their work history. Examples: "Tell me about a time you had to push back on a technical decision from a senior engineer.", "Walk me through a situation where a production incident required you to coordinate across three teams under pressure." Strong fit when: the underlying signal has `type=behavioral` AND `evaluation_method=behavioral_question`.
+
+  - `technical_depth` — DEFAULT. Open-ended technical, scenario, or design question that probes HOW the candidate thinks. Examples: "How would you design a rate limiter for an API serving 100k req/sec?", "Walk me through debugging a 5xx storm in a payment service." Use this when the question doesn't fit the two above. The vast majority of questions are this kind.
+
+Rules:
+  - Mutually exclusive — pick exactly one.
+  - The kind drives the engine's per-question budget and probe cap. Misclassification costs the candidate real interview time.
+  - Per-stage prompts may BAN certain kinds at this stage. Honor the ban.
+  - NEVER use the kind to encode anything that could correlate with a protected class. The kind is a structural routing decision based on question shape, not on the candidate or the signal's social meaning.

@@ -21,6 +21,7 @@ Produce ONE new question that:
 - Respects this stage's depth target (shallow/medium/deep based on stage
   difficulty)
 - Meets all the evidence + rubric quality requirements from the common prompt
+- **Preserve the original question's `question_kind` unless `replace_signal_values` is provided AND the new signal class materially changes the question shape** (e.g., swapping a `compliance_binary` knockout signal for a `competency` depth signal). If unsure, keep the same kind. The replacement question's `question_kind` field is REQUIRED — see the common prompt §6 for selection rules.
 
 ## Output
 

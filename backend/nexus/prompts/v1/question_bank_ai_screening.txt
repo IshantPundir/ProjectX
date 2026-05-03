@@ -36,3 +36,9 @@ For a 30-min stage with 3 knockouts, expect ~3 mandatory (~12 min) + ~3–4 opti
 
 - Positive evidence should be substantial: "demonstrates understanding of tradeoffs", "names specific tools AND explains why they chose them", "walks through failure modes and mitigations".
 - Red flags: "surface-level answers without specifics", "cannot defend design choices", "memorized textbook answers without application context".
+
+### Question kind selection (this stage)
+
+AI screening's per-question budget assumes 3-5 minute deep-dive cognition. `compliance_binary` is BANNED at this stage — a 60-second yes/no in a 30-minute deep-dive robs budget from depth probes this stage exists to deliver. Binary attestations belong in the phone screen. If you find yourself reaching for one here, either re-frame the underlying intent as a `technical_depth` scenario, or recognize the signal should have been verified at the phone screen and skip it.
+
+`behavioral_star` is also not expected — this stage skips behavioral signals entirely (see the allocation rule above). Every question this stage emits should be `technical_depth`.
