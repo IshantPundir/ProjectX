@@ -51,3 +51,53 @@ The original Phase 3C.2 trust boundaries described a `verify_engine_token` path 
   needs its own STRIDE row.
 - A rejoin flow for candidates who were disconnected mid-session.
 - Cross-region tenant data residency.
+
+---
+
+## Engine: in-session safety reporting (Phase 2 — controller cutover; 2026-05-03)
+
+Closes Phase 2 acceptance gate §9.5. Covers the trust surface added
+when `InterviewController` exposes meta tools the LLM can call
+in-session (`flag_safety_concern`, `report_technical_issue`,
+`disqualify_knockout`). These are not new external services — they
+are new in-process capabilities the LLM can invoke through
+`@function_tool` calls. The audit + escalation surface they create
+is the new threat-model concern.
+
+### Trust boundaries
+
+| Boundary | Element | STRIDE | Mitigation |
+|---|---|---|---|
+| LLM tool-call → audit log | Every meta tool fires a structured audit event into the event-log envelope (`controller.intent.flag_safety_concern`, `controller.intent.report_technical_issue`, `disqualify.knockout`). | I (information disclosure), R (repudiation) | Tool-call retention follows the event-log envelope: same path, same redaction, same TTL. The `category` enum on `flag_safety_concern` is bounded; the `note` field is free-form but redacted to "(content redacted)" in `metadata` mode (production default). `full` mode preserves the verbatim note for audit replay only. |
+| Reviewer → metadata-mode envelope | Default reviewer access is `metadata` mode: tool name + category enum + redaction marker, no note bodies, no transcript content. | I | Standard structlog redactor + envelope-level redaction. Recruiter-dashboard access is the only routine path. No additional gating beyond existing recruiter RBAC. |
+| Reviewer → full-mode envelope (audit replay) | `full` mode preserves verbatim note + transcript content. Required for genuine investigation of a flagged session. | I (information disclosure of candidate PII / safety-sensitive disclosures) | Privileged audit-replay path. Requires (a) candidate consent on the original session (already captured pre-recording per AIVIA), (b) documented use case under `docs/security/`, (c) Super Admin role assertion at access time. The path is not exposed in the recruiter dashboard today; access is operator-only via direct envelope file read. |
+
+### Escalation procedure for `flag_safety_concern`
+
+The LLM may call `flag_safety_concern(category, note)` mid-session
+when a candidate disclosure raises a safety concern. Categories are
+a bounded enum; `threats_to_self` is the highest-severity case.
+
+| Category | Severity | Notification | SLA |
+|---|---|---|---|
+| `threats_to_self` | SEV2 | Recruiter notified within **1 hour** (in-app notification + email via the existing notifications module). Super Admin notified at the same time. SEV2 incident opened if not actioned within **24 hours**. | 1h notify / 24h actioned |
+| `disclosure_inappropriate` | SEV3 | Recruiter notified within 4 hours. No SEV escalation unless repeated across sessions for the same candidate. | 4h notify |
+| Other categories | SEV3 | Routine recruiter dashboard surface; no time-bound SLA. | n/a |
+
+The 1h notification for `threats_to_self` is the binding SLA — an
+operational alert if the notifications path is degraded would itself
+be a SEV2 incident (notify-the-notifier failure).
+
+### When this section needs updating
+
+- A new meta tool is added to the controller (e.g.,
+  `request_break`, `report_consent_withdrawal`).
+- A new category is added to the `flag_safety_concern` enum.
+- A new redaction mode is added (e.g., `aggregate` for cross-session
+  analytics).
+- The recruiter dashboard exposes the `full` mode replay path (today
+  it is operator-only; surfacing it to recruiters changes the
+  consent-gate posture).
+- A real-world incident demonstrates a new attack path on the meta
+  tools (e.g., LLM emitting a flag with a free-form note that
+  contains untrusted user input from an attacker probing the system).
