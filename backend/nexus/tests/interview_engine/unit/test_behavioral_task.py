@@ -64,9 +64,6 @@ class TestConstruction:
         assert "<<INTERNAL_RUBRIC>>" in body
 
 
-pytestmark = pytest.mark.asyncio
-
-
 class TestRecordBehavioralAnswer:
     async def test_all_four_covered_returns_complete_instruction(self, sample_question) -> None:
         t = _make_task(sample_question)

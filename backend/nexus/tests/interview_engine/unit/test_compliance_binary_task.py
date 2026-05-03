@@ -70,9 +70,6 @@ class TestConstruction:
         assert "<<INTERNAL_RUBRIC>>" in body
 
 
-pytestmark = pytest.mark.asyncio
-
-
 class TestRecordComplianceAttestation:
     async def test_confirmed_true_resolves_with_correct_result(self, sample_question) -> None:
         t = _make_task(sample_question)
