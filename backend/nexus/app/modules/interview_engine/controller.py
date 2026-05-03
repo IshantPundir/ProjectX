@@ -51,12 +51,10 @@ from app.modules.interview_runtime import (
     SessionResult,
     record_session_result,
 )
-from app.modules.tenant_settings import TenantSettings
+from app.modules.tenant_settings import KnockoutPolicy, TenantSettings
 
 
 log = structlog.get_logger("interview-engine.controller")
-
-KnockoutPolicy = Literal["record_only", "close_polite"]
 
 
 @dataclass

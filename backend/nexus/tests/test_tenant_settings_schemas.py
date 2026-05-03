@@ -53,3 +53,23 @@ def test_knockout_policy_literal_values() -> None:
     # Runtime check via __args__
     from typing import get_args
     assert set(get_args(KnockoutPolicy)) == {"record_only", "close_polite"}
+
+
+def test_empty_agent_name_rejected() -> None:
+    """engine_agent_name must be None or non-empty — empty string would
+    create a divergence between _agent_name_override_active (True) and
+    the displayed name (env fallback)."""
+    with pytest.raises(ValidationError):
+        TenantSettings(
+            tenant_id=uuid.uuid4(),
+            engine_agent_name="",
+        )
+
+
+def test_whitespace_only_agent_name_rejected() -> None:
+    """Whitespace-only is functionally empty."""
+    with pytest.raises(ValidationError):
+        TenantSettings(
+            tenant_id=uuid.uuid4(),
+            engine_agent_name="   ",
+        )

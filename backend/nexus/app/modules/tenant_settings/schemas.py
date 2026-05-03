@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 KnockoutPolicy = Literal["record_only", "close_polite"]
@@ -26,3 +26,17 @@ class TenantSettings(BaseModel):
     tenant_id: UUID
     engine_knockout_policy: KnockoutPolicy = "record_only"
     engine_agent_name: str | None = None
+
+    @field_validator("engine_agent_name")
+    @classmethod
+    def _reject_empty_override(cls, v: str | None) -> str | None:
+        """None means 'use env fallback'; a string means 'tenant override'.
+        Empty / whitespace-only strings are neither — reject so the
+        controller's _agent_name_override_active flag never disagrees
+        with the displayed name.
+        """
+        if v is not None and not v.strip():
+            raise ValueError(
+                "engine_agent_name override must be non-empty; use None for env fallback"
+            )
+        return v
