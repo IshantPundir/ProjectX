@@ -349,7 +349,11 @@ async def _generate_one_bank(
                             "tenant_id": str(bank.tenant_id),
                             "job_posting_id": str(job.id),
                             "prompt_version": bank.prompt_version,
-                            "budget_attempt": attempt + 1,
+                            # OpenAI's chat.completions `metadata` requires
+                            # every value to be a string (max 16 keys,
+                            # ≤512 chars each). Cast the int at the
+                            # boundary so the call doesn't 400.
+                            "budget_attempt": str(attempt + 1),
                         },
                     )
                 except Exception as llm_exc:
