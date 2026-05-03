@@ -7,6 +7,7 @@ the modular-monolith uplift.
 """
 
 from app.modules.interview_runtime.schemas import (
+    KnockoutFailure,
     QuestionConfig,
     QuestionResult,
     SessionConfig,
@@ -20,6 +21,7 @@ from app.modules.interview_runtime.service import (
 )
 
 __all__ = [
+    "KnockoutFailure",
     "QuestionConfig",
     "QuestionResult",
     "SessionConfig",
