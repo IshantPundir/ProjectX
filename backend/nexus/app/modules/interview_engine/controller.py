@@ -458,7 +458,19 @@ class InterviewController(Agent):
                 },
                 wall_ms=now_ms(),
             )
-            # Phase 5 (T8) wires close_polite here.
+            if self._tenant_policy == "close_polite":
+                log.info(
+                    "controller.knockout.close_polite",
+                    question_id=q.id,
+                    signal_values=list(q.signal_values),
+                )
+                self._collector.append(
+                    kind="controller.intent.knockout_closed",
+                    payload={"question_id": q.id},
+                    wall_ms=now_ms(),
+                )
+                asyncio.create_task(self._terminate(outcome="knockout_closed"))
+                return
 
     def _is_signal_disclaim_subsumed(self, q: QuestionConfig) -> bool:
         """True iff every signal in q.signal_values is in disqualified_signals.
