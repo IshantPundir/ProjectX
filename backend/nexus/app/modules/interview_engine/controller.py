@@ -21,7 +21,6 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Literal
 
@@ -46,6 +45,7 @@ from app.modules.interview_engine.outcome_close import (
 from app.modules.interview_engine.tasks import build_task_for, effective_budget_seconds_for
 from app.modules.interview_engine.tasks.base import TaskResult
 from app.modules.interview_runtime import (
+    KnockoutFailure,
     QuestionConfig,
     SessionConfig,
     SessionResult,
@@ -55,16 +55,6 @@ from app.modules.tenant_settings import KnockoutPolicy, TenantSettings
 
 
 log = structlog.get_logger("interview-engine.controller")
-
-
-@dataclass
-class KnockoutFailureRecord:
-    """In-memory record. Phase 5 introduces the persisted KnockoutFailure model."""
-
-    question_id: str
-    reason: str
-    signal_values: list[str]
-    occurred_at_ms: int
 
 
 def now_ms() -> int:
@@ -132,7 +122,7 @@ class InterviewController(Agent):
             tenant_settings.engine_agent_name is not None
         )
         self._disqualified_signals: set[str] = set()
-        self._knockout_failures: list[KnockoutFailureRecord] = []
+        self._knockout_failures: list[KnockoutFailure] = []
         self._end_outcome: SessionOutcome | None = None
         self._current_task_run: asyncio.Task | None = None
         # Reference to the in-flight QuestionTask (a livekit AgentTask),
@@ -438,10 +428,23 @@ class InterviewController(Agent):
         for signal in result.signals_lacked:
             self._disqualified_signals.add(signal)
         if result.knockout:
-            self._knockout_failures.append(
-                KnockoutFailureRecord(
+            reason_text = (result.knockout_reason or "").strip()
+            if not reason_text:
+                # KnockoutFailure.reason has min_length=1; the upstream
+                # disqualify_knockout tool requires non-empty reason. An
+                # empty value is an upstream bug — log and skip the
+                # append rather than crash the controller with a
+                # ValidationError.
+                log.warning(
+                    "controller.knockout.empty_reason",
                     question_id=q.id,
-                    reason=result.knockout_reason or "",
+                    signal_values=list(q.signal_values),
+                )
+                return
+            self._knockout_failures.append(
+                KnockoutFailure(
+                    question_id=q.id,
+                    reason=reason_text,
                     signal_values=list(q.signal_values),
                     occurred_at_ms=now_ms() - self._session_start_ms,
                 )
@@ -450,12 +453,12 @@ class InterviewController(Agent):
                 kind="disqualify.knockout",
                 payload={
                     "question_id": q.id,
-                    "reason_chars": len(result.knockout_reason or ""),
-                    "reason": result.knockout_reason or "",
+                    "reason_chars": len(reason_text),
+                    "reason": reason_text,
                 },
                 wall_ms=now_ms(),
             )
-            # Phase 5 will read self._tenant_policy here and break on close_polite.
+            # Phase 5 (T8) wires close_polite here.
 
     def _is_signal_disclaim_subsumed(self, q: QuestionConfig) -> bool:
         """True iff every signal in q.signal_values is in disqualified_signals.
@@ -581,6 +584,7 @@ class InterviewController(Agent):
             question_results=question_results,
             full_transcript=[],
             completed_at=datetime.now(timezone.utc).isoformat(),
+            knockout_failures=list(self._knockout_failures),
         )
 
     # ------------------------------------------------------------------
