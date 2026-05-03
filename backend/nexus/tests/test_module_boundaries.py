@@ -57,6 +57,7 @@ KNOWN_DOMAIN_MODULES = frozenset(
         "scheduler",
         "session",
         "settings",
+        "tenant_settings",
     }
 )
 

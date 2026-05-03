@@ -1,0 +1,28 @@
+"""Pydantic models for the tenant_settings module."""
+from __future__ import annotations
+
+from typing import Literal
+from uuid import UUID
+
+from pydantic import BaseModel
+
+
+KnockoutPolicy = Literal["record_only", "close_polite"]
+
+
+class TenantSettings(BaseModel):
+    """Per-tenant engine configuration.
+
+    `engine_agent_name` is None-able; null means "use the env fallback
+    `settings.engine_agent_name`". The override applies only at the
+    candidate-facing prompt-substitution site (`controller.py`'s
+    `build_controller_prompt`) and the `controller.started` log; the
+    LiveKit routing label (decorator at `agent.py:130` and
+    `dispatch_agent` call at `livekit.py:102`) STAYS on the env value
+    because it's a fleet-wide routing primitive, not a candidate-facing
+    identifier (P5-Q1 in the Phase 5 spec).
+    """
+
+    tenant_id: UUID
+    engine_knockout_policy: KnockoutPolicy = "record_only"
+    engine_agent_name: str | None = None

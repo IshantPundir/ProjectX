@@ -217,6 +217,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     import app.modules.question_bank.models  # noqa: F401
     import app.modules.roles.models  # noqa: F401
     import app.modules.session.models  # noqa: F401
+    import app.modules.tenant_settings.models  # noqa: F401
 
     from app.database import Base
     Base.registry.configure()
