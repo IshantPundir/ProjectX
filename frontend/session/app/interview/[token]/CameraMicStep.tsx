@@ -87,7 +87,14 @@ export function CameraMicStep({ onPass }: Props) {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: true,
-        audio: true,
+        // Phase 6: disable browser-side EC/NS/AGC so ai_coustics
+        // becomes the single noise filter in the audio path. See
+        // docs/security/threat-model.md Phase 6 section.
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        },
       })
       streamRef.current = stream
       if (videoRef.current) {
