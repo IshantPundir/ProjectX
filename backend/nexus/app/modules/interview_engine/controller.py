@@ -469,7 +469,14 @@ class InterviewController(Agent):
                     payload={"question_id": q.id},
                     wall_ms=now_ms(),
                 )
-                asyncio.create_task(self._terminate(outcome="knockout_closed"))
+                # Mirror end_interview_early's canonical short-circuit: set the
+                # outcome so the question loop's next-iteration check (line ~175)
+                # breaks BEFORE dispatching the next question. Termination is
+                # awaited synchronously at the loop's natural convergence point
+                # (line ~229: `await self._terminate(self._end_outcome or "completed")`),
+                # eliminating the race window where asyncio.create_task could let
+                # the loop dispatch q_{n+1} before _terminate ran.
+                self._end_outcome = "knockout_closed"
                 return
 
     def _is_signal_disclaim_subsumed(self, q: QuestionConfig) -> bool:

@@ -1,13 +1,15 @@
-"""Integration test: close_polite policy triggers _terminate(knockout_closed).
+"""Integration test: close_polite policy sets _end_outcome="knockout_closed".
 
 Phase 5 / Task 8 — three scenarios:
 
-A. record_only — knockout fires, controller continues to next
-   question, no _terminate call. The in-memory _knockout_failures
-   list grows; the loop carries on.
+A. record_only — knockout fires, controller continues (no _end_outcome
+   set). The in-memory _knockout_failures list grows; the loop carries
+   on.
 
-B. close_polite — knockout fires, _terminate(outcome="knockout_closed")
-   runs (mocked), controller.intent.knockout_closed event fires.
+B. close_polite — knockout fires, _end_outcome is set to
+   "knockout_closed", controller.intent.knockout_closed event fires.
+   Termination itself runs at the loop's natural convergence point;
+   _handle_task_result no longer schedules _terminate.
 
 C. Empty-reason guard (T7) — knockout_reason="" → log warning + skip
    append + skip event log, regardless of policy.
@@ -16,7 +18,6 @@ C. Empty-reason guard (T7) — knockout_reason="" → log warning + skip
 from __future__ import annotations
 
 import uuid
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -86,24 +87,18 @@ def _knockout_result(
 # --- Scenario A: record_only ---
 
 
-async def test_record_only_continues(monkeypatch) -> None:
+async def test_record_only_continues() -> None:
     ctrl, collector = _build_controller("record_only")
-    terminate_spy = AsyncMock()
-    monkeypatch.setattr(ctrl, "_terminate", terminate_spy)
 
     # Q3 in live_data is the UK-shift question.
     q3 = next(q for q in ctrl._config.stage.questions if q.id == "q-3")
     ctrl._handle_task_result(q3, _knockout_result(q3.id))
 
-    # Allow any scheduled work to settle (record_only shouldn't schedule any).
-    import asyncio
-
-    await asyncio.sleep(0)
-
     assert len(ctrl._knockout_failures) == 1
     assert ctrl._knockout_failures[0].question_id == "q-3"
     assert "UK shift" in ctrl._knockout_failures[0].reason
-    terminate_spy.assert_not_called()
+    # record_only must NOT short-circuit the loop.
+    assert ctrl._end_outcome is None
 
     # No knockout_closed event should appear.
     assert collector.events_of_kind("controller.intent.knockout_closed") == []
@@ -114,37 +109,29 @@ async def test_record_only_continues(monkeypatch) -> None:
 # --- Scenario B: close_polite ---
 
 
-async def test_close_polite_terminates(monkeypatch) -> None:
+async def test_close_polite_sets_end_outcome() -> None:
+    """The close_polite branch sets _end_outcome and returns.
+
+    The question loop's next-iteration check (`if self._end_outcome is
+    not None: break`) breaks before dispatching q_{n+1}; the natural
+    convergence call (`await self._terminate(self._end_outcome or
+    "completed")`) handles termination synchronously. No asyncio.create_task,
+    no race window where q_{n+1} could be dispatched before _terminate ran.
+    """
     ctrl, _collector = _build_controller("close_polite")
-    terminate_spy = AsyncMock()
-    monkeypatch.setattr(ctrl, "_terminate", terminate_spy)
 
     q3 = next(q for q in ctrl._config.stage.questions if q.id == "q-3")
     ctrl._handle_task_result(q3, _knockout_result(q3.id))
-
-    # _handle_task_result schedules termination via asyncio.create_task;
-    # yield twice so the scheduled coroutine attaches and runs.
-    import asyncio
-
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
 
     assert len(ctrl._knockout_failures) == 1
-    terminate_spy.assert_called_once()
-    args, kwargs = terminate_spy.call_args
-    assert kwargs.get("outcome") == "knockout_closed" or "knockout_closed" in args
+    assert ctrl._end_outcome == "knockout_closed"
 
 
-async def test_close_polite_emits_event(monkeypatch) -> None:
+async def test_close_polite_emits_event() -> None:
     ctrl, collector = _build_controller("close_polite")
-    monkeypatch.setattr(ctrl, "_terminate", AsyncMock())
 
     q3 = next(q for q in ctrl._config.stage.questions if q.id == "q-3")
     ctrl._handle_task_result(q3, _knockout_result(q3.id))
-
-    import asyncio
-
-    await asyncio.sleep(0)
 
     assert len(collector.events_of_kind("disqualify.knockout")) == 1
     knockout_closed_events = collector.events_of_kind(
@@ -158,25 +145,17 @@ async def test_close_polite_emits_event(monkeypatch) -> None:
 
 
 @pytest.mark.parametrize("empty_value", ["", "   ", "\t\n"])
-async def test_empty_reason_skips_append_and_event(
-    monkeypatch, empty_value: str
-) -> None:
+async def test_empty_reason_skips_append_and_event(empty_value: str) -> None:
     """The guard fires regardless of policy. Use record_only here for
     minimum coupling to other behavior; the guard runs before the
     policy branch."""
     ctrl, collector = _build_controller("record_only")
-    terminate_spy = AsyncMock()
-    monkeypatch.setattr(ctrl, "_terminate", terminate_spy)
 
     q3 = next(q for q in ctrl._config.stage.questions if q.id == "q-3")
     ctrl._handle_task_result(q3, _knockout_result(q3.id, reason=empty_value))
 
-    import asyncio
-
-    await asyncio.sleep(0)
-
-    # No append; no event log entries; no termination.
+    # No append; no event log entries; no _end_outcome change.
     assert ctrl._knockout_failures == []
     assert collector.events_of_kind("disqualify.knockout") == []
     assert collector.events_of_kind("controller.intent.knockout_closed") == []
-    terminate_spy.assert_not_called()
+    assert ctrl._end_outcome is None
