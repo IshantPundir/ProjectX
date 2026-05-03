@@ -7,14 +7,21 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
+// Declared before vi.mock calls so Vitest's hoisting can reference them
+// inside the factory closures at runtime.
+const useSessionCalls: Array<{ tokenSource: unknown; options: unknown }> = []
+
 vi.mock('@livekit/components-react', () => ({
-  useSession: () => ({
-    start: vi.fn(),
-    end: vi.fn(),
-    isConnected: false,
-    connectionState: 'idle',
-    room: undefined,
-  }),
+  useSession: (tokenSource: unknown, options?: unknown) => {
+    useSessionCalls.push({ tokenSource, options })
+    return {
+      start: vi.fn(),
+      end: vi.fn(),
+      isConnected: false,
+      connectionState: 'idle',
+      room: undefined,
+    }
+  },
   useSessionContext: () => ({
     isConnected: false,
     connectionState: 'idle',
@@ -27,10 +34,16 @@ vi.mock('@livekit/components-react', () => ({
   RoomAudioRenderer: () => null,
 }))
 
+const roomConstructorCalls: Array<unknown> = []
+
 vi.mock('livekit-client', () => ({
   TokenSource: { custom: () => ({}) },
   RoomEvent: { Disconnected: 'disconnected' },
-  Room: class {},
+  Room: class {
+    constructor(options?: unknown) {
+      roomConstructorCalls.push(options)
+    }
+  },
 }))
 
 vi.mock('@/components/agents-ui/agent-session-provider', () => ({
@@ -92,5 +105,39 @@ describe('App', () => {
     expect(
       screen.getByText(/You were disconnected/i),
     ).toBeInTheDocument()
+  })
+
+  it('constructs the LiveKit Room with audioCaptureDefaults disabling EC/NS/AGC and passes it to useSession', () => {
+    // Reset the module-level capture arrays so this test sees only its
+    // own constructor / hook calls. The arrays accumulate across test
+    // runs because the vi.mock factory runs once at module-load.
+    roomConstructorCalls.length = 0
+    useSessionCalls.length = 0
+
+    render(
+      <App
+        appConfig={APP_CONFIG_DEFAULTS}
+        token="tok-1"
+        preCheck={PRE_CHECK}
+        mode="start"
+      />,
+    )
+
+    // The Room was constructed with the Phase 6 audioCaptureDefaults.
+    expect(roomConstructorCalls).toHaveLength(1)
+    expect(roomConstructorCalls[0]).toEqual({
+      audioCaptureDefaults: {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      },
+    })
+
+    // useSession was invoked with the pre-constructed Room as the second
+    // argument's `room` field.
+    expect(useSessionCalls).toHaveLength(1)
+    const optionsArg = useSessionCalls[0].options as { room?: unknown } | undefined
+    expect(optionsArg).toBeDefined()
+    expect(optionsArg?.room).toBeDefined()
   })
 })
