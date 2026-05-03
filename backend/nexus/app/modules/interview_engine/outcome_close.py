@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from app.modules.interview_runtime.schemas import SessionConfig
+from app.modules.interview_runtime import SessionConfig
 
 
 SessionOutcome = Literal[

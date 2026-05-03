@@ -25,7 +25,7 @@ from livekit.agents import AgentTask, RunContext, function_tool
 
 if TYPE_CHECKING:
     from app.modules.interview_engine.controller import InterviewController
-    from app.modules.interview_runtime.schemas import QuestionConfig
+    from app.modules.interview_runtime import QuestionConfig
 
 
 log = structlog.get_logger("interview-engine.tasks.base")

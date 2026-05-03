@@ -22,7 +22,7 @@ from app.modules.interview_engine.tasks.technical_depth import TechnicalDepthTas
 
 if TYPE_CHECKING:
     from app.modules.interview_engine.controller import InterviewController
-    from app.modules.interview_runtime.schemas import QuestionConfig
+    from app.modules.interview_runtime import QuestionConfig
 
 
 _ROUTING_TABLE: dict[str, type[QuestionTask]] = {

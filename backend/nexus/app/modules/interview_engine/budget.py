@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.modules.interview_runtime.schemas import QuestionConfig
+from app.modules.interview_runtime import QuestionConfig
 
 
 @dataclass
