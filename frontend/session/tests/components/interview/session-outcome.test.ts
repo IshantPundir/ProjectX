@@ -46,4 +46,12 @@ describe('isSessionOutcome', () => {
     // @ts-expect-error — testing the runtime guard, not the type
     expect(isSessionOutcome({})).toBe(false)
   })
+
+  it('narrows the value to SessionOutcome on true branch', () => {
+    const raw: unknown = 'completed'
+    if (isSessionOutcome(raw)) {
+      const narrowed: SessionOutcome = raw
+      expect(narrowed).toBe('completed')
+    }
+  })
 })
