@@ -40,6 +40,18 @@
   intent tool, three meta tools (flag_safety_concern, report_technical_issue,
   disqualify_knockout — record_only in Phase 2). See spec
   `docs/superpowers/specs/2026-05-03-engine-redesign-phase-2-controller-cutover-design.md`.
+- **Phase 3D.engine-redesign-3** — done: BehavioralStarTask + ComplianceBinaryTask
+  added alongside TechnicalDepthTask. Factory extracted to tasks/factory.py
+  with `_ROUTING_TABLE` keyed on `QuestionConfig.question_kind` (in-memory
+  field added in Phase 3, DB column lands in Phase 4). New
+  `effective_budget_seconds_for(question)` helper applies the
+  ComplianceBinaryTask 60s hard cap to the controller's per-task watchdog.
+  Two new prompt files (`task_behavioral.txt`, `task_compliance_binary.txt`)
+  with senior-reviewer fairness signoff. Unit + integration + prompt_quality
+  test coverage; 100% branch coverage on the new task files + factory.
+  Real interviews still all route to TechnicalDepthTask (default
+  `question_kind="technical_depth"`) until Phase 4 ships the bank-generator
+  update.
 - **Phase 3D** — pending: real-time `analysis` (scoring, probe selection) and `reporting` (post-session report compilation).
 
 Stubbed modules (routers registered, no business logic yet): `ats`, `analysis`, `reporting`.
