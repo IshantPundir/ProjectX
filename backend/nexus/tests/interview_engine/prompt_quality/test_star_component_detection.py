@@ -13,12 +13,11 @@ RunResult whose .events list carries FunctionCallEvent items.
 
 from __future__ import annotations
 
-import pytest
 from livekit.agents import AgentSession
 from livekit.agents.voice.run_result import FunctionCallEvent
 
-from app.ai.config import ai_config
 from app.modules.interview_engine.tasks.behavioral import BehavioralStarTask
+from app.modules.interview_engine.tasks.factory import _build_rubric_block
 from app.modules.interview_runtime.schemas import QuestionConfig, QuestionRubric
 
 
@@ -45,21 +44,11 @@ def _synth_behavioral_question() -> QuestionConfig:
 
 def _build_behavioral_task() -> BehavioralStarTask:
     q = _synth_behavioral_question()
-    rubric_internal = (
-        f"<<INTERNAL_RUBRIC>>\n"
-        f"Question: {q.text}\nSignals: leadership\n"
-        f"Positive evidence: delegation; communication; outcome\n"
-        f"Red flags: solo_hero; blame_team\n"
-        f"Excellent: {q.rubric.excellent}\n"
-        f"Meets bar: {q.rubric.meets_bar}\nBelow bar: {q.rubric.below_bar}\n"
-        f"Evaluation hint: {q.evaluation_hint}\n"
-        f"<<END_INTERNAL_RUBRIC>>"
-    )
     return BehavioralStarTask(
         question_config=q,
         controller=None,  # type: ignore[arg-type]
         disqualified_signals=frozenset(),
-        rubric_internal=rubric_internal,
+        rubric_internal=_build_rubric_block(q),
     )
 
 
@@ -70,9 +59,6 @@ def _tool_names(result) -> list[str]:
         for e in result.events
         if isinstance(e, FunctionCallEvent)
     ]
-
-
-pytestmark = pytest.mark.asyncio
 
 
 async def test_partial_coverage_triggers_probe(production_llm):
