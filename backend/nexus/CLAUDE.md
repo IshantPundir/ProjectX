@@ -14,7 +14,7 @@
 - **Framework:** FastAPI (async throughout)
 - **DB driver:** asyncpg (direct PostgreSQL connection — NOT PostgREST)
 - **ORM:** SQLAlchemy async (asyncpg driver)
-- **Schema management:** Supabase SQL for the initial cut + Supabase-managed objects (auth hook, `supabase_auth_admin` grants); Alembic for every incremental change after that. `migrations/versions/` currently has 12 revisions up through `0012_rename_service_role_bypass`.
+- **Schema management:** Supabase SQL for the initial cut + Supabase-managed objects (auth hook, `supabase_auth_admin` grants); Alembic for every incremental change after that. `migrations/versions/` currently has 26 revisions; head is `0026_question_kind_column`.
 - **Task queue:** Dramatiq + Redis. Used for JD extraction/re-enrichment and question-bank generation. Notification dispatch still runs via FastAPI `BackgroundTasks` (short, non-retryable).
 - **Containerisation:** Docker + Docker Compose
 - **Hosting MVP:** Railway
@@ -563,6 +563,7 @@ Migrations so far:
 - `0022_users_partial_unique_auth` — replaces the plain UNIQUE on `users.auth_user_id` with a partial unique index `WHERE deleted_at IS NULL`. Required so a re-invite after tenant soft-delete can re-bind the same Supabase Auth identity.
 - `0023_tenant_hard_delete_cascade` — drops `audit_log_tenant_id_fkey` + `audit_log_actor_id_fkey` (audit history outlives the rows it references); converts every other `tenant_id` FK to `ON DELETE CASCADE` so `DELETE FROM clients WHERE id = ?` propagates cleanly.
 - `0024_engine_integration` — **Phase 3C.2**: new `engine_dispatch_tokens` table (tenant-scoped, RLS pair with NULLIF) tracking issued engine JWTs per session; new `engine_token_uses` table (service-bypass-only, composite PK on `(jti, endpoint)`) providing atomic single-use enforcement for the engine's `/config` and `/results` calls. Adds 7 result columns to `sessions` (`livekit_room_name`, `agent_started_at`, `agent_completed_at`, `transcript`, `questions_asked`, `questions_skipped`, `total_probes_fired`).
+- `0025_drop_engine_dispatch_tables` — **Phase 3 of modular-monolith uplift**: drops `engine_dispatch_tokens` + `engine_token_uses`. Phase 3 of the modular-monolith spec retired the engine-dispatch JWT layer; the interview engine now runs in-process inside nexus and reads `SessionConfig` / posts `SessionResult` via direct `app.modules.interview_runtime.service` calls. The `verify_engine_token` path was retired with the tables. Down-migration recreates both tables with the original 0024 schema; in-flight dispatches at rollback time would be unrecoverable but the rollback hazard is theoretical at zero-user state.
 - `0026_question_kind_column` — **Phase 4**: adds `stage_questions.question_kind` (TEXT NOT NULL DEFAULT `'technical_depth'`, CHECK in `('technical_depth','behavioral_star','compliance_binary','open_culture')`). Bank-generator now emits the field; existing rows get the default. Recruiters regenerate to upgrade old banks (no automatic backfill).
 
 ### Going Forward
