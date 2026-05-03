@@ -31,3 +31,4 @@ htmlcov/
 
 # Docker
 *.log
+engine-events/*.json

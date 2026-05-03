@@ -1,6 +1,31 @@
 # Engine Redesign — Phase 6: Server-authoritative audio + e2e gate
 
-**Status:** Draft for user review · **Date:** 2026-05-03 · **Phase:** 6 of 6 in the engine-redesign arc (terminal phase)
+**Status:** SUPERSEDED — rolled back 2026-05-04. · **Date:** 2026-05-03 · **Phase:** 6 of 6 in the engine-redesign arc (terminal phase)
+
+> **2026-05-04 SUPERSEDED:** Phase 6's server-authoritative audio
+> invariant was rolled back on 2026-05-04 when the deployment target
+> shifted to **self-hosted LiveKit from day one**. LiveKit's enhanced
+> noise cancellation plugins (Krisp and ai_coustics) are LiveKit Cloud
+> features and are explicitly unsupported on self-hosted deployments
+> per `https://docs.livekit.io/agents/start/voice-ai` ("for
+> self-hosting in production … remove the enhanced noise cancellation
+> plugin from the agent code"). The browser is back on standard
+> WebRTC NS/EC/AGC; the engine no longer installs
+> `livekit-plugins-ai-coustics`; the audio invariant in root
+> CLAUDE.md is removed. See `docs/security/threat-model.md` Phase 6
+> section for the rollback record.
+>
+> This document is preserved as the historical record of the design
+> rationale. **Do not implement against this spec.** If LiveKit Cloud
+> ever becomes a production target again, write a fresh design doc;
+> several of the trade-offs below depend on Cloud-specific assumptions
+> that no longer hold.
+>
+> **Earlier 2026-05-04 correction (now also moot):** the original
+> draft named the ai_coustics model as `QUAIL_S`, which doesn't exist
+> in `livekit-plugins-ai-coustics==0.2.11`. The fix was to switch to
+> `SPARROW_S`. That correction is moot now that the entire spec is
+> superseded.
 
 ## Summary
 
@@ -15,7 +40,7 @@ ships the **full-arc end-to-end manual checklist** that closes the
   constructor (in `app.tsx`) carry the explicit `false / false / false`
   triplet.
 - The engine's noise-cancellation defaults flip from `QUAIL_VF_L` /
-  `0.7` to `QUAIL_S` / `0.4`. With browser-side EC/NS/AGC off,
+  `0.7` to `SPARROW_S` / `0.4`. With browser-side EC/NS/AGC off,
   ai_coustics is the **single source of truth** for noise reduction;
   the gentler model + lower level preserves soft speech that the
   prior config was attenuating below the VAD activation threshold.
@@ -45,20 +70,20 @@ Behavior change in production interviews:
   `audio.user.state new_state=speaking` within the first sentence.
 - The audit-log envelope's `model_versions` dict (already populated
   by `agent.py:191-202`) automatically records the new
-  `noise_cancellation_model="QUAIL_S"` and
+  `noise_cancellation_model="SPARROW_S"` and
   `noise_cancellation_level=0.4` on every session — zero engine code
   change required for audit capture.
 - Candidates in noisy environments lose the browser-side noise
   suppression they previously had as a safety net. Fairness exposure
   is verified end-to-end via the paired noisy-environment e2e
-  scenario; ai_coustics at QUAIL_S / 0.4 is expected to hold.
+  scenario; ai_coustics at SPARROW_S / 0.4 is expected to hold.
 
 This phase consumes 2 of the 21 decisions from the
 [overview spec](2026-05-02-interview-engine-redesign-overview-design.md):
 
 - **Decision #6** — server-authoritative audio: browser disables
   EC/NS/AGC; ai_coustics is single source of truth; tuning is
-  `QUAIL_S` / `0.4`.
+  `SPARROW_S` / `0.4`.
 - **Decision #10** — audio-authority placement is Phase 6 (final
   phase, after the engine redesign is shipping).
 
@@ -80,8 +105,8 @@ This phase consumes 2 of the 21 decisions from the
 
 | Surface | Change |
 |---|---|
-| `backend/nexus/app/config.py:303-304` | Defaults flip: `interview_noise_cancellation_model: str = "QUAIL_S"` and `interview_noise_cancellation_level: float \| None = 0.4`. Docstring rewrite: drop "best WER for agent pipelines per LiveKit's published numbers" framing, replace with "best soft-speech preservation when browser-side EC/NS/AGC are off; trades absolute WER for fewer false-silence cuts on quiet candidates." Cross-reference the threat-model Phase 6 section. |
-| `backend/nexus/.env.example:128-129` | `INTERVIEW_NOISE_CANCELLATION_MODEL=QUAIL_S` and `INTERVIEW_NOISE_CANCELLATION_LEVEL=0.4`. Comment block rewritten to match the new docstring. |
+| `backend/nexus/app/config.py:303-304` | Defaults flip: `interview_noise_cancellation_model: str = "SPARROW_S"` and `interview_noise_cancellation_level: float \| None = 0.4`. Docstring rewrite: drop "best WER for agent pipelines per LiveKit's published numbers" framing, replace with "best soft-speech preservation when browser-side EC/NS/AGC are off; trades absolute WER for fewer false-silence cuts on quiet candidates." Cross-reference the threat-model Phase 6 section. |
+| `backend/nexus/.env.example:128-129` | `INTERVIEW_NOISE_CANCELLATION_MODEL=SPARROW_S` and `INTERVIEW_NOISE_CANCELLATION_LEVEL=0.4`. Comment block rewritten to match the new docstring. |
 | `frontend/session/app/interview/[token]/CameraMicStep.tsx` (constraint) | Line :88 `getUserMedia({ video: true, audio: true })` becomes `getUserMedia({ video: true, audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } })`. |
 | `frontend/session/app/interview/[token]/CameraMicStep.tsx` (verification) | After `getUserMedia` resolves and the audio track is obtained: read `track.getSettings()`, compare each of `echoCancellation` / `noiseSuppression` / `autoGainControl` to the requested `false`, and if any diverged emit a structured log `cammic.constraints.diverged` with payload `{ requested: { ec: false, ns: false, agc: false }, applied: { ec, ns, agc } }`. **No candidate-facing warning** (per P6-Q4). The session proceeds normally. |
 | `frontend/session/app/interview/[token]/CameraMicStep.tsx` (noise-floor recalibration + copy) | Push the "good / borderline / poor" threshold up by ~10 dBFS to reflect raw ambient. Add explanatory copy under the dBFS reading: "This measures your raw room noise. Anything below -25 dBFS is fine — our audio processing handles the rest." (Exact threshold values to be finalized during implementation; the rule is "match what a typical room reads now that EC/NS/AGC are off.") |
@@ -94,7 +119,7 @@ This phase consumes 2 of the 21 decisions from the
 | `docs/security/prompt-fairness-signoffs.md` | Append one-line entry: "Phase 6 (2026-05-03) audio tuning: not a prompt change; fairness validation deferred to `engine-redesign-full-arc-e2e.md` scenarios 9a + 9b (soft-spoken + noisy-environment paired)." |
 | `docs/superpowers/specs/2026-05-02-interview-engine-redesign-overview-design.md` | Phase status index row for Phase 6: `⚪ not started → ✅ shipped`; link the new spec + plan filenames. **§11 acceptance gate #6** wording update: currently says "Soft-spoken candidate at default mic level…"; expand to reference scenarios 9a + 9b paired (soft-spoken + noisy-environment) per the fairness coverage rule. |
 | `CLAUDE.md` (root) | Add a one-line "Audio invariant" rule under "Hard Rules": "**Audio invariant:** Browser-side EC/NS/AGC are OFF on the candidate surface; ai_coustics is the sole noise filter. See `docs/security/threat-model.md` Phase 6 section." |
-| `backend/nexus/CLAUDE.md` | Add a `Phase 3D.engine-redesign-6` status block (~12 lines) following Phase 5's precedent. Note: defaults flipped (`QUAIL_S` / `0.4`), ai_coustics is now the sole noise filter, no application-level runtime fallback, recording capture-point documented in threat-model. **Migration list unchanged** (Phase 6 adds none — head still `0027_tenant_settings`). |
+| `backend/nexus/CLAUDE.md` | Add a `Phase 3D.engine-redesign-6` status block (~12 lines) following Phase 5's precedent. Note: defaults flipped (`SPARROW_S` / `0.4`), ai_coustics is now the sole noise filter, no application-level runtime fallback, recording capture-point documented in threat-model. **Migration list unchanged** (Phase 6 adds none — head still `0027_tenant_settings`). |
 | `frontend/session/CLAUDE.md` | Add new subsection "Audio handling — server-authoritative invariant" (~10 lines): browser EC/NS/AGC OFF, ai_coustics is the single noise filter, `audioCaptureDefaults` flows via the pre-constructed Room passed into `useSession`'s `{ room }` option. Note the noise-floor display reflects raw ambient (recalibrated thresholds + new copy) and the `track.getSettings()` divergence-log path. |
 
 ### 2.2 Out of scope
@@ -156,7 +181,7 @@ Candidate browser
 
 LiveKit room (server-side, post-WebRTC)
   └─ Engine worker subscribes to candidate audio track
-       └─ ai_coustics QUAIL_S, level=0.4 applied                  [Phase 6 env]
+       └─ ai_coustics SPARROW_S, level=0.4 applied                  [Phase 6 env]
             (env-driven via AIConfig; agent.py event-log
             collector captures model+level into model_versions
             on every session — already wired)
@@ -316,12 +341,12 @@ A new section is appended to `docs/security/threat-model.md`:
 >
 > Trust boundaries that change when browser-side EC/NS/AGC switch from
 > ON to OFF and ai_coustics becomes the sole noise filter for candidate
-> audio. Configuration tuning: `INTERVIEW_NOISE_CANCELLATION_MODEL=QUAIL_S`,
+> audio. Configuration tuning: `INTERVIEW_NOISE_CANCELLATION_MODEL=SPARROW_S`,
 > `INTERVIEW_NOISE_CANCELLATION_LEVEL=0.4`.
 >
 > | Boundary | Element | STRIDE | Mitigation |
 > |---|---|---|---|
-> | Browser mic → LiveKit room | Raw audio (no browser-side EC/NS/AGC) carries any sound the mic captures, including ambient conversations near the candidate (open-plan offices, family members in the next room). | I (info disclosure of bystander PII) | Pre-session consent text already states audio is recorded; reviewers SHOULD verify the consent copy reasonably covers third-party voices for the candidate's locale. ai_coustics QUAIL_S at level 0.4 suppresses non-target voices but is gentler than QUAIL_VF_L; the e2e checklist's noisy-environment scenario verifies the suppression holds in practice. STT transcripts of bystander speech, if produced, fall under the existing event-log redaction policy (`metadata` mode strips transcript content). |
+> | Browser mic → LiveKit room | Raw audio (no browser-side EC/NS/AGC) carries any sound the mic captures, including ambient conversations near the candidate (open-plan offices, family members in the next room). | I (info disclosure of bystander PII) | Pre-session consent text already states audio is recorded; reviewers SHOULD verify the consent copy reasonably covers third-party voices for the candidate's locale. ai_coustics SPARROW_S at level 0.4 suppresses non-target voices but is gentler than QUAIL_VF_L; the e2e checklist's noisy-environment scenario verifies the suppression holds in practice. STT transcripts of bystander speech, if produced, fall under the existing event-log redaction policy (`metadata` mode strips transcript content). |
 > | ai_coustics plugin → audio path | Single source of truth for noise reduction. **No application-level runtime fallback.** Boot-time misconfigured model name → `ValueError` → worker exits → container restarts → LiveKit `AGENT_DISPATCH_FAILED`. Mid-session plugin failure → undefined application behavior (depends on plugin internals). | A (availability dependency) | Mitigation is LiveKit Cloud-managed plugin reliability. Documented as a known gap; future phase can wrap the audio input pipeline with a fallback if a real-world failure pattern emerges. The audit envelope's `model_versions` dict captures the model+level on every session, providing forensic trace if a session reports degraded quality. |
 > | Engine → recording (LiveKit Cloud Insights, if enabled) | Recording captures post-ai_coustics audio per `https://docs.livekit.io/deploy/observability/insights/` ("If noise cancellation is enabled, user audio recording is collected after noise cancellation is applied. The recording reflects what the STT or realtime model receives.") | I (information disclosure via recording) | Insights recording is OFF by default; enabling it is a deliberate operator choice already covered by existing consent gating + S3 recording-bucket policy in root CLAUDE.md ("S3: versioning ON for the recording bucket. MFA-delete ON for the recording bucket."). Future LiveKit Egress wiring will need its own threat-model row when added. |
 >
@@ -350,8 +375,8 @@ A new section is appended to `docs/security/threat-model.md`:
 > - LiveKit Egress is wired into the engine (would require its own
 >   capture-point row).
 > - The ai_coustics model is changed in production (the threat surface
->   changes per-model; e.g., a switch to `QUAIL_BV` would change the
->   broadband-voice-suppression characteristic).
+>   changes per-model; e.g., a switch to `QUAIL_L` or `QUAIL_VF_L` would
+>   trade soft-speech preservation for more aggressive noise suppression).
 > - A real-world incident demonstrates a mid-session plugin failure path
 >   needing application-level handling.
 > - The candidate surface adopts a structured logger that ships
@@ -374,7 +399,7 @@ same commit (per P6-Q3); git history preserves it.
 3. **Acceptance scenarios** — nine scenarios mapping 1:1 to overview
    spec §11's nine acceptance gates:
    1. **Clean interview** (greet + 6Q + close + audit-log clean +
-      `model_versions.noise_cancellation_model=QUAIL_S`).
+      `model_versions.noise_cancellation_model=SPARROW_S`).
    2. **Q3 compliance binary completes < 60s** (per-kind hard cap).
    3. **Q0/Q1 spoken forms < 25 words, no verbatim reading**.
    4. **Q2 STAR-shape probe behavior** (probe fires only when missing
@@ -471,7 +496,7 @@ overview spec status in the same commit that ships the phase artifact.
 
 | Order | Task | Commit shape |
 |---|---|---|
-| 1 | T1 — Engine env+config flip (`config.py` defaults + `.env.example` + docstring rewrite). | `feat(engine): server-authoritative audio defaults — QUAIL_S / 0.4 (Phase 6)` |
+| 1 | T1 — Engine env+config flip (`config.py` defaults + `.env.example` + docstring rewrite). | `feat(engine): server-authoritative audio defaults — SPARROW_S / 0.4 (Phase 6)` |
 | 2 | T3 — `CameraMicStep.tsx` constraint object on `getUserMedia`. | `feat(session): disable browser EC/NS/AGC in cam/mic step (Phase 6)` |
 | 3 | T4 — `CameraMicStep.tsx` `track.getSettings()` divergence log + noise-floor threshold recalibration + UX copy. | `feat(session): cam/mic constraint verification + noise-floor recalibration (Phase 6)` |
 | 4 | T5 — `app.tsx` pre-constructed Room + `useSession({ room })`. | `feat(session): pre-construct LiveKit Room with audioCaptureDefaults (Phase 6)` |

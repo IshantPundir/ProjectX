@@ -38,6 +38,7 @@ from app.modules.interview_engine.idle_nudge import (
     IdleNudgeOutput,
     IdleNudgeStateMachine,
 )
+from app.modules.interview_engine.event_log import EventLogSink
 from app.modules.interview_engine.outcome_close import (
     SessionOutcome,
     closing_instructions_for,
@@ -107,11 +108,14 @@ class InterviewController(Agent):
         idle_nudge_config: IdleNudgeConfig,
         budget: SessionBudget,
         tenant_settings: TenantSettings,
+        event_sink: EventLogSink | None = None,
     ) -> None:
         self._config: SessionConfig = session_config
         self._tenant_id = tenant_id
         self._correlation_id = correlation_id
         self._collector = collector
+        self._event_sink = event_sink
+        self._envelope_written: bool = False
         self._budget = budget
         self._idle_nudge_state = IdleNudgeStateMachine(idle_nudge_config)
         self._tenant_policy: KnockoutPolicy = tenant_settings.engine_knockout_policy
@@ -547,8 +551,55 @@ class InterviewController(Agent):
         # Publish session_outcome for the candidate's frontend.
         await self._publish_session_outcome(outcome)
 
+        # Append a terminal `session.close` event to the audit envelope
+        # so the on-disk JSON has a marker for how the session ended.
+        # Mirrors the close-handler fallback (`_handle_close` in
+        # agent.py) for the disconnect/error path; this is the
+        # normal-completion path.
+        self._collector.append(
+            kind="session.close",
+            payload={
+                "outcome": outcome,
+                "reason": "controller_terminate",
+                "knockout_failures_count": len(self._knockout_failures),
+                "persisted": self._persisted,
+            },
+            wall_ms=now_ms(),
+        )
+
+        # Write the audit envelope INLINE — `session.on("close")` schedules
+        # `_handle_close` as a fire-and-forget background task, which the
+        # framework cancels when the worker process tears down after
+        # `_safe_shutdown`. Writing here guarantees the file lands before
+        # we hand control back. Idempotent (`_envelope_written` flag) so
+        # the close-handler safety net can't double-write.
+        await self._finalize_event_log(reason="terminate")
+
         # Shutdown with retry.
         await _safe_shutdown(self.session, max_attempts=3)
+
+    async def _finalize_event_log(self, *, reason: str) -> None:
+        """Idempotent write of the audit envelope to the configured sink."""
+        if self._envelope_written or self._event_sink is None:
+            return
+        self._envelope_written = True
+        envelope = self._collector.close(
+            closed_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        )
+        try:
+            target = await asyncio.to_thread(self._event_sink.write, envelope)
+            log.info(
+                "controller.event_log.written",
+                reason=reason,
+                target=target,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.error(
+                "controller.event_log.failed",
+                reason=reason,
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
 
     async def _persist_session_result(self, outcome: SessionOutcome) -> None:
         """Persist the SessionResult exactly once."""
@@ -687,16 +738,27 @@ class InterviewController(Agent):
         Reply briefly with "Okay." after calling — the controller composes
         the actual closing.
         """
+        self.signal_end_interview(reason)
+        return "Reply with a brief 'Okay.' — the interview will wrap up after this turn."
+
+    def signal_end_interview(self, reason: str) -> None:
+        """Idempotent state-mutation: mark the controller for graceful end.
+
+        Public for the per-question task tools so they can reach this
+        without duplicating the cancellation choreography. Safe to call
+        from inside a tool dispatched by either the controller or the
+        active QuestionTask.
+        """
         self._collector.append(
             kind="controller.intent.end_early",
             payload={"reason": reason},
             wall_ms=now_ms(),
         )
-        self._end_outcome = "candidate_ended"
+        if self._end_outcome is None:
+            self._end_outcome = "candidate_ended"
         self._complete_inflight_task(reason="task_timeout")
         if self._current_task_run is not None and not self._current_task_run.done():
             self._current_task_run.cancel()
-        return "Reply with a brief 'Okay.' — the interview will wrap up after this turn."
 
     @function_tool()
     async def flag_safety_concern(

@@ -65,6 +65,11 @@ Otherwise, ask the question cold without preamble.
 - (inherited from controller) request_clarification()
   Call when the candidate asks "can you repeat the question?" or clearly didn't hear it.
   This re-speaks the question without recording an observation.
+- end_interview_early(reason="candidate_request")
+  Call ONLY when the candidate EXPLICITLY asks to stop the interview ("I want to end this",
+  "I have to leave", "let's stop here", "I'm done"). Do NOT call it for "I don't know",
+  "let's move on from this question", general frustration, or a long silence. Reply with
+  a brief "Okay." — the controller composes the actual closing.
 
 # Decision flow
 1. Speak the question (per the spoken-form rules above).

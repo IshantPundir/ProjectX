@@ -201,6 +201,35 @@ class QuestionTask(AgentTask, abc.ABC):
         return "Knockout recorded. Call complete_question to end this question."
 
     @function_tool()
+    async def end_interview_early(
+        self,
+        ctx: RunContext,
+        reason: Literal["candidate_request"],
+    ) -> str:
+        """Call ONLY when the candidate explicitly asks to stop the interview.
+
+        Examples that DO trigger:
+          - "I'd like to end the interview now."
+          - "I have to go."
+          - "Can we wrap this up?" / "Let's stop here."
+
+        Examples that do NOT trigger:
+          - "I don't know this one."  (frustration; not end-intent)
+          - "Can you repeat that?"
+          - "Can we move on?"  (move past one question, not end the whole interview)
+
+        Reply with a brief "Okay." after calling — the controller will
+        compose the actual closing line.
+        """
+        log.info(
+            "task.end_interview_early",
+            question_id=self.question_config.id,
+            reason=reason,
+        )
+        self.controller.signal_end_interview(reason)
+        return "Reply with a brief 'Okay.' — the interview will wrap up after this turn."
+
+    @function_tool()
     async def request_clarification(self, ctx: RunContext) -> str:
         """Use when the candidate asks you to repeat or rephrase the question.
 

@@ -1,12 +1,29 @@
 # Interview Engine — Full-Arc Manual End-to-End Checklist
 
-This is the **terminal acceptance gate for the entire 6-phase
-engine-redesign arc** (Phases 1 → 6). Operator runs this end-to-end
-ONCE after the Phase 6 commits land on `main`. It validates the full
-controller + per-kind tasks + question_kind schema + knockout policy
-+ server-authoritative audio chain against the live `7d96c5d1` Bot
-Screening stage (or any equivalent locally-generated AI-screening
-stage with at least 6 questions).
+> **2026-05-04 — Phase 6 audio sections are obsolete.** The Phase 6
+> "server-authoritative audio" invariant (browser EC/NS/AGC OFF +
+> ai_coustics SPARROW_S as sole filter) was rolled back when the
+> production target shifted to self-hosted LiveKit. Skip the
+> Phase-6-specific items in this checklist:
+>
+> - Bringup step 1's "Phase 6 check" (the `INTERVIEW_NOISE_CANCELLATION_*`
+>   env vars no longer exist).
+> - Bringup step 5's `ai.realtime.noise_cancellation.built` log line
+>   (the engine no longer builds noise cancellation).
+> - The "Phase 6 constraint-verification check" before scenarios.
+> - `model_versions.noise_cancellation_*` assertions.
+> - Scenarios **9a (soft-spoken)** and **9b (noisy-environment)** — no
+>   longer gating; the audio path is standard browser WebRTC NS.
+>
+> Everything else in this checklist (controller flow, per-kind tasks,
+> knockout policy, idle nudge, OTel, event-log envelope) still applies.
+
+This is the **terminal acceptance gate for the engine-redesign arc**.
+Operator runs this end-to-end ONCE after the engine-redesign commits
+land on `main`. It validates the full controller + per-kind tasks +
+question_kind schema + knockout policy chain against the live
+`7d96c5d1` Bot Screening stage (or any equivalent locally-generated
+AI-screening stage with at least 6 questions).
 
 This file supersedes `docs/onboarding/engine-redesign-phase-2-e2e.md`,
 which has been deleted (git history preserves it).
@@ -37,7 +54,7 @@ Three Docker containers + Supabase + the Next.js dev servers:
    `OPENAI_API_KEY`, `DEEPGRAM_API_KEY`, `CARTESIA_API_KEY`,
    `CANDIDATE_JWT_SECRET`, `FRONTEND_BASE_URL`,
    `CANDIDATE_SESSION_BASE_URL`. **Phase 6 check:** confirm
-   `INTERVIEW_NOISE_CANCELLATION_MODEL=QUAIL_S` and
+   `INTERVIEW_NOISE_CANCELLATION_MODEL=SPARROW_S` and
    `INTERVIEW_NOISE_CANCELLATION_LEVEL=0.4` are present (defaults from
    `.env.example` after Phase 6 T1).
 2. `supabase start`.
@@ -47,7 +64,7 @@ Three Docker containers + Supabase + the Next.js dev servers:
    agent_name=Dakota-1785` (or whichever agent name your `.env` has set).
 5. Verify the noise-cancellation log line on the engine boot:
    `ai.realtime.noise_cancellation.built provider=ai_coustics
-   model=QUAIL_S enhancement_level=0.4`. If you see different values,
+   model=SPARROW_S enhancement_level=0.4`. If you see different values,
    your local `.env` overrides the Phase 6 defaults — fix or accept.
 6. Recruiter dashboard: `cd frontend/app && npm install && npm run dev`
    (port 3000).
@@ -111,7 +128,7 @@ Start. Answer all 6 questions normally.
 - DB: `sessions.state = 'completed'`; `transcript` populated.
 - LocalFileSink envelope contains `session.close` event with
   `completed` outcome AND `model_versions.noise_cancellation_model
-  == "QUAIL_S"`, `model_versions.noise_cancellation_level == 0.4`.
+  == "SPARROW_S"`, `model_versions.noise_cancellation_level == 0.4`.
 
 ### 2. Q3 compliance binary completes < 60s (overview gate #2)
 
@@ -223,7 +240,7 @@ to a coworker).
 edit distance of the spoken sentence.
 
 **Fail:** no `speaking` event for >2s, OR transcript missing >2
-content words. If fail, Phase 6's QUAIL_S / 0.4 tuning is too
+content words. If fail, Phase 6's SPARROW_S / 0.4 tuning is too
 aggressive for soft speech — investigate before sign-off.
 
 #### 9b Noisy-environment
@@ -268,7 +285,7 @@ cat /tmp/engine-events/<session_id>.json | jq '.model_versions'
 **Acceptance:**
 - Envelope parses back into `EventLogEnvelope` cleanly.
 - `redaction_mode = "metadata"`.
-- `model_versions` shows `noise_cancellation_model = "QUAIL_S"` and
+- `model_versions` shows `noise_cancellation_model = "SPARROW_S"` and
   `noise_cancellation_level = 0.4`.
 - All expected event kinds present for the scenario:
   `audio.user.state`, `audio.agent.state`, `audio.stt.transcribed`,
@@ -326,7 +343,7 @@ scenario N/A and note in the sign-off table.
 Operator signs off here when all scenarios pass:
 
 ```
-- [ ] Bringup successful, engine logs show QUAIL_S / 0.4
+- [ ] Bringup successful, engine logs show SPARROW_S / 0.4
 - [ ] Per-browser matrix completed (4 rows)
 - [ ] Scenario 1: Clean interview — Operator: <name>, Date: <YYYY-MM-DD>
 - [ ] Scenario 2: Q3 compliance binary < 60s — Operator: <name>, Date: <YYYY-MM-DD>

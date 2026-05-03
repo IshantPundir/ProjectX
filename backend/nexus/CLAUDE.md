@@ -84,23 +84,31 @@
   exhaustive `OutcomeWatcher` switch, and a new `CANDIDATE_UNRESPONSIVE`
   code on `DisconnectError`. Migration `0027_tenant_settings`. See spec
   `docs/superpowers/specs/2026-05-03-engine-redesign-phase-5-knockout-policy-design.md`.
-- **Phase 3D.engine-redesign-6** — done: server-authoritative audio
-  invariant landed. `INTERVIEW_NOISE_CANCELLATION_MODEL` defaults to
-  `QUAIL_S` (was `QUAIL_VF_L`) and `INTERVIEW_NOISE_CANCELLATION_LEVEL`
-  to `0.4` (was `0.7`) in `app/config.py` + `.env.example`. The
-  candidate browser disables EC/NS/AGC at both `getUserMedia`
-  (`frontend/session/app/interview/[token]/CameraMicStep.tsx`) and the
-  LiveKit `Room` constructor (`frontend/session/components/interview/app/app.tsx`,
-  via a pre-constructed Room passed to `useSession({ room })`).
-  ai_coustics QUAIL_S is now the SOLE noise filter in the audio path;
-  no application-level runtime fallback exists (documented in
-  `docs/security/threat-model.md` Phase 6 section). The wizard's
-  noise-floor warning threshold shifted from -30 dBFS to -20 dBFS to
-  match raw ambient. A `track.getSettings()` divergence-log path
-  detects browsers that silently ignore the constraints (notably
-  mobile Safari on iOS); session continues regardless per the
-  browser-divergence decision. **Migration list unchanged** — head
-  is still `0027_tenant_settings`. The terminal acceptance gate for
+- **Phase 3D.engine-redesign-6** — **rolled back 2026-05-04**. The
+  Phase 6 "server-authoritative audio" work briefly disabled
+  browser-side EC/NS/AGC and made ai_coustics SPARROW_S / 0.4 the sole
+  noise filter. It was reverted when the production target shifted to
+  self-hosted LiveKit from day one — LiveKit's enhanced noise
+  cancellation plugins (Krisp, ai_coustics) are Cloud-only and
+  unsupported on self-hosted (per
+  `https://docs.livekit.io/agents/start/voice-ai`: "for self-hosting in
+  production … remove the enhanced noise cancellation plugin from the
+  agent code"). The candidate browser is back on standard WebRTC
+  NS/EC/AGC; the engine no longer installs or imports
+  `livekit-plugins-ai-coustics`; `INTERVIEW_NOISE_CANCELLATION_*` env
+  vars and the audio invariant in root CLAUDE.md are removed. The
+  audit envelope's `model_versions` no longer carries
+  `noise_cancellation_*` keys. The full-arc e2e checklist's audio
+  scenarios (9a soft-spoken / 9b noisy-environment) are no longer
+  gating. The same self-hosted constraint also applies to **adaptive
+  interruption handling** (`agent-gateway.livekit.cloud/v1/bargein`)
+  — `agent.py` was switched from `"mode": "adaptive"` to `"mode": "vad"`
+  in the `TurnHandlingOptions.interruption` block. Pattern: the three
+  LiveKit-Cloud-only features (Krisp NC, ai_coustics NC, adaptive
+  interruption) are all swapped out for self-hostable equivalents
+  (browser WebRTC NS, Silero VAD-based interruption); flip back if a
+  future deployment runs on LiveKit Cloud. **Migration list unchanged** — head is still
+  `0027_tenant_settings`. The terminal acceptance gate for
   the entire 6-phase arc is
   `docs/onboarding/engine-redesign-full-arc-e2e.md`. See spec
   `docs/superpowers/specs/2026-05-03-engine-redesign-phase-6-audio-authority-design.md`.
@@ -368,7 +376,7 @@ from openai import AsyncOpenAI
 
 **Documented carve-outs (allowed):**
 - `app/modules/jd/errors.py` and `app/modules/jd/actors.py` import `openai` and `instructor.core.InstructorRetryException` *as types*, exclusively for retry/permanent-error classification (`_PERMANENT_EXCEPTIONS`) and user-safe error message mapping (`_SAFE_MESSAGES`). They never call the SDK. If the provider changes, this exception map moves with the new SDK; nothing else changes.
-- `app/ai/realtime.py` is the second blessed import site for vendor SDKs. It owns LiveKit plugin instantiation (`livekit.plugins.openai`, `deepgram`, `cartesia`, `silero`, `turn_detector`, `ai_coustics`) so the interview-engine worker never touches them directly. Reads model IDs / voices / effort from `AIConfig` — never from env or settings. (Engine-integration mechanics — `interview_engine_jwt_secret`, `interview_agent_name`, `nexus_internal_base_url` — are deliberately NOT in `AIConfig`; the engine worker reads those directly from `settings`. AIConfig is for AI provider config only.) Lazy imports inside each factory keep the FastAPI nexus process free of the realtime plugin packages (which are installed only in the interview-engine container).
+- `app/ai/realtime.py` is the second blessed import site for vendor SDKs. It owns LiveKit plugin instantiation (`livekit.plugins.openai`, `deepgram`, `cartesia`, `silero`, `turn_detector`) so the interview-engine worker never touches them directly. Reads model IDs / voices / effort from `AIConfig` — never from env or settings. (Engine-integration mechanics — `interview_engine_jwt_secret`, `interview_agent_name`, `nexus_internal_base_url` — are deliberately NOT in `AIConfig`; the engine worker reads those directly from `settings`. AIConfig is for AI provider config only.) Lazy imports inside each factory keep the FastAPI nexus process free of the realtime plugin packages (which are installed only in the interview-engine container).
 - A future cleanup is to lift the JD exception map into `app/ai/errors.py` and re-export typed sentinels so module code never references vendor exception classes by name. Tracked as tech-debt; not blocking.
 - The interview-engine container (Phase 3C.2 Chunk 5) currently still installs nexus + livekit-agents into **two separate venvs** with `PYTHONPATH` layering. The original blocker — nexus pinning `openai<2` while `livekit-agents>=1.5.4` requires `openai>=2` — was resolved by Phase 2 of the modular-monolith spec (openai 2.x + instructor 1.15.x). The two-venv layout remains in place because the engine container itself ships independently until Phase 3 merges its source tree into nexus and consolidates onto a single image. Removing the two-venv layout is Phase 3's responsibility.
 

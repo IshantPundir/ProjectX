@@ -85,7 +85,7 @@ relevant phase's spec.
 | 3 | `question_kind` ownership | **Question-bank generator emits it**; engine has fallback heuristic for missing rows. |
 | 4 | Knockout policy default | **`record_only`** (continue interview, surface failure in `SessionResult`). Tenant-overridable later. |
 | 5 | Spoken-form derivation | **Runtime LLM derivation, cached per session.** No schema field; backfill `spoken_form` on `QuestionConfig` later as a separate optimization. |
-| 6 | Audio authority | **Server-authoritative.** Browser disables EC/NS/AGC; ai_coustics is single source of truth. Tuning: `QUAIL_S` model, level `0.4`. |
+| 6 | Audio authority | **Originally server-authoritative (browser EC/NS/AGC OFF + ai_coustics as sole filter). Rolled back 2026-05-04** when the production target shifted to self-hosted LiveKit, which doesn't support LiveKit's enhanced noise-cancellation plugins. Now: standard browser-side WebRTC NS. See root `CLAUDE.md` → "Audio Path" and `docs/security/threat-model.md` Phase 6 section. |
 | 7 | Phase fit | Arc is framed as **Phase 3C.2 redesign + Phase 3D foundation**. Rubric-tier classification belongs in-the-moment. |
 | 8 | Audit log destination | **Local FS in dev, S3 in deploy.** Sink-agnostic `EventLogSink` interface. **S3 plumbing is a hard deployment gate before any deploy ships.** |
 | 9 | Migration path | **Additive-then-cutover collapsed.** Phase 1 lands additively on the current engine; Phase 2 is the cutover (controller replaces `InterviewerAgent` + `state_machine.py` in one PR); Phases 3–6 enrich the new system. No feature flag. No `v1` after Phase 2. |
@@ -547,7 +547,7 @@ implementation plan → own commit on `main`.
 | **3** | Per-kind task subclasses | `TechnicalDepthTask`, `BehavioralStarTask`, `ComplianceBinaryTask`, factory routing, three task prompt files | `tasks/`, prompts |
 | **4** | `question_kind` schema + bank-gen | Migration adds `stage_questions.question_kind` with default; `question_bank/schemas.py` (internal/persistence) + `actors.py` emit it; `interview_runtime/schemas.QuestionConfig` extended (engine-facing). **Recruiter API response schema does NOT expose `question_kind`** — a separate frontend ticket later decides whether and how to surface it in the dashboard | `question_bank/`, `interview_runtime/`, migrations |
 | **5** | Knockout policy + tenant settings | `KnockoutFailure` model; `SessionResult.knockout_failures`; `tenant_settings.engine_knockout_policy` + `engine_agent_name` columns; controller reads tenant policy; `session_outcome` enum expansion; frontend `useSessionOutcome` updated | `interview_runtime/`, `tenant_settings/`, `frontend/session/components/interview/` |
-| **6** | Server-authoritative audio + e2e gate | Browser disables EC/NS/AGC in `getUserMedia` and LiveKit Room construction; `INTERVIEW_NOISE_CANCELLATION_MODEL=QUAIL_S`; `INTERVIEW_NOISE_CANCELLATION_LEVEL=0.4`; e2e test checklist in `docs/onboarding/` | `frontend/session/app/interview/[token]/CameraMicStep.tsx`, `frontend/session/components/interview/app/app.tsx`, engine `.env`, e2e doc |
+| **6** | ~~Server-authoritative audio + e2e gate~~ — **rolled back 2026-05-04** (self-hosted LiveKit doesn't support enhanced noise cancellation). The browser is back on standard WebRTC NS; ai_coustics is removed; `INTERVIEW_NOISE_CANCELLATION_*` env vars are gone. See root `CLAUDE.md` → "Audio Path". The e2e checklist's audio scenarios (9a/9b) no longer gate. | (no live files — rollback) |
 
 ## 9 — Test gates per phase
 
@@ -663,12 +663,14 @@ The arc is "done" when:
    Q1 probes the same signal) to skip with a graceful bridge — no re-asking.
 5. The audit log JSON for a session opens cleanly, replays into a chronological
    timeline, and contains zero PII in `metadata` mode.
-6. Audio-fix fairness pair: (a) soft-spoken candidate at default mic level
-   produces `audio.user.state new_state=speaking` within the first sentence
-   (Phase 6 audio fix); AND (b) noisy-environment candidate (HVAC + typing)
-   at normal voice level still produces a usable STT transcript via
-   ai_coustics QUAIL_S / 0.4 (Phase 6 fairness coverage). Both 9a and 9b
-   in the full-arc e2e checklist must pass.
+6. ~~Audio-fix fairness pair (Phase 6).~~ **Rolled back 2026-05-04.** The
+   server-authoritative audio invariant + ai_coustics SPARROW_S / 0.4
+   tuning were reverted when the production target shifted to
+   self-hosted LiveKit. The browser is back on standard WebRTC NS, so
+   the soft-spoken / noisy-environment fairness pair (formerly
+   scenarios 9a / 9b in the full-arc e2e checklist) is no longer
+   gating. If LiveKit Cloud ever returns as a production target,
+   re-design audio fairness from scratch.
 7. End-to-end OTel: with `OTEL_DEV_CONSOLE_EXPORTER=true`, the engine prints spans for
    each LLM turn, STT segment, and tool execution.
 8. `SessionResult.knockout_failures` is non-empty when Q3 is failed; empty when not.

@@ -187,40 +187,23 @@ has no Supabase session and must not send any `Authorization` header.
   the frontend does NOT generate tokens.
 - Recordings use LiveKit Egress writing to S3 — no frontend involvement.
 
-### Audio handling — server-authoritative invariant
+### Audio handling
 
-Phase 6 of the engine-redesign arc made the candidate browser
-disable its built-in EC/NS/AGC. ai_coustics is the SOLE noise filter
-in the audio path. Two code points carry the EC/NS/AGC=false triplet:
+`getUserMedia` is called with `audio: true` — the browser's standard
+WebRTC echo cancellation, noise suppression, and AGC are on. LiveKit's
+enhanced noise cancellation plugins are Cloud-only and intentionally
+not wired into the candidate surface (see root CLAUDE.md → "Audio
+Path"). The Phase 6 "server-authoritative audio" invariant
+(browser EC/NS/AGC OFF + ai_coustics as sole filter) was rolled back
+on 2026-05-04 when production shifted to self-hosted LiveKit.
 
-1. `app/interview/[token]/CameraMicStep.tsx` — `getUserMedia` is
-   called with an explicit `MediaTrackConstraints` object disabling
-   EC/NS/AGC. After resolution, `track.getSettings()` is read and
-   compared to the requested constraints; any divergence (notably
-   mobile Safari on iOS) is `console.warn`-ed as
-   `cammic.constraints.diverged`. The session continues regardless —
-   the candidate has no actionable knob, and refusing the session is
-   worse UX than partial mitigation via ai_coustics.
-2. `components/interview/app/app.tsx` — a LiveKit `Room` is
-   pre-constructed in a `useMemo` with matching
-   `audioCaptureDefaults`, then passed to `useSession(tokenSource,
-   { room })`. This catches the second capture path that
-   `useSession.start()` invokes via
-   `room.localParticipant.setMicrophoneEnabled(true, undefined,
-   ...)` — `mergeDefaultOptions` falls back to
-   `roomOptions.audioCaptureDefaults` because the captureOptions slot
-   is undefined.
+The wizard's noise-floor display (`NOISE_WARN_DBFS = -30`) reflects
+post-noiseSuppression audio. Above the threshold, the candidate sees
+a "sounds noisy" warning — non-blocking; the interview continues.
 
-Both code points are gated by the "Human Review Required For: any
-change to OTP, consent, or camera/mic step flow" rule.
-
-The wizard's noise-floor display reflects RAW ambient audio
-post-Phase-6 (`NOISE_WARN_DBFS = -20`, was `-30`). The "noisy"
-warning copy mentions "raw room noise" to set candidate expectations.
-
-Full trust-boundary analysis lives in `docs/security/threat-model.md`
-Phase 6 section. Per-browser e2e matrix lives in
-`docs/onboarding/engine-redesign-full-arc-e2e.md`.
+`getUserMedia` (in `CameraMicStep.tsx`) is gated by the "Human Review
+Required For: any change to OTP, consent, or camera/mic step flow"
+rule.
 
 ---
 

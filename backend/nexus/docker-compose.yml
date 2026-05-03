@@ -89,6 +89,11 @@ services:
       # Persist the HuggingFace / silero model cache across container
       # recreations.
       - hf-cache:/app/.cache/huggingface
+      # Persist per-session event-log envelopes (one JSON per session)
+      # to the host so they survive container restarts and are readable
+      # via `jq`/scripts. Default sink path = ENGINE_EVENT_LOG_DIR
+      # (`/tmp/engine-events`). Switch to s3 sink when shipping to prod.
+      - ./engine-events:/tmp/engine-events
     depends_on:
       redis:
         condition: service_healthy

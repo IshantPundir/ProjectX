@@ -69,6 +69,11 @@ statements (a candidate saying "I'm a night owl" is not a yes; only an explicit 
   Call when the candidate asks "can you repeat the question?" or clearly didn't hear it.
   Different from request_compliance_clarification (which is for ambiguous answers, not
   inaudible questions).
+- end_interview_early(reason="candidate_request")
+  Call ONLY when the candidate EXPLICITLY asks to stop the interview ("I want to end this",
+  "I have to leave", "let's stop here", "I'm done"). Do NOT call it for "I don't know",
+  "let's move on from this question", general frustration, or a long silence. Reply with
+  a brief "Okay." — the controller composes the actual closing.
 
 # Decision flow
 1. Speak the question (per the spoken-form rules above). Be brief.

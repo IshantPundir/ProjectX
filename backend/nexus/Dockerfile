@@ -33,7 +33,7 @@ ENV HF_HOME=/app/.cache/huggingface
 # multilingual turn-detector plugin which instantiates with
 # local_files_only=True and would otherwise crash with "Could not find
 # file 'model_q8.onnx'". The download-files subcommand iterates registered
-# plugins (silero, turn-detector, ai_coustics) and pulls each plugin's
+# plugins (silero, turn-detector) and pulls each plugin's
 # HF / ONNX assets.
 #
 # Inherited by all three services from the same image (nexus, nexus-worker,

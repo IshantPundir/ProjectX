@@ -210,22 +210,20 @@ shape.
 
 ---
 
-## Phase 6 — server-authoritative audio (2026-05-03)
+## Phase 6 — server-authoritative audio (2026-05-03 → ROLLED BACK 2026-05-04)
 
-**Not a prompt change.** Phase 6 of the engine-redesign arc tunes
-audio infrastructure (browser EC/NS/AGC OFF, ai_coustics defaults
-flipped to `QUAIL_S` / `0.4`). No prompt body was modified.
+**Rolled back.** The Phase 6 audio invariant (browser EC/NS/AGC OFF,
+ai_coustics SPARROW_S / 0.4 as sole filter) was reverted when the
+production target shifted to self-hosted LiveKit from day one. The
+candidate surface is back on standard browser-side WebRTC noise
+suppression and the e2e checklist's audio fairness scenarios (9a
+soft-spoken / 9b noisy-environment) no longer gate. See
+`docs/security/threat-model.md` Phase 6 section for the rollback
+rationale.
 
-Audio tuning has fairness implications even though Decision #18 in
-the overview spec only formally gates prompt changes. Fairness
-validation for Phase 6 lives in the full-arc e2e checklist
-(`docs/onboarding/engine-redesign-full-arc-e2e.md`) scenarios 9a
-(soft-spoken) + 9b (noisy-environment), which form a paired
-acceptance gate — neither alone is sufficient.
-
-This entry is the audit-discoverable record that fairness was
-considered. No senior-reviewer sign-off was solicited; the e2e
-checklist's paired scenarios are the validation surface.
+If LiveKit Cloud ever becomes the production target again, the
+fairness implications of disabling browser-side EC/NS/AGC need a
+fresh review — not a revival of this entry.
 
 ---
 

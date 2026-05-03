@@ -35,7 +35,6 @@ from livekit.agents import (
     UserInputTranscribedEvent,
     UserStateChangedEvent,
     cli,
-    room_io,
 )
 from livekit.agents.voice.events import (
     AgentFalseInterruptionEvent,
@@ -53,16 +52,14 @@ from app.ai.config import ai_config
 # discovers to prewarm model files at container build time. Per the
 # `app.ai.realtime` carve-out (see backend/nexus/CLAUDE.md): direct vendor
 # SDK imports are forbidden EXCEPT for process-startup model registration
-# of plugins that need local model files. Silero (VAD), turn_detector
-# (multilingual EOU), and ai_coustics (noise cancellation) all qualify.
-# Session-time instantiation still goes through `app.ai.realtime.build_*`.
-from livekit.plugins import ai_coustics  # noqa: F401  (download-files registration)
+# of plugins that need local model files. Silero (VAD) and turn_detector
+# (multilingual EOU) qualify. Session-time instantiation still goes through
+# `app.ai.realtime.build_*`.
 from livekit.plugins import silero
 from livekit.plugins.turn_detector import multilingual as _turn_detector_multilingual  # noqa: F401
 
 from app.ai.realtime import (
     build_llm_plugin,
-    build_noise_cancellation,
     build_stt_plugin,
     build_turn_detector,
     build_tts_plugin,
@@ -199,10 +196,6 @@ async def entrypoint(ctx: JobContext) -> None:
             "turn_detector_unlikely_threshold": str(
                 ai_config.interview_turn_detector_unlikely_threshold
             ),
-            "noise_cancellation_model": ai_config.interview_noise_cancellation_model,
-            "noise_cancellation_level": str(
-                ai_config.interview_noise_cancellation_level
-            ),
         },
         redaction_mode=settings.engine_event_log_redaction,
     )
@@ -235,6 +228,7 @@ async def entrypoint(ctx: JobContext) -> None:
             overhead_seconds=settings.engine_task_budget_overhead_seconds,
         ),
         tenant_settings=tenant_settings,
+        event_sink=event_sink,
     )
 
     session = AgentSession(
@@ -264,13 +258,22 @@ async def entrypoint(ctx: JobContext) -> None:
                 "min_delay": settings.engine_endpointing_min_delay,
                 "max_delay": settings.engine_endpointing_max_delay,
             },
-            # Adaptive interruption is the LiveKit-recommended mode when
-            # a turn detector + STT with aligned transcripts are present
-            # (Deepgram nova-3 qualifies). Resumes the agent's speech if
-            # the interruption turns out to be a false trigger (cough,
-            # background noise) within the timeout window.
+            # VAD-based interruption: the local Silero VAD's speech-start
+            # signal triggers a barge-in once `min_duration` of speech is
+            # observed. Adaptive (transcript-aware) interruption is the
+            # higher-quality alternative — it distinguishes intent-to-
+            # interrupt from passive backchannels ("uh-huh", "yeah") and
+            # noise (cough, throat-clear) by reading the STT transcript
+            # — but it requires LiveKit Cloud (the plugin connects to
+            # `agent-gateway.livekit.cloud/v1/bargein`, which 401's on
+            # self-hosted setups including local `livekit-server --dev`).
+            # On a Cloud deployment, switch `mode` back to `"adaptive"`.
+            # `resume_false_interruption` recovers the agent's speech if
+            # the trigger turns out to be silence/noise within
+            # `false_interruption_timeout` (default 2.0s) — works in
+            # either mode.
             interruption={
-                "mode": "adaptive",
+                "mode": "vad",
                 "min_duration": 0.5,
                 "resume_false_interruption": True,
             },
@@ -286,15 +289,11 @@ async def entrypoint(ctx: JobContext) -> None:
     )
 
     _wire_close_handler(session, agent, collector=event_collector, sink=event_sink)
+    _wire_participant_disconnect(ctx, agent)
 
     await session.start(
         agent=agent,
         room=ctx.room,
-        room_options=room_io.RoomOptions(
-            audio_input=room_io.AudioInputOptions(
-                noise_cancellation=build_noise_cancellation(),
-            ),
-        ),
     )
 
 
@@ -331,8 +330,6 @@ def _log_session_setup(config) -> None:
         idle_give_up_seconds=settings.engine_idle_give_up_seconds,
         task_budget_overhead_seconds=settings.engine_task_budget_overhead_seconds,
         closing_drain_timeout_seconds=settings.engine_closing_drain_timeout_seconds,
-        noise_cancellation_model=ai_config.interview_noise_cancellation_model,
-        noise_cancellation_level=ai_config.interview_noise_cancellation_level,
     )
     log.info(
         "engine.setup.session",
@@ -575,6 +572,53 @@ def _wire_close_handler(
         task.add_done_callback(_bg_tasks.discard)
 
 
+def _wire_participant_disconnect(
+    ctx: JobContext,
+    agent: InterviewController,
+) -> None:
+    """Drive the controller's natural termination path on participant
+    disconnect (End Call, page refresh, network drop past reconnect).
+
+    Without this, ``RoomOptions.close_on_disconnect=True`` (LiveKit's
+    default) cancels only the in-flight AgentTask. The controller catches
+    the cancel, treats it as a forced task completion, and the question
+    loop dispatches the *next* question — which queues new generate_reply
+    calls onto a session that LiveKit is concurrently trying to drain.
+    The drain blocks waiting for queued ops to complete; the queued ops
+    block waiting for a session that's closing. Result: AgentSession
+    never emits its ``close`` event, ``_handle_close`` never runs,
+    ``record_session_result`` is never called, and the DB row stays
+    ``state='active'`` — so the candidate's next page-load lands in
+    Rejoin mode and waits for an interviewer that won't reappear.
+
+    Mirrors the cancellation pattern used by the controller's
+    ``end_interview_early`` tool: set ``_end_outcome='candidate_ended'``
+    and cancel the in-flight task. The on_enter loop's next iteration
+    sees ``_end_outcome`` is non-None, breaks, and runs ``_terminate``
+    which persists, publishes ``session_outcome``, and cleanly shuts
+    down the LiveKit session — at which point the AgentSession's close
+    event fires and the envelope-writing path in ``_handle_close``
+    runs idempotently (``_persisted=True`` short-circuits the persist).
+    """
+
+    def _on_participant_disconnected(participant: object) -> None:
+        identity = getattr(participant, "identity", "<unknown>")
+        reason = getattr(participant, "disconnect_reason", None)
+        log.info(
+            "session.participant_disconnected",
+            participant_identity=identity,
+            disconnect_reason=str(reason) if reason is not None else None,
+            already_terminating=agent._end_outcome is not None,
+        )
+        if agent._end_outcome is None:
+            agent._end_outcome = "candidate_ended"
+        agent._complete_inflight_task(reason="task_timeout")
+        if agent._current_task_run is not None and not agent._current_task_run.done():
+            agent._current_task_run.cancel()
+
+    ctx.room.on("participant_disconnected", _on_participant_disconnected)
+
+
 async def _handle_close(
     ev: CloseEvent,
     agent: InterviewController,
@@ -634,17 +678,12 @@ async def _handle_close(
     # 2. Publish session_outcome (existing behavior; both classes implement it).
     await agent._publish_session_outcome(outcome)
 
-    # 3. Close the EventCollector and write the envelope.
-    if sink is not None:
-        envelope = collector.close(
-            closed_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        )
-        try:
-            target = await asyncio.to_thread(sink.write, envelope)
-            log.info("session.close.event_log_written", target=target)
-        except Exception as exc:  # noqa: BLE001
-            log.error(
-                "session.close.event_log_failed",
-                error=str(exc),
-                error_type=type(exc).__name__,
-            )
+    # 3. Write the envelope. The controller's `_terminate` already wrote
+    # it on the normal path (this is a no-op there). On the disconnect/
+    # error path where _terminate didn't run, this is the safety net.
+    # The write is fire-and-forget at the asyncio level — if the worker
+    # process tears down before this completes, the envelope is lost.
+    # That's acceptable for the safety-net case (controller crashed
+    # mid-session); the normal path is covered by the inline write in
+    # `_terminate`.
+    await agent._finalize_event_log(reason="close_handler")

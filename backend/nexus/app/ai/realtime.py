@@ -29,7 +29,6 @@ if TYPE_CHECKING:
     # forcing a runtime import. Only the engine container has these
     # packages installed.
     from livekit.agents.voice.turn import TurnDetectionMode
-    from livekit.plugins.ai_coustics import AudioEnhancement
     from livekit.plugins.cartesia import TTS
     from livekit.plugins.deepgram import STT
     from livekit.plugins.openai import LLM
@@ -119,44 +118,3 @@ def build_turn_detector() -> "TurnDetectionMode":
     return MultilingualModel(unlikely_threshold=threshold)
 
 
-def build_noise_cancellation() -> "AudioEnhancement":
-    """Construct the ai_coustics noise-cancellation enhancement.
-
-    Model + ``enhancement_level`` are env-driven via ``AIConfig``. When the
-    level is None, the plugin's built-in default is used. Lowering the
-    level reduces how aggressively the model processes audio — important
-    when over-suppression attenuates a soft-spoken candidate's voice
-    enough that downstream Silero VAD never crosses its activation
-    threshold.
-
-    Model name is resolved against ``ai_coustics.EnhancerModel`` at call
-    time so config can name any model the plugin exposes (QUAIL_S,
-    QUAIL_L, QUAIL_VF_L, QUAIL_BV, …) without an engine code change.
-    """
-    from livekit.plugins import ai_coustics
-
-    model_name = ai_config.interview_noise_cancellation_model
-    enhancement_level = ai_config.interview_noise_cancellation_level
-
-    try:
-        model = getattr(ai_coustics.EnhancerModel, model_name)
-    except AttributeError as exc:
-        raise ValueError(
-            f"Unknown ai_coustics enhancer model: {model_name!r}. "
-            f"Set INTERVIEW_NOISE_CANCELLATION_MODEL to one of the values "
-            f"in ai_coustics.EnhancerModel."
-        ) from exc
-
-    kwargs: dict[str, object] = {"model": model}
-    if enhancement_level is not None:
-        kwargs["model_parameters"] = ai_coustics.ModelParameters(
-            enhancement_level=enhancement_level,
-        )
-
-    logger.info(
-        "ai.realtime.noise_cancellation.built",
-        provider="ai_coustics",
-        model=model_name,
-        enhancement_level=enhancement_level,
-    )
-    return ai_coustics.audio_enhancement(**kwargs)

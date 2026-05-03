@@ -503,7 +503,7 @@ async def start_session(
     )
 
     return StartSessionResponse(
-        livekit_url=settings.livekit_url,
+        livekit_url=settings.livekit_public_url or settings.livekit_url,
         livekit_token=candidate_lk_token,
         room_name=room_name,
         session_id=sess.id,
@@ -571,7 +571,7 @@ async def rejoin_session(
     )
 
     return StartSessionResponse(
-        livekit_url=settings.livekit_url,
+        livekit_url=settings.livekit_public_url or settings.livekit_url,
         livekit_token=new_lk_token,
         room_name=session.livekit_room_name,
         session_id=session.id,

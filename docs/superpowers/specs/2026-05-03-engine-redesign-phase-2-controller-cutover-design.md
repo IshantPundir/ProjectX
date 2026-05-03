@@ -994,7 +994,7 @@ later phases):
 - **`question_kind` schema column** + bank-generator emitting it — Phase 4.
 - **`KnockoutFailure` persistence + `tenant_settings.engine_knockout_policy` + `close_polite` loop break** — Phase 5.
 - **Per-tenant `engine_agent_name` column** — Phase 5.
-- **Server-authoritative audio + e2e gate** (`getUserMedia` constraints, `INTERVIEW_NOISE_CANCELLATION_MODEL=QUAIL_S`, etc.) — Phase 6.
+- ~~**Server-authoritative audio + e2e gate**~~ — Phase 6, **rolled back 2026-05-04** (self-hosted LiveKit doesn't support LiveKit's enhanced noise-cancellation plugins). The browser is back on standard WebRTC NS; ai_coustics is removed.
 - **Recruiter dashboard surfacing of `question_kind`** — separate post-arc frontend ticket (per overview spec §11 acceptance gate #9).
 - **Phase 3D analysis (post-session scoring, hire/no-hire recommendation)** — outside this entire arc.
 
