@@ -7,6 +7,7 @@ can assert it directly via _is_signal_disclaim_subsumed.
 
 from __future__ import annotations
 
+import uuid
 from unittest.mock import MagicMock
 
 import pytest
@@ -19,6 +20,7 @@ from app.modules.interview_runtime.schemas import (
     QuestionConfig,
     QuestionRubric,
 )
+from app.modules.tenant_settings import TenantSettings
 
 
 def make_question(
@@ -66,7 +68,9 @@ def make_controller(session_config) -> InterviewController:
             started_at_monotonic=0.0,
             duration_limit_seconds=900.0,
         ),
-        tenant_policy="record_only",
+        tenant_settings=TenantSettings(
+            tenant_id=uuid.UUID("00000000-0000-0000-0000-000000000001"),
+        ),
     )
 
 

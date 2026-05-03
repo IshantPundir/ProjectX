@@ -51,6 +51,7 @@ from app.modules.interview_runtime import (
     SessionResult,
     record_session_result,
 )
+from app.modules.tenant_settings import TenantSettings
 
 
 log = structlog.get_logger("interview-engine.controller")
@@ -82,15 +83,20 @@ def mandatory_first_then_optional(
     return mandatory + optional
 
 
-def build_controller_prompt(session_config: SessionConfig) -> str:
-    """Load and substitute placeholders into the controller.txt prompt body."""
+def build_controller_prompt(session_config: SessionConfig, *, agent_name: str) -> str:
+    """Load and substitute placeholders into the controller.txt prompt body.
+
+    `agent_name` is the candidate-facing display name. The caller is
+    responsible for resolving the env fallback when no per-tenant
+    override is set (see `InterviewController.__init__`).
+    """
     from string import Template
     from app.ai.prompts import prompt_loader
 
     template = Template(prompt_loader.get("interview/controller"))
     questions = session_config.stage.questions
     return template.substitute(
-        agent_name=settings.engine_agent_name,
+        agent_name=agent_name,
         company_about=session_config.company.about,
         company_industry=session_config.company.industry,
         company_stage=session_config.company.company_stage,
@@ -112,7 +118,7 @@ class InterviewController(Agent):
         collector: EventCollector,
         idle_nudge_config: IdleNudgeConfig,
         budget: SessionBudget,
-        tenant_policy: KnockoutPolicy,
+        tenant_settings: TenantSettings,
     ) -> None:
         self._config: SessionConfig = session_config
         self._tenant_id = tenant_id
@@ -120,7 +126,13 @@ class InterviewController(Agent):
         self._collector = collector
         self._budget = budget
         self._idle_nudge_state = IdleNudgeStateMachine(idle_nudge_config)
-        self._tenant_policy: KnockoutPolicy = tenant_policy
+        self._tenant_policy: KnockoutPolicy = tenant_settings.engine_knockout_policy
+        self._agent_name: str = (
+            tenant_settings.engine_agent_name or settings.engine_agent_name
+        )
+        self._agent_name_override_active: bool = (
+            tenant_settings.engine_agent_name is not None
+        )
         self._disqualified_signals: set[str] = set()
         self._knockout_failures: list[KnockoutFailureRecord] = []
         self._end_outcome: SessionOutcome | None = None
@@ -136,7 +148,11 @@ class InterviewController(Agent):
         self._session_start_ms: int = 0
         self._session_start_monotonic: float = 0.0
         self._persisted: bool = False  # mirrors Phase 1's InterviewerAgent attr
-        super().__init__(instructions=build_controller_prompt(session_config))
+        super().__init__(
+            instructions=build_controller_prompt(
+                session_config, agent_name=self._agent_name
+            )
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -146,6 +162,12 @@ class InterviewController(Agent):
         self._session_start_ms = now_ms()
         self._session_start_monotonic = time.monotonic()
         self._budget.started_at_monotonic = self._session_start_monotonic
+        log.info(
+            "controller.started",
+            agent_name_displayed=self._agent_name,
+            agent_name_override_active=self._agent_name_override_active,
+            tenant_policy=self._tenant_policy,
+        )
         await self._publish_progress_attributes()
         self._idle_nudge_tick_task = asyncio.create_task(self._idle_nudge_loop())
 

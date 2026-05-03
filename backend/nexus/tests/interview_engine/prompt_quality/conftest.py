@@ -19,6 +19,7 @@ from app.modules.interview_engine.budget import SessionBudget
 from app.modules.interview_engine.controller import InterviewController
 from app.modules.interview_engine.event_log import EventCollector
 from app.modules.interview_engine.idle_nudge import IdleNudgeConfig
+from app.modules.tenant_settings import TenantSettings
 from tests.interview_engine.fixtures.mock_session_config import (
     load_live_data_session_config,
 )
@@ -65,7 +66,9 @@ async def agent_session(session_config, production_llm):
             started_at_monotonic=0.0,
             duration_limit_seconds=session_config.stage.duration_minutes * 60.0,
         ),
-        tenant_policy="record_only",
+        tenant_settings=TenantSettings(
+            tenant_id=uuid.UUID("00000000-0000-0000-0000-000000000001"),
+        ),
     )
     await session.start(controller)
     yield session, controller, collector

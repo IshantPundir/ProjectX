@@ -80,6 +80,7 @@ from app.modules.interview_engine.event_log import (
     build_sink_from_settings,
 )
 from app.modules.interview_engine.prompt_hash import hash_prompt_file
+from app.modules.tenant_settings import get_tenant_settings
 
 
 log = structlog.get_logger("interview-engine")
@@ -162,10 +163,13 @@ async def entrypoint(ctx: JobContext) -> None:
             session_id=uuid.UUID(session_id),
             tenant_id=tenant_uuid,
         )
+        tenant_settings = await get_tenant_settings(db, tenant_uuid)
     log.info(
         "engine.config.fetched",
         question_count=len(config.stage.questions),
         stage_type=config.stage.stage_type,
+        tenant_policy=tenant_settings.engine_knockout_policy,
+        agent_name_override_active=tenant_settings.engine_agent_name is not None,
     )
     _log_session_setup(config)
 
@@ -230,7 +234,7 @@ async def entrypoint(ctx: JobContext) -> None:
             duration_limit_seconds=config.stage.duration_minutes * 60.0,
             overhead_seconds=settings.engine_task_budget_overhead_seconds,
         ),
-        tenant_policy="record_only",
+        tenant_settings=tenant_settings,
     )
 
     session = AgentSession(
