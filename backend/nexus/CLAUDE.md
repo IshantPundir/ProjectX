@@ -14,7 +14,7 @@
 - **Framework:** FastAPI (async throughout)
 - **DB driver:** asyncpg (direct PostgreSQL connection — NOT PostgREST)
 - **ORM:** SQLAlchemy async (asyncpg driver)
-- **Schema management:** Supabase SQL for the initial cut + Supabase-managed objects (auth hook, `supabase_auth_admin` grants); Alembic for every incremental change after that. `migrations/versions/` currently has 26 revisions; head is `0026_question_kind_column`.
+- **Schema management:** Supabase SQL for the initial cut + Supabase-managed objects (auth hook, `supabase_auth_admin` grants); Alembic for every incremental change after that. `migrations/versions/` currently has 27 revisions; head is `0027_tenant_settings`.
 - **Task queue:** Dramatiq + Redis. Used for JD extraction/re-enrichment and question-bank generation. Notification dispatch still runs via FastAPI `BackgroundTasks` (short, non-retryable).
 - **Containerisation:** Docker + Docker Compose
 - **Hosting MVP:** Railway
@@ -63,6 +63,27 @@
   prompt's kind selection. Recruiter API surface unchanged
   (`question_kind` not in request/response schemas). See spec
   `docs/superpowers/specs/2026-05-03-engine-redesign-phase-4-question-kind-schema-design.md`.
+- **Phase 3D.engine-redesign-5** — done: `tenant_settings` table +
+  `KnockoutFailure` persistence + `close_polite` policy wiring + 6-state
+  `session_outcome` frontend wiring. New `app/modules/tenant_settings/`
+  module (ORM + Pydantic + service, public API via `__init__.py`); new
+  `KnockoutFailure` pydantic model in `interview_runtime.schemas` with
+  defense-in-depth `_scrub_pii` validator (email + phone regex →
+  `[redacted]`); `record_session_result` writes the new
+  `sessions.knockout_failures` JSONB column for Phase 3D analytics.
+  Controller's `tenant_policy: KnockoutPolicy` constructor parameter is
+  replaced with `tenant_settings: TenantSettings`; the `close_polite`
+  branch at `controller.py` (stub from Phase 2) now sets
+  `_end_outcome="knockout_closed"` so the question loop's natural
+  convergence handles graceful termination — no race window. `agent_name`
+  override flows from `tenant_settings.engine_agent_name` into
+  `build_controller_prompt` substitution + a new `controller.started`
+  audit-log line; the env value remains the LiveKit fleet-wide routing
+  label (P5-Q1). Frontend gains a typed `SessionOutcome` Literal union
+  in `frontend/session/components/interview/lib/session-outcome.ts`,
+  exhaustive `OutcomeWatcher` switch, and a new `CANDIDATE_UNRESPONSIVE`
+  code on `DisconnectError`. Migration `0027_tenant_settings`. See spec
+  `docs/superpowers/specs/2026-05-03-engine-redesign-phase-5-knockout-policy-design.md`.
 - **Phase 3D** — pending: real-time `analysis` (scoring, probe selection) and `reporting` (post-session report compilation).
 
 Stubbed modules (routers registered, no business logic yet): `ats`, `analysis`, `reporting`.
@@ -166,6 +187,10 @@ backend/nexus/
 │       │   ├── router.py         ← /api/internal/sessions/{id}/config (GET) + /results (POST)
 │       │   ├── service.py        ← build_session_config, record_session_result, verify_engine_token
 │       │   └── schemas.py        ← SessionConfig, SessionResult, QuestionConfig, etc. (the wire contract)
+│       ├── tenant_settings/      ← Phase 5 — per-tenant engine configuration
+│       │   ├── models.py         ← TenantSettingsModel (PK = tenant_id, FK clients.id ON DELETE CASCADE)
+│       │   ├── schemas.py        ← TenantSettings (engine_knockout_policy Literal, engine_agent_name)
+│       │   └── service.py        ← get_tenant_settings — lazy-default read (no row → schema defaults)
 │       ├── ats/                  ← [Stub] Per-ATS adapters, polling, outbound sync
 │       ├── analysis/             ← [Stub] Real-time scoring, probe decision logic
 │       └── reporting/            ← [Stub] Report compilation, score aggregation
@@ -176,7 +201,7 @@ backend/nexus/
 │       ├── jd_reenrichment.txt      ← Call 2 — re-enrichment after signal edits
 │       ├── question_bank_common.txt ← Shared system prompt for question bank calls
 │       └── question_bank_<stage_type>.txt ← Per-stage-type system prompts
-├── migrations/                  ← Alembic — 25 revisions; head is `0026_question_kind_column`
+├── migrations/                  ← Alembic — 27 revisions; head is `0027_tenant_settings`
 │   └── versions/
 ├── tests/
 │   └── conftest.py              ← AsyncClient fixture
@@ -405,6 +430,7 @@ from openai import AsyncOpenAI
 | `scheduler` | Invite send / resend / revoke. `send_invite` mints a candidate JWT (HS256) and inserts the matching `candidate_session_tokens` row (jti, tenant, session_id, expires_at). Resend creates a new token row and stamps `superseded_at + superseded_by` on the prior row, building a per-session supersession chain. Notification dispatch via the provider-agnostic notifications module — notification dispatch reads settings.candidate_session_base_url (NOT frontend_base_url). |
 | `session` | Two routers: `candidate_session_router` (candidate-facing, JWT in path) and `session_router` (recruiter-facing, read-only). State machine: `created → pre_check → consented → active → completed \| cancelled \| error`. OTP gate (CSPRNG 6-digit code, HMAC-SHA256 hash, 10-minute lifetime, max 3 attempts, 60s rate limit, constant-time compare). **Single-use token enforcement** is atomic on `/start` (`UPDATE … WHERE used_at IS NULL RETURNING`). Phase 3C.2 wired the LiveKit room + token provisioning: `/start` mints a candidate `room_join` token, mints + records an engine dispatch JWT, dispatches the agent, then atomically consumes the candidate token and transitions to `active` (502 `AGENT_DISPATCH_FAILED` if dispatch fails — token is NOT consumed in that case so the candidate can retry). LiveKit helpers live at `session/livekit.py`. |
 | `interview_runtime` | Phase 3C.2 internal API for the engine container. `verify_engine_token` validates the dispatch JWT (HS256 pinning, `purpose='engine_dispatch'` claim, atomic single-use INSERT into `engine_token_uses` per `(jti, endpoint)` with FK→IntegrityError translation). `build_session_config` walks session → assignment → candidate → job → stage → bank → snapshot → questions → ancestry-walked company profile to build the engine's `SessionConfig`. `record_session_result` atomically updates the session row gated on `state='active'`, idempotent on retry, writes an audit row. Router under `/api/internal/sessions/{id}/{config,results}` — auth middleware exempts `/api/internal/`. |
+| `tenant_settings` | Phase 5 — per-tenant engine configuration. ORM `TenantSettingsModel` (PK = `tenant_id`, FK `clients.id` ON DELETE CASCADE); Pydantic `TenantSettings` with `engine_knockout_policy: Literal['record_only','close_polite']` and `engine_agent_name: str \| None`. `get_tenant_settings(db, tenant_id)` is the single read path with lazy-default semantics (no row → schema defaults). No router; recruiter-side editing UI is post-arc per overview Decision #19. |
 
 ### Future Phases — Stubbed
 
@@ -536,7 +562,7 @@ Every environment must set BOTH settings explicitly. The localhost defaults are 
 ## Database Migrations
 
 ### Current State
-The initial schema (6 tables, first-cut RLS policies, system role seeds, and the Supabase auth hook) lives in `backend/supabase/migrations/20260405000000_initial_schema.sql`. Every incremental change since Phase 2A has been an Alembic migration in `migrations/versions/`. Current head: `0026_question_kind_column`.
+The initial schema (6 tables, first-cut RLS policies, system role seeds, and the Supabase auth hook) lives in `backend/supabase/migrations/20260405000000_initial_schema.sql`. Every incremental change since Phase 2A has been an Alembic migration in `migrations/versions/`. Current head: `0027_tenant_settings`.
 
 Migrations so far:
 - `0001_phase_2b_columns` — signal editing + version columns
@@ -565,6 +591,7 @@ Migrations so far:
 - `0024_engine_integration` — **Phase 3C.2**: new `engine_dispatch_tokens` table (tenant-scoped, RLS pair with NULLIF) tracking issued engine JWTs per session; new `engine_token_uses` table (service-bypass-only, composite PK on `(jti, endpoint)`) providing atomic single-use enforcement for the engine's `/config` and `/results` calls. Adds 7 result columns to `sessions` (`livekit_room_name`, `agent_started_at`, `agent_completed_at`, `transcript`, `questions_asked`, `questions_skipped`, `total_probes_fired`).
 - `0025_drop_engine_dispatch_tables` — **Phase 3 of modular-monolith uplift**: drops `engine_dispatch_tokens` + `engine_token_uses`. Phase 3 of the modular-monolith spec retired the engine-dispatch JWT layer; the interview engine now runs in-process inside nexus and reads `SessionConfig` / posts `SessionResult` via direct `app.modules.interview_runtime.service` calls. The `verify_engine_token` path was retired with the tables. Down-migration recreates both tables with the original 0024 schema; in-flight dispatches at rollback time would be unrecoverable but the rollback hazard is theoretical at zero-user state.
 - `0026_question_kind_column` — **Phase 4**: adds `stage_questions.question_kind` (TEXT NOT NULL DEFAULT `'technical_depth'`, CHECK in `('technical_depth','behavioral_star','compliance_binary','open_culture')`). Bank-generator now emits the field; existing rows get the default. Recruiters regenerate to upgrade old banks (no automatic backfill).
+- `0027_tenant_settings` — **Phase 5**: new `tenant_settings` table (PK = `tenant_id`, FK→`clients` ON DELETE CASCADE, two columns: `engine_knockout_policy` enum (`'record_only' | 'close_polite'`, default `'record_only'`) + `engine_agent_name` nullable TEXT). Adds `sessions.knockout_failures JSONB NOT NULL DEFAULT '[]'`. Both ops are PG11+ metadata-only. Lazy-default read pattern: `get_tenant_settings` returns schema defaults when the tenant has no row — no backfill performed.
 
 ### Going Forward
 - Future schema changes should use Alembic migrations in `migrations/versions/`.

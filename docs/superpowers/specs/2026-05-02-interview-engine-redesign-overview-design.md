@@ -116,7 +116,7 @@ table** in the same commit. Status legend: ⚪ not started · 🟡 brainstorm op
 | 2 — Controller cutover | [`2026-05-03-…phase-2-controller-cutover-design.md`](2026-05-03-engine-redesign-phase-2-controller-cutover-design.md) | [`2026-05-03-…phase-2-controller-cutover.md`](../plans/2026-05-03-engine-redesign-phase-2-controller-cutover.md) | ✅ shipped |
 | 3 — Per-kind tasks | [`2026-05-03-…phase-3-per-kind-tasks-design.md`](2026-05-03-engine-redesign-phase-3-per-kind-tasks-design.md) | [`2026-05-03-…phase-3-per-kind-tasks.md`](../plans/2026-05-03-engine-redesign-phase-3-per-kind-tasks.md) | ✅ shipped |
 | 4 — `question_kind` schema | [`2026-05-03-…phase-4-question-kind-schema-design.md`](2026-05-03-engine-redesign-phase-4-question-kind-schema-design.md) | [`2026-05-03-…phase-4-question-kind-schema.md`](../plans/2026-05-03-engine-redesign-phase-4-question-kind-schema.md) | ✅ shipped |
-| 5 — Knockout policy | _pending_ | _pending_ | ⚪ not started |
+| 5 — Knockout policy | [`2026-05-03-…phase-5-knockout-policy-design.md`](2026-05-03-engine-redesign-phase-5-knockout-policy-design.md) | [`2026-05-03-…phase-5-knockout-policy.md`](../plans/2026-05-03-engine-redesign-phase-5-knockout-policy.md) | ✅ shipped |
 | 6 — Audio authority + e2e | _pending_ | _pending_ | ⚪ not started |
 
 Phase 1 has no separate phase-spec file because the overview already pins the data
