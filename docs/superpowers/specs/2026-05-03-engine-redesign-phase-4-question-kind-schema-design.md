@@ -105,14 +105,19 @@ Both paths share the `GeneratedQuestion` schema. Both share the
 ```
 POST /api/jobs/.../questions
   CreateQuestionBody (no question_kind field)
-    └─ create_question(...)
-          └─ INSERT INTO stage_questions (...) VALUES (...)
-                └─ DB DEFAULT 'technical_depth' fires  ← server-side default
+    └─ create_recruiter_question(...)            ← service.py:566
+          └─ StageQuestion(...) — no question_kind kwarg passed
+                └─ INSERT INTO stage_questions (...) VALUES (...)
+                      └─ DB DEFAULT 'technical_depth' fires  ← server-side default
 ```
 
-Recruiter cannot author or edit `question_kind`. This is intentional — it
-keeps every non-default kind decision on the LLM-traceable, fairness-reviewed
-path (Decision #18).
+Recruiter cannot author or edit `question_kind` directly through the
+API surface. The only way a recruiter-authored question can end up with
+a non-default kind is via `POST /questions/{id}/regenerate`, which goes
+through `_regenerate_one_question` and the LLM path (§3.1) — and that
+path requires the LLM to emit `question_kind` per the strict 3-value
+Literal. This is intentional: every non-default kind decision lands on
+the LLM-traceable, fairness-reviewed path (Decision #18).
 
 ### 3.3 Runtime read
 
@@ -373,7 +378,13 @@ existing convention (no `tests/question_bank/` subdirectory).
 Phase 3's plan had two recurring template bugs the implementing subagent
 had to correct multiple times. Phase 4's plan pre-empts them:
 
-- Every fixture `GeneratedQuestion` instance MUST set `question_kind="technical_depth"`. Existing fixture builders (~20-30 across the test tree) need that key added — touch them in the same task that introduces the schema field so the unit test suite stays green at every commit.
+- Every fixture `GeneratedQuestion` instance MUST set `question_kind="technical_depth"` (or another valid kind where the test exercises a non-default path). The audit found **5 test files with ~5-7 fixture/inline construction sites** that need the key added — touch them in the same task that introduces the schema field so the unit test suite stays green at every commit. Concrete sites:
+  - `tests/test_question_banks_schemas.py` — `_valid_generated_question(**overrides)` helper (the central one). Adding `question_kind="technical_depth"` to its base dict propagates the default to every test that uses it.
+  - `tests/test_question_banks_actors.py` — one inline `GeneratedQuestion(...)` and one `_make_question(...) -> GeneratedQuestion` helper.
+  - `tests/test_question_banks_service.py` — one `_make_question(...) -> GeneratedQuestion` helper.
+  - `tests/test_question_banks_events.py` — one inline `GeneratedQuestion(...)` (regen-one mock).
+  - `tests/test_question_banks_integration.py` — one inline `GeneratedQuestion(...)` in a list comprehension.
+  - **`tests/interview_engine/` and `tests/interview_runtime/`**: zero changes needed — those use the engine-side `QuestionConfig`, where `question_kind` is already optional with default `"technical_depth"` from Phase 3.
 - Pydantic-rejection tests use `pydantic.ValidationError`, not bare `Exception`.
 - `pytest` import is module-level, not function-level.
 - `positive_evidence` lists ≥3 items, `red_flags` ≥2 items.
