@@ -54,6 +54,8 @@ _TENANT_SCOPED_TABLES: tuple[str, ...] = (
     "candidate_stage_progress",
     # Phase 3C — scheduler + session
     "candidate_session_tokens",
+    # Phase 5 — tenant settings
+    "tenant_settings",
 )
 
 
