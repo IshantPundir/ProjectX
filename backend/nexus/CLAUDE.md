@@ -655,7 +655,8 @@ docker compose run nexus alembic revision --autogenerate -m "description"
 # Run tests
 docker compose run nexus pytest
 
-# Run tests with coverage
+# Run tests with coverage — see "Coverage in Docker" below for the
+# pytest-cov + Python 3.13 + livekit segfault workaround.
 docker compose run nexus pytest --cov=app --cov-report=term-missing
 
 # Lint
@@ -679,6 +680,24 @@ docker compose logs -f nexus-worker
 ```
 
 The worker reads actor definitions from `app/worker.py`, which imports every actor module so they register with the Redis broker at startup.
+
+### Coverage in Docker — pytest-cov + Python 3.13 segfault workaround
+
+`pytest --cov=...` segfaults intermittently in the nexus container. Root cause: PyO3-backed native extensions in the LiveKit dependency tree (and possibly others) are compiled for an older CPython ABI than `coverage.py`'s tracer assumes; under Python 3.13 the interpreter aborts with `ImportError: PyO3 modules compiled for CPython 3.8 or older may only be initialized once per interpreter process` mid-collection. Reproduces consistently when the test run touches `livekit.agents` modules (the entire `tests/interview_engine/` subtree).
+
+**Workaround** — run `coverage` directly inside the long-running container instead of through the pytest-cov plugin:
+
+```bash
+docker compose up -d nexus
+docker compose exec nexus python -m coverage run --branch \
+    --source=app/modules/interview_engine/tasks \
+    -m pytest tests/interview_engine -m "not prompt_quality" -q
+docker compose exec nexus python -m coverage report --show-missing
+```
+
+Adjust `--source=...` to the package(s) under test. The `--branch` flag matches the CLAUDE.md "100% branch coverage" gate. Coverage data is identical to a successful pytest-cov run; only the invocation path differs.
+
+Why not pin `coverage` / `pytest-cov` to a pre-segfault version? The segfault is in the PyO3 ↔ Python-3.13 interaction inside livekit's deps, not in coverage.py itself — pinning would only mask the issue temporarily and could break the rest of the dev toolchain. The workaround is the supported path until the upstream native deps are rebuilt against 3.13.
 
 ---
 
