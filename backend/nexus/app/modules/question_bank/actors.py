@@ -342,7 +342,6 @@ async def _generate_one_bank(
                         response_model=StageQuestionBankOutput,
                         messages=messages,
                         max_retries=1,
-                        name="question_bank_generate_call1",
                         metadata={
                             "bank_id": str(bank.id),
                             "stage_id": str(stage.id),
@@ -1025,7 +1024,6 @@ async def _regenerate_one_question(
                     {"role": "user", "content": "".join(user_parts)},
                 ],
                 max_retries=1,
-                name="question_bank_regenerate_call1",
                 metadata={
                     "bank_id": str(bank.id),
                     "stage_id": str(stage.id),
