@@ -1132,3 +1132,46 @@ async def test_write_generated_questions_persists_question_kind(db):
     assert by_signal["UK shift"].question_kind == "compliance_binary"
     assert by_signal["Conflict resolution"].question_kind == "behavioral_star"
     assert by_signal["Python"].question_kind == "technical_depth"
+
+
+@pytest.mark.asyncio
+async def test_replace_question_in_place_updates_question_kind(db):
+    """replace_question_in_place writes the new GeneratedQuestion's
+    question_kind onto the existing row. Tests the regen-one path."""
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    job, _snapshot = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id,
+        signals=[
+            _signal(value="Python"),
+            _signal(value="UK shift", knockout=True),
+        ],
+    )
+    _instance, stage = await _make_pipeline_and_stage(db, job=job)
+    bank = await ensure_bank_exists(db, stage=stage, job=job)
+
+    # Seed with a technical_depth question
+    await write_generated_questions(
+        db, bank=bank,
+        questions=[
+            _make_generated_question(
+                position=0, signal_values=["Python"],
+                question_kind="technical_depth",
+            ),
+        ],
+        source="ai_generated",
+    )
+    seeded = (await get_bank_questions(db, bank.id))[0]
+    assert seeded.question_kind == "technical_depth"
+
+    # Regen with a compliance_binary
+    new_data = _make_generated_question(
+        position=0,
+        text="Can you work the UK shift (1pm-9pm UK time)?",
+        signal_values=["UK shift"],
+        is_mandatory=True,
+        question_kind="compliance_binary",
+    )
+    await replace_question_in_place(db, question=seeded, new_data=new_data)
+    await db.refresh(seeded)
+    assert seeded.question_kind == "compliance_binary"
+    assert seeded.source == "ai_regenerated"

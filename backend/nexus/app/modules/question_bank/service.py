@@ -554,6 +554,7 @@ async def replace_question_in_place(
     question.red_flags = list(new_data.red_flags)
     question.rubric = new_data.rubric.model_dump()
     question.evaluation_hint = new_data.evaluation_hint
+    question.question_kind = new_data.question_kind
     question.source = "ai_regenerated"
     question.edited_by_recruiter = False
     question.updated_at = _now_utc()
