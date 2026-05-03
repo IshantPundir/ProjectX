@@ -60,6 +60,11 @@ class Session(Base):
     livekit_room_name: Mapped[str | None] = mapped_column(Text)
     recording_s3_key: Mapped[str | None] = mapped_column(Text)
     raw_result_json: Mapped[dict | None] = mapped_column(JSONB)
+    knockout_failures: Mapped[list[dict]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=sql_text("'[]'::jsonb"),
+    )
     transcript: Mapped[list | None] = mapped_column(JSONB)
     questions_asked: Mapped[int | None] = mapped_column(Integer)
     probes_fired: Mapped[int | None] = mapped_column(Integer)

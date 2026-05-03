@@ -273,3 +273,11 @@ class SessionResult(BaseModel):
     completed_at: str = Field(
         description="ISO 8601 timestamp of session completion.",
     )
+    knockout_failures: list[KnockoutFailure] = Field(
+        default_factory=list,
+        description=(
+            "Hard-requirement failures recorded during the interview "
+            "(self-disclosed, factual). Engine records, never auto-rejects "
+            "— Phase 3D analytics consumes this list."
+        ),
+    )
