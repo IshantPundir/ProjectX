@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from uuid import UUID
 
-import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,10 +25,7 @@ from app.modules.tenant_settings.models import TenantSettingsModel
 from app.modules.tenant_settings.schemas import TenantSettings
 
 
-log = structlog.get_logger("tenant_settings")
-
-
-def DEFAULT_TENANT_SETTINGS(tenant_id: UUID) -> TenantSettings:
+def DEFAULT_TENANT_SETTINGS(tenant_id: UUID) -> TenantSettings:  # noqa: N802
     """Build the default TenantSettings for a tenant with no row.
 
     Mirrors the DB-level defaults in migration 0027.
@@ -44,9 +40,10 @@ async def get_tenant_settings(db: AsyncSession, tenant_id: UUID) -> TenantSettin
     work because RLS is enforced by the policies, not by the helper.
     On a tenant-scoped session reading a different tenant_id, the
     policy filter returns 0 rows and the helper falls back to defaults
-    for the *requesting* tenant — same as if the row had never been
-    written. This is intentional: the service is permissive on read
-    and the caller is responsible for tenant scope.
+    keyed on the **passed-in** ``tenant_id`` — same as if the row had
+    never been written. Callers are expected to pass the requesting
+    tenant's id; under a tenant-scoped session the RLS policy makes
+    any other id behave as 'no row.'
     """
     row = (
         await db.execute(

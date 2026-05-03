@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import uuid
 
-import pytest
-
 from app.modules.tenant_settings import (
     DEFAULT_TENANT_SETTINGS,
     TenantSettings,
