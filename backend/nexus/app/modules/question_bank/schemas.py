@@ -70,6 +70,19 @@ class GeneratedQuestion(BaseModel):
     red_flags: list[str] = Field(..., min_length=2, max_length=3)
     rubric: QuestionRubric
     evaluation_hint: str = Field(..., min_length=10, max_length=200)
+    question_kind: Literal[
+        "technical_depth",
+        "behavioral_star",
+        "compliance_binary",
+    ] = Field(
+        ...,
+        description=(
+            "Which task subclass the engine routes this question to. See "
+            "the common prompt §6 for selection rules. The 4th engine-side "
+            "value `open_culture` is intentionally NOT in this Literal — "
+            "it is a forward-compat slot the generator never emits."
+        ),
+    )
 
 
 class StageQuestionBankOutput(BaseModel):

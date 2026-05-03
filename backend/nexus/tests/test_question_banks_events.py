@@ -556,6 +556,7 @@ async def test_regenerate_question_actor_publishes_event(
             below_bar="Only tutorial-level async knowledge with no production use.",
         ),
         evaluation_hint="Strong answer names specific async patterns used in production.",
+        question_kind="technical_depth",
     )
     llm_output = SingleQuestionOutput(
         question=regen_question,

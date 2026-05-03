@@ -224,6 +224,7 @@ def _make_generated_question(
     signal_values: list[str] | None = None,
     estimated_minutes: float = 5.0,
     is_mandatory: bool = False,
+    question_kind: str = "technical_depth",
 ) -> GeneratedQuestion:
     return GeneratedQuestion(
         position=position,
@@ -240,6 +241,7 @@ def _make_generated_question(
         red_flags=["No specific tools", "Blames team"],
         rubric=_valid_rubric(),
         evaluation_hint="Strong answer names tools, describes structured approach.",
+        question_kind=question_kind,
     )
 
 

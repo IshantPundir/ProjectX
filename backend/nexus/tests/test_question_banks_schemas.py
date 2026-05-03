@@ -37,6 +37,7 @@ def _valid_generated_question(**overrides) -> dict:
         red_flags=["No specific tools", "Blames team"],
         rubric=_valid_rubric(),
         evaluation_hint="Strong answer names tools, describes structured approach.",
+        question_kind="technical_depth",
     )
     base.update(overrides)
     return base
@@ -92,3 +93,34 @@ def test_update_question_body_accepts_partial():
 def test_reorder_body_rejects_empty_list():
     with pytest.raises(ValidationError):
         ReorderBody(question_ids=[])
+
+
+def test_generated_question_requires_question_kind():
+    """The strict Literal field must be present — instructor relies on this
+    to reject any LLM output that omits the kind."""
+    base = _valid_generated_question()
+    base.pop("question_kind", None)  # ensure it's not present
+    with pytest.raises(ValidationError):
+        GeneratedQuestion(**base)
+
+
+@pytest.mark.parametrize(
+    "kind", ["technical_depth", "behavioral_star", "compliance_binary"]
+)
+def test_generated_question_accepts_each_generator_kind(kind):
+    """All 3 generator-allowed kinds parse cleanly."""
+    q = GeneratedQuestion(**_valid_generated_question(question_kind=kind))
+    assert q.question_kind == kind
+
+
+def test_generated_question_rejects_open_culture():
+    """`open_culture` is reserved for the engine-side Literal only — the
+    generator must not emit it. instructor enforces this on every LLM call."""
+    with pytest.raises(ValidationError):
+        GeneratedQuestion(**_valid_generated_question(question_kind="open_culture"))
+
+
+def test_generated_question_rejects_unknown_kind():
+    """Any out-of-Literal value is rejected."""
+    with pytest.raises(ValidationError):
+        GeneratedQuestion(**_valid_generated_question(question_kind="not_a_kind"))

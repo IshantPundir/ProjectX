@@ -229,6 +229,7 @@ def _mock_llm_output(
                     below_bar=f"Only tutorial or POC {v} exposure with no real use.",
                 ),
                 evaluation_hint=f"Strong = production {v} usage with specific incidents.",
+                question_kind="technical_depth",
             )
             for i, v in enumerate(signal_values)
         ],
@@ -250,6 +251,7 @@ def _build_question(
     signal_values: list[str],
     is_mandatory: bool = False,
     estimated_minutes: float = 5.0,
+    question_kind: str = "technical_depth",
 ) -> GeneratedQuestion:
     return GeneratedQuestion(
         position=position,
@@ -270,6 +272,7 @@ def _build_question(
             below_bar="A weak answer is vague with no tools and no structure.",
         ),
         evaluation_hint="Strong answer names tools and describes structure.",
+        question_kind=question_kind,
     )
 
 
