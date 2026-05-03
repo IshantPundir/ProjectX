@@ -344,6 +344,7 @@ Operator signs off here when all scenarios pass:
 ```
 
 Once all rows are checked, the 6-phase engine-redesign arc is
-declared done. Update the overview spec's Phase 6 row to ✅ shipped
-in the same commit as this checklist's first sign-off, per the
-working agreement.
+declared done end-to-end. Note: the overview spec's Phase 6 row
+was already flipped to ✅ shipped in T8's commit when the docs
+landed; sign-off here means filling in the sign-off rows above
+(operator name + date), not making a further spec commit.
