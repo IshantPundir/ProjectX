@@ -84,7 +84,30 @@ export function App({ appConfig, token, preCheck, mode }: Props) {
     [token, mode, setError],
   )
 
-  const session = useSession(tokenSource)
+  // Phase 6: pre-construct the LiveKit Room with audioCaptureDefaults
+  // disabling EC/NS/AGC. useSession's internal Room construction never
+  // exposes audioCaptureDefaults as a hook-level option, so we supply
+  // a pre-constructed Room via the `room` field on its options object.
+  // The hook explicitly handles this via `roomFromContext ?? optionsRoom`
+  // (see livekit/components-js@main/packages/react/src/hooks/useSession.ts).
+  // The Room's audioCaptureDefaults flow through
+  // LocalParticipant.setMicrophoneEnabled(true, undefined, ...) because
+  // the captureOptions slot is undefined → mergeDefaultOptions falls
+  // back to roomOptions.audioCaptureDefaults. See
+  // docs/security/threat-model.md Phase 6 section.
+  const room = useMemo(
+    () =>
+      new Room({
+        audioCaptureDefaults: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        },
+      }),
+    [],
+  )
+
+  const session = useSession(tokenSource, { room })
 
   const onCompleted = useCallback(() => setOutcome('completed'), [])
 
