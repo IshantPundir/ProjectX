@@ -6,8 +6,6 @@ CLAUDE.md "candidate scoring and classification thresholds").
 
 from __future__ import annotations
 
-import pytest
-
 from app.modules.interview_engine.tasks import (
     BehavioralStarTask,
     ComplianceBinaryTask,
