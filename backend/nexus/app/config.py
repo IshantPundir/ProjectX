@@ -286,22 +286,30 @@ class Settings(BaseSettings):
     # latency data. Range: 0.0 – 1.0.
     interview_turn_detector_unlikely_threshold: float | None = None
 
-    # Noise cancellation — ai_coustics. Default is QUAIL_VF_L (Voice Focus
-    # Large, single-speaker isolation). Per LiveKit's published WER table,
-    # QUAIL_VF_L gives the best STT accuracy for agent pipelines (11.8%
-    # vs Krisp BVC's 23.5%). Other ai_coustics models: QUAIL_S (small,
-    # lightweight), QUAIL_L (background-noise suppression, less aggressive
-    # than VF_L), QUAIL_BV (broadband voice).
+    # Noise cancellation — ai_coustics. Default is QUAIL_S (small,
+    # lightweight). Phase 6 of the engine-redesign arc made the
+    # candidate browser disable its built-in echo cancellation, noise
+    # suppression, and AGC, so ai_coustics is the SOLE noise filter in
+    # the audio path. QUAIL_S preserves soft speech better than the
+    # previously-used QUAIL_VF_L, trading a few WER points for fewer
+    # false-silence cuts on quiet candidates whose voices were being
+    # attenuated below the Silero VAD activation threshold. Other
+    # ai_coustics models: QUAIL_VF_L (Voice Focus Large — best raw WER
+    # but more aggressive), QUAIL_L (background-noise suppression),
+    # QUAIL_BV (broadband voice). See
+    # ``docs/security/threat-model.md`` Phase 6 section for the
+    # ai_coustics-as-sole-filter trust-boundary analysis.
     #
     # ``interview_noise_cancellation_level`` (0.0–1.0) controls how
     # aggressively the model processes audio. None = plugin built-in
-    # default. Lower = less aggressive (safer for soft-spoken candidates
-    # and quiet environments where over-suppression can attenuate real
-    # voice frames). LiveKit's docs use 0.8 in their published samples.
-    # 0.7 is a reasonable balance for office environments with HVAC noise
-    # without eating quieter speech.
-    interview_noise_cancellation_model: str = "QUAIL_VF_L"
-    interview_noise_cancellation_level: float | None = 0.7
+    # default. Lower = less aggressive (safer for soft-spoken
+    # candidates and quiet environments where over-suppression can
+    # attenuate real voice frames). LiveKit's docs use 0.8 in their
+    # published samples. 0.4 is the Phase 6 floor that matches the
+    # gentler QUAIL_S model — raise toward 0.7 if real-session data
+    # shows under-suppression in noisy environments.
+    interview_noise_cancellation_model: str = "QUAIL_S"
+    interview_noise_cancellation_level: float | None = 0.4
 
     @field_validator("interview_engine_jwt_secret")
     @classmethod
