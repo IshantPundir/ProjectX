@@ -101,3 +101,61 @@ be a SEV2 incident (notify-the-notifier failure).
 - A real-world incident demonstrates a new attack path on the meta
   tools (e.g., LLM emitting a flag with a free-form note that
   contains untrusted user input from an attacker probing the system).
+
+---
+
+## Phase 6 — Server-authoritative audio (2026-05-03)
+
+Trust boundaries that change when browser-side EC/NS/AGC switch from
+ON to OFF and ai_coustics becomes the sole noise filter for candidate
+audio. Configuration tuning: `INTERVIEW_NOISE_CANCELLATION_MODEL=QUAIL_S`,
+`INTERVIEW_NOISE_CANCELLATION_LEVEL=0.4`. Affected surfaces:
+
+- `frontend/session/app/interview/[token]/CameraMicStep.tsx` —
+  `getUserMedia` constraint object disables EC/NS/AGC.
+- `frontend/session/components/interview/app/app.tsx` —
+  pre-constructed LiveKit `Room` carries matching `audioCaptureDefaults`.
+- `backend/nexus/app/config.py` + `.env.example` — engine ai_coustics
+  defaults.
+
+### Trust boundaries
+
+| Boundary | Element | STRIDE | Mitigation |
+|---|---|---|---|
+| Browser mic → LiveKit room | Raw audio (no browser-side EC/NS/AGC) carries any sound the mic captures, including ambient conversations near the candidate (open-plan offices, family members in the next room). | I (info disclosure of bystander PII) | Pre-session consent text already states audio is recorded; reviewers SHOULD verify the consent copy reasonably covers third-party voices for the candidate's locale. ai_coustics QUAIL_S at level 0.4 suppresses non-target voices but is gentler than QUAIL_VF_L; the e2e checklist's noisy-environment scenario (9b) verifies the suppression holds in practice. STT transcripts of bystander speech, if produced, fall under the existing event-log redaction policy (`metadata` mode strips transcript content). |
+| ai_coustics plugin → audio path | Single source of truth for noise reduction. **No application-level runtime fallback exists.** Boot-time misconfigured model name → `ValueError` at `app/ai/realtime.py::build_noise_cancellation` → worker exits → container restarts → LiveKit `AGENT_DISPATCH_FAILED`. Mid-session plugin failure → undefined application behavior (depends on plugin internals). | A (availability dependency) | Mitigation is LiveKit Cloud-managed plugin reliability. Documented as a known gap; future phase can wrap the audio input pipeline with a fallback if a real-world failure pattern emerges. The audit envelope's `model_versions` dict (`agent.py:191-202`) captures the model+level on every session, providing forensic trace if a session reports degraded quality. |
+| Engine → recording (LiveKit Cloud Insights, if enabled) | Recording captures **post-ai_coustics audio** per `https://docs.livekit.io/deploy/observability/insights/` ("If noise cancellation is enabled, user audio recording is collected after noise cancellation is applied. The recording reflects what the STT or realtime model receives."). | I (information disclosure via recording) | Insights recording is OFF by default; enabling it is a deliberate operator choice already covered by existing consent gating + S3 recording-bucket policy in root CLAUDE.md ("S3: versioning ON for the recording bucket. MFA-delete ON for the recording bucket."). Future LiveKit Egress wiring will need its own threat-model row when added. |
+
+### Browser-divergence decision (residual risk accepted)
+
+Browsers (notably mobile Safari on iOS, sometimes mobile Chrome on
+Android) silently ignore `MediaTrackConstraints` flags such as
+`echoCancellation: false`. After `getUserMedia` resolves, `CameraMicStep`
+reads `track.getSettings()` and emits `cammic.constraints.diverged` if
+any flag was silently re-enabled. **The session continues regardless.**
+Refusing to start would be worse UX than partial mitigation via
+ai_coustics. Residual risk: a candidate on an ignoring-browser has
+stacked browser-NC + ai_coustics-NC, which may over-suppress soft
+speech. Operators monitor the divergence log; if a high false-rate is
+observed, a future phase can add per-browser handling.
+
+### Operational performance note
+
+Raw audio uplink may be marginally larger (more entropy in the Opus
+payload); browser CPU may be marginally lower (no DSP). Net effect on
+low-bandwidth or low-CPU candidate devices is expected to be invisible;
+measurement is deferred to a future analytics phase.
+
+### When this section needs updating
+
+- LiveKit Egress is wired into the engine (would require its own
+  capture-point row — see `docs/superpowers/specs/2026-05-02-…` Phase 3C.2
+  "out of scope" notes, which are still authoritative for Egress).
+- The ai_coustics model is changed in production (the threat surface
+  changes per-model; e.g., a switch to `QUAIL_BV` would change the
+  broadband-voice-suppression characteristic).
+- A real-world incident demonstrates a mid-session plugin failure path
+  needing application-level handling.
+- The candidate surface adopts a structured logger that ships
+  `cammic.constraints.diverged` to a third-party sink (would change the
+  PII posture of the divergence record).
