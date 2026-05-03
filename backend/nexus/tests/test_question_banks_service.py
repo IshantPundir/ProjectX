@@ -1175,3 +1175,28 @@ async def test_replace_question_in_place_updates_question_kind(db):
     await db.refresh(seeded)
     assert seeded.question_kind == "compliance_binary"
     assert seeded.source == "ai_regenerated"
+
+
+@pytest.mark.asyncio
+async def test_create_recruiter_question_lands_with_default_kind(db):
+    """Recruiter-authored questions take 'technical_depth' as their kind.
+    CreateQuestionBody has no question_kind field — the service writes
+    the default explicitly so the in-memory row state matches the DB
+    without needing a session refresh."""
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    job, snapshot = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id,
+        signals=[_signal(value="Python")],
+    )
+    _instance, stage = await _make_pipeline_and_stage(db, job=job)
+    bank = await ensure_bank_exists(db, stage=stage, job=job)
+
+    question = await _add_recruiter_question(
+        db, bank=bank, snapshot=snapshot, user_id=user.id,
+        text="What testing tools have you used in production?",
+        signal_values=["Python"],
+    )
+    # The Python-level attribute reads back as 'technical_depth' WITHOUT
+    # needing a session refresh — the explicit kwarg in service.py
+    # establishes that.
+    assert question.question_kind == "technical_depth"
