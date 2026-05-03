@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, Text, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, Numeric, Text, text
 from sqlalchemy import text as sql_text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -79,6 +79,13 @@ class StageQuestion(Base):
     server_default expressions here use the ``sql_text`` alias."""
 
     __tablename__ = "stage_questions"
+    __table_args__ = (
+        CheckConstraint(
+            "question_kind IN ('technical_depth', 'behavioral_star', "
+            "'compliance_binary', 'open_culture')",
+            name="stage_questions_question_kind_check",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, server_default=sql_text("gen_random_uuid()")
@@ -110,6 +117,9 @@ class StageQuestion(Base):
     )
     rubric: Mapped[dict] = mapped_column(JSONB, nullable=False)
     evaluation_hint: Mapped[str] = mapped_column(Text, nullable=False)
+    question_kind: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=sql_text("'technical_depth'")
+    )
     edited_by_recruiter: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=sql_text("false")
     )
