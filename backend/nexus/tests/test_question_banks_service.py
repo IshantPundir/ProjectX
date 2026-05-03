@@ -1091,3 +1091,44 @@ async def test_compute_is_stale_returns_true_when_snapshot_superseded(db):
 
     # compute_is_stale shim now reads the persisted column — True.
     assert await compute_is_stale(db, bank) is True
+
+
+@pytest.mark.asyncio
+async def test_write_generated_questions_persists_question_kind(db):
+    """write_generated_questions writes question_kind from each
+    GeneratedQuestion to the persisted StageQuestion row. Each of the
+    3 generator-allowed kinds round-trips."""
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    job, _snapshot = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id,
+        signals=[
+            _signal(value="UK shift", knockout=True),
+            _signal(value="Conflict resolution", signal_type="behavioral"),
+            _signal(value="Python"),
+        ],
+    )
+    _instance, stage = await _make_pipeline_and_stage(db, job=job)
+    bank = await ensure_bank_exists(db, stage=stage, job=job)
+
+    incoming = [
+        _make_generated_question(
+            position=0, signal_values=["UK shift"], is_mandatory=True,
+            question_kind="compliance_binary",
+        ),
+        _make_generated_question(
+            position=1, signal_values=["Conflict resolution"],
+            question_kind="behavioral_star",
+        ),
+        _make_generated_question(
+            position=2, signal_values=["Python"],
+            question_kind="technical_depth",
+        ),
+    ]
+    await write_generated_questions(
+        db, bank=bank, questions=incoming, source="ai_generated",
+    )
+    persisted = await get_bank_questions(db, bank.id)
+    by_signal = {p.signal_values[0]: p for p in persisted}
+    assert by_signal["UK shift"].question_kind == "compliance_binary"
+    assert by_signal["Conflict resolution"].question_kind == "behavioral_star"
+    assert by_signal["Python"].question_kind == "technical_depth"

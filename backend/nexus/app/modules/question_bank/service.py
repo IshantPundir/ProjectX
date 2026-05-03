@@ -526,6 +526,7 @@ async def write_generated_questions(
                 red_flags=list(incoming.red_flags),
                 rubric=incoming.rubric.model_dump(),
                 evaluation_hint=incoming.evaluation_hint,
+                question_kind=incoming.question_kind,
             )
         )
     await db.flush()
