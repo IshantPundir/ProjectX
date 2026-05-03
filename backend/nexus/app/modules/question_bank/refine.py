@@ -69,7 +69,6 @@ async def _call_llm_refine(prompt: str) -> RefineResponse:
         response_model=RefineResponse,
         messages=[{"role": "user", "content": prompt}],
         max_retries=1,
-        name="question_refine_call",
     )
     return result
 
@@ -84,7 +83,6 @@ async def _call_llm_draft(prompt: str) -> DraftResponse:
         response_model=DraftResponse,
         messages=[{"role": "user", "content": prompt}],
         max_retries=1,
-        name="question_draft_call",
     )
     return result
 

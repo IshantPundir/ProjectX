@@ -205,7 +205,6 @@ async def _run_enrichment(
                     {"role": "system", "content": prompt},
                     {"role": "user", "content": user_message},
                 ],
-                name="jd_enrichment_call",
                 metadata={
                     "correlation_id": correlation_id,
                     "job_posting_id": job_posting_id,
@@ -346,7 +345,6 @@ async def _run_signal_extraction(
                     {"role": "system", "content": prompt},
                     {"role": "user", "content": user_message},
                 ],
-                name="jd_signal_extraction_call",
                 metadata={
                     "correlation_id": correlation_id,
                     "job_posting_id": job_posting_id,
@@ -666,7 +664,6 @@ async def _run_reenrichment(
                     {"role": "system", "content": prompt},
                     {"role": "user", "content": user_message},
                 ],
-                name="jd_reenrichment_call2",
                 metadata={
                     "correlation_id": correlation_id,
                     "job_posting_id": job_posting_id,
