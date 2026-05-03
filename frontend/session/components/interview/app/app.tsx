@@ -15,6 +15,7 @@ import {
 } from '@/lib/api/candidate-session'
 
 import { useSessionOutcome } from './hooks/use-session-outcome'
+import { type SessionOutcome } from '../lib/session-outcome'
 import { ViewController, type Outcome } from './view-controller'
 
 interface Props {
@@ -122,7 +123,7 @@ export function App({ appConfig, token, preCheck, mode }: Props) {
  * outcomes. The agent's published outcome takes precedence; falls back to
  * DisconnectReason when the engine didn't publish anything (crash, network drop).
  */
-function OutcomeWatcher({
+export function OutcomeWatcher({
   room,
   onCompleted,
   onError,
@@ -132,7 +133,7 @@ function OutcomeWatcher({
   onError: (code: string) => void
 }) {
   const lastOutcome = useSessionOutcome()
-  const lastOutcomeRef = useRef<string | null>(lastOutcome)
+  const lastOutcomeRef = useRef<SessionOutcome | null>(lastOutcome)
   lastOutcomeRef.current = lastOutcome
 
   useEffect(() => {
@@ -140,8 +141,26 @@ function OutcomeWatcher({
 
     const onDisconnected = (reason?: DisconnectReason) => {
       const o = lastOutcomeRef.current
-      if (o === 'completed') return onCompleted()
-      if (o === 'error') return onError('ENGINE_ERROR')
+      switch (o) {
+        case 'completed':
+        case 'knockout_closed':
+        case 'time_expired':
+        case 'candidate_ended':
+          return onCompleted()
+        case 'candidate_unresponsive':
+          return onError('CANDIDATE_UNRESPONSIVE')
+        case 'error':
+          return onError('ENGINE_ERROR')
+        case null:
+          break // fall through to DisconnectReason mapping
+        default: {
+          // Compile-time guard: if a future SessionOutcome is added without a
+          // corresponding case, TypeScript will error here because `o` would
+          // no longer narrow to `never`.
+          const _exhaustive: never = o
+          void _exhaustive
+        }
+      }
 
       const reasonName = reasonToName(reason)
       if (reasonName === 'CLIENT_INITIATED') return onCompleted()

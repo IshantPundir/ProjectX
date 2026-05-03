@@ -5,6 +5,10 @@ const COPY: Record<string, { title: string; body: string }> = {
     title: "Interviewer didn't connect",
     body: "We couldn't reach the interviewer. Please try again later or contact your recruiter.",
   },
+  CANDIDATE_UNRESPONSIVE: {
+    title: "We didn't hear from you",
+    body: "We ended the interview because we couldn't hear from you for a while. If this was unexpected, please contact your recruiter.",
+  },
   MEDIA_LOST: {
     title: 'Camera or microphone unavailable',
     body: 'Your camera or microphone is no longer accessible. Please reconnect to continue.',
