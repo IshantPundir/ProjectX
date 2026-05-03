@@ -84,6 +84,26 @@
   exhaustive `OutcomeWatcher` switch, and a new `CANDIDATE_UNRESPONSIVE`
   code on `DisconnectError`. Migration `0027_tenant_settings`. See spec
   `docs/superpowers/specs/2026-05-03-engine-redesign-phase-5-knockout-policy-design.md`.
+- **Phase 3D.engine-redesign-6** — done: server-authoritative audio
+  invariant landed. `INTERVIEW_NOISE_CANCELLATION_MODEL` defaults to
+  `QUAIL_S` (was `QUAIL_VF_L`) and `INTERVIEW_NOISE_CANCELLATION_LEVEL`
+  to `0.4` (was `0.7`) in `app/config.py` + `.env.example`. The
+  candidate browser disables EC/NS/AGC at both `getUserMedia`
+  (`frontend/session/app/interview/[token]/CameraMicStep.tsx`) and the
+  LiveKit `Room` constructor (`frontend/session/components/interview/app/app.tsx`,
+  via a pre-constructed Room passed to `useSession({ room })`).
+  ai_coustics QUAIL_S is now the SOLE noise filter in the audio path;
+  no application-level runtime fallback exists (documented in
+  `docs/security/threat-model.md` Phase 6 section). The wizard's
+  noise-floor warning threshold shifted from -30 dBFS to -20 dBFS to
+  match raw ambient. A `track.getSettings()` divergence-log path
+  detects browsers that silently ignore the constraints (notably
+  mobile Safari on iOS); session continues regardless per the
+  browser-divergence decision. **Migration list unchanged** — head
+  is still `0027_tenant_settings`. The terminal acceptance gate for
+  the entire 6-phase arc is
+  `docs/onboarding/engine-redesign-full-arc-e2e.md`. See spec
+  `docs/superpowers/specs/2026-05-03-engine-redesign-phase-6-audio-authority-design.md`.
 - **Phase 3D** — pending: real-time `analysis` (scoring, probe selection) and `reporting` (post-session report compilation).
 
 Stubbed modules (routers registered, no business logic yet): `ats`, `analysis`, `reporting`.

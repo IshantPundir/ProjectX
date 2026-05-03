@@ -93,6 +93,11 @@ Subdirectory CLAUDE.md files are the source of truth for module-level detail. Th
 - The app verifies its RLS state at boot via a startup assertion (`_assert_rls_completeness` in `app/main.py`) that queries `pg_policies` and aborts on any missing policy.
 - The candidate session app (`frontend/session`) MUST NOT depend on `@supabase/*` packages or read `NEXT_PUBLIC_SUPABASE_*` env vars. The recruiter dashboard app (`frontend/app`) MUST NOT depend on `livekit-*` packages or import from a `components/agents-ui/` or `components/ai-elements/` path. Pre-merge gate today: manual `grep livekit frontend/app/package.json` and `grep @supabase frontend/session/package.json` (CI gate when CI lands).
 
+### Audio Invariant — Load-Bearing
+- Browser-side echo cancellation, noise suppression, and automatic gain control are **OFF** on the candidate surface. ai_coustics (`QUAIL_S` / `0.4` defaults) is the **sole noise filter** in the audio path.
+- See `docs/security/threat-model.md` Phase 6 section for the full trust-boundary analysis (bystander PII exposure, ai_coustics availability dependency, recording capture-point, browser-divergence decision).
+- Changing this invariant requires a threat-model update and per-browser e2e re-validation (see `docs/onboarding/engine-redesign-full-arc-e2e.md` per-browser matrix).
+
 ### Auth Abstraction — Load-Bearing
 - FastAPI must verify JWTs through a **provider-agnostic interface**. Never call the Supabase SDK directly in business logic.
 - This is what makes a future Cognito swap a config change, not a rewrite.

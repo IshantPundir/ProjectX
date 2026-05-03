@@ -117,7 +117,7 @@ table** in the same commit. Status legend: ⚪ not started · 🟡 brainstorm op
 | 3 — Per-kind tasks | [`2026-05-03-…phase-3-per-kind-tasks-design.md`](2026-05-03-engine-redesign-phase-3-per-kind-tasks-design.md) | [`2026-05-03-…phase-3-per-kind-tasks.md`](../plans/2026-05-03-engine-redesign-phase-3-per-kind-tasks.md) | ✅ shipped |
 | 4 — `question_kind` schema | [`2026-05-03-…phase-4-question-kind-schema-design.md`](2026-05-03-engine-redesign-phase-4-question-kind-schema-design.md) | [`2026-05-03-…phase-4-question-kind-schema.md`](../plans/2026-05-03-engine-redesign-phase-4-question-kind-schema.md) | ✅ shipped |
 | 5 — Knockout policy | [`2026-05-03-…phase-5-knockout-policy-design.md`](2026-05-03-engine-redesign-phase-5-knockout-policy-design.md) | [`2026-05-03-…phase-5-knockout-policy.md`](../plans/2026-05-03-engine-redesign-phase-5-knockout-policy.md) | ✅ shipped |
-| 6 — Audio authority + e2e | _pending_ | _pending_ | ⚪ not started |
+| 6 — Audio authority + e2e | [`2026-05-03-…phase-6-audio-authority-design.md`](2026-05-03-engine-redesign-phase-6-audio-authority-design.md) | [`2026-05-03-…phase-6-audio-authority.md`](../plans/2026-05-03-engine-redesign-phase-6-audio-authority.md) | ✅ shipped |
 
 Phase 1 has no separate phase-spec file because the overview already pins the data
 shapes (envelope, redaction, sink interface) at full fidelity. Phases 2–6 each get
@@ -663,8 +663,12 @@ The arc is "done" when:
    Q1 probes the same signal) to skip with a graceful bridge — no re-asking.
 5. The audit log JSON for a session opens cleanly, replays into a chronological
    timeline, and contains zero PII in `metadata` mode.
-6. Soft-spoken candidate at default mic level produces `audio.user.state new_state=speaking`
-   within the first sentence (Phase 6 audio fix).
+6. Audio-fix fairness pair: (a) soft-spoken candidate at default mic level
+   produces `audio.user.state new_state=speaking` within the first sentence
+   (Phase 6 audio fix); AND (b) noisy-environment candidate (HVAC + typing)
+   at normal voice level still produces a usable STT transcript via
+   ai_coustics QUAIL_S / 0.4 (Phase 6 fairness coverage). Both 9a and 9b
+   in the full-arc e2e checklist must pass.
 7. End-to-end OTel: with `OTEL_DEV_CONSOLE_EXPORTER=true`, the engine prints spans for
    each LLM turn, STT segment, and tool execution.
 8. `SessionResult.knockout_failures` is non-empty when Q3 is failed; empty when not.
