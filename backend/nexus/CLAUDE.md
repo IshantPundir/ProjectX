@@ -52,6 +52,17 @@
   Real interviews still all route to TechnicalDepthTask (default
   `question_kind="technical_depth"`) until Phase 4 ships the bank-generator
   update.
+- **Phase 3D.engine-redesign-4** — done: `stage_questions.question_kind`
+  column added (migration `0026_question_kind_column`); bank-generator
+  now emits the field per question (3-value Literal:
+  `technical_depth | behavioral_star | compliance_binary`); regen-one
+  preserves prior kind via prompt rule;
+  `interview_runtime.build_session_config` reads the column into
+  `QuestionConfig.question_kind`. Existing banks unchanged (default
+  `'technical_depth'`); recruiters regenerate to pick up the new
+  prompt's kind selection. Recruiter API surface unchanged
+  (`question_kind` not in request/response schemas). See spec
+  `docs/superpowers/specs/2026-05-03-engine-redesign-phase-4-question-kind-schema-design.md`.
 - **Phase 3D** — pending: real-time `analysis` (scoring, probe selection) and `reporting` (post-session report compilation).
 
 Stubbed modules (routers registered, no business logic yet): `ats`, `analysis`, `reporting`.
@@ -165,7 +176,7 @@ backend/nexus/
 │       ├── jd_reenrichment.txt      ← Call 2 — re-enrichment after signal edits
 │       ├── question_bank_common.txt ← Shared system prompt for question bank calls
 │       └── question_bank_<stage_type>.txt ← Per-stage-type system prompts
-├── migrations/                  ← Alembic — 24 revisions; head is `0024_engine_integration`
+├── migrations/                  ← Alembic — 25 revisions; head is `0026_question_kind_column`
 │   └── versions/
 ├── tests/
 │   └── conftest.py              ← AsyncClient fixture
@@ -525,7 +536,7 @@ Every environment must set BOTH settings explicitly. The localhost defaults are 
 ## Database Migrations
 
 ### Current State
-The initial schema (6 tables, first-cut RLS policies, system role seeds, and the Supabase auth hook) lives in `backend/supabase/migrations/20260405000000_initial_schema.sql`. Every incremental change since Phase 2A has been an Alembic migration in `migrations/versions/`. Current head: `0024_engine_integration`.
+The initial schema (6 tables, first-cut RLS policies, system role seeds, and the Supabase auth hook) lives in `backend/supabase/migrations/20260405000000_initial_schema.sql`. Every incremental change since Phase 2A has been an Alembic migration in `migrations/versions/`. Current head: `0026_question_kind_column`.
 
 Migrations so far:
 - `0001_phase_2b_columns` — signal editing + version columns
@@ -552,6 +563,7 @@ Migrations so far:
 - `0022_users_partial_unique_auth` — replaces the plain UNIQUE on `users.auth_user_id` with a partial unique index `WHERE deleted_at IS NULL`. Required so a re-invite after tenant soft-delete can re-bind the same Supabase Auth identity.
 - `0023_tenant_hard_delete_cascade` — drops `audit_log_tenant_id_fkey` + `audit_log_actor_id_fkey` (audit history outlives the rows it references); converts every other `tenant_id` FK to `ON DELETE CASCADE` so `DELETE FROM clients WHERE id = ?` propagates cleanly.
 - `0024_engine_integration` — **Phase 3C.2**: new `engine_dispatch_tokens` table (tenant-scoped, RLS pair with NULLIF) tracking issued engine JWTs per session; new `engine_token_uses` table (service-bypass-only, composite PK on `(jti, endpoint)`) providing atomic single-use enforcement for the engine's `/config` and `/results` calls. Adds 7 result columns to `sessions` (`livekit_room_name`, `agent_started_at`, `agent_completed_at`, `transcript`, `questions_asked`, `questions_skipped`, `total_probes_fired`).
+- `0026_question_kind_column` — **Phase 4**: adds `stage_questions.question_kind` (TEXT NOT NULL DEFAULT `'technical_depth'`, CHECK in `('technical_depth','behavioral_star','compliance_binary','open_culture')`). Bank-generator now emits the field; existing rows get the default. Recruiters regenerate to upgrade old banks (no automatic backfill).
 
 ### Going Forward
 - Future schema changes should use Alembic migrations in `migrations/versions/`.
