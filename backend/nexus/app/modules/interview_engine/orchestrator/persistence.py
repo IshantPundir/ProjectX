@@ -39,6 +39,14 @@ Persistence model:
   alongside hot-resume from Redis state. Until then, gap detection
   is a single-process correctness tool, not a crash-recovery audit.
 
+Redis client source — process-level memoized singleton from
+``app.pubsub._get_client()``. Construct ``LedgerPersistence`` per
+session passing the shared client; do NOT build a fresh
+``aioredis.Redis`` per ``LedgerPersistence`` instance. The pubsub
+module owns the connection lifecycle. The leading-underscore on
+``_get_client`` is acknowledged; if a third consumer appears we
+promote it to ``get_redis_client`` in a separate small commit.
+
 Key layout (tenant-scoped — `nexus_app` role enforces no cross-tenant
 key access at the Redis ACL level when that lands; today the prefix
 is the only fence, sufficient because nothing else writes these keys):
@@ -81,7 +89,13 @@ def _ledger_key(tenant_id: str, session_id: str) -> str:
 
 
 class LedgerPersistence:
-    """Tenant-scoped Redis writeback for one in-flight session."""
+    """Tenant-scoped Redis writeback for one in-flight session.
+
+    Construct one per session, passing the process-level memoized
+    ``aioredis.Redis`` client returned by ``app.pubsub._get_client()``.
+    Do not construct a fresh client per session — the pubsub module
+    owns connection lifecycle and pooling.
+    """
 
     def __init__(
         self,
