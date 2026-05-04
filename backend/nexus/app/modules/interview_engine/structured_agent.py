@@ -254,7 +254,12 @@ class StructuredInterviewAgent(Agent):
                 error=str(exc),
                 error_type=type(exc).__name__,
             )
-            self._end_outcome = "error"
+            # Guard symmetric to _wire_participant_disconnect: only stamp
+            # if no other path has already labeled the outcome. Without
+            # this, a participant_disconnected callback that fires before
+            # the loop raises would be silently overwritten with "error".
+            if self._end_outcome is None:
+                self._end_outcome = "error"
         else:
             log.info("structured_agent.main_loop.completed")
 

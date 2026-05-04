@@ -264,10 +264,22 @@ def _build_system_prompt(*, config: SessionConfig, agent_name: str) -> str:
     The realtime LLM is fully bypassed by StructuredInterviewAgent.llm_node;
     this prompt is defense in depth (Layer 2 of the three-layer guardrail).
     See spec §3.1.
+
+    The string returned here is the same `INERT_SYSTEM_PROMPT` constant the
+    agent passes to `super().__init__(instructions=...)`. We import it from
+    structured_agent so a future edit to the inert wording can't drift the
+    audit envelope's `controller_prompt_hash` away from the prompt actually
+    sent to LiveKit.
     """
     _ = config  # unused — kept in signature for symmetry with future phases
     _ = agent_name  # unused — agent_name surfacing returns in Phase C
-    return "Wait for explicit instructions. Do not speak unless told."
+    # Lazy import to avoid a circular import (agent.py imports
+    # StructuredInterviewAgent at module load; we only need the constant
+    # at call time).
+    from app.modules.interview_engine.structured_agent import (
+        INERT_SYSTEM_PROMPT,
+    )
+    return INERT_SYSTEM_PROMPT
 
 
 def _wire_session_observability(
