@@ -24,6 +24,7 @@ beyond LiveKit's defaults, no reconnect protocol):
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import time
 import uuid
@@ -201,12 +202,34 @@ class StructuredInterviewAgent(Agent):
     # ------------------------------------------------------------------
     # Layer 3 — single utterance entry point. AST-invariant test (Task 8)
     # asserts session.say(...) is only called from inside this method.
+    #
+    # `allow_interruptions=False` is the Phase B default. The orchestrator
+    # drives every utterance; candidate input is captured BETWEEN
+    # utterances via `_wait_for_final_transcript`, not during them.
+    # Allowing interruptions caused two bugs in the first smoke gates:
+    #
+    #   (a) When the candidate was still speaking at the moment the
+    #       orchestrator called `say()` for the next question, VAD-mode
+    #       interruption cancelled the SpeechHandle BEFORE TTS produced
+    #       any audio — the candidate heard nothing. (Sessions
+    #       2c226524-... and ca971b63-...: only INTRO and Q1 reached
+    #       tts_metrics; Q2+ silenced.)
+    #   (b) When `_say` returns from an interruption, the orchestrator's
+    #       `_wait_for_final_transcript` registers its listener AFTER
+    #       the interrupting transcript already fired — so the listener
+    #       missed the transcript and hung until the next final
+    #       (typically a confused "are you still there?" 20-30 seconds
+    #       later).
+    #
+    # Phase F (Intent Classifier) re-introduces controlled interruption
+    # — meta-requests like "can you repeat?" need to barge in. Phase B
+    # is deliberately the opposite: every utterance plays to completion.
     # ------------------------------------------------------------------
     async def _say(
         self,
         text: str,
         *,
-        allow_interruptions: bool = True,
+        allow_interruptions: bool = False,
     ) -> None:
         safety = check_safety(text)
         if not safety.is_safe:
@@ -290,21 +313,42 @@ class StructuredInterviewAgent(Agent):
         else:
             log.info("structured_agent.main_loop.completed")
 
-    async def _wait_for_final_transcript(self) -> str:
-        """Block until the next UserInputTranscribedEvent(final=True),
-        return its transcript text. Phase B treats every utterance as
-        substantive (no Intent Classifier — Phase F)."""
-        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+    def _arm_final_transcript(self) -> asyncio.Future[str]:
+        """Pre-register a listener that resolves the returned future on
+        the next ``UserInputTranscribedEvent(final=True)``. The future
+        must be awaited later (typically after the current `_say`
+        completes).
+
+        This is a Future-returning helper rather than an `async def`
+        because the listener must be registered BEFORE the awaitable
+        operation it's racing — otherwise final transcripts that fire
+        DURING that operation are missed. Smoke gate ca971b63 confirmed
+        the race: a candidate finishing their answer near the end of
+        the agent's say would fire `is_final=True` while the agent
+        was still speaking; the previous `_wait_for_final_transcript`
+        registered AFTER the say returned and missed that event,
+        causing the orchestrator to hang for 20+ seconds until the
+        candidate spoke again.
+
+        The listener is detached automatically when the future resolves
+        (success, cancellation, or set-exception) via the done callback.
+        """
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[str] = loop.create_future()
 
         def _on_user_transcript(ev: UserInputTranscribedEvent) -> None:
             if ev.is_final and not future.done():
                 future.set_result(ev.transcript)
 
         self.session.on("user_input_transcribed", _on_user_transcript)
-        try:
-            return await future
-        finally:
-            self.session.off("user_input_transcribed", _on_user_transcript)
+
+        def _detach(_: asyncio.Future[str]) -> None:
+            # Best-effort cleanup — `off` may raise on a closed session.
+            with contextlib.suppress(Exception):
+                self.session.off("user_input_transcribed", _on_user_transcript)
+
+        future.add_done_callback(_detach)
+        return future
 
     async def _run_main_loop(self) -> None:
         """The Phase B linear orchestration loop.
@@ -402,11 +446,21 @@ class StructuredInterviewAgent(Agent):
             wall_ms=_wall_ms(),
         )
 
+        # Arm the transcript listener BEFORE saying. If a final transcript
+        # fires DURING `_say` (the candidate finishes their answer right
+        # as the agent's question audio ends), the listener catches it
+        # rather than missing the event during the pre-listener gap. See
+        # `_arm_final_transcript` for the full rationale (smoke gate
+        # ca971b63 confirmed the race).
+        transcript_future = self._arm_final_transcript()
+
         ask_text = ASK_QUESTION_STANDARD.format(question_text=q.text)
         await self._say(ask_text)
 
-        # Wait for the candidate's final transcribed utterance.
-        transcript = await self._wait_for_final_transcript()
+        # Wait for the candidate's final transcribed utterance. If the
+        # listener already caught one during `_say`, this resolves
+        # immediately.
+        transcript = await transcript_future
         self._candidate_transcripts[q.id] = transcript
 
         qs.completed_at = _now_utc()
