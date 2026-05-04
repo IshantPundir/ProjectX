@@ -5,7 +5,31 @@ hardcode a model name or effort level anywhere else. Swapping a model for a
 specific task is a .env change + restart, no code change.
 
 Future phase properties (reenrichment, generation, session, scoring) are
-added to this class as each phase lands — not speculatively in 2A."""
+added to this class as each phase lands — not speculatively in 2A.
+
+------------------------------------------------------------------
+**Effort-gating contract (read before wiring a new evaluator).**
+
+Per OpenAI's API: ``reasoning_effort`` is **not supported on
+non-reasoning chat models** (``*-chat-latest``). Sending it returns
+HTTP 400, which kills the call. Every ``*_effort`` property on this
+class therefore follows the same discipline as
+``interview_reasoning_effort`` (see ``app/ai/realtime.py::build_llm_plugin``):
+
+  * The property defaults to empty string ``""``.
+  * Caller code MUST gate on ``if ai_config.<role>_effort:`` before
+    forwarding ``reasoning_effort=...`` to the OpenAI client.
+  * An empty string means "do not send the parameter at all" — the
+    correct contract whether the configured model is a reasoning
+    model or a chat model.
+
+Default-empty across all evaluator roles means the system is safe by
+default if an operator overrides a model to a chat variant. Production
+deploys opt into reasoning models per evaluator role by setting both
+the ``EVALUATOR_<ROLE>_MODEL`` and ``EVALUATOR_<ROLE>_EFFORT`` env
+vars together.
+------------------------------------------------------------------
+"""
 
 from app.config import settings
 
@@ -76,6 +100,36 @@ class AIConfig:
     @property
     def interview_turn_detector_unlikely_threshold(self) -> float | None:
         return settings.interview_turn_detector_unlikely_threshold
+
+    # Phase 3D — Structured AI Screening Agent evaluators (batch OpenAI
+    # calls, not realtime). Used by Sufficiency Checker (Phase D/E),
+    # Intent Classifier (Phase F), and Disclaim Classifier (Phase H).
+    # All three go through ``app.ai.client.get_openai_client()`` (already
+    # an ``instructor.AsyncInstructor``) — see effort-gating contract in
+    # this module's docstring.
+    @property
+    def evaluator_intent_model(self) -> str:
+        return settings.evaluator_intent_model
+
+    @property
+    def evaluator_intent_effort(self) -> str:
+        return settings.evaluator_intent_effort
+
+    @property
+    def evaluator_disclaim_model(self) -> str:
+        return settings.evaluator_disclaim_model
+
+    @property
+    def evaluator_disclaim_effort(self) -> str:
+        return settings.evaluator_disclaim_effort
+
+    @property
+    def evaluator_sufficiency_model(self) -> str:
+        return settings.evaluator_sufficiency_model
+
+    @property
+    def evaluator_sufficiency_effort(self) -> str:
+        return settings.evaluator_sufficiency_effort
 
 
 ai_config = AIConfig()
