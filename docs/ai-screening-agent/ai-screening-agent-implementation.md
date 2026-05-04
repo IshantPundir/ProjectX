@@ -154,10 +154,11 @@ The realtime LLM is configured to **not auto-respond** — instead, our Orchestr
 
 Concretely:
 - Build the `AgentSession` with `preemptive_generation={"enabled": False}` and a no-op `Agent` whose instructions are something like `"Wait for explicit instructions. Do not speak unless told."` (defense in depth — if `say()` fails or the LLM tries to autogen, the system prompt is a guardrail).
-- When the Orchestrator decides to speak, it calls `speech_agent.render_<template>(...)` → gets a string → calls `session.say(text, allow_interruptions=True)`.
-- Listen for `UserInputTranscribedEvent` (final=True) → run Intent Classifier → route → Orchestrator → next utterance via `session.say()`.
+- When the Orchestrator decides to speak, it calls `speech_agent.render_<template>(...)` → gets a string → `await session.say(text, allow_interruptions=True)`.
+- **Always `await` `session.say()` in the orchestrator main loop.** `AgentSession.say()` returns a `SpeechHandle`; awaiting it blocks until playback completes (or an interruption fires). This gives the Orchestrator deterministic ordering: the candidate has heard the utterance before we wait for `UserInputTranscribedEvent(final=True)`. Fire-and-forget (`handle = session.say(...)` without `await`) is forbidden in the main loop. Reserved patterns (e.g., starting a `say()` then `handle.interrupt()` on a corrective signal) are explicit, post-MVP, and must be commented inline.
+- Listen for `UserInputTranscribedEvent` (final=True) → run Intent Classifier → route → Orchestrator → next utterance via `await session.say()`.
 
-This is the inversion of the current `GenericInterviewAgent` pattern. Verify with a tiny spike that `session.say()` works as expected in your LiveKit Agents version (`>=1.5.4,<2`) before committing to this for Phase B.
+This is the inversion of the current `GenericInterviewAgent` pattern. The `session.say()` API was confirmed against `livekit-agents` source (`livekit-agents/voice/agent_session.py`) and the canonical `frontdesk_agent.py` / `multi_agent.py` examples (the latter notes inline: *"awaiting it will ensure the message is played out before returning"*). No further spike required for the API itself; manual smoke-test in Phase B remains gated by acceptance criteria.
 
 ---
 
@@ -193,7 +194,8 @@ These are pulled from `backend/nexus/CLAUDE.md` and observable patterns. Violati
 - Default values via `app/config.py` `Settings` class. Add the env vars to `.env.example`.
 
 ### 5.6 instructor library
-- `instructor` is already a dependency (>=1.15,<2). Use `instructor.from_openai(client)` then `client.chat.completions.create(response_model=YourPydanticModel, ...)`. This is the project's standard for structured outputs (see `app/modules/jd/actors.py`, `app/modules/question_bank/actors.py` for canonical examples).
+- `instructor` is already a dependency (>=1.15,<2). **`app.ai.client.get_openai_client()` already returns an `instructor.AsyncInstructor` (mode=`TOOLS_STRICT`)** — do NOT additionally wrap with `instructor.from_openai()`. Evaluator code (Sufficiency, Intent, Disclaim) calls `client.chat.completions.create(response_model=YourPydanticModel, ...)` directly on the client returned by `get_openai_client()`. See `app/modules/jd/actors.py`, `app/modules/question_bank/actors.py` for canonical examples — they use the pre-wrapped client the same way.
+- `TOOLS_STRICT` mode enforces OpenAI function-calling with strict schema validation; on schema-validation failure, `instructor` raises `InstructorRetryException` (from `instructor.core`) after exhausting `max_retries` (defaults to instructor's per-call default — pass `max_retries=` to `chat.completions.create()` to override).
 - All evaluator output schemas must be Pydantic models with strict validation.
 
 ### 5.7 Logging
@@ -828,7 +830,7 @@ When you (the coding agent) pick up this task:
 4. Read `app/modules/interview_engine/agent.py` end-to-end (current clean-slate state).
 5. Read `app/modules/interview_runtime/schemas.py` and `service.py`.
 6. Read `app/ai/realtime.py` and `app/ai/config.py`.
-7. Verify the spike from §4: confirm `session.say(text)` works in your LiveKit Agents version. Write a 30-line throwaway test if needed.
+7. The §4 `session.say()` API spike was completed on 2026-05-04 against the `livekit-agents>=1.5.4,<2` source: the method exists, returns a `SpeechHandle`, and `await`-ing it blocks until playback completes. No further API spike needed; a manual end-to-end smoke test in a real LiveKit session remains a Phase B acceptance criterion.
 8. **Begin Phase A.** Do not proceed to B until A's acceptance criteria are met.
 9. After each phase: run all tests. Run mypy strict. Run ruff. Run `test_module_boundaries.py`. Manual smoke test in a real LiveKit session.
 10. When in doubt: ask, do not guess. The cost of a clarifying question is much lower than the cost of a wrong assumption that propagates through three phases.
