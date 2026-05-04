@@ -37,6 +37,7 @@ from app.modules.question_bank import StageQuestion, StageQuestionBank
 from app.modules.session import Session as SessionRow
 from app.modules.interview_runtime.errors import (
     CompanyProfileMissingError,
+    EmptySignalMetadataError,
     QuestionBankNotReadyError,
     SessionNotActiveError,
     StageNotAiDrivenError,
@@ -215,6 +216,17 @@ async def build_session_config(
         ],
         signal_metadata=_project_signal_metadata(snapshot.signals or []),
     )
+    if not config.signal_metadata:
+        # Engine-boundary fence — see EmptySignalMetadataError docstring.
+        # Upstream `ExtractedSignals.signals` enforces min_length=5, so a
+        # confirmed snapshot reaching this point with zero valid metadata
+        # rows is a data-integrity bug. Refuse to start the session
+        # rather than dispatch an agent with nothing to track.
+        raise EmptySignalMetadataError(
+            f"session {session_id} produced empty signal_metadata "
+            f"from snapshot version={snapshot.version} "
+            f"(raw signals count={len(snapshot.signals or [])})"
+        )
     logger.info(
         "interview_runtime.session_config.built",
         session_id=str(session_id),

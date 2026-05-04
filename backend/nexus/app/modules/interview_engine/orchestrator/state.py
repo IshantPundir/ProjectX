@@ -21,6 +21,42 @@ main_loop → candidate_initiated_wrap (candidate ends pause-decline path)
 Illegal transitions raise ``InterviewPhaseError``. The
 ``transition()`` helper is the single mutation entry point so the
 sequence-number-and-mtime persistence layer (A.4) has a single hook.
+
+------------------------------------------------------------------
+**Mutation discipline — please read before modifying this file.**
+
+``InterviewState`` and ``QuestionState`` are Pydantic models with
+default mutability (``model_config`` does NOT set ``frozen=True`` or
+``validate_assignment=True``). Direct field assignment such as
+``state.phase = InterviewPhase.MAIN_LOOP`` or ``state.reconnect_count
++= 1`` is syntactically permitted by Python but **silently bypasses
+both the legality checks and the sequence-number bumping** that the
+named methods perform.
+
+**Always mutate through the named methods:**
+
+* ``state.transition(target)`` — phase changes; rejects illegal
+  transitions; bumps ``sequence_number``.
+* ``state.record_reconnect()`` — increments ``reconnect_count``;
+  rejects mutation of a CLOSED session; bumps ``sequence_number``.
+* ``state.set_exit_mode(mode, ended_at=...)`` — stamps exit mode +
+  end-time exactly once; bumps ``sequence_number``.
+* ``QuestionState`` field updates during a turn (e.g. incrementing
+  ``followups_asked`` or ``meta_request_count``) are direct
+  assignments today — those don't need legality checks. If a
+  per-question invariant ever needs enforcement, add a method here
+  rather than letting direct mutation accumulate.
+
+The ``LedgerPersistence`` layer (A.4) reads ``state.sequence_number``
+to detect lost Redis writes; bypassing the mutation methods produces
+silent gap-detection failures (the seq doesn't advance, so the
+persistence layer thinks no write was needed).
+
+This is enforced by convention, not Python. A future contributor
+reading ``state.phase`` and writing it back without going through
+``transition()`` is the exact bug class this docstring exists to
+prevent. If you're tempted: don't.
+------------------------------------------------------------------
 """
 from __future__ import annotations
 

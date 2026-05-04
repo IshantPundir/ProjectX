@@ -49,11 +49,29 @@ ViolationCategory = Literal["outcome", "salary", "scheduling"]
 
 @dataclass(frozen=True)
 class SafetyViolation:
-    """A single disallowed-phrase hit in a rendered utterance."""
+    """A single disallowed-phrase hit in a rendered utterance.
+
+    **Audit envelope convention (Phase C onwards) — `matched_text` is
+    NOT logged verbatim.** When the structured agent emits a
+    ``speech.safety_violation`` event into the audit envelope, the
+    payload uses ``matched_text_hash`` (sha256 of `matched_text`,
+    first 16 hex chars) plus ``pattern_name`` — never ``matched_text``
+    raw. Rationale: the matched span isn't candidate PII (it's agent
+    output), but it can include LLM-hallucinated specifics like fake
+    salary figures or fabricated commitments that we don't want
+    persisted at S3. Hashing preserves "did this exact violation
+    repeat?" debuggability without leaking the hallucinated content.
+
+    The raw ``matched_text`` field stays on ``SafetyViolation`` itself
+    so dev/test failure messages and structlog warnings (where they
+    are scoped to local debug, not the durable envelope) can show the
+    actual offending span. Phase C's envelope event wiring is the
+    single site that must hash.
+    """
 
     category: ViolationCategory
     pattern_name: str  # short identifier for the specific rule
-    matched_text: str  # the actual span that matched (logged hashed only at INFO)
+    matched_text: str  # the actual span that matched (envelope: hash, not raw)
 
 
 @dataclass(frozen=True)

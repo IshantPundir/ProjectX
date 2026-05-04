@@ -21,6 +21,24 @@ Persistence model:
   Builder can flag the session for review.
 * **TTL** (default 6h) ensures abandoned sessions don't leak.
 
+* **Gap-detection scope is the current process lifetime — v1
+  limitation.** ``_last_state_seq_persisted`` and
+  ``_last_ledger_seq_persisted`` are instance attributes, scoped to
+  the LedgerPersistence object that lives in one ``StructuredInterviewAgent``
+  process. On agent crash + fresh dispatch (or any cross-process
+  rehydrate), the new instance starts with both attributes = ``None``;
+  ``detect_gaps`` at the new agent's session-close will report "all
+  of current_seq missing" because the new instance never wrote
+  anything itself, even though the OLD process had successfully
+  written most updates before crashing. This is acceptable for v1
+  because crash-resume (the v2 capability that would make this a
+  real bug) is explicitly out of scope per design doc §9.3 and
+  §16. Cross-process gap tracking would require persisting the
+  last-persisted-seq somewhere durable (Postgres or a Redis
+  metadata key) and reading it on rehydrate — deferred to v2
+  alongside hot-resume from Redis state. Until then, gap detection
+  is a single-process correctness tool, not a crash-recovery audit.
+
 Key layout (tenant-scoped — `nexus_app` role enforces no cross-tenant
 key access at the Redis ACL level when that lands; today the prefix
 is the only fence, sufficient because nothing else writes these keys):
