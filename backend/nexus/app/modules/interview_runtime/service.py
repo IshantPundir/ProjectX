@@ -236,7 +236,7 @@ async def build_session_config(
     return config
 
 
-def _project_signal_metadata(raw_signals: list) -> list[SignalMetadata]:
+def _project_signal_metadata(raw_signals: list[object]) -> list[SignalMetadata]:
     """Project the snapshot.signals JSONB into SignalMetadata models.
 
     Snapshots written by the initial-extraction actor (`extract_and_enhance_jd`)

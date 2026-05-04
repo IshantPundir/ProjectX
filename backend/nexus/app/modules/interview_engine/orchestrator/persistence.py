@@ -247,4 +247,8 @@ class LedgerPersistence:
             return None
         if isinstance(raw, bytes):
             return raw.decode("utf-8")
+        # `redis.asyncio.Redis.get` is typed `Any`; we've already covered
+        # the None and bytes branches, so anything reaching here is a str.
+        # `decode_responses=True` clients return str directly.
+        assert isinstance(raw, str)
         return raw
