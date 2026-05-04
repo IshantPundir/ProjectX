@@ -175,6 +175,8 @@ async def build_session_config(
 
     config = SessionConfig(
         session_id=str(session_id),
+        job_id=str(job.id),
+        candidate_id=str(assignment.candidate_id),
         job_title=job.title,
         role_summary=snapshot.role_summary,
         seniority_level=snapshot.seniority_level,

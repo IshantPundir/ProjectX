@@ -155,6 +155,22 @@ class SessionConfig(BaseModel):
     """
 
     session_id: str
+    job_id: str = Field(
+        min_length=1,
+        description=(
+            "UUID-as-string of the source JobPosting. Required by the "
+            "structured agent's InterviewState identity fields (state.py "
+            "wire-format invariant). Populated by build_session_config."
+        ),
+    )
+    candidate_id: str = Field(
+        min_length=1,
+        description=(
+            "UUID-as-string of the candidate. Required by the structured "
+            "agent's InterviewState identity fields (state.py wire-format "
+            "invariant). Populated by build_session_config."
+        ),
+    )
     job_title: str
     role_summary: str
     seniority_level: str

@@ -484,3 +484,142 @@ async def test_build_session_config_raises_on_empty_signal_metadata(db):
         await build_session_config(
             db, session_id=session.id, tenant_id=tenant.id,
         )
+
+
+@pytest.mark.asyncio
+async def test_build_session_config_populates_job_and_candidate_ids(db):
+    """A.1 part 2 — `build_session_config` projects `job_id` and
+    `candidate_id` from the walked rows so `InterviewState` can be
+    constructed with required identity fields.
+    """
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    company = await create_test_org_unit(
+        db, tenant.id, unit_type="company", company_profile=_VALID_PROFILE,
+    )
+    tenant.super_admin_id = user.id
+    await db.flush()
+    await db.execute(sql_text(f"SET LOCAL app.current_tenant = '{tenant.id}'"))
+
+    job = JobPosting(
+        tenant_id=tenant.id,
+        org_unit_id=company.id,
+        title="Identity Fields Engineer",
+        description_raw="A" * 200,
+        description_enriched="Enriched description for identity field test.",
+        status="signals_confirmed",
+        source="native",
+        created_by=user.id,
+    )
+    db.add(job)
+    await db.flush()
+
+    snapshot = JobPostingSignalSnapshot(
+        tenant_id=tenant.id,
+        job_posting_id=job.id,
+        version=1,
+        signals=[
+            _signal_dict(
+                value="Python", type_="competency", priority="required",
+                weight=3, knockout=False, stage="screen",
+                evaluation_method="verbal_response",
+            ),
+        ],
+        seniority_level="mid",
+        role_summary="Role summary for identity field test.",
+        prompt_version="v1",
+        confirmed_by=user.id,
+        confirmed_at=datetime.now(UTC),
+    )
+    db.add(snapshot)
+    await db.flush()
+
+    instance = JobPipelineInstance(tenant_id=tenant.id, job_posting_id=job.id)
+    db.add(instance)
+    await db.flush()
+
+    stage = JobPipelineStage(
+        tenant_id=tenant.id,
+        instance_id=instance.id,
+        position=0,
+        name="AI Screen",
+        stage_type="ai_screening",
+        duration_minutes=20,
+        difficulty="medium",
+        signal_filter={},
+        pass_criteria={},
+        advance_behavior="manual_review",
+    )
+    db.add(stage)
+    await db.flush()
+
+    bank = StageQuestionBank(
+        tenant_id=tenant.id,
+        stage_id=stage.id,
+        job_posting_id=job.id,
+        signal_snapshot_id=snapshot.id,
+        status="confirmed",
+        prompt_version="v1",
+    )
+    db.add(bank)
+    await db.flush()
+
+    rubric = {"excellent": "x" * 30, "meets_bar": "y" * 30, "below_bar": "z" * 30}
+    question = StageQuestion(
+        tenant_id=tenant.id,
+        bank_id=bank.id,
+        position=0,
+        text="Tell me about your Python experience in depth.",
+        signal_values=["Python"],
+        estimated_minutes=2.0,
+        is_mandatory=True,
+        question_kind="technical_depth",
+        source="ai_generated",
+        follow_ups=[],
+        positive_evidence=["a", "b", "c"],
+        red_flags=["d", "e"],
+        rubric=rubric,
+        evaluation_hint="evaluation hint at least 10 chars",
+    )
+    db.add(question)
+    await db.flush()
+
+    candidate = Candidate(
+        tenant_id=tenant.id,
+        name="Dana",
+        email=f"dana-{uuid.uuid4()}@example.com",
+        source="manual",
+        created_by=user.id,
+    )
+    db.add(candidate)
+    await db.flush()
+
+    assignment = CandidateJobAssignment(
+        tenant_id=tenant.id,
+        candidate_id=candidate.id,
+        job_posting_id=job.id,
+        current_stage_id=stage.id,
+        assigned_by=user.id,
+    )
+    db.add(assignment)
+    await db.flush()
+
+    session = Session(
+        tenant_id=tenant.id,
+        assignment_id=assignment.id,
+        stage_id=stage.id,
+        created_by=user.id,
+    )
+    db.add(session)
+    await db.flush()
+
+    config = await build_session_config(
+        db, session_id=session.id, tenant_id=tenant.id,
+    )
+
+    assert config.job_id == str(job.id), (
+        f"expected job_id={job.id!s}, got {config.job_id!r}"
+    )
+    assert config.candidate_id == str(candidate.id), (
+        f"expected candidate_id={candidate.id!s}, got {config.candidate_id!r}"
+    )
