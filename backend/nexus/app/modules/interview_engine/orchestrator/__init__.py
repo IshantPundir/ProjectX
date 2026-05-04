@@ -15,6 +15,10 @@ Public API:
 Persistence (Redis fire-and-forget) lives in ``persistence.py`` (A.4).
 The structured agent class itself lands in ``structured_agent.py`` (B).
 """
+from app.modules.interview_engine.orchestrator.flow import (
+    evaluate_exit_condition,
+    pick_next_question,
+)
 from app.modules.interview_engine.orchestrator.ledger import (
     CoverageStatus,
     EvidenceQuote,
@@ -51,4 +55,6 @@ __all__ = [
     "QuestionState",
     "SignalLedger",
     "SignalState",
+    "evaluate_exit_condition",
+    "pick_next_question",
 ]
