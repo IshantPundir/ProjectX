@@ -79,7 +79,9 @@ Before proposing the work, the spec audit confirmed the following are already in
 
 ### 2.3 Files NOT touched
 
-`event_log/*`, `event_kinds.py` (already declares Phase B kinds), all of `interview_runtime/`, `app/ai/realtime.py`, `app/ai/config.py`, `app/ai/client.py`, `app/ai/prompts.py`, `tenant_settings/`, frontend, migrations, Alembic. Verified during the spec audit; no new migrations are required for any of A or B.
+`event_log/*`, `event_kinds.py` (already declares Phase B kinds), `app/ai/realtime.py`, `app/ai/config.py`, `app/ai/client.py`, `app/ai/prompts.py`, `tenant_settings/`, frontend, migrations, Alembic. Verified during the spec audit; no new migrations are required for any of A or B.
+
+`interview_runtime/` substantive logic not touched. Additive `SessionConfig` schema extensions and corresponding `build_session_config` projector additions are in scope, per Phase A precedent (`signal_metadata`, A.1) — see §4.1 Phase A tail "Modify" table for the two additive fields (`job_id`, `candidate_id`) Phase B requires for `InterviewState` construction.
 
 ---
 
@@ -268,6 +270,8 @@ One process-level memoized `aioredis.Redis` client is shared across all per-sess
 
 `LedgerPersistence.write_state` is called by the orchestrator (`structured_agent.py`) on every `state.transition()` call site. `write_ledger` is called once per question completion. Both are best-effort and never raise. Failures log at warning. `detect_gaps(...)` is called inside `_handle_close` and the result is emitted as `PERSISTENCE_GAPS_DETECTED`. The state-model layer (`state.py`) does NOT import persistence — see §3.3 for the architectural-split rationale.
 
+`StructuredInterviewAgent.__init__` constructs `InterviewState` using `config.job_id` and `config.candidate_id` (added to `SessionConfig` in C2 — see §4.1). Both fields must be populated by `build_session_config`; missing values raise at `InterviewState` construction time, which is the correct fail-loud boundary. The agent should never silently fall back to placeholder identity values.
+
 The `LedgerPersistence` module + class docstring is updated as part of the Phase A tail to name `app/pubsub.py::_get_client()` explicitly.
 
 ---
@@ -289,6 +293,8 @@ The `LedgerPersistence` module + class docstring is updated as part of the Phase
 |---|---|
 | `app/modules/interview_engine/speech/__init__.py` | Re-export `template_loader` alongside the existing safety re-exports. |
 | `app/modules/interview_engine/orchestrator/persistence.py` | Module docstring + `LedgerPersistence.__init__` docstring updated to spell out the `app.pubsub._get_client()` reuse contract: "Clients are obtained from `app.pubsub._get_client()` — a process-level memoized `aioredis.Redis` shared across all per-session `LedgerPersistence` instances. Do not construct a fresh client per session." No code change. |
+| `app/modules/interview_runtime/schemas.py` | Add `job_id: str` and `candidate_id: str` fields to `SessionConfig`. Required, no default. Inline docstring notes they exist for `InterviewState` construction in the structured agent — both are required identity fields per `state.py` and the Redis wire-format stability invariant. |
+| `app/modules/interview_runtime/service.py` | Populate `job_id` + `candidate_id` in `build_session_config`. Both are already walked during the existing signal-metadata projection (job via `JobPosting`, candidate via `Candidate` through the assignment join); the change is one additional line of population per field, no new query. |
 
 ### 4.2 Phase B
 
@@ -379,6 +385,9 @@ The exact wording of the four strings is not load-bearing on this spec — imple
 - `test_missing_version_raises_file_not_found` — `template_loader.get("speech_agent", "intro", "v999")` raises `FileNotFoundError`.
 - `test_reload_flag_reflects_environment` — with `settings.environment` patched to `"development"`, a freshly-instantiated `template_loader` has `_reload=True`; with `"production"` (or any other value), `_reload=False`.
 
+`tests/interview_runtime/test_signal_metadata_plumbing.py` (extend existing file, do NOT create a new one):
+- `test_build_session_config_populates_job_and_candidate_ids` — asserts both `job_id` and `candidate_id` on the returned `SessionConfig` are populated as stringified UUIDs matching the source rows. Reuses the existing scaffolding (fixtures already construct an assignment with linked job + candidate); the new case adds two assertions on the projector output.
+
 ### 5.2 Phase B unit tests
 
 `tests/interview_engine/orchestrator/test_flow.py`:
@@ -438,16 +447,17 @@ Precedent: `tests/test_module_boundaries.py` is the existing AST-walk invariant 
 
 ### Phase A tail — done when ALL of:
 
-- C1, C2 landed.
+- C1, C2, C3 landed.
 - `pytest tests/interview_engine/speech/test_template_loader_binding.py` green.
+- `pytest tests/interview_runtime/test_signal_metadata_plumbing.py` green (including the new `test_build_session_config_populates_job_and_candidate_ids` case).
 - All previously-green `tests/interview_engine/` tests still green.
-- `mypy --strict app/modules/interview_engine/speech/` clean on new files.
-- `ruff check app/modules/interview_engine/speech/` clean.
+- `mypy --strict app/modules/interview_engine/speech/ app/modules/interview_runtime/` clean on new files.
+- `ruff check app/modules/interview_engine/speech/ app/modules/interview_runtime/` clean.
 - `tests/test_module_boundaries.py` still green (`templates.py` re-exports through `__init__.py`).
 
 ### Phase B — done when ALL of:
 
-- C3, C4, C5 (squashed agent + entrypoint), C6 (test_flow), C7 (integration test), C8 (AST invariant) landed.
+- C4, C5, C6 (squashed agent + entrypoint), C7 (test_flow), C8 (integration test), C9 (AST invariant) landed.
 - All Phase B tests green.
 - All Phase A tests still green (no regression on orchestrator / state / ledger / persistence / safety).
 - `mypy --strict app/modules/interview_engine/` clean.
@@ -487,13 +497,14 @@ Numbered slots are the planned, pre-gate commits. Post-gate commits (zero or mor
 | # | Commit (codebase convention: `<type>(<scope>): <description>`) | Phase | Atomic |
 |---|---|---|---|
 | C1 | `docs(interview_engine): document _get_client() reuse contract in LedgerPersistence` | A tail | yes |
-| C2 | `feat(interview_engine): bind engine-scoped TemplateLoader instance` | A tail | yes |
-| C3 | `feat(interview_engine): add orchestrator/flow.py for Phase B linear progression` | B prep | yes |
-| C4 | `feat(interview_engine): add hardcoded-utterance stub for Phase B` | B prep | yes (includes `_PHASE_B_SAFETY_FALLBACK_TEXT` + module-import-time assertion per §4.3) |
-| C5 | `feat(interview_engine): swap GenericInterviewAgent → StructuredInterviewAgent end-to-end` | B core | yes (squashed: structured_agent.py + agent.py edits + LedgerPersistence wiring + system-prompt swap + preemptive_generation flip) |
-| C6 | `test(interview_engine): unit tests for orchestrator/flow.py` | B test | yes |
-| C7 | `test(interview_engine): integration test for StructuredInterviewAgent SessionResult shape` | B test | yes (includes happy path + disconnect + safety-fallback sub-case per §5.3) |
-| C8 | `test(interview_engine): AST invariant on session.say single-entry-point` | B test | yes |
+| C2 | `feat(interview_runtime): plumb job_id and candidate_id into SessionConfig` | A tail | yes (schema fields + projector population + plumbing test in `tests/interview_runtime/test_signal_metadata_plumbing.py`) |
+| C3 | `feat(interview_engine): bind engine-scoped TemplateLoader instance` | A tail | yes |
+| C4 | `feat(interview_engine): add orchestrator/flow.py for Phase B linear progression` | B prep | yes |
+| C5 | `feat(interview_engine): add hardcoded-utterance stub for Phase B` | B prep | yes (includes `_PHASE_B_SAFETY_FALLBACK_TEXT` + module-import-time assertion per §4.3) |
+| C6 | `feat(interview_engine): swap GenericInterviewAgent → StructuredInterviewAgent end-to-end` | B core | yes (squashed: structured_agent.py + agent.py edits + LedgerPersistence wiring + system-prompt swap + preemptive_generation flip) |
+| C7 | `test(interview_engine): unit tests for orchestrator/flow.py` | B test | yes |
+| C8 | `test(interview_engine): integration test for StructuredInterviewAgent SessionResult shape` | B test | yes (includes happy path + disconnect + safety-fallback sub-case per §5.3) |
+| C9 | `test(interview_engine): AST invariant on session.say single-entry-point` | B test | yes |
 
 **Smoke gate (not a commit):** Manual happy-path + disconnect runs in a real LiveKit session per §6 acceptance criteria. The gate must pass before the close-out commit is allowed to land.
 
@@ -501,7 +512,7 @@ Numbered slots are the planned, pre-gate commits. Post-gate commits (zero or mor
 - Zero or more `fix(interview_engine): <description>` commits, one per fix surfaced by the smoke gate. Each is small, surgical, and atomic. If the smoke gate passes cleanly with no fixes, this category is empty.
 - Exactly one close-out commit: `docs(ai-screening): Phase A finalize + Phase B close-out — StructuredInterviewAgent shipped`. Mirrors the established `docs(ai-screening): ...` scope (commits `de33731`, `9d4a65a`, `23e0583`). Body lists every carryforward item from §7 explicitly — including any deferrals or behavioral nuances discovered during the smoke gate. The close-out describes what shipped, not what was predicted; it lands AFTER all fix commits.
 
-C5 squashes the new class introduction and the entrypoint swap into one atomic commit. Solo-dev posture, no production exposure yet — flag-gating is not justified, and a class-without-call-site snapshot in git history is the kind of thing that gets stale silently if the next commit stalls.
+C6 squashes the new class introduction and the entrypoint swap into one atomic commit. Solo-dev posture, no production exposure yet — flag-gating is not justified, and a class-without-call-site snapshot in git history is the kind of thing that gets stale silently if the next commit stalls.
 
 ---
 
