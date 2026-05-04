@@ -31,7 +31,8 @@ from datetime import UTC, datetime
 from typing import Literal
 
 import structlog
-from livekit.agents import Agent, UserInputTranscribedEvent
+from livekit.agents import Agent, ChatContext, ChatMessage, UserInputTranscribedEvent
+from livekit.agents.llm import StopResponse
 
 from app.modules.interview_engine._phase_b_utterances import (
     _PHASE_B_SAFETY_FALLBACK_TEXT,
@@ -158,9 +159,35 @@ class StructuredInterviewAgent(Agent):
         super().__init__(instructions=INERT_SYSTEM_PROMPT)
 
     # ------------------------------------------------------------------
-    # Layer 1 — hard guardrail. The realtime LLM autogen path becomes a
-    # no-op regardless of system prompt. Verified against
-    # livekit-agents>=1.5.4 examples/voice_agents/structured_output.py.
+    # Layer 1a — hard guardrail (turn-level). Raise StopResponse from
+    # `on_user_turn_completed` to cancel the framework's auto-reply
+    # (`AgentSession._generate_reply`) before it can schedule a competing
+    # SpeechHandle that would race with the orchestrator's
+    # `session.say()` for the next question. The first smoke-gate run
+    # confirmed: without this, every user transcript fires
+    # `audio.speech.created source=generate_reply user_initiated=True`,
+    # which interrupts the orchestrator's in-flight `say()` and
+    # silences Q2+. Pattern lifted directly from
+    # `examples/voice_agents/push_to_talk.py` and the transcriber/
+    # translator examples in livekit-agents — `StopResponse` is the
+    # documented mechanism for "transcribe but don't auto-respond"
+    # agents (which is exactly what the structured agent is doing
+    # at the framework level — the orchestrator decides every utterance
+    # via `session.say()`).
+    # ------------------------------------------------------------------
+    async def on_user_turn_completed(
+        self, turn_ctx: ChatContext, new_message: ChatMessage,
+    ) -> None:
+        del turn_ctx, new_message  # consumed by the orchestrator's loop
+        raise StopResponse()
+
+    # ------------------------------------------------------------------
+    # Layer 1b — hard guardrail (token-level). Even with auto-reply
+    # cancelled, an explicit `session.generate_reply(...)` call (or
+    # any other path that reaches `llm_node`) must produce zero chunks.
+    # Belt-and-suspenders against future code that grows a path to
+    # `generate_reply`. Verified against livekit-agents>=1.5.4
+    # examples/voice_agents/structured_output.py.
     # ------------------------------------------------------------------
     async def llm_node(self, *args, **kwargs):  # type: ignore[no-untyped-def]
         return
