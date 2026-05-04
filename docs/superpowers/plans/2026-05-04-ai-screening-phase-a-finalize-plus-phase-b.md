@@ -804,6 +804,41 @@ EOF
 
 This is the largest atomic commit in the plan. Squashed per spec §8 to keep no class-without-call-site snapshot in git history. Tests follow in Task 7 + Task 8.
 
+- [ ] **Step 0: Verify LiveKit AgentSession `.on` / `.off` API surface.**
+
+Spec-time verification done at plan-write time and captured here for the executing engineer. Re-run before relying on the API in case the local pinned version drifted:
+
+```bash
+docker compose run --rm nexus python -c "
+from livekit.agents import AgentSession
+import inspect
+print('on:', hasattr(AgentSession, 'on'))
+print('off:', hasattr(AgentSession, 'off'))
+if hasattr(AgentSession, 'off'):
+    print('off signature:', inspect.signature(AgentSession.off))
+if hasattr(AgentSession, 'on'):
+    print('on signature:', inspect.signature(AgentSession.on))
+"
+```
+
+Expected (verified at plan write 2026-05-05):
+```
+on: True
+off: True
+off signature: (self, event: -T_contra, callback: Callable) -> None
+on signature: (self, event: 'EventTypes', callback: 'Callable | None' = None) -> 'Callable'
+```
+
+If the output diverges from these signatures, halt and amend the plan before writing `_wait_for_final_transcript` (Step 4). The current code in Step 4 assumes `session.on(event, cb)` registers and `session.off(event, cb)` removes — both confirmed.
+
+Also verify the envelope-event constants the new class will import are declared:
+
+```bash
+grep -n "SPEECH_FALLBACK_USED\|SPEECH_SAFETY_VIOLATION\|ORCHESTRATOR_PHASE_CHANGED\|ORCHESTRATOR_QUESTION_ASKED\|ORCHESTRATOR_QUESTION_COMPLETED\|ORCHESTRATOR_EXIT\|ORCHESTRATOR_LEDGER_SNAPSHOT\|PERSISTENCE_GAPS_DETECTED" app/modules/interview_engine/event_kinds.py
+```
+
+Expected (verified at plan write 2026-05-05): all eight constants are defined (lines 58-71) and re-exported in `ALL_EVENT_KINDS`. If any are missing, halt and either add them to `event_kinds.py` first or update the imports in Step 1 to match the existing names.
+
 - [ ] **Step 1: Create `structured_agent.py` skeleton (imports + class signature + constants).**
 
 ```python
@@ -1590,7 +1625,17 @@ async def _handle_close(
 
 (g) **Update type hints** on `_wire_close_handler`, `_wire_participant_disconnect`, and `_handle_close` to use `StructuredInterviewAgent` instead of `GenericInterviewAgent`.
 
-- [ ] **Step 9: Verify mypy + ruff clean across the engine module.**
+- [ ] **Step 9: Defensive grep for `GenericInterviewAgent` references.**
+
+After step 8(f) removes the class, verify no stale references remain in `app/` or `tests/`:
+
+```bash
+docker compose run --rm nexus grep -rn "GenericInterviewAgent" app/modules/interview_engine/ tests/
+```
+
+Expected: zero matches. Matches in `docs/` are fine (historical references, including the design and impl docs). Any match in `app/` or `tests/` must be cleaned up before committing — otherwise mypy `--strict` will fail on the type-hint reference. Common offenders: type hints in `_wire_close_handler` / `_wire_participant_disconnect` / `_handle_close` signatures.
+
+- [ ] **Step 10: Verify mypy + ruff clean across the engine module.**
 
 ```bash
 docker compose run --rm nexus mypy --strict app/modules/interview_engine/
@@ -1599,7 +1644,7 @@ docker compose run --rm nexus ruff check app/modules/interview_engine/
 
 Expected: both clean. If `--warn-unreachable` is set globally and the `yield` in `llm_node` trips, add a single `# type: ignore[unreachable]` with the wordy rationale comment from spec §3.1.
 
-- [ ] **Step 10: Verify module boundaries + existing tests still green.**
+- [ ] **Step 11: Verify module boundaries + existing tests still green.**
 
 ```bash
 docker compose run --rm nexus pytest tests/test_module_boundaries.py tests/interview_engine/orchestrator/ tests/interview_engine/speech/ tests/interview_engine/event_log/ -v
@@ -1607,7 +1652,7 @@ docker compose run --rm nexus pytest tests/test_module_boundaries.py tests/inter
 
 Expected: PASS (the structural change shouldn't break existing tests; integration tests for the new agent come in Task 7).
 
-- [ ] **Step 11: Commit (atomic squashed commit per spec §8).**
+- [ ] **Step 12: Commit (atomic squashed commit per spec §8).**
 
 ```bash
 git add app/modules/interview_engine/structured_agent.py app/modules/interview_engine/agent.py
@@ -1848,22 +1893,28 @@ This is the largest test surface in the plan. Three sub-cases: happy path, disco
 
 - [ ] **Step 1: Write the test scaffolding (mocks + fixtures).**
 
+The integration tests exercise `StructuredInterviewAgent` end-to-end including the close-path envelope events emitted by `agent.py::_handle_close`. Both the happy-path and disconnect tests invoke `_handle_close(...)` directly to cover the full event sequence (`orchestrator.exit` → `orchestrator.ledger.snapshot` → `persistence.gaps_detected` → `session.close`). Spec §5.3 Case A asserts `last event is session.close`; without invoking the close handler the test cannot verify that contract.
+
 ```python
 """Integration test for StructuredInterviewAgent.
 
 Mocked LiveKit transport (no real room, no real STT/TTS). The agent
 class itself is exercised end-to-end: state machine traversal,
 envelope event emission, SessionResult shape, ExitMode → SessionOutcome
-mapping.
+mapping. Both happy-path and disconnect tests invoke
+agent.py::_handle_close so the full close-path envelope sequence
+(ledger.snapshot, gaps_detected, session.close) is covered.
 
 Three sub-cases:
 - Happy path: scripted candidate sends N transcribed utterances
-  (UserInputTranscribedEvent fires N times); SessionResult.exit_mode
-  maps to "completed", envelope events match the first/last/multiset
-  contract from spec §5.3 Case A.
+  (UserInputTranscribedEvent fires N times); main loop completes;
+  close handler runs; SessionResult.exit_mode maps to "completed",
+  envelope events match the first/last/multiset contract from spec
+  §5.3 Case A — first event is phase_changed CONNECTING→CONSENT,
+  last event is session.close.
 - Disconnect mid-session: cancel the orchestrator's main-loop task
-  after Q1, invoke the close handler; SessionResult exit_mode maps
-  to "candidate_disconnected".
+  after Q1, set _end_outcome="candidate_disconnected", invoke the
+  close handler; SessionResult exit_mode maps to "candidate_disconnected".
 - Safety-fallback: inject a deliberately-unsafe string into _say(...);
   assert SPEECH_SAFETY_VIOLATION + SPEECH_FALLBACK_USED envelope
   events are emitted; the candidate hears the fallback text.
@@ -1879,6 +1930,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.modules.interview_engine.agent import _handle_close
 from app.modules.interview_engine.event_kinds import (
     ORCHESTRATOR_EXIT,
     ORCHESTRATOR_LEDGER_SNAPSHOT,
@@ -2049,6 +2101,36 @@ def _make_agent(
     # Bind the fake session so _say + on/off + room_io work.
     agent.session = fake_session  # type: ignore[assignment]
     return agent, fake_session, collector, persistence
+
+
+def _make_close_event(*, is_error: bool = False):
+    """Construct a CloseEvent-shaped object for invoking _handle_close.
+
+    The close handler reads ev.reason (compared against CloseReason.ERROR)
+    and ev.error (truthy check) and ev.reason.value (string for envelope).
+    """
+    from livekit.agents.voice.events import CloseReason
+
+    ev = MagicMock()
+    if is_error:
+        ev.reason = CloseReason.ERROR
+        ev.error = RuntimeError("simulated error")
+    else:
+        # Use any non-ERROR enum value. `CloseReason.USER_INITIATED` /
+        # `CloseReason.SESSION_END` etc. — pick whichever exists in the
+        # pinned livekit-agents version. The close handler only branches
+        # on ERROR vs not-ERROR, so any non-ERROR enum is fine.
+        non_error_values = [v for v in CloseReason if v != CloseReason.ERROR]
+        assert non_error_values, "expected at least one non-ERROR CloseReason"
+        ev.reason = non_error_values[0]
+        ev.error = None
+    return ev
+
+
+async def _persist_session_result_noop(self, outcome):  # noqa: ANN001
+    """Patch target for _persist_session_result — DB writes are out of
+    scope for this integration test."""
+    self._persisted = True
 ```
 
 - [ ] **Step 2: Add the happy-path test.**
@@ -2057,35 +2139,46 @@ Append:
 
 ```python
 @pytest.mark.asyncio
-async def test_happy_path_produces_completed_session_result():
-    """Scripted candidate sends N transcribed utterances; SessionResult
-    has every QuestionConfig as non-skipped; envelope events match the
-    first/last/multiset contract."""
+async def test_happy_path_produces_completed_session_result(monkeypatch):
+    """Scripted candidate sends N transcribed utterances; main loop
+    completes naturally; close handler runs; envelope events match
+    spec §5.3 Case A first/last/multiset contract."""
     n_questions = 3
     config = _make_session_config(n_questions)
     agent, fake_session, collector, persistence = _make_agent(config)
 
+    # Stub out _persist_session_result — DB writes are out of scope.
+    monkeypatch.setattr(
+        StructuredInterviewAgent,
+        "_persist_session_result",
+        _persist_session_result_noop,
+    )
+
     # Launch on_enter — it kicks off the main loop as a background task.
     await agent.on_enter()
 
-    # The main loop is now awaiting the first UserInputTranscribedEvent.
-    # Drive the conversation: one "transcribed utterance" per question.
+    # Drive the conversation: one transcribed utterance per question.
     for i in range(n_questions):
-        # Wait briefly for the agent to reach the await point.
-        # Real LiveKit fires the event asynchronously; in the test we
-        # busy-wait on the ASK utterance being said for question i.
-        await _wait_for_say_count(fake_session, expected=i + 2)  # +1 INTRO, +1 ASK_i
+        # +1 INTRO, +1 ASK_i (count grows by 1 INTRO + 1 ASK per loop iter)
+        await _wait_for_say_count(fake_session, expected=i + 2)
         fake_session.fire_user_transcript(
             f"My answer to challenge {i} mentions specific tools and outcomes.",
         )
 
-    # Wait for the main loop task to complete (it should after the last
-    # WRAP_NORMAL utterance).
+    # Wait for the main loop task to complete (after the WRAP_NORMAL utterance).
     assert agent._main_loop_task is not None
     await asyncio.wait_for(agent._main_loop_task, timeout=2.0)
 
-    # Build the SessionResult (close handler in agent.py would do this;
-    # here we call the agent helper directly).
+    # Phase B has now reached state.phase == CLOSED via the natural main
+    # loop completion path. Now invoke the close handler to exercise
+    # the close-path envelope events (ledger.snapshot, gaps_detected,
+    # session.close).
+    close_ev = _make_close_event(is_error=False)
+    await _handle_close(close_ev, agent, collector, sink=None)  # type: ignore[arg-type]
+
+    # Build the SessionResult to verify shape (the close handler would
+    # have called _persist_session_result; we stubbed it so we build
+    # ourselves for assertion).
     result = agent._build_session_result("completed")
 
     # Question results
@@ -2100,7 +2193,7 @@ async def test_happy_path_produces_completed_session_result():
     assert result.questions_skipped == 0
     assert result.knockout_failures == []
 
-    # Envelope events — first / last / multiset.
+    # Envelope events — first / last / multiset (spec §5.3 Case A).
     kinds = [ev["kind"] for ev in collector.events]
 
     # First envelope event: phase_changed CONNECTING→CONSENT.
@@ -2108,14 +2201,16 @@ async def test_happy_path_produces_completed_session_result():
     assert collector.events[0]["payload"]["old_phase"] == "connecting"
     assert collector.events[0]["payload"]["new_phase"] == "consent"
 
-    # Multiset counts:
+    # Last envelope event: session.close (emitted by _handle_close).
+    assert kinds[-1] == "session.close"
+
+    # Multiset counts (no order constraint among these):
     assert kinds.count(ORCHESTRATOR_PHASE_CHANGED) == 5
     assert kinds.count(ORCHESTRATOR_QUESTION_ASKED) == n_questions
     assert kinds.count(ORCHESTRATOR_QUESTION_COMPLETED) == n_questions
     assert kinds.count(ORCHESTRATOR_EXIT) == 1
-    # Phase B emits exit; ledger.snapshot + gaps_detected fire from
-    # close handler in agent.py — not exercised in this unit-style
-    # integration test (we don't run the close handler here).
+    assert kinds.count(ORCHESTRATOR_LEDGER_SNAPSHOT) == 1
+    assert kinds.count(PERSISTENCE_GAPS_DETECTED) == 1
 
     # Phase progression sanity:
     phase_payloads = [
@@ -2131,12 +2226,16 @@ async def test_happy_path_produces_completed_session_result():
         ("normal_wrap", "closed"),
     ]
 
-    # Persistence was called per phase change + per question completion.
-    # 5 transitions = 5 write_state. Plus 1 per ask (asked_at update) = +n.
-    # Plus 1 per completion (completed_at update) = +n. Total 5 + 2*n.
-    # write_ledger: once per question completion = n.
+    # Persistence calls during the main loop:
+    #   write_state: 5 transitions + 2 per question (asked_at + completed_at)
+    #   write_ledger: 1 per question completion
     assert persistence.state_writes == 5 + 2 * n_questions
     assert persistence.ledger_writes == n_questions
+
+    # Outcome publishing reached the room mock.
+    fake_session.room_io.room.local_participant.set_attributes.assert_awaited_with(
+        {"session_outcome": "completed"},
+    )
 
 
 async def _wait_for_say_count(
@@ -2159,29 +2258,38 @@ Append:
 
 ```python
 @pytest.mark.asyncio
-async def test_disconnect_mid_session_produces_candidate_disconnected():
+async def test_disconnect_mid_session_produces_candidate_disconnected(monkeypatch):
     """Scripted candidate answers Q1 then disconnects. Cancel the main
     loop task (test stand-in for LiveKit's participant-timeout-driven
-    close); verify state.phase is MAIN_LOOP at cancellation; the close
-    handler would then drive MAIN_LOOP→CLOSED. SessionResult shows
-    Q1 non-skipped and Q2+ skipped."""
+    close); set _end_outcome="candidate_disconnected" (mirroring the
+    real participant-disconnected callback); invoke _handle_close;
+    assert it drives MAIN_LOOP→CLOSED and emits the full close-path
+    envelope sequence."""
     n_questions = 3
     config = _make_session_config(n_questions)
     agent, fake_session, collector, persistence = _make_agent(config)
 
+    monkeypatch.setattr(
+        StructuredInterviewAgent,
+        "_persist_session_result",
+        _persist_session_result_noop,
+    )
+
     await agent.on_enter()
 
-    # Answer Q1.
+    # Answer Q0.
     await _wait_for_say_count(fake_session, expected=2)  # INTRO + ASK Q0
     fake_session.fire_user_transcript("My answer to Q0.")
 
-    # Wait for Q0 to be fully recorded (completed_at set + transcript
-    # captured). Spin until we see ASK Q1 being said (or a brief delay).
+    # Wait for ASK Q1 to be said — confirms Q0 completion was processed.
     await _wait_for_say_count(fake_session, expected=3)  # +ASK Q1
 
-    # Now simulate disconnect: cancel the main loop task. Verify state
-    # is MAIN_LOOP at cancellation time (orchestrator was waiting for
-    # Q1's transcript that will never arrive).
+    # Simulate disconnect: state is MAIN_LOOP, the main loop is awaiting
+    # Q1's transcript that never arrives. The real _wire_participant_disconnect
+    # callback stamps _end_outcome but does NOT cancel the loop or
+    # transition phase. The test simulates LiveKit's eventual session-
+    # timeout-driven close by cancelling the loop and invoking
+    # _handle_close, which is what _wire_close_handler does in production.
     assert agent._state.phase == InterviewPhase.MAIN_LOOP
     agent._end_outcome = "candidate_disconnected"
     assert agent._main_loop_task is not None
@@ -2191,15 +2299,20 @@ async def test_disconnect_mid_session_produces_candidate_disconnected():
     except asyncio.CancelledError:
         pass
 
-    # The close handler (in agent.py::_handle_close) would now drive
-    # MAIN_LOOP→CLOSED. We replicate that here so we can build a
-    # SessionResult.
-    agent._state.transition(InterviewPhase.CLOSED)
-    agent._state.set_exit_mode(
-        ExitMode.TECHNICAL_FAILURE,
-        ended_at=datetime.now(timezone.utc),
-    )
+    # Phase is still MAIN_LOOP — the close handler has not yet run.
+    assert agent._state.phase == InterviewPhase.MAIN_LOOP
 
+    # Invoke the close handler. It must drive MAIN_LOOP→CLOSED, set
+    # ExitMode.TECHNICAL_FAILURE, emit ledger.snapshot, gaps_detected,
+    # and session.close.
+    close_ev = _make_close_event(is_error=False)
+    await _handle_close(close_ev, agent, collector, sink=None)  # type: ignore[arg-type]
+
+    # Phase is now CLOSED, exit_mode is TECHNICAL_FAILURE.
+    assert agent._state.phase == InterviewPhase.CLOSED
+    assert agent._state.exit_mode == ExitMode.TECHNICAL_FAILURE
+
+    # SessionResult shape.
     result = agent._build_session_result("candidate_disconnected")
     assert len(result.question_results) == n_questions
     assert result.question_results[0].was_skipped is False
@@ -2209,6 +2322,33 @@ async def test_disconnect_mid_session_produces_candidate_disconnected():
         assert qr.transcript_entries == []
     assert result.questions_asked == 1
     assert result.questions_skipped == n_questions - 1
+
+    # Envelope events: first event is phase_changed CONNECTING→CONSENT,
+    # last is session.close. Multiset counts per spec §5.3 Case B.
+    kinds = [ev["kind"] for ev in collector.events]
+    assert kinds[0] == ORCHESTRATOR_PHASE_CHANGED
+    assert collector.events[0]["payload"]["new_phase"] == "consent"
+    assert kinds[-1] == "session.close"
+
+    # 4 phase_changed events: CONNECTING→CONSENT, CONSENT→INTRO,
+    # INTRO→MAIN_LOOP, MAIN_LOOP→CLOSED (no NORMAL_WRAP — close
+    # handler took the direct edge).
+    assert kinds.count(ORCHESTRATOR_PHASE_CHANGED) == 4
+    assert kinds.count(ORCHESTRATOR_QUESTION_ASKED) == 1
+    assert kinds.count(ORCHESTRATOR_QUESTION_COMPLETED) == 1
+    assert kinds.count(ORCHESTRATOR_EXIT) == 1
+    assert kinds.count(ORCHESTRATOR_LEDGER_SNAPSHOT) == 1
+    assert kinds.count(PERSISTENCE_GAPS_DETECTED) == 1
+
+    # The exit-mode payload reflects TECHNICAL_FAILURE.
+    exit_evs = [ev for ev in collector.events if ev["kind"] == ORCHESTRATOR_EXIT]
+    assert len(exit_evs) == 1
+    assert exit_evs[0]["payload"]["exit_mode"] == ExitMode.TECHNICAL_FAILURE.value
+
+    # Outcome publishing reached the room mock with candidate_disconnected.
+    fake_session.room_io.room.local_participant.set_attributes.assert_awaited_with(
+        {"session_outcome": "candidate_disconnected"},
+    )
 ```
 
 - [ ] **Step 4: Add the safety-fallback test.**
@@ -2431,15 +2571,25 @@ docker compose run --rm nexus pytest tests/interview_engine/test_say_call_sites.
 
 Expected: PASS. (If it fails listing violations, the implementation in Task 6 has a `session.say(...)` outside `_say` — fix the offending site rather than relaxing the test.)
 
-- [ ] **Step 3: Negative-control sanity: temporarily add a call outside `_say`, verify the test fails with a helpful message, then revert.**
+- [ ] **Step 3: Negative-control sanity (REQUIRED).**
 
-This step is optional but recommended. In `app/modules/interview_engine/structured_agent.py`, after the class body, add a temporary file-level `await self.session.say("test")` (it won't compile at module level — instead, add it inside `_run_main_loop` outside `_ask_one_question` for the negative control). Run the test:
+Verifying that an invariant test actually catches what it claims to catch is the cheapest insurance available; ~30 seconds. Skip this step and the next contributor who adds `session.say(...)` outside `_say` could ship the regression unnoticed if the test was subtly broken.
+
+In `app/modules/interview_engine/structured_agent.py`, temporarily add a `await self.session.say("test")` line inside `_run_main_loop` (NOT inside `_ask_one_question` and NOT inside `_say`). For example, add it as the first line inside the `while True:` loop body. Then run:
 
 ```bash
 docker compose run --rm nexus pytest tests/interview_engine/test_say_call_sites.py -v
 ```
 
-Expected: FAIL with a message naming `structured_agent.py:<line>` and the explanation. Verify the failure message, then revert the temporary edit.
+Expected: FAIL. The failure message must name `structured_agent.py:<line>` (the line of the temporary call) and the explanation `"session.say(...) outside StructuredInterviewAgent._say"`. Verify the message identifies the exact line.
+
+Then revert the temporary edit (`git checkout -- app/modules/interview_engine/structured_agent.py`) and re-run the test:
+
+```bash
+docker compose run --rm nexus pytest tests/interview_engine/test_say_call_sites.py -v
+```
+
+Expected: PASS. Both directions verified.
 
 - [ ] **Step 4: Verify mypy + ruff clean.**
 
@@ -2545,6 +2695,18 @@ Carryforward (must surface in subsequent phases):
    flagging. Examples: TTS latency on hardcoded strings (Phase C's
    pre-buffering helps), audio pipeline metrics, audio.pipeline.error
    envelope events seen.]
+
+6. Close-path logic consolidation: agent.py::_handle_close and
+   structured_agent.py's close-related helpers (_persist_session_result,
+   _publish_session_outcome, _finalize_event_log) form a parallel
+   implementation that's tolerable for v1 but creates a two-place sync
+   requirement. Phase J's hardening pass should consolidate these into
+   a single owner — likely the structured agent itself owns the full
+   close lifecycle, and agent.py's _handle_close shrinks to a thin
+   adapter that constructs the close-event mock and calls
+   agent.handle_close(ev). Surfaced during Phase B integration test
+   authoring (Task 8 had to import _handle_close to exercise the
+   close-path envelope events).
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 EOF
