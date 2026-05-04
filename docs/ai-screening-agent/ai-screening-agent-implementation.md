@@ -138,7 +138,7 @@ The realtime LLM stays in charge of speaking. We control what it says by mutatin
 **Pattern 2: External Speech Agent + `session.say(text)` injection**
 We pre-generate the exact utterance using a non-realtime call to OpenAI (with the template, full MUST-NOT rules, output validation), then call `session.say(text)` to make the LiveKit session speak that exact string. The realtime LLM is bypassed for agent speech entirely; it only exists to handle the STT→LLM→TTS plumbing.
 
-Looking at the `livekit-agents` API, this is feasible: `AgentSession.say(text)` exists for exactly this purpose. Combined with `TurnHandlingOptions(preemptive_generation={"enabled": False})` on transitions where we want full control, this becomes the structured-agent pattern.
+Looking at the `livekit-agents` API, this is feasible: `AgentSession.say(text)` exists for exactly this purpose.
 
 - **Pro:** Full control. Every utterance goes through our template + safety regex + version. Cheaper (no per-turn realtime LLM cost on agent turns). Auditable.
 - **Con:** Slightly higher latency (one extra non-realtime LLM call). Need to manage `say()` lifecycle correctly to avoid race conditions with auto-generation.
@@ -152,13 +152,25 @@ Looking at the `livekit-agents` API, this is feasible: `AgentSession.say(text)` 
 
 The realtime LLM is configured to **not auto-respond** — instead, our Orchestrator drives every agent utterance via `session.say()` with a string produced by the Speech Agent.
 
+### Three-layer guardrail (non-negotiable)
+
+`preemptive_generation={"enabled": False}` alone is **not sufficient** — it disables only *speculative* LLM execution before end-of-turn. After the user's turn is confirmed, the framework still runs the LLM by default (per `https://docs.livekit.io/reference/agents/turn-handling-options/` and *Agent speech and audio*: "Only the LLM runs preemptively — TTS waits until the turn is confirmed."). A "do not speak unless told" system prompt is a *soft* guardrail — it depends on the LLM faithfully following instructions and produces zero tokens at best, hallucinated speech at worst.
+
+Pattern 2 therefore needs **three layers**, in order of increasing strength:
+
+1. **Hard guardrail — override `Agent.llm_node`** to return an empty / no-op stream. This is the load-bearing layer: with `llm_node` overridden, the framework's autogen path becomes a no-op regardless of what the system prompt says or what the LLM tries to produce. There is no race window where a hallucinated autogen response could reach TTS in parallel with our `session.say()`. LiveKit's own `examples/voice_agents/structured_output.py` uses the same pattern (override `llm_node` and `tts_node` for full control).
+2. **Defense in depth — system prompt** of the form `"Wait for explicit instructions. Do not speak unless told."`. Belt-and-suspenders: if the `llm_node` override is ever removed by mistake, the system prompt is a second line of defense.
+3. **Single utterance entry point — `await session.say(text)`** routed through `structured_agent.py`'s utterance dispatcher, which is the sole site that runs `safety.check_safety()` before TTS playout. Every agent utterance — hardcoded in Phase B, LLM-rendered in Phase C+ — converges here.
+
 Concretely:
-- Build the `AgentSession` with `preemptive_generation={"enabled": False}` and a no-op `Agent` whose instructions are something like `"Wait for explicit instructions. Do not speak unless told."` (defense in depth — if `say()` fails or the LLM tries to autogen, the system prompt is a guardrail).
-- When the Orchestrator decides to speak, it calls `speech_agent.render_<template>(...)` → gets a string → `await session.say(text, allow_interruptions=True)`.
+- Override `Agent.llm_node` in `StructuredInterviewAgent` to yield nothing (e.g. an `async def llm_node(self, *args, **kwargs): return; yield  # noqa` that satisfies the framework's async-generator contract while emitting zero chunks). Verify against the LiveKit version pinned in `pyproject.toml` (`livekit-agents>=1.5.4,<2`) before Phase B; the `structured_output.py` example is the reference implementation.
+- Build the `AgentSession` with `preemptive_generation={"enabled": False}` (kept for clarity even though `llm_node` would short-circuit before that fires).
+- The no-op `Agent`'s instructions are `"Wait for explicit instructions. Do not speak unless told."`.
+- When the Orchestrator decides to speak, it calls `speech_agent.render_<template>(...)` → gets a string → utterance dispatcher → `safety.check_safety(text)` → `await session.say(text, allow_interruptions=...)`.
 - **Always `await` `session.say()` in the orchestrator main loop.** `AgentSession.say()` returns a `SpeechHandle`; awaiting it blocks until playback completes (or an interruption fires). This gives the Orchestrator deterministic ordering: the candidate has heard the utterance before we wait for `UserInputTranscribedEvent(final=True)`. Fire-and-forget (`handle = session.say(...)` without `await`) is forbidden in the main loop. Reserved patterns (e.g., starting a `say()` then `handle.interrupt()` on a corrective signal) are explicit, post-MVP, and must be commented inline.
 - Listen for `UserInputTranscribedEvent` (final=True) → run Intent Classifier → route → Orchestrator → next utterance via `await session.say()`.
 
-This is the inversion of the current `GenericInterviewAgent` pattern. The `session.say()` API was confirmed against `livekit-agents` source (`livekit-agents/voice/agent_session.py`) and the canonical `frontdesk_agent.py` / `multi_agent.py` examples (the latter notes inline: *"awaiting it will ensure the message is played out before returning"*). No further spike required for the API itself; manual smoke-test in Phase B remains gated by acceptance criteria.
+This is the inversion of the current `GenericInterviewAgent` pattern. The `session.say()` API was confirmed against `livekit-agents` source (`livekit-agents/voice/agent_session.py`) and the canonical `frontdesk_agent.py` / `multi_agent.py` examples (the latter notes inline: *"awaiting it will ensure the message is played out before returning"*). The `llm_node` override pattern was confirmed against `examples/voice_agents/structured_output.py`. No further spike required for the API itself; manual smoke-test in Phase B remains gated by acceptance criteria.
 
 ---
 
