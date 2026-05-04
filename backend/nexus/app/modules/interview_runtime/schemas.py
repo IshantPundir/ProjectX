@@ -111,6 +111,42 @@ class StageConfig(BaseModel):
     advance_behavior: AdvanceBehavior = "manual_review"
 
 
+class SignalMetadata(BaseModel):
+    """Per-signal metadata projected from the latest confirmed signal snapshot.
+
+    The structured agent's Orchestrator + SignalLedger keys decisions
+    (skip-on-disclaim, knockout-confirmation gating, deepening probes,
+    question-priority order) on weight / knockout / priority / stage.
+    These travel into the engine alongside ``SessionConfig.signals`` (the
+    flat list of value strings).
+
+    The Literal values here must mirror ``app/modules/jd/schemas.py``
+    exactly so the round-trip through ``snapshot.signals`` (JSONB) is
+    validated on every session start. Mismatch → ValidationError at
+    ``build_session_config`` — preferable to a silent drop.
+
+    Provenance fields (``source`` / ``inference_basis``) are deliberately
+    omitted: they are recruiter-facing signal-editing concerns, not agent
+    decision inputs, and the wire format keeps PII / authorship metadata
+    off the engine path by default.
+    """
+
+    value: str = Field(min_length=1)
+    type: Literal["competency", "experience", "credential", "behavioral"]
+    priority: Literal["required", "preferred"]
+    weight: Literal[1, 2, 3]
+    knockout: bool
+    stage: Literal["screen", "interview"]
+    evaluation_method: Literal[
+        "verbal_response",
+        "code_exercise",
+        "scenario_walkthrough",
+        "credential_verify",
+        "behavioral_question",
+    ]
+    evaluation_hint: str | None = None
+
+
 class SessionConfig(BaseModel):
     """The full input contract sent from Nexus to the interview engine.
 
@@ -128,6 +164,16 @@ class SessionConfig(BaseModel):
     signals: list[str] = Field(
         default_factory=list,
         description="Top-level signal dimensions the evaluator cares about.",
+    )
+    signal_metadata: list[SignalMetadata] = Field(
+        default_factory=list,
+        description=(
+            "Per-signal metadata (weight, knockout, priority, stage, "
+            "evaluation method) projected from the latest confirmed "
+            "signal snapshot. One entry per ``signals`` value (same order). "
+            "Empty list is the additive default — pre-rebuild engines "
+            "ignore it; the structured agent (Phase B+) reads it."
+        ),
     )
 
 

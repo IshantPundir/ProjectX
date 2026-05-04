@@ -26,7 +26,11 @@ logger = structlog.get_logger("interview_runtime")
 
 from app.modules.audit import log_event
 from app.modules.candidates import Candidate, CandidateJobAssignment
-from app.modules.jd import JobPosting, JobPostingSignalSnapshot
+from app.modules.jd import (
+    JobPosting,
+    JobPostingSignalSnapshot,
+    default_evaluation_method,
+)
 from app.modules.org_units import find_company_profile_in_ancestry
 from app.modules.pipelines import JobPipelineStage
 from app.modules.question_bank import StageQuestion, StageQuestionBank
@@ -44,6 +48,7 @@ from app.modules.interview_runtime.schemas import (
     QuestionRubric,
     SessionConfig,
     SessionResult,
+    SignalMetadata,
     StageConfig,
 )
 
@@ -208,6 +213,7 @@ async def build_session_config(
             s["value"] if isinstance(s, dict) and "value" in s else str(s)
             for s in (snapshot.signals or [])
         ],
+        signal_metadata=_project_signal_metadata(snapshot.signals or []),
     )
     logger.info(
         "interview_runtime.session_config.built",
@@ -224,9 +230,56 @@ async def build_session_config(
         optional_count=sum(1 for q in config.stage.questions if not q.is_mandatory),
         duration_minutes=config.stage.duration_minutes,
         signals_total=len(config.signals),
+        signal_metadata_total=len(config.signal_metadata),
         snapshot_version=snapshot.version,
     )
     return config
+
+
+def _project_signal_metadata(raw_signals: list) -> list[SignalMetadata]:
+    """Project the snapshot.signals JSONB into SignalMetadata models.
+
+    Snapshots written by the initial-extraction actor (`extract_and_enhance_jd`)
+    persist `SignalItemV2.model_dump()` which has NO `evaluation_method` —
+    that field is filled at read-time by `default_evaluation_method(type, stage)`,
+    matching the recruiter-facing read path in `jd/router.py::_snapshot_to_response`.
+
+    Snapshots written by `save_signals` (recruiter edits) persist
+    `SignalItemInput.model_dump()` which DOES have `evaluation_method` (or
+    explicit None). Either way the same `or default_evaluation_method(...)`
+    fallback applies.
+
+    Provenance fields (`source`, `inference_basis`) are deliberately dropped:
+    they are recruiter-facing, not agent decision inputs. Order is preserved
+    so `signal_metadata[i]` aligns with `signals[i]`.
+    """
+    out: list[SignalMetadata] = []
+    for s in raw_signals:
+        if not isinstance(s, dict):
+            # Defensive — pre-v2 snapshots are off-spec and shouldn't survive
+            # to a confirmed snapshot, but log and skip rather than crash a
+            # session start on a single bad row.
+            logger.warning(
+                "interview_runtime.signal_metadata.dropped_non_dict",
+                signal_repr=repr(s)[:200],
+            )
+            continue
+        eval_method = s.get("evaluation_method") or default_evaluation_method(
+            s["type"], s["stage"],
+        )
+        out.append(
+            SignalMetadata(
+                value=s["value"],
+                type=s["type"],
+                priority=s["priority"],
+                weight=s.get("weight", 2),
+                knockout=s.get("knockout", False),
+                stage=s["stage"],
+                evaluation_method=eval_method,
+                evaluation_hint=s.get("evaluation_hint"),
+            )
+        )
+    return out
 
 
 async def record_session_result(

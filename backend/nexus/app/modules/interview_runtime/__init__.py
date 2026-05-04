@@ -12,6 +12,7 @@ from app.modules.interview_runtime.schemas import (
     QuestionResult,
     SessionConfig,
     SessionResult,
+    SignalMetadata,
     SteeringObservation,
     TranscriptEntry,
 )
@@ -26,6 +27,7 @@ __all__ = [
     "QuestionResult",
     "SessionConfig",
     "SessionResult",
+    "SignalMetadata",
     "SteeringObservation",
     "TranscriptEntry",
     "build_session_config",
