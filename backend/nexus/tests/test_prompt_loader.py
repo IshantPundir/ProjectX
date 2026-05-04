@@ -26,3 +26,49 @@ def test_missing_prompt_raises():
     loader = PromptLoader(version="v1")
     with pytest.raises(FileNotFoundError):
         loader.get("nonexistent_prompt_name")
+
+
+def test_include_directive_unknown_target_raises():
+    """An include pointing at a non-existent prompt raises FileNotFoundError."""
+    import tempfile
+    import textwrap
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        v = Path(tmp) / "v1"
+        v.mkdir()
+        (v / "leaf.txt").write_text(textwrap.dedent("""
+            {{include:does_not_exist}}
+        """).strip(), encoding="utf-8")
+        loader = PromptLoader(version="v1")
+        # Point loader at our temp dir.
+        from app.ai import prompts as prompts_mod
+        original_root = prompts_mod.PROMPTS_ROOT
+        prompts_mod.PROMPTS_ROOT = Path(tmp)
+        try:
+            with pytest.raises(FileNotFoundError):
+                loader.get("leaf")
+        finally:
+            prompts_mod.PROMPTS_ROOT = original_root
+
+
+def test_include_directive_cycle_raises():
+    """A → B → A include cycle raises RuntimeError."""
+    import tempfile
+    import textwrap
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        v = Path(tmp) / "v1"
+        v.mkdir()
+        (v / "a.txt").write_text("{{include:b}}", encoding="utf-8")
+        (v / "b.txt").write_text("{{include:a}}", encoding="utf-8")
+        loader = PromptLoader(version="v1")
+        from app.ai import prompts as prompts_mod
+        original_root = prompts_mod.PROMPTS_ROOT
+        prompts_mod.PROMPTS_ROOT = Path(tmp)
+        try:
+            with pytest.raises(RuntimeError, match="cycle"):
+                loader.get("a")
+        finally:
+            prompts_mod.PROMPTS_ROOT = original_root

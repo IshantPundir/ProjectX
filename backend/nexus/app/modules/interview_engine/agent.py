@@ -1,28 +1,49 @@
-"""ProjectX Interview Engine — LiveKit Agent entrypoint.
+"""ProjectX Interview Engine — clean-slate generic-LLM entrypoint.
 
-Per-session entrypoint:
-  1. Parse dispatch metadata (session_id, tenant_id, correlation_id).
-  2. Bind structlog contextvars so every log line carries them.
-  3. Fetch SessionConfig in-process via build_session_config (no HTTP).
-  4. Build InterviewController (per-task watchdog, idle-nudge state
-     machine, end_interview_early intent + meta tools).
-  5. Build AgentSession using app.ai.realtime factories — the engine
-     never imports livekit.plugins.* directly except for VAD prewarm,
-     which is process-startup-only and not a session-time AI plugin.
-  6. Start the session.
+The previous structured-interview brain (InterviewController +
+per-question QuestionTasks + prompts + idle-nudge state machine +
+outcome composition + closing scripts) was removed on 2026-05-04.
+
+This file is the bare LiveKit Agent harness:
+  * Parses dispatch metadata (session_id, tenant_id, correlation_id).
+  * Binds structlog contextvars so every log line carries them.
+  * Fetches SessionConfig in-process via build_session_config.
+  * Fetches per-tenant settings (currently unused; future agent will read).
+  * Builds a generic ``Agent`` whose system prompt names the candidate,
+    the job title, and the company's about text — nothing structured.
+  * Builds an AgentSession with STT/TTS/LLM/VAD/turn-detector via the
+    ``app.ai.realtime`` factories.
+  * Wires the audit envelope (EventCollector + sink) so transcripts and
+    audio metrics land on disk under ``engine-events/<session_id>.json``.
+  * Persists a minimal SessionResult on close and publishes
+    ``session_outcome`` for the candidate frontend.
+  * Cold start — does not greet, does not speak first. The candidate
+    speaks first and the LLM responds.
+
+The plumbing is intentionally preserved so a new structured agent can
+re-attach without re-discovering it:
+  * SessionConfig is fetched and bound at session scope.
+  * tenant_settings is fetched (only consumed via ``engine_agent_name``
+    fallback in the system prompt today; everything else, including
+    ``engine_knockout_policy``, is pass-through).
+  * EventCollector + sink format is unchanged so the envelope schema
+    remains forward-compatible.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import time
 import uuid
 from datetime import datetime, timezone
+from typing import Literal
 
 import structlog
 
 from livekit.agents import (
+    Agent,
     AgentServer,
     AgentSession,
     AgentStateChangedEvent,
@@ -34,7 +55,6 @@ from livekit.agents import (
     TurnHandlingOptions,
     UserInputTranscribedEvent,
     UserStateChangedEvent,
-    cli,
 )
 from livekit.agents.voice.events import (
     AgentFalseInterruptionEvent,
@@ -47,13 +67,13 @@ from livekit.agents.voice.events import (
 from livekit.agents.inference.interruption import OverlappingSpeechEvent
 
 from app.ai.config import ai_config
-# Process-startup plugin imports. Each of these calls Plugin.register_plugin()
-# at module load time, which is what `python agent.py download-files`
-# discovers to prewarm model files at container build time. Per the
-# `app.ai.realtime` carve-out (see backend/nexus/CLAUDE.md): direct vendor
-# SDK imports are forbidden EXCEPT for process-startup model registration
-# of plugins that need local model files. Silero (VAD) and turn_detector
-# (multilingual EOU) qualify. Session-time instantiation still goes through
+# Process-startup plugin imports. Each call registers the plugin so that
+# `python agent.py download-files` discovers and prewarms model files at
+# container build time. Per the `app.ai.realtime` carve-out (see
+# backend/nexus/CLAUDE.md), direct vendor SDK imports are forbidden
+# EXCEPT for process-startup model registration of plugins that need
+# local model files. Silero (VAD) and turn_detector (multilingual EOU)
+# qualify. Session-time instantiation still goes through
 # `app.ai.realtime.build_*`.
 from livekit.plugins import silero
 from livekit.plugins.turn_detector import multilingual as _turn_detector_multilingual  # noqa: F401
@@ -69,40 +89,40 @@ from opentelemetry.trace import set_tracer_provider as _otel_set_global_provider
 
 from app.config import settings
 from app.database import get_bypass_session
-from app.modules.interview_engine.controller import InterviewController
-from app.modules.interview_runtime import build_session_config
+from app.modules.interview_runtime import (
+    QuestionResult,
+    SessionConfig,
+    SessionResult,
+    build_session_config,
+    record_session_result,
+)
 from app.modules.interview_engine.event_log import (
     EventCollector,
     EventLogSink,
     build_sink_from_settings,
 )
-from app.modules.interview_engine.prompt_hash import hash_prompt_file
 from app.modules.tenant_settings import get_tenant_settings
 
 
 log = structlog.get_logger("interview-engine")
-# AgentServer with explicit health-check port. LiveKit Agents auto-spawns
-# a health endpoint at host:port/ — 200 when registered with LiveKit,
-# 503 otherwise. Locking the port (vs the default random in dev mode)
-# so docker-compose's healthcheck: directive can probe a deterministic URL.
+SessionOutcome = Literal[
+    "completed",
+    "candidate_ended",
+    "candidate_disconnected",
+    "error",
+]
+
+
 server = AgentServer(host="0.0.0.0", port=8081)
 
 
 def prewarm(proc: JobProcess) -> None:
     """Process-startup hook.
 
-    1. Bootstrap a TracerProvider so livekit-agents' built-in spans plus
-       any explicit spans we add later (Phase 2 tasks) actually ship to
-       an aggregator. Production-safe default: no env vars set -> spans
-       go nowhere. Setting OTEL_EXPORTER_OTLP_ENDPOINT (Langfuse / Sentry
-       / generic OTLP) flips the engine on.
+    1. Bootstrap a TracerProvider so livekit-agents' built-in spans ship
+       to whatever aggregator the operator points OTLP at. Production-
+       safe default: no env vars set -> spans go nowhere.
     2. Load Silero VAD into shared process memory.
-
-    Tuning knobs (``activation_threshold``, ``min_speech_duration``,
-    ``min_silence_duration``) come from ``InterviewEngineConfig`` so the
-    VAD sensitivity can be tuned per-deploy without a code change.
-    Lower ``activation_threshold`` makes VAD catch quieter speech at the
-    cost of occasional false-positive triggers from background noise.
     """
     provider = bootstrap_tracer_provider()
     _otel_set_global_provider(provider)
@@ -127,18 +147,9 @@ server.setup_fnc = prewarm
 
 @server.rtc_session(agent_name=settings.engine_agent_name)
 async def entrypoint(ctx: JobContext) -> None:
-    """Per-session entrypoint.
-
-    Reads dispatch metadata Nexus injected at /start time. Config is
-    fetched in-process via build_session_config; InterviewController
-    persists the session result on close (or via _terminate before
-    close, on the normal-end path).
-    """
+    """Per-session entrypoint."""
     metadata = json.loads(ctx.job.metadata or "{}")
 
-    # Phase 3 metadata shape: session_id + tenant_id + correlation_id.
-    # engine_jwt is gone — RLS + explicit-tenant-filter at the
-    # application layer is the new defense.
     session_id = metadata["session_id"]
     tenant_id_str = metadata["tenant_id"]
     correlation_id = metadata.get("correlation_id", session_id)
@@ -151,9 +162,6 @@ async def entrypoint(ctx: JobContext) -> None:
     )
     log.info("engine.dispatch.received", agent_name=settings.engine_agent_name)
 
-    # In-process config fetch. build_session_config runs on a bypass-RLS
-    # session and filters every query by tenant_id explicitly — see
-    # app/modules/interview_runtime/service.py docstring.
     async with get_bypass_session() as db:
         config = await build_session_config(
             db,
@@ -165,36 +173,29 @@ async def entrypoint(ctx: JobContext) -> None:
         "engine.config.fetched",
         question_count=len(config.stage.questions),
         stage_type=config.stage.stage_type,
-        tenant_policy=tenant_settings.engine_knockout_policy,
-        agent_name_override_active=tenant_settings.engine_agent_name is not None,
+        candidate_name=config.candidate.name,
+        job_title=config.job_title,
     )
-    _log_session_setup(config)
 
-    # Phase 1 — audit event log. Build the sink from settings (None when
-    # ENGINE_EVENT_LOG_SINK=none) and a per-session collector that the
-    # observability listeners feed via append().
+    agent_name = tenant_settings.engine_agent_name or settings.engine_agent_name
+    system_prompt = _build_system_prompt(config=config, agent_name=agent_name)
+    prompt_hash = "sha256:" + hashlib.sha256(system_prompt.encode("utf-8")).hexdigest()
+
     event_sink: EventLogSink | None = build_sink_from_settings()
-    # Phase 2 — controller.txt is the live system prompt for InterviewController;
-    # task_prompt_hashes is keyed by question_id because the controller dispatches
-    # one QuestionTask per question. Phase 2 ships only TechnicalDepthTask, so
-    # every question hashes the same task_technical_depth.txt body. When more
-    # task kinds land (Phase 3+), build_task_for(...) will determine per-question
-    # prompt selection and the hash dict here should mirror that mapping.
     event_collector = EventCollector(
         session_id=session_id,
         tenant_id=tenant_id_str,
         correlation_id=correlation_id,
-        controller_prompt_hash=hash_prompt_file("interview/controller.txt"),
-        task_prompt_hashes={
-            q.id: hash_prompt_file("interview/task_technical_depth.txt")
-            for q in config.stage.questions
-        },
+        controller_prompt_hash=prompt_hash,
+        task_prompt_hashes={},
         model_versions={
             "llm": ai_config.interview_llm_model,
             "stt": ai_config.interview_stt_model,
             "tts": ai_config.interview_tts_model,
-            "turn_detector_unlikely_threshold": str(
-                ai_config.interview_turn_detector_unlikely_threshold
+            "turn_detector_unlikely_threshold": (
+                f"{ai_config.interview_turn_detector_unlikely_threshold}"
+                if ai_config.interview_turn_detector_unlikely_threshold is not None
+                else "null"
             ),
         },
         redaction_mode=settings.engine_event_log_redaction,
@@ -205,29 +206,12 @@ async def entrypoint(ctx: JobContext) -> None:
         redaction=settings.engine_event_log_redaction,
     )
 
-    # Phase 2 — controller-and-tasks architecture. SessionBudget is seeded
-    # with monotonic() at construction; on_enter() resets it to the actual
-    # session-start monotonic before the question loop runs, so the value
-    # passed here is just a placeholder.
-    from app.modules.interview_engine.budget import SessionBudget
-    from app.modules.interview_engine.idle_nudge import IdleNudgeConfig
-
-    agent = InterviewController(
-        session_config=config,
+    agent = GenericInterviewAgent(
+        instructions=system_prompt,
+        config=config,
         tenant_id=tenant_uuid,
         correlation_id=correlation_id,
         collector=event_collector,
-        idle_nudge_config=IdleNudgeConfig(
-            first_nudge_seconds=settings.engine_idle_first_nudge_seconds,
-            second_nudge_seconds=settings.engine_idle_second_nudge_seconds,
-            give_up_seconds=settings.engine_idle_give_up_seconds,
-        ),
-        budget=SessionBudget(
-            started_at_monotonic=time.monotonic(),
-            duration_limit_seconds=config.stage.duration_minutes * 60.0,
-            overhead_seconds=settings.engine_task_budget_overhead_seconds,
-        ),
-        tenant_settings=tenant_settings,
         event_sink=event_sink,
     )
 
@@ -238,40 +222,12 @@ async def entrypoint(ctx: JobContext) -> None:
         vad=ctx.proc.userdata["vad"],
         turn_handling=TurnHandlingOptions(
             turn_detection=build_turn_detector(),
-            # Preemptive generation = LLM starts inferring before EOU is
-            # confirmed, then commits/discards based on final transcript.
-            # LiveKit's Agent Builder doc recommends this for all voice
-            # agents — the first-token latency drop is significant
-            # (often 200-500ms) on conversational turns. Recommended
-            # default per docs/agents/multimodality/audio § preemptive
-            # generation.
             preemptive_generation={"enabled": True},
-            # Dynamic endpointing adapts the delay between min_delay and
-            # max_delay based on the candidate's pause statistics across
-            # the session. Interview-tuned: candidates pause to think
-            # mid-answer, but we don't want to wait the full 2.5s after
-            # every short reply. Dynamic mode learns the candidate's
-            # rhythm and shortens snappy turns while still tolerating
-            # longer thinking pauses on hard questions.
             endpointing={
                 "mode": "dynamic",
                 "min_delay": settings.engine_endpointing_min_delay,
                 "max_delay": settings.engine_endpointing_max_delay,
             },
-            # VAD-based interruption: the local Silero VAD's speech-start
-            # signal triggers a barge-in once `min_duration` of speech is
-            # observed. Adaptive (transcript-aware) interruption is the
-            # higher-quality alternative — it distinguishes intent-to-
-            # interrupt from passive backchannels ("uh-huh", "yeah") and
-            # noise (cough, throat-clear) by reading the STT transcript
-            # — but it requires LiveKit Cloud (the plugin connects to
-            # `agent-gateway.livekit.cloud/v1/bargein`, which 401's on
-            # self-hosted setups including local `livekit-server --dev`).
-            # On a Cloud deployment, switch `mode` back to `"adaptive"`.
-            # `resume_false_interruption` recovers the agent's speech if
-            # the trigger turns out to be silence/noise within
-            # `false_interruption_timeout` (default 2.0s) — works in
-            # either mode.
             interruption={
                 "mode": "vad",
                 "min_duration": 0.5,
@@ -282,7 +238,6 @@ async def entrypoint(ctx: JobContext) -> None:
 
     _wire_session_observability(
         session,
-        agent=agent,
         collector=event_collector,
         log_verbose_content=settings.engine_log_user_transcripts,
         log_audio_events=settings.engine_log_audio_events,
@@ -291,101 +246,173 @@ async def entrypoint(ctx: JobContext) -> None:
     _wire_close_handler(session, agent, collector=event_collector, sink=event_sink)
     _wire_participant_disconnect(ctx, agent)
 
-    await session.start(
-        agent=agent,
-        room=ctx.room,
-    )
+    # Cold start — no greeting, no preemptive say. The candidate speaks
+    # first; the AgentSession routes their utterance through STT, the
+    # generic LLM responds, TTS speaks the reply.
+    await session.start(agent=agent, room=ctx.room)
 
 
-def _log_session_setup(config) -> None:
-    """One-shot startup log written immediately after SessionConfig fetch.
+def _build_system_prompt(*, config: SessionConfig, agent_name: str) -> str:
+    """Render the generic-assistant system prompt.
 
-    Captures everything you'd want to compare across runs: model IDs (from
-    nexus's AIConfig), engine mechanics (probe budget, time-warning,
-    endpointing min/max), and the full question list (id, position,
-    mandatory flag, signals, estimated minutes). Without this log you
-    can't tell whether a regression came from a model change, an engine
-    knob change, or a content change in the question bank.
+    Substitutes candidate name, job title, and company.about so the LLM
+    has something to riff on. No structure, no rubric, no tools.
     """
-    log.info(
-        "engine.setup.models",
-        llm_model=ai_config.interview_llm_model,
-        llm_reasoning_effort=ai_config.interview_reasoning_effort,
-        stt_model=ai_config.interview_stt_model,
-        stt_language=ai_config.interview_stt_language,
-        tts_model=ai_config.interview_tts_model,
-        tts_voice=ai_config.interview_tts_voice,
-        tts_language=ai_config.interview_tts_language,
-        turn_detector_unlikely_threshold=ai_config.interview_turn_detector_unlikely_threshold,
+    return (
+        f"You are {agent_name}, an AI assistant having a voice conversation with "
+        f"{config.candidate.name}.\n\n"
+        f"They are speaking with you in the context of a {config.job_title} role.\n\n"
+        f"About the company:\n{config.company.about}\n\n"
+        "Have a natural, warm, concise conversation. Let the candidate lead. "
+        "Speak in plain text only — no markdown, no lists, no emojis. "
+        "Keep replies to two short sentences unless they ask for more."
     )
-    log.info(
-        "engine.setup.tuning",
-        endpointing_min_delay=settings.engine_endpointing_min_delay,
-        endpointing_max_delay=settings.engine_endpointing_max_delay,
-        silero_activation_threshold=settings.engine_silero_activation_threshold,
-        silero_min_speech_duration=settings.engine_silero_min_speech_duration,
-        silero_min_silence_duration=settings.engine_silero_min_silence_duration,
-        idle_first_nudge_seconds=settings.engine_idle_first_nudge_seconds,
-        idle_second_nudge_seconds=settings.engine_idle_second_nudge_seconds,
-        idle_give_up_seconds=settings.engine_idle_give_up_seconds,
-        task_budget_overhead_seconds=settings.engine_task_budget_overhead_seconds,
-        closing_drain_timeout_seconds=settings.engine_closing_drain_timeout_seconds,
-    )
-    log.info(
-        "engine.setup.session",
-        session_id=config.session_id,
-        job_title=config.job_title,
-        seniority_level=config.seniority_level,
-        candidate_name=config.candidate.name,
-        company_industry=config.company.industry,
-        stage_type=config.stage.stage_type,
-        stage_name=config.stage.name,
-        duration_minutes=config.stage.duration_minutes,
-        difficulty=config.stage.difficulty,
-        total_questions=len(config.stage.questions),
-        mandatory_count=sum(1 for q in config.stage.questions if q.is_mandatory),
-        optional_count=sum(1 for q in config.stage.questions if not q.is_mandatory),
-        signals_total=len(config.signals),
-    )
-    for q in config.stage.questions:
+
+
+class GenericInterviewAgent(Agent):
+    """Bare LiveKit Agent — no tools, no structured loop.
+
+    Carries enough state for the close handler to persist a minimal
+    SessionResult and publish ``session_outcome``. ``_end_outcome`` is
+    settable from the participant-disconnect path.
+    """
+
+    def __init__(
+        self,
+        *,
+        instructions: str,
+        config: SessionConfig,
+        tenant_id: uuid.UUID,
+        correlation_id: str,
+        collector: EventCollector,
+        event_sink: EventLogSink | None,
+    ) -> None:
+        self._config = config
+        self._tenant_id = tenant_id
+        self._correlation_id = correlation_id
+        self._collector = collector
+        self._event_sink = event_sink
+        self._envelope_written: bool = False
+        self._persisted: bool = False
+        self._end_outcome: SessionOutcome | None = None
+        self._session_start_monotonic: float = time.monotonic()
+        super().__init__(instructions=instructions)
+
+    async def on_enter(self) -> None:
+        """No-op. Cold start — wait for the candidate to speak first."""
+        self._session_start_monotonic = time.monotonic()
         log.info(
-            "engine.setup.question",
-            question_id=q.id,
-            position=q.position,
-            is_mandatory=q.is_mandatory,
-            estimated_minutes=q.estimated_minutes,
-            signal_values=q.signal_values,
-            text_chars=len(q.text),
+            "agent.on_enter",
+            candidate_name=self._config.candidate.name,
+            job_title=self._config.job_title,
         )
+
+    async def _persist_session_result(self, outcome: SessionOutcome) -> None:
+        if self._persisted:
+            return
+        result = self._build_session_result(outcome)
+        async with get_bypass_session() as db:
+            await record_session_result(
+                db,
+                session_id=uuid.UUID(self._config.session_id),
+                tenant_id=self._tenant_id,
+                result=result,
+                correlation_id=self._correlation_id,
+            )
+            await db.commit()
+        self._persisted = True
+        log.info(
+            "agent.result.persisted",
+            session_id=self._config.session_id,
+            outcome=outcome,
+        )
+
+    def _build_session_result(self, outcome: SessionOutcome) -> SessionResult:
+        """Compose a minimal SessionResult.
+
+        The clean-slate agent doesn't ask structured questions, so every
+        question in the bank is reported as ``was_skipped=True`` with no
+        observations. Transcripts live in the audit envelope, not on the
+        DB row.
+        """
+        question_results: list[QuestionResult] = [
+            QuestionResult(
+                question_id=q.id,
+                question_text=q.text,
+                position=q.position,
+                is_mandatory=q.is_mandatory,
+                was_skipped=True,
+                probes_fired=0,
+                observations=[],
+                transcript_entries=[],
+            )
+            for q in self._config.stage.questions
+        ]
+        return SessionResult(
+            session_id=self._config.session_id,
+            job_title=self._config.job_title,
+            stage_id=self._config.stage.stage_id,
+            stage_type=self._config.stage.stage_type,
+            candidate_name=self._config.candidate.name,
+            duration_seconds=time.monotonic() - self._session_start_monotonic,
+            questions_asked=0,
+            questions_skipped=len(question_results),
+            total_probes_fired=0,
+            question_results=question_results,
+            full_transcript=[],
+            completed_at=datetime.now(timezone.utc).isoformat(),
+            knockout_failures=[],
+        )
+
+    async def _publish_session_outcome(self, outcome: SessionOutcome) -> None:
+        try:
+            room = self.session.room_io.room
+            await room.local_participant.set_attributes({"session_outcome": outcome})
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "agent.outcome.publish_failed", outcome=outcome, error=str(exc)
+            )
+
+    async def _finalize_event_log(self, *, reason: str) -> None:
+        """Idempotent write of the audit envelope to the configured sink."""
+        if self._envelope_written or self._event_sink is None:
+            return
+        self._envelope_written = True
+        closed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        try:
+            envelope = self._collector.close(closed_at=closed_at)
+        except Exception as exc:  # noqa: BLE001
+            log.error(
+                "agent.event_log.envelope_validation_failed",
+                reason=reason,
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            return
+        try:
+            target = await asyncio.to_thread(self._event_sink.write, envelope)
+            log.info("agent.event_log.written", reason=reason, target=target)
+        except Exception as exc:  # noqa: BLE001
+            log.error(
+                "agent.event_log.sink_write_failed",
+                reason=reason,
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
 
 
 def _wire_session_observability(
     session: AgentSession,
     *,
-    agent: InterviewController,
     collector: EventCollector,
     log_verbose_content: bool,
     log_audio_events: bool,
 ) -> None:
-    """Attach structlog + EventCollector listeners covering every AgentSession event.
-
-    Two destinations:
-    1. structlog stdout — live debugging, gated behind ``log_audio_events``
-       so production can quiet it without losing the durable artifact.
-    2. EventCollector — durable per-session audit envelope, always fed
-       so a session that crashes mid-flight still has a partial record
-       on disk (whatever was written before the crash).
-
-    PII discipline:
-    - Always-on payload fields are metadata only (state names, finality
-      flags, character counts, token counts, latency numbers, error types).
-    - Verbose content (verbatim STT transcripts, LLM message bodies,
-      function-tool args/outputs) is gated TWICE: structlog by
-      ``log_verbose_content``, and the EventCollector by its own
-      ``redaction_mode``. Production runs both at minimum (audio events
-      on, verbose off, metadata redaction).
-    """
-    state: dict[str, float | None] = {"t0_monotonic": None}
+    """Attach EventCollector + structlog listeners. PII gating preserved."""
+    state: dict[str, float | None] = {
+        "t0_monotonic": None,
+        "last_usage_emit_at": None,
+    }
 
     def _ts(ev_created_at: float) -> dict[str, int]:
         now = time.monotonic()
@@ -410,8 +437,6 @@ def _wire_session_observability(
             {"old_state": ev.old_state, "new_state": ev.new_state},
             ev.created_at,
         )
-        # Phase 2: drive the InterviewController's idle-nudge state machine.
-        agent.on_user_state_changed(ev.new_state)
 
     @session.on("agent_state_changed")
     def _on_agent_state(ev: AgentStateChangedEvent) -> None:
@@ -473,16 +498,20 @@ def _wire_session_observability(
                     bool(getattr(output, "is_error", False)) if output else None
                 ),
             }
-            # Always include the *keys* of arguments (no values) so audit
-            # replay can see which args the LLM produced without leaking
-            # their content.
-            try:
-                arg_keys = list(getattr(call, "arguments", {}) or {})
-            except Exception:  # noqa: BLE001
-                arg_keys = []
+            raw_args = getattr(call, "arguments", None)
+            arg_keys: list[str] = []
+            if isinstance(raw_args, dict):
+                arg_keys = list(raw_args.keys())
+            elif isinstance(raw_args, str) and raw_args.strip():
+                try:
+                    parsed = json.loads(raw_args)
+                except (ValueError, TypeError):
+                    parsed = None
+                if isinstance(parsed, dict):
+                    arg_keys = list(parsed.keys())
             payload["argument_keys"] = arg_keys
             if log_verbose_content:
-                payload["arguments"] = getattr(call, "arguments", None)
+                payload["arguments"] = raw_args
                 payload["output"] = (
                     getattr(output, "output", None) if output else None
                 )
@@ -497,8 +526,14 @@ def _wire_session_observability(
         ev_created = getattr(ev, "created_at", time.time())
         _emit("audio.overlap", {}, ev_created)
 
+    USAGE_EMIT_INTERVAL_S = 30.0
+
     @session.on("session_usage_updated")
     def _on_usage(ev: SessionUsageUpdatedEvent) -> None:
+        last_at = state.get("last_usage_emit_at")
+        if last_at is not None and (ev.created_at - last_at) < USAGE_EMIT_INTERVAL_S:
+            return
+        state["last_usage_emit_at"] = ev.created_at
         try:
             usage = ev.usage.model_dump()
         except Exception:  # noqa: BLE001
@@ -520,7 +555,6 @@ def _wire_session_observability(
             "error": str(ev.error),
             "error_type": type(ev.error).__name__,
         }
-        # Errors bypass the log_audio_events gate — always log.
         log.error("audio.pipeline.error", **payload, **_ts(ev.created_at))
         collector.append(
             kind="audio.pipeline.error",
@@ -531,38 +565,11 @@ def _wire_session_observability(
 
 def _wire_close_handler(
     session: AgentSession,
-    agent: InterviewController,
+    agent: GenericInterviewAgent,
     *,
     collector: EventCollector,
     sink: EventLogSink | None,
 ) -> None:
-    """Attach the close-event handler that:
-    1. persists the SessionResult on the disconnect/error path (the
-       normal-end path persists earlier, in ``_terminate``)
-    2. publishes the ``session_outcome`` attribute
-    3. closes the EventCollector and writes the envelope to the sink
-
-    Two paths reach close:
-
-    1. Normal end — InterviewController's ``_terminate`` already persisted +
-       published ``session_outcome`` and set ``agent._persisted=True``. The
-       close handler is a no-op for the SessionResult path; the envelope is
-       still written here.
-    2. Candidate disconnects mid-session — clicks End Call, refreshes the
-       page (which closes their old room session), or network drops past
-       the SDK's reconnect window. ``close_on_disconnect=True`` (default)
-       fires the AgentSession close with ``reason=PARTICIPANT_DISCONNECTED``.
-       The controller's ``on_enter`` task is still running (or was cancelled
-       by the disconnect). We attempt a persist via
-       ``_persist_session_result(outcome)`` so a candidate that drops
-       mid-session still has a partial row written.
-
-    ``ERROR`` reason (LLM/STT/TTS plugin error) routes outcome='error' so the
-    frontend's ``useSessionOutcome`` hook surfaces ``DisconnectError`` with
-    ``ENGINE_ERROR`` rather than ``CompletionScreen``. The envelope is still
-    written for forensic review.
-    """
-
     _bg_tasks: set[asyncio.Task[None]] = set()
 
     @session.on("close")
@@ -574,31 +581,14 @@ def _wire_close_handler(
 
 def _wire_participant_disconnect(
     ctx: JobContext,
-    agent: InterviewController,
+    agent: GenericInterviewAgent,
 ) -> None:
-    """Drive the controller's natural termination path on participant
-    disconnect (End Call, page refresh, network drop past reconnect).
+    """Mark the session as candidate_disconnected when the candidate leaves.
 
-    Without this, ``RoomOptions.close_on_disconnect=True`` (LiveKit's
-    default) cancels only the in-flight AgentTask. The controller catches
-    the cancel, treats it as a forced task completion, and the question
-    loop dispatches the *next* question — which queues new generate_reply
-    calls onto a session that LiveKit is concurrently trying to drain.
-    The drain blocks waiting for queued ops to complete; the queued ops
-    block waiting for a session that's closing. Result: AgentSession
-    never emits its ``close`` event, ``_handle_close`` never runs,
-    ``record_session_result`` is never called, and the DB row stays
-    ``state='active'`` — so the candidate's next page-load lands in
-    Rejoin mode and waits for an interviewer that won't reappear.
-
-    Mirrors the cancellation pattern used by the controller's
-    ``end_interview_early`` tool: set ``_end_outcome='candidate_ended'``
-    and cancel the in-flight task. The on_enter loop's next iteration
-    sees ``_end_outcome`` is non-None, breaks, and runs ``_terminate``
-    which persists, publishes ``session_outcome``, and cleanly shuts
-    down the LiveKit session — at which point the AgentSession's close
-    event fires and the envelope-writing path in ``_handle_close``
-    runs idempotently (``_persisted=True`` short-circuits the persist).
+    Without this, the AgentSession close handler would default to
+    ``completed`` for a hang-up, which lies. The bare agent has no
+    end_interview_early intent path, so candidate_disconnected is the
+    only non-error termination that comes from the candidate side.
     """
 
     def _on_participant_disconnected(participant: object) -> None:
@@ -611,22 +601,18 @@ def _wire_participant_disconnect(
             already_terminating=agent._end_outcome is not None,
         )
         if agent._end_outcome is None:
-            agent._end_outcome = "candidate_ended"
-        agent._complete_inflight_task(reason="task_timeout")
-        if agent._current_task_run is not None and not agent._current_task_run.done():
-            agent._current_task_run.cancel()
+            agent._end_outcome = "candidate_disconnected"
 
     ctx.room.on("participant_disconnected", _on_participant_disconnected)
 
 
 async def _handle_close(
     ev: CloseEvent,
-    agent: InterviewController,
+    agent: GenericInterviewAgent,
     collector: EventCollector,
     sink: EventLogSink | None,
 ) -> None:
-    """Async body of the close-event handler. See ``_wire_close_handler`` docstring."""
-    log = structlog.get_logger("interview-engine")
+    """Persist the SessionResult, publish session_outcome, write envelope."""
     log.info(
         "session.close",
         reason=ev.reason.value,
@@ -634,40 +620,27 @@ async def _handle_close(
         already_persisted=agent._persisted,
     )
 
-    # Append session.close to the audit envelope so the on-disk JSON has a
-    # terminal event marking how the session ended. Surface
-    # knockout_failures_count from the live controller record.
-    knockout_count = len(getattr(agent, "_knockout_failures", []))
     collector.append(
         kind="session.close",
         payload={
             "reason": ev.reason.value,
             "persisted": agent._persisted,
-            "knockout_failures_count": knockout_count,
             "has_error": bool(ev.error),
+            "controller_end_outcome": getattr(agent, "_end_outcome", None),
         },
         wall_ms=int(time.time() * 1000),
     )
 
-    outcome = "error" if ev.reason == CloseReason.ERROR else "completed"
+    if ev.reason == CloseReason.ERROR:
+        outcome: SessionOutcome = "error"
+    elif agent._end_outcome is not None:
+        outcome = agent._end_outcome
+    else:
+        outcome = "candidate_disconnected"
 
-    # 1. Persist the SessionResult on the disconnect / error path.
-    #
-    # InterviewController._terminate() already persists + publishes BEFORE
-    # the AgentSession close fires for the normal-end path, so this branch
-    # is only meaningful when the controller never reached _terminate
-    # (mid-session disconnect / error). SessionOutcome is a closed Literal
-    # (completed / knockout_closed / time_expired / candidate_ended /
-    # candidate_unresponsive / error). The close handler only fires for
-    # paths the controller didn't reach _terminate on — disconnect / error.
-    # Map ERROR to "error"; everything else to "completed" since we can't
-    # know the controller's intended outcome at this point.
     if not agent._persisted:
         try:
-            controller_outcome = (
-                "error" if ev.reason == CloseReason.ERROR else "completed"
-            )
-            await agent._persist_session_result(controller_outcome)
+            await agent._persist_session_result(outcome)
         except Exception as exc:  # noqa: BLE001
             log.error(
                 "session.close.persist_failed",
@@ -675,15 +648,5 @@ async def _handle_close(
                 error_type=type(exc).__name__,
             )
 
-    # 2. Publish session_outcome (existing behavior; both classes implement it).
     await agent._publish_session_outcome(outcome)
-
-    # 3. Write the envelope. The controller's `_terminate` already wrote
-    # it on the normal path (this is a no-op there). On the disconnect/
-    # error path where _terminate didn't run, this is the safety net.
-    # The write is fire-and-forget at the asyncio level — if the worker
-    # process tears down before this completes, the envelope is lost.
-    # That's acceptable for the safety-net case (controller crashed
-    # mid-session); the normal path is covered by the inline write in
-    # `_terminate`.
     await agent._finalize_event_log(reason="close_handler")

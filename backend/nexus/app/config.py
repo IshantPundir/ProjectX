@@ -203,14 +203,26 @@ class Settings(BaseSettings):
     # task lands, this field can be removed.
     interview_engine_jwt_secret: str = ""
 
-    engine_agent_name: str = "Dakota-1785"
+    # Default agent name. The pre-overhaul "Dakota-1785" reads as a
+    # robotic identifier; "Sam" is gender-neutral, short (one syllable for
+    # TTS efficiency), and unambiguous. Tenants can override per-session
+    # via tenant_settings.engine_agent_name.
+    engine_agent_name: str = "Sam"
     # Turn detection / endpointing (forwarded to AgentSession)
     engine_endpointing_min_delay: float = 0.3
     engine_endpointing_max_delay: float = 2.5
-    # Silero VAD prewarm
+    # Silero VAD prewarm.
+    # Tightened from the pre-overhaul defaults after the test-session
+    # event log showed pervasive over-cutting (single utterances split
+    # into 3+ finals, "Okay. / Thanks for the / suggestions." pattern):
+    #   - min_speech_duration 0.05 → 0.15: ignore sub-150ms blips that
+    #     were getting promoted to candidate "speech" (mouse clicks,
+    #     keyboard taps, throat clears).
+    #   - min_silence_duration 0.55 → 0.7: wait an extra 150ms before
+    #     declaring end-of-utterance, reducing mid-thought false EOU.
     engine_silero_activation_threshold: float = 0.3
-    engine_silero_min_speech_duration: float = 0.05
-    engine_silero_min_silence_duration: float = 0.55
+    engine_silero_min_speech_duration: float = 0.15
+    engine_silero_min_silence_duration: float = 0.7
     # Observability
     engine_log_audio_events: bool = True
     engine_log_user_transcripts: bool = False
@@ -286,13 +298,14 @@ class Settings(BaseSettings):
     interview_tts_language: str = "en"
 
     # End-of-utterance confidence floor for the multilingual turn-detector
-    # plugin. None (default) lets the plugin choose. Raising this above the
-    # plugin default (~0.15 in current versions) makes the agent wait
-    # longer before deciding the candidate has finished speaking — useful
-    # in noisy environments where stray sound bursts can prematurely
-    # trigger end-of-turn. Don't set blindly; tune from real session
-    # latency data. Range: 0.0 – 1.0.
-    interview_turn_detector_unlikely_threshold: float | None = None
+    # plugin. None lets the plugin choose; the test-session event log
+    # showed EOU delays of 0.5–0.8s with the plugin default, contributing
+    # to perceived latency above the 1.5s P95 SLA. 0.15 is the ballpark
+    # plugin default at the current livekit-plugins-turn-detector version
+    # — pinning explicitly makes the value visible in startup logs and
+    # in the audit envelope's model_versions payload, which previously
+    # serialized "None" as a string. Range: 0.0 – 1.0.
+    interview_turn_detector_unlikely_threshold: float | None = 0.15
 
     @field_validator("interview_engine_jwt_secret")
     @classmethod

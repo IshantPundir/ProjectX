@@ -10,12 +10,26 @@ from __future__ import annotations
 from app.config import Settings
 
 
-def test_engine_event_log_settings_defaults() -> None:
+def test_engine_event_log_settings_defaults(monkeypatch) -> None:
+    """Verify the documented defaults — independent of any .env file the
+    developer may have set locally for live debugging (the user's .env
+    has ENGINE_EVENT_LOG_REDACTION=full so they can read transcripts in
+    audit envelopes; that environment override must not bleed into
+    default-assertion tests).
+    """
+    # Strip the env vars whose .env values would shadow the class-level
+    # defaults we're trying to pin.
+    for var in (
+        "ENGINE_EVENT_LOG_SINK",
+        "ENGINE_EVENT_LOG_DIR",
+        "ENGINE_EVENT_LOG_REDACTION",
+        "AWS_S3_BUCKET_ENGINE_EVENTS",
+    ):
+        monkeypatch.delenv(var, raising=False)
     s = Settings(
-        # Required-in-non-test fields (skip via test envvars in conftest);
-        # we instantiate Settings directly here to assert defaults.
         candidate_jwt_secret="x" * 32,
         interview_engine_jwt_secret="x" * 32,
+        _env_file=None,  # type: ignore[call-arg]
     )
     assert s.engine_event_log_sink == "local"
     assert s.engine_event_log_dir == "/tmp/engine-events"
