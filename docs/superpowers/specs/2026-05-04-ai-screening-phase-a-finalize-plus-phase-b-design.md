@@ -121,7 +121,11 @@ async def _say(self, text: str, *, allow_interruptions: bool = True) -> None:
     # safety check before TTS — never bypass
     safety = check_safety(text)
     if not safety.is_safe:
-        # Phase B: log + raise. Phase C wires retry/fallback inside SpeechAgent.
+        # Hardcoded-string drift: vetted Phase-B strings should always pass.
+        # If they don't, log every violation, emit envelope event, fall back
+        # to a pre-validated static string, and continue. Never crash mid-call.
+        # Phase C's retry/fallback inside SpeechAgent.render is a separate
+        # concern (LLM output drift, not hardcoded-string drift).
         for v in safety.violations:
             self._collector.append(
                 kind=SPEECH_SAFETY_VIOLATION,
@@ -132,11 +136,18 @@ async def _say(self, text: str, *, allow_interruptions: bool = True) -> None:
                 },
                 wall_ms=int(time.time() * 1000),
             )
-        raise RuntimeError(f"Phase B: hardcoded utterance failed safety: {safety.violations}")
+        self._collector.append(
+            kind=SPEECH_FALLBACK_USED,
+            payload={"reason": "phase_b_hardcoded_safety_violation"},
+            wall_ms=int(time.time() * 1000),
+        )
+        text = _PHASE_B_SAFETY_FALLBACK_TEXT  # imported from _phase_b_utterances
     await self.session.say(text, allow_interruptions=allow_interruptions)
 ```
 
 Awaiting `session.say(...)` blocks until playback completes. The orchestrator's main loop relies on this for deterministic ordering: the candidate has heard the utterance before we wait for the next `UserInputTranscribedEvent(final=True)`. Fire-and-forget (`handle = session.say(...)` without `await`) is forbidden in the main loop.
+
+`_PHASE_B_SAFETY_FALLBACK_TEXT` is defined at module level in `_phase_b_utterances.py` with a **module-import-time assertion** that it passes `check_safety`. If the fallback itself drifts and trips a safety rule, the import fails and the agent process cannot start — the right loudness for a load-bearing recovery path. See §4.3 for the constant + assertion.
 
 The single-entry-point invariant is enforced by an AST test (§5.4).
 
@@ -175,7 +186,7 @@ Phase B's orchestrator implements:
 4. `state.transition(InterviewPhase.MAIN_LOOP)` — emits `phase_changed`.
 5. **For each `QuestionConfig` in `config.stage.questions`:**
    - Set `QuestionState.asked_at = now()`, `asked_mode = "standard"`.
-   - `await self._persistence.write_state(state)` (best-effort).
+   - **The orchestrator (not the state model) calls** `await self._persistence.write_state(self._state)` after every `state.transition(...)` invocation. This is best-effort, non-blocking, never raises. The architectural split is intentional: `state.py` is pure data-layer (no `persistence.py` import); `persistence.py` is I/O-layer; `structured_agent.py` is the only layer that calls both. Don't be tempted to hook persistence into `state.transition()` itself — that would couple data layer to I/O in the wrong direction.
    - Emit `orchestrator.question_asked` envelope event with payload `{question_id, position, mode: "standard"}`.
    - `await self._say(<ask_string with question.text>)`.
    - Wait for one `UserInputTranscribedEvent(final=True)`. Treat unconditionally as substantive.
@@ -239,10 +250,15 @@ Sourced from `event_kinds.py` (already declared up-front, no string drift):
 Per the `app/pubsub.py::_get_client()` pattern verified in the spec audit:
 
 ```python
-# in agent.py entrypoint(...), after building the EventCollector
-from app.pubsub import _get_client as get_redis_client
+# in agent.py entrypoint(...), after building the EventCollector.
+# Reusing app.pubsub's process-level memoized Redis client per Phase A
+# close-out Flag 5; LedgerPersistence is the second legitimate consumer.
+# No separate engine pool needed. The leading-underscore convention is
+# acknowledged but accepted for this scope; promoting to a public name
+# is deferred to a separate small commit if a third consumer appears.
+from app.pubsub import _get_client as _get_redis_client
 persistence = LedgerPersistence(
-    client=get_redis_client(),
+    client=_get_redis_client(),
     tenant_id=tenant_id_str,
     session_id=session_id,
 )
@@ -250,7 +266,7 @@ persistence = LedgerPersistence(
 
 One process-level memoized `aioredis.Redis` client is shared across all per-session `LedgerPersistence` instances. Not a per-session client, not a Dramatiq-broker reconstruction — the same shared client `app/pubsub.py` already exposes for fanout.
 
-`LedgerPersistence.write_state` is called on every `state.transition()`. `write_ledger` is called once per question completion. Both are best-effort and never raise. Failures log at warning. `detect_gaps(...)` is called inside `_handle_close` and the result is emitted as `PERSISTENCE_GAPS_DETECTED`.
+`LedgerPersistence.write_state` is called by the orchestrator (`structured_agent.py`) on every `state.transition()` call site. `write_ledger` is called once per question completion. Both are best-effort and never raise. Failures log at warning. `detect_gaps(...)` is called inside `_handle_close` and the result is emitted as `PERSISTENCE_GAPS_DETECTED`. The state-model layer (`state.py`) does NOT import persistence — see §3.3 for the architectural-split rationale.
 
 The `LedgerPersistence` module + class docstring is updated as part of the Phase A tail to name `app/pubsub.py::_get_client()` explicitly.
 
@@ -303,7 +319,9 @@ The `LedgerPersistence` module + class docstring is updated as part of the Phase
 
 Both deferrals are tracked in §6 (carryforward) so they cannot be silently lost.
 
-### 4.3 `_phase_b_utterances.py` docstring
+### 4.3 `_phase_b_utterances.py` shape
+
+The module exports four strings and asserts the safety-fallback string at import time:
 
 ```python
 """Throwaway hardcoded utterances for Phase B.
@@ -320,16 +338,35 @@ site with `await speech_agent.render(template, version, inputs)` →
 `await session.say(rendered.text)`, with the same single-entry-point
 discipline.
 
-Three strings ship in Phase B:
+Four strings ship in Phase B:
 - INTRO with placeholders: {name}, {role}, {minutes}
 - ASK_QUESTION_STANDARD with: {question_text}
 - WRAP_NORMAL (no placeholders)
+- _PHASE_B_SAFETY_FALLBACK_TEXT — load-bearing recovery path used by
+  StructuredInterviewAgent._say when an utterance fails check_safety.
 
-All three are designed to pass `speech.safety.check_safety` cleanly. If
-a future edit trips a safety rule the integration test surface
-catches it (see tests/interview_engine/test_structured_agent_integration.py).
+All four are designed to pass `speech.safety.check_safety` cleanly. The
+fallback's safety is enforced at module import time (see assertion
+below) so a regression that would crash the agent in production fails
+loudly during boot instead.
 """
+from app.modules.interview_engine.speech.safety import check_safety
+
+INTRO = "Hi {name}, I'll be running a short technical screen for the {role} role today. We'll be about {minutes} minutes. Take your time, and feel free to ask me to repeat anything. Let's get started."
+ASK_QUESTION_STANDARD = "Got it. Next question: {question_text}"
+WRAP_NORMAL = "That's everything from my side. The recruiting team will be in touch with next steps."
+_PHASE_B_SAFETY_FALLBACK_TEXT = "Let me ask you about something else. The recruiting team will follow up with you."
+
+# Module-import-time assertion: a safety regression in the fallback itself
+# would otherwise allow the agent to limp on into production. Failing the
+# import is the right loudness for a load-bearing recovery path.
+assert check_safety(_PHASE_B_SAFETY_FALLBACK_TEXT).is_safe, (
+    "_PHASE_B_SAFETY_FALLBACK_TEXT failed check_safety — fix the string before "
+    "the agent process is allowed to start."
+)
 ```
+
+The exact wording of the four strings is not load-bearing on this spec — implementation may tune them as long as (a) all four pass `check_safety` and (b) the placeholder set on each is exactly as documented above so the orchestrator's `.format(...)` call sites don't drift.
 
 ---
 
@@ -376,6 +413,10 @@ Assertions:
 The set-membership assertion (first-ordered, last-ordered, middle as multiset) is deliberate. Strict ordering of all events is brittle when async Redis writebacks fire concurrently with envelope appends; counts + first-and-last anchors prove the path executed without flaking on interleaving.
 
 **Case B — disconnect mid-session.** Scripted candidate answers Q1 then disconnects. Simulated by directly invoking the registered `participant_disconnected` callback (the one wired by `_wire_participant_disconnect`) with a mock participant object after the `UserInputTranscribedEvent` for Q1, then triggering the close handler.
+
+**Test mechanics:** after asserting Q1 was processed, cancel the orchestrator's main-loop task (which is awaiting the `UserInputTranscribedEvent` for Q2 that will never fire), then directly invoke the close handler. Cancellation is the test's stand-in for LiveKit's participant-timeout-driven close; without it the awaiting task hangs the test. Verify that `state.phase` immediately after cancellation is `MAIN_LOOP` (not yet `CLOSED`) and that the close handler observes `_end_outcome="candidate_disconnected"` and performs the direct `MAIN_LOOP→CLOSED` transition itself, then `set_exit_mode(ExitMode.TECHNICAL_FAILURE, ended_at=...)`.
+
+**Safety-fallback variant:** a third sub-case asserts that injecting a deliberately-unsafe string into `_say(...)` (test-only override of one Phase B utterance) emits both `SPEECH_SAFETY_VIOLATION` and `SPEECH_FALLBACK_USED` envelope events, and that the candidate hears the `_PHASE_B_SAFETY_FALLBACK_TEXT` string instead of crashing the session. This covers the §3.1 Layer 3 fallback path.
 
 Assertions:
 - `SessionResult.question_results[0].was_skipped=False`, `transcript_entries` has 1 entry.
@@ -441,23 +482,26 @@ The close-out commit message body must explicitly list:
 
 ## 8. Commit sequence
 
+Numbered slots are the planned, pre-gate commits. Post-gate commits (zero or more fix commits + the close-out) are described but not numbered, since their count and exact subject lines depend on what the smoke gate surfaces.
+
 | # | Commit (codebase convention: `<type>(<scope>): <description>`) | Phase | Atomic |
 |---|---|---|---|
 | C1 | `docs(interview_engine): document _get_client() reuse contract in LedgerPersistence` | A tail | yes |
 | C2 | `feat(interview_engine): bind engine-scoped TemplateLoader instance` | A tail | yes |
 | C3 | `feat(interview_engine): add orchestrator/flow.py for Phase B linear progression` | B prep | yes |
-| C4 | `feat(interview_engine): add hardcoded-utterance stub for Phase B` | B prep | yes |
+| C4 | `feat(interview_engine): add hardcoded-utterance stub for Phase B` | B prep | yes (includes `_PHASE_B_SAFETY_FALLBACK_TEXT` + module-import-time assertion per §4.3) |
 | C5 | `feat(interview_engine): swap GenericInterviewAgent → StructuredInterviewAgent end-to-end` | B core | yes (squashed: structured_agent.py + agent.py edits + LedgerPersistence wiring + system-prompt swap + preemptive_generation flip) |
 | C6 | `test(interview_engine): unit tests for orchestrator/flow.py` | B test | yes |
-| C7 | `test(interview_engine): integration test for StructuredInterviewAgent SessionResult shape` | B test | yes |
+| C7 | `test(interview_engine): integration test for StructuredInterviewAgent SessionResult shape` | B test | yes (includes happy path + disconnect + safety-fallback sub-case per §5.3) |
 | C8 | `test(interview_engine): AST invariant on session.say single-entry-point` | B test | yes |
-| (gate) | **Manual smoke gate — happy path + disconnect** | B verify | not a commit |
-| C8.x | (zero or more) `fix(interview_engine): <description>` from smoke-gate findings | B fix | yes |
-| C(final) | `docs(ai-screening): Phase A finalize + Phase B close-out — StructuredInterviewAgent shipped` | B finalize | yes |
+
+**Smoke gate (not a commit):** Manual happy-path + disconnect runs in a real LiveKit session per §6 acceptance criteria. The gate must pass before the close-out commit is allowed to land.
+
+**Post-gate commits (unnumbered, count depends on smoke-gate findings):**
+- Zero or more `fix(interview_engine): <description>` commits, one per fix surfaced by the smoke gate. Each is small, surgical, and atomic. If the smoke gate passes cleanly with no fixes, this category is empty.
+- Exactly one close-out commit: `docs(ai-screening): Phase A finalize + Phase B close-out — StructuredInterviewAgent shipped`. Mirrors the established `docs(ai-screening): ...` scope (commits `de33731`, `9d4a65a`, `23e0583`). Body lists every carryforward item from §7 explicitly — including any deferrals or behavioral nuances discovered during the smoke gate. The close-out describes what shipped, not what was predicted; it lands AFTER all fix commits.
 
 C5 squashes the new class introduction and the entrypoint swap into one atomic commit. Solo-dev posture, no production exposure yet — flag-gating is not justified, and a class-without-call-site snapshot in git history is the kind of thing that gets stale silently if the next commit stalls.
-
-The close-out commit's commit-message subject mirrors the established `docs(ai-screening): ...` scope (commits `de33731`, `9d4a65a`, `23e0583`).
 
 ---
 
