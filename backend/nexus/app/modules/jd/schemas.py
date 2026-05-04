@@ -7,6 +7,7 @@ Signal Schema v2: universal flat list with type, priority, weight,
 knockout, stage, evaluation_method, and provenance metadata."""
 
 from datetime import date, datetime
+from functools import cache
 from typing import Literal
 from uuid import UUID
 
@@ -65,10 +66,31 @@ _EVALUATION_DEFAULTS: dict[tuple[str, str], EvaluationMethod] = {
 }
 
 
+@cache
 def default_evaluation_method(
     signal_type: SignalType, stage: SignalStage,
 ) -> EvaluationMethod:
-    """Return the default evaluation method for a (type, stage) pair."""
+    """Return the default evaluation method for a (type, stage) pair.
+
+    Pure function over a small fixed lookup table — `functools.cache`
+    makes that purity machine-verifiable and lets future readers know
+    the output is stable for any given (type, stage) input.
+
+    **Cross-module consumers** (in addition to this module's own
+    `jd/router.py::_snapshot_to_response`):
+
+    - ``app.modules.interview_runtime.service._project_signal_metadata``
+      (Phase A.1 onwards) — uses this to fill `evaluation_method` when
+      projecting `JobPostingSignalSnapshot.signals` JSONB into
+      `SessionConfig.signal_metadata`. Initial-extraction snapshots
+      persist `SignalItemV2` dumps which lack `evaluation_method`;
+      this default is the read-time backstop.
+
+    Renaming or deprecating this function requires updating both
+    call sites — `interview_runtime` will refuse to start sessions if
+    the import breaks, but a silent semantic change here would
+    propagate into the structured agent's signal-evaluation routing.
+    """
     return _EVALUATION_DEFAULTS.get(
         (signal_type, stage), "verbal_response",
     )

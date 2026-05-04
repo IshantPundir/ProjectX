@@ -253,6 +253,10 @@ def _project_signal_metadata(raw_signals: list[object]) -> list[SignalMetadata]:
     they are recruiter-facing, not agent decision inputs. Order is preserved
     so `signal_metadata[i]` aligns with `signals[i]`.
     """
+    # TODO(post-v1): consider plumbing source / inference_basis if Report Builder
+    # wants signal-confidence weighting (e.g. weighting `ai_extracted` evidence
+    # higher than `ai_inferred` when the candidate's quote is ambiguous).
+    # Decision deferred 2026-05-04 — agent makes flow decisions, not scoring.
     out: list[SignalMetadata] = []
     for s in raw_signals:
         if not isinstance(s, dict):
