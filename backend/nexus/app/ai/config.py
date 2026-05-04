@@ -107,6 +107,14 @@ class AIConfig:
     # All three go through ``app.ai.client.get_openai_client()`` (already
     # an ``instructor.AsyncInstructor``) — see effort-gating contract in
     # this module's docstring.
+    #
+    # TODO(post-v1): unified field_validator across all *_effort properties
+    # (extraction, reenrichment, question_bank, interview, evaluators) to
+    # reject non-empty effort when paired with a *-chat-latest model — would
+    # 400 every call. Today the runtime-gating contract (caller checks
+    # ``if effort:`` before forwarding) is the only defense. Same risk
+    # surface as ``interview_reasoning_effort``; the right scope is a single
+    # validator covering all five effort properties, not just evaluators.
     @property
     def evaluator_intent_model(self) -> str:
         return settings.evaluator_intent_model
