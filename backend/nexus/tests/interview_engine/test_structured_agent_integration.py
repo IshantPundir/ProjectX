@@ -26,11 +26,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import uuid
-from collections.abc import Callable
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from livekit.agents.llm import StopResponse
 
 from app.modules.interview_engine.agent import _handle_close
 from app.modules.interview_engine.event_kinds import (
@@ -118,13 +118,15 @@ def _make_session_config(num_questions: int) -> SessionConfig:
 class _FakeAgentSession:
     """Minimal AgentSession surface used by StructuredInterviewAgent.
 
-    Records every session.say(text) call. Lets the test fire
-    UserInputTranscribedEvent listeners on demand.
+    Records every session.say(text) call. The orchestrator's
+    "next user turn" signal is delivered via the agent's
+    `on_user_turn_completed` hook (see `_fire_user_turn` helper at
+    module scope) — NOT via this session's events, since the framework
+    routes EOU through the turn detector, not through raw STT.
     """
 
     def __init__(self) -> None:
         self.said_texts: list[str] = []
-        self._user_transcript_listeners: list[Callable[[Any], None]] = []
         # Mock room + room_io for set_attributes call from
         # _publish_session_outcome.
         self.room_io = MagicMock()
@@ -133,36 +135,23 @@ class _FakeAgentSession:
     async def say(self, text: str, *, allow_interruptions: bool = True) -> None:
         self.said_texts.append(text)
 
-    def on(
-        self,
-        event_name: str,
-        callback: Callable[[Any], None] | None = None,
-    ) -> Callable[[Any], None]:
-        """Register an event listener. Returns the callback for decorator use."""
-        if callback is not None and event_name == "user_input_transcribed":
-            self._user_transcript_listeners.append(callback)
-            return callback
-        # When used as a decorator factory (@session.on("event_name")),
-        # callback is None — return a decorator that stores the listener.
-        def _decorator(fn: Callable[[Any], None]) -> Callable[[Any], None]:
-            if event_name == "user_input_transcribed":
-                self._user_transcript_listeners.append(fn)
-            return fn
-        return _decorator  # type: ignore[return-value]
 
-    def off(self, event_name: str, callback: Callable[[Any], None]) -> None:
-        if event_name == "user_input_transcribed":
-            with contextlib.suppress(ValueError):
-                self._user_transcript_listeners.remove(callback)
+async def _fire_user_turn(
+    agent: StructuredInterviewAgent, text: str,
+) -> None:
+    """Simulate a turn-detector-confirmed end-of-utterance.
 
-    def fire_user_transcript(
-        self, transcript: str, *, is_final: bool = True
-    ) -> None:
-        ev = MagicMock()
-        ev.transcript = transcript
-        ev.is_final = is_final
-        for cb in list(self._user_transcript_listeners):
-            cb(ev)
+    Calls the real `Agent.on_user_turn_completed` with a mocked
+    `ChatMessage` whose `text_content` is `text`. The agent resolves
+    its pending `_next_user_turn_future` (which the orchestrator is
+    awaiting) and then raises `StopResponse` to suppress the
+    framework's auto-reply. The test catches `StopResponse` because
+    in production the framework catches it at a higher layer.
+    """
+    new_message = MagicMock()
+    new_message.text_content = text
+    with contextlib.suppress(StopResponse):
+        await agent.on_user_turn_completed(MagicMock(), new_message)
 
 
 class _RecordingCollector:
@@ -310,11 +299,12 @@ async def test_happy_path_produces_completed_session_result(
     # Launch on_enter — it kicks off the main loop as a background task.
     await agent.on_enter()
 
-    # Drive the conversation: one transcribed utterance per question.
+    # Drive the conversation: one turn-detector-confirmed EOU per question.
     # say count grows by 1 per iter: INTRO is say #1, ASK_Qi is say #(i+2).
     for i in range(n_questions):
         await _wait_for_say_count(fake_session, expected=i + 2)
-        fake_session.fire_user_transcript(
+        await _fire_user_turn(
+            agent,
             f"My answer to challenge {i} mentions specific tools and outcomes.",
         )
 
@@ -423,7 +413,7 @@ async def test_disconnect_mid_session_produces_candidate_disconnected(
 
     # Answer Q0 (the first question).
     await _wait_for_say_count(fake_session, expected=2)  # INTRO + ASK Q0
-    fake_session.fire_user_transcript("My answer to Q0.")
+    await _fire_user_turn(agent, "My answer to Q0.")
 
     # Wait for ASK Q1 to be said — confirms Q0 completion was processed.
     await _wait_for_say_count(fake_session, expected=3)  # +ASK Q1

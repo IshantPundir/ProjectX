@@ -208,9 +208,26 @@ class Settings(BaseSettings):
     # TTS efficiency), and unambiguous. Tenants can override per-session
     # via tenant_settings.engine_agent_name.
     engine_agent_name: str = "Sam"
-    # Turn detection / endpointing (forwarded to AgentSession)
-    engine_endpointing_min_delay: float = 0.3
-    engine_endpointing_max_delay: float = 2.5
+    # Turn detection / endpointing (forwarded to AgentSession).
+    #
+    # Tuned for technical-interview UX where candidates think
+    # mid-sentence. The framework's MultilingualModel turn detector
+    # decides when within [min_delay, max_delay] to fire EOU based on
+    # context (does the user's text look like they're done?). Minimum
+    # is the floor — even with a high "user is done" probability, the
+    # session waits at least min_delay after speech stops.
+    #
+    # min_delay 1.0s (was 0.3): extra patience for thinking pauses.
+    #   Pre-fix the candidate's "Hey. So I would like map business
+    #   systems to..." was cut after a 0.3s pause at "...to" because
+    #   STT fired is_final=True and the orchestrator advanced. The
+    #   real fix is consuming `on_user_turn_completed` (turn-detector
+    #   EOU, not STT finals) — but a longer min_delay also gives the
+    #   turn detector more signal before deciding.
+    # max_delay 4.0s (was 2.5): cap the wait so a candidate who's
+    #   truly done isn't held up indefinitely.
+    engine_endpointing_min_delay: float = 1.0
+    engine_endpointing_max_delay: float = 4.0
     # Silero VAD prewarm.
     # Tightened from the pre-overhaul defaults after the test-session
     # event log showed pervasive over-cutting (single utterances split

@@ -1,14 +1,17 @@
 """StructuredInterviewAgent — the deterministic-flow LiveKit Agent.
 
 Phase B drives candidate utterances via:
-1. Pattern 2 hard guardrail — `llm_node` is overridden to emit zero
-   chunks, fully bypassing the realtime LLM autogen path.
+1. Pattern 2 hard guardrail — `on_user_turn_completed` raises
+   `StopResponse` (cancels the framework's auto-reply) and `llm_node`
+   is overridden to emit zero chunks (defense-in-depth for any path
+   that reaches it).
 2. The orchestrator's main loop generates each agent utterance from
    `_phase_b_utterances` (hardcoded English strings; throwaway), passes
    through `_say()` for safety + fallback, and calls
    `await self.session.say(text)`.
-3. Wait for the next `UserInputTranscribedEvent(final=True)`, treat the
-   transcript as substantive, advance.
+3. Wait for the framework's turn-detector-confirmed end-of-utterance
+   (resolved via `on_user_turn_completed`), treat the full turn text
+   as substantive, advance.
 
 Phase B scope (no Sufficiency Checker, no Intent Classifier, no Disclaim
 Classifier, no follow-ups, no deepening probes, no silence handling
@@ -24,7 +27,6 @@ beyond LiveKit's defaults, no reconnect protocol):
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import hashlib
 import time
 import uuid
@@ -32,7 +34,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 import structlog
-from livekit.agents import Agent, ChatContext, ChatMessage, UserInputTranscribedEvent
+from livekit.agents import Agent, ChatContext, ChatMessage
 from livekit.agents.llm import StopResponse
 
 from app.modules.interview_engine._phase_b_utterances import (
@@ -128,6 +130,14 @@ class StructuredInterviewAgent(Agent):
         # Built up during the main loop; folded into SessionResult on close.
         self._candidate_transcripts: dict[str, str] = {}
 
+        # The orchestrator's pending "next user turn" future, set by
+        # `_arm_user_turn` immediately before each `_say` and resolved
+        # by `on_user_turn_completed` when the framework's turn detector
+        # confirms end-of-utterance. See `on_user_turn_completed` for
+        # the rationale on EOU vs STT-`is_final` (smoke gate
+        # 8cbc0ff4-...).
+        self._next_user_turn_future: asyncio.Future[str] | None = None
+
         # Initialize state + ledger from SessionConfig.
         # job_id and candidate_id come from the C2 SessionConfig fields;
         # missing values raise here at construction time — the correct
@@ -160,26 +170,48 @@ class StructuredInterviewAgent(Agent):
         super().__init__(instructions=INERT_SYSTEM_PROMPT)
 
     # ------------------------------------------------------------------
-    # Layer 1a — hard guardrail (turn-level). Raise StopResponse from
-    # `on_user_turn_completed` to cancel the framework's auto-reply
-    # (`AgentSession._generate_reply`) before it can schedule a competing
-    # SpeechHandle that would race with the orchestrator's
-    # `session.say()` for the next question. The first smoke-gate run
-    # confirmed: without this, every user transcript fires
-    # `audio.speech.created source=generate_reply user_initiated=True`,
-    # which interrupts the orchestrator's in-flight `say()` and
-    # silences Q2+. Pattern lifted directly from
-    # `examples/voice_agents/push_to_talk.py` and the transcriber/
-    # translator examples in livekit-agents — `StopResponse` is the
+    # Layer 1a — hard guardrail + turn-detector EOU bridge.
+    #
+    # Two responsibilities, both load-bearing for Phase B's UX:
+    #
+    # 1. Cancel the framework's auto-reply (`StopResponse`). Without
+    #    this, every user turn fires
+    #    `AgentSession._generate_reply`, which schedules a competing
+    #    SpeechHandle that races with the orchestrator's
+    #    `session.say()`. (Smoke gate 2c226524-...: silenced Q2+.)
+    #
+    # 2. Resolve the orchestrator's pending "next user turn" future
+    #    using the framework's turn-detector-confirmed end-of-utterance
+    #    signal — NOT raw STT `is_final` events. The previous
+    #    implementation listened to `user_input_transcribed`
+    #    `is_final=True`, but Deepgram fires `is_final=True` after
+    #    every ~1s pause, not at end-of-turn. The candidate's
+    #    thinking pauses caused premature advancement: Q0 cut at
+    #    "...map business systems to" (smoke gate 8cbc0ff4-...).
+    #
+    #    The framework's turn detector (`MultilingualModel`) consumes
+    #    STT output + dynamic endpointing + EOU context to decide when
+    #    the user is REALLY done. `on_user_turn_completed` fires only
+    #    after EOU is confirmed; `new_message.text_content` is the
+    #    full turn text, not a fragment.
+    #
+    # Pattern lifted from `examples/voice_agents/push_to_talk.py` and
+    # the transcriber/translator examples — `StopResponse` is the
     # documented mechanism for "transcribe but don't auto-respond"
-    # agents (which is exactly what the structured agent is doing
-    # at the framework level — the orchestrator decides every utterance
-    # via `session.say()`).
+    # agents.
     # ------------------------------------------------------------------
     async def on_user_turn_completed(
         self, turn_ctx: ChatContext, new_message: ChatMessage,
     ) -> None:
-        del turn_ctx, new_message  # consumed by the orchestrator's loop
+        del turn_ctx
+        text = (new_message.text_content or "").strip()
+        # Resolve the orchestrator's pending future, if armed.
+        future = self._next_user_turn_future
+        if future is not None and not future.done():
+            future.set_result(text)
+        # Cancel the auto-reply regardless. The orchestrator drives
+        # every utterance via `session.say()`; the framework must not
+        # generate its own reply.
         raise StopResponse()
 
     # ------------------------------------------------------------------
@@ -203,33 +235,25 @@ class StructuredInterviewAgent(Agent):
     # Layer 3 — single utterance entry point. AST-invariant test (Task 8)
     # asserts session.say(...) is only called from inside this method.
     #
-    # `allow_interruptions=False` is the Phase B default. The orchestrator
-    # drives every utterance; candidate input is captured BETWEEN
-    # utterances via `_wait_for_final_transcript`, not during them.
-    # Allowing interruptions caused two bugs in the first smoke gates:
+    # `allow_interruptions=True` (default). Candidates can barge in on
+    # the agent — natural voice UX. Interruptions are processed by the
+    # framework's turn detector + endpointing pipeline and surface as
+    # `on_user_turn_completed` once the candidate's turn is fully done.
+    # The orchestrator's main loop arms `_arm_user_turn` BEFORE the
+    # `_say`, so a candidate-initiated interruption that produces an
+    # immediate turn (and a final transcript) is captured by the
+    # already-armed future without race.
     #
-    #   (a) When the candidate was still speaking at the moment the
-    #       orchestrator called `say()` for the next question, VAD-mode
-    #       interruption cancelled the SpeechHandle BEFORE TTS produced
-    #       any audio — the candidate heard nothing. (Sessions
-    #       2c226524-... and ca971b63-...: only INTRO and Q1 reached
-    #       tts_metrics; Q2+ silenced.)
-    #   (b) When `_say` returns from an interruption, the orchestrator's
-    #       `_wait_for_final_transcript` registers its listener AFTER
-    #       the interrupting transcript already fired — so the listener
-    #       missed the transcript and hung until the next final
-    #       (typically a confused "are you still there?" 20-30 seconds
-    #       later).
-    #
-    # Phase F (Intent Classifier) re-introduces controlled interruption
-    # — meta-requests like "can you repeat?" need to barge in. Phase B
-    # is deliberately the opposite: every utterance plays to completion.
+    # Phase B treats the interruption text as the candidate's answer
+    # to the current question — no Intent Classifier yet (that's
+    # Phase F, where meta-requests like "can you repeat?" get semantic
+    # gating).
     # ------------------------------------------------------------------
     async def _say(
         self,
         text: str,
         *,
-        allow_interruptions: bool = False,
+        allow_interruptions: bool = True,
     ) -> None:
         safety = check_safety(text)
         if not safety.is_safe:
@@ -313,39 +337,45 @@ class StructuredInterviewAgent(Agent):
         else:
             log.info("structured_agent.main_loop.completed")
 
-    def _arm_final_transcript(self) -> asyncio.Future[str]:
-        """Pre-register a listener that resolves the returned future on
-        the next ``UserInputTranscribedEvent(final=True)``. The future
-        must be awaited later (typically after the current `_say`
-        completes).
+    def _arm_user_turn(self) -> asyncio.Future[str]:
+        """Arm a future resolved by the next turn-detector-confirmed
+        end-of-utterance.
 
-        This is a Future-returning helper rather than an `async def`
-        because the listener must be registered BEFORE the awaitable
-        operation it's racing — otherwise final transcripts that fire
-        DURING that operation are missed. Smoke gate ca971b63 confirmed
-        the race: a candidate finishing their answer near the end of
-        the agent's say would fire `is_final=True` while the agent
-        was still speaking; the previous `_wait_for_final_transcript`
-        registered AFTER the say returned and missed that event,
-        causing the orchestrator to hang for 20+ seconds until the
-        candidate spoke again.
+        The framework's `MultilingualModel` turn detector consumes STT
+        output + dynamic endpointing + EOU context to decide when the
+        user is really done. It fires `Agent.on_user_turn_completed`
+        with the FULL turn text — not a per-pause STT fragment.
 
-        The listener is detached automatically when the future resolves
-        (success, cancellation, or set-exception) via the done callback.
+        Listening to `on_user_turn_completed` (this method's resolution
+        path) instead of raw STT `is_final` events fixes the
+        premature-advance bug (smoke gate 8cbc0ff4-...): Deepgram fires
+        `is_final=True` on every ~1s pause, but candidates pause to
+        think mid-sentence; the previous implementation cut Q0 at
+        "...map business systems to" because the first STT pause
+        triggered advancement.
+
+        This must be called BEFORE the awaitable operation it's racing
+        (typically `_say` for the next question). Otherwise, an EOU
+        that fires DURING that operation is missed. Cleanup of
+        `_next_user_turn_future` happens via the done callback so a
+        cancelled awaiter doesn't leave a stale reference behind.
+
+        Only one user-turn future may be armed at a time. Re-arming
+        before the previous future resolves replaces the reference
+        (the unresolved future is garbage-collected — its awaiter
+        gets a CancelledError).
         """
         loop = asyncio.get_running_loop()
         future: asyncio.Future[str] = loop.create_future()
+        self._next_user_turn_future = future
 
-        def _on_user_transcript(ev: UserInputTranscribedEvent) -> None:
-            if ev.is_final and not future.done():
-                future.set_result(ev.transcript)
-
-        self.session.on("user_input_transcribed", _on_user_transcript)
-
-        def _detach(_: asyncio.Future[str]) -> None:
-            # Best-effort cleanup — `off` may raise on a closed session.
-            with contextlib.suppress(Exception):
-                self.session.off("user_input_transcribed", _on_user_transcript)
+        def _detach(fut: asyncio.Future[str]) -> None:
+            # Clear the agent's reference so a stray `on_user_turn_completed`
+            # after the orchestrator has moved on doesn't try to resolve
+            # this future. Best-effort — the field may already point to
+            # a freshly armed future from the next question.
+            if self._next_user_turn_future is fut:
+                self._next_user_turn_future = None
 
         future.add_done_callback(_detach)
         return future
@@ -446,13 +476,15 @@ class StructuredInterviewAgent(Agent):
             wall_ms=_wall_ms(),
         )
 
-        # Arm the transcript listener BEFORE saying. If a final transcript
-        # fires DURING `_say` (the candidate finishes their answer right
-        # as the agent's question audio ends), the listener catches it
-        # rather than missing the event during the pre-listener gap. See
-        # `_arm_final_transcript` for the full rationale (smoke gate
-        # ca971b63 confirmed the race).
-        transcript_future = self._arm_final_transcript()
+        # Arm the user-turn future BEFORE saying. The framework's
+        # turn-detector-confirmed EOU fires via `on_user_turn_completed`
+        # and resolves this future; pre-arming guarantees no race even
+        # when the candidate's turn completes during the agent's say
+        # (e.g., a fast barge-in). See `_arm_user_turn` and
+        # `on_user_turn_completed` for full rationale (smoke gates
+        # ca971b63 + 8cbc0ff4 confirmed both the race and the
+        # premature-advance bug from listening to STT `is_final`).
+        transcript_future = self._arm_user_turn()
 
         ask_text = ASK_QUESTION_STANDARD.format(question_text=q.text)
         await self._say(ask_text)
