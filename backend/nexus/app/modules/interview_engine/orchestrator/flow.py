@@ -4,9 +4,10 @@ No I/O, no LLMs, no DB. The structured agent (Phase B) calls these on
 every candidate-turn-resolution boundary to decide what to do next.
 
 Phase B scope:
-* `pick_next_question` walks `config.stage.questions` in position order
-  and returns the first one not yet completed (no ``QuestionState`` for
-  it, OR ``QuestionState.completed_at`` is None).
+* `pick_next_question` walks ``config.stage.questions`` in the order the
+  upstream provider produced — ``build_session_config`` orders by
+  ``is_mandatory DESC, position ASC`` (mandatory-first, then
+  position-ascending within each tier).
 * `evaluate_exit_condition` returns `ExitMode.COMPLETED` exactly when
   `pick_next_question` is None; otherwise returns None.
 
@@ -30,12 +31,14 @@ def pick_next_question(
 ) -> QuestionConfig | None:
     """Return the next QuestionConfig to ask, or None if all are done.
 
-    Phase B: walks ``config.stage.questions`` in position order. A
-    question is considered "done" when there is a corresponding
-    ``QuestionState`` in ``state.questions`` with a non-None
-    ``completed_at``. The first question with no QuestionState (asked
-    yet) — or with QuestionState but ``completed_at is None`` (in
-    progress) — is returned.
+    Phase B: walks ``config.stage.questions`` in the order the upstream
+    provider produced — ``build_session_config`` orders by
+    ``is_mandatory DESC, position ASC`` (mandatory-first, then
+    position-ascending within each tier). A question is considered "done"
+    when there is a corresponding ``QuestionState`` in ``state.questions``
+    with a non-None ``completed_at``. The first question with no
+    QuestionState (not yet asked) — or with QuestionState but
+    ``completed_at is None`` (in progress) — is returned.
 
     Returns None when every question has a QuestionState with
     completed_at set, OR when ``config.stage.questions`` is empty.

@@ -7,12 +7,16 @@ the modular-monolith uplift.
 """
 
 from app.modules.interview_runtime.schemas import (
+    CandidateContext,
+    CompanyContext,
     KnockoutFailure,
     QuestionConfig,
     QuestionResult,
+    QuestionRubric,
     SessionConfig,
     SessionResult,
     SignalMetadata,
+    StageConfig,
     SteeringObservation,
     TranscriptEntry,
 )
@@ -22,12 +26,16 @@ from app.modules.interview_runtime.service import (
 )
 
 __all__ = [
+    "CandidateContext",
+    "CompanyContext",
     "KnockoutFailure",
     "QuestionConfig",
     "QuestionResult",
+    "QuestionRubric",
     "SessionConfig",
     "SessionResult",
     "SignalMetadata",
+    "StageConfig",
     "SteeringObservation",
     "TranscriptEntry",
     "build_session_config",
