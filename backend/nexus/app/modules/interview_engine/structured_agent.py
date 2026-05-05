@@ -43,8 +43,9 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal, cast
 
 import structlog
 from livekit.agents import Agent, ChatContext, ChatMessage
@@ -70,8 +71,8 @@ from app.modules.interview_engine.speech import (
     SpeechAgent,
     SpeechRenderError,
     SpeechRenderHandle,
+    deliveries,
 )
-from app.modules.interview_engine.speech import deliveries
 from app.modules.interview_runtime import (
     QuestionConfig,
     QuestionResult,
@@ -287,8 +288,8 @@ class StructuredInterviewAgent(Agent):
 
     async def _consume_pending_or_render(
         self,
-        render_fn,  # render_intro / render_ask_question_standard / render_wrap_normal
-        **inputs,
+        render_fn: Callable[..., Awaitable[SpeechRenderHandle]],
+        **inputs: object,
     ) -> SpeechRenderHandle:
         """Use the pending slot if hot; otherwise render synchronously.
 
@@ -317,7 +318,7 @@ class StructuredInterviewAgent(Agent):
                 )
                 return await deliveries.fallback_for(
                     self._speech_agent,
-                    template_name=render_fn.template_name,
+                    template_name=cast(Any, render_fn).template_name,
                     failure_reason=exc.reason,
                     render_id=exc.render_id,
                     **inputs,
@@ -339,7 +340,7 @@ class StructuredInterviewAgent(Agent):
             )
             return await deliveries.fallback_for(
                 self._speech_agent,
-                template_name=render_fn.template_name,
+                template_name=cast(Any, render_fn).template_name,
                 failure_reason=exc.reason,
                 render_id=exc.render_id,
                 **inputs,

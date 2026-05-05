@@ -17,7 +17,6 @@ from app.modules.interview_engine.speech.agent import (
 )
 from app.modules.interview_engine.speech.fallbacks import build_fallback_text
 
-
 _F = TypeVar("_F", bound=Callable[..., Awaitable[SpeechRenderHandle]])
 
 
@@ -75,7 +74,7 @@ async def fallback_for(
     template_name: str,
     failure_reason: SpeechRenderErrorReason,
     render_id: str | None,
-    **inputs,
+    **inputs: object,
 ) -> SpeechRenderHandle:
     """Constructs the fallback handle for a given template.
 

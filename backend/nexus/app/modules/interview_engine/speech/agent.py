@@ -14,9 +14,23 @@ Both satisfy the SpeechRenderHandle Protocol structurally.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterable
+import contextlib
+import re
+import time
+import uuid
+from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import dataclass
-from typing import Literal, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
+
+import openai
+import structlog
+
+from app.modules.interview_engine.event_kinds import (
+    SPEECH_RENDERED,
+    SPEECH_STREAM_INTERRUPTED,
+)
+from app.modules.interview_engine.event_log import EventCollector
+from app.modules.interview_engine.speech.templates import template_loader
 
 
 @dataclass(frozen=True)
@@ -89,22 +103,6 @@ class SpeechRenderHandle(Protocol):
     def completed_text(self) -> asyncio.Future[str]: ...
 
 
-import re
-import time
-import uuid
-from collections.abc import AsyncIterator
-from typing import Any, Literal
-
-import openai
-import structlog
-
-from app.modules.interview_engine.event_kinds import (
-    SPEECH_RENDERED,
-    SPEECH_STREAM_INTERRUPTED,
-)
-from app.modules.interview_engine.event_log import EventCollector
-from app.modules.interview_engine.speech.templates import template_loader
-
 log = structlog.get_logger("interview-engine.speech.agent")
 
 
@@ -112,7 +110,7 @@ _SENTENCE_BOUNDARY_RE = re.compile(r"[.!?]\s+[A-Z]")
 _MAX_PREFIX_TOKENS = 100
 
 
-class _PreFirstTokenFailure(Exception):
+class _PreFirstTokenFailureError(Exception):
     """Internal — used by _drive to signal pre-first-token failure for retry."""
     def __init__(self, *, reason: SpeechRenderErrorReason) -> None:
         self.reason = reason
@@ -232,8 +230,8 @@ class StreamingRenderHandle:
             yield chunk
         # 2) Pipe the live stream
         while True:
-            chunk = await self._live_queue.get()
-            if chunk is None:  # sentinel: stream closed or interrupted
+            live_chunk = await self._live_queue.get()
+            if live_chunk is None:  # sentinel: stream closed or interrupted
                 # Mark natural drain only if cancellation didn't trigger
                 # this sentinel. If cancel_event is set when we hit the
                 # sentinel, the iteration is being aborted (cancellation
@@ -244,7 +242,7 @@ class StreamingRenderHandle:
                 if not self._cancel_event.is_set():
                     self._consumer_drained_naturally = True
                 break
-            yield chunk
+            yield live_chunk
         self._consumer_finish_wall_ms = _wall_ms()
         self._maybe_emit_rendered()
 
@@ -254,10 +252,8 @@ class StreamingRenderHandle:
         self._cancelled = True
         self._cancel_event.set()
         self._task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError, TimeoutError):
             await asyncio.wait_for(asyncio.shield(self._task), timeout=2.0)
-        except (asyncio.CancelledError, asyncio.TimeoutError):
-            pass
 
     @property
     def is_committed(self) -> bool:
@@ -283,7 +279,7 @@ class StreamingRenderHandle:
                 try:
                     await self._open_stream_and_buffer_prefix(attempt=attempt)
                     return
-                except _PreFirstTokenFailure as exc:
+                except _PreFirstTokenFailureError as exc:
                     if attempt == 0 and exc.reason != "openai_429":
                         log.warning(
                             "speech.render.retry",
@@ -345,11 +341,11 @@ class StreamingRenderHandle:
         try:
             stream = await self._client.chat.completions.create(**request_kwargs)
         except openai.APITimeoutError as e:
-            raise _PreFirstTokenFailure(reason="openai_timeout") from e
+            raise _PreFirstTokenFailureError(reason="openai_timeout") from e
         except openai.RateLimitError as e:
-            raise _PreFirstTokenFailure(reason="openai_429") from e
+            raise _PreFirstTokenFailureError(reason="openai_429") from e
         except (openai.APIConnectionError, openai.APIError) as e:
-            raise _PreFirstTokenFailure(reason="openai_5xx") from e
+            raise _PreFirstTokenFailureError(reason="openai_5xx") from e
 
         self._state = "buffering_prefix"
         prefix_text = ""
@@ -383,7 +379,7 @@ class StreamingRenderHandle:
                     self._tokens_out = chunk.usage.completion_tokens
         except (openai.APIConnectionError, openai.APIError, asyncio.IncompleteReadError) as e:
             if self._first_token_wall_ms is None:
-                raise _PreFirstTokenFailure(
+                raise _PreFirstTokenFailureError(
                     reason="openai_connection_dropped_pre_first_token"
                 ) from e
             # Post-first-token: non-recoverable, truncate
@@ -403,10 +399,8 @@ class StreamingRenderHandle:
                 wall_ms=_wall_ms(),
             )
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 await stream.close()
-            except Exception:  # noqa: BLE001
-                pass
 
         self._stream_close_wall_ms = _wall_ms()
         # End-of-stream sentinel for the consumer

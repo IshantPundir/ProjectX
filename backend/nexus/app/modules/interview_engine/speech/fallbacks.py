@@ -49,7 +49,7 @@ class StaticFallbackHandle:
         failure_reason: SpeechRenderErrorReason,
         retries_attempted: int,
         render_id: str,
-        collector: "EventCollector",
+        collector: EventCollector,
         model: str = "<fallback-no-llm-call>",
     ) -> None:
         self._text = text
@@ -139,7 +139,7 @@ class StaticFallbackHandle:
 # ---------------------------------------------------------------------------
 
 
-def _intro_fallback(*, target_duration_minutes: int, **_) -> str:
+def _intro_fallback(*, target_duration_minutes: int, **_: object) -> str:
     """Parameterized — NEVER hardcode the duration (spec §4.1 Bug 2)."""
     return (
         f"Hi, I'll be running a short technical screen with you today. "
@@ -148,7 +148,7 @@ def _intro_fallback(*, target_duration_minutes: int, **_) -> str:
     )
 
 
-def _ask_question_standard_fallback(*, question_text: str, **_) -> str:
+def _ask_question_standard_fallback(*, question_text: str, **_: object) -> str:
     """QuestionConfig.text is recruiter-validated; fallback asks verbatim."""
     return question_text
 
@@ -159,14 +159,18 @@ _WRAP_NORMAL_FALLBACK: str = (
 )
 
 
+def _wrap_normal_fallback(**_: object) -> str:
+    return _WRAP_NORMAL_FALLBACK
+
+
 _FALLBACK_BUILDERS: dict[str, Callable[..., str]] = {
     "intro": _intro_fallback,
     "ask_question_standard": _ask_question_standard_fallback,
-    "wrap_normal": lambda **_: _WRAP_NORMAL_FALLBACK,
+    "wrap_normal": _wrap_normal_fallback,
 }
 
 
-def build_fallback_text(*, template_name: str, **inputs) -> str:
+def build_fallback_text(*, template_name: str, **inputs: object) -> str:
     """Returns the fallback string for a given template.
 
     Raises KeyError on unknown template_name (programmer error — fail loud)."""
