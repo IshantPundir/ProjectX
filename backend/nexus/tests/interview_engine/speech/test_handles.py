@@ -177,3 +177,68 @@ def test_static_fallback_handle_emits_fallback_used_on_construction():
     assert payload["template_version"] == "v1"
     assert payload["reason"] == "openai_429"
     assert payload["retries_attempted"] == 1
+
+
+@pytest.mark.asyncio
+async def test_streaming_render_handle_satisfies_protocol():
+    """StreamingRenderHandle must structurally satisfy SpeechRenderHandle."""
+    from unittest.mock import MagicMock, AsyncMock
+    from app.modules.interview_engine.speech.agent import StreamingRenderHandle
+
+    h = StreamingRenderHandle(
+        client=AsyncMock(),
+        model="gpt-5-mini",
+        effort=None,
+        prompt="ignored",
+        template_name="intro",
+        template_version="v1",
+        render_id="abc",
+        collector=MagicMock(),
+    )
+    assert isinstance(h, SpeechRenderHandle)
+    await h.cancel()  # ensure no leak
+
+
+@pytest.mark.asyncio
+async def test_streaming_render_handle_cancel_during_buffering(monkeypatch):
+    """cancel() during buffering: ready_to_commit raises CancelledError
+    (NOT SpeechRenderError); subsequent commit() raises RuntimeError."""
+    from unittest.mock import MagicMock
+    import openai
+    from app.modules.interview_engine.speech.agent import StreamingRenderHandle
+
+    # Mock client whose stream yields slowly; we cancel before completion.
+    async def slow_stream(*_, **__):
+        class _Stream:
+            async def __aiter__(self):
+                # Yield one delta then sleep forever
+                from openai.types.chat import ChatCompletionChunk
+                yield ChatCompletionChunk(
+                    id="x", object="chat.completion.chunk", created=0, model="x",
+                    choices=[{"index": 0, "delta": {"content": "Hi "}, "finish_reason": None}],
+                )
+                await asyncio.sleep(60)
+            async def close(self): pass
+        return _Stream()
+
+    client = MagicMock()
+    client.chat.completions.create = slow_stream
+
+    h = StreamingRenderHandle(
+        client=client, model="gpt-5-mini", effort=None,
+        prompt="x", template_name="intro", template_version="v1",
+        render_id="abc", collector=MagicMock(),
+    )
+
+    # Spawn ready_to_commit and cancel before it resolves.
+    r2c_task = asyncio.create_task(h.ready_to_commit())
+    await asyncio.sleep(0.05)  # let _drive start
+    await h.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await r2c_task
+
+    # Subsequent commit() raises
+    with pytest.raises(RuntimeError):
+        h.commit()
+    assert h.is_cancelled
