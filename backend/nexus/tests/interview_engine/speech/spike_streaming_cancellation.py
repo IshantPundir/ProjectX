@@ -4,19 +4,30 @@ This is a STANDALONE SCRIPT (not a pytest test). Runs once before the
 SpeechAgent class merges. Result is recorded in
 docs/superpowers/specs/2026-05-05-ai-screening-phase-c-close-out.md.
 
-What it verifies:
-    Cancelling the consumer Task of an in-flight OpenAI streaming
-    chat completion closes the underlying httpx connection within
-    p99 < 500ms over 10 runs.
+What this measures:
+    The latency of `AsyncStream.close()` returning, NOT actual TCP
+    teardown. Per spec §3.4, the close-handler's 2s timeout bounds the
+    consumer Task's wait — not the underlying TCP connection. The SDK's
+    close() returning promptly is sufficient evidence that the Task
+    won't deadlock the close handler. (Tracing into
+    `openai/_streaming.py` → `httpx/_models.py` confirms close() sets
+    flags + signals the connection pool, with no awaiting of TCP
+    FIN-ACK or server ack — application-layer call timing only.)
 
-Why it matters:
+Why this is sufficient:
     The pre-render Task lifecycle (spec §3) cancels in-flight streams
-    on candidate disconnect. The runtime close-handler timeout is 2s
-    (spec §3.4); the spike validates cancellation is comfortably
-    under the cap so the timeout isn't hit on the normal path.
+    on candidate disconnect. Spec §3.4 explicitly accepts that "if the
+    OpenAI HTTP client is being slow to release, we move on — Python's
+    GC will tear down the dangling connection eventually." The 2s
+    timeout was always meant to bound the close-handler's wait on the
+    consumer Task, not actual TCP teardown. So a fast SDK close() ⇒
+    Task is unblocked ⇒ close-handler doesn't hit its 2s ceiling on
+    the normal path.
 
 PASS criterion:
-    p99 cancellation-to-connection-close latency < 500ms across 10 runs.
+    max `AsyncStream.close()` return latency < 500ms across 10 measured
+    runs (one warm-up run is discarded). With N=10 the tail figure is a
+    max, not a true p99 — labelled "max" accordingly.
 
 FAIL action:
     ARCH-D collapses to ARCH-D-buffered-non-streaming (Option α —
@@ -40,11 +51,11 @@ from openai import AsyncOpenAI
 
 NUM_RUNS = 10
 TOKENS_BEFORE_CANCEL = 5
-P99_THRESHOLD_MS = 500
+MAX_THRESHOLD_MS = 500
 
 
 async def run_one() -> float:
-    """Returns cancellation latency in milliseconds."""
+    """Returns AsyncStream.close() return latency in milliseconds."""
     client = AsyncOpenAI(
         api_key=os.environ["OPENAI_API_KEY"],
         max_retries=0,
@@ -55,6 +66,10 @@ async def run_one() -> float:
         stream=True,
         stream_options={"include_usage": True},
         messages=[
+            # "Count to 100 slowly" guarantees a long output stream so
+            # the connection is still actively producing tokens when
+            # we cancel after TOKENS_BEFORE_CANCEL — this exercises the
+            # mid-flight cancellation path, not a near-EOF close.
             {"role": "user", "content": "Count to 100 slowly, one number per line."}
         ],
     )
@@ -65,16 +80,28 @@ async def run_one() -> float:
             if tokens_seen >= TOKENS_BEFORE_CANCEL:
                 break
 
-    # Now cancel and measure how long the connection takes to close.
-    cancel_start = time.monotonic()
+    # Now cancel and measure how long AsyncStream.close() takes to
+    # return. This is the application-layer call latency — NOT actual
+    # TCP teardown. See module docstring for why that's sufficient.
+    cancel_start = time.perf_counter()
     await stream.close()
-    cancel_end = time.monotonic()
+    cancel_end = time.perf_counter()
 
     await client.close()
     return (cancel_end - cancel_start) * 1000.0
 
 
 async def main() -> None:
+    if "OPENAI_API_KEY" not in os.environ:
+        raise SystemExit("OPENAI_API_KEY not set in environment")
+
+    # Warm-up run: the first run includes httpx connection-pool
+    # initialization, DNS resolution, and TLS handshake — all of which
+    # are one-time costs we don't want polluting the latency stats.
+    print("Warm-up run (discarded from stats)...")
+    warmup_ms = await run_one()
+    print(f"  Warm-up: {warmup_ms:.1f}ms\n")
+
     print(f"Running {NUM_RUNS} streaming cancellation runs against gpt-5-mini...")
     latencies: list[float] = []
     for i in range(NUM_RUNS):
@@ -83,14 +110,21 @@ async def main() -> None:
         print(f"  Run {i+1}: {ms:.1f}ms")
 
     p50 = statistics.median(latencies)
-    p99 = sorted(latencies)[-1]  # max as p99 proxy with N=10
-    print(f"\nResults: p50={p50:.1f}ms  p99={p99:.1f}ms  min={min(latencies):.1f}ms  max={max(latencies):.1f}ms")
-    print(f"Threshold: p99 < {P99_THRESHOLD_MS}ms")
-    if p99 < P99_THRESHOLD_MS:
-        print("\nPASS — ARCH-D Option β (streaming) ships as designed.")
-        print(f"   Document p50={p50:.1f}ms, p99={p99:.1f}ms in close-out ADR.")
+    max_latency = max(latencies)
+    print(
+        f"\nResults: p50={p50:.1f}ms  max={max_latency:.1f}ms  "
+        f"min={min(latencies):.1f}ms"
+    )
+    print(f"Threshold: max < {MAX_THRESHOLD_MS}ms")
+    if max_latency < MAX_THRESHOLD_MS:
+        print(
+            "\nPASS — AsyncStream.close() returns promptly across all runs. "
+            "The consumer Task won't deadlock the close handler's 2s budget "
+            "(spec §3.4). ARCH-D Option β (streaming) ships as designed."
+        )
+        print(f"   Document p50={p50:.1f}ms, max={max_latency:.1f}ms in close-out ADR.")
     else:
-        print(f"\nFAIL — p99={p99:.1f}ms exceeds threshold.")
+        print(f"\nFAIL — max={max_latency:.1f}ms exceeds threshold.")
         print("   ARCH-D collapses to ARCH-D-buffered-non-streaming (Option α).")
         print("   STOP and surface to user before proceeding.")
         raise SystemExit(1)
