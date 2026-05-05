@@ -52,3 +52,50 @@ async def test_ask_question_standard_real_llm_preserves_meaning(
     full = "".join(chunks).lower()
     for phrase in must_contain:
         assert phrase.lower() in full, f"Lost {phrase!r} in: {full!r}"
+
+
+@pytest.mark.prompt_quality
+@pytest.mark.asyncio
+async def test_ask_question_standard_real_llm_strips_rubric_from_verbose_source(speech_agent):
+    """The Speech Agent must compress rubric-rich source into a short
+    direct question. Sub-topic enumeration in the source MUST NOT appear
+    as a checklist in the output. This is the load-bearing prompt-quality
+    invariant for screening signal collection."""
+    verbose_source = (
+        "You need to block a transition to 'Ready for QA' unless there's "
+        "a merged PR linked and a 'Test Cases' field is filled. Using "
+        "ScriptRunner/Groovy, explain where you'd hook this "
+        "(validator/condition/post-function), the logic you'd implement, "
+        "any REST calls you'd make, and how you'd handle errors, "
+        "timeouts, and performance."
+    )
+    handle = await deliveries.render_ask_question_standard(
+        speech_agent, question_text=verbose_source,
+    )
+    await handle.ready_to_commit()
+    chunks = [c async for c in handle.commit()]
+    full = "".join(chunks)
+
+    # Length cap: max 35 words target, lenient ≤45 to allow some slack
+    word_count = len(full.split())
+    assert word_count <= 45, (
+        f"Output {word_count} words: {full!r} — should be ≤35 (lenient ≤45). "
+        f"Source had {len(verbose_source.split())} words."
+    )
+
+    # Sub-topic enumeration check: more than 1 of these together = checklist leak
+    enumeration_terms = [
+        "validator", "post-function", "condition",
+        "REST", "error", "timeout", "performance",
+    ]
+    lower = full.lower()
+    hits = sum(1 for term in enumeration_terms if term.lower() in lower)
+    assert hits <= 1, (
+        f"Output contains {hits} rubric enumeration terms — sub-topic leak. "
+        f"Output: {full!r}"
+    )
+
+    # Core scenario preserved
+    assert any(term in lower for term in ["jira", "workflow", "transition", "status"]), (
+        f"Output lost the core scenario: {full!r}"
+    )
