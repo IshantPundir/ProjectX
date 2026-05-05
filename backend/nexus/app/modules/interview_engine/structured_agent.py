@@ -9,13 +9,19 @@ Phase C drives candidate utterances via:
    the `SpeechAgent` rendering service. Each utterance is pre-rendered
    via `deliveries.render_*` into `self._pending_next_render` BEFORE
    the prior `_say` call, then drained at the consumption site via
-   `_consume_pending_or_render`. The helper catches `SpeechRenderError`
-   and substitutes a `StaticFallbackHandle` (built by `deliveries.fallback_for`)
-   with the same render_id so the SPEECH_FALLBACK_USED + SPEECH_RENDERED
+   `_consume_pending_or_render`. The helper is the SOLE catch site for
+   `SpeechRenderError`: it catches both synchronous render-time errors
+   (template_not_found / placeholder_missing) AND asynchronous
+   infrastructure errors raised by `handle.ready_to_commit()`
+   (openai_timeout / openai_5xx /
+   openai_connection_dropped_pre_first_token / openai_429), substituting
+   a `StaticFallbackHandle` (built by `deliveries.fallback_for`) with
+   the same render_id so the SPEECH_FALLBACK_USED + SPEECH_RENDERED
    envelope events correlate (spec §4.5).
-3. `_say(handle)` awaits `handle.ready_to_commit()` and pipes
-   `handle.commit()`'s AsyncIterable[str] into `session.say()`. The
-   handle's internal Task drains alongside session.say's consumer;
+3. `_say(handle)` receives a handle that has ALREADY passed
+   `ready_to_commit()` (the helper awaits it before returning). It just
+   pipes `handle.commit()`'s AsyncIterable[str] into `session.say()`.
+   The handle's internal Task drains alongside session.say's consumer;
    SPEECH_RENDERED fires from inside the handle.
 4. Wait for the framework's turn-detector-confirmed end-of-utterance
    (resolved via `on_user_turn_completed`), treat the full turn text
@@ -268,33 +274,16 @@ class StructuredInterviewAgent(Agent):
     ) -> None:
         """Single utterance entry point.
 
-        Phase C: takes a SpeechRenderHandle (live or fallback — same
-        Protocol). Awaits handle.ready_to_commit() (which blocks until
-        the prefix sentence boundary fires for live handles, or returns
-        synchronously for fallbacks), then pipes handle.commit()'s
-        AsyncIterable[str] into session.say(). The handle's internal
-        Task drains alongside session.say's consumer; SPEECH_RENDERED
-        fires from inside the handle once both stream-close and
-        consumer-finish have happened.
+        Phase C: takes a SpeechRenderHandle that has ALREADY passed
+        ready_to_commit() (the consumption helper awaits it before
+        returning). _say() commits and pipes to TTS.
         """
-        try:
-            await handle.ready_to_commit()
-        except SpeechRenderError as exc:
-            # Defensive: this branch should be unreachable in Phase C
-            # because `_consume_pending_or_render` catches
-            # SpeechRenderError and substitutes a fallback handle
-            # before _say is invoked. If a future caller bypasses the
-            # helper we want to fail loudly rather than swallow.
-            log.error(
-                "structured_agent._say.unexpected_render_error",
-                reason=exc.reason,
-                render_id=exc.render_id,
-            )
-            raise
-
         await self.session.say(
             handle.commit(), allow_interruptions=allow_interruptions,
         )
+        # handle.completed_text + handle.metadata resolve as a side
+        # effect of the internal Task draining alongside session.say()'s
+        # consumer. SPEECH_RENDERED fires from inside the handle.
 
     async def _consume_pending_or_render(
         self,
@@ -303,18 +292,23 @@ class StructuredInterviewAgent(Agent):
     ) -> SpeechRenderHandle:
         """Use the pending slot if hot; otherwise render synchronously.
 
-        Central drain point for the pre-render pipeline. On
-        SpeechRenderError (post-retry-exhaustion infrastructure
-        failure, raised by handle.ready_to_commit() inside the slot
-        Task), substitutes a fallback handle via
-        ``deliveries.fallback_for``. The same render_id from the
-        failed live render is reused so the SPEECH_FALLBACK_USED +
-        SPEECH_RENDERED envelope events correlate across live → fallback
-        (spec §4.5).
+        Returns a handle that is GUARANTEED to be past
+        ``ready_to_commit()``. Catches ``SpeechRenderError`` from BOTH
+        the synchronous ``render()`` path (template_not_found /
+        placeholder_missing) AND the asynchronous ``ready_to_commit()``
+        path (openai_timeout / openai_5xx /
+        openai_connection_dropped_pre_first_token / openai_429),
+        substituting a fallback handle in either case.
+
+        The helper is the SOLE catch site for ``SpeechRenderError``.
+        ``_say`` receives a handle that has already passed
+        ``ready_to_commit()``.
         """
         if self._pending_next_render is not None:
             try:
-                return await self._pending_next_render
+                handle = await self._pending_next_render
+                await handle.ready_to_commit()
+                return handle
             except SpeechRenderError as exc:
                 log.warning(
                     "speech.pre_render.failed",
@@ -334,7 +328,9 @@ class StructuredInterviewAgent(Agent):
         # Cold path — no pending slot was spawned (e.g. the very first
         # call, or a code path that didn't pre-render).
         try:
-            return await render_fn(self._speech_agent, **inputs)
+            handle = await render_fn(self._speech_agent, **inputs)
+            await handle.ready_to_commit()
+            return handle
         except SpeechRenderError as exc:
             log.warning(
                 "speech.render.failed",
