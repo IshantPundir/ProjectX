@@ -61,7 +61,7 @@ from app.modules.interview_engine.orchestrator import (
     SignalLedger,
     pick_next_question,
 )
-from app.modules.interview_engine.speech import check_safety
+from app.modules.interview_engine.speech.safety import check_safety
 from app.modules.interview_runtime import (
     QuestionConfig,
     QuestionResult,

@@ -16,7 +16,7 @@ Covers:
 """
 from __future__ import annotations
 
-from app.modules.interview_engine.speech import (
+from app.modules.interview_engine.speech.safety import (
     SafetyResult,
     SafetyViolation,
     check_safety,
