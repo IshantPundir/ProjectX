@@ -38,7 +38,7 @@
 | `backend/nexus/app/ai/client.py` | Add `get_openai_raw_client()` factory (~15 lines) |
 | `backend/nexus/app/ai/config.py` | Add `speech_agent_model` + `speech_agent_effort` properties |
 | `backend/nexus/app/config.py` | Add corresponding `Settings` fields |
-| `backend/nexus/.env.example` | Document `INTERVIEW_SPEECH_AGENT_MODEL`, `INTERVIEW_SPEECH_AGENT_EFFORT` |
+| `backend/nexus/.env.example` | Document `SPEECH_AGENT_MODEL`, `SPEECH_AGENT_EFFORT` |
 | `backend/nexus/app/modules/interview_engine/agent.py` | Construct `SpeechAgent` + pass into `StructuredInterviewAgent`; bounded cancellation in close handler |
 | `backend/nexus/app/modules/interview_engine/structured_agent.py` | Major edits (~150 lines net): `_say(handle)`, `_pending_next_render` slot, `_consume_pending_or_render`, three trigger sites |
 | `backend/nexus/app/modules/interview_engine/event_kinds.py` | DELETE `SPEECH_SAFETY_VIOLATION` + remove from `ALL_EVENT_KINDS`; ADD `SPEECH_STREAM_INTERRUPTED` |
@@ -269,11 +269,11 @@ In `backend/nexus/.env.example`, after the `EVALUATOR_SUFFICIENCY_*` block (~lin
 # *_EFFORT follows the same default-empty contract as the evaluator
 # vars: forwarded to OpenAI only when non-empty. Chat models
 # (*-chat-latest) reject reasoning_effort with HTTP 400.
-INTERVIEW_SPEECH_AGENT_MODEL=gpt-5-mini
-INTERVIEW_SPEECH_AGENT_EFFORT=
+SPEECH_AGENT_MODEL=gpt-5-mini
+SPEECH_AGENT_EFFORT=
 ```
 
-Note: env var names use `INTERVIEW_SPEECH_AGENT_*` prefix to match the existing `INTERVIEW_*` family (LLM/STT/TTS/turn-detector); the Settings field name is `speech_agent_*` (pydantic-settings lowercases). Verify in step 6.
+Note: env var names use the bare-name `SPEECH_AGENT_*` prefix matching the field names. Phase C amendment 2026-05-05: `Settings` has no `env_prefix` set, so pydantic-settings matches by uppercased bare field name. The semantic split in `.env.example` is real: `INTERVIEW_*` is the realtime LiveKit-plugin block; `EVALUATOR_*` is the non-realtime batch structured-output block; `SPEECH_AGENT_*` is the non-realtime batch streaming sibling of `EVALUATOR_*`. Forcing it under `INTERVIEW_*` would cross the realtime/batch boundary the engine has carefully drawn.
 
 - [ ] **Step 6: Run tests, confirm they pass**
 

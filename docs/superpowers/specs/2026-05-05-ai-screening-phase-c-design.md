@@ -33,7 +33,7 @@ The realtime LLM stays no-op'd via the `llm_node` override (Pattern 2 hard guard
 - **3 hand-reviewed static fallback strings** keyed by template name in `speech/fallbacks.py`.
 - **Pre-render Task slot** on `StructuredInterviewAgent` with three trigger sites (intro / Q0 / Qn+1) and four cancellation sub-cases.
 - **`get_openai_raw_client()` factory** in `app/ai/client.py` (plain `AsyncOpenAI`, not instructor-wrapped) for streaming chat completions.
-- **`speech_agent_model` + `speech_agent_effort`** AIConfig keys with `INTERVIEW_SPEECH_AGENT_MODEL` env var.
+- **`speech_agent_model` + `speech_agent_effort`** AIConfig keys with `SPEECH_AGENT_MODEL` / `SPEECH_AGENT_EFFORT` env vars (bare-name prefix per pydantic-settings convention; matches the `EVALUATOR_*` non-realtime-batch family rather than the `INTERVIEW_*` realtime family).
 - **Doc amendments**: `design.md` §11.5 v3 (three-layer model, regex layer dropped entirely), `implementation.md` §7 Phase C amendment header v3, `implementation.md` §8 rules 3+5 v3.
 
 ### Phase C non-goals (explicit)
@@ -117,7 +117,7 @@ backend/nexus/app/ai/
 
 backend/nexus/app/ai/config.py        [MODIFY — speech_agent_model + speech_agent_effort properties]
 backend/nexus/app/config.py           [MODIFY — corresponding Settings fields]
-backend/nexus/.env.example            [MODIFY — INTERVIEW_SPEECH_AGENT_MODEL, INTERVIEW_SPEECH_AGENT_EFFORT]
+backend/nexus/.env.example            [MODIFY — SPEECH_AGENT_MODEL, SPEECH_AGENT_EFFORT]
 
 backend/nexus/tests/interview_engine/
 ├── speech/test_safety.py             [DELETED]
@@ -933,7 +933,7 @@ Until the eval harness ships (parallel workstream, separate spec), `test_fallbac
 
 | Aspect | Detail |
 |---|---|
-| Diff scope | Two new properties on `AIConfig` (`speech_agent_model`, `speech_agent_effort`); two new fields on `Settings`; two env vars in `.env.example` (`INTERVIEW_SPEECH_AGENT_MODEL` default `gpt-5-mini`; `INTERVIEW_SPEECH_AGENT_EFFORT` default empty). |
+| Diff scope | Two new properties on `AIConfig` (`speech_agent_model`, `speech_agent_effort`); two new fields on `Settings`; two env vars in `.env.example` (`SPEECH_AGENT_MODEL` default `gpt-5-mini`; `SPEECH_AGENT_EFFORT` default empty). Bare-name prefix per pydantic-settings convention. |
 | Downstream consumers | Only `agent.py`'s SpeechAgent construction. |
 | Tests gating | `tests/test_ai_config.py`: (i) properties read from settings, (ii) chat-tier model with empty effort doesn't raise, (iii) reasoning-tier model with effort flows through. |
 
