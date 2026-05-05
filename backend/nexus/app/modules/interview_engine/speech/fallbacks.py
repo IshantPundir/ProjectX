@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Callable
 from typing import TYPE_CHECKING
 
 from app.modules.interview_engine.event_kinds import SPEECH_FALLBACK_USED
@@ -131,3 +131,43 @@ class StaticFallbackHandle:
     @property
     def completed_text(self) -> asyncio.Future[str]:
         return self._completed_text_fut
+
+
+# ---------------------------------------------------------------------------
+# Per-template fallback string builders. Hand-reviewed for outcome-neutrality.
+# Code review enforces; no runtime regex check (spec §0, design doc §11.5 v3).
+# ---------------------------------------------------------------------------
+
+
+def _intro_fallback(*, target_duration_minutes: int, **_) -> str:
+    """Parameterized — NEVER hardcode the duration (spec §4.1 Bug 2)."""
+    return (
+        f"Hi, I'll be running a short technical screen with you today. "
+        f"We'll be about {target_duration_minutes} minutes. "
+        f"Take your time. Let's get started."
+    )
+
+
+def _ask_question_standard_fallback(*, question_text: str, **_) -> str:
+    """QuestionConfig.text is recruiter-validated; fallback asks verbatim."""
+    return question_text
+
+
+_WRAP_NORMAL_FALLBACK: str = (
+    "That's everything from my side. The recruiting team will be "
+    "in touch with next steps."
+)
+
+
+_FALLBACK_BUILDERS: dict[str, Callable[..., str]] = {
+    "intro": _intro_fallback,
+    "ask_question_standard": _ask_question_standard_fallback,
+    "wrap_normal": lambda **_: _WRAP_NORMAL_FALLBACK,
+}
+
+
+def build_fallback_text(*, template_name: str, **inputs) -> str:
+    """Returns the fallback string for a given template.
+
+    Raises KeyError on unknown template_name (programmer error — fail loud)."""
+    return _FALLBACK_BUILDERS[template_name](**inputs)
