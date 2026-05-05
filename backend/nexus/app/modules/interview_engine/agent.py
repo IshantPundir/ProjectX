@@ -22,7 +22,9 @@ interview agent:
 Three-layer guardrail (spec §3.1):
   1. Hard — llm_node override emits zero chunks (Pattern 2).
   2. Defense in depth — inert system prompt.
-  3. Single utterance entry point — _say gated by check_safety.
+  3. Single utterance entry point — _say drives session.say(handle.commit())
+     where the handle is produced by SpeechAgent (template-based; safety is
+     enforced at template-authoring time, not via runtime regex).
 """
 
 from __future__ import annotations

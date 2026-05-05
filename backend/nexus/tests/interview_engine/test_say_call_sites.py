@@ -96,7 +96,8 @@ def test_session_say_only_called_inside_structured_agent_say() -> None:
                 violations.append(
                     f"{rel}:{lineno} — session.say(...) outside "
                     f"StructuredInterviewAgent._say. Every utterance must "
-                    f"go through _say so check_safety can gate it."
+                    f"go through _say so the SpeechRenderHandle pipeline is "
+                    f"the single source of truth for agent-spoken content."
                 )
 
     assert not violations, (
