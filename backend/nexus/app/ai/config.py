@@ -139,5 +139,16 @@ class AIConfig:
     def evaluator_sufficiency_effort(self) -> str:
         return settings.evaluator_sufficiency_effort
 
+    # Phase C — Speech Agent (mid-tier streaming chat completion via
+    # get_openai_raw_client; not instructor-wrapped). See effort-gating
+    # contract in module docstring.
+    @property
+    def speech_agent_model(self) -> str:
+        return settings.speech_agent_model
+
+    @property
+    def speech_agent_effort(self) -> str:
+        return settings.speech_agent_effort
+
 
 ai_config = AIConfig()

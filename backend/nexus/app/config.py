@@ -367,6 +367,13 @@ class Settings(BaseSettings):
     evaluator_sufficiency_model: str = "gpt-5.2"
     evaluator_sufficiency_effort: str = ""
 
+    # Phase C — Speech Agent (LLM-rendered utterances; non-realtime batch
+    # streaming chat completion). Mid-tier per design doc §5.6 latency
+    # budget (≤500ms TTFT). Effort-gated default-empty per the contract
+    # in app/ai/config.py module docstring.
+    speech_agent_model: str = "gpt-5-mini"
+    speech_agent_effort: str = ""
+
     @field_validator("interview_engine_jwt_secret")
     @classmethod
     def _engine_secret_required(cls, v: str, info) -> str:
