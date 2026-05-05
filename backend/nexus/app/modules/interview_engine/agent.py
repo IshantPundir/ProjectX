@@ -70,6 +70,7 @@ from livekit.plugins import silero
 from livekit.plugins.turn_detector import multilingual as _turn_detector_multilingual  # noqa: F401
 from opentelemetry.trace import set_tracer_provider as _otel_set_global_provider
 
+from app.ai.client import get_openai_raw_client
 from app.ai.config import ai_config
 from app.ai.otel import bootstrap_tracer_provider
 from app.ai.realtime import (
@@ -90,6 +91,7 @@ from app.modules.interview_engine.orchestrator import (
     InterviewPhase,
     LedgerPersistence,
 )
+from app.modules.interview_engine.speech import SpeechAgent, SpeechRenderError
 from app.modules.interview_engine.structured_agent import (
     SessionOutcome,
     StructuredInterviewAgent,
@@ -212,12 +214,20 @@ async def entrypoint(ctx: JobContext) -> None:
         session_id=session_id,
     )
 
+    speech_agent = SpeechAgent(
+        client=get_openai_raw_client(),
+        model=ai_config.speech_agent_model,
+        effort=ai_config.speech_agent_effort or None,
+        collector=event_collector,
+    )
+
     agent = StructuredInterviewAgent(
         config=config,
         tenant_id=tenant_uuid,
         correlation_id=correlation_id,
         collector=event_collector,
         persistence=persistence,
+        speech_agent=speech_agent,
     )
 
     session = AgentSession(
@@ -506,6 +516,25 @@ async def _handle_close(
         has_error=bool(ev.error),
         already_persisted=agent._persisted,
     )
+
+    # Phase C — cancel pending pre-render Task if in flight.
+    pending = getattr(agent, "_pending_next_render", None)
+    if pending is not None and not pending.done():
+        pending.cancel()
+        try:
+            # Brief await for cancellation propagation so the OpenAI httpx
+            # connection actually closes. Bounded so we don't block close
+            # indefinitely on a slow connection. Spec §3.4: the runtime
+            # cap is 2s; the spike (Task 3) confirmed cancellation
+            # latency p99 << 500ms, so the timeout is safety net only.
+            await asyncio.wait_for(asyncio.shield(pending), timeout=2.0)
+        except (asyncio.CancelledError, asyncio.TimeoutError, SpeechRenderError):
+            pass
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "structured_agent.pending_render.cancel_failed",
+                error=str(exc),
+            )
 
     collector.append(
         kind="session.close",
