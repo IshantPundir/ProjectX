@@ -368,10 +368,15 @@ class Settings(BaseSettings):
     evaluator_sufficiency_effort: str = ""
 
     # Phase C — Speech Agent (LLM-rendered utterances; non-realtime batch
-    # streaming chat completion). Mid-tier per design doc §5.6 latency
-    # budget (≤500ms TTFT). Effort-gated default-empty per the contract
-    # in app/ai/config.py module docstring.
-    speech_agent_model: str = "gpt-5-mini"
+    # streaming chat completion). Chat-tier (NOT reasoning) for low first-
+    # token latency in the candidate-perceived gap between turns. Default
+    # mirrors `interview_llm_model` for consistency with the realtime path's
+    # chat-tier choice. Smoke session 2317ed8c (2026-05-05) on `gpt-5-mini`
+    # showed reasoning-tier first-token delay ~9.7s on intro — unacceptable
+    # for a real-time agent. Switched to `gpt-5.3-chat-latest`.
+    # Effort-gated default-empty per the contract in app/ai/config.py module
+    # docstring; chat models reject `reasoning_effort` with HTTP 400.
+    speech_agent_model: str = "gpt-5.3-chat-latest"
     speech_agent_effort: str = ""
 
     @field_validator("interview_engine_jwt_secret")
