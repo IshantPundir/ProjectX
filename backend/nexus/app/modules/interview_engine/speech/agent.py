@@ -91,6 +91,7 @@ class SpeechRenderHandle(Protocol):
 
 import re
 import time
+import uuid
 from collections.abc import AsyncIterator
 from typing import Any, Literal
 
@@ -102,6 +103,7 @@ from app.modules.interview_engine.event_kinds import (
     SPEECH_STREAM_INTERRUPTED,
 )
 from app.modules.interview_engine.event_log import EventCollector
+from app.modules.interview_engine.speech.templates import template_loader
 
 log = structlog.get_logger("interview-engine.speech.agent")
 
@@ -209,10 +211,18 @@ class StreamingRenderHandle:
             raise RuntimeError("Cannot commit a cancelled handle")
         if self._committed:
             raise RuntimeError("commit() may only be called once")
-        if self._state not in ("ready",):
+        # Valid states for commit: "ready" (boundary hit, stream still flowing)
+        # or "completed" (stream already closed naturally before commit ran).
+        # The race exists because _drive may finish before the consumer calls
+        # ready_to_commit (e.g., short utterances that fit in one stream burst).
+        if self._state not in ("ready", "completed"):
             raise RuntimeError(f"Cannot commit from state {self._state}")
         self._committed = True
-        self._state = "committed"
+        # Note: leave state as "completed" if stream already closed; otherwise
+        # transition to "committed". _maybe_emit_rendered keys off the
+        # _committed flag, not the state literal.
+        if self._state == "ready":
+            self._state = "committed"
 
         return self._joined_iterator()
 
@@ -401,11 +411,28 @@ class StreamingRenderHandle:
         self._stream_close_wall_ms = _wall_ms()
         # End-of-stream sentinel for the consumer
         self._live_queue.put_nowait(None)
-        # If we never reached ready (e.g., empty stream), error out
+        # If we never reached ready BUT we received at least one token, treat
+        # the entire utterance as the prefix and transition to ready. This
+        # covers two cases:
+        #   1. Natural stream end before the boundary regex matches (short
+        #      utterance like "Hi. " — no following capital letter to satisfy
+        #      [.!?]\s+[A-Z], so the boundary never fired).
+        #   2. Post-first-token disconnect before the boundary regex matches
+        #      (the except branch above already emitted SPEECH_STREAM_INTERRUPTED;
+        #      we still want to play what we have, NOT error).
+        # If we have ZERO tokens, this is a true pre-first-token failure
+        # (empty stream / immediate disconnect) → bubble up as an error.
         if not self._ready_event.is_set():
-            self._fail_pre_first_token(reason="openai_connection_dropped_pre_first_token")
-            return
-        self._state = "completed"
+            if self._first_token_wall_ms is None:
+                self._fail_pre_first_token(
+                    reason="openai_connection_dropped_pre_first_token",
+                )
+                return
+            # Received tokens but no boundary fired — promote to ready.
+            self._state = "ready"
+            self._ready_event.set()
+        else:
+            self._state = "completed"
 
     def _fail_pre_first_token(self, *, reason: SpeechRenderErrorReason) -> None:
         self._state = "errored_pre_first_token"
@@ -479,3 +506,95 @@ class StreamingRenderHandle:
 
 def _wall_ms() -> int:
     return int(time.time() * 1000)
+
+
+def _render_prompt(
+    template_name: str, template_version: str, inputs: dict[str, Any]
+) -> str:
+    """Loads the template via template_loader.get and substitutes placeholders.
+
+    Raises SpeechRenderError synchronously for template_not_found or
+    placeholder_missing — these are programmer errors, not retried."""
+    try:
+        template_text = template_loader.get(
+            role="speech_agent", name=template_name, version=template_version,
+        )
+    except FileNotFoundError as e:
+        raise SpeechRenderError(reason="template_not_found") from e
+
+    try:
+        return template_text.format(**inputs)
+    except KeyError as e:
+        raise SpeechRenderError(reason="placeholder_missing") from e
+
+
+class SpeechAgent:
+    """Phase C — produces SpeechRenderHandle from a template + inputs.
+
+    The caller (orchestrator) consumes the handle via session.say(handle.commit())
+    after handle.ready_to_commit() resolves. Errors raised by ready_to_commit()
+    are caught only at StructuredInterviewAgent._consume_pending_or_render.
+    """
+
+    def __init__(
+        self,
+        *,
+        client: openai.AsyncOpenAI,
+        model: str,
+        effort: str | None,
+        collector: EventCollector,
+    ) -> None:
+        self._client = client
+        self._model = model
+        self._effort = effort
+        self._collector = collector
+
+    async def render(
+        self,
+        *,
+        template_name: str,
+        template_version: str,
+        inputs: dict[str, Any],
+    ) -> SpeechRenderHandle:
+        """Returns synchronously after opening the OpenAI stream.
+        Raises SpeechRenderError for template_not_found or placeholder_missing
+        (programmer errors). Does NOT raise on OpenAI errors — those surface
+        via handle.ready_to_commit() once the _drive Task observes them."""
+        prompt = _render_prompt(template_name, template_version, inputs)
+        render_id = str(uuid.uuid4())
+        return StreamingRenderHandle(
+            client=self._client,
+            model=self._model,
+            effort=self._effort,
+            prompt=prompt,
+            template_name=template_name,
+            template_version=template_version,
+            render_id=render_id,
+            collector=self._collector,
+        )
+
+    def fallback_handle(
+        self,
+        *,
+        template_name: str,
+        template_version: str,
+        text: str,
+        failure_reason: SpeechRenderErrorReason,
+        retries_attempted: int,
+        render_id: str,
+    ) -> SpeechRenderHandle:
+        """Constructs a StaticFallbackHandle. Emits SPEECH_FALLBACK_USED
+        on construction. Caller treats it indistinguishably from a live handle."""
+        # Lazy import to avoid circular dependency: fallbacks.py imports from
+        # this module (RenderMetadata + SpeechRenderErrorReason).
+        from app.modules.interview_engine.speech.fallbacks import StaticFallbackHandle
+        return StaticFallbackHandle(
+            text=text,
+            template_name=template_name,
+            template_version=template_version,
+            failure_reason=failure_reason,
+            retries_attempted=retries_attempted,
+            render_id=render_id,
+            collector=self._collector,
+            model=self._model,
+        )
