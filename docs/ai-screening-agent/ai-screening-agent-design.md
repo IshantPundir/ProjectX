@@ -1668,10 +1668,33 @@ Aggregate dashboards: p50/p95/p99 latency per phase, cost per session, knockout-
 
 ### 11.5 Model output safety
 
-- Every Speech Agent output is checked against a disallowed-phrase regex before TTS:
-  - Outcome words: "passed", "failed", "rejected", "advanced", "best of luck", "unfortunately"
-  - Off-policy promises: specific salary numbers, scheduling commitments, hiring manager mentions
-- On match: log + retry with stricter instruction; on second match, fall back to a static safe utterance.
+> **Re-amended 2026-05-05 (Phase C):** this section originally mandated regex-as-blocker on every Speech Agent output; an interim amendment in the same Phase C cycle moved regex to an audit-only role; this final amendment **drops the regex layer entirely** (both blocker and audit). The Phase C design spec (`docs/superpowers/specs/2026-05-05-ai-screening-phase-c-design.md`) is the authoritative implementation reference for the prompt-only safety enforcement model.
+
+Speech Agent safety is **enforced** by per-template prompt MUST-NOT rules, **iterated** via versioned templates when production violations surface, and **regression-detected** via manual session review and a parallel-workstream eval harness. There is no regex layer.
+
+**Why no regex layer at all.**
+
+1. **Prompt is the enforcement, full stop.** With mid-tier GPT-5 and a tight per-template prompt (MUST-NOTs, negative examples, length cap, plain-text constraint), the production violation rate on actual catastrophic failure modes is on the order of 1-in-thousands or rarer. The prompt is the gate; layering regex on top is theatre — the layers aren't independent (regex is a strict subset of what the prompt already constrains).
+
+2. **Regex has a negative expected value on free-text LLM output.** False positives degrade UX silently (candidate hears the fallback static string instead of an LLM utterance that was probably fine). False negatives give false confidence — paraphrases like "hear back from us" or "we appreciate your time today" sail through any literal pattern set. The audit-only variant inherited both problems: false positives bloat audit-flagged metrics with noise; false negatives still leak.
+
+3. **Other layers do the work an audit-tier would have done.** Full transcript in the audit envelope (subject to `engine_event_log_redaction` settings), manual session review (§13.4 miscall log), eval harness corpus (parallel workstream), and real candidate / recruiter complaints are all higher-signal than substring matching. A pattern showing up in 3 sessions is one we'd catch in manual review or eval-harness regression before any audit metric rolls up to a useful number.
+
+4. **The two-tier (blocker + audit) model adds complexity the problem doesn't justify.** Even the audit-only variant carried a regex pattern set, an event kind, a hashing convention, and post-hoc dispatch in the orchestrator's `_say` — real surface area defending against a problem prompt + monitoring already address.
+
+5. **Keeping regex makes the eval harness look optional.** With regex in place, future contributors reach for "let's just add a pattern" instead of "let's add a regression test to the eval harness." The harness should be the explicit owner of the safety guarantee — that's where catching real failures actually scales.
+
+**The three-layer model:**
+
+1. **Prompt as gate.** Every Speech Agent template includes explicit MUST-NOT rules with concrete negative examples (e.g., the `wrap_normal` template forbids "best of luck", "we'll be in touch about other opportunities", "thanks for your interest"). MUST-NOT rules are expressed affirmatively where possible. Length cap is a soft target (lenient — see Phase C spec §4.1). Mid-tier GPT-5 follows tight constraints with high reliability; the prompt is the actual enforcement.
+
+2. **Versioned templates.** Templates live at `prompts/<role>/<template>.<version>.txt`. Old versions are retained read-only forever. Version pinned at session start; in-flight sessions don't migrate. When a real production violation surfaces, bump the template (`v1` → `v2`) with the offending phrasing added to the negative-examples block. Operational response: log the session in the miscall log → revise the template → bump version → new sessions pick up the new version (§7.19).
+
+3. **Manual adversarial eval + miscall log.** Every prompt or model change runs through the canonical checklist (§15) before ship. The miscall log (§13.4) records every reviewer-flagged miscall — input, expected output, actual output, hypothesis, resolution. The miscall log is the seed of Layer 4.
+
+**Layer 4 (forward reference): eval harness.** A parallel workstream (separate spec) builds a corpus of ~80-120 hand-crafted (template, inputs, expected properties) tuples covering the templates that ship in C/D/F/G/H. `@pytest.mark.prompt_quality` runner, nightly schedule. When a real violation surfaces in production, it goes in as a failing case; the prompt gets a v2 bump; the harness validates v2 catches it. The harness is the explicit owner of the safety guarantee over time — when it ships, manual review remains as the human gate but regression detection is automated.
+
+**Static fallback strings (separate concern).** Per-template fallback strings in `speech/fallbacks.py` are triggered ONLY by OpenAI infrastructure errors (timeout, 5xx, pre-first-token disconnect) — never by content-based checks. Hand-reviewed strings; ship in code, not data; no import-time regex fence (no regex left to fence against). Correctness is by code review.
 
 ### 11.6 Audit trail
 

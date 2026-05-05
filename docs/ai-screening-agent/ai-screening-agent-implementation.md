@@ -421,7 +421,9 @@ A simple `dict[Template, str]` with `{name}`, `{role}`, `{n}` placeholder substi
 
 ### Phase C — Speech Agent (LLM-generated utterances)
 
-**Goal:** Replace hardcoded utterances with LLM-generated ones. Every agent utterance goes through the Speech Agent: load template → render with inputs → call OpenAI → validate (length, schema, safety regex) → `session.say()`.
+> **Superseded by Phase C design spec (2026-05-05).** The implementation details below were the original Phase C plan; they were revised before build began. The authoritative source is `docs/superpowers/specs/2026-05-05-ai-screening-phase-c-design.md` (ARCH-D: streaming + pre-render, prompt-only safety enforcement (no regex layer)). The phase's *goal* and *acceptance criteria* below are still accurate; the *files to create*, *event log kinds*, and *render pipeline* are revised by the spec.
+
+**Goal:** Replace hardcoded utterances with LLM-generated ones. Every agent utterance is produced by the Speech Agent — a class that takes a template name + inputs, calls OpenAI with `stream=True`, exposes a `SpeechRenderHandle` whose joined async iterator is consumed by `session.say(handle.commit())` for token-streamed TTS playout. Per-template prompt MUST-NOT rules enforce safety; manual session review and eval harness regression tests verify (no regex layer at runtime).
 
 **Files to create:**
 - `app/modules/interview_engine/speech/agent.py`:
@@ -785,9 +787,11 @@ These are pulled from the design document plus codebase discipline. They are non
 
 1. **Tenant_id at every DB boundary.** Bypass-RLS does not absolve you of tenant filtering. Every query in new code includes `WHERE tenant_id = :tenant_id`.
 2. **No rubric content in Speech Agent prompts.** Ever. The Speech Agent's input is template + delivery context only — no `positive_evidence`, no `red_flags`, no `evaluation_hint`, no SignalLedger.
-3. **Output schema validation on every LLM call.** Speech Agent: length cap + safety regex. Evaluators: instructor + Pydantic. On validation failure: retry once with stricter instruction; on second failure: fall back to safe default (Speech: static utterance; evaluator: conservative output).
+3. **Output schema validation on every LLM call.**
+   - **Speech Agent (Phase C and on):** length cap is lenient — measured post-hoc on the completed text, logged on `speech.rendered`, never retried, never fallback-triggered. Retries fire only on OpenAI API errors (timeout, 5xx, pre-first-token disconnect); one retry, then fallback to a static per-template utterance. Mid-stream disconnects after the first token is yielded are non-recoverable — the partial utterance plays through and the cause is logged on `speech.stream_interrupted`.
+   - **Evaluators (Phase D and on):** instructor + Pydantic. On validation failure: retry once with stricter instruction; on second failure: fall back to conservative output.
 4. **Evidence quote verification.** Every quote returned by Sufficiency Checker or Disclaim Classifier must be a substring of the actual candidate transcript. Hallucinated quotes are dropped silently and counted as a metric.
-5. **Outcome-neutral language.** Verified by `safety.py` regex on every Speech Agent output. The disallowed-phrase list in §7.13 of the design doc applies to all Speech Agent templates, not just the wrap templates.
+5. **Outcome-neutral language.** Enforced by template prompt's MUST-NOT rules (the gate); verified by manual session review and eval harness regression tests. The disallowed-phrase list in §7.13 of the design doc applies to all Speech Agent templates as MUST-NOT rules in the prompt. There is no regex layer at runtime. See design doc §11.5 (re-amended 2026-05-05) for the three-layer safety model.
 6. **Versioned prompt templates as files.** Never as Python string literals. Loaded via `load_template(role, name, version)`. Version recorded in event log on every render.
 7. **Log every LLM call.** Template, version, model, latency, tokens, validation status, retries. The audit envelope is the source of truth for "why did the agent do X."
 8. **No new DB tables for v1.** All state lives in `InterviewState` (memory + Redis), `SessionResult` (DB), audit envelope (file/S3). If you reach for a migration, stop and reconsider.
