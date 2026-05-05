@@ -1,6 +1,7 @@
 """Phase C deliveries tests — typed render wrappers + fallback_for."""
 from __future__ import annotations
 
+import string
 from unittest.mock import MagicMock, AsyncMock, patch
 
 import pytest
@@ -93,3 +94,84 @@ async def test_render_wrappers_have_template_name_attribute():
     assert render_intro.template_name == "intro"
     assert render_ask_question_standard.template_name == "ask_question_standard"
     assert render_wrap_normal.template_name == "wrap_normal"
+
+
+def _placeholders_in(template_text: str) -> set[str]:
+    """Extract `{placeholder}` field names from a template via stdlib Formatter."""
+    names: set[str] = set()
+    for _literal, field_name, _format_spec, _conversion in string.Formatter().parse(
+        template_text
+    ):
+        if field_name is not None and field_name != "":
+            # Strip any attribute / index access (e.g. `obj.attr` or `arr[0]`)
+            # to get the root identifier — we only care that the delivery
+            # passes a key under that name.
+            root = field_name.split(".")[0].split("[")[0]
+            names.add(root)
+    return names
+
+
+@pytest.mark.parametrize(
+    ("template_name", "import_name", "sentinel_inputs"),
+    [
+        (
+            "intro",
+            "render_intro",
+            {
+                "candidate_first_name": "Alex",
+                "role_title": "Engineer",
+                "target_duration_minutes": 15,
+            },
+        ),
+        (
+            "ask_question_standard",
+            "render_ask_question_standard",
+            {"question_text": "Sample question."},
+        ),
+        ("wrap_normal", "render_wrap_normal", {}),
+    ],
+)
+@pytest.mark.asyncio
+async def test_delivery_inputs_satisfy_template_placeholders(
+    template_name: str,
+    import_name: str,
+    sentinel_inputs: dict[str, object],
+) -> None:
+    """Regression guard for placeholder_missing fallbacks.
+
+    Discovered in user's first manual smoke test
+    (session 06c5af57-3b7f-45ad-aa90-98f8b376faef): the
+    ask_question_standard.v1.txt template had a dead trailing `# Inputs`
+    echo block referencing {is_first_question} and {previous_answer_brief}
+    that the delivery wrapper did NOT pass. _render_prompt's
+    template_text.format(**inputs) raised KeyError → SpeechRenderError
+    (placeholder_missing) → fallback path → every render fell back to
+    static text (which IS question_text verbatim). 5/5 ask_question_standard
+    renders fell back in that session.
+
+    For each template, assert that every placeholder the template uses
+    is present in the inputs dict the delivery wrapper passes.
+    """
+    from app.modules.interview_engine.speech import deliveries
+    from app.modules.interview_engine.speech.templates import template_loader
+
+    template_text = template_loader.get(
+        role="speech_agent", name=template_name, version="v1",
+    )
+    placeholders = _placeholders_in(template_text)
+
+    render_fn = getattr(deliveries, import_name)
+    speech_agent = AsyncMock()
+    speech_agent.render = AsyncMock()
+    await render_fn(speech_agent, **sentinel_inputs)
+
+    speech_agent.render.assert_awaited_once()
+    inputs_passed = speech_agent.render.await_args.kwargs["inputs"]
+
+    missing = placeholders - set(inputs_passed.keys())
+    assert not missing, (
+        f"Template {template_name}.v1.txt has placeholders {missing} "
+        f"that the delivery wrapper does not pass. This will cause "
+        f"placeholder_missing fallbacks at runtime — every render of "
+        f"this template will fall through to static fallback text."
+    )

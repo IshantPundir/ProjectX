@@ -22,9 +22,4 @@ way, after a smooth transition from the previous answer (if any).
 - Use contractions. Sound like a person, not a script reader.
 - Plain text. No markdown.
 
-# Inputs
-question_text: {question_text}
-is_first_question: {is_first_question}
-previous_answer_brief: {previous_answer_brief}
-
 Output the utterance now.
