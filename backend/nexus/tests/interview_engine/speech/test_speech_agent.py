@@ -6,9 +6,7 @@ behavior of render() / SpeechAgent / StreamingRenderHandle.
 from __future__ import annotations
 
 import asyncio
-import contextlib
-from collections.abc import AsyncIterator
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -29,19 +27,8 @@ def _make_chunk(content=None, finish_reason=None, usage=None):
     return chunk
 
 
-@contextlib.asynccontextmanager
-async def _mock_stream(chunks):
-    class _Stream:
-        async def __aiter__(self):
-            for c in chunks:
-                yield c
-        async def close(self):
-            pass
-    yield _Stream()
-
-
 def _mock_client_yielding(chunks):
-    """Returns an AsyncMock client whose chat.completions.create yields chunks."""
+    """Returns a MagicMock client whose chat.completions.create yields chunks."""
     client = MagicMock()
 
     async def _create(**kwargs):
@@ -58,7 +45,7 @@ def _mock_client_yielding(chunks):
 
 
 @pytest.mark.asyncio
-async def test_render_happy_path(collector, tmp_path, monkeypatch):
+async def test_render_happy_path(collector):
     """Mocked client streams 3 chunks; ready_to_commit resolves;
     commit() yields concatenated tokens; metadata correct."""
     from app.modules.interview_engine.speech.agent import SpeechAgent
@@ -197,6 +184,12 @@ async def test_retries_once_on_openai_timeout(collector):
         )
     await handle.ready_to_commit()  # should not raise
     assert call_count["n"] == 2
+    # Drain commit so the metadata Future resolves (fires at LATER of
+    # stream-close + consumer-finish).
+    async for _chunk in handle.commit():
+        pass
+    md = await handle.metadata
+    assert md.retries == 1
 
 
 @pytest.mark.asyncio
@@ -283,7 +276,13 @@ async def test_does_not_retry_post_first_token_failure(collector):
     # Then commit and observe truncated output
     await handle.ready_to_commit()
     chunks_out = [c async for c in handle.commit()]
-    # We got 3 tokens before drop; commit yields what's there
+    # We got 3 tokens before drop; commit yields what's there. Verify the
+    # truncated playback actually delivered the partial content the bug
+    # fix enables (no boundary fired → entire utterance becomes the
+    # prefix and is replayed verbatim).
+    joined = "".join(chunks_out)
+    assert joined, "expected partial content from truncated stream"
+    assert "Hi" in joined
 
     # speech.stream_interrupted fired
     kinds = [call.kwargs["kind"] for call in collector.append.call_args_list]
