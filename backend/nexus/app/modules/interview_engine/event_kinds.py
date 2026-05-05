@@ -67,8 +67,9 @@ ORCHESTRATOR_EXIT = "orchestrator.exit"
 # ---------------------------------------------------------------------------
 
 SPEECH_RENDERED = "speech.rendered"
-SPEECH_SAFETY_VIOLATION = "speech.safety_violation"
+SPEECH_SAFETY_VIOLATION = "speech.safety_violation"  # KEEP for now — deleted in Task 12
 SPEECH_FALLBACK_USED = "speech.fallback_used"
+SPEECH_STREAM_INTERRUPTED = "speech.stream_interrupted"
 
 
 # ---------------------------------------------------------------------------
@@ -166,6 +167,7 @@ ALL_EVENT_KINDS: frozenset[str] = frozenset({
     SPEECH_RENDERED,
     SPEECH_SAFETY_VIOLATION,
     SPEECH_FALLBACK_USED,
+    SPEECH_STREAM_INTERRUPTED,
     # Phase D / E
     EVALUATOR_SUFFICIENCY_CHECKED,
     # Phase F
