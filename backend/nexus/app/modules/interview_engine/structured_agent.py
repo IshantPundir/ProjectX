@@ -1,19 +1,27 @@
 """StructuredInterviewAgent — the deterministic-flow LiveKit Agent.
 
-Phase B drives candidate utterances via:
+Phase C drives candidate utterances via:
 1. Pattern 2 hard guardrail — `on_user_turn_completed` raises
    `StopResponse` (cancels the framework's auto-reply) and `llm_node`
    is overridden to emit zero chunks (defense-in-depth for any path
    that reaches it).
-2. The orchestrator's main loop generates each agent utterance from
-   `_phase_b_utterances` (hardcoded English strings; throwaway), passes
-   through `_say()` for safety + fallback, and calls
-   `await self.session.say(text)`.
-3. Wait for the framework's turn-detector-confirmed end-of-utterance
+2. The orchestrator's main loop drives every agent utterance through
+   the `SpeechAgent` rendering service. Each utterance is pre-rendered
+   via `deliveries.render_*` into `self._pending_next_render` BEFORE
+   the prior `_say` call, then drained at the consumption site via
+   `_consume_pending_or_render`. The helper catches `SpeechRenderError`
+   and substitutes a `StaticFallbackHandle` (built by `deliveries.fallback_for`)
+   with the same render_id so the SPEECH_FALLBACK_USED + SPEECH_RENDERED
+   envelope events correlate (spec §4.5).
+3. `_say(handle)` awaits `handle.ready_to_commit()` and pipes
+   `handle.commit()`'s AsyncIterable[str] into `session.say()`. The
+   handle's internal Task drains alongside session.say's consumer;
+   SPEECH_RENDERED fires from inside the handle.
+4. Wait for the framework's turn-detector-confirmed end-of-utterance
    (resolved via `on_user_turn_completed`), treat the full turn text
    as substantive, advance.
 
-Phase B scope (no Sufficiency Checker, no Intent Classifier, no Disclaim
+Phase C scope (no Sufficiency Checker, no Intent Classifier, no Disclaim
 Classifier, no follow-ups, no deepening probes, no silence handling
 beyond LiveKit's defaults, no reconnect protocol):
 * Linear walk through `config.stage.questions` in position order.
@@ -27,7 +35,6 @@ beyond LiveKit's defaults, no reconnect protocol):
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import time
 import uuid
 from datetime import UTC, datetime
@@ -37,19 +44,11 @@ import structlog
 from livekit.agents import Agent, ChatContext, ChatMessage
 from livekit.agents.llm import StopResponse
 
-from app.modules.interview_engine._phase_b_utterances import (
-    _PHASE_B_SAFETY_FALLBACK_TEXT,
-    ASK_QUESTION_STANDARD,
-    INTRO,
-    WRAP_NORMAL,
-)
 from app.modules.interview_engine.event_kinds import (
     ORCHESTRATOR_EXIT,
     ORCHESTRATOR_PHASE_CHANGED,
     ORCHESTRATOR_QUESTION_ASKED,
     ORCHESTRATOR_QUESTION_COMPLETED,
-    SPEECH_FALLBACK_USED,
-    SPEECH_SAFETY_VIOLATION,
 )
 from app.modules.interview_engine.event_log import EventCollector, EventLogSink
 from app.modules.interview_engine.orchestrator import (
@@ -61,7 +60,12 @@ from app.modules.interview_engine.orchestrator import (
     SignalLedger,
     pick_next_question,
 )
-from app.modules.interview_engine.speech.safety import check_safety
+from app.modules.interview_engine.speech import (
+    SpeechAgent,
+    SpeechRenderError,
+    SpeechRenderHandle,
+)
+from app.modules.interview_engine.speech import deliveries
 from app.modules.interview_runtime import (
     QuestionConfig,
     QuestionResult,
@@ -80,12 +84,6 @@ SessionOutcome = Literal[
     "candidate_disconnected",
     "error",
 ]
-
-
-def _sha256_short(s: str) -> str:
-    """First 16 hex chars of sha256(s) — used for safety-violation
-    matched_text hashing in the audit envelope."""
-    return hashlib.sha256(s.encode("utf-8")).hexdigest()[:16]
 
 
 def _now_utc() -> datetime:
@@ -114,12 +112,14 @@ class StructuredInterviewAgent(Agent):
         correlation_id: str,
         collector: EventCollector,
         persistence: LedgerPersistence,
+        speech_agent: SpeechAgent,
     ) -> None:
         self._config = config
         self._tenant_id = tenant_id
         self._correlation_id = correlation_id
         self._collector = collector
         self._persistence = persistence
+        self._speech_agent = speech_agent
         self._envelope_written: bool = False
         self._persisted: bool = False
         self._end_outcome: SessionOutcome | None = None
@@ -129,6 +129,17 @@ class StructuredInterviewAgent(Agent):
         # Per-question candidate transcripts, keyed by question_id.
         # Built up during the main loop; folded into SessionResult on close.
         self._candidate_transcripts: dict[str, str] = {}
+
+        # Phase C — pre-render slot. At each pre-render trigger site
+        # (intro pre-roll in on_enter, Q0 at INTRO→MAIN_LOOP boundary,
+        # Qn+1 + wrap inside _ask_one_question), the orchestrator spawns
+        # an asyncio.Task that calls `deliveries.render_*` and stashes
+        # the resulting Future-of-handle here. `_consume_pending_or_render`
+        # is the central drain point: it awaits the slot, catches
+        # SpeechRenderError, and substitutes a fallback handle via
+        # `deliveries.fallback_for` reusing the failed render's
+        # render_id (spec §4.5).
+        self._pending_next_render: asyncio.Task[SpeechRenderHandle] | None = None
 
         # The orchestrator's pending "next user turn" future, set by
         # `_arm_user_turn` immediately before each `_say` and resolved
@@ -251,29 +262,92 @@ class StructuredInterviewAgent(Agent):
     # ------------------------------------------------------------------
     async def _say(
         self,
-        text: str,
+        handle: SpeechRenderHandle,
         *,
         allow_interruptions: bool = True,
     ) -> None:
-        safety = check_safety(text)
-        if not safety.is_safe:
-            for v in safety.violations:
-                self._collector.append(
-                    kind=SPEECH_SAFETY_VIOLATION,
-                    payload={
-                        "category": v.category,
-                        "pattern_name": v.pattern_name,
-                        "matched_text_hash": _sha256_short(v.matched_text),
-                    },
-                    wall_ms=_wall_ms(),
-                )
-            self._collector.append(
-                kind=SPEECH_FALLBACK_USED,
-                payload={"reason": "phase_b_hardcoded_safety_violation"},
-                wall_ms=_wall_ms(),
+        """Single utterance entry point.
+
+        Phase C: takes a SpeechRenderHandle (live or fallback — same
+        Protocol). Awaits handle.ready_to_commit() (which blocks until
+        the prefix sentence boundary fires for live handles, or returns
+        synchronously for fallbacks), then pipes handle.commit()'s
+        AsyncIterable[str] into session.say(). The handle's internal
+        Task drains alongside session.say's consumer; SPEECH_RENDERED
+        fires from inside the handle once both stream-close and
+        consumer-finish have happened.
+        """
+        try:
+            await handle.ready_to_commit()
+        except SpeechRenderError as exc:
+            # Defensive: this branch should be unreachable in Phase C
+            # because `_consume_pending_or_render` catches
+            # SpeechRenderError and substitutes a fallback handle
+            # before _say is invoked. If a future caller bypasses the
+            # helper we want to fail loudly rather than swallow.
+            log.error(
+                "structured_agent._say.unexpected_render_error",
+                reason=exc.reason,
+                render_id=exc.render_id,
             )
-            text = _PHASE_B_SAFETY_FALLBACK_TEXT
-        await self.session.say(text, allow_interruptions=allow_interruptions)
+            raise
+
+        await self.session.say(
+            handle.commit(), allow_interruptions=allow_interruptions,
+        )
+
+    async def _consume_pending_or_render(
+        self,
+        render_fn,  # render_intro / render_ask_question_standard / render_wrap_normal
+        **inputs,
+    ) -> SpeechRenderHandle:
+        """Use the pending slot if hot; otherwise render synchronously.
+
+        Central drain point for the pre-render pipeline. On
+        SpeechRenderError (post-retry-exhaustion infrastructure
+        failure, raised by handle.ready_to_commit() inside the slot
+        Task), substitutes a fallback handle via
+        ``deliveries.fallback_for``. The same render_id from the
+        failed live render is reused so the SPEECH_FALLBACK_USED +
+        SPEECH_RENDERED envelope events correlate across live → fallback
+        (spec §4.5).
+        """
+        if self._pending_next_render is not None:
+            try:
+                return await self._pending_next_render
+            except SpeechRenderError as exc:
+                log.warning(
+                    "speech.pre_render.failed",
+                    reason=exc.reason,
+                    render_id=exc.render_id,
+                )
+                return await deliveries.fallback_for(
+                    self._speech_agent,
+                    template_name=render_fn.template_name,
+                    failure_reason=exc.reason,
+                    render_id=exc.render_id,
+                    **inputs,
+                )
+            finally:
+                self._pending_next_render = None
+
+        # Cold path — no pending slot was spawned (e.g. the very first
+        # call, or a code path that didn't pre-render).
+        try:
+            return await render_fn(self._speech_agent, **inputs)
+        except SpeechRenderError as exc:
+            log.warning(
+                "speech.render.failed",
+                reason=exc.reason,
+                render_id=exc.render_id,
+            )
+            return await deliveries.fallback_for(
+                self._speech_agent,
+                template_name=render_fn.template_name,
+                failure_reason=exc.reason,
+                render_id=exc.render_id,
+                **inputs,
+            )
 
     async def _transition_with_persist(
         self,
@@ -303,7 +377,14 @@ class StructuredInterviewAgent(Agent):
     async def on_enter(self) -> None:
         """LiveKit calls this on session.start(). Launch the main loop
         as a background task so on_enter returns promptly; the loop
-        manages the entire interview lifecycle."""
+        manages the entire interview lifecycle.
+
+        Trigger 1 (intro pre-render): spawn the intro `deliveries.render_intro`
+        Task into the pending slot BEFORE creating the main loop Task.
+        The intro LLM round-trip overlaps the room-join window so the
+        candidate hears the first audio with minimal perceived gap once
+        the main loop reaches its `_say(intro_handle)` call site.
+        """
         self._session_start_monotonic = time.monotonic()
         log.info(
             "structured_agent.on_enter",
@@ -312,6 +393,21 @@ class StructuredInterviewAgent(Agent):
             job_title=self._config.job_title,
             question_count=len(self._config.stage.questions),
         )
+
+        # Trigger 1 — pre-render intro in the room-join window.
+        first_name = (
+            self._config.candidate.name.split(" ")[0]
+            if self._config.candidate.name else "there"
+        )
+        self._pending_next_render = asyncio.create_task(
+            deliveries.render_intro(
+                self._speech_agent,
+                candidate_first_name=first_name,
+                role_title=self._config.job_title,
+                target_duration_minutes=self._config.stage.duration_minutes,
+            )
+        )
+
         self._main_loop_task = asyncio.create_task(self._run_main_loop())
         # Add a done-callback so a crashing loop produces a logged error
         # rather than an unobserved-task warning.
@@ -381,7 +477,7 @@ class StructuredInterviewAgent(Agent):
         return future
 
     async def _run_main_loop(self) -> None:
-        """The Phase B linear orchestration loop.
+        """The Phase C linear orchestration loop.
 
         Sequence:
           CONNECTING → CONSENT → INTRO → MAIN_LOOP → NORMAL_WRAP → CLOSED.
@@ -390,6 +486,16 @@ class StructuredInterviewAgent(Agent):
         candidate already consented in the pre-room wizard; the phase
         exists as a brief audit-recordable acknowledgment (design doc
         §6.1, §4.2 enum comment). Phase F may add behavior here later.
+
+        Pre-render pipeline (spec §3): each utterance after the intro is
+        spawned BEFORE the prior `_say` call so the LLM round-trip
+        overlaps with playout / persistence I/O. Triggers:
+          1. Intro — spawned in `on_enter` (room-join window).
+          2. Q0 — spawned here at the INTRO→MAIN_LOOP boundary,
+             AFTER consuming the intro slot and BEFORE awaiting intro
+             playout.
+          3. Qn+1 / wrap — spawned inside `_ask_one_question` after
+             the prior transcript arrives.
         """
         # 1. Brief CONSENT traversal (wizard already captured consent).
         await self._transition_with_persist(
@@ -397,17 +503,33 @@ class StructuredInterviewAgent(Agent):
             reason="wizard_consent_already_captured",
         )
 
-        # 2. Move into INTRO and play the intro utterance.
+        # 2. Move into INTRO. Consume the intro slot pre-rendered in
+        # on_enter (or render synchronously with fallback if missing).
         await self._transition_with_persist(
             InterviewPhase.INTRO, reason="intro_phase",
         )
-        intro_text = INTRO.format(
-            name=self._config.candidate.name.split(" ")[0]
-            if self._config.candidate.name else "there",
-            role=self._config.job_title,
-            minutes=self._config.stage.duration_minutes,
+        first_name = (
+            self._config.candidate.name.split(" ")[0]
+            if self._config.candidate.name else "there"
         )
-        await self._say(intro_text)
+        intro_handle = await self._consume_pending_or_render(
+            deliveries.render_intro,
+            candidate_first_name=first_name,
+            role_title=self._config.job_title,
+            target_duration_minutes=self._config.stage.duration_minutes,
+        )
+
+        # Trigger 2 — spawn Q0 pre-render BEFORE awaiting intro playout.
+        # This overlaps the Q0 LLM round-trip with the intro audio.
+        first_q = pick_next_question(self._state, self._config)
+        if first_q is not None:
+            self._pending_next_render = asyncio.create_task(
+                deliveries.render_ask_question_standard(
+                    self._speech_agent, question_text=first_q.text,
+                )
+            )
+
+        await self._say(intro_handle)
 
         # 3. Enter MAIN_LOOP and walk the questions.
         await self._transition_with_persist(
@@ -419,11 +541,16 @@ class StructuredInterviewAgent(Agent):
                 break
             await self._ask_one_question(next_q)
 
-        # 4. Wrap normally.
+        # 4. Wrap normally. The wrap slot was pre-rendered at the end of
+        # the last `_ask_one_question` (Trigger 3 — the no-more-questions
+        # branch).
+        wrap_handle = await self._consume_pending_or_render(
+            deliveries.render_wrap_normal,
+        )
         await self._transition_with_persist(
             InterviewPhase.NORMAL_WRAP, reason="all_questions_completed",
         )
-        await self._say(WRAP_NORMAL)
+        await self._say(wrap_handle)
 
         # 5. Close. Stamp _end_outcome BEFORE the CLOSED transition so
         # a participant_disconnected callback that fires in the tiny
@@ -447,7 +574,15 @@ class StructuredInterviewAgent(Agent):
 
     async def _ask_one_question(self, q: QuestionConfig) -> None:
         """Ask a single question, wait for one transcribed utterance,
-        record both into ledger + envelope + state, advance."""
+        record both into ledger + envelope + state, advance.
+
+        Trigger 3 (Qn+1 / wrap pre-render) fires inside this method
+        AFTER the candidate's transcript arrives but BEFORE the
+        persistence + envelope writes. This is load-bearing: the LLM
+        round-trip for the next utterance overlaps the persistence
+        I/O window (~150-280ms perceived gap savings). If no further
+        questions remain, the wrap utterance is pre-rendered instead.
+        """
         # Locate the QuestionState for this question (created in __init__).
         qs = next(
             (s for s in self._state.questions if s.question_id == q.id),
@@ -476,6 +611,13 @@ class StructuredInterviewAgent(Agent):
             wall_ms=_wall_ms(),
         )
 
+        # Consume the pre-rendered handle for THIS question (or render
+        # synchronously / fall back if the slot is missing or errored).
+        handle = await self._consume_pending_or_render(
+            deliveries.render_ask_question_standard,
+            question_text=q.text,
+        )
+
         # Arm the user-turn future BEFORE saying. The framework's
         # turn-detector-confirmed EOU fires via `on_user_turn_completed`
         # and resolves this future; pre-arming guarantees no race even
@@ -486,8 +628,7 @@ class StructuredInterviewAgent(Agent):
         # premature-advance bug from listening to STT `is_final`).
         transcript_future = self._arm_user_turn()
 
-        ask_text = ASK_QUESTION_STANDARD.format(question_text=q.text)
-        await self._say(ask_text)
+        await self._say(handle)
 
         # Wait for the candidate's final transcribed utterance. If the
         # listener already caught one during `_say`, this resolves
@@ -499,6 +640,23 @@ class StructuredInterviewAgent(Agent):
         qs.elapsed_seconds = (
             qs.completed_at - qs.asked_at
         ).total_seconds() if qs.asked_at else 0.0
+
+        # Trigger 3 — spawn the next utterance's pre-render BEFORE the
+        # persistence + envelope writes below. Order is load-bearing:
+        # the LLM round-trip overlaps the persistence I/O window.
+        next_q = pick_next_question(self._state, self._config)
+        if next_q is not None:
+            self._pending_next_render = asyncio.create_task(
+                deliveries.render_ask_question_standard(
+                    self._speech_agent, question_text=next_q.text,
+                )
+            )
+        else:
+            # No more questions — pre-render the wrap utterance for the
+            # main loop's post-loop `_say(wrap_handle)` call site.
+            self._pending_next_render = asyncio.create_task(
+                deliveries.render_wrap_normal(self._speech_agent)
+            )
 
         await self._persistence.write_ledger(self._ledger)
 
