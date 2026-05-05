@@ -63,3 +63,117 @@ def test_speech_render_handle_protocol_is_runtime_checkable():
         def completed_text(self) -> asyncio.Future[str]: ...  # type: ignore[empty-body]
 
     assert isinstance(_StubHandle(), SpeechRenderHandle)
+
+
+def test_static_fallback_handle_satisfies_protocol():
+    """StaticFallbackHandle must structurally satisfy SpeechRenderHandle."""
+    from unittest.mock import MagicMock
+    from app.modules.interview_engine.speech.fallbacks import StaticFallbackHandle
+
+    h = StaticFallbackHandle(
+        text="Hi there.",
+        template_name="intro",
+        template_version="v1",
+        failure_reason="openai_timeout",
+        retries_attempted=1,
+        render_id="abc-123",
+        collector=MagicMock(),
+    )
+    assert isinstance(h, SpeechRenderHandle)
+
+
+@pytest.mark.asyncio
+async def test_static_fallback_handle_pre_resolved_futures():
+    """metadata + completed_text futures resolve immediately (no Task)."""
+    from unittest.mock import MagicMock
+    from app.modules.interview_engine.speech.fallbacks import StaticFallbackHandle
+
+    h = StaticFallbackHandle(
+        text="That's everything from my side.",
+        template_name="wrap_normal",
+        template_version="v1",
+        failure_reason="openai_timeout",
+        retries_attempted=1,
+        render_id="abc",
+        collector=MagicMock(),
+    )
+    assert h.metadata.done()
+    assert h.completed_text.done()
+    md = await h.metadata
+    assert md.was_fallback is True
+    assert md.length_words == 5
+    assert md.tokens_in is None  # Pin 2: nullable for fallbacks
+    assert (await h.completed_text) == "That's everything from my side."
+
+
+@pytest.mark.asyncio
+async def test_static_fallback_handle_commit_yields_one_chunk():
+    """commit() returns an AsyncIterable yielding exactly one chunk = full text."""
+    from unittest.mock import MagicMock
+    from app.modules.interview_engine.speech.fallbacks import StaticFallbackHandle
+
+    h = StaticFallbackHandle(
+        text="Hi there, candidate.",
+        template_name="intro",
+        template_version="v1",
+        failure_reason="openai_5xx",
+        retries_attempted=1,
+        render_id="abc",
+        collector=MagicMock(),
+    )
+    chunks = [chunk async for chunk in h.commit()]
+    assert chunks == ["Hi there, candidate."]
+    assert h.is_committed
+    # Re-committing must raise
+    with pytest.raises(RuntimeError):
+        h.commit()
+
+
+@pytest.mark.asyncio
+async def test_static_fallback_handle_cancel_is_idempotent_noop():
+    """cancel() on a fallback handle is a no-op (no Task to cancel)."""
+    from unittest.mock import MagicMock
+    from app.modules.interview_engine.speech.fallbacks import StaticFallbackHandle
+
+    h = StaticFallbackHandle(
+        text="x",
+        template_name="intro",
+        template_version="v1",
+        failure_reason="openai_timeout",
+        retries_attempted=1,
+        render_id="abc",
+        collector=MagicMock(),
+    )
+    await h.cancel()
+    await h.cancel()  # idempotent
+    assert h.is_cancelled
+    with pytest.raises(RuntimeError):
+        h.commit()  # cannot commit after cancel
+
+
+def test_static_fallback_handle_emits_fallback_used_on_construction():
+    """Constructing the handle MUST emit speech.fallback_used (Pin 1).
+    Render and consumer code never have to remember to fire this event."""
+    from unittest.mock import MagicMock
+    from app.modules.interview_engine.event_kinds import SPEECH_FALLBACK_USED
+    from app.modules.interview_engine.speech.fallbacks import StaticFallbackHandle
+
+    collector = MagicMock()
+    StaticFallbackHandle(
+        text="x",
+        template_name="ask_question_standard",
+        template_version="v1",
+        failure_reason="openai_429",
+        retries_attempted=1,
+        render_id="render-abc",
+        collector=collector,
+    )
+    collector.append.assert_called_once()
+    call_kwargs = collector.append.call_args.kwargs
+    assert call_kwargs["kind"] == SPEECH_FALLBACK_USED
+    payload = call_kwargs["payload"]
+    assert payload["render_id"] == "render-abc"
+    assert payload["template_name"] == "ask_question_standard"
+    assert payload["template_version"] == "v1"
+    assert payload["reason"] == "openai_429"
+    assert payload["retries_attempted"] == 1
