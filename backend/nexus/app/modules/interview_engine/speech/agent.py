@@ -116,13 +116,6 @@ class _PreFirstTokenFailure(Exception):
         self.reason = reason
 
 
-class _PostFirstTokenFailure(Exception):
-    """Internal — mid-stream failure after first token; non-recoverable."""
-    def __init__(self, *, reason: str, tokens_received: int) -> None:
-        self.reason = reason
-        self.tokens_received = tokens_received
-
-
 _State = Literal[
     "opening",
     "buffering_prefix",
@@ -190,6 +183,8 @@ class StreamingRenderHandle:
         self._tokens_in: int | None = None
         self._tokens_out: int | None = None
         self._completed_text_buf: list[str] = []
+        self._retries_attempted: int = 0
+        self._consumer_drained_naturally: bool = False
 
         self._task: asyncio.Task[None] = asyncio.create_task(self._drive())
 
@@ -229,6 +224,15 @@ class StreamingRenderHandle:
         while True:
             chunk = await self._live_queue.get()
             if chunk is None:  # sentinel: stream closed or interrupted
+                # Mark natural drain only if cancellation didn't trigger
+                # this sentinel. If cancel_event is set when we hit the
+                # sentinel, the iteration is being aborted (cancellation
+                # pushed the sentinel to unblock us). This is what lets
+                # _maybe_emit_rendered distinguish played (commit ran) vs
+                # played_to_completion (commit ran AND drained naturally),
+                # per spec §3.5 sub-case 3.
+                if not self._cancel_event.is_set():
+                    self._consumer_drained_naturally = True
                 break
             yield chunk
         self._consumer_finish_wall_ms = _wall_ms()
@@ -265,6 +269,7 @@ class StreamingRenderHandle:
         """OpenAI streaming consumer. State machine per spec §2.5."""
         try:
             for attempt in range(2):
+                self._retries_attempted = attempt  # 0 on first try, 1 on retry
                 try:
                     await self._open_stream_and_buffer_prefix(attempt=attempt)
                     return
@@ -282,9 +287,32 @@ class StreamingRenderHandle:
                     return
         except asyncio.CancelledError:
             # Cancellation during _drive — close everything cleanly.
+            # CancelledError MUST come before the broad except below so
+            # that cooperative cancellation is propagated to the caller
+            # rather than swallowed by the defensive openai_5xx bucket.
             self._state = "cancelled"
             self._live_queue.put_nowait(None)
             raise
+        except Exception as exc:  # noqa: BLE001
+            # Defensive bucket: any unexpected failure in _drive must NOT
+            # leave the consumer hanging on _ready_event. Surface as an
+            # openai_5xx-class error so ready_to_commit() raises and the
+            # consumption helper falls back. Also push the live-queue
+            # sentinel so any committed consumer that might already be
+            # iterating gets unblocked. _fail_pre_first_token() is
+            # idempotent in effect (re-setting an already-set Event is a
+            # no-op), so the pre-ready path stays correct even if the
+            # error happens after _ready_event was set (in which case
+            # _error stays None for those callers — but ready_to_commit
+            # already returned, so they won't observe inconsistency).
+            log.error(
+                "speech.render.drive_unexpected_error",
+                render_id=self._render_id,
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            self._fail_pre_first_token(reason="openai_5xx")
+            self._live_queue.put_nowait(None)
 
     async def _open_stream_and_buffer_prefix(self, *, attempt: int) -> None:
         """Opens the stream, buffers the prefix, transitions to ready,
@@ -401,6 +429,14 @@ class StreamingRenderHandle:
         latency_last = self._stream_close_wall_ms
         playout_duration = self._consumer_finish_wall_ms - latency_last if latency_last else None
 
+        # Spec §3.5 sub-case 3: distinguish `played` (commit ran — we
+        # attempted playback) from `played_to_completion` (commit ran AND
+        # the joined iterator drained naturally to its sentinel without
+        # cancellation). A mid-PLAYOUT disconnect after commit yields
+        # committed=true, played=true, played_to_completion=false.
+        played = self._committed
+        played_to_completion = self._committed and self._consumer_drained_naturally
+
         md = RenderMetadata(
             render_id=self._render_id,
             template_name=self._template_name,
@@ -413,7 +449,7 @@ class StreamingRenderHandle:
             length_words=len(completed_text.split()),
             playout_duration_ms=playout_duration,
             was_fallback=False,
-            retries=0,  # _drive's retry attempt count would go here in a richer impl
+            retries=self._retries_attempted,
         )
         self._metadata_fut.set_result(md)
         self._completed_text_fut.set_result(completed_text)
@@ -432,10 +468,10 @@ class StreamingRenderHandle:
                 "length_words": len(completed_text.split()),
                 "playout_duration_ms": playout_duration,
                 "committed": self._committed,
-                "played": self._committed and not self._cancelled,
-                "played_to_completion": self._committed and not self._cancelled,
+                "played": played,
+                "played_to_completion": played_to_completion,
                 "was_fallback": False,
-                "retries": 0,
+                "retries": self._retries_attempted,
             },
             wall_ms=_wall_ms(),
         )
