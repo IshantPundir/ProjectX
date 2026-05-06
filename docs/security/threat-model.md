@@ -40,10 +40,6 @@ If the LiveKit API secret leaks, an attacker could dispatch arbitrary agents int
 - The engine moves out of the same Postgres network (e.g., enterprise client requires the engine in their VPC).
 - A real-world incident demonstrates LiveKit-credential leakage as a viable attack path.
 
-### Original Phase 3C.2 notes (superseded)
-
-The original Phase 3C.2 trust boundaries described a `verify_engine_token` path in `app/modules/interview_runtime/` enforcing HS256 algorithm pinning, a `purpose='engine_dispatch'` claim, and tenant-id consistency. All of that — `verify_engine_token`, the `engine_dispatch_tokens` table, the `engine_token_uses` table, and the `/api/internal/*` HTTP endpoints — was retired in Phase 3 of the modular-monolith spec (see `docs/superpowers/specs/2026-05-01-drop-langfuse-modular-monolith-design.md` and `docs/superpowers/plans/2026-05-01-phase-3-engine-merge.md`). The original notes are preserved in git history for reference.
-
 ### Out of scope this round
 
 - A LiveKit recording (Egress) pipeline. When added, it will publish
@@ -51,24 +47,6 @@ The original Phase 3C.2 trust boundaries described a `verify_engine_token` path 
   needs its own STRIDE row.
 - A rejoin flow for candidates who were disconnected mid-session.
 - Cross-region tenant data residency.
-
----
-
-## Engine: in-session safety reporting (retired)
-
-> **Status: retired 2026-05-06 with the engine revert (commit `eb8e687`).**
->
-> The original Phase 2 controller-cutover added a trust surface around
-> `InterviewController` meta tools (`flag_safety_concern`,
-> `report_technical_issue`, `disqualify_knockout`) and an escalation
-> procedure with SEV-class SLAs. The controller and tools were removed
-> when the engine reverted to a generic LLM chatbot; no current code
-> emits these audit events.
->
-> If a structured-engine path returns and re-introduces in-session
-> meta tools, this section needs to be re-authored from scratch — the
-> previous escalation matrix, redaction modes, and review gates are
-> preserved in git history (pre-commit `9257ec3`).
 
 ---
 

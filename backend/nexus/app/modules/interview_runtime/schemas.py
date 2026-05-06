@@ -151,9 +151,7 @@ class SessionConfig(BaseModel):
     """The full input contract sent from Nexus to the interview engine.
 
     Constructed in-process by ``build_session_config`` and consumed
-    directly by the engine entrypoint (post-Phase-3 modular-monolith
-    merge — the original ``/api/internal/sessions/{id}/config`` HTTP
-    boundary was retired in migration ``0025``).
+    directly by the engine entrypoint.
     """
 
     session_id: str
@@ -320,10 +318,7 @@ class KnockoutFailure(BaseModel):
 class SessionResult(BaseModel):
     """Complete output of an interview session.
 
-    Passed in-process to ``record_session_result`` by the engine on
-    close (post-Phase-3 modular-monolith merge — the original
-    ``/api/internal/sessions/{id}/results`` HTTP boundary was retired
-    in migration ``0025``).
+    Passed in-process to ``record_session_result`` by the engine on close.
     """
 
     session_id: str
