@@ -1536,7 +1536,7 @@ requires-dist = [
     { name = "jinja2", specifier = ">=3.1,<4" },
     { name = "livekit-agents", extras = ["silero", "turn-detector"], specifier = ">=1.5.4,<2" },
     { name = "livekit-api", specifier = ">=1.0,<2" },
-    { name = "livekit-plugins-ai-coustics", specifier = ">=0.1,<1" },
+    { name = "livekit-plugins-ai-coustics", specifier = ">=0.2,<1" },
     { name = "livekit-plugins-cartesia", specifier = ">=1.5.4,<2" },
     { name = "livekit-plugins-deepgram", specifier = ">=1.5.4,<2" },
     { name = "livekit-plugins-noise-cancellation", specifier = ">=0.2,<1" },
