@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import sys
 from unittest.mock import patch
 
 import pytest
 
-from app.ai.realtime import build_interruption_options
+from app.ai.realtime import build_interruption_options, build_noise_cancellation
 
 
 class TestBuildInterruptionOptions:
@@ -35,11 +36,6 @@ class TestBuildInterruptionOptions:
         }
 
 
-import sys
-
-from app.ai.realtime import build_noise_cancellation
-
-
 class TestBuildNoiseCancellation:
     def test_off_returns_none_and_does_not_import_plugins(self) -> None:
         # Pre-clear caches so we can assert lazy-import discipline.
@@ -62,6 +58,7 @@ class TestBuildNoiseCancellation:
             mock_config.interview_nc_enhancement_level = 0.5
             result = build_noise_cancellation()
         assert result is not None
+        assert "livekit.plugins.ai_coustics" in sys.modules
 
     def test_ai_coustics_quail_vf_returns_audio_enhancement(self) -> None:
         with patch("app.ai.realtime.ai_config") as mock_config:
@@ -69,6 +66,7 @@ class TestBuildNoiseCancellation:
             mock_config.interview_nc_enhancement_level = 0.5
             result = build_noise_cancellation()
         assert result is not None
+        assert "livekit.plugins.ai_coustics" in sys.modules
 
     def test_krisp_nc_returns_filter(self) -> None:
         with patch("app.ai.realtime.ai_config") as mock_config:
@@ -76,6 +74,7 @@ class TestBuildNoiseCancellation:
             mock_config.interview_nc_enhancement_level = 0.5
             result = build_noise_cancellation()
         assert result is not None
+        assert "livekit.plugins.noise_cancellation" in sys.modules
 
     def test_unknown_value_raises(self) -> None:
         with patch("app.ai.realtime.ai_config") as mock_config:

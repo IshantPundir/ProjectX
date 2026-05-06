@@ -159,18 +159,21 @@ def build_noise_cancellation() -> object | None:
     never imports the Cloud-only `ai_coustics` / `noise_cancellation` plugin
     packages. Critical because the plugins fail at import-time on platforms
     that don't ship the underlying native libraries.
+
+    Note: typed as ``object | None`` because the LiveKit plugin packages do
+    not export a stable public return type for ``ai_coustics.audio_enhancement``
+    or ``noise_cancellation.NC()``. Both call sites in ``room_io.AudioInputOptions``
+    treat the return value as an opaque protocol-conforming object. Tighten
+    the type if/when the plugins expose stable public types.
     """
     nc = ai_config.interview_noise_cancellation
+    if nc == "off":
+        return None
     logger.info(
         "ai.realtime.noise_cancellation.built",
         provider=nc,
-        enhancement_level=(
-            ai_config.interview_nc_enhancement_level
-            if nc.startswith("ai_coustics_") else None
-        ),
+        enhancement_level=ai_config.interview_nc_enhancement_level,
     )
-    if nc == "off":
-        return None
     if nc == "ai_coustics_quail":
         from livekit.plugins import ai_coustics
         return ai_coustics.audio_enhancement(
@@ -190,5 +193,5 @@ def build_noise_cancellation() -> object | None:
     if nc == "krisp_nc":
         from livekit.plugins import noise_cancellation
         return noise_cancellation.NC()
-    raise ValueError(f"Unknown interview_noise_cancellation: {nc}")
+    raise ValueError(f"Unknown interview_noise_cancellation: {nc!r}")
 
