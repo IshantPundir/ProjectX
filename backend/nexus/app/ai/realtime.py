@@ -148,3 +148,47 @@ def build_interruption_options() -> dict[str, object]:
     raise ValueError(f"Unknown interview_interruption_mode: {mode!r}")
 
 
+def build_noise_cancellation() -> object | None:
+    """Construct the noise cancellation filter from AIConfig.
+
+    Returns a LiveKit AudioFilter-protocol object suitable for passing into
+    `room_io.AudioInputOptions(noise_cancellation=...)`, or None when the
+    configured value is `"off"` (self-hosted default — no Cloud-side NC).
+
+    Plugin imports are LAZY: a self-hosted deploy with `interview_noise_cancellation=off`
+    never imports the Cloud-only `ai_coustics` / `noise_cancellation` plugin
+    packages. Critical because the plugins fail at import-time on platforms
+    that don't ship the underlying native libraries.
+    """
+    nc = ai_config.interview_noise_cancellation
+    logger.info(
+        "ai.realtime.noise_cancellation.built",
+        provider=nc,
+        enhancement_level=(
+            ai_config.interview_nc_enhancement_level
+            if nc.startswith("ai_coustics_") else None
+        ),
+    )
+    if nc == "off":
+        return None
+    if nc == "ai_coustics_quail":
+        from livekit.plugins import ai_coustics
+        return ai_coustics.audio_enhancement(
+            model=ai_coustics.EnhancerModel.QUAIL_L,
+            model_parameters=ai_coustics.ModelParameters(
+                enhancement_level=ai_config.interview_nc_enhancement_level,
+            ),
+        )
+    if nc == "ai_coustics_quail_vf":
+        from livekit.plugins import ai_coustics
+        return ai_coustics.audio_enhancement(
+            model=ai_coustics.EnhancerModel.QUAIL_VF_L,
+            model_parameters=ai_coustics.ModelParameters(
+                enhancement_level=ai_config.interview_nc_enhancement_level,
+            ),
+        )
+    if nc == "krisp_nc":
+        from livekit.plugins import noise_cancellation
+        return noise_cancellation.NC()
+    raise ValueError(f"Unknown interview_noise_cancellation: {nc}")
+
