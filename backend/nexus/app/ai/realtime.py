@@ -118,3 +118,30 @@ def build_turn_detector() -> "TurnDetectionMode":
     return MultilingualModel(unlikely_threshold=threshold)
 
 
+def build_interruption_options() -> dict[str, object]:
+    """Construct the `interruption=` block for TurnHandlingOptions.
+
+    Reads `AIConfig.interview_interruption_mode`. Cloud mode uses
+    `mode="adaptive"` and lets the LK barge-in classifier handle
+    backchannel detection. Self-hosted mode uses `mode="vad"` and
+    compensates with `min_words=3` (gates 1-2 word backchannel via
+    Deepgram word-aligned transcripts) and tighter `min_duration`.
+    """
+    mode = ai_config.interview_interruption_mode
+    if mode == "adaptive":
+        return {
+            "mode": "adaptive",
+            "min_duration": 0.5,
+            "min_words": 0,
+            "false_interruption_timeout": 2.0,
+            "resume_false_interruption": True,
+        }
+    return {
+        "mode": "vad",
+        "min_duration": 0.8,
+        "min_words": 3,
+        "false_interruption_timeout": 2.5,
+        "resume_false_interruption": True,
+    }
+
+
