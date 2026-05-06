@@ -1,7 +1,6 @@
 'use client'
 
-import { RoomEvent, TokenSource } from 'livekit-client'
-import type { Room } from 'livekit-client'
+import { Room, RoomEvent, TokenSource } from 'livekit-client'
 import type { DisconnectReason } from '@livekit/protocol'
 import { useSession } from '@livekit/components-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -14,6 +13,7 @@ import {
   type CandidateSessionError,
   type PreCheckResponse,
 } from '@/lib/api/candidate-session'
+import { toAudioCaptureOptions } from '@/lib/api/audio-hints'
 
 import { useSessionOutcome } from './hooks/use-session-outcome'
 import { type SessionOutcome } from '../lib/session-outcome'
@@ -42,6 +42,12 @@ export function App({ appConfig, token, preCheck, mode }: Props) {
   const [isStartPending, setIsStartPending] = useState(false)
   const credsRef = useRef<{ serverUrl: string; participantToken: string } | null>(null)
 
+  // A single Room instance for the lifetime of this component. audioCaptureDefaults
+  // is not set here — it's populated inside the async TokenSource callback below,
+  // before returning creds, so the Room picks up the server-provided hints when
+  // it publishes the microphone track after room.connect().
+  const room = useMemo(() => new Room(), [])
+
   const setError = useCallback((code: string) => {
     setErrorCode(code)
     setOutcome('error')
@@ -57,6 +63,18 @@ export function App({ appConfig, token, preCheck, mode }: Props) {
             mode === 'rejoin'
               ? await candidateSessionApi.rejoin(token)
               : await candidateSessionApi.start(token)
+
+          // Apply server-provided audio hints before returning creds so the room
+          // picks them up when it acquires the microphone track during room.connect().
+          // This mutation is intentional: it happens in an async callback (not during
+          // render). The server is the source of truth — Cloud mode sets
+          // noise_suppression=false so the ML model sees raw audio; EC and AGC stay
+          // ON in both modes.
+          // eslint-disable-next-line react-hooks/immutability
+          room.options.audioCaptureDefaults = toAudioCaptureOptions(
+            creds.audio_processing_hints,
+          )
+
           credsRef.current = {
             serverUrl: creds.livekit_url,
             participantToken: creds.livekit_token,
@@ -82,10 +100,10 @@ export function App({ appConfig, token, preCheck, mode }: Props) {
           setIsStartPending(false)
         }
       }),
-    [token, mode, setError],
+    [token, mode, room, setError],
   )
 
-  const session = useSession(tokenSource)
+  const session = useSession(tokenSource, { room })
 
   const onCompleted = useCallback(() => setOutcome('completed'), [])
 

@@ -41,11 +41,18 @@ export interface VerifyOtpBody {
   code: string
 }
 
+export interface AudioProcessingHints {
+  noise_suppression: boolean
+  echo_cancellation: boolean
+  auto_gain_control: boolean
+}
+
 export interface StartSessionResponse {
   livekit_url: string
   livekit_token: string
   room_name: string
   session_id: string
+  audio_processing_hints: AudioProcessingHints
 }
 
 export interface CandidateSessionError extends Error {

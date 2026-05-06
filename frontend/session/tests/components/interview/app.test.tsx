@@ -30,6 +30,9 @@ vi.mock('@livekit/components-react', () => ({
 vi.mock('livekit-client', () => ({
   TokenSource: { custom: () => ({}) },
   RoomEvent: { Disconnected: 'disconnected' },
+  Room: class MockRoom {
+    options: Record<string, unknown> = {}
+  },
 }))
 
 vi.mock('@/components/agents-ui/agent-session-provider', () => ({
