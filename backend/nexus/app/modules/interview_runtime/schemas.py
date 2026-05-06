@@ -150,8 +150,10 @@ class SignalMetadata(BaseModel):
 class SessionConfig(BaseModel):
     """The full input contract sent from Nexus to the interview engine.
 
-    In standalone mode this is loaded from a fixture JSON file.
-    In integration mode this arrives via /api/internal/sessions/{id}/config.
+    Constructed in-process by ``build_session_config`` and consumed
+    directly by the engine entrypoint (post-Phase-3 modular-monolith
+    merge — the original ``/api/internal/sessions/{id}/config`` HTTP
+    boundary was retired in migration ``0025``).
     """
 
     session_id: str
@@ -232,7 +234,7 @@ class SteeringObservation(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Output models (interview engine -> /api/internal/sessions/{id}/results)
+# Output models (interview engine -> record_session_result, in-process)
 # ---------------------------------------------------------------------------
 
 class TranscriptEntry(BaseModel):
@@ -318,7 +320,10 @@ class KnockoutFailure(BaseModel):
 class SessionResult(BaseModel):
     """Complete output of an interview session.
 
-    Posted to /api/internal/sessions/{id}/results by the engine on close.
+    Passed in-process to ``record_session_result`` by the engine on
+    close (post-Phase-3 modular-monolith merge — the original
+    ``/api/internal/sessions/{id}/results`` HTTP boundary was retired
+    in migration ``0025``).
     """
 
     session_id: str

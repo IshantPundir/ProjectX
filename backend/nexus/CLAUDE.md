@@ -31,115 +31,15 @@
 - **Phase 2C.2** — done: question bank generation (adaptive coverage, mandatory demotion, per-stage LLM call, bundling discipline, SSE progress stream).
 - **Phase 3B** — done: candidates module (`candidates`, `candidate_job_assignments`, `candidate_stage_progress` tables; resume upload + S3; PII redaction gate; kanban board; created in migration 0013).
 - **Phase 3C.1** — done: scheduler invite/resend/revoke flow; candidate JWT mint + supersession chain; OTP code (CSPRNG + HMAC-SHA256 hash + constant-time verify); session pre-check / consent / OTP / start endpoints; **single-use token enforcement** via atomic `UPDATE … WHERE used_at IS NULL RETURNING` (`session/service.py:412–426`).
-- **Phase 3C.2** — done: `/start` provisions a LiveKit room + mints candidate access token + dispatches the engine agent worker (`session/livekit.py`); new `interview_runtime` module exposes the internal API the engine reads `SessionConfig` from and posts `SessionResult` to (`/api/internal/sessions/{id}/{config,results}`). New tables `engine_dispatch_tokens` (tenant-scoped, RLS) and `engine_token_uses` (service-bypass, composite PK on `(jti, endpoint)` for atomic single-use enforcement) added in migration 0024.
-- **Phase 3D.engine-redesign-2** — done: InterviewerAgent + state_machine.py
-  retired in favor of InterviewController + QuestionTask base + TechnicalDepthTask
-  (`app/modules/interview_engine/{controller.py,tasks/}`). Per-task asyncio
-  watchdog (sibling timer + AgentTask awaitable; terminal `complete()`
-  resolves the await), idle-nudge state machine, end_interview_early
-  intent tool, three meta tools (flag_safety_concern, report_technical_issue,
-  disqualify_knockout — record_only in Phase 2). See spec
-  `docs/superpowers/specs/2026-05-03-engine-redesign-phase-2-controller-cutover-design.md`.
-- **Phase 3D.engine-redesign-3** — done: BehavioralStarTask + ComplianceBinaryTask
-  added alongside TechnicalDepthTask. Factory extracted to tasks/factory.py
-  with `_ROUTING_TABLE` keyed on `QuestionConfig.question_kind` (in-memory
-  field added in Phase 3, DB column lands in Phase 4). New
-  `effective_budget_seconds_for(question)` helper applies the
-  ComplianceBinaryTask 60s hard cap to the controller's per-task watchdog.
-  Two new prompt files (`task_behavioral.txt`, `task_compliance_binary.txt`)
-  with senior-reviewer fairness signoff. Unit + integration + prompt_quality
-  test coverage; 100% branch coverage on the new task files + factory.
-  Real interviews still all route to TechnicalDepthTask (default
-  `question_kind="technical_depth"`) until Phase 4 ships the bank-generator
-  update.
-- **Phase 3D.engine-redesign-4** — done: `stage_questions.question_kind`
-  column added (migration `0026_question_kind_column`); bank-generator
-  now emits the field per question (3-value Literal:
-  `technical_depth | behavioral_star | compliance_binary`); regen-one
-  preserves prior kind via prompt rule;
-  `interview_runtime.build_session_config` reads the column into
-  `QuestionConfig.question_kind`. Existing banks unchanged (default
-  `'technical_depth'`); recruiters regenerate to pick up the new
-  prompt's kind selection. Recruiter API surface unchanged
-  (`question_kind` not in request/response schemas). See spec
-  `docs/superpowers/specs/2026-05-03-engine-redesign-phase-4-question-kind-schema-design.md`.
-- **Phase 3D.engine-redesign-5** — done: `tenant_settings` table +
-  `KnockoutFailure` persistence + `close_polite` policy wiring + 6-state
-  `session_outcome` frontend wiring. New `app/modules/tenant_settings/`
-  module (ORM + Pydantic + service, public API via `__init__.py`); new
-  `KnockoutFailure` pydantic model in `interview_runtime.schemas` with
-  defense-in-depth `_scrub_pii` validator (email + phone regex →
-  `[redacted]`); `record_session_result` writes the new
-  `sessions.knockout_failures` JSONB column for Phase 3D analytics.
-  Controller's `tenant_policy: KnockoutPolicy` constructor parameter is
-  replaced with `tenant_settings: TenantSettings`; the `close_polite`
-  branch at `controller.py` (stub from Phase 2) now sets
-  `_end_outcome="knockout_closed"` so the question loop's natural
-  convergence handles graceful termination — no race window. `agent_name`
-  override flows from `tenant_settings.engine_agent_name` into
-  `build_controller_prompt` substitution + a new `controller.started`
-  audit-log line; the env value remains the LiveKit fleet-wide routing
-  label (P5-Q1). Frontend gains a typed `SessionOutcome` Literal union
-  in `frontend/session/components/interview/lib/session-outcome.ts`,
-  exhaustive `OutcomeWatcher` switch, and a new `CANDIDATE_UNRESPONSIVE`
-  code on `DisconnectError`. Migration `0027_tenant_settings`. See spec
-  `docs/superpowers/specs/2026-05-03-engine-redesign-phase-5-knockout-policy-design.md`.
-- **Phase 3D.engine-redesign-6** — **partially un-rolled-back
-  2026-05-06**. The Phase 6 "server-authoritative audio" work was
-  initially rolled back on 2026-05-04 when the production target was
-  self-hosted LiveKit. It is now partially reinstated because the
-  day-1 deployment target has shifted back to **LiveKit Cloud**, which
-  makes Krisp NC, ai_coustics NC, and adaptive interruption available
-  again. Key changes in this second pass:
-  - **Noise cancellation:** `build_noise_cancellation()` factory in
-    `app/ai/realtime.py` instantiates
-    `ai_coustics.audio_enhancement(model=EnhancerModel.QUAIL_L,
-    model_parameters=ModelParameters(enhancement_level=0.5))`. Krisp
-    NC is also available as an alternative (env-selectable).
-  - **Adaptive interruption:** `build_interruption_options()` factory
-    restores `mode="adaptive"` (Cloud) replacing the `"vad"` fallback
-    used during the self-hosted phase.
-  - **Per-mode browser getUserMedia contract:** `noise_suppression`
-    flips OFF when server-side NC is on (avoids double-denoising the
-    ML model's input). `echo_cancellation` and `auto_gain_control`
-    stay ON in both modes (EC is load-bearing for full-duplex; ai-
-    coustics is not an EC). Frontend reads these via the
-    `audio_processing_hints` field on the `/start` response — server
-    is source of truth. Contract is JSONB-snapshotted per session in
-    `sessions.audio_tuning_summary` (migration `0028_audio_tuning_summary`).
-  - **Self-hosted fallback:** env vars `INTERVIEW_INTERRUPTION_MODE`
-    and `INTERVIEW_NOISE_CANCELLATION` switch back to `vad` + `off`
-    for local dev or any deployment on self-hosted LiveKit. See
-    `backend/nexus/.env.example` for the full block.
-  See spec `docs/superpowers/specs/2026-05-06-audio-pipeline-design.md`.
-  Original rollback rationale preserved in
-  `docs/superpowers/specs/2026-05-03-engine-redesign-phase-6-audio-authority-design.md`
+- **Phase 3C.2** — done: `/start` provisions a LiveKit room + mints candidate access token + dispatches the engine agent worker (`session/livekit.py`); new `interview_runtime` module exposes the helpers (`build_session_config`, `record_session_result`) the engine consumes. **As shipped**: `interview_runtime` had an `/api/internal/sessions/{id}/{config,results}` HTTP router gated by an engine-dispatch JWT, backed by `engine_dispatch_tokens` + `engine_token_uses` tables (migration `0024`). **Retired in Phase 3 of the modular-monolith merge** (migration `0025`): the HTTP boundary, the dispatch JWT, and both tables are gone. The engine now imports `interview_runtime.service` directly in-process (RLS-only defense layer).
+- **Phase 3D.engine-attempts (2026-05-02 → 2026-05-05)** — multiple iterations of a structured interview engine were attempted (controller + per-kind task pattern, AI-screening with state machine, streaming speech agent). All reverted to a generic LLM chatbot in commit `eb8e687` ("chore(interview_engine): revert to generic LLM chatbot"). The current `app/modules/interview_engine/` is just `agent.py` (a thin LiveKit AgentSession harness with a system-prompt-only loop) plus `event_log/` and `event_kinds.py`. **Two schema artifacts remain** from these attempts and are durable in the DB even though no current code consumes them:
+  - `stage_questions.question_kind` column (migration `0026`) — the bank-generator still emits the field, but no agent code reads it. Safe to leave; if the structured agent ever returns, the data is already there.
+  - `tenant_settings` table (migration `0027`) — has `engine_knockout_policy` and `engine_agent_name` columns. Only `engine_agent_name` is currently consumed (read at session start by `agent.py`). The knockout-policy column is dormant.
 
-  **Update 2026-05-06 (later):** the self-hosted-LK fallback config switch was
-  removed once the Cloud path was empirically validated. The architecture now
-  locks to LK Cloud (SFU + adaptive interruption + ai-coustics QUAIL_L NC +
-  ai-coustics built-in VAD adapter). The agent worker stays self-hosted in
-  nexus-engine; only the noise-cancellation/VAD/interruption-mode toggles got
-  simplified. `INTERVIEW_INTERRUPTION_MODE` env var is removed;
-  `INTERVIEW_NOISE_CANCELLATION` no longer accepts `"off"`. Silero VAD is
-  gone — ai-coustics' built-in VAD adapter (`livekit.plugins.ai_coustics.VAD()`)
-  reads VAD signals from the same inference that runs for NC. For Krisp mode
-  (no built-in VAD adapter), Silero is used as a fallback. The Silero extras
-  remain in `pyproject.toml` for this case.
+  Removed engine-redesign artifacts: `controller.py`, `tasks/factory.py`, the engine-side `state_machine.py`, the `disqualify_knockout` / `flag_safety_concern` / `report_technical_issue` agent tools, the `close_polite` policy wiring, and the structured per-kind prompts (`task_behavioral.txt`, `task_compliance_binary.txt`).
 
-  **Update 2026-05-06 (Patch 5):** Silero and Krisp are now fully removed
-  from the nexus container. `livekit-agents[silero]` and
-  `livekit-plugins-noise-cancellation` dropped from `pyproject.toml`;
-  `NoiseCancellationMode` loses `"krisp_nc"`; `build_vad()` is simplified to
-  always return `ai_coustics.VAD()` (no conditional); `build_noise_cancellation()`
-  drops the Krisp branch. The architecture is locked to ai-coustics exclusively.
-  If Krisp is required in the future, restore the dep + the dispatch branch.
-  `preemptive_tts: True` enabled in `TurnHandlingOptions` (saves ~150ms
-  perceived latency on confirmed turns). The `audio.tuning_summary` latency
-  block now computes real p50/p95/max/n percentiles from
-  `audio.metrics.{eou,llm,tts}_metrics` events instead of placeholder zeros.
-  (marked superseded). The terminal acceptance gate for the entire
-  6-phase arc is `docs/onboarding/engine-redesign-full-arc-e2e.md`.
+  **Still present** (and dormant, not consumed by the current generic chatbot): the `KnockoutFailure` Pydantic model in `interview_runtime.schemas` and the `sessions.knockout_failures` JSONB column. The model + column persist the wire contract for `SessionResult.knockout_failures` so a future structured agent can populate them without a schema change. `agent.py` currently writes an empty list there.
+- **Phase 3D.audio-pipeline (2026-05-06)** — done. LK Cloud cutover with adaptive interruption + ai-coustics QUAIL_L noise cancellation + ai-coustics built-in VAD adapter. The architecture is locked to LK Cloud (Silero VAD and Krisp NC plugins removed from `pyproject.toml`). New JSONB column `sessions.audio_tuning_summary` (migration `0028`) persists per-session pause/interruption/latency percentiles for empirical tuning. `preemptive_tts: True` in `TurnHandlingOptions`. Frontend reads server-authoritative audio constraints via the `audio_processing_hints` field on the `/start` response (`noiseSuppression: false`, `echoCancellation: true`, `autoGainControl: true`). Adaptive interruption uses `min_words=2` to gate single-word backchannel. See spec `docs/superpowers/specs/2026-05-06-audio-pipeline-design.md`.
 - **Phase 3D** — pending: real-time `analysis` (scoring, probe selection) and `reporting` (post-session report compilation).
 
 Stubbed modules (routers registered, no business logic yet): `ats`, `analysis`, `reporting`.
@@ -239,10 +139,10 @@ backend/nexus/
 │       │   ├── otp.py            ← CSPRNG generate_code + HMAC-SHA256 hash + constant-time verify
 │       │   ├── schemas.py
 │       │   └── errors.py         ← TokenAlreadyUsedError, TokenSupersededError, OtpInvalidError, AgentDispatchFailedError
-│       ├── interview_runtime/    ← Phase 3C.2 — internal API for the engine container
-│       │   ├── router.py         ← /api/internal/sessions/{id}/config (GET) + /results (POST)
-│       │   ├── service.py        ← build_session_config, record_session_result, verify_engine_token
-│       │   └── schemas.py        ← SessionConfig, SessionResult, QuestionConfig, etc. (the wire contract)
+│       ├── interview_runtime/    ← Helpers the in-process engine calls (post-Phase-3 merge)
+│       │   ├── service.py        ← build_session_config, record_session_result (called directly by agent.py)
+│       │   ├── schemas.py        ← SessionConfig, SessionResult, QuestionConfig, KnockoutFailure (the wire contract)
+│       │   └── errors.py         ← CompanyProfileMissingError, EmptySignalMetadataError, QuestionBankNotReadyError, …
 │       ├── tenant_settings/      ← Phase 5 — per-tenant engine configuration
 │       │   ├── models.py         ← TenantSettingsModel (PK = tenant_id, FK clients.id ON DELETE CASCADE)
 │       │   ├── schemas.py        ← TenantSettings (engine_knockout_policy Literal, engine_agent_name)
@@ -404,9 +304,9 @@ from openai import AsyncOpenAI
 
 **Documented carve-outs (allowed):**
 - `app/modules/jd/errors.py` and `app/modules/jd/actors.py` import `openai` and `instructor.core.InstructorRetryException` *as types*, exclusively for retry/permanent-error classification (`_PERMANENT_EXCEPTIONS`) and user-safe error message mapping (`_SAFE_MESSAGES`). They never call the SDK. If the provider changes, this exception map moves with the new SDK; nothing else changes.
-- `app/ai/realtime.py` is the second blessed import site for vendor SDKs. It owns LiveKit plugin instantiation (`livekit.plugins.openai`, `deepgram`, `cartesia`, `ai_coustics`, `turn_detector`) so the interview-engine worker never touches them directly. Reads model IDs / voices / effort from `AIConfig` — never from env or settings. (Engine-integration mechanics — `interview_engine_jwt_secret`, `interview_agent_name`, `nexus_internal_base_url` — are deliberately NOT in `AIConfig`; the engine worker reads those directly from `settings`. AIConfig is for AI provider config only.) Lazy imports inside each factory keep the FastAPI nexus process free of the realtime plugin packages (which are installed only in the interview-engine container). Audio-pipeline factories added in Phase 3D.engine-redesign-6 (2026-05-06) and locked further in Patch 5: `build_noise_cancellation()` (ai_coustics QUAIL_L or QUAIL_VF, env-selected — Krisp removed), `build_interruption_options()` (locked to adaptive/Cloud), and `build_vad()` (always ai-coustics built-in VAD adapter — Silero removed entirely).
+- `app/ai/realtime.py` is the second blessed import site for vendor SDKs. It owns LiveKit plugin instantiation (`livekit.plugins.openai`, `deepgram`, `cartesia`, `ai_coustics`, `turn_detector`) so the interview-engine entrypoint never touches them directly. Reads model IDs / voices / effort from `AIConfig` — never from env or settings. (`interview_agent_name` is the only LiveKit fleet-wide routing label still in `settings`; AIConfig is for AI provider config only.) Lazy imports inside each factory keep the FastAPI nexus process free of the realtime plugin packages even though they're installed in the same image (the engine compose service is the only one that loads them). Current factories: `build_noise_cancellation()` (ai_coustics QUAIL_L or QUAIL_VF, env-selected), `build_interruption_options()` (locked to `mode="adaptive"` with `min_words=2`), and `build_vad()` (always returns `ai_coustics.VAD()`). `interview_engine_jwt_secret` is a vestigial setting kept for one transitional check; will be removed when the field validator is cleaned up.
 - A future cleanup is to lift the JD exception map into `app/ai/errors.py` and re-export typed sentinels so module code never references vendor exception classes by name. Tracked as tech-debt; not blocking.
-- The interview-engine container (Phase 3C.2 Chunk 5) currently still installs nexus + livekit-agents into **two separate venvs** with `PYTHONPATH` layering. The original blocker — nexus pinning `openai<2` while `livekit-agents>=1.5.4` requires `openai>=2` — was resolved by Phase 2 of the modular-monolith spec (openai 2.x + instructor 1.15.x). The two-venv layout remains in place because the engine container itself ships independently until Phase 3 merges its source tree into nexus and consolidates onto a single image. Removing the two-venv layout is Phase 3's responsibility.
+- The engine runs as the `nexus-engine` compose service from the **same Docker image** as `nexus` and `nexus-worker`, just with command `python -m app.modules.interview_engine`. Single venv. The two-venv layout that existed pre-Phase-3 was retired when the engine source tree merged into nexus.
 
 ### RBAC Enforcement
 - Auth middleware extracts JWT and attaches `token_payload` to `request.state` before any route handler runs.
@@ -485,7 +385,7 @@ from openai import AsyncOpenAI
 |---|---|
 | `scheduler` | Invite send / resend / revoke. `send_invite` mints a candidate JWT (HS256) and inserts the matching `candidate_session_tokens` row (jti, tenant, session_id, expires_at). Resend creates a new token row and stamps `superseded_at + superseded_by` on the prior row, building a per-session supersession chain. Notification dispatch via the provider-agnostic notifications module — notification dispatch reads settings.candidate_session_base_url (NOT frontend_base_url). |
 | `session` | Two routers: `candidate_session_router` (candidate-facing, JWT in path) and `session_router` (recruiter-facing, read-only). State machine: `created → pre_check → consented → active → completed \| cancelled \| error`. OTP gate (CSPRNG 6-digit code, HMAC-SHA256 hash, 10-minute lifetime, max 3 attempts, 60s rate limit, constant-time compare). **Single-use token enforcement** is atomic on `/start` (`UPDATE … WHERE used_at IS NULL RETURNING`). Phase 3C.2 wired the LiveKit room + token provisioning: `/start` mints a candidate `room_join` token, mints + records an engine dispatch JWT, dispatches the agent, then atomically consumes the candidate token and transitions to `active` (502 `AGENT_DISPATCH_FAILED` if dispatch fails — token is NOT consumed in that case so the candidate can retry). LiveKit helpers live at `session/livekit.py`. |
-| `interview_runtime` | Phase 3C.2 internal API for the engine container. `verify_engine_token` validates the dispatch JWT (HS256 pinning, `purpose='engine_dispatch'` claim, atomic single-use INSERT into `engine_token_uses` per `(jti, endpoint)` with FK→IntegrityError translation). `build_session_config` walks session → assignment → candidate → job → stage → bank → snapshot → questions → ancestry-walked company profile to build the engine's `SessionConfig`. `record_session_result` atomically updates the session row gated on `state='active'`, idempotent on retry, writes an audit row. Router under `/api/internal/sessions/{id}/{config,results}` — auth middleware exempts `/api/internal/`. |
+| `interview_runtime` | In-process helpers the engine calls directly (post-Phase-3 merge). `build_session_config` walks session → assignment → candidate → job → stage → bank → snapshot → questions → ancestry-walked company profile to build the engine's `SessionConfig`. `record_session_result` atomically updates the session row gated on `state='active'`, idempotent on retry, writes an audit row. Both run on a bypass-RLS session with explicit `tenant_id` filter on every query (RLS-only defense layer; no HTTP router, no engine-dispatch JWT — those were retired in migration `0025`). The wire-format Pydantic models (`SessionConfig`, `SessionResult`, `KnockoutFailure`) live here for the engine to import. |
 | `tenant_settings` | Phase 5 — per-tenant engine configuration. ORM `TenantSettingsModel` (PK = `tenant_id`, FK `clients.id` ON DELETE CASCADE); Pydantic `TenantSettings` with `engine_knockout_policy: Literal['record_only','close_polite']` and `engine_agent_name: str \| None`. `get_tenant_settings(db, tenant_id)` is the single read path with lazy-default semantics (no row → schema defaults). No router; recruiter-side editing UI is post-arc per overview Decision #19. |
 
 ### Future Phases — Stubbed

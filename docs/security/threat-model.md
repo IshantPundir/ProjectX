@@ -114,9 +114,7 @@ be a SEV2 incident (notify-the-notifier failure).
 >
 > See the audio-pipeline spec at
 > `docs/superpowers/specs/2026-05-06-audio-pipeline-design.md` for the
-> full implementation detail. The original rollback rationale is preserved
-> in `docs/superpowers/specs/2026-05-03-engine-redesign-phase-6-audio-authority-design.md`
-> (marked superseded).
+> full implementation detail.
 
 ### New sub-processors (as of 2026-05-06 audio-pipeline cutover)
 
