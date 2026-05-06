@@ -70,9 +70,19 @@ export function App({ appConfig, token, preCheck, mode }: Props) {
           // render). The server is the source of truth — Cloud mode sets
           // noise_suppression=false so the ML model sees raw audio; EC and AGC stay
           // ON in both modes.
+          const hints = creds.audio_processing_hints
+          if (!hints) {
+            console.warn(
+              '[interview] /start response missing audio_processing_hints; falling back to safe defaults',
+            )
+          }
           // eslint-disable-next-line react-hooks/immutability
           room.options.audioCaptureDefaults = toAudioCaptureOptions(
-            creds.audio_processing_hints,
+            hints ?? {
+              noise_suppression: true,
+              echo_cancellation: true,
+              auto_gain_control: true,
+            },
           )
 
           credsRef.current = {
