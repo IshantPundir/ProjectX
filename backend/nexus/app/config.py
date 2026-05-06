@@ -7,7 +7,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 NoiseCancellationMode = Literal[
     "ai_coustics_quail",
     "ai_coustics_quail_vf",
-    "krisp_nc",
 ]
 
 
@@ -235,25 +234,13 @@ class Settings(BaseSettings):
     #   truly done isn't held up indefinitely.
     engine_endpointing_min_delay: float = 1.0
     engine_endpointing_max_delay: float = 6.0
-    # Silero VAD prewarm.
-    # Tightened from the pre-overhaul defaults after the test-session
-    # event log showed pervasive over-cutting (single utterances split
-    # into 3+ finals, "Okay. / Thanks for the / suggestions." pattern):
-    #   - min_speech_duration 0.05 → 0.15: ignore sub-150ms blips that
-    #     were getting promoted to candidate "speech" (mouse clicks,
-    #     keyboard taps, throat clears).
-    #   - min_silence_duration 0.55 → 0.7: wait an extra 150ms before
-    #     declaring end-of-utterance, reducing mid-thought false EOU.
-    engine_silero_activation_threshold: float = 0.5
-    engine_silero_min_speech_duration: float = 0.15
-    engine_silero_min_silence_duration: float = 0.8
     # Phase 3D — audio pipeline tuning (LK Cloud locked, 2026-05-06)
-    # Architecture is locked to LK Cloud. "off" is no longer a valid value.
-    # Set ai_coustics_quail (default), ai_coustics_quail_vf (voice isolation),
-    # or krisp_nc (alternative provider).
+    # Architecture is locked to LK Cloud + ai-coustics exclusively.
+    # "off" and "krisp_nc" are no longer valid values.
+    # Set ai_coustics_quail (default, background noise suppression) or
+    # ai_coustics_quail_vf (voice isolation — kills other voices in the room).
     interview_noise_cancellation: NoiseCancellationMode = "ai_coustics_quail"
     # Passed as `enhancement_level` to the ai_coustics plugin (0.0 = off, 1.0 = max).
-    # Ignored when interview_noise_cancellation = "krisp_nc".
     interview_nc_enhancement_level: float = 0.5
 
     # Observability

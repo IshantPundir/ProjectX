@@ -69,11 +69,10 @@ dependencies = [
     # here. Pin versions inherited from the (about-to-be-deleted)
     # backend/interview_engine/pyproject.toml — they're already verified
     # against openai 2.x via Phase 2.
-    "livekit-agents[silero,turn-detector]>=1.5.4,<2",
+    "livekit-agents[turn-detector]>=1.5.4,<2",
     "livekit-plugins-openai>=1.5.4,<2",
     "livekit-plugins-deepgram>=1.5.4,<2",
     "livekit-plugins-cartesia>=1.5.4,<2",
-    "livekit-plugins-noise-cancellation>=0.2,<1",
     "livekit-plugins-ai-coustics>=0.2,<1",
 
     # --- AI provider (Phase 2A) ---

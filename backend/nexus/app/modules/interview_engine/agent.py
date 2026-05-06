@@ -236,10 +236,7 @@ async def entrypoint(ctx: JobContext) -> None:
             ),
             "noise_cancellation": ai_config.interview_noise_cancellation,
             "nc_enhancement_level": f"{ai_config.interview_nc_enhancement_level}",
-            "vad_provider": (
-                "ai_coustics" if ai_config.interview_noise_cancellation.startswith("ai_coustics_")
-                else "silero_fallback"
-            ),
+            "vad_provider": "ai_coustics",
         },
         redaction_mode=settings.engine_event_log_redaction,
     )
@@ -263,7 +260,7 @@ async def entrypoint(ctx: JobContext) -> None:
         vad=build_vad(),  # was: ctx.proc.userdata["vad"]
         turn_handling=TurnHandlingOptions(
             turn_detection=build_turn_detector(),
-            preemptive_generation={"enabled": True},
+            preemptive_generation={"enabled": True, "preemptive_tts": True},
             endpointing={
                 "mode": "dynamic",
                 "min_delay": settings.engine_endpointing_min_delay,
@@ -681,11 +678,29 @@ def _compute_audio_tuning_summary(
         "agent_yielded": true_count,
     }
 
-    # Latency: leave at zero in initial implementation; tighten when
-    # validated against real telemetry shape.
+    # Latency — pull per-component percentiles from the metrics events.
+    # Each event's payload is the LiveKit SDK's metrics object (already
+    # in seconds), so multiply by 1000 to get ms before percentile-ing.
+    def _extract_ms(events_filter: list[dict[str, object]], field: str) -> list[int]:
+        out: list[int] = []
+        for ev in events_filter:
+            payload = ev.get("payload") or {}
+            if not isinstance(payload, dict):
+                continue
+            val = payload.get(field)
+            if isinstance(val, (int, float)) and val > 0:
+                out.append(int(val * 1000))
+        return out
+
+    eou_events = [ev for ev in events if ev.get("kind") == "audio.metrics.eou_metrics"]
+    llm_events = [ev for ev in events if ev.get("kind") == "audio.metrics.llm_metrics"]
+    tts_events = [ev for ev in events if ev.get("kind") == "audio.metrics.tts_metrics"]
+
     latency_block = {
-        "stt_to_eou_ms": {"p50": 0, "p95": 0},
-        "eou_to_first_audio_ms": {"p50": 0, "p95": 0},
+        "end_of_utterance_delay_ms": _percentile_stats(_extract_ms(eou_events, "end_of_utterance_delay")),
+        "transcription_delay_ms": _percentile_stats(_extract_ms(eou_events, "transcription_delay")),
+        "llm_ttft_ms": _percentile_stats(_extract_ms(llm_events, "ttft")),
+        "tts_ttfb_ms": _percentile_stats(_extract_ms(tts_events, "ttfb")),
     }
 
     return {
@@ -732,10 +747,7 @@ async def _handle_close(
         "nc_enhancement_level": ai_config.interview_nc_enhancement_level,
         "unlikely_threshold": ai_config.interview_turn_detector_unlikely_threshold,
         "endpointing_max_delay": settings.engine_endpointing_max_delay,
-        "vad_provider": (
-            "ai_coustics" if ai_config.interview_noise_cancellation.startswith("ai_coustics_")
-            else "silero_fallback"
-        ),
+        "vad_provider": "ai_coustics",
     }
     audio_summary = _compute_audio_tuning_summary(
         events=[

@@ -39,14 +39,6 @@ class TestBuildNoiseCancellation:
         assert result is not None
         assert "livekit.plugins.ai_coustics" in sys.modules
 
-    def test_krisp_nc_returns_filter(self) -> None:
-        with patch("app.ai.realtime.ai_config") as mock_config:
-            mock_config.interview_noise_cancellation = "krisp_nc"
-            mock_config.interview_nc_enhancement_level = 0.5
-            result = build_noise_cancellation()
-        assert result is not None
-        assert "livekit.plugins.noise_cancellation" in sys.modules
-
     def test_unknown_value_raises(self) -> None:
         with patch("app.ai.realtime.ai_config") as mock_config:
             mock_config.interview_noise_cancellation = "bogus"
@@ -56,23 +48,7 @@ class TestBuildNoiseCancellation:
 
 
 class TestBuildVad:
-    def test_ai_coustics_quail_returns_ai_coustics_vad(self) -> None:
-        with patch("app.ai.realtime.ai_config") as mock_config:
-            mock_config.interview_noise_cancellation = "ai_coustics_quail"
-            result = build_vad()
+    def test_returns_ai_coustics_vad(self) -> None:
+        result = build_vad()
         assert result is not None
         assert "livekit.plugins.ai_coustics" in sys.modules
-
-    def test_ai_coustics_quail_vf_returns_ai_coustics_vad(self) -> None:
-        with patch("app.ai.realtime.ai_config") as mock_config:
-            mock_config.interview_noise_cancellation = "ai_coustics_quail_vf"
-            result = build_vad()
-        assert result is not None
-        assert "livekit.plugins.ai_coustics" in sys.modules
-
-    def test_krisp_nc_falls_back_to_silero(self) -> None:
-        with patch("app.ai.realtime.ai_config") as mock_config:
-            mock_config.interview_noise_cancellation = "krisp_nc"
-            result = build_vad()
-        assert result is not None
-        assert "livekit.plugins.silero" in sys.modules

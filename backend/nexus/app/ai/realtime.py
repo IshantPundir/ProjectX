@@ -23,7 +23,6 @@ from typing import TYPE_CHECKING
 import structlog
 
 from app.ai.config import ai_config
-from app.config import settings
 
 if TYPE_CHECKING:
     # Forward-declared so type checkers see the right return types without
@@ -168,34 +167,19 @@ def build_noise_cancellation() -> object:
                 enhancement_level=ai_config.interview_nc_enhancement_level,
             ),
         )
-    if nc == "krisp_nc":
-        from livekit.plugins import noise_cancellation
-        return noise_cancellation.NC()
     raise ValueError(f"Unknown interview_noise_cancellation: {nc!r}")
 
 
 def build_vad() -> object:
     """Construct the VAD instance for the AgentSession.
 
-    For ai_coustics modes (default), returns the built-in VAD adapter
-    that reads speech/silence signals from the same ai-coustics
-    inference that runs for noise cancellation. Saves a separate VAD
-    model load and operates on the cleanest possible signal (the
-    model's internal classification, not post-filter audio).
-
-    For Krisp mode (no built-in VAD adapter), falls back to Silero.
+    Locked to ai-coustics' built-in VAD adapter — reads VAD signals
+    from the same ai-coustics inference that runs for noise
+    cancellation. Saves a separate VAD model load and operates on
+    the cleanest possible signal (the model's internal classification,
+    not post-filter audio).
     """
-    nc = ai_config.interview_noise_cancellation
-    if nc == "ai_coustics_quail" or nc == "ai_coustics_quail_vf":
-        from livekit.plugins import ai_coustics
-        logger.info("ai.realtime.vad.built", provider="ai_coustics")
-        return ai_coustics.VAD()
-    # Krisp branch: fall back to Silero
-    from livekit.plugins import silero
-    logger.info("ai.realtime.vad.built", provider="silero_fallback")
-    return silero.VAD.load(
-        activation_threshold=settings.engine_silero_activation_threshold,
-        min_speech_duration=settings.engine_silero_min_speech_duration,
-        min_silence_duration=settings.engine_silero_min_silence_duration,
-    )
+    from livekit.plugins import ai_coustics
+    logger.info("ai.realtime.vad.built", provider="ai_coustics")
+    return ai_coustics.VAD()
 
