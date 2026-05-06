@@ -18,7 +18,7 @@ class TestBuildInterruptionOptions:
         assert opts == {
             "mode": "adaptive",
             "min_duration": 0.5,
-            "min_words": 0,
+            "min_words": 2,
             "false_interruption_timeout": 2.0,
             "resume_false_interruption": True,
         }

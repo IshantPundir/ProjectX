@@ -14,6 +14,9 @@ class TestComputeAudioTuningSummary:
         summary = _compute_audio_tuning_summary(events=[], config_snapshot={"foo": "bar"})
         assert summary["pauses"]["between_utterance_ms"]["n"] == 0
         assert summary["interruptions"]["total"] == 0
+        assert summary["interruptions"]["true"] == 0
+        assert summary["interruptions"]["ignored_as_backchannel"] == 0
+        assert summary["interruptions"]["false_recovered"] == 0
         assert summary["config_snapshot"] == {"foo": "bar"}
 
     def test_pause_percentiles_computed_from_user_state_events(self) -> None:
@@ -30,14 +33,20 @@ class TestComputeAudioTuningSummary:
 
     def test_interruption_tally(self) -> None:
         events = [
-            _ev("audio.interruption.false", {"resumed": True}, 1000),
-            _ev("audio.interruption.false", {"resumed": True}, 2000),
-            _ev("audio.overlap", {}, 3000),
+            # Two backchannel attempts the classifier correctly suppressed
+            _ev("audio.overlap", {"is_interruption": False, "probability": 0.2}, 1000),
+            _ev("audio.overlap", {"is_interruption": False, "probability": 0.15}, 1500),
+            # One real interruption the classifier flagged
+            _ev("audio.overlap", {"is_interruption": True, "probability": 0.92}, 2000),
+            # Plus one post-hoc recovery (agent yielded but user fell silent)
+            _ev("audio.interruption.false", {"resumed": True}, 3000),
         ]
         summary = _compute_audio_tuning_summary(events=events, config_snapshot={})
-        assert summary["interruptions"]["false"] == 2
         assert summary["interruptions"]["total"] == 3
-        assert summary["interruptions"]["true"] == 0
+        assert summary["interruptions"]["true"] == 1
+        assert summary["interruptions"]["ignored_as_backchannel"] == 2
+        assert summary["interruptions"]["false_recovered"] == 1
+        assert summary["interruptions"]["agent_yielded"] == 1
 
     def test_config_snapshot_passed_through_verbatim(self) -> None:
         snapshot = {

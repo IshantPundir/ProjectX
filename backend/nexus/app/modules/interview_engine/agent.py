@@ -518,8 +518,19 @@ def _wire_session_observability(
 
     @session.on("overlapping_speech")
     def _on_overlap(ev: OverlappingSpeechEvent) -> None:
-        ev_created = getattr(ev, "created_at", time.time())
-        _emit("audio.overlap", {}, ev_created)
+        # detected_at is the canonical timestamp on OverlappingSpeechEvent per LK
+        # docs (/reference/agents/events/). Fall back to time.time() defensively
+        # if the SDK ever omits the field.
+        ev_created = getattr(ev, "detected_at", None) or time.time()
+        _emit(
+            "audio.overlap",
+            {
+                "is_interruption": ev.is_interruption,
+                "probability": getattr(ev, "probability", None),
+                "detection_delay": getattr(ev, "detection_delay", None),
+            },
+            ev_created,
+        )
 
     usage_emit_interval_s = 30.0
 
@@ -663,16 +674,27 @@ def _compute_audio_tuning_summary(
         "between_turn_ms": _percentile_stats(pause_ms),  # proxy until refined
     }
 
-    # Interruptions
-    false_count = sum(1 for ev in events if ev.get("kind") == "audio.interruption.false")
-    overlap_count = sum(1 for ev in events if ev.get("kind") == "audio.overlap")
-    total = false_count + overlap_count
-    true_count = max(0, overlap_count - false_count)
+    # Interruptions — derived from OverlappingSpeechEvent.is_interruption (the
+    # adaptive classifier's per-event decision) plus AgentFalseInterruptionEvent
+    # (post-hoc recovery when the agent yielded but no transcript followed).
+    overlap_events = [ev for ev in events if ev.get("kind") == "audio.overlap"]
+    true_count = sum(
+        1 for ev in overlap_events
+        if (ev.get("payload") or {}).get("is_interruption") is True
+    )
+    ignored_count = sum(
+        1 for ev in overlap_events
+        if (ev.get("payload") or {}).get("is_interruption") is False
+    )
+    false_recovered = sum(
+        1 for ev in events if ev.get("kind") == "audio.interruption.false"
+    )
     interruptions_block = {
-        "total": total,
+        "total": len(overlap_events),
         "true": true_count,
-        "false": false_count,
-        "agent_yielded": false_count,
+        "ignored_as_backchannel": ignored_count,
+        "false_recovered": false_recovered,
+        "agent_yielded": true_count,
     }
 
     # Latency: leave at zero in initial implementation; tighten when

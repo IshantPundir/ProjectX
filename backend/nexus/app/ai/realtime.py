@@ -123,9 +123,14 @@ def build_interruption_options() -> dict[str, object]:
 
     Reads `AIConfig.interview_interruption_mode`. Cloud mode uses
     `mode="adaptive"` and lets the LK barge-in classifier handle
-    backchannel detection. Self-hosted mode uses `mode="vad"` and
-    compensates with `min_words=3` (gates 1-2 word backchannel via
-    Deepgram word-aligned transcripts) and tighter `min_duration`.
+    backchannel detection. Per the LK turn-handling-options reference,
+    `min_words` is honoured in both adaptive and vad modes when STT is
+    enabled — setting `min_words=2` in adaptive mode is a safe additive
+    guard rail: even if the adaptive classifier says "interrupt," the
+    STT transcript must contain ≥2 words before the agent actually yields.
+    Self-hosted mode uses `mode="vad"` and compensates with `min_words=3`
+    (gates 1-2 word backchannel via Deepgram word-aligned transcripts)
+    and tighter `min_duration`.
     """
     mode = ai_config.interview_interruption_mode
     logger.info("ai.realtime.interruption.built", mode=mode)
@@ -133,7 +138,7 @@ def build_interruption_options() -> dict[str, object]:
         return {
             "mode": "adaptive",
             "min_duration": 0.5,
-            "min_words": 0,
+            "min_words": 2,
             "false_interruption_timeout": 2.0,
             "resume_false_interruption": True,
         }
