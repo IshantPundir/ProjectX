@@ -4,9 +4,7 @@ from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-InterruptionMode = Literal["adaptive", "vad"]
 NoiseCancellationMode = Literal[
-    "off",
     "ai_coustics_quail",
     "ai_coustics_quail_vf",
     "krisp_nc",
@@ -249,11 +247,13 @@ class Settings(BaseSettings):
     engine_silero_activation_threshold: float = 0.5
     engine_silero_min_speech_duration: float = 0.15
     engine_silero_min_silence_duration: float = 0.8
-    # Phase 3D — audio pipeline tuning (LK Cloud cutover spec, 2026-05-06)
-    interview_interruption_mode: InterruptionMode = "vad"
-    interview_noise_cancellation: NoiseCancellationMode = "off"
+    # Phase 3D — audio pipeline tuning (LK Cloud locked, 2026-05-06)
+    # Architecture is locked to LK Cloud. "off" is no longer a valid value.
+    # Set ai_coustics_quail (default), ai_coustics_quail_vf (voice isolation),
+    # or krisp_nc (alternative provider).
+    interview_noise_cancellation: NoiseCancellationMode = "ai_coustics_quail"
     # Passed as `enhancement_level` to the ai_coustics plugin (0.0 = off, 1.0 = max).
-    # Ignored when interview_noise_cancellation = "off" or "krisp_nc".
+    # Ignored when interview_noise_cancellation = "krisp_nc".
     interview_nc_enhancement_level: float = 0.5
 
     # Observability

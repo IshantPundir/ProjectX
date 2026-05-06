@@ -31,13 +31,13 @@ def test_prewarm_bootstraps_otel_tracer_provider() -> None:
         assert proc.userdata["otel_provider"] is fake_provider
 
 
-def test_prewarm_still_loads_silero_vad() -> None:
-    """Adding OTel must not break the existing Silero load."""
+def test_prewarm_does_not_load_silero_vad() -> None:
+    """Silero VAD is no longer prewarmed — the ai-coustics built-in VAD
+    adapter is constructed per-session via build_vad(). prewarm() should
+    not touch proc.userdata['vad']."""
     proc = MagicMock(spec=JobProcess)
     proc.userdata = {}
-    with patch.object(agent_mod.silero.VAD, "load") as vad_load, \
-         patch.object(agent_mod, "bootstrap_tracer_provider", return_value=MagicMock()), \
+    with patch.object(agent_mod, "bootstrap_tracer_provider", return_value=MagicMock()), \
          patch.object(agent_mod, "_otel_set_global_provider"):
         agent_mod.prewarm(proc)
-        vad_load.assert_called_once()
-        assert "vad" in proc.userdata
+        assert "vad" not in proc.userdata

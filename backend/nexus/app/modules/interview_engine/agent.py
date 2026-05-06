@@ -59,10 +59,8 @@ from livekit.agents.voice.events import (
 # container build time. Per the `app.ai.realtime` carve-out (see
 # backend/nexus/CLAUDE.md), direct vendor SDK imports are forbidden
 # EXCEPT for process-startup model registration of plugins that need
-# local model files. Silero (VAD) and turn_detector (multilingual EOU)
-# qualify. Session-time instantiation still goes through
-# `app.ai.realtime.build_*`.
-from livekit.plugins import silero
+# local model files. turn_detector (multilingual EOU) qualifies.
+# VAD is now ai-coustics' built-in adapter — no separate model to prewarm.
 from livekit.plugins.turn_detector import multilingual as _turn_detector_multilingual  # noqa: F401
 from opentelemetry.trace import set_tracer_provider as _otel_set_global_provider
 
@@ -75,6 +73,7 @@ from app.ai.realtime import (
     build_stt_plugin,
     build_tts_plugin,
     build_turn_detector,
+    build_vad,
 )
 from app.config import settings
 from app.database import get_bypass_session
@@ -109,27 +108,18 @@ server = AgentServer(host="0.0.0.0", port=8081)
 def prewarm(proc: JobProcess) -> None:
     """Process-startup hook.
 
-    1. Bootstrap a TracerProvider so livekit-agents' built-in spans ship
-       to whatever aggregator the operator points OTLP at. Production-
-       safe default: no env vars set -> spans go nowhere.
-    2. Load Silero VAD into shared process memory.
+    Bootstrap a TracerProvider so livekit-agents' built-in spans ship
+    to whatever aggregator the operator points OTLP at. Production-
+    safe default: no env vars set -> spans go nowhere.
+
+    VAD is no longer prewarmed — we use ai-coustics' built-in VAD
+    adapter, which lives inside the ai-coustics process loaded for
+    noise cancellation. No separate model weights to load.
     """
     provider = bootstrap_tracer_provider()
     _otel_set_global_provider(provider)
     proc.userdata["otel_provider"] = provider
     log.info("engine.otel.bootstrapped", service_name=settings.otel_service_name)
-
-    proc.userdata["vad"] = silero.VAD.load(
-        activation_threshold=settings.engine_silero_activation_threshold,
-        min_speech_duration=settings.engine_silero_min_speech_duration,
-        min_silence_duration=settings.engine_silero_min_silence_duration,
-    )
-    log.info(
-        "engine.vad.prewarmed",
-        activation_threshold=settings.engine_silero_activation_threshold,
-        min_speech_duration=settings.engine_silero_min_speech_duration,
-        min_silence_duration=settings.engine_silero_min_silence_duration,
-    )
 
 
 server.setup_fnc = prewarm
@@ -244,12 +234,11 @@ async def entrypoint(ctx: JobContext) -> None:
                 if ai_config.interview_turn_detector_unlikely_threshold is not None
                 else "null"
             ),
-            "interruption_mode": ai_config.interview_interruption_mode,
             "noise_cancellation": ai_config.interview_noise_cancellation,
-            "nc_enhancement_level": (
-                f"{ai_config.interview_nc_enhancement_level}"
-                if ai_config.interview_noise_cancellation != "off"
-                else "n/a"
+            "nc_enhancement_level": f"{ai_config.interview_nc_enhancement_level}",
+            "vad_provider": (
+                "ai_coustics" if ai_config.interview_noise_cancellation.startswith("ai_coustics_")
+                else "silero_fallback"
             ),
         },
         redaction_mode=settings.engine_event_log_redaction,
@@ -271,7 +260,7 @@ async def entrypoint(ctx: JobContext) -> None:
         stt=build_stt_plugin(),
         llm=build_llm_plugin(),
         tts=build_tts_plugin(),
-        vad=ctx.proc.userdata["vad"],
+        vad=build_vad(),  # was: ctx.proc.userdata["vad"]
         turn_handling=TurnHandlingOptions(
             turn_detection=build_turn_detector(),
             preemptive_generation={"enabled": True},
@@ -305,19 +294,14 @@ async def entrypoint(ctx: JobContext) -> None:
     _wire_participant_disconnect(ctx, agent)
 
     nc_filter = build_noise_cancellation()
-    room_options = (
-        room_io.RoomOptions(
-            audio_input=room_io.AudioInputOptions(
-                noise_cancellation=nc_filter,
-            ),
-        )
-        if nc_filter is not None
-        else None
-    )
     await session.start(
         agent=agent,
         room=ctx.room,
-        room_options=room_options,
+        room_options=room_io.RoomOptions(
+            audio_input=room_io.AudioInputOptions(
+                noise_cancellation=nc_filter,
+            ),
+        ),
     )
 
 
@@ -744,13 +728,14 @@ async def _handle_close(
     )
 
     config_snapshot = {
-        "interruption_mode": ai_config.interview_interruption_mode,
         "noise_cancellation": ai_config.interview_noise_cancellation,
         "nc_enhancement_level": ai_config.interview_nc_enhancement_level,
         "unlikely_threshold": ai_config.interview_turn_detector_unlikely_threshold,
         "endpointing_max_delay": settings.engine_endpointing_max_delay,
-        "silero_min_silence_duration": settings.engine_silero_min_silence_duration,
-        "silero_activation_threshold": settings.engine_silero_activation_threshold,
+        "vad_provider": (
+            "ai_coustics" if ai_config.interview_noise_cancellation.startswith("ai_coustics_")
+            else "silero_fallback"
+        ),
     }
     audio_summary = _compute_audio_tuning_summary(
         events=[

@@ -114,6 +114,18 @@
   See spec `docs/superpowers/specs/2026-05-06-audio-pipeline-design.md`.
   Original rollback rationale preserved in
   `docs/superpowers/specs/2026-05-03-engine-redesign-phase-6-audio-authority-design.md`
+
+  **Update 2026-05-06 (later):** the self-hosted-LK fallback config switch was
+  removed once the Cloud path was empirically validated. The architecture now
+  locks to LK Cloud (SFU + adaptive interruption + ai-coustics QUAIL_L NC +
+  ai-coustics built-in VAD adapter). The agent worker stays self-hosted in
+  nexus-engine; only the noise-cancellation/VAD/interruption-mode toggles got
+  simplified. `INTERVIEW_INTERRUPTION_MODE` env var is removed;
+  `INTERVIEW_NOISE_CANCELLATION` no longer accepts `"off"`. Silero VAD is
+  gone — ai-coustics' built-in VAD adapter (`livekit.plugins.ai_coustics.VAD()`)
+  reads VAD signals from the same inference that runs for NC. For Krisp mode
+  (no built-in VAD adapter), Silero is used as a fallback. The Silero extras
+  remain in `pyproject.toml` for this case.
   (marked superseded). The terminal acceptance gate for the entire
   6-phase arc is `docs/onboarding/engine-redesign-full-arc-e2e.md`.
 - **Phase 3D** — pending: real-time `analysis` (scoring, probe selection) and `reporting` (post-session report compilation).
@@ -380,7 +392,7 @@ from openai import AsyncOpenAI
 
 **Documented carve-outs (allowed):**
 - `app/modules/jd/errors.py` and `app/modules/jd/actors.py` import `openai` and `instructor.core.InstructorRetryException` *as types*, exclusively for retry/permanent-error classification (`_PERMANENT_EXCEPTIONS`) and user-safe error message mapping (`_SAFE_MESSAGES`). They never call the SDK. If the provider changes, this exception map moves with the new SDK; nothing else changes.
-- `app/ai/realtime.py` is the second blessed import site for vendor SDKs. It owns LiveKit plugin instantiation (`livekit.plugins.openai`, `deepgram`, `cartesia`, `silero`, `turn_detector`) so the interview-engine worker never touches them directly. Reads model IDs / voices / effort from `AIConfig` — never from env or settings. (Engine-integration mechanics — `interview_engine_jwt_secret`, `interview_agent_name`, `nexus_internal_base_url` — are deliberately NOT in `AIConfig`; the engine worker reads those directly from `settings`. AIConfig is for AI provider config only.) Lazy imports inside each factory keep the FastAPI nexus process free of the realtime plugin packages (which are installed only in the interview-engine container). Audio-pipeline factories added in Phase 3D.engine-redesign-6 (2026-05-06): `build_noise_cancellation()` (ai_coustics QUAIL_L or Krisp, env-selected) and `build_interruption_options()` (adaptive for Cloud, vad for self-hosted).
+- `app/ai/realtime.py` is the second blessed import site for vendor SDKs. It owns LiveKit plugin instantiation (`livekit.plugins.openai`, `deepgram`, `cartesia`, `silero`, `turn_detector`) so the interview-engine worker never touches them directly. Reads model IDs / voices / effort from `AIConfig` — never from env or settings. (Engine-integration mechanics — `interview_engine_jwt_secret`, `interview_agent_name`, `nexus_internal_base_url` — are deliberately NOT in `AIConfig`; the engine worker reads those directly from `settings`. AIConfig is for AI provider config only.) Lazy imports inside each factory keep the FastAPI nexus process free of the realtime plugin packages (which are installed only in the interview-engine container). Audio-pipeline factories added in Phase 3D.engine-redesign-6 (2026-05-06): `build_noise_cancellation()` (ai_coustics QUAIL_L or Krisp, env-selected), `build_interruption_options()` (locked to adaptive/Cloud), and `build_vad()` (ai-coustics built-in VAD adapter for ai_coustics modes; Silero fallback for krisp_nc).
 - A future cleanup is to lift the JD exception map into `app/ai/errors.py` and re-export typed sentinels so module code never references vendor exception classes by name. Tracked as tech-debt; not blocking.
 - The interview-engine container (Phase 3C.2 Chunk 5) currently still installs nexus + livekit-agents into **two separate venvs** with `PYTHONPATH` layering. The original blocker — nexus pinning `openai<2` while `livekit-agents>=1.5.4` requires `openai>=2` — was resolved by Phase 2 of the modular-monolith spec (openai 2.x + instructor 1.15.x). The two-venv layout remains in place because the engine container itself ships independently until Phase 3 merges its source tree into nexus and consolidates onto a single image. Removing the two-venv layout is Phase 3's responsibility.
 

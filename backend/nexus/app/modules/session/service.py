@@ -22,7 +22,6 @@ from uuid import UUID
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.config import ai_config
 from app.config import settings
 from app.modules.audit import log_event
 from app.modules.auth import UserContext, create_candidate_token
@@ -67,15 +66,16 @@ OTP_MAX_ATTEMPTS = 3
 
 
 def _compute_audio_processing_hints() -> AudioProcessingHints:
-    """Derive browser-side audio constraints from AIConfig.
+    """Browser-side audio constraints for the candidate session.
 
-    When server-side NC is on (interview_noise_cancellation != "off"),
-    browser noiseSuppression flips OFF so the ML model sees raw audio.
-    Echo cancellation and auto-gain control stay ON in both modes.
+    Server-side NC (ai-coustics or Krisp) is always on per the
+    audio-pipeline architecture (no self-hosted fallback).
+    Browser noiseSuppression is therefore always OFF (let the ML
+    model see raw audio); EC and AGC stay ON (load-bearing for
+    full-duplex).
     """
-    nc_active = ai_config.interview_noise_cancellation != "off"
     return AudioProcessingHints(
-        noise_suppression=not nc_active,
+        noise_suppression=False,
         echo_cancellation=True,
         auto_gain_control=True,
     )

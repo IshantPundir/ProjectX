@@ -95,20 +95,20 @@ Subdirectory CLAUDE.md files are the source of truth for module-level detail. Th
 
 ### Audio Path
 
-Browser-side `getUserMedia` audio constraints flip per deployment mode:
+Browser-side `getUserMedia` audio constraints (server is source of truth):
 
-| Constraint | Self-hosted LK | LK Cloud (server NC on) |
-|---|---|---|
-| `noiseSuppression` | true | **false** (avoids double-denoising the ML model's input) |
-| `echoCancellation` | true | true (load-bearing for full-duplex; ai-coustics is not an EC) |
-| `autoGainControl` | true | true |
+| Constraint | Value |
+|---|---|
+| `noiseSuppression` | **false** (raw audio for the ML model's training distribution) |
+| `echoCancellation` | true (load-bearing for full-duplex; ai-coustics is not an EC) |
+| `autoGainControl` | true |
 
-The `frontend/session` app reads these via the `audio_processing_hints`
-field on the `/start` response — server is source of truth. The
-Phase 6 invariant of "all three off" was rolled back on 2026-05-04 and
-replaced by this per-mode contract on 2026-05-06 (spec:
-`docs/superpowers/specs/2026-05-06-audio-pipeline-design.md`). See
-`docs/security/threat-model.md` Phase 6 section for the full history.
+The frontend reads these via the `audio_processing_hints` field on the `/start`
+response. Architecture is locked to LK Cloud (no self-hosted fallback) — if a
+future tenant-VPC requirement arises, the spec at
+`docs/superpowers/specs/2026-05-06-audio-pipeline-design.md` documents what
+would need to be re-introduced. See `docs/security/threat-model.md` Phase 6
+section for the full rollback/re-lock history.
 
 ### Auth Abstraction — Load-Bearing
 - FastAPI must verify JWTs through a **provider-agnostic interface**. Never call the Supabase SDK directly in business logic.

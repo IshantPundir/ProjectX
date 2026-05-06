@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from app.ai.config import ai_config
+from app.config import settings
 
 if TYPE_CHECKING:
     # Forward-declared so type checkers see the right return types without
@@ -121,59 +122,31 @@ def build_turn_detector() -> "TurnDetectionMode":
 def build_interruption_options() -> dict[str, object]:
     """Construct the `interruption=` block for TurnHandlingOptions.
 
-    Reads `AIConfig.interview_interruption_mode`. Cloud mode uses
-    `mode="adaptive"` and lets the LK barge-in classifier handle
-    backchannel detection. Per the LK turn-handling-options reference,
-    `min_words` is honoured in both adaptive and vad modes when STT is
-    enabled — setting `min_words=2` in adaptive mode is a safe additive
-    guard rail: even if the adaptive classifier says "interrupt," the
-    STT transcript must contain ≥2 words before the agent actually yields.
-    Self-hosted mode uses `mode="vad"` and compensates with `min_words=3`
-    (gates 1-2 word backchannel via Deepgram word-aligned transcripts)
-    and tighter `min_duration`.
+    Locked to adaptive mode (LK Cloud). The barge-in classifier handles
+    backchannel detection. min_words=2 layers an STT-aligned word-count
+    gate on top per the LK turn-handling-options reference.
     """
-    mode = ai_config.interview_interruption_mode
-    logger.info("ai.realtime.interruption.built", mode=mode)
-    if mode == "adaptive":
-        return {
-            "mode": "adaptive",
-            "min_duration": 0.5,
-            "min_words": 2,
-            "false_interruption_timeout": 2.0,
-            "resume_false_interruption": True,
-        }
-    if mode == "vad":
-        return {
-            "mode": "vad",
-            "min_duration": 0.8,
-            "min_words": 3,
-            "false_interruption_timeout": 2.5,
-            "resume_false_interruption": True,
-        }
-    raise ValueError(f"Unknown interview_interruption_mode: {mode!r}")
+    logger.info("ai.realtime.interruption.built", mode="adaptive")
+    return {
+        "mode": "adaptive",
+        "min_duration": 0.5,
+        "min_words": 2,
+        "false_interruption_timeout": 2.0,
+        "resume_false_interruption": True,
+    }
 
 
-def build_noise_cancellation() -> object | None:
+def build_noise_cancellation() -> object:
     """Construct the noise cancellation filter from AIConfig.
 
-    Returns a LiveKit AudioFilter-protocol object suitable for passing into
-    `room_io.AudioInputOptions(noise_cancellation=...)`, or None when the
-    configured value is `"off"` (self-hosted default — no Cloud-side NC).
+    Returns a LiveKit AudioFilter-protocol object suitable for
+    passing into `room_io.AudioInputOptions(noise_cancellation=...)`.
 
-    Plugin imports are LAZY: a self-hosted deploy with `interview_noise_cancellation=off`
-    never imports the Cloud-only `ai_coustics` / `noise_cancellation` plugin
-    packages. Critical because the plugins fail at import-time on platforms
-    that don't ship the underlying native libraries.
-
-    Note: typed as ``object | None`` because the LiveKit plugin packages do
-    not export a stable public return type for ``ai_coustics.audio_enhancement``
-    or ``noise_cancellation.NC()``. Both call sites in ``room_io.AudioInputOptions``
-    treat the return value as an opaque protocol-conforming object. Tighten
-    the type if/when the plugins expose stable public types.
+    Locked to LK Cloud — at least one ML provider is always wired
+    (no self-hosted fallback). Plugin imports stay LAZY for cold-start
+    isolation.
     """
     nc = ai_config.interview_noise_cancellation
-    if nc == "off":
-        return None
     logger.info(
         "ai.realtime.noise_cancellation.built",
         provider=nc,
@@ -199,4 +172,30 @@ def build_noise_cancellation() -> object | None:
         from livekit.plugins import noise_cancellation
         return noise_cancellation.NC()
     raise ValueError(f"Unknown interview_noise_cancellation: {nc!r}")
+
+
+def build_vad() -> object:
+    """Construct the VAD instance for the AgentSession.
+
+    For ai_coustics modes (default), returns the built-in VAD adapter
+    that reads speech/silence signals from the same ai-coustics
+    inference that runs for noise cancellation. Saves a separate VAD
+    model load and operates on the cleanest possible signal (the
+    model's internal classification, not post-filter audio).
+
+    For Krisp mode (no built-in VAD adapter), falls back to Silero.
+    """
+    nc = ai_config.interview_noise_cancellation
+    if nc == "ai_coustics_quail" or nc == "ai_coustics_quail_vf":
+        from livekit.plugins import ai_coustics
+        logger.info("ai.realtime.vad.built", provider="ai_coustics")
+        return ai_coustics.VAD()
+    # Krisp branch: fall back to Silero
+    from livekit.plugins import silero
+    logger.info("ai.realtime.vad.built", provider="silero_fallback")
+    return silero.VAD.load(
+        activation_threshold=settings.engine_silero_activation_threshold,
+        min_speech_duration=settings.engine_silero_min_speech_duration,
+        min_silence_duration=settings.engine_silero_min_silence_duration,
+    )
 
