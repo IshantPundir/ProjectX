@@ -60,6 +60,27 @@ class VerifyOtpErrorResponse(BaseModel):
     attempts_remaining: int
 
 
+class AudioProcessingHints(BaseModel):
+    """Browser-side audio constraints derived from server-side AIConfig.
+
+    The frontend passes these straight into ``getUserMedia({ audio: ... })``
+    or LiveKit's ``AudioCaptureOptions``. Server is the source of truth so
+    the candidate session app stays dumb about deployment-mode details.
+
+    When server-side enhanced NC is on (Cloud mode):
+      noise_suppression=False  (raw audio for the ML model's training distribution)
+      echo_cancellation=True   (load-bearing for full-duplex; QUAIL_L is not an EC)
+      auto_gain_control=True   (stabilizes input dynamic range)
+
+    When server-side NC is off (self-hosted mode):
+      All three True (browser does it all).
+    """
+    model_config = ConfigDict(extra="forbid")
+    noise_suppression: bool
+    echo_cancellation: bool
+    auto_gain_control: bool
+
+
 class StartSessionResponse(BaseModel):
     """200 OK shape after /start successfully provisions LiveKit + dispatches agent."""
     model_config = ConfigDict(from_attributes=True)
@@ -67,6 +88,7 @@ class StartSessionResponse(BaseModel):
     livekit_token: str
     room_name: str
     session_id: UUID
+    audio_processing_hints: AudioProcessingHints
 
 
 class SessionDetailResponse(BaseModel):

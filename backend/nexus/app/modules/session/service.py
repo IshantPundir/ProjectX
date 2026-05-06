@@ -22,6 +22,7 @@ from uuid import UUID
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai.config import ai_config
 from app.config import settings
 from app.modules.audit import log_event
 from app.modules.auth import UserContext, create_candidate_token
@@ -50,6 +51,7 @@ from app.modules.session.livekit import (
 )
 from app.modules.session.otp import generate_code, hash_code, verify_code
 from app.modules.session.schemas import (
+    AudioProcessingHints,
     PreCheckResponse,
     SessionDetailResponse,
     SessionListPage,
@@ -62,6 +64,21 @@ from app.modules.session.state_machine import advance_on_pre_check_load, transit
 OTP_RATE_LIMIT_SECONDS = 60
 OTP_LIFETIME_SECONDS = 600  # 10 minutes
 OTP_MAX_ATTEMPTS = 3
+
+
+def _compute_audio_processing_hints() -> AudioProcessingHints:
+    """Derive browser-side audio constraints from AIConfig.
+
+    When server-side NC is on (interview_noise_cancellation != "off"),
+    browser noiseSuppression flips OFF so the ML model sees raw audio.
+    Echo cancellation and auto-gain control stay ON in both modes.
+    """
+    nc_active = ai_config.interview_noise_cancellation != "off"
+    return AudioProcessingHints(
+        noise_suppression=not nc_active,
+        echo_cancellation=True,
+        auto_gain_control=True,
+    )
 
 
 async def create_session(
@@ -507,6 +524,7 @@ async def start_session(
         livekit_token=candidate_lk_token,
         room_name=room_name,
         session_id=sess.id,
+        audio_processing_hints=_compute_audio_processing_hints(),
     )
 
 
@@ -575,6 +593,7 @@ async def rejoin_session(
         livekit_token=new_lk_token,
         room_name=session.livekit_room_name,
         session_id=session.id,
+        audio_processing_hints=_compute_audio_processing_hints(),
     )
 
 
