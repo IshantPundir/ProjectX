@@ -65,6 +65,11 @@ class Session(Base):
         nullable=False,
         server_default=sql_text("'[]'::jsonb"),
     )
+    audio_tuning_summary: Mapped[dict | None] = mapped_column(
+        JSONB,
+        nullable=True,
+        default=None,
+    )
     transcript: Mapped[list | None] = mapped_column(JSONB)
     questions_asked: Mapped[int | None] = mapped_column(Integer)
     probes_fired: Mapped[int | None] = mapped_column(Integer)
