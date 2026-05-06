@@ -128,6 +128,7 @@ def build_interruption_options() -> dict[str, object]:
     Deepgram word-aligned transcripts) and tighter `min_duration`.
     """
     mode = ai_config.interview_interruption_mode
+    logger.info("ai.realtime.interruption.built", mode=mode)
     if mode == "adaptive":
         return {
             "mode": "adaptive",
@@ -136,12 +137,14 @@ def build_interruption_options() -> dict[str, object]:
             "false_interruption_timeout": 2.0,
             "resume_false_interruption": True,
         }
-    return {
-        "mode": "vad",
-        "min_duration": 0.8,
-        "min_words": 3,
-        "false_interruption_timeout": 2.5,
-        "resume_false_interruption": True,
-    }
+    if mode == "vad":
+        return {
+            "mode": "vad",
+            "min_duration": 0.8,
+            "min_words": 3,
+            "false_interruption_timeout": 2.5,
+            "resume_false_interruption": True,
+        }
+    raise ValueError(f"Unknown interview_interruption_mode: {mode!r}")
 
 
