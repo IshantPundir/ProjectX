@@ -236,7 +236,7 @@ class Settings(BaseSettings):
     # max_delay 4.0s (was 2.5): cap the wait so a candidate who's
     #   truly done isn't held up indefinitely.
     engine_endpointing_min_delay: float = 1.0
-    engine_endpointing_max_delay: float = 4.0
+    engine_endpointing_max_delay: float = 6.0
     # Silero VAD prewarm.
     # Tightened from the pre-overhaul defaults after the test-session
     # event log showed pervasive over-cutting (single utterances split
@@ -246,9 +246,9 @@ class Settings(BaseSettings):
     #     keyboard taps, throat clears).
     #   - min_silence_duration 0.55 → 0.7: wait an extra 150ms before
     #     declaring end-of-utterance, reducing mid-thought false EOU.
-    engine_silero_activation_threshold: float = 0.3
+    engine_silero_activation_threshold: float = 0.5
     engine_silero_min_speech_duration: float = 0.15
-    engine_silero_min_silence_duration: float = 0.7
+    engine_silero_min_silence_duration: float = 0.8
     # Phase 3D — audio pipeline tuning (LK Cloud cutover spec, 2026-05-06)
     interview_interruption_mode: InterruptionMode = "vad"
     interview_noise_cancellation: NoiseCancellationMode = "off"
