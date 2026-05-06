@@ -14,7 +14,7 @@
 - **Framework:** FastAPI (async throughout)
 - **DB driver:** asyncpg (direct PostgreSQL connection — NOT PostgREST)
 - **ORM:** SQLAlchemy async (asyncpg driver)
-- **Schema management:** Supabase SQL for the initial cut + Supabase-managed objects (auth hook, `supabase_auth_admin` grants); Alembic for every incremental change after that. `migrations/versions/` currently has 27 revisions; head is `0027_tenant_settings`.
+- **Schema management:** Supabase SQL for the initial cut + Supabase-managed objects (auth hook, `supabase_auth_admin` grants); Alembic for every incremental change after that. `migrations/versions/` currently has 28 revisions; head is `0028_audio_tuning_summary`.
 - **Task queue:** Dramatiq + Redis. Used for JD extraction/re-enrichment and question-bank generation. Notification dispatch still runs via FastAPI `BackgroundTasks` (short, non-retryable).
 - **Containerisation:** Docker + Docker Compose
 - **Hosting MVP:** Railway
@@ -84,34 +84,38 @@
   exhaustive `OutcomeWatcher` switch, and a new `CANDIDATE_UNRESPONSIVE`
   code on `DisconnectError`. Migration `0027_tenant_settings`. See spec
   `docs/superpowers/specs/2026-05-03-engine-redesign-phase-5-knockout-policy-design.md`.
-- **Phase 3D.engine-redesign-6** — **rolled back 2026-05-04**. The
-  Phase 6 "server-authoritative audio" work briefly disabled
-  browser-side EC/NS/AGC and made ai_coustics SPARROW_S / 0.4 the sole
-  noise filter. It was reverted when the production target shifted to
-  self-hosted LiveKit from day one — LiveKit's enhanced noise
-  cancellation plugins (Krisp, ai_coustics) are Cloud-only and
-  unsupported on self-hosted (per
-  `https://docs.livekit.io/agents/start/voice-ai`: "for self-hosting in
-  production … remove the enhanced noise cancellation plugin from the
-  agent code"). The candidate browser is back on standard WebRTC
-  NS/EC/AGC; the engine no longer installs or imports
-  `livekit-plugins-ai-coustics`; `INTERVIEW_NOISE_CANCELLATION_*` env
-  vars and the audio invariant in root CLAUDE.md are removed. The
-  audit envelope's `model_versions` no longer carries
-  `noise_cancellation_*` keys. The full-arc e2e checklist's audio
-  scenarios (9a soft-spoken / 9b noisy-environment) are no longer
-  gating. The same self-hosted constraint also applies to **adaptive
-  interruption handling** (`agent-gateway.livekit.cloud/v1/bargein`)
-  — `agent.py` was switched from `"mode": "adaptive"` to `"mode": "vad"`
-  in the `TurnHandlingOptions.interruption` block. Pattern: the three
-  LiveKit-Cloud-only features (Krisp NC, ai_coustics NC, adaptive
-  interruption) are all swapped out for self-hostable equivalents
-  (browser WebRTC NS, Silero VAD-based interruption); flip back if a
-  future deployment runs on LiveKit Cloud. **Migration list unchanged** — head is still
-  `0027_tenant_settings`. The terminal acceptance gate for
-  the entire 6-phase arc is
-  `docs/onboarding/engine-redesign-full-arc-e2e.md`. See spec
-  `docs/superpowers/specs/2026-05-03-engine-redesign-phase-6-audio-authority-design.md`.
+- **Phase 3D.engine-redesign-6** — **partially un-rolled-back
+  2026-05-06**. The Phase 6 "server-authoritative audio" work was
+  initially rolled back on 2026-05-04 when the production target was
+  self-hosted LiveKit. It is now partially reinstated because the
+  day-1 deployment target has shifted back to **LiveKit Cloud**, which
+  makes Krisp NC, ai_coustics NC, and adaptive interruption available
+  again. Key changes in this second pass:
+  - **Noise cancellation:** `build_noise_cancellation()` factory in
+    `app/ai/realtime.py` instantiates
+    `ai_coustics.audio_enhancement(model=EnhancerModel.QUAIL_L,
+    model_parameters=ModelParameters(enhancement_level=0.5))`. Krisp
+    NC is also available as an alternative (env-selectable).
+  - **Adaptive interruption:** `build_interruption_options()` factory
+    restores `mode="adaptive"` (Cloud) replacing the `"vad"` fallback
+    used during the self-hosted phase.
+  - **Per-mode browser getUserMedia contract:** `noise_suppression`
+    flips OFF when server-side NC is on (avoids double-denoising the
+    ML model's input). `echo_cancellation` and `auto_gain_control`
+    stay ON in both modes (EC is load-bearing for full-duplex; ai-
+    coustics is not an EC). Frontend reads these via the
+    `audio_processing_hints` field on the `/start` response — server
+    is source of truth. Contract is JSONB-snapshotted per session in
+    `sessions.audio_tuning_summary` (migration `0028_audio_tuning_summary`).
+  - **Self-hosted fallback:** env vars `INTERVIEW_INTERRUPTION_MODE`
+    and `INTERVIEW_NOISE_CANCELLATION` switch back to `vad` + `off`
+    for local dev or any deployment on self-hosted LiveKit. See
+    `backend/nexus/.env.example` for the full block.
+  See spec `docs/superpowers/specs/2026-05-06-audio-pipeline-design.md`.
+  Original rollback rationale preserved in
+  `docs/superpowers/specs/2026-05-03-engine-redesign-phase-6-audio-authority-design.md`
+  (marked superseded). The terminal acceptance gate for the entire
+  6-phase arc is `docs/onboarding/engine-redesign-full-arc-e2e.md`.
 - **Phase 3D** — pending: real-time `analysis` (scoring, probe selection) and `reporting` (post-session report compilation).
 
 Stubbed modules (routers registered, no business logic yet): `ats`, `analysis`, `reporting`.
@@ -229,7 +233,7 @@ backend/nexus/
 │       ├── jd_reenrichment.txt      ← Call 2 — re-enrichment after signal edits
 │       ├── question_bank_common.txt ← Shared system prompt for question bank calls
 │       └── question_bank_<stage_type>.txt ← Per-stage-type system prompts
-├── migrations/                  ← Alembic — 27 revisions; head is `0027_tenant_settings`
+├── migrations/                  ← Alembic — 28 revisions; head is `0028_audio_tuning_summary`
 │   └── versions/
 ├── tests/
 │   └── conftest.py              ← AsyncClient fixture
@@ -376,7 +380,7 @@ from openai import AsyncOpenAI
 
 **Documented carve-outs (allowed):**
 - `app/modules/jd/errors.py` and `app/modules/jd/actors.py` import `openai` and `instructor.core.InstructorRetryException` *as types*, exclusively for retry/permanent-error classification (`_PERMANENT_EXCEPTIONS`) and user-safe error message mapping (`_SAFE_MESSAGES`). They never call the SDK. If the provider changes, this exception map moves with the new SDK; nothing else changes.
-- `app/ai/realtime.py` is the second blessed import site for vendor SDKs. It owns LiveKit plugin instantiation (`livekit.plugins.openai`, `deepgram`, `cartesia`, `silero`, `turn_detector`) so the interview-engine worker never touches them directly. Reads model IDs / voices / effort from `AIConfig` — never from env or settings. (Engine-integration mechanics — `interview_engine_jwt_secret`, `interview_agent_name`, `nexus_internal_base_url` — are deliberately NOT in `AIConfig`; the engine worker reads those directly from `settings`. AIConfig is for AI provider config only.) Lazy imports inside each factory keep the FastAPI nexus process free of the realtime plugin packages (which are installed only in the interview-engine container).
+- `app/ai/realtime.py` is the second blessed import site for vendor SDKs. It owns LiveKit plugin instantiation (`livekit.plugins.openai`, `deepgram`, `cartesia`, `silero`, `turn_detector`) so the interview-engine worker never touches them directly. Reads model IDs / voices / effort from `AIConfig` — never from env or settings. (Engine-integration mechanics — `interview_engine_jwt_secret`, `interview_agent_name`, `nexus_internal_base_url` — are deliberately NOT in `AIConfig`; the engine worker reads those directly from `settings`. AIConfig is for AI provider config only.) Lazy imports inside each factory keep the FastAPI nexus process free of the realtime plugin packages (which are installed only in the interview-engine container). Audio-pipeline factories added in Phase 3D.engine-redesign-6 (2026-05-06): `build_noise_cancellation()` (ai_coustics QUAIL_L or Krisp, env-selected) and `build_interruption_options()` (adaptive for Cloud, vad for self-hosted).
 - A future cleanup is to lift the JD exception map into `app/ai/errors.py` and re-export typed sentinels so module code never references vendor exception classes by name. Tracked as tech-debt; not blocking.
 - The interview-engine container (Phase 3C.2 Chunk 5) currently still installs nexus + livekit-agents into **two separate venvs** with `PYTHONPATH` layering. The original blocker — nexus pinning `openai<2` while `livekit-agents>=1.5.4` requires `openai>=2` — was resolved by Phase 2 of the modular-monolith spec (openai 2.x + instructor 1.15.x). The two-venv layout remains in place because the engine container itself ships independently until Phase 3 merges its source tree into nexus and consolidates onto a single image. Removing the two-venv layout is Phase 3's responsibility.
 
@@ -590,7 +594,7 @@ Every environment must set BOTH settings explicitly. The localhost defaults are 
 ## Database Migrations
 
 ### Current State
-The initial schema (6 tables, first-cut RLS policies, system role seeds, and the Supabase auth hook) lives in `backend/supabase/migrations/20260405000000_initial_schema.sql`. Every incremental change since Phase 2A has been an Alembic migration in `migrations/versions/`. Current head: `0027_tenant_settings`.
+The initial schema (6 tables, first-cut RLS policies, system role seeds, and the Supabase auth hook) lives in `backend/supabase/migrations/20260405000000_initial_schema.sql`. Every incremental change since Phase 2A has been an Alembic migration in `migrations/versions/`. Current head: `0028_audio_tuning_summary`.
 
 Migrations so far:
 - `0001_phase_2b_columns` — signal editing + version columns
@@ -620,6 +624,7 @@ Migrations so far:
 - `0025_drop_engine_dispatch_tables` — **Phase 3 of modular-monolith uplift**: drops `engine_dispatch_tokens` + `engine_token_uses`. Phase 3 of the modular-monolith spec retired the engine-dispatch JWT layer; the interview engine now runs in-process inside nexus and reads `SessionConfig` / posts `SessionResult` via direct `app.modules.interview_runtime.service` calls. The `verify_engine_token` path was retired with the tables. Down-migration recreates both tables with the original 0024 schema; in-flight dispatches at rollback time would be unrecoverable but the rollback hazard is theoretical at zero-user state.
 - `0026_question_kind_column` — **Phase 4**: adds `stage_questions.question_kind` (TEXT NOT NULL DEFAULT `'technical_depth'`, CHECK in `('technical_depth','behavioral_star','compliance_binary','open_culture')`). Bank-generator now emits the field; existing rows get the default. Recruiters regenerate to upgrade old banks (no automatic backfill).
 - `0027_tenant_settings` — **Phase 5**: new `tenant_settings` table (PK = `tenant_id`, FK→`clients` ON DELETE CASCADE, two columns: `engine_knockout_policy` enum (`'record_only' | 'close_polite'`, default `'record_only'`) + `engine_agent_name` nullable TEXT). Adds `sessions.knockout_failures JSONB NOT NULL DEFAULT '[]'`. Both ops are PG11+ metadata-only. Lazy-default read pattern: `get_tenant_settings` returns schema defaults when the tenant has no row — no backfill performed.
+- `0028_audio_tuning_summary` — **Audio pipeline (LK Cloud cutover, 2026-05-06)**: adds `sessions.audio_tuning_summary JSONB NOT NULL DEFAULT '{}'` — a per-session snapshot of which NC model, enhancement level, interruption mode, and browser-side getUserMedia hints were active when the session was started. Used by post-session analytics and audit.
 
 ### Going Forward
 - Future schema changes should use Alembic migrations in `migrations/versions/`.

@@ -104,61 +104,71 @@ be a SEV2 incident (notify-the-notifier failure).
 
 ---
 
-## Phase 6 — Server-authoritative audio (2026-05-03 → ROLLED BACK 2026-05-04)
+## Phase 6 — Audio pipeline (2026-05-03 → rolled back 2026-05-04 → partially un-rolled-back 2026-05-06)
 
-> **Status: rolled back.** The trust-boundary changes documented in
-> the original Phase 6 entry no longer apply. The server-authoritative
-> audio invariant (browser EC/NS/AGC OFF + ai_coustics SPARROW_S as
-> sole noise filter) was reverted on 2026-05-04 when the production
-> deployment target shifted to self-hosted LiveKit from day one.
+> **Status: partially un-rolled-back (2026-05-06).** The Phase 6 "server-
+> authoritative audio" work was initially rolled back on 2026-05-04 when
+> the production target was self-hosted LiveKit. The day-1 deployment
+> target has since shifted back to **LiveKit Cloud**, restoring access to
+> ai_coustics NC and adaptive interruption.
 >
-> **Why:** LiveKit's enhanced noise cancellation plugins (Krisp and
-> ai_coustics) are LiveKit-Cloud-only features. The Voice AI
-> quickstart at `https://docs.livekit.io/agents/start/voice-ai`
-> states explicitly that for self-hosted production deployments, the
-> enhanced noise cancellation plugin must be removed from the agent
-> code. Phase 6's audio invariant was a sophisticated bet on
-> Cloud-managed audio that doesn't pay off when Cloud isn't the
-> production target.
+> See the audio-pipeline spec at
+> `docs/superpowers/specs/2026-05-06-audio-pipeline-design.md` for the
+> full implementation detail. The original rollback rationale is preserved
+> in `docs/superpowers/specs/2026-05-03-engine-redesign-phase-6-audio-authority-design.md`
+> (marked superseded).
 
-### Current audio path
+### New sub-processors (as of 2026-05-06 audio-pipeline cutover)
 
-- The candidate browser uses standard WebRTC `echoCancellation`,
-  `noiseSuppression`, and `autoGainControl` — the `getUserMedia`
-  defaults. No constraint overrides.
-- The engine no longer installs or imports
-  `livekit-plugins-ai-coustics`. `app/ai/realtime.py` has no
-  `build_noise_cancellation()` function.
-- `INTERVIEW_NOISE_CANCELLATION_*` env vars are removed from
-  `app/config.py` and `.env.example`.
-- The audit envelope's `model_versions` dict no longer carries
-  `noise_cancellation_*` keys.
-- The wizard's noise-floor display threshold is back to
-  `NOISE_WARN_DBFS = -30` (post-noiseSuppression baseline).
+- **LiveKit Cloud SFU** — candidate audio routes through Cloud's SFU
+  (encrypted in transit, transient, no persistence at the SFU layer).
+  New as of 2026-05-06 audio-pipeline cutover.
+- **ai-coustics** — ML noise-cancellation provider running inside
+  the LK Cloud audio path. Server-side QUAIL_L model processes
+  candidate audio before it reaches Deepgram STT.
 
-### Trust boundaries (post-rollback)
+### Current audio path (LK Cloud mode)
+
+Audio data-flow: candidate mic → browser WebRTC (EC + AGC on,
+`noiseSuppression` OFF) → LiveKit Cloud SFU → ai-coustics QUAIL_L
+(server-side denoising, enhancement_level=0.5) → Deepgram STT →
+engine LLM.
+
+- `noiseSuppression` is **false** on the browser side when server NC
+  is on — avoids double-denoising the ML model's input.
+- `echoCancellation` and `autoGainControl` stay true in both modes
+  (Cloud and self-hosted).
+- Server is source of truth: frontend reads constraints from
+  `audio_processing_hints` on the `/start` response.
+- The engine installs `livekit-plugins-noise-cancellation` +
+  `livekit-plugins-ai-coustics`. `app/ai/realtime.py` exposes
+  `build_noise_cancellation()` (ai_coustics QUAIL_L or Krisp,
+  env-selected) and `build_interruption_options()` (adaptive for
+  Cloud, vad for self-hosted).
+- Per-session tuning is snapshotted in `sessions.audio_tuning_summary`
+  (migration `0028_audio_tuning_summary`) for audit and analytics.
+
+### Self-hosted fallback audio path
+
+When `INTERVIEW_NOISE_CANCELLATION=off` (self-hosted LK):
+- Browser `noiseSuppression` is true (standard WebRTC NS).
+- No server-side NC plugin installed in the agent.
+- `INTERVIEW_INTERRUPTION_MODE=vad` (Silero VAD; adaptive
+  mode requires Cloud infrastructure).
+
+### Trust boundaries
 
 | Boundary | Element | STRIDE | Mitigation |
 |---|---|---|---|
-| Browser mic → LiveKit room | Audio carries whatever the browser's WebRTC NS does not suppress, including ambient conversations near the candidate. WebRTC NS is single-talker-tuned — better than nothing for non-speech background noise but does not isolate competing voices. | I (info disclosure of bystander PII) | Pre-session consent text covers audio recording; reviewers verify the consent copy reasonably covers third-party voices for the candidate's locale. STT transcripts of bystander speech, if produced, fall under the existing event-log redaction policy (`metadata` mode strips transcript content). Voice-isolation (removing competing voices) is a known gap accepted at MVP given the typical solo-candidate-with-headphones interview setup. |
-| Engine → recording (LiveKit Egress, if ever wired) | LiveKit Egress is not wired today (still on the Phase 3C.2 "out of scope" list). When wired, the recording captures whatever the engine receives after browser-side WebRTC NS — the same audio the STT sees. | I (information disclosure via recording) | Future Egress wiring will need its own threat-model row when added. S3 recording-bucket policy in root CLAUDE.md (versioning + MFA-delete) is already in place. |
+| Browser mic → LiveKit Cloud SFU | Audio carries whatever the browser's WebRTC EC/AGC pass through (noiseSuppression is OFF in Cloud mode). | I (info disclosure of bystander speech) | ai-coustics QUAIL_L provides server-side NS before STT. Pre-session consent covers audio recording; consent text must cover third-party voices for the candidate's locale. STT transcripts of bystander speech fall under the existing event-log redaction policy (`metadata` mode). |
+| LiveKit Cloud SFU → ai-coustics | Candidate audio transits ai-coustics infrastructure before STT. | I (PII via 3rd party) | ai-coustics is a sub-processor (add to DPA); audio is transient (not stored by the provider). Consent gate already in place. |
+| Engine → recording (LiveKit Egress, if ever wired) | LiveKit Egress is not wired today. When wired, the recording captures post-denoising audio. | I (information disclosure via recording) | Future Egress wiring will need its own threat-model row. S3 recording-bucket policy in root CLAUDE.md (versioning + MFA-delete) is already in place. |
 
-### Considerations for future re-introduction
+### When this section needs updating
 
-If a client requirement forces a return to LiveKit Cloud, the audio
-invariant can be re-evaluated. The historical Phase 6 design lives
-in `docs/superpowers/specs/2026-05-03-engine-redesign-phase-6-audio-authority-design.md`
-(marked as superseded). That document captures the trade-offs that
-were considered the first time and would be the starting point for
-any redesign.
-
-If a future deployment uses LiveKit Cloud for production, the
-relevant decisions to revisit:
-- Whether to disable browser-side EC/NS/AGC again
-- Whether to use ai_coustics QUAIL_L (free background noise
-  suppression) or QUAIL_VF_L (metered voice isolation)
-- Whether the recording capture-point still satisfies the consent
-  and redaction posture
-
-These decisions belong in a fresh threat-model entry, not a revival
-of the rolled-back Phase 6 entry.
+- NC model changes (QUAIL_L → QUAIL_VF_L or different provider).
+- Enhancement level tuned above 0.8 (voice-isolation range; changes
+  consent-gate posture for bystander speech).
+- Egress (recording) wired in.
+- Deployment target switches from Cloud to self-hosted for a specific
+  tenant (per-tenant audio path becomes heterogeneous).

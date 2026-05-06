@@ -189,17 +189,36 @@ has no Supabase session and must not send any `Authorization` header.
 
 ### Audio handling
 
-`getUserMedia` is called with `audio: true` — the browser's standard
-WebRTC echo cancellation, noise suppression, and AGC are on. LiveKit's
-enhanced noise cancellation plugins are Cloud-only and intentionally
-not wired into the candidate surface (see root CLAUDE.md → "Audio
-Path"). The Phase 6 "server-authoritative audio" invariant
-(browser EC/NS/AGC OFF + ai_coustics as sole filter) was rolled back
-on 2026-05-04 when production shifted to self-hosted LiveKit.
+`getUserMedia` constraints are determined at runtime from the
+`audio_processing_hints` field returned by the `/start` response —
+do NOT hard-code `noiseSuppression: true` or any other constraint.
+Pass the hints straight into LiveKit's `AudioCaptureOptions` or
+the `getUserMedia({ audio: … })` call. The
+`lib/api/audio-hints.ts::toAudioCaptureOptions` helper does the
+snake_case → camelCase rename.
+
+**Per-mode contract** (server is source of truth):
+
+| Constraint | Self-hosted LK | LK Cloud (server NC on) |
+|---|---|---|
+| `noiseSuppression` | true | **false** (server-side ai-coustics QUAIL_L is the denoiser) |
+| `echoCancellation` | true | true (load-bearing for full-duplex) |
+| `autoGainControl` | true | true |
+
+When server-side NC is on (Cloud mode), `noise_suppression` is `false`
+so the ai-coustics model sees raw audio. `echoCancellation` and
+`autoGainControl` stay `true` in both modes — do not turn them off.
 
 The wizard's noise-floor display (`NOISE_WARN_DBFS = -30`) reflects
-post-noiseSuppression audio. Above the threshold, the candidate sees
-a "sounds noisy" warning — non-blocking; the interview continues.
+post-noiseSuppression audio (self-hosted) or raw audio (Cloud). Above
+the threshold, the candidate sees a "sounds noisy" warning —
+non-blocking; the interview continues.
+
+The Phase 6 "server-authoritative audio" invariant (browser EC/NS/AGC
+OFF + ai_coustics as sole filter) was rolled back on 2026-05-04 and
+replaced by this per-mode contract on 2026-05-06. See root CLAUDE.md
+→ "Audio Path" and the audio-pipeline spec
+`docs/superpowers/specs/2026-05-06-audio-pipeline-design.md`.
 
 `getUserMedia` (in `CameraMicStep.tsx`) is gated by the "Human Review
 Required For: any change to OTP, consent, or camera/mic step flow"

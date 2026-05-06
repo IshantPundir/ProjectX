@@ -47,7 +47,7 @@ Each subdirectory has its own `CLAUDE.md` with context-specific rules. Always re
 | Auth + DB | Supabase Cloud Pro | Client requires data in own VPC |
 | Backend | Railway | With DB migration |
 | Task queue | Upstash Redis | With backend migration |
-| Real-time | LiveKit Cloud | Client requires A/V in VPC |
+| Real-time | LiveKit Cloud (day-1 target; self-hosted available for dev / future tenant-VPC needs) | Client requires A/V in own VPC |
 | STT | Deepgram managed | Client requires audio isolation |
 | LLM async | OpenAI API | — |
 | LLM real-time | OpenAI API (GPT-5 mini class) | Per-token cost > GPU cost |
@@ -73,7 +73,7 @@ Each subdirectory has its own `CLAUDE.md` with context-specific rules. Always re
 | 3B | Candidates module (CRUD, resume + S3, kanban, PII redaction gate) | ✅ done |
 | 3C.1 | Scheduler invites + supersession chain; session pre-check / consent / OTP; **single-use token enforcement** atomic on `/start` | ✅ done |
 | 3C.2 | LiveKit room + token provisioning on `/start`; engine worker (now `nexus-engine` compose service from the same image after Phase 3 merge) with structured-interview state machine; candidate live UI ported to LiveKit's `agent-starter-react` template via `@agents-ui` shadcn enclave (`<AgentSessionView_01>`, audio visualizers, control bar); engine graceful-close attribute (`session_outcome`); mid-session rejoin endpoint (`POST /rejoin`); realtime tuning (preemptive generation, dynamic endpointing, adaptive interruption). **Phase 3 of the modular-monolith spec merged the engine source into nexus, retired the `/api/internal/*` HTTP boundary + engine-dispatch JWT, and switched to in-process `build_session_config` / `record_session_result` calls (RLS-only defense layer).** (extracted to frontend/session 2026-05-01; see docs/superpowers/specs/2026-05-01-frontend-session-extract-design.md) | ✅ done |
-| 3D | Real-time `analysis` (scoring, probe selection) + `reporting` (post-session report) | 🟡 pending |
+| 3D | Audio pipeline cutover (LK Cloud + ai-coustics QUAIL_L + adaptive interruption) shipped 2026-05-06 (spec: `docs/superpowers/specs/2026-05-06-audio-pipeline-design.md`); real-time `analysis` (scoring, probe selection) + `reporting` (post-session report) still pending | 🟡 partial |
 | ATS | Ceipal polling, Greenhouse/Workday adapters, outbound sync | 🟡 stubbed |
 
 Subdirectory CLAUDE.md files are the source of truth for module-level detail. This table is the cross-cutting summary only.
@@ -94,8 +94,21 @@ Subdirectory CLAUDE.md files are the source of truth for module-level detail. Th
 - The candidate session app (`frontend/session`) MUST NOT depend on `@supabase/*` packages or read `NEXT_PUBLIC_SUPABASE_*` env vars. The recruiter dashboard app (`frontend/app`) MUST NOT depend on `livekit-*` packages or import from a `components/agents-ui/` or `components/ai-elements/` path. Pre-merge gate today: manual `grep livekit frontend/app/package.json` and `grep @supabase frontend/session/package.json` (CI gate when CI lands).
 
 ### Audio Path
-- The candidate surface uses standard browser-side WebRTC noise/echo cancellation and AGC (the `getUserMedia` defaults). LiveKit's enhanced noise cancellation plugins (Krisp, ai_coustics) are LiveKit-Cloud-only and intentionally **not** wired in — production targets self-hosted LiveKit, where those plugins are unsupported.
-- The Phase 6 "server-authoritative audio" invariant (browser EC/NS/AGC OFF + ai_coustics as sole filter) was rolled back on 2026-05-04 when the deployment target shifted to self-hosted LiveKit from day one. See `docs/security/threat-model.md` Phase 6 section for the rollback rationale.
+
+Browser-side `getUserMedia` audio constraints flip per deployment mode:
+
+| Constraint | Self-hosted LK | LK Cloud (server NC on) |
+|---|---|---|
+| `noiseSuppression` | true | **false** (avoids double-denoising the ML model's input) |
+| `echoCancellation` | true | true (load-bearing for full-duplex; ai-coustics is not an EC) |
+| `autoGainControl` | true | true |
+
+The `frontend/session` app reads these via the `audio_processing_hints`
+field on the `/start` response — server is source of truth. The
+Phase 6 invariant of "all three off" was rolled back on 2026-05-04 and
+replaced by this per-mode contract on 2026-05-06 (spec:
+`docs/superpowers/specs/2026-05-06-audio-pipeline-design.md`). See
+`docs/security/threat-model.md` Phase 6 section for the full history.
 
 ### Auth Abstraction — Load-Bearing
 - FastAPI must verify JWTs through a **provider-agnostic interface**. Never call the Supabase SDK directly in business logic.
