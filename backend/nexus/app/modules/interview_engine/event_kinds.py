@@ -46,6 +46,8 @@ AUDIO_PIPELINE_ERROR = "audio.pipeline.error"
 # is fixed; suffixes are vendor-defined. Documented here as a prefix.
 AUDIO_METRICS_PREFIX = "audio.metrics."
 
+AUDIO_TUNING_SUMMARY = "audio.tuning_summary"
+
 
 # ---------------------------------------------------------------------------
 # LLM conversation (framework-driven STT → LLM → TTS loop)
@@ -72,6 +74,7 @@ ALL_EVENT_KINDS: frozenset[str] = frozenset({
     AUDIO_OVERLAP,
     AUDIO_SPEECH_CREATED,
     AUDIO_PIPELINE_ERROR,
+    AUDIO_TUNING_SUMMARY,
     LLM_MESSAGE_ADDED,
     LLM_TOOL_EXECUTED,
 })
