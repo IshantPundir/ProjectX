@@ -567,6 +567,20 @@ def _wire_close_handler(
         task.add_done_callback(_bg_tasks.discard)
 
 
+def _percentile_stats(values: list[int]) -> dict[str, int]:
+    """Compute p50/p95/max/n stats for an int list (true median for even n)."""
+    if not values:
+        return {"p50": 0, "p95": 0, "max": 0, "n": 0}
+    sorted_values = sorted(values)
+    n = len(sorted_values)
+    if n % 2 == 0:
+        p50 = (sorted_values[n // 2 - 1] + sorted_values[n // 2]) // 2
+    else:
+        p50 = sorted_values[n // 2]
+    p95 = sorted_values[min(n - 1, int(n * 0.95))]
+    return {"p50": p50, "p95": p95, "max": sorted_values[-1], "n": n}
+
+
 def _wire_participant_disconnect(
     ctx: JobContext,
     agent: GenericInterviewAgent,
@@ -616,7 +630,7 @@ def _compute_audio_tuning_summary(
     for ev in events:
         if ev.get("kind") != "audio.user.state":
             continue
-        payload = ev.get("payload") or {}
+        payload = ev.get("payload", {})
         wall_ms = int(ev.get("wall_ms") or 0)
         if isinstance(payload, dict) and payload.get("new_state") == "listening":
             last_listening_at = wall_ms
@@ -624,22 +638,9 @@ def _compute_audio_tuning_summary(
             pause_ms.append(wall_ms - last_listening_at)
             last_listening_at = None
 
-    def _pct(values: list[int]) -> dict[str, int]:
-        if not values:
-            return {"p50": 0, "p95": 0, "max": 0, "n": 0}
-        sorted_values = sorted(values)
-        n = len(sorted_values)
-        # True median: average two middle values when n is even
-        if n % 2 == 0:
-            p50 = (sorted_values[n // 2 - 1] + sorted_values[n // 2]) // 2
-        else:
-            p50 = sorted_values[n // 2]
-        p95 = sorted_values[min(n - 1, int(n * 0.95))]
-        return {"p50": p50, "p95": p95, "max": sorted_values[-1], "n": n}
-
     pauses_block = {
-        "between_utterance_ms": _pct(pause_ms),
-        "between_turn_ms": _pct(pause_ms),  # proxy until refined
+        "between_utterance_ms": _percentile_stats(pause_ms),
+        "between_turn_ms": _percentile_stats(pause_ms),  # proxy until refined
     }
 
     # Interruptions

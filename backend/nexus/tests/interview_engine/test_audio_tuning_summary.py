@@ -36,7 +36,8 @@ class TestComputeAudioTuningSummary:
         ]
         summary = _compute_audio_tuning_summary(events=events, config_snapshot={})
         assert summary["interruptions"]["false"] == 2
-        assert summary["interruptions"]["total"] >= 2
+        assert summary["interruptions"]["total"] == 3
+        assert summary["interruptions"]["true"] == 0
 
     def test_config_snapshot_passed_through_verbatim(self) -> None:
         snapshot = {
