@@ -796,7 +796,6 @@ def _build_session_result(
     agent: GenericInterviewAgent,
     *,
     transcript_entries: list[TranscriptEntry],
-    outcome: SessionOutcome,
 ) -> SessionResult:
     """Compose a minimal SessionResult.
 
@@ -851,7 +850,6 @@ async def _persist_session_result(
     result = _build_session_result(
         agent,
         transcript_entries=transcript_entries,
-        outcome=outcome,
     )
     async with get_bypass_session() as db:
         await record_session_result(
