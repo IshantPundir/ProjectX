@@ -73,6 +73,11 @@ class EventCollector:
             )
         )
 
+    @property
+    def events(self) -> list[EventLogEvent]:
+        """All events appended so far, in declaration order. Read-only view (returns a shallow copy)."""
+        return list(self._events)
+
     def events_of_kind(self, kind: str) -> list[EventLogEvent]:
         """Return all currently-collected events with ``kind == <kind>``.
 

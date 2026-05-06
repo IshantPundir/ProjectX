@@ -733,7 +733,7 @@ async def _handle_close(
     audio_summary = _compute_audio_tuning_summary(
         events=[
             {"kind": e.kind, "payload": e.payload, "wall_ms": e.wall_ms}
-            for e in collector._events
+            for e in collector.events
         ],
         config_snapshot=config_snapshot,
     )
