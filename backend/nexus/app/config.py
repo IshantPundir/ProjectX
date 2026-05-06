@@ -240,6 +240,15 @@ class Settings(BaseSettings):
     engine_silero_activation_threshold: float = 0.3
     engine_silero_min_speech_duration: float = 0.15
     engine_silero_min_silence_duration: float = 0.7
+    # Phase 3D — audio pipeline tuning (LK Cloud cutover spec, 2026-05-06)
+    interview_interruption_mode: Literal["adaptive", "vad"] = "vad"
+    interview_noise_cancellation: Literal[
+        "off",
+        "ai_coustics_quail",
+        "ai_coustics_quail_vf",
+        "krisp_nc",
+    ] = "off"
+    interview_nc_enhancement_level: float = 0.5
     # Observability
     engine_log_audio_events: bool = True
     engine_log_user_transcripts: bool = False

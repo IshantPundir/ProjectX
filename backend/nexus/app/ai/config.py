@@ -101,5 +101,17 @@ class AIConfig:
     def interview_turn_detector_unlikely_threshold(self) -> float | None:
         return settings.interview_turn_detector_unlikely_threshold
 
+    @property
+    def interview_interruption_mode(self) -> str:
+        return settings.interview_interruption_mode
+
+    @property
+    def interview_noise_cancellation(self) -> str:
+        return settings.interview_noise_cancellation
+
+    @property
+    def interview_nc_enhancement_level(self) -> float:
+        return settings.interview_nc_enhancement_level
+
 
 ai_config = AIConfig()
