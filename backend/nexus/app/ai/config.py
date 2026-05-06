@@ -31,7 +31,7 @@ vars together.
 ------------------------------------------------------------------
 """
 
-from app.config import settings
+from app.config import InterruptionMode, NoiseCancellationMode, settings
 
 
 class AIConfig:
@@ -102,11 +102,11 @@ class AIConfig:
         return settings.interview_turn_detector_unlikely_threshold
 
     @property
-    def interview_interruption_mode(self) -> str:
+    def interview_interruption_mode(self) -> InterruptionMode:
         return settings.interview_interruption_mode
 
     @property
-    def interview_noise_cancellation(self) -> str:
+    def interview_noise_cancellation(self) -> NoiseCancellationMode:
         return settings.interview_noise_cancellation
 
     @property
