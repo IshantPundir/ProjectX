@@ -324,61 +324,6 @@ class Settings(BaseSettings):
     # serialized "None" as a string. Range: 0.0 – 1.0.
     interview_turn_detector_unlikely_threshold: float | None = 0.15
 
-    # Phase 3D — Structured AI Screening Agent evaluators (batch OpenAI
-    # calls, NOT realtime). Each evaluator runs `instructor` against the
-    # shared `get_openai_client()` returned `AsyncInstructor`.
-    #
-    # Tier choice rationale (matches design doc §3.3 / §5.3-5.5):
-    #
-    # * **Sufficiency Checker** is the rubric-grounded evaluator and the
-    #   highest-impact prompt in the system (design doc §5.5 / §7.18).
-    #   Mid-tier reasoning model — `gpt-5.2` aligns with the existing
-    #   batch-extraction tier (`openai_extraction_model`) which is
-    #   reasoning-capable. NOT pinned to `interview_llm_model`'s
-    #   `gpt-5.3-chat-latest` — that's a chat model that can't take
-    #   `reasoning_effort`, AND the realtime conversational LLM picks a
-    #   different optimization (TTFT) than what the Sufficiency Checker
-    #   needs (analytical depth on a structured rubric).
-    #
-    # * **Intent Classifier** routes every candidate turn (design doc
-    #   §5.3). Latency budget ≤200ms p95. Smallest GPT-5 (`gpt-5`)
-    #   matches the `openai_question_bank_model` tier, which is the
-    #   smallest reasoning-capable model in current use.
-    #
-    # * **Disclaim Classifier** is a single-purpose binary on the
-    #   knockout-disclaim path (design doc §5.4). Smallest GPT-5 by
-    #   default; design doc §5.4 explicitly notes this is one place
-    #   where mid-tier should be tested side-by-side during build —
-    #   override per-tenant via env if needed.
-    #
-    # Effort defaults are empty (`""`) for all three. The
-    # effort-gating contract (see `app/ai/config.py` module docstring)
-    # forwards `reasoning_effort` only when non-empty. Default-empty is
-    # safe even if an operator overrides a model to a chat variant
-    # (`*-chat-latest`), which would otherwise return HTTP 400.
-    # Production opts in by setting both `EVALUATOR_<ROLE>_MODEL` and
-    # `EVALUATOR_<ROLE>_EFFORT` together.
-    evaluator_intent_model: str = "gpt-5"
-    evaluator_intent_effort: str = ""
-
-    evaluator_disclaim_model: str = "gpt-5"
-    evaluator_disclaim_effort: str = ""
-
-    evaluator_sufficiency_model: str = "gpt-5.2"
-    evaluator_sufficiency_effort: str = ""
-
-    # Phase C — Speech Agent (LLM-rendered utterances; non-realtime batch
-    # streaming chat completion). Chat-tier (NOT reasoning) for low first-
-    # token latency in the candidate-perceived gap between turns. Default
-    # mirrors `interview_llm_model` for consistency with the realtime path's
-    # chat-tier choice. Smoke session 2317ed8c (2026-05-05) on `gpt-5-mini`
-    # showed reasoning-tier first-token delay ~9.7s on intro — unacceptable
-    # for a real-time agent. Switched to `gpt-5.3-chat-latest`.
-    # Effort-gated default-empty per the contract in app/ai/config.py module
-    # docstring; chat models reject `reasoning_effort` with HTTP 400.
-    speech_agent_model: str = "gpt-5.3-chat-latest"
-    speech_agent_effort: str = ""
-
     @field_validator("interview_engine_jwt_secret")
     @classmethod
     def _engine_secret_required(cls, v: str, info) -> str:

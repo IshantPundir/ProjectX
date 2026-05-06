@@ -97,26 +97,7 @@ def test_audio_metrics_prefix_terminates_with_dot():
     assert event_kinds.AUDIO_METRICS_PREFIX.endswith(".")
 
 
-def test_phase_j_ledger_snapshot_kind_present():
-    """The audit envelope's terminal ledger flush event is the seam
-    between live agent and Report Builder; declared up-front so the
-    Phase B / J implementation can't drift from the documented kind."""
-    assert event_kinds.ORCHESTRATOR_LEDGER_SNAPSHOT == "orchestrator.ledger.snapshot"
-
-
 def test_session_close_kind_matches_existing_emission():
     """`agent.py` emits `session.close` today; the constant must match
     so adopting the constant doesn't silently change the kind string."""
     assert event_kinds.SESSION_CLOSE == "session.close"
-
-
-def test_speech_stream_interrupted_constant_added():
-    """Phase C: SPEECH_STREAM_INTERRUPTED fires on cancellation sub-case 3
-    (mid-PLAYOUT disconnect after first token yielded). Carries
-    tokens_received count + reason in the payload."""
-    from app.modules.interview_engine.event_kinds import (
-        SPEECH_STREAM_INTERRUPTED,
-        ALL_EVENT_KINDS,
-    )
-    assert SPEECH_STREAM_INTERRUPTED == "speech.stream_interrupted"
-    assert SPEECH_STREAM_INTERRUPTED in ALL_EVENT_KINDS

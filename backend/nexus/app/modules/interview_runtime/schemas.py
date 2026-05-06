@@ -114,11 +114,11 @@ class StageConfig(BaseModel):
 class SignalMetadata(BaseModel):
     """Per-signal metadata projected from the latest confirmed signal snapshot.
 
-    The structured agent's Orchestrator + SignalLedger keys decisions
-    (skip-on-disclaim, knockout-confirmation gating, deepening probes,
-    question-priority order) on weight / knockout / priority / stage.
-    These travel into the engine alongside ``SessionConfig.signals`` (the
-    flat list of value strings).
+    Travels into the engine alongside ``SessionConfig.signals`` (the
+    flat list of value strings). Reserved for use by future evaluators
+    or agents that need structured signal info (weight / knockout /
+    priority / stage) beyond the flat value list — the current generic
+    chatbot does not consume it.
 
     The Literal values here must mirror ``app/modules/jd/schemas.py``
     exactly so the round-trip through ``snapshot.signals`` (JSONB) is

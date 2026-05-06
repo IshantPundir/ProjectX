@@ -104,31 +104,3 @@ def get_openai_client() -> instructor.AsyncInstructor:
         raw,
         mode=instructor.Mode.TOOLS_STRICT,
     )
-
-
-@lru_cache(maxsize=1)
-def get_openai_raw_client() -> AsyncOpenAI:
-    """Return a memoized async OpenAI client WITHOUT instructor wrapping.
-
-    Used by the Phase C SpeechAgent for plain-text streaming chat completions.
-    Evaluators (Phase D-H) continue to use ``get_openai_client()`` (instructor-
-    wrapped). Same env vars, same timeout, same httpx event hooks — just
-    no structured-output enforcement layer.
-
-    The SpeechAgent owns its own retry policy in ``_drive``; this factory
-    sets ``max_retries=0`` so SDK-level retries don't compound the per-attempt
-    timeout (per Phase C spec §4.4).
-    """
-    http_client = httpx.AsyncClient(
-        timeout=ai_config.request_timeout_seconds,
-        event_hooks={
-            "request": [_log_request],
-            "response": [_log_response],
-        },
-    )
-    return AsyncOpenAI(
-        api_key=settings.openai_api_key,
-        timeout=ai_config.request_timeout_seconds,
-        max_retries=0,
-        http_client=http_client,
-    )

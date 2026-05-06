@@ -30,17 +30,15 @@ class CompanyProfileMissingError(Exception):
 class EmptySignalMetadataError(Exception):
     """422 — projected SessionConfig.signal_metadata is empty.
 
-    The structured AI Screening Agent's Orchestrator + SignalLedger
-    require at least one tracked signal to make question-selection,
-    coverage, and knockout decisions. Upstream invariants make this
-    case unreachable in production: ``ExtractedSignals.signals`` enforces
-    ``min_length=5`` (`app/ai/schemas.py`), so a confirmed snapshot
-    always has ≥ 5 valid signals; ``_project_signal_metadata`` only drops
-    rows that fail strict shape validation, which a confirmed snapshot
-    should never contain.
+    Indicates a data-integrity problem at the engine boundary. Upstream
+    invariants make this case unreachable in production:
+    ``ExtractedSignals.signals`` enforces ``min_length=5``
+    (`app/ai/schemas.py`), so a confirmed snapshot always has ≥ 5 valid
+    signals; ``_project_signal_metadata`` only drops rows that fail
+    strict shape validation, which a confirmed snapshot should never
+    contain.
 
     If this fires, it means a confirmed snapshot somehow carries either
-    zero signals or only off-spec rows — a data-integrity bug worth
-    failing loud at the engine boundary rather than degrading silently
-    into an orchestrator that has no signals to track.
+    zero signals or only off-spec rows — fail loud at the engine
+    boundary rather than degrading silently downstream.
     """
