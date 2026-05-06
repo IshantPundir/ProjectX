@@ -42,6 +42,7 @@ from livekit.agents import (
     TurnHandlingOptions,
     UserInputTranscribedEvent,
     UserStateChangedEvent,
+    room_io,
 )
 from livekit.agents.inference.interruption import OverlappingSpeechEvent
 from livekit.agents.voice.events import (
@@ -68,7 +69,9 @@ from opentelemetry.trace import set_tracer_provider as _otel_set_global_provider
 from app.ai.config import ai_config
 from app.ai.otel import bootstrap_tracer_provider
 from app.ai.realtime import (
+    build_interruption_options,
     build_llm_plugin,
+    build_noise_cancellation,
     build_stt_plugin,
     build_tts_plugin,
     build_turn_detector,
@@ -241,6 +244,13 @@ async def entrypoint(ctx: JobContext) -> None:
                 if ai_config.interview_turn_detector_unlikely_threshold is not None
                 else "null"
             ),
+            "interruption_mode": ai_config.interview_interruption_mode,
+            "noise_cancellation": ai_config.interview_noise_cancellation,
+            "nc_enhancement_level": (
+                f"{ai_config.interview_nc_enhancement_level}"
+                if ai_config.interview_noise_cancellation != "off"
+                else "n/a"
+            ),
         },
         redaction_mode=settings.engine_event_log_redaction,
     )
@@ -270,11 +280,7 @@ async def entrypoint(ctx: JobContext) -> None:
                 "min_delay": settings.engine_endpointing_min_delay,
                 "max_delay": settings.engine_endpointing_max_delay,
             },
-            interruption={
-                "mode": "vad",
-                "min_duration": 0.5,
-                "resume_false_interruption": True,
-            },
+            interruption=build_interruption_options(),
         ),
     )
 
@@ -298,7 +304,21 @@ async def entrypoint(ctx: JobContext) -> None:
     )
     _wire_participant_disconnect(ctx, agent)
 
-    await session.start(agent=agent, room=ctx.room)
+    nc_filter = build_noise_cancellation()
+    room_options = (
+        room_io.RoomOptions(
+            audio_input=room_io.AudioInputOptions(
+                noise_cancellation=nc_filter,
+            ),
+        )
+        if nc_filter is not None
+        else None
+    )
+    await session.start(
+        agent=agent,
+        room=ctx.room,
+        room_options=room_options,
+    )
 
 
 def _build_system_prompt(*, config: SessionConfig, agent_name: str) -> str:
@@ -701,6 +721,29 @@ async def _handle_close(
         wall_ms=int(time.time() * 1000),
     )
 
+    config_snapshot = {
+        "interruption_mode": ai_config.interview_interruption_mode,
+        "noise_cancellation": ai_config.interview_noise_cancellation,
+        "nc_enhancement_level": ai_config.interview_nc_enhancement_level,
+        "unlikely_threshold": ai_config.interview_turn_detector_unlikely_threshold,
+        "endpointing_max_delay": settings.engine_endpointing_max_delay,
+        "silero_min_silence_duration": settings.engine_silero_min_silence_duration,
+        "silero_activation_threshold": settings.engine_silero_activation_threshold,
+    }
+    audio_summary = _compute_audio_tuning_summary(
+        events=[
+            {"kind": e.kind, "payload": e.payload, "wall_ms": e.wall_ms}
+            for e in collector._events
+        ],
+        config_snapshot=config_snapshot,
+    )
+    collector.append(
+        kind="audio.tuning_summary",
+        payload=audio_summary,
+        wall_ms=int(time.time() * 1000),
+    )
+    agent._audio_tuning_summary = audio_summary
+
     if ev.reason == CloseReason.ERROR:
         outcome: SessionOutcome = "error"
     elif agent._end_outcome is not None:
@@ -772,6 +815,7 @@ def _build_session_result(
         full_transcript=list(transcript_entries),
         completed_at=datetime.now(UTC).isoformat(),
         knockout_failures=[],
+        audio_tuning_summary=getattr(agent, "_audio_tuning_summary", None),
     )
 
 
