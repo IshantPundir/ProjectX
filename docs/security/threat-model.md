@@ -54,65 +54,30 @@ The original Phase 3C.2 trust boundaries described a `verify_engine_token` path 
 
 ---
 
-## Engine: in-session safety reporting (Phase 2 — controller cutover; 2026-05-03)
+## Engine: in-session safety reporting (retired)
 
-Closes Phase 2 acceptance gate §9.5. Covers the trust surface added
-when `InterviewController` exposes meta tools the LLM can call
-in-session (`flag_safety_concern`, `report_technical_issue`,
-`disqualify_knockout`). These are not new external services — they
-are new in-process capabilities the LLM can invoke through
-`@function_tool` calls. The audit + escalation surface they create
-is the new threat-model concern.
-
-### Trust boundaries
-
-| Boundary | Element | STRIDE | Mitigation |
-|---|---|---|---|
-| LLM tool-call → audit log | Every meta tool fires a structured audit event into the event-log envelope (`controller.intent.flag_safety_concern`, `controller.intent.report_technical_issue`, `disqualify.knockout`). | I (information disclosure), R (repudiation) | Tool-call retention follows the event-log envelope: same path, same redaction, same TTL. The `category` enum on `flag_safety_concern` is bounded; the `note` field is free-form but redacted to "(content redacted)" in `metadata` mode (production default). `full` mode preserves the verbatim note for audit replay only. |
-| Reviewer → metadata-mode envelope | Default reviewer access is `metadata` mode: tool name + category enum + redaction marker, no note bodies, no transcript content. | I | Standard structlog redactor + envelope-level redaction. Recruiter-dashboard access is the only routine path. No additional gating beyond existing recruiter RBAC. |
-| Reviewer → full-mode envelope (audit replay) | `full` mode preserves verbatim note + transcript content. Required for genuine investigation of a flagged session. | I (information disclosure of candidate PII / safety-sensitive disclosures) | Privileged audit-replay path. Requires (a) candidate consent on the original session (already captured pre-recording per AIVIA), (b) documented use case under `docs/security/`, (c) Super Admin role assertion at access time. The path is not exposed in the recruiter dashboard today; access is operator-only via direct envelope file read. |
-
-### Escalation procedure for `flag_safety_concern`
-
-The LLM may call `flag_safety_concern(category, note)` mid-session
-when a candidate disclosure raises a safety concern. Categories are
-a bounded enum; `threats_to_self` is the highest-severity case.
-
-| Category | Severity | Notification | SLA |
-|---|---|---|---|
-| `threats_to_self` | SEV2 | Recruiter notified within **1 hour** (in-app notification + email via the existing notifications module). Super Admin notified at the same time. SEV2 incident opened if not actioned within **24 hours**. | 1h notify / 24h actioned |
-| `disclosure_inappropriate` | SEV3 | Recruiter notified within 4 hours. No SEV escalation unless repeated across sessions for the same candidate. | 4h notify |
-| Other categories | SEV3 | Routine recruiter dashboard surface; no time-bound SLA. | n/a |
-
-The 1h notification for `threats_to_self` is the binding SLA — an
-operational alert if the notifications path is degraded would itself
-be a SEV2 incident (notify-the-notifier failure).
-
-### When this section needs updating
-
-- A new meta tool is added to the controller (e.g.,
-  `request_break`, `report_consent_withdrawal`).
-- A new category is added to the `flag_safety_concern` enum.
-- A new redaction mode is added (e.g., `aggregate` for cross-session
-  analytics).
-- The recruiter dashboard exposes the `full` mode replay path (today
-  it is operator-only; surfacing it to recruiters changes the
-  consent-gate posture).
-- A real-world incident demonstrates a new attack path on the meta
-  tools (e.g., LLM emitting a flag with a free-form note that
-  contains untrusted user input from an attacker probing the system).
+> **Status: retired 2026-05-06 with the engine revert (commit `eb8e687`).**
+>
+> The original Phase 2 controller-cutover added a trust surface around
+> `InterviewController` meta tools (`flag_safety_concern`,
+> `report_technical_issue`, `disqualify_knockout`) and an escalation
+> procedure with SEV-class SLAs. The controller and tools were removed
+> when the engine reverted to a generic LLM chatbot; no current code
+> emits these audit events.
+>
+> If a structured-engine path returns and re-introduces in-session
+> meta tools, this section needs to be re-authored from scratch — the
+> previous escalation matrix, redaction modes, and review gates are
+> preserved in git history (pre-commit `9257ec3`).
 
 ---
 
-## Phase 6 — Audio pipeline (2026-05-03 → rolled back 2026-05-04 → partially un-rolled-back 2026-05-06)
+## Audio pipeline (2026-05-06)
 
-> **Status: partially un-rolled-back (2026-05-06).** The Phase 6 "server-
-> authoritative audio" work was initially rolled back on 2026-05-04 when
-> the production target was self-hosted LiveKit. The day-1 deployment
-> target has since shifted back to **LiveKit Cloud**, restoring access to
-> ai_coustics NC and adaptive interruption.
->
-> See the audio-pipeline spec at
+> **Status: locked to LK Cloud (2026-05-06).** The architecture committed
+> to LK Cloud as the day-1 deployment target — the prior self-hosted
+> fallback was removed once the Cloud path was empirically validated
+> across three smoke sessions. See the audio-pipeline spec at
 > `docs/superpowers/specs/2026-05-06-audio-pipeline-design.md` for the
 > full implementation detail.
 
@@ -138,21 +103,17 @@ engine LLM.
   (Cloud and self-hosted).
 - Server is source of truth: frontend reads constraints from
   `audio_processing_hints` on the `/start` response.
-- The engine installs `livekit-plugins-noise-cancellation` +
-  `livekit-plugins-ai-coustics`. `app/ai/realtime.py` exposes
-  `build_noise_cancellation()` (ai_coustics QUAIL_L or Krisp,
-  env-selected) and `build_interruption_options()` (adaptive for
-  Cloud, vad for self-hosted).
+- The engine installs `livekit-plugins-ai-coustics` only (Krisp +
+  Silero plugins were removed in Patch 5 once the architecture
+  locked to ai-coustics). `app/ai/realtime.py` exposes
+  `build_noise_cancellation()` (ai_coustics QUAIL_L or QUAIL_VF,
+  env-selected), `build_interruption_options()` (locked to
+  `mode="adaptive"` with `min_words=2`), and `build_vad()`
+  (always returns `ai_coustics.VAD()` — uses ai-coustics' built-in
+  VAD adapter, which reads VAD signals from the same inference that
+  runs for NC).
 - Per-session tuning is snapshotted in `sessions.audio_tuning_summary`
   (migration `0028_audio_tuning_summary`) for audit and analytics.
-
-### Self-hosted fallback audio path
-
-When `INTERVIEW_NOISE_CANCELLATION=off` (self-hosted LK):
-- Browser `noiseSuppression` is true (standard WebRTC NS).
-- No server-side NC plugin installed in the agent.
-- `INTERVIEW_INTERRUPTION_MODE=vad` (Silero VAD; adaptive
-  mode requires Cloud infrastructure).
 
 ### Trust boundaries
 
