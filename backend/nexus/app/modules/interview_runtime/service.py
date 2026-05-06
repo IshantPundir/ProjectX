@@ -343,6 +343,7 @@ async def record_session_result(
             questions_asked=result.questions_asked,
             probes_fired=result.total_probes_fired,
             knockout_failures=[k.model_dump(mode="json") for k in result.knockout_failures],
+            audio_tuning_summary=result.audio_tuning_summary,
             agent_completed_at=now,
             result_status=derived_status,
             state="completed",

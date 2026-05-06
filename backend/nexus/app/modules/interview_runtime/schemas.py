@@ -343,3 +343,12 @@ class SessionResult(BaseModel):
             "— Phase 3D analytics consumes this list."
         ),
     )
+    audio_tuning_summary: dict[str, object] | None = Field(
+        default=None,
+        description=(
+            "Per-session pause/interruption/latency snapshot computed by the "
+            "engine at session close. Persisted to sessions.audio_tuning_summary "
+            "for empirical-tuning analysis. None when the engine couldn't "
+            "compute a summary (e.g. session aborted before any audio events)."
+        ),
+    )
