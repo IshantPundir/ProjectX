@@ -593,6 +593,82 @@ def _wire_participant_disconnect(
     ctx.room.on("participant_disconnected", _on_participant_disconnected)
 
 
+def _compute_audio_tuning_summary(
+    *,
+    events: list[dict[str, object]],
+    config_snapshot: dict[str, object],
+) -> dict[str, object]:
+    """Aggregate the EventCollector's events into a tuning summary.
+
+    Pure function — no side effects, no logging. Output shape matches the
+    `audio.tuning_summary` event documented in the audio-pipeline spec
+    (§7.1).
+
+    Pause inputs come from `audio.user.state` transitions:
+    listening→speaking deltas are between-utterance pauses (within a turn).
+    For initial implementation, between_turn_ms uses the same
+    listening→speaking deltas as a coarse proxy. A more refined
+    derivation lands when we have real session data to validate against.
+    """
+    # Pauses (between-utterance proxy)
+    pause_ms: list[int] = []
+    last_listening_at: int | None = None
+    for ev in events:
+        if ev.get("kind") != "audio.user.state":
+            continue
+        payload = ev.get("payload") or {}
+        wall_ms = int(ev.get("wall_ms") or 0)
+        if isinstance(payload, dict) and payload.get("new_state") == "listening":
+            last_listening_at = wall_ms
+        elif isinstance(payload, dict) and payload.get("new_state") == "speaking" and last_listening_at is not None:
+            pause_ms.append(wall_ms - last_listening_at)
+            last_listening_at = None
+
+    def _pct(values: list[int]) -> dict[str, int]:
+        if not values:
+            return {"p50": 0, "p95": 0, "max": 0, "n": 0}
+        sorted_values = sorted(values)
+        n = len(sorted_values)
+        # True median: average two middle values when n is even
+        if n % 2 == 0:
+            p50 = (sorted_values[n // 2 - 1] + sorted_values[n // 2]) // 2
+        else:
+            p50 = sorted_values[n // 2]
+        p95 = sorted_values[min(n - 1, int(n * 0.95))]
+        return {"p50": p50, "p95": p95, "max": sorted_values[-1], "n": n}
+
+    pauses_block = {
+        "between_utterance_ms": _pct(pause_ms),
+        "between_turn_ms": _pct(pause_ms),  # proxy until refined
+    }
+
+    # Interruptions
+    false_count = sum(1 for ev in events if ev.get("kind") == "audio.interruption.false")
+    overlap_count = sum(1 for ev in events if ev.get("kind") == "audio.overlap")
+    total = false_count + overlap_count
+    true_count = max(0, overlap_count - false_count)
+    interruptions_block = {
+        "total": total,
+        "true": true_count,
+        "false": false_count,
+        "agent_yielded": false_count,
+    }
+
+    # Latency: leave at zero in initial implementation; tighten when
+    # validated against real telemetry shape.
+    latency_block = {
+        "stt_to_eou_ms": {"p50": 0, "p95": 0},
+        "eou_to_first_audio_ms": {"p50": 0, "p95": 0},
+    }
+
+    return {
+        "pauses": pauses_block,
+        "interruptions": interruptions_block,
+        "latency": latency_block,
+        "config_snapshot": dict(config_snapshot),
+    }
+
+
 async def _handle_close(
     ev: CloseEvent,
     agent: GenericInterviewAgent,
