@@ -513,7 +513,7 @@ def test_repeat_replays_last_question_not_redirect():
     engine.register_agent_utterance(
         turn_id="t1",
         text="Let's stay on the Jira workflow side for now.",
-        instruction_kind=InstructionKind.redirect_off_topic,  # legacy kind — Task 9 collapses
+        instruction_kind=InstructionKind.redirect,
     )
 
     # Now exercise repeat resolution.

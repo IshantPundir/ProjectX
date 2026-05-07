@@ -288,18 +288,10 @@ class StateEngine:
         elif action == NextAction.acknowledge_no_experience:
             instruction = InstructionKind.acknowledge_no_experience
 
-        elif action == NextAction.redirect_off_topic:
-            instruction = InstructionKind.redirect_off_topic
-        elif action == NextAction.redirect_abusive:
-            instruction = InstructionKind.redirect_abusive
-        elif action == NextAction.safe_redirect_injection:
-            instruction = InstructionKind.safe_redirect_injection
         elif action == NextAction.redirect:
-            # NEW (Task 8): the collapsed redirect action. The legacy
-            # redirect_* branches above remain functional until Task 9
-            # deletes them; this branch is additive. Tone selection
-            # happens in the Speaker via turn_metadata, which
-            # build_speaker_input threads through ONLY for this kind.
+            # The collapsed redirect action. Tone selection happens in the
+            # Speaker via turn_metadata, which build_speaker_input threads
+            # through ONLY for this kind.
             instruction = InstructionKind.redirect
 
         elif action == NextAction.polite_close:

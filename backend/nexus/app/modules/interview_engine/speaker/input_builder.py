@@ -68,9 +68,8 @@ def build_speaker_input(
         turn_metadata = judge_output.turn_metadata
 
     # InstructionKind.repeat: bank_text is None; orchestrator uses cached_utterance.
-    # Legacy redirect_off_topic/_abusive/safe_redirect_injection +
-    # polite_close: bank_text is None and turn_metadata is None — Speaker
-    # uses canned scaffolds (Task 9 will delete the legacy redirect kinds).
+    # InstructionKind.polite_close: bank_text is None and turn_metadata is None —
+    # Speaker uses canned scaffolds.
 
     return SpeakerInput(
         instruction_kind=instruction_kind,

@@ -71,17 +71,13 @@ def resolve_bank_text(
             bank_text=None, failed_signal_value=failed,
         )
 
-    if action == NextAction.redirect_off_topic:
+    if action == NextAction.redirect:
+        # Collapsed redirect action. The Speaker restates the active question;
+        # tone selection (off-topic / abusive / injection / social-greeting)
+        # is driven by turn_metadata threaded through build_speaker_input.
         return ResolvedBankText(
-            instruction_kind=InstructionKind.redirect_off_topic, bank_text=None,
-        )
-    if action == NextAction.redirect_abusive:
-        return ResolvedBankText(
-            instruction_kind=InstructionKind.redirect_abusive, bank_text=None,
-        )
-    if action == NextAction.safe_redirect_injection:
-        return ResolvedBankText(
-            instruction_kind=InstructionKind.safe_redirect_injection, bank_text=None,
+            instruction_kind=InstructionKind.redirect,
+            bank_text=active_question.text if active_question else None,
         )
 
     if action in (NextAction.polite_close, NextAction.end_session):

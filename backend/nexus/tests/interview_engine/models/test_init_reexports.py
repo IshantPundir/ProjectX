@@ -7,8 +7,7 @@ def test_judge_models_reexported():
         "NextAction", "CoverageTransition",
         "Observation", "TurnMetadata",
         "AdvancePayload", "ProbePayload", "ClarifyPayload", "RepeatPayload",
-        "RedirectOffTopicPayload", "RedirectAbusivePayload",
-        "SafeRedirectInjectionPayload", "AcknowledgeNoExperiencePayload",
+        "RedirectPayload", "AcknowledgeNoExperiencePayload",
         "PoliteClosePayload", "EndSessionPayload",
         "JudgeOutput", "JudgeClaimEntry",
     ):

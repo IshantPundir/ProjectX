@@ -21,10 +21,7 @@ class InstructionKind(StrEnum):
     deliver_probe = "deliver_probe"
     clarify = "clarify"
     repeat = "repeat"  # bypassed at orchestrator level; never reaches Speaker LLM
-    redirect_off_topic = "redirect_off_topic"          # kept for now — Task 9 deletes
-    redirect_abusive = "redirect_abusive"              # kept for now — Task 9 deletes
-    safe_redirect_injection = "safe_redirect_injection"  # kept for now — Task 9 deletes
-    redirect = "redirect"                              # NEW
+    redirect = "redirect"
     acknowledge_no_experience = "acknowledge_no_experience"
     polite_close = "polite_close"
 

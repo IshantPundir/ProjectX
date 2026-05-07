@@ -13,10 +13,7 @@ from app.modules.interview_engine.models.judge import (
     Observation,
     PoliteClosePayload,
     ProbePayload,
-    RedirectAbusivePayload,
-    RedirectOffTopicPayload,
     RepeatPayload,
-    SafeRedirectInjectionPayload,
     TurnMetadata,
 )
 
@@ -27,9 +24,6 @@ def test_next_action_values():
         "probe",
         "clarify",
         "repeat",
-        "redirect_off_topic",
-        "redirect_abusive",
-        "safe_redirect_injection",
         "redirect",
         "acknowledge_no_experience",
         "polite_close",

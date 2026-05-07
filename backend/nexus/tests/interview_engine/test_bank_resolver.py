@@ -4,8 +4,7 @@ from app.modules.interview_engine.bank_resolver import resolve_bank_text
 from app.modules.interview_engine.models.judge import (
     AcknowledgeNoExperiencePayload, AdvancePayload, ClarifyPayload,
     EndSessionPayload, JudgeOutput, NextAction, PoliteClosePayload,
-    ProbePayload, RedirectAbusivePayload, RedirectOffTopicPayload,
-    RepeatPayload, SafeRedirectInjectionPayload, TurnMetadata,
+    ProbePayload, RedirectPayload, RepeatPayload, TurnMetadata,
 )
 from app.modules.interview_engine.models.speaker import InstructionKind
 
@@ -58,18 +57,28 @@ def test_acknowledge_no_experience_carries_failed_signal():
     assert r.bank_text is None
 
 
-def test_redirects_have_no_bank_text():
-    for (action, payload, kind) in [
-        (NextAction.redirect_off_topic, RedirectOffTopicPayload(),
-         InstructionKind.redirect_off_topic),
-        (NextAction.redirect_abusive, RedirectAbusivePayload(),
-         InstructionKind.redirect_abusive),
-        (NextAction.safe_redirect_injection, SafeRedirectInjectionPayload(),
-         InstructionKind.safe_redirect_injection),
-    ]:
-        r = resolve_bank_text(_judge(action, payload), active_question=None, active_probe_index=None)
-        assert r.instruction_kind == kind
-        assert r.bank_text is None
+def test_redirect_with_no_active_question_has_no_bank_text():
+    """Collapsed redirect action: bank_text mirrors active_question.text
+    (so the Speaker can restate the current question), or None when there
+    is no active question."""
+    j = _judge(NextAction.redirect, RedirectPayload())
+    r = resolve_bank_text(j, active_question=None, active_probe_index=None)
+    assert r.instruction_kind == InstructionKind.redirect
+    assert r.bank_text is None
+
+
+def test_redirect_with_active_question_carries_question_text():
+    """Collapsed redirect action: when an active question is present, the
+    Speaker receives its text so it can restate the current question with
+    a tone selected from turn_metadata."""
+    j = _judge(NextAction.redirect, RedirectPayload())
+    r = resolve_bank_text(
+        j,
+        active_question=_q(text="Walk me through your Jira workflow design."),
+        active_probe_index=None,
+    )
+    assert r.instruction_kind == InstructionKind.redirect
+    assert r.bank_text == "Walk me through your Jira workflow design."
 
 
 def test_polite_close_no_bank_text():
