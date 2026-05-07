@@ -204,10 +204,6 @@ class Settings(BaseSettings):
     # --- Interview engine (in-process, Phase 3 merged) ---
     # The engine no longer runs as a separate Docker image with its own
     # config. These fields are read directly by app/modules/interview_engine.
-    # `interview_engine_jwt_secret` is retained for now because Task 9 of
-    # Phase 3 deletes its only consumer (mint_engine_dispatch_jwt). When that
-    # task lands, this field can be removed.
-    interview_engine_jwt_secret: str = ""
 
     # Default agent name. The pre-overhaul "Dakota-1785" reads as a
     # robotic identifier; "Sam" is gender-neutral, short (one syllable for
@@ -264,6 +260,29 @@ class Settings(BaseSettings):
     # waits for the closing line to play before forcing shutdown. Avoids
     # deadlocking teardown on a stuck TTS pipeline.
     engine_closing_drain_timeout_seconds: float = 8.0
+
+    # Phase 3D (structured agent) — judge + speaker model selection and tuning.
+    # Judge: async LLM that decides next action each turn.
+    # Speaker: streaming Responses API LLM that generates candidate-facing text.
+    engine_judge_model: str = "gpt-5.4-mini-2026-03-17"
+    engine_speaker_model: str = "gpt-5.4-mini-2026-03-17"
+    # Total wall-clock budget (ms) the judge is allowed before fallback kicks in.
+    engine_judge_total_budget_ms: int = 3000
+    # Wait between judge retry attempts (ms).
+    engine_judge_retry_wait_ms: int = 250
+    # Max tokens the speaker may emit in a single turn.
+    engine_speaker_max_output_tokens: int = 200
+    # Checkpoint cadence — persist state every N turns or every M seconds,
+    # whichever fires first.
+    engine_checkpoint_turns: int = 10
+    engine_checkpoint_seconds: int = 30
+    # Maximum number of candidate utterance claims to keep in the pool.
+    engine_claims_pool_max: int = 50
+    # How many of the most recent turns the judge receives as context.
+    engine_recent_turns_window: int = 8
+    # Prompt version tags — controls which versioned prompt file is loaded.
+    engine_judge_prompt_version: str = "v1"
+    engine_speaker_prompt_version: str = "v1"
 
     # Phase 1 (engine redesign) — event log sink config. The engine writes a
     # per-session JSON envelope at session close; the sink chosen here decides
@@ -326,20 +345,6 @@ class Settings(BaseSettings):
     # in the audit envelope's model_versions payload, which previously
     # serialized "None" as a string. Range: 0.0 – 1.0.
     interview_turn_detector_unlikely_threshold: float | None = 0.15
-
-    @field_validator("interview_engine_jwt_secret")
-    @classmethod
-    def _engine_secret_required(cls, v: str, info) -> str:
-        env = info.data.get("environment", "development")
-        if not v and env != "test":
-            raise ValueError(
-                "INTERVIEW_ENGINE_JWT_SECRET is required (generate with: "
-                "`openssl rand -hex 32`). This signs the engine dispatch JWT "
-                "embedded in LiveKit dispatch metadata and authenticates the "
-                "interview-engine worker against /api/internal/sessions/*. "
-                "Set ENVIRONMENT=test to skip this check in the test suite."
-            )
-        return v
 
     # Frontend base URL — used to build invite/confirmation links in emails.
     # Previously hardcoded with a `debug ? localhost : app.projectx.com`
