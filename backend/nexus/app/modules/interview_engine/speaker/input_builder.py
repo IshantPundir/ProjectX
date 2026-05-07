@@ -22,6 +22,7 @@ def build_speaker_input(
     recent_turns: list[TranscriptEntry],
     persona_name: str,
     last_candidate_utterance: str | None,
+    candidate_name: str | None = None,
 ) -> SpeakerInput:
     """Anti-leak guarantee: NEVER include positive_evidence, red_flags, rubric."""
     bank_text: str | None = None
@@ -61,5 +62,6 @@ def build_speaker_input(
         recent_turns=recent_turns,
         claims_pool_snapshot=claims_pool.snapshot().entries,
         persona_name=persona_name,
+        candidate_name=candidate_name,
         failed_signal_value=failed_signal_value,
     )

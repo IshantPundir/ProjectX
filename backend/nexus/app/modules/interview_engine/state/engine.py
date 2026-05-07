@@ -344,6 +344,7 @@ class StateEngine:
             recent_turns=recent,
             persona_name=self._persona_name(),
             last_candidate_utterance=candidate_utterance_text,
+            candidate_name=self._cfg.candidate.name,
         )
 
     def _persona_name(self) -> str:

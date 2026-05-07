@@ -44,6 +44,29 @@ def test_speaker_input_for_acknowledge_no_experience_carries_failed_signal():
     assert s.failed_signal_value == "JQL fluency"
 
 
+def test_speaker_input_candidate_name_optional_default_none():
+    s = SpeakerInput(
+        instruction_kind=InstructionKind.deliver_first_question,
+        bank_text="What is your experience?",
+        last_candidate_utterance=None,
+        recent_turns=[], claims_pool_snapshot=[],
+        persona_name="Sam",
+    )
+    assert s.candidate_name is None
+
+
+def test_speaker_input_candidate_name_carries_through():
+    s = SpeakerInput(
+        instruction_kind=InstructionKind.deliver_first_question,
+        bank_text="What is your experience?",
+        last_candidate_utterance=None,
+        recent_turns=[], claims_pool_snapshot=[],
+        persona_name="Sam",
+        candidate_name="Alice",
+    )
+    assert s.candidate_name == "Alice"
+
+
 def test_speaker_input_has_no_rubric_fields():
     """Anti-leak guarantee: SpeakerInput must NEVER carry rubric content.
 

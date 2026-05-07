@@ -69,6 +69,30 @@ def test_probe_input_carries_correct_followup_text():
     assert s.bank_text == "FU-1"
 
 
+def test_speaker_input_carries_candidate_name():
+    queue = QuestionQueue.from_initial(
+        questions=[{"question_id": "q1", "is_mandatory": True, "follow_ups": []}],
+    )
+    queue.advance_to("q1", at_turn=0)
+    s = build_speaker_input(
+        instruction_kind=InstructionKind.deliver_first_question,
+        judge_output=_judge(NextAction.advance, AdvancePayload(target_question_id="q1")),
+        active_question=_q(),
+        queue=queue,
+        claims_pool=CandidateClaimsPool(max_size=50),
+        recent_turns=[],
+        persona_name="Sam",
+        last_candidate_utterance=None,
+        candidate_name="Alice",
+    )
+    assert s.candidate_name == "Alice"
+    assert s.persona_name == "Sam"
+    # Anti-leak guarantee still holds.
+    serialized = s.model_dump_json()
+    for forbidden in ("EVIDENCE-A", "EVIDENCE-B", "EVIDENCE-C", "FLAG-A", "FLAG-B"):
+        assert forbidden not in serialized
+
+
 def test_acknowledge_no_experience_carries_failed_signal():
     queue = QuestionQueue.from_initial(
         questions=[{"question_id": "q1", "is_mandatory": True, "follow_ups": []}],

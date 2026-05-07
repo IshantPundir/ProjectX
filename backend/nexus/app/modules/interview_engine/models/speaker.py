@@ -37,4 +37,8 @@ class SpeakerInput(BaseModel):
     recent_turns: list[TranscriptEntry] = Field(default_factory=list, max_length=8)
     claims_pool_snapshot: list[ClaimEntry] = Field(default_factory=list)
     persona_name: str = Field(min_length=1)
+    candidate_name: str | None = Field(
+        default=None,
+        description="The candidate's name (NOT the agent's name — that's persona_name).",
+    )
     failed_signal_value: str | None = None

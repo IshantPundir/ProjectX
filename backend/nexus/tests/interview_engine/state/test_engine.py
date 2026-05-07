@@ -260,3 +260,22 @@ def test_end_session_blocked_without_knockout_or_complete():
     # Should fall back to advance (q2) not actually end.
     assert decision.speaker_input.instruction_kind == InstructionKind.deliver_question
     assert any(w.code == "end_session_not_allowed" for w in decision.validation_warnings)
+
+
+def test_speaker_input_includes_candidate_name(make_session_config, make_question, make_judge_output):
+    """The State Engine must pass SessionConfig.candidate.name into SpeakerInput.candidate_name."""
+    cfg = make_session_config(
+        questions=[make_question(qid="q1", text="What is your first question response?")],
+        signals=["S1"],
+    )
+    # The make_session_config fixture sets candidate.name to "Alice".
+    eng = StateEngine(session_config=cfg, config=StateEngineConfig())
+    eng.set_persona_name("Sam")
+
+    decision = eng.process_judge_output(
+        turn_id="t-0",
+        judge_output=eng.initialize_for_session_start(),
+        candidate_utterance_text=None, elapsed_ms=0,
+    )
+    assert decision.speaker_input.candidate_name == "Alice"
+    assert decision.speaker_input.persona_name == "Sam"
