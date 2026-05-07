@@ -198,3 +198,63 @@ async def test_on_user_turn_completed_happy_path(make_session_config, make_quest
     for a in room.local_participant.set_attributes.await_args_list:
         pushed.update(a.args[0])
     assert pushed.get(ATTR_CURRENT_QUESTION_INDEX) == "1"
+
+
+@pytest.mark.asyncio
+async def test_speaker_error_triggers_canned_recovery(make_session_config, make_question, make_judge_output):
+    cfg = make_session_config(
+        questions=[make_question(qid="q1", text="What is your first question response?")],
+        signals=["S1"],
+    )
+
+    raising_speaker = MagicMock()
+    call_count = {"n": 0}
+
+    async def _stream(*args, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return _FakeSpeakerHandle("first question")
+        raise RuntimeError("simulated streaming failure")
+
+    raising_speaker.stream = AsyncMock(side_effect=_stream)
+
+    judge_service = MagicMock()
+    judge_service.call = AsyncMock(return_value=MagicMock(
+        judge_output=make_judge_output(),
+        is_fallback=False, fallback_reason=None,
+        original_failure_context=None, latency_ms=10,
+        usage={"prompt_tokens": 1, "completion_tokens": 1}, model_used="gpt-test",
+    ))
+
+    room = MagicMock()
+    room.local_participant.set_attributes = AsyncMock()
+    pub = AttributePublisher(room=room)
+    fake_session = MagicMock()
+    fake_session.say = AsyncMock()
+    fake_agent = MagicMock()
+    fake_agent.session = fake_session
+
+    state_engine = StateEngine(session_config=cfg)
+    collector = _collector()
+    orch = InterviewOrchestrator(
+        session_config=cfg,
+        tenant_settings=MagicMock(engine_agent_name=None),
+        state_engine=state_engine,
+        judge=judge_service, speaker=raising_speaker,
+        attr_publisher=pub, event_collector=collector,
+        correlation_id="c", config=OrchestratorConfig(),
+    )
+    await orch.on_enter(fake_agent)
+
+    from livekit.agents.llm import ChatMessage
+    from livekit.agents.llm import StopResponse
+    msg = ChatMessage(role="user", content=["my answer"])
+    with pytest.raises(StopResponse):
+        await orch.on_user_turn_completed(fake_agent, MagicMock(), msg)
+
+    # Recovery line was sent — search for "apologize" or similar in the say calls.
+    say_calls_text = " ".join(str(c) for c in fake_session.say.await_args_list)
+    assert "apologize" in say_calls_text.lower() or "could you say that again" in say_calls_text.lower()
+
+    from app.modules.interview_engine.event_kinds import SPEAKER_ERROR
+    assert SPEAKER_ERROR in [e.kind for e in collector.events]

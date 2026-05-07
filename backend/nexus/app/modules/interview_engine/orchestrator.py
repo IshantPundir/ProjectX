@@ -202,35 +202,52 @@ class InterviewOrchestrator:
 
     # --- Internals ---
 
+    _RECOVERY_TEXT = "I apologize — could you say that again?"
+
     async def _stream_speaker_and_say(
         self, *, agent: Any, turn_id: str, speaker_input: Any,
     ) -> str:
-        handle = await self._speaker.stream(
-            turn_id=turn_id, speaker_input=speaker_input,
-            correlation_id=self._correlation_id,
-            tenant_id=str(self._cfg.session_id),
-        )
-        stream = handle.stream()
-        await agent.session.say(stream, allow_interruptions=True, add_to_chat_ctx=True)
-        final_text = await handle.final_text()
-
-        self._append(SPEAKER_CALL, SpeakerCallPayload(
-            turn_id=turn_id, model="speaker",
-            prompt_hash="sha256:speaker",
-            instruction_kind=speaker_input.instruction_kind.value,
-            bank_text_present=speaker_input.bank_text is not None,
-            latency_ms_first_token=handle.latency_ms_first_token,
-            latency_ms_total=handle.latency_ms_total,
-            usage=handle.usage,
-            final_utterance=final_text,
-        ).model_dump())
-        self._append(SPEAKER_OUTPUT, SpeakerOutputPayload(
-            turn_id=turn_id, final_utterance=final_text,
-        ).model_dump())
-
-        # Register the agent utterance with State Engine for repeat support.
-        self._state.register_agent_utterance(turn_id=turn_id, text=final_text)
-        return final_text
+        try:
+            handle = await self._speaker.stream(
+                turn_id=turn_id, speaker_input=speaker_input,
+                correlation_id=self._correlation_id,
+                tenant_id=str(self._cfg.session_id),
+            )
+            stream = handle.stream()
+            await agent.session.say(
+                stream, allow_interruptions=True, add_to_chat_ctx=True,
+            )
+            final_text = await handle.final_text()
+            self._append(SPEAKER_CALL, SpeakerCallPayload(
+                turn_id=turn_id, model="speaker", prompt_hash="sha256:speaker",
+                instruction_kind=speaker_input.instruction_kind.value,
+                bank_text_present=speaker_input.bank_text is not None,
+                latency_ms_first_token=handle.latency_ms_first_token,
+                latency_ms_total=handle.latency_ms_total,
+                usage=handle.usage, final_utterance=final_text,
+            ).model_dump())
+            self._append(SPEAKER_OUTPUT, SpeakerOutputPayload(
+                turn_id=turn_id, final_utterance=final_text,
+            ).model_dump())
+            self._state.register_agent_utterance(turn_id=turn_id, text=final_text)
+            return final_text
+        except Exception as exc:
+            from app.modules.interview_engine.event_kinds import SPEAKER_ERROR
+            from app.modules.interview_engine.audit_events import SpeakerErrorPayload
+            self._append(SPEAKER_ERROR, SpeakerErrorPayload(
+                turn_id=turn_id, model="speaker",
+                error_class=type(exc).__name__,
+                error_message=str(exc)[:500],
+                recovery_utterance=self._RECOVERY_TEXT,
+            ).model_dump())
+            await agent.session.say(
+                self._RECOVERY_TEXT,
+                allow_interruptions=True, add_to_chat_ctx=False,
+            )
+            self._state.register_agent_utterance(
+                turn_id=turn_id, text=self._RECOVERY_TEXT,
+            )
+            return self._RECOVERY_TEXT
 
     async def _publish_attributes(
         self, *, turn_id: str | None,
