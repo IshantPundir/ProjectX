@@ -399,6 +399,95 @@ def test_record_only_policy_does_not_close_on_knockout(make_session_config, make
     assert eng.lifecycle_snapshot().state.value == "active"
 
 
+def test_failed_with_positive_anchor_is_dropped(make_session_config, make_question):
+    """Bug C — Judge sometimes emits sufficient->failed with anchor_id=0
+    on a positive answer. State Engine must drop the observation, not
+    propagate it into a knockout.
+
+    Reproduces the session 8317142f-3166-4236-a43c-18c8ab4592e1 turn-7
+    pattern: signal in `sufficient`, Judge emits a sufficient->failed with
+    a real positive-evidence anchor (anchor_id=0). Ledger precondition
+    matches, knockout=True signal would fire a KnockoutFailure and the
+    close_polite policy would override the Judge's actual `probe` action.
+    """
+    cfg = make_session_config(
+        questions=[
+            make_question(
+                qid="q1",
+                text="Tell me about your work on this topic.",
+                signal_values=["S_KO"],
+                follow_ups=["fu0", "fu1"],
+            ),
+        ],
+        signals=["S_KO"],
+        knockout_signal="S_KO",
+    )
+    engine = StateEngine(
+        session_config=cfg,
+        config=StateEngineConfig(knockout_policy="close_polite"),
+    )
+    # Drive to active state via initialize_for_session_start + a first turn.
+    synthetic = engine.initialize_for_session_start()
+    engine.process_judge_output(
+        turn_id="t0", judge_output=synthetic,
+        candidate_utterance_text=None, elapsed_ms=0,
+    )
+
+    # Walk S_KO into `sufficient` so the bogus sufficient->failed
+    # observation passes the ledger precondition (matching the
+    # session 8317142f turn-7 state).
+    warmup = JudgeOutput(
+        thought="warmup",
+        observations=[
+            Observation(
+                signal_value="S_KO", anchor_id=1,
+                evidence_quote="solid context",
+                coverage_transition=CoverageTransition.none_to_sufficient,
+            ),
+        ],
+        candidate_claims=[],
+        next_action=NextAction.probe,
+        next_action_payload=ProbePayload(probe_id="0", probe_rationale="r"),
+        turn_metadata=TurnMetadata(),
+    )
+    engine.process_judge_output(
+        turn_id="t-warmup", judge_output=warmup,
+        candidate_utterance_text="answer", elapsed_ms=500,
+    )
+
+    # Build a Judge output with the bogus -> failed observation.
+    bogus_obs = Observation(
+        signal_value="S_KO",
+        anchor_id=0,                                  # POSITIVE anchor — illegal for ->failed
+        evidence_quote="I use validators to enforce required actions",
+        coverage_transition=CoverageTransition.sufficient_to_failed,
+    )
+    output = JudgeOutput(
+        thought="probe further",
+        observations=[bogus_obs],
+        candidate_claims=[],
+        next_action=NextAction.probe,
+        next_action_payload=ProbePayload(
+            probe_id="1", probe_rationale="targets the missing X",
+        ),
+        turn_metadata=TurnMetadata(),
+    )
+
+    decision = engine.process_judge_output(
+        turn_id="t1", judge_output=output,
+        candidate_utterance_text="I use validators...", elapsed_ms=1000,
+    )
+
+    # The bogus observation must be dropped: no knockout, lifecycle still active.
+    assert engine.lifecycle_snapshot().knockout_failures == []
+    assert engine.lifecycle_snapshot().state.value == "active"
+    # The Judge's original action (probe) must survive — no policy override.
+    assert decision.speaker_input.instruction_kind.value == "deliver_probe"
+    # And the warning is recorded.
+    codes = [w.code for w in decision.validation_warnings]
+    assert "illegal_failure_observation" in codes
+
+
 def test_non_knockout_signal_failure_does_not_record_knockout(make_session_config, make_question):
     """Failure on a non-knockout signal: NO KnockoutFailure recorded."""
     cfg = make_session_config(

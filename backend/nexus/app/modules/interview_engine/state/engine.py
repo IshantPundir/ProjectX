@@ -142,6 +142,27 @@ class StateEngine:
         # ledger — an illegal-transition drop must NOT trigger a knockout.
         applied_observations: list[Observation] = []
         for obs in judge_output.observations:
+            transition = obs.coverage_transition.value
+            # Hard invariant: ->failed transitions require the sentinel
+            # anchor_id=-1 (per Judge prompt §6). Any ->failed observation with
+            # a positive anchor is the Judge mis-classifying a positive answer
+            # span as a no-experience disclosure (Bug C from session
+            # 8317142f-3166-4236-a43c-18c8ab4592e1, turn 7). Drop without
+            # applying — do NOT propagate into the ledger or knockout
+            # detection. The illegal_failure_observation warning is recorded
+            # for audit so the prompt drift is visible downstream.
+            if transition.endswith("→failed") and obs.anchor_id != -1:
+                warnings.append(ValidationWarning(
+                    code="illegal_failure_observation",
+                    level="warning",
+                    details={
+                        "signal": obs.signal_value,
+                        "anchor_id": obs.anchor_id,
+                        "transition": transition,
+                        "reason": "failure transition requires sentinel anchor (-1)",
+                    },
+                ))
+                continue
             try:
                 self._ledger.apply_observation(
                     obs, turn_id=turn_id, recorded_at_ms=elapsed_ms,
