@@ -311,6 +311,7 @@ async def entrypoint(ctx: JobContext) -> None:
             checkpoint_turns=settings.engine_checkpoint_turns,
             checkpoint_seconds=settings.engine_checkpoint_seconds,
         ),
+        tenant_id=str(tenant_uuid),
     )
 
     agent = StructuredInterviewAgent(

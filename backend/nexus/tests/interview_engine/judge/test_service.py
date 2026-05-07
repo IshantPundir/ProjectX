@@ -125,3 +125,24 @@ async def test_judge_falls_back_to_polite_close_when_no_target():
     )
     assert result.is_fallback is True
     assert result.judge_output.next_action == NextAction.polite_close
+
+
+@pytest.mark.asyncio
+async def test_judge_uses_responses_api_text_format_not_response_format():
+    """Regression: Responses API uses text={"format":...}, not response_format=."""
+    mock_client = MagicMock()
+    response = MagicMock()
+    response.output_text = json.dumps(_good_judge_dict())
+    response.usage = MagicMock(input_tokens=1, output_tokens=1)
+    mock_client.responses.create = AsyncMock(return_value=response)
+    svc = JudgeService(
+        openai_client=mock_client, model="gpt-test",
+        system_prompt="SYS", system_prompt_hash="sha256:abc",
+        next_pending_mandatory_resolver=lambda: "q1",
+    )
+    await svc.call(turn_id="t-1", input_payload=_payload(),
+                   correlation_id="c", tenant_id="ten")
+    call_kwargs = mock_client.responses.create.await_args.kwargs
+    assert "text" in call_kwargs
+    assert call_kwargs["text"] == {"format": {"type": "json_object"}}
+    assert "response_format" not in call_kwargs

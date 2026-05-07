@@ -52,9 +52,11 @@ class InterviewOrchestrator:
         event_collector: EventCollector,
         correlation_id: str,
         config: OrchestratorConfig | None = None,
+        tenant_id: str,
     ) -> None:
         self._cfg = session_config
         self._tenant = tenant_settings
+        self._tenant_id = tenant_id
         self._state = state_engine
         self._judge = judge
         self._speaker = speaker
@@ -141,7 +143,7 @@ class InterviewOrchestrator:
         ledger = self._state.ledger_snapshot()
         queue = self._state.queue_snapshot()
         claims = self._state.claims_snapshot()
-        recent: list = []
+        recent = self._state.transcript_snapshot()[-self._config.recent_turns_window:]
         time_remaining = int(self._state.lifecycle_snapshot().time_remaining_seconds())
         judge_input = build_judge_input(
             active_question=active_q_cfg,
@@ -153,7 +155,7 @@ class InterviewOrchestrator:
         result = await self._judge.call(
             turn_id=turn_id, input_payload=judge_input,
             correlation_id=self._correlation_id,
-            tenant_id=str(self._cfg.session_id),
+            tenant_id=self._tenant_id,
         )
         self._append_judge_event(turn_id=turn_id, result=result)
 
@@ -245,7 +247,7 @@ class InterviewOrchestrator:
             handle = await self._speaker.stream(
                 turn_id=turn_id, speaker_input=speaker_input,
                 correlation_id=self._correlation_id,
-                tenant_id=str(self._cfg.session_id),
+                tenant_id=self._tenant_id,
             )
             stream = handle.stream()
             await agent.session.say(

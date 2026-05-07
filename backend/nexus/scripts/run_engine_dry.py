@@ -222,6 +222,7 @@ async def _run(scenario_path: Path, mode: str) -> int:
         judge=judge, speaker=speaker,
         attr_publisher=pub, event_collector=collector,
         correlation_id="dry-run", config=OrchestratorConfig(),
+        tenant_id="dry-run-tenant",
     )
 
     print(f"=== Running scenario: {scenario_path.name} (mode={mode}) ===")

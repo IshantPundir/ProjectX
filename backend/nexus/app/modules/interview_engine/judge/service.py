@@ -92,7 +92,7 @@ class JudgeService:
                 model=self._model,
                 instructions=self._system_prompt,
                 input=input_payload.model_dump_json(),
-                response_format={"type": "json_object"},
+                text={"format": {"type": "json_object"}},
             )
             return response.output_text, response.usage
 

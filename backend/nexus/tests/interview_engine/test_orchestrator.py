@@ -93,6 +93,7 @@ async def test_on_enter_delivers_first_question(make_session_config, make_questi
         event_collector=collector,
         correlation_id="c",
         config=OrchestratorConfig(),
+        tenant_id="t",
     )
 
     await orch.on_enter(fake_agent)
@@ -180,6 +181,7 @@ async def test_on_user_turn_completed_happy_path(make_session_config, make_quest
         event_collector=collector,
         correlation_id="c",
         config=OrchestratorConfig(),
+        tenant_id="t",
     )
     await orch.on_enter(fake_agent)
     speaker_service.stream.reset_mock()
@@ -243,6 +245,7 @@ async def test_speaker_error_triggers_canned_recovery(make_session_config, make_
         judge=judge_service, speaker=raising_speaker,
         attr_publisher=pub, event_collector=collector,
         correlation_id="c", config=OrchestratorConfig(),
+        tenant_id="t",
     )
     await orch.on_enter(fake_agent)
 
@@ -287,6 +290,7 @@ async def test_on_close_returns_session_result_with_snapshots(make_session_confi
         judge=judge_service, speaker=speaker_service,
         attr_publisher=pub, event_collector=collector,
         correlation_id="c", config=OrchestratorConfig(),
+        tenant_id="t",
     )
     await orch.on_enter(fake_agent)
 
@@ -297,3 +301,93 @@ async def test_on_close_returns_session_result_with_snapshots(make_session_confi
     assert result.questions_skipped == 0
     assert result.questions_asked >= 1
     assert isinstance(result.audit_envelope_ref, (str, type(None)))
+
+
+@pytest.mark.asyncio
+async def test_judge_input_carries_recent_turns(make_session_config, make_question, make_judge_output):
+    """Regression for I1: recent_turns must be populated from State Engine transcript, not [].
+
+    After on_enter delivers turn 0 + on_user_turn_completed delivers turn 1, the next
+    turn's Judge call should see at least 2 transcript entries in recent_turns.
+    """
+    cfg = make_session_config(
+        questions=[
+            make_question(qid="q1", text="What is your first question response?", follow_ups=["fu0"]),
+            make_question(qid="q2", text="What is your second question response?", follow_ups=[]),
+        ],
+        signals=["S1"],
+    )
+    speaker = MagicMock()
+    speaker.stream = AsyncMock(return_value=_FakeSpeakerHandle("ok."))
+    judge = MagicMock()
+    judge.call = AsyncMock(return_value=MagicMock(
+        judge_output=make_judge_output(target="q2"),
+        is_fallback=False, fallback_reason=None,
+        original_failure_context=None, latency_ms=10,
+        usage={"prompt_tokens": 1, "completion_tokens": 1}, model_used="gpt-test",
+    ))
+
+    room = MagicMock()
+    room.local_participant.set_attributes = AsyncMock()
+    pub = AttributePublisher(room=room)
+    fake_session = MagicMock()
+    fake_session.say = AsyncMock()
+    fake_agent = MagicMock()
+    fake_agent.session = fake_session
+
+    state_engine = StateEngine(session_config=cfg)
+    collector = _collector()
+    orch = InterviewOrchestrator(
+        session_config=cfg, tenant_settings=MagicMock(engine_agent_name=None),
+        state_engine=state_engine, judge=judge, speaker=speaker,
+        attr_publisher=pub, event_collector=collector,
+        correlation_id="c", config=OrchestratorConfig(),
+        tenant_id="t",
+    )
+    await orch.on_enter(fake_agent)
+
+    from livekit.agents.llm import ChatMessage, StopResponse
+    msg = ChatMessage(role="user", content=["I have JQL experience."])
+    with pytest.raises(StopResponse):
+        await orch.on_user_turn_completed(fake_agent, MagicMock(), msg)
+
+    # First Judge call's input_payload — recent_turns must be non-empty
+    # (it should contain the prior agent utterance + the candidate response).
+    judge_call_args = judge.call.await_args.kwargs["input_payload"]
+    assert len(judge_call_args.recent_turns) >= 1, "Judge input must include recent transcript"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_uses_tenant_id_not_session_id(make_session_config, make_question):
+    """Regression for I2: LLM tracing must receive tenant_id, not session_id."""
+    cfg = make_session_config(
+        questions=[make_question(qid="q1", text="What is your first question response?")],
+        signals=["S1"],
+    )
+    speaker = MagicMock()
+    speaker.stream = AsyncMock(return_value=_FakeSpeakerHandle("ok."))
+    judge = MagicMock()
+
+    room = MagicMock()
+    room.local_participant.set_attributes = AsyncMock()
+    pub = AttributePublisher(room=room)
+    fake_session = MagicMock()
+    fake_session.say = AsyncMock()
+    fake_agent = MagicMock()
+    fake_agent.session = fake_session
+
+    state_engine = StateEngine(session_config=cfg)
+    collector = _collector()
+    orch = InterviewOrchestrator(
+        session_config=cfg, tenant_settings=MagicMock(engine_agent_name=None),
+        state_engine=state_engine, judge=judge, speaker=speaker,
+        attr_publisher=pub, event_collector=collector,
+        correlation_id="c", config=OrchestratorConfig(),
+        tenant_id="my-tenant-uuid-not-the-session-id",
+    )
+    await orch.on_enter(fake_agent)
+
+    # Speaker.stream call must carry tenant_id="my-tenant-uuid-..."
+    call_kwargs = speaker.stream.await_args.kwargs
+    assert call_kwargs["tenant_id"] == "my-tenant-uuid-not-the-session-id"
+    assert call_kwargs["tenant_id"] != cfg.session_id
