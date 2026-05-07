@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from app.modules.interview_engine.models.claims import ClaimsPoolSnapshot
 from app.modules.interview_engine.models.ledger import SignalLedgerSnapshot
 from app.modules.interview_engine.models.queue import QuestionQueueSnapshot
-from app.modules.interview_runtime.schemas import (
+from app.modules.interview_runtime import (
     QuestionConfig, TranscriptEntry,
 )
 

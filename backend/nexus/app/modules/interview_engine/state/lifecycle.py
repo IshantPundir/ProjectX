@@ -5,7 +5,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
-from app.modules.interview_runtime.schemas import KnockoutFailure
+from app.modules.interview_runtime import KnockoutFailure
 
 
 class LifecycleState(StrEnum):

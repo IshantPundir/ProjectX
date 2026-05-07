@@ -11,7 +11,7 @@ from app.modules.interview_engine.models.judge import (
     AcknowledgeNoExperiencePayload, JudgeOutput, NextAction,
 )
 from app.modules.interview_engine.models.speaker import InstructionKind
-from app.modules.interview_runtime.schemas import QuestionConfig
+from app.modules.interview_runtime import QuestionConfig
 
 
 @dataclass(slots=True)

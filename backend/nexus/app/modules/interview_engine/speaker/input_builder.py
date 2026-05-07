@@ -7,7 +7,7 @@ from app.modules.interview_engine.models.speaker import (
 )
 from app.modules.interview_engine.state.claims import CandidateClaimsPool
 from app.modules.interview_engine.state.queue import QuestionQueue
-from app.modules.interview_runtime.schemas import (
+from app.modules.interview_runtime import (
     QuestionConfig, TranscriptEntry,
 )
 

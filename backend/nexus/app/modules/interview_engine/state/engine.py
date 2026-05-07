@@ -30,7 +30,7 @@ from app.modules.interview_engine.state.lifecycle import (
 from app.modules.interview_engine.state.queue import (
     NoActiveQuestionError, QueueError, QuestionQueue,
 )
-from app.modules.interview_runtime.schemas import (
+from app.modules.interview_runtime import (
     SessionConfig, TranscriptEntry,
 )
 

@@ -11,7 +11,7 @@ from enum import StrEnum
 from pydantic import BaseModel, Field
 
 from app.modules.interview_engine.models.claims import ClaimEntry
-from app.modules.interview_runtime.schemas import TranscriptEntry
+from app.modules.interview_runtime import TranscriptEntry
 
 
 class InstructionKind(StrEnum):
