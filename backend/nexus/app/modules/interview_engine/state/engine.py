@@ -6,7 +6,7 @@ The firewall: never calls an LLM; pure deterministic Python.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import ClassVar, Literal
 
 from app.modules.interview_engine.models.claims import ClaimsPoolSnapshot
 from app.modules.interview_engine.models.judge import (
@@ -65,6 +65,18 @@ class StateEngineDecision:
 class StateEngine:
     """Composes ledger + queue + claims + lifecycle. Drives all per-turn mutations."""
 
+    # Bug B (session 8317142f-3166-4236-a43c-18c8ab4592e1, turn 5):
+    # `_resolve_repeat` previously replayed the most recent agent
+    # utterance regardless of kind, so a candidate who said "Can you
+    # please repeat?" right after a redirect heard the redirect again,
+    # not the actual question. Filter the repeat-cache at insertion
+    # time: only question-bearing kinds get cached.
+    _QUESTION_KINDS: ClassVar[frozenset[InstructionKind]] = frozenset({
+        InstructionKind.deliver_first_question,
+        InstructionKind.deliver_question,
+        InstructionKind.deliver_probe,
+    })
+
     def __init__(
         self,
         *,
@@ -100,7 +112,12 @@ class StateEngine:
             sig.value for sig in session_config.signal_metadata if sig.knockout
         }
 
-        self._agent_utterances: dict[str, str] = {}
+        # Renamed from _agent_utterances. Holds question-bearing
+        # utterances ONLY (deliver_first_question / deliver_question /
+        # deliver_probe). The full transcript still lives on
+        # self._transcript; this cache is the source of truth for
+        # `repeat` replay.
+        self._question_utterances: dict[str, str] = {}
         self._transcript: list[TranscriptEntry] = []
         self._turn_count = 0
 
@@ -407,14 +424,14 @@ class StateEngine:
     def _resolve_repeat(
         self, warnings: list[ValidationWarning]
     ) -> tuple[InstructionKind, str | None, str | None]:
-        if not self._agent_utterances:
+        if not self._question_utterances:
             warnings.append(ValidationWarning(
-                code="repeat_without_prior_utterance",
+                code="repeat_without_prior_question",
                 details={},
             ))
             return InstructionKind.clarify, None, None
-        last_turn_id = list(self._agent_utterances.keys())[-1]
-        return InstructionKind.repeat, self._agent_utterances[last_turn_id], last_turn_id
+        last_turn_id = list(self._question_utterances.keys())[-1]
+        return InstructionKind.repeat, self._question_utterances[last_turn_id], last_turn_id
 
     def _build_speaker_input(
         self,
@@ -451,12 +468,19 @@ class StateEngine:
 
     # --- External hooks ---
 
-    def register_agent_utterance(self, *, turn_id: str, text: str) -> None:
-        self._agent_utterances[turn_id] = text
+    def register_agent_utterance(
+        self, *, turn_id: str, text: str, instruction_kind: InstructionKind,
+    ) -> None:
         self._transcript.append(TranscriptEntry(
             role="agent", text=text, timestamp_ms=0,
             question_id=self._queue.active_question_id(),
         ))
+        # Filter at insertion: only question-bearing utterances are
+        # eligible for `repeat` replay. Redirects, clarifies,
+        # acknowledgements, and polite_closes never end up in this cache,
+        # so `_resolve_repeat` is guaranteed to return an actual question.
+        if instruction_kind in self._QUESTION_KINDS:
+            self._question_utterances[turn_id] = text
 
     # --- Snapshot accessors ---
 

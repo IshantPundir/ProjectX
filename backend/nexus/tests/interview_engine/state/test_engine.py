@@ -156,7 +156,10 @@ def test_repeat_action_uses_cached_utterance():
         turn_id="t-0", judge_output=eng.initialize_for_session_start(),
         candidate_utterance_text=None, elapsed_ms=0,
     )
-    eng.register_agent_utterance(turn_id="t-0", text="Tell me about your work with q1.")
+    eng.register_agent_utterance(
+        turn_id="t-0", text="Tell me about your work with q1.",
+        instruction_kind=InstructionKind.deliver_first_question,
+    )
     j = JudgeOutput(
         thought="candidate asked to repeat",
         observations=[],
@@ -196,7 +199,7 @@ def test_repeat_without_prior_utterance_degrades_to_clarify():
     )
     assert decision.speaker_input.instruction_kind == InstructionKind.clarify
     assert any(
-        w.code == "repeat_without_prior_utterance" for w in decision.validation_warnings
+        w.code == "repeat_without_prior_question" for w in decision.validation_warnings
     )
 
 
@@ -486,6 +489,38 @@ def test_failed_with_positive_anchor_is_dropped(make_session_config, make_questi
     # And the warning is recorded.
     codes = [w.code for w in decision.validation_warnings]
     assert "illegal_failure_observation" in codes
+
+
+def test_repeat_replays_last_question_not_redirect():
+    """Bug B — `_resolve_repeat` previously returned the most recent
+    AGENT utterance regardless of kind. Now it must return the most
+    recent QUESTION-bearing utterance (deliver_first_question /
+    deliver_question / deliver_probe), skipping redirects, clarifies,
+    polite_closes, etc."""
+    engine = _engine()
+    synthetic = engine.initialize_for_session_start()
+    engine.process_judge_output(
+        turn_id="t0", judge_output=synthetic,
+        candidate_utterance_text=None, elapsed_ms=0,
+    )
+
+    # Simulate the orchestrator registering the first-question utterance.
+    engine.register_agent_utterance(
+        turn_id="t0", text="Walk me through your Jira workflow.",
+        instruction_kind=InstructionKind.deliver_first_question,
+    )
+    # Then simulate a redirect utterance from a later turn.
+    engine.register_agent_utterance(
+        turn_id="t1",
+        text="Let's stay on the Jira workflow side for now.",
+        instruction_kind=InstructionKind.redirect_off_topic,  # legacy kind — Task 9 collapses
+    )
+
+    # Now exercise repeat resolution.
+    instruction, cached, source_turn = engine._resolve_repeat(warnings=[])
+    assert instruction == InstructionKind.repeat
+    assert cached == "Walk me through your Jira workflow."
+    assert source_turn == "t0"
 
 
 def test_non_knockout_signal_failure_does_not_record_knockout(make_session_config, make_question):

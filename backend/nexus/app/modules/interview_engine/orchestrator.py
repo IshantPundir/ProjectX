@@ -523,7 +523,10 @@ class InterviewOrchestrator:
             self._append(SPEAKER_OUTPUT, SpeakerOutputPayload(
                 turn_id=turn_id, final_utterance=final_text,
             ).model_dump())
-            self._state.register_agent_utterance(turn_id=turn_id, text=final_text)
+            self._state.register_agent_utterance(
+                turn_id=turn_id, text=final_text,
+                instruction_kind=speaker_input.instruction_kind,
+            )
             return final_text
         except Exception as exc:
             from app.modules.interview_engine.event_kinds import SPEAKER_ERROR
@@ -540,6 +543,7 @@ class InterviewOrchestrator:
             )
             self._state.register_agent_utterance(
                 turn_id=turn_id, text=self._RECOVERY_TEXT,
+                instruction_kind=speaker_input.instruction_kind,
             )
             return self._RECOVERY_TEXT
 
