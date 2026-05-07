@@ -37,6 +37,42 @@ from app.modules.interview_engine.state.engine import StateEngine
 from app.modules.interview_runtime import SessionConfig
 
 
+def _map_livekit_close_reason(close_reason: str | None) -> str:
+    """Map a LiveKit ``CloseReason`` value-string to a SessionOutcome string.
+
+    Used by :meth:`InterviewOrchestrator.resolve_close_outcome` as the
+    fallback when no structured ``lifecycle.last_outcome`` was set by
+    the State Engine. The returned string is one of the
+    ``state.lifecycle.SessionOutcome`` values so it is interchangeable
+    with the structured-outcome branch.
+
+    Mapping:
+
+    * ``"participant_disconnected"`` → ``"candidate_disconnected"``
+      (LiveKit's word for "the remote party left" maps cleanly to ours).
+    * ``"user_initiated"`` → ``"completed"``. ``user_initiated`` is the
+      reason LiveKit reports when WE call ``session.shutdown()``; if the
+      structured agent did so without setting ``last_outcome`` (rare —
+      checkpoint shutdown, manual ops shutdown), "completed" is the
+      least-misleading label.
+    * ``"error"`` → ``"error"`` (defensive — the higher-priority
+      ``CloseReason.ERROR`` branch in :meth:`resolve_close_outcome`
+      already handles this; included here for completeness so unit
+      tests against the mapper directly do the right thing).
+    * Anything else (None, unknown future enum value) → ``"error"``.
+      Unknown reasons are treated as errors for safety: the audit
+      envelope is forensic data, and "error" surfaces an unexpected
+      close cleanly rather than masquerading as a normal completion.
+    """
+    if close_reason == "participant_disconnected":
+        return "candidate_disconnected"
+    if close_reason == "user_initiated":
+        return "completed"
+    if close_reason == "error":
+        return "error"
+    return "error"
+
+
 @dataclass(slots=True)
 class OrchestratorConfig:
     recent_turns_window: int = 8
@@ -97,6 +133,45 @@ class InterviewOrchestrator:
         without reaching into the orchestrator's private ``_state``.
         """
         return self._state.lifecycle_snapshot()
+
+    def resolve_close_outcome(self, *, close_reason: str | None) -> str:
+        """Determine the canonical session outcome string at close time.
+
+        Resolution order (highest priority first):
+
+        1. **LiveKit ERROR close reason** → ``"error"``. A pipeline-level
+           error wins over any structured outcome — there is no "graceful"
+           recovery from an underlying transport / plugin failure, and the
+           audit envelope must reflect that the session terminated abnormally.
+        2. **``state_engine.lifecycle.last_outcome``** — the structured
+           agent's authoritative outcome (``knockout_closed``, ``completed``,
+           ``candidate_ended``, ``time_expired``, etc.) set by the State
+           Engine when a knockout-policy override fires, the candidate
+           ends the session, mandatory coverage completes, the time
+           budget exhausts, etc.
+        3. **LiveKit-reported close reason** mapped via
+           :func:`_map_livekit_close_reason` — fallback used when no
+           structured outcome was recorded (e.g. the candidate disconnected
+           mid-session before any State Engine outcome was set).
+
+        Used by ``agent.py::_handle_close`` to populate BOTH the
+        ``session.close`` audit payload's ``controller_end_outcome``
+        field AND the ``session_outcome`` participant attribute that the
+        candidate frontend reads. They MUST agree, so the resolution
+        logic lives once, here, on the orchestrator (which already owns
+        the StateEngine). Previously the close handler was reading a
+        local mirror (``agent._end_outcome``) that nothing populated for
+        knockout / completed / time_expired paths — only the
+        participant-disconnect listener wrote to it — so the audit event
+        and frontend attribute reported ``null`` for every structured
+        close.
+        """
+        if close_reason == "error":
+            return "error"
+        lifecycle_outcome = self._state.lifecycle_snapshot().last_outcome
+        if lifecycle_outcome is not None:
+            return lifecycle_outcome.value
+        return _map_livekit_close_reason(close_reason)
 
     # --- LiveKit lifecycle hooks ---
 

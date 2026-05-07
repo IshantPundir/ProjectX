@@ -750,3 +750,202 @@ async def test_orchestrator_uses_tenant_id_not_session_id(make_session_config, m
     call_kwargs = speaker.stream.await_args.kwargs
     assert call_kwargs["tenant_id"] == "my-tenant-uuid-not-the-session-id"
     assert call_kwargs["tenant_id"] != cfg.session_id
+
+
+# ---------------------------------------------------------------------------
+# resolve_close_outcome — controller_end_outcome propagation regression
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_resolve_close_outcome_returns_lifecycle_last_outcome(
+    make_session_config, make_question,
+):
+    """When ``state_engine.lifecycle.last_outcome`` is set (e.g. by the
+    knockout policy override path), :meth:`InterviewOrchestrator.resolve_close_outcome`
+    must return that value regardless of the LiveKit-reported close
+    reason.
+
+    Regression: prior to this fix the close handler read
+    ``agent._end_outcome`` (a local mirror nothing populated for
+    structured-close paths), so the ``session.close`` audit event and
+    the ``session_outcome`` participant attribute both serialized as
+    ``null`` even though lifecycle had an outcome.
+    """
+    cfg = make_session_config(
+        questions=[make_question(qid="q1", text="What is your first question response?")],
+        signals=["S_KO"],
+    )
+    state_engine = StateEngine(session_config=cfg)
+    state_engine._lifecycle.transition_to_active()
+    state_engine._lifecycle.transition_to_closing()
+    from app.modules.interview_engine.state.lifecycle import SessionOutcome
+    state_engine._lifecycle.set_last_outcome(SessionOutcome.knockout_closed)
+
+    orch = InterviewOrchestrator(
+        session_config=cfg, tenant_settings=MagicMock(engine_agent_name=None),
+        state_engine=state_engine, judge=MagicMock(), speaker=MagicMock(),
+        attr_publisher=AttributePublisher(room=MagicMock()),
+        event_collector=_collector(),
+        correlation_id="c", config=OrchestratorConfig(),
+        tenant_id="t",
+    )
+
+    # LiveKit reports user_initiated (because the agent called shutdown),
+    # but the structured outcome must win.
+    assert orch.resolve_close_outcome(close_reason="user_initiated") == "knockout_closed"
+    # Even participant_disconnected (candidate closed their tab during
+    # the polite-close drain) must NOT downgrade to candidate_disconnected.
+    assert orch.resolve_close_outcome(close_reason="participant_disconnected") == "knockout_closed"
+
+
+@pytest.mark.asyncio
+async def test_resolve_close_outcome_falls_back_to_livekit_reason(
+    make_session_config, make_question,
+):
+    """When lifecycle.last_outcome is None, the resolver maps the
+    LiveKit-reported close reason to a SessionOutcome string."""
+    cfg = make_session_config(
+        questions=[make_question(qid="q1", text="What is your first question response?")],
+        signals=["S1"],
+    )
+    state_engine = StateEngine(session_config=cfg)
+    # No transitions, no outcome set — pristine pre_start lifecycle.
+    assert state_engine.lifecycle_snapshot().last_outcome is None
+
+    orch = InterviewOrchestrator(
+        session_config=cfg, tenant_settings=MagicMock(engine_agent_name=None),
+        state_engine=state_engine, judge=MagicMock(), speaker=MagicMock(),
+        attr_publisher=AttributePublisher(room=MagicMock()),
+        event_collector=_collector(),
+        correlation_id="c", config=OrchestratorConfig(),
+        tenant_id="t",
+    )
+
+    assert orch.resolve_close_outcome(close_reason="participant_disconnected") == "candidate_disconnected"
+    assert orch.resolve_close_outcome(close_reason="user_initiated") == "completed"
+    assert orch.resolve_close_outcome(close_reason="error") == "error"
+    # Unknown / None default to "error" for safety.
+    assert orch.resolve_close_outcome(close_reason=None) == "error"
+    assert orch.resolve_close_outcome(close_reason="some_future_reason") == "error"
+
+
+@pytest.mark.asyncio
+async def test_session_close_outcome_reflects_lifecycle_last_outcome(
+    make_session_config, make_question,
+):
+    """End-to-end regression: when a knockout drives lifecycle to
+    closing with last_outcome=knockout_closed, the orchestrator's
+    resolver returns "knockout_closed" — which is what the agent.py
+    close handler will write to the session.close audit payload's
+    ``controller_end_outcome`` field and the ``session_outcome``
+    participant attribute.
+    """
+    cfg = make_session_config(
+        questions=[make_question(qid="q1", text="What is your first question response?")],
+        signals=["S_KO"],
+        knockout_signal="S_KO",
+    )
+    speaker = MagicMock()
+    speaker.stream = AsyncMock(return_value=_FakeSpeakerHandle("polite close text"))
+
+    from app.modules.interview_engine.models.judge import (
+        AcknowledgeNoExperiencePayload,
+        CoverageTransition,
+        JudgeOutput,
+        NextAction,
+        Observation,
+        TurnMetadata,
+    )
+    judge = MagicMock()
+    judge.call = AsyncMock(return_value=MagicMock(
+        judge_output=JudgeOutput(
+            thought="t",
+            observations=[Observation(
+                signal_value="S_KO", anchor_id=-1,
+                evidence_quote="never used",
+                coverage_transition=CoverageTransition.none_to_failed,
+            )],
+            candidate_claims=[],
+            next_action=NextAction.acknowledge_no_experience,
+            next_action_payload=AcknowledgeNoExperiencePayload(
+                failed_signal_value="S_KO"),
+            turn_metadata=TurnMetadata(),
+        ),
+        is_fallback=False, fallback_reason=None,
+        original_failure_context=None, latency_ms=10,
+        usage={"prompt_tokens": 1, "completion_tokens": 1}, model_used="gpt-test",
+    ))
+
+    room = MagicMock()
+    room.local_participant.set_attributes = AsyncMock()
+    pub = AttributePublisher(room=room)
+    fake_session = MagicMock()
+    fake_session.say = AsyncMock()
+    fake_session.shutdown = AsyncMock()
+    fake_agent = MagicMock()
+    fake_agent.session = fake_session
+
+    from app.modules.interview_engine.state.engine import StateEngineConfig
+    state_engine = StateEngine(
+        session_config=cfg,
+        config=StateEngineConfig(knockout_policy="close_polite"),
+    )
+    collector = _collector()
+    orch = InterviewOrchestrator(
+        session_config=cfg, tenant_settings=MagicMock(engine_agent_name=None),
+        state_engine=state_engine, judge=judge, speaker=speaker,
+        attr_publisher=pub, event_collector=collector,
+        correlation_id="c", config=OrchestratorConfig(),
+        tenant_id="t",
+    )
+    await orch.on_enter(fake_agent)
+
+    # Trigger knockout via candidate utterance.
+    from livekit.agents.llm import ChatMessage
+    msg = ChatMessage(role="user", content=["I have no experience."])
+    await orch.on_user_turn_completed(fake_agent, MagicMock(), msg)
+
+    # Lifecycle.last_outcome must be knockout_closed.
+    snap = state_engine.lifecycle_snapshot()
+    assert snap.last_outcome is not None
+    assert snap.last_outcome.value == "knockout_closed"
+
+    # Resolver returns knockout_closed regardless of the LiveKit reason.
+    # This is the value agent.py will write to:
+    #   1. session.close audit payload's controller_end_outcome field
+    #   2. participant attribute session_outcome
+    assert orch.resolve_close_outcome(close_reason="user_initiated") == "knockout_closed"
+    assert orch.resolve_close_outcome(close_reason="participant_disconnected") == "knockout_closed"
+
+
+@pytest.mark.asyncio
+async def test_resolve_close_outcome_error_overrides_lifecycle(
+    make_session_config, make_question,
+):
+    """An ERROR close reason wins over any structured lifecycle outcome.
+
+    Pipeline-level errors (transport / plugin failure) must serialize as
+    "error" in the audit envelope so post-incident triage can find them
+    by outcome alone, even if the State Engine had already recorded
+    e.g. ``knockout_closed`` before the error fired.
+    """
+    cfg = make_session_config(
+        questions=[make_question(qid="q1", text="What is your first question response?")],
+        signals=["S_KO"],
+    )
+    state_engine = StateEngine(session_config=cfg)
+    state_engine._lifecycle.transition_to_active()
+    state_engine._lifecycle.transition_to_closing()
+    from app.modules.interview_engine.state.lifecycle import SessionOutcome
+    state_engine._lifecycle.set_last_outcome(SessionOutcome.knockout_closed)
+
+    orch = InterviewOrchestrator(
+        session_config=cfg, tenant_settings=MagicMock(engine_agent_name=None),
+        state_engine=state_engine, judge=MagicMock(), speaker=MagicMock(),
+        attr_publisher=AttributePublisher(room=MagicMock()),
+        event_collector=_collector(),
+        correlation_id="c", config=OrchestratorConfig(),
+        tenant_id="t",
+    )
+
+    assert orch.resolve_close_outcome(close_reason="error") == "error"

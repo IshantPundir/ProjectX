@@ -114,6 +114,9 @@ SessionOutcome = Literal[
     "completed",
     "candidate_ended",
     "candidate_disconnected",
+    "candidate_unresponsive",
+    "knockout_closed",
+    "time_expired",
     "error",
 ]
 
@@ -798,11 +801,38 @@ async def _handle_close(
     """Emit session.close, persist a SessionResult via the orchestrator,
     publish outcome, finalize the audit envelope.
     """
+    # Resolve the canonical session outcome BEFORE emitting the
+    # session.close audit event. The orchestrator's resolver consults
+    # ``state_engine.lifecycle.last_outcome`` (set by the structured
+    # agent on knockout / completed / candidate_ended / time_expired)
+    # and falls back to mapping the LiveKit-reported close reason. This
+    # is what guarantees the audit envelope's ``controller_end_outcome``
+    # and the participant ``session_outcome`` attribute agree on the
+    # same value — previously the audit payload was reading
+    # ``agent._end_outcome``, a local mirror that nothing populated for
+    # structured-close paths, so every knockout/completed close
+    # serialized as ``controller_end_outcome: null``.
+    resolved_outcome: SessionOutcome = orchestrator.resolve_close_outcome(  # type: ignore[assignment]
+        close_reason=ev.reason.value if ev.reason is not None else None,
+    )
+    if ev.reason == CloseReason.ERROR:
+        # ERROR has highest priority. resolve_close_outcome already
+        # respects this, but mirror the override here so future readers
+        # don't have to chase the resolver's source to verify.
+        resolved_outcome = "error"
+
+    # Mirror the resolved outcome onto the agent so any later code path
+    # reading ``agent._end_outcome`` (e.g. forensic logs, retries) sees
+    # the same value the audit envelope and frontend received. The
+    # resolver is the source of truth; this assignment is bookkeeping.
+    agent._end_outcome = resolved_outcome
+
     log.info(
         "session.close",
         reason=ev.reason.value,
         has_error=bool(ev.error),
         already_persisted=agent._persisted,
+        controller_end_outcome=resolved_outcome,
     )
 
     collector.append(
@@ -811,7 +841,7 @@ async def _handle_close(
             "reason": ev.reason.value,
             "persisted": agent._persisted,
             "has_error": bool(ev.error),
-            "controller_end_outcome": agent._end_outcome,
+            "controller_end_outcome": resolved_outcome,
         },
         wall_ms=int(time.time() * 1000),
     )
@@ -837,26 +867,11 @@ async def _handle_close(
     )
     agent._audio_tuning_summary = audio_summary
 
-    # Outcome priority:
-    #   1. CloseReason.ERROR  →  "error" (hard override)
-    #   2. lifecycle.last_outcome  →  whatever the structured agent set
-    #      (knockout_closed, completed, candidate_ended, time_expired, …).
-    #      This wins over participant-disconnect labeling so a polite_close
-    #      followed by a candidate-tab-close still reports as
-    #      knockout_closed / completed, not candidate_disconnected.
-    #   3. agent._end_outcome  →  fast-path label set by participant-
-    #      disconnect listener when no structured outcome was recorded.
-    #   4. fallback  →  "candidate_disconnected".
-    if ev.reason == CloseReason.ERROR:
-        outcome: SessionOutcome = "error"
-    else:
-        lifecycle_last = orchestrator.lifecycle_snapshot().last_outcome
-        if lifecycle_last is not None:
-            outcome = lifecycle_last.value  # type: ignore[assignment]
-        elif agent._end_outcome is not None:
-            outcome = agent._end_outcome
-        else:
-            outcome = "candidate_disconnected"
+    # Outcome resolution already happened above (orchestrator.resolve_close_outcome).
+    # ``resolved_outcome`` is the single source of truth for the rest of
+    # this handler — both the SessionResult persisted by the orchestrator
+    # and the participant attribute publish read it.
+    outcome: SessionOutcome = resolved_outcome
 
     if not agent._persisted:
         try:
