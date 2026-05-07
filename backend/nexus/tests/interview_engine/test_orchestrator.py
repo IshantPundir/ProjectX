@@ -166,7 +166,6 @@ async def test_on_user_turn_completed_happy_path(make_session_config, make_quest
 
     from app.modules.interview_engine.event_kinds import JUDGE_CALL
     from livekit.agents.llm import ChatMessage
-    from livekit.agents.llm import StopResponse
 
     state_engine = StateEngine(session_config=cfg)
     collector = _collector()
@@ -187,8 +186,11 @@ async def test_on_user_turn_completed_happy_path(make_session_config, make_quest
     speaker_service.stream.reset_mock()
 
     msg = ChatMessage(role="user", content=["I have 5 years of JQL experience."])
-    with pytest.raises(StopResponse):
-        await orch.on_user_turn_completed(fake_agent, MagicMock(), msg)
+    # No StopResponse expected: the orchestrator returns normally so the
+    # framework's auto-append → conversation_item_added → chat_history
+    # capture chain stays alive. Duplicate-reply suppression is handled
+    # by StructuredInterviewAgent.llm_node yielding nothing.
+    await orch.on_user_turn_completed(fake_agent, MagicMock(), msg)
 
     judge_service.call.assert_awaited_once()
     speaker_service.stream.assert_awaited_once()
@@ -250,10 +252,9 @@ async def test_speaker_error_triggers_canned_recovery(make_session_config, make_
     await orch.on_enter(fake_agent)
 
     from livekit.agents.llm import ChatMessage
-    from livekit.agents.llm import StopResponse
     msg = ChatMessage(role="user", content=["my answer"])
-    with pytest.raises(StopResponse):
-        await orch.on_user_turn_completed(fake_agent, MagicMock(), msg)
+    # No StopResponse expected — see test_on_user_turn_completed_happy_path.
+    await orch.on_user_turn_completed(fake_agent, MagicMock(), msg)
 
     # Recovery line was sent — search for "apologize" or similar in the say calls.
     say_calls_text = " ".join(str(c) for c in fake_session.say.await_args_list)
@@ -346,10 +347,10 @@ async def test_judge_input_carries_recent_turns(make_session_config, make_questi
     )
     await orch.on_enter(fake_agent)
 
-    from livekit.agents.llm import ChatMessage, StopResponse
+    from livekit.agents.llm import ChatMessage
     msg = ChatMessage(role="user", content=["I have JQL experience."])
-    with pytest.raises(StopResponse):
-        await orch.on_user_turn_completed(fake_agent, MagicMock(), msg)
+    # No StopResponse expected — see test_on_user_turn_completed_happy_path.
+    await orch.on_user_turn_completed(fake_agent, MagicMock(), msg)
 
     # First Judge call's input_payload — recent_turns must be non-empty
     # (it should contain the prior agent utterance + the candidate response).
@@ -416,62 +417,70 @@ async def test_on_enter_robust_to_publish_failure(make_session_config, make_ques
 
 
 @pytest.mark.asyncio
-async def test_on_user_turn_completed_persists_user_message_to_chat_ctx(
-    make_session_config, make_question, make_judge_output,
-):
-    """Regression for Bug 4: user messages must persist in LiveKit chat_ctx
-    even when the orchestrator raises StopResponse to suppress the default reply.
+async def test_llm_node_yields_nothing():
+    """Regression for Bug 4 (proper fix): llm_node must yield nothing.
 
-    The framework auto-appends new_message to chat_ctx after on_user_turn_completed
-    returns normally, but StopResponse short-circuits that. The fix: copy turn_ctx,
-    add the user message, and call update_chat_ctx() BEFORE delegating to the
-    orchestrator.
+    LiveKit's chat_history capture is driven by ``conversation_item_added``
+    events, which fire when the framework auto-appends ``new_message`` to
+    ``chat_ctx`` AFTER ``on_user_turn_completed`` returns normally. The
+    orchestrator now returns normally (no StopResponse), so the auto-append
+    fires and user messages land in chat_history.
 
-    Testing approach: we use a MagicMock orchestrator (so agent.session is never
-    accessed) and monkeypatch update_chat_ctx on the agent instance. The real
-    StructuredInterviewAgent.on_user_turn_completed logic is exercised; only the
-    LiveKit runtime internals (session/activity) are mocked away.
+    But returning normally also means the framework would otherwise call
+    its default LLM node and stream a duplicate reply on top of the
+    orchestrator's session.say(). The fix is to override ``llm_node`` to
+    yield nothing — that suppresses the duplicate reply while keeping the
+    chat-context auto-append path active.
+
+    This regression check asserts that ``llm_node`` produces zero chunks.
     """
     from app.modules.interview_engine.agent import StructuredInterviewAgent
-    from livekit.agents.llm import ChatContext, ChatMessage, StopResponse
 
-    # Orchestrator raises StopResponse on on_user_turn_completed — that's
-    # exactly the production behaviour that previously short-circuited the
-    # framework's auto-append.
+    orch = MagicMock()
+    agent = StructuredInterviewAgent(
+        orchestrator=orch,
+        instructions="(test)",
+    )
+    chunks = []
+    async for chunk in agent.llm_node(
+        chat_ctx=MagicMock(), tools=[], model_settings=MagicMock(),
+    ):
+        chunks.append(chunk)
+    assert chunks == [], "llm_node must yield no chunks"
+
+
+@pytest.mark.asyncio
+async def test_on_user_turn_completed_returns_normally_for_chat_history():
+    """Regression for Bug 4 (proper fix): the agent must NOT raise StopResponse.
+
+    The framework's auto-append of ``new_message`` to ``chat_ctx`` only
+    fires when ``on_user_turn_completed`` returns normally. The previous
+    implementation raised StopResponse, which short-circuited that path
+    and silently dropped every candidate utterance from LiveKit's
+    ``chat_history.json``. This test asserts the agent simply delegates
+    to the orchestrator and returns.
+    """
+    from app.modules.interview_engine.agent import StructuredInterviewAgent
+    from livekit.agents.llm import ChatContext, ChatMessage
+
     mock_orch = MagicMock()
-    mock_orch.on_user_turn_completed = AsyncMock(side_effect=StopResponse())
+    mock_orch.on_user_turn_completed = AsyncMock()
 
     agent = StructuredInterviewAgent(
         orchestrator=mock_orch,
         instructions="(see Speaker prompt — agent has no top-level instructions)",
     )
-    # Monkeypatch update_chat_ctx so we can inspect calls without needing a
-    # live AgentActivity context (agent.session property raises RuntimeError
-    # when _activity is None).
-    agent.update_chat_ctx = AsyncMock()
 
     turn_ctx = ChatContext()
     new_message = ChatMessage(role="user", content=["I have JQL experience."])
 
-    with pytest.raises(StopResponse):
-        await agent.on_user_turn_completed(turn_ctx, new_message)
-
-    # update_chat_ctx must have been awaited with a context containing the
-    # user message BEFORE StopResponse propagated.
-    agent.update_chat_ctx.assert_awaited()
-    persisted_ctx = agent.update_chat_ctx.await_args_list[0].args[0]
-    user_msgs = [
-        it for it in persisted_ctx.items
-        if getattr(it, "role", None) == "user"
-    ]
-    assert user_msgs, "user message was not persisted in chat_ctx"
-    assert "JQL experience" in str(user_msgs[0].content), (
-        f"user message content lost: {user_msgs[0].content!r}"
+    # Must return normally (no StopResponse) so the framework's auto-append
+    # fires and conversation_item_added populates chat_history.
+    result = await agent.on_user_turn_completed(turn_ctx, new_message)
+    assert result is None
+    mock_orch.on_user_turn_completed.assert_awaited_once_with(
+        agent, turn_ctx, new_message,
     )
-
-    # The orchestrator delegate must still have been called (StopResponse came
-    # from there, so this is implicit — but assert it explicitly for clarity).
-    mock_orch.on_user_turn_completed.assert_awaited_once()
 
 
 @pytest.mark.asyncio

@@ -29,6 +29,7 @@ import hashlib
 import json
 import time
 import uuid
+from collections.abc import AsyncIterable
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -43,9 +44,11 @@ from livekit.agents import (
     JobContext,
     JobProcess,
     MetricsCollectedEvent,
+    ModelSettings,
     TurnHandlingOptions,
     UserInputTranscribedEvent,
     UserStateChangedEvent,
+    llm,
     room_io,
 )
 from livekit.agents.inference.interruption import OverlappingSpeechEvent
@@ -140,11 +143,23 @@ server.setup_fnc = prewarm
 class StructuredInterviewAgent(Agent):
     """LiveKit Agent subclass that delegates to InterviewOrchestrator.
 
-    The orchestrator owns all turn semantics; this class is a thin LiveKit
-    hook surface that forwards on_enter / on_user_turn_completed. The
-    Speaker prompt (loaded by the orchestrator) carries every
-    candidate-facing instruction, so the LiveKit-level ``instructions``
-    string is informational only.
+    Two LiveKit-pipeline customizations:
+
+    * ``on_user_turn_completed`` delegates to the orchestrator and returns
+      normally. The orchestrator already delivered the structured-agent
+      reply via ``session.say()``; we DO NOT raise ``StopResponse`` here.
+      Returning normally lets the framework run its post-hook flow, which
+      auto-appends ``new_message`` to ``chat_ctx`` and fires the
+      ``conversation_item_added`` event — that event is what populates
+      LiveKit's per-session ``chat_history.json``. Raising StopResponse
+      (the previous behaviour) short-circuited that auto-append, so every
+      candidate utterance was missing from chat_history.
+    * ``llm_node`` is overridden to yield nothing. With StopResponse gone,
+      the framework will otherwise call its default LLM node and produce
+      a duplicate reply on top of the one our Speaker already streamed.
+      An empty async generator tells the downstream TTS node there is no
+      LLM reply to synthesize, while keeping the chat-context auto-append
+      path active.
     """
 
     def __init__(
@@ -177,36 +192,42 @@ class StructuredInterviewAgent(Agent):
         turn_ctx: Any,
         new_message: Any,
     ) -> None:
-        """Persist the user message in chat_ctx before delegating to the orchestrator.
+        """Delegate to the orchestrator and return normally.
 
-        The framework auto-appends new_message to chat_ctx after this method
-        returns normally, but our orchestrator raises StopResponse to suppress
-        the framework's default LLM reply. That short-circuits the auto-append.
-
-        The SDK passes turn_ctx as a _ReadOnlyChatContext (all list mutations
-        raise RuntimeError), so we copy it, append the user message, then call
-        update_chat_ctx() to persist the enriched context. This follows the
-        pattern shown in https://docs.livekit.io/agents/logic/chat-context/.
+        Returning normally (rather than raising ``StopResponse``) is what
+        keeps the framework's auto-append → ``conversation_item_added``
+        → ``chat_history`` capture chain alive. The duplicate-reply
+        problem this used to solve is now handled by the ``llm_node``
+        override below.
         """
-        if new_message is not None:
-            try:
-                enriched_ctx = turn_ctx.copy()
-                enriched_ctx.add_message(
-                    role="user",
-                    content=new_message.content,
-                )
-                await self.update_chat_ctx(enriched_ctx)
-            except Exception:
-                # Persistence failure must not block the orchestrator.
-                # Missing chat_ctx persistence is observable (chat history gaps)
-                # but non-fatal for the session itself.
-                log.warning(
-                    "interview_engine.update_chat_ctx_failed",
-                    exc_info=True,
-                )
         await self._orchestrator.on_user_turn_completed(
             self, turn_ctx, new_message,
         )
+
+    async def llm_node(
+        self,
+        chat_ctx: llm.ChatContext,
+        tools: list[llm.FunctionTool],
+        model_settings: ModelSettings,
+    ) -> AsyncIterable[llm.ChatChunk]:
+        """No-op LLM node: the orchestrator already delivered the reply.
+
+        The orchestrator's ``session.say()`` (called inside
+        ``on_user_turn_completed``) is the source of truth for the
+        agent's structured response. With ``StopResponse`` removed, the
+        framework would otherwise run its default LLM node and stream a
+        second, free-form reply on top of ours. Yielding nothing makes
+        the downstream TTS node a no-op while keeping the framework's
+        chat-context auto-append path active (so ``new_message`` lands
+        in LiveKit's ``chat_history``).
+
+        ``return; yield`` is the canonical Python idiom for an empty
+        async generator — the ``yield`` keyword turns the coroutine into
+        a generator function; the ``return`` exits before producing any
+        value.
+        """
+        return
+        yield  # makes this an async generator (unreachable)
 
 
 @server.rtc_session(agent_name=settings.engine_agent_name)

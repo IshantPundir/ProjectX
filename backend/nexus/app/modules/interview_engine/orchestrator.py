@@ -114,18 +114,18 @@ class InterviewOrchestrator:
     async def on_user_turn_completed(
         self, agent: Any, turn_ctx: Any, new_message: Any,
     ) -> None:
-        # Local import — `StopResponse` lives at livekit.agents.llm.tool_context
-        # and is re-exported from livekit.agents.llm. LiveKit may not be
-        # available in some test contexts, so keep the import local.
-        from livekit.agents.llm import StopResponse
-
+        # No StopResponse here — see StructuredInterviewAgent docstring.
+        # Returning normally lets the framework auto-append new_message to
+        # chat_ctx, which fires conversation_item_added and populates the
+        # LiveKit chat_history. The agent's llm_node override yields
+        # nothing, so no duplicate LLM reply is generated.
         candidate_text = getattr(new_message, "text_content", None)
         # ChatMessage.text_content can be a property — call it if it's a method,
         # otherwise it's a string already.
         if callable(candidate_text):
             candidate_text = candidate_text()
         if not candidate_text:
-            raise StopResponse()
+            return  # nothing to process; framework's default flow is harmless
 
         turn_id = str(uuid.uuid4())
         self._turn_index += 1
@@ -195,8 +195,6 @@ class InterviewOrchestrator:
             turn_id=turn_id, turn_index=self._turn_index,
             duration_ms=self._elapsed_ms() - elapsed_ms,
         ).model_dump())
-
-        raise StopResponse()
 
     async def on_close(
         self, agent: Any, audio_tuning_summary: dict | None,
