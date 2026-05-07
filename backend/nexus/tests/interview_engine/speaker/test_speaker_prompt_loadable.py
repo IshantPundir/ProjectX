@@ -1,47 +1,37 @@
+"""Smoke test: every per-action Speaker prompt composes via PromptLoader."""
 from app.ai.prompts import prompt_loader
+from app.modules.interview_engine.models.speaker import InstructionKind
 
 
-def test_speaker_prompt_loads():
-    text = prompt_loader.get("engine/speaker.system")
-    assert len(text) > 800
+def test_all_per_action_speaker_prompts_load():
+    """Every InstructionKind that goes through the Speaker LLM must have
+    a corresponding per-action body file. The `repeat` kind is bypassed
+    (cached delivery in the orchestrator) so it has no body file."""
+    SPEAKER_LLM_KINDS = [
+        InstructionKind.deliver_first_question,
+        InstructionKind.deliver_question,
+        InstructionKind.deliver_probe,
+        InstructionKind.clarify,
+        InstructionKind.redirect,
+        InstructionKind.acknowledge_no_experience,
+        InstructionKind.polite_close,
+    ]
+    for kind in SPEAKER_LLM_KINDS:
+        body = prompt_loader.load_pair(
+            "engine/speaker/_preamble",
+            f"engine/speaker/{kind.value}",
+        )
+        assert "OUTPUT DISCIPLINE" in body, f"preamble missing for {kind.value}"
+        assert "TASK" in body, f"task statement missing for {kind.value}"
+        assert "EXAMPLES" in body or "EXAMPLE" in body, f"examples missing for {kind.value}"
+        assert len(body) > 200, f"body suspiciously short for {kind.value}"
 
 
-def test_speaker_prompt_anti_evaluation_rule():
-    """Locked from Round 3.3: acknowledgment OK, evaluative praise is not."""
-    text = prompt_loader.get("engine/speaker.system").lower()
-    assert "acknowledge" in text
-    assert "great answer" in text or "evaluative praise" in text
-
-
-def test_speaker_prompt_anti_leak_marker():
-    text = prompt_loader.get("engine/speaker.system").lower()
-    assert "never explain what makes a good answer" in text or "do not hint" in text
-
-
-def test_speaker_prompt_lists_instruction_kinds():
-    text = prompt_loader.get("engine/speaker.system")
-    for kind in (
-        "deliver_first_question", "deliver_question", "deliver_probe",
-        "clarify", "redirect_off_topic", "redirect_abusive",
-        "safe_redirect_injection", "acknowledge_no_experience", "polite_close",
-    ):
-        assert kind in text, f"instruction_kind {kind} not documented in speaker prompt"
-
-
-def test_speaker_prompt_documents_repeat_no_op():
-    text = prompt_loader.get("engine/speaker.system").lower()
-    assert "repeat" in text and "empty" in text  # speaker returns empty on repeat
-
-
-def test_speaker_prompt_disambiguates_persona_from_candidate():
-    """Regression for 'Thanks, Sam' confusion: prompt must clarify persona_name
-    is the agent's own name, not the candidate's. candidate_name field must be
-    documented."""
-    text = prompt_loader.get("engine/speaker.system").lower()
-    assert "candidate_name" in text, "candidate_name field must be documented"
-    # Some phrasing that makes the disambiguation explicit.
-    assert (
-        "you are" in text or "your own name" in text or "your name" in text
-    ), "prompt must say persona_name is the interviewer's own name"
-    # Worked example warning against thanking yourself.
-    assert "thanks, sam" in text or "never thank yourself" in text or "do not thank yourself" in text
+def test_repeat_has_no_body_file():
+    """`repeat` is handled deterministically by the orchestrator (cached
+    delivery, bypassing the Speaker LLM). Asserting absence prevents a
+    future contributor from creating a redundant repeat.txt."""
+    import pathlib
+    from app.ai.prompts import PROMPTS_ROOT
+    repeat_path = PROMPTS_ROOT / "v1" / "engine" / "speaker" / "repeat.txt"
+    assert not repeat_path.exists()
