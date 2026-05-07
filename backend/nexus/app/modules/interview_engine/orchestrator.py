@@ -6,7 +6,6 @@ Speaker on each candidate turn. on_close builds the SessionResult.
 """
 from __future__ import annotations
 
-import asyncio
 import time
 import uuid
 from dataclasses import dataclass
@@ -486,20 +485,18 @@ class InterviewOrchestrator:
     def _schedule_shutdown(self, agent: Any) -> None:
         """Schedule the LiveKit session to shut down. Idempotent.
 
-        ``drain=True`` waits for any in-flight speech to finish playing
-        before closing — the candidate hears the polite_close / canned
-        terminal audio fully and then the connection terminates ~1s
-        later, which is the user-visible behavior change this fixes.
-
-        The shutdown call is intentionally fire-and-forget: we don't
-        await it inside the turn handler because that would block the
-        framework's post-turn pipeline. The background task handles
-        drain semantics on its own.
+        ``AgentSession.shutdown(drain=True)`` is itself non-blocking:
+        it schedules drain in the background and returns ``None``.
+        Wrapping it in ``asyncio.create_task`` raises
+        ``TypeError: a coroutine was expected, got None`` and pollutes
+        the framework's post-turn pipeline with an exception. Call it
+        directly. (See LiveKit docs: /agents/server/job/ →
+        "Ending the session".)
         """
         if self._shutdown_scheduled:
             return
         self._shutdown_scheduled = True
-        asyncio.create_task(agent.session.shutdown(drain=True))
+        agent.session.shutdown(drain=True)
 
     async def _stream_speaker_and_say(
         self, *, agent: Any, turn_id: str, speaker_input: Any,

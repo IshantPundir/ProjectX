@@ -235,7 +235,7 @@ async def test_speaker_error_triggers_canned_recovery(make_session_config, make_
     pub = AttributePublisher(room=room)
     fake_session = MagicMock()
     fake_session.say = AsyncMock()
-    fake_session.shutdown = AsyncMock()
+    fake_session.shutdown = MagicMock()
     fake_agent = MagicMock()
     fake_agent.session = fake_session
 
@@ -507,7 +507,7 @@ async def test_post_close_turn_plays_canned_message_and_skips_judge(
     pub = AttributePublisher(room=room)
     fake_session = MagicMock()
     fake_session.say = AsyncMock()
-    fake_session.shutdown = AsyncMock()
+    fake_session.shutdown = MagicMock()
     fake_agent = MagicMock()
     fake_agent.session = fake_session
 
@@ -596,7 +596,7 @@ async def test_normal_turn_then_knockout_triggers_shutdown(
     pub = AttributePublisher(room=room)
     fake_session = MagicMock()
     fake_session.say = AsyncMock()
-    fake_session.shutdown = AsyncMock()
+    fake_session.shutdown = MagicMock()
     fake_agent = MagicMock()
     fake_agent.session = fake_session
 
@@ -663,7 +663,7 @@ async def test_time_remaining_seconds_decreases_each_turn(
     pub = AttributePublisher(room=room)
     fake_session = MagicMock()
     fake_session.say = AsyncMock()
-    fake_session.shutdown = AsyncMock()
+    fake_session.shutdown = MagicMock()
     fake_agent = MagicMock()
     fake_agent.session = fake_session
 
@@ -881,7 +881,7 @@ async def test_session_close_outcome_reflects_lifecycle_last_outcome(
     pub = AttributePublisher(room=room)
     fake_session = MagicMock()
     fake_session.say = AsyncMock()
-    fake_session.shutdown = AsyncMock()
+    fake_session.shutdown = MagicMock()
     fake_agent = MagicMock()
     fake_agent.session = fake_session
 

@@ -45,10 +45,12 @@ def livekit_stubs(monkeypatch):
     """
     stubs = {
         "mint_candidate_lk_token": lambda **kw: "candidate-jwt-stub",
+        "create_room": AsyncMock(return_value=None),
         "dispatch_agent": AsyncMock(return_value=None),
         "cancel_room": AsyncMock(return_value=None),
     }
     monkeypatch.setattr(session_service, "mint_candidate_lk_token", stubs["mint_candidate_lk_token"])
+    monkeypatch.setattr(session_service, "create_room", stubs["create_room"])
     monkeypatch.setattr(session_service, "dispatch_agent", stubs["dispatch_agent"])
     monkeypatch.setattr(session_service, "cancel_room", stubs["cancel_room"])
     return stubs

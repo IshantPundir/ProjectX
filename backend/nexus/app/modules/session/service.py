@@ -45,6 +45,7 @@ from app.modules.session.errors import (
 )
 from app.modules.session.livekit import (
     cancel_room,
+    create_room,
     dispatch_agent,
     mint_candidate_lk_token,
 )
@@ -457,6 +458,10 @@ async def start_session(
         ttl_minutes=duration_minutes + 10,
     )
     try:
+        # Pre-create the room with our short empty_timeout instead of
+        # letting agent_dispatch auto-create it with LiveKit's 5-minute
+        # default. See app/modules/session/livekit.py::create_room.
+        await create_room(room_name=room_name)
         await dispatch_agent(
             room_name=room_name,
             session_id=sess.id,

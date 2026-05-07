@@ -12,6 +12,13 @@ const RoomEvent = { Disconnected: 'disconnected' } as const
 
 class FakeRoom {
   private handlers = new Map<string, Array<(...args: unknown[]) => void>>()
+  // OutcomeWatcher proactively calls room.disconnect() when an engine
+  // session_outcome attribute appears, so the fake needs to expose it.
+  // We track invocations as a vi.fn() so individual tests can assert on
+  // the auto-disconnect path. The implementation is a no-op — the tests
+  // that exercise the Disconnected handler still emit the event manually
+  // for deterministic ordering.
+  disconnect = vi.fn()
   on(event: string, fn: (...args: unknown[]) => void) {
     const arr = this.handlers.get(event) ?? []
     arr.push(fn)
@@ -115,5 +122,17 @@ describe('OutcomeWatcher', () => {
     room.emit(RoomEvent.Disconnected, 99)
     expect(onError).toHaveBeenCalledWith('UNEXPECTED_DISCONNECT')
     expect(onCompleted).not.toHaveBeenCalled()
+  })
+
+  it('auto-calls room.disconnect() when an engine outcome is published', () => {
+    setOutcome('completed')
+    mount()
+    expect(room.disconnect).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not call room.disconnect() when no engine outcome is published', () => {
+    setOutcome(null)
+    mount()
+    expect(room.disconnect).not.toHaveBeenCalled()
   })
 })

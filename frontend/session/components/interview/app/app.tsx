@@ -165,6 +165,18 @@ export function OutcomeWatcher({
   const lastOutcomeRef = useRef<SessionOutcome | null>(lastOutcome)
   lastOutcomeRef.current = lastOutcome
 
+  // Proactively leave the LiveKit room as soon as the engine publishes
+  // a session_outcome attribute. Without this the candidate would stay
+  // connected after the agent disconnected, keeping the room non-empty
+  // until the agent's TTL or the candidate closes the tab — which keeps
+  // the LiveKit dashboard "Active" and the worker process alive longer
+  // than necessary. Calling disconnect() here triggers the existing
+  // RoomEvent.Disconnected handler below, which routes by outcome.
+  useEffect(() => {
+    if (!room || !lastOutcome) return
+    void room.disconnect()
+  }, [room, lastOutcome])
+
   useEffect(() => {
     if (!room) return
 

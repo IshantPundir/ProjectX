@@ -70,6 +70,33 @@ def mint_candidate_lk_token(
     return token.to_jwt()
 
 
+async def create_room(*, room_name: str) -> None:
+    """Pre-create the LiveKit room with an explicit ``empty_timeout``.
+
+    LiveKit auto-creates rooms on first dispatch with its default
+    ``empty_timeout`` of 5 minutes — so a room idles for 5 min after
+    the last participant leaves before LiveKit deletes it. That
+    lingering keeps the dashboard "Active" and the agent worker
+    process alive far longer than necessary.
+
+    Pre-creating the room lets us shrink that window while still
+    leaving enough time for LiveKit Cloud's Agent Insights ingest +
+    OTel batch exporters to drain after the conversation ends.
+    Idempotent on the LiveKit side — calling create with an existing
+    name updates the timeouts in-place.
+    """
+    lk = _lk_client()
+    try:
+        await lk.room.create_room(
+            livekit_api.CreateRoomRequest(
+                name=room_name,
+                empty_timeout=settings.livekit_room_empty_timeout_seconds,
+            )
+        )
+    finally:
+        await lk.aclose()
+
+
 async def dispatch_agent(
     *,
     room_name: str,

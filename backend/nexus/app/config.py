@@ -141,6 +141,15 @@ class Settings(BaseSettings):
     livekit_api_key: str = ""
     livekit_api_secret: str = ""
 
+    # How long an empty LiveKit room lingers before LiveKit deletes it.
+    # LiveKit's default is 5 minutes. We pre-create the room with a
+    # shorter window so the dashboard "Active" state and the agent
+    # worker process die quickly after the agent + candidate both
+    # disconnect — but not so quickly that LiveKit Cloud's Agent
+    # Insights ingest pipeline loses the trailing batch flush.
+    # 30 s is a safe middle ground; tunable per deployment.
+    livekit_room_empty_timeout_seconds: int = 30
+
     # --- AI — OpenAI (Phase 2A) ---
     openai_api_key: str = ""
 

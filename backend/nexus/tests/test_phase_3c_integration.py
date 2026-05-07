@@ -92,6 +92,9 @@ async def test_phase_3c_happy_path_with_otp(db):
                 "app.modules.session.service.mint_candidate_lk_token",
                 return_value="candidate-lk-token-stub",
             ), patch(
+                "app.modules.session.service.create_room",
+                new=AsyncMock(return_value=None),
+            ), patch(
                 "app.modules.session.service.dispatch_agent",
                 new=mock_dispatch_agent,
             ), patch(
