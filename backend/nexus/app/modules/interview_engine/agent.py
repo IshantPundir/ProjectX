@@ -177,6 +177,33 @@ class StructuredInterviewAgent(Agent):
         turn_ctx: Any,
         new_message: Any,
     ) -> None:
+        """Persist the user message in chat_ctx before delegating to the orchestrator.
+
+        The framework auto-appends new_message to chat_ctx after this method
+        returns normally, but our orchestrator raises StopResponse to suppress
+        the framework's default LLM reply. That short-circuits the auto-append.
+
+        The SDK passes turn_ctx as a _ReadOnlyChatContext (all list mutations
+        raise RuntimeError), so we copy it, append the user message, then call
+        update_chat_ctx() to persist the enriched context. This follows the
+        pattern shown in https://docs.livekit.io/agents/logic/chat-context/.
+        """
+        if new_message is not None:
+            try:
+                enriched_ctx = turn_ctx.copy()
+                enriched_ctx.add_message(
+                    role="user",
+                    content=new_message.content,
+                )
+                await self.update_chat_ctx(enriched_ctx)
+            except Exception:
+                # Persistence failure must not block the orchestrator.
+                # Missing chat_ctx persistence is observable (chat history gaps)
+                # but non-fatal for the session itself.
+                log.warning(
+                    "interview_engine.update_chat_ctx_failed",
+                    exc_info=True,
+                )
         await self._orchestrator.on_user_turn_completed(
             self, turn_ctx, new_message,
         )

@@ -416,6 +416,65 @@ async def test_on_enter_robust_to_publish_failure(make_session_config, make_ques
 
 
 @pytest.mark.asyncio
+async def test_on_user_turn_completed_persists_user_message_to_chat_ctx(
+    make_session_config, make_question, make_judge_output,
+):
+    """Regression for Bug 4: user messages must persist in LiveKit chat_ctx
+    even when the orchestrator raises StopResponse to suppress the default reply.
+
+    The framework auto-appends new_message to chat_ctx after on_user_turn_completed
+    returns normally, but StopResponse short-circuits that. The fix: copy turn_ctx,
+    add the user message, and call update_chat_ctx() BEFORE delegating to the
+    orchestrator.
+
+    Testing approach: we use a MagicMock orchestrator (so agent.session is never
+    accessed) and monkeypatch update_chat_ctx on the agent instance. The real
+    StructuredInterviewAgent.on_user_turn_completed logic is exercised; only the
+    LiveKit runtime internals (session/activity) are mocked away.
+    """
+    from app.modules.interview_engine.agent import StructuredInterviewAgent
+    from livekit.agents.llm import ChatContext, ChatMessage, StopResponse
+
+    # Orchestrator raises StopResponse on on_user_turn_completed — that's
+    # exactly the production behaviour that previously short-circuited the
+    # framework's auto-append.
+    mock_orch = MagicMock()
+    mock_orch.on_user_turn_completed = AsyncMock(side_effect=StopResponse())
+
+    agent = StructuredInterviewAgent(
+        orchestrator=mock_orch,
+        instructions="(see Speaker prompt — agent has no top-level instructions)",
+    )
+    # Monkeypatch update_chat_ctx so we can inspect calls without needing a
+    # live AgentActivity context (agent.session property raises RuntimeError
+    # when _activity is None).
+    agent.update_chat_ctx = AsyncMock()
+
+    turn_ctx = ChatContext()
+    new_message = ChatMessage(role="user", content=["I have JQL experience."])
+
+    with pytest.raises(StopResponse):
+        await agent.on_user_turn_completed(turn_ctx, new_message)
+
+    # update_chat_ctx must have been awaited with a context containing the
+    # user message BEFORE StopResponse propagated.
+    agent.update_chat_ctx.assert_awaited()
+    persisted_ctx = agent.update_chat_ctx.await_args_list[0].args[0]
+    user_msgs = [
+        it for it in persisted_ctx.items
+        if getattr(it, "role", None) == "user"
+    ]
+    assert user_msgs, "user message was not persisted in chat_ctx"
+    assert "JQL experience" in str(user_msgs[0].content), (
+        f"user message content lost: {user_msgs[0].content!r}"
+    )
+
+    # The orchestrator delegate must still have been called (StopResponse came
+    # from there, so this is implicit — but assert it explicitly for clarity).
+    mock_orch.on_user_turn_completed.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_orchestrator_uses_tenant_id_not_session_id(make_session_config, make_question):
     """Regression for I2: LLM tracing must receive tenant_id, not session_id."""
     cfg = make_session_config(
