@@ -101,3 +101,11 @@ def test_session_close_kind_matches_existing_emission():
     """`agent.py` emits `session.close` today; the constant must match
     so adopting the constant doesn't silently change the kind string."""
     assert event_kinds.SESSION_CLOSE == "session.close"
+
+
+def test_speaker_output_empty_in_registry():
+    from app.modules.interview_engine.event_kinds import (
+        ALL_EVENT_KINDS, SPEAKER_OUTPUT_EMPTY,
+    )
+    assert SPEAKER_OUTPUT_EMPTY == "speaker.output.empty"
+    assert SPEAKER_OUTPUT_EMPTY in ALL_EVENT_KINDS

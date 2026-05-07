@@ -95,6 +95,17 @@ class SpeakerOutputPayload(BaseModel):
     final_utterance: str
 
 
+class SpeakerOutputEmptyPayload(BaseModel):
+    """Fired when the Speaker LLM streamed no audible text and the
+    orchestrator played a deterministic fallback. Distinguished from
+    SpeakerErrorPayload (which fires on an exception) and SpeakerCachedPayload
+    (which fires on the deterministic repeat path).
+    """
+    turn_id: str
+    instruction_kind: str
+    fallback_text: str
+
+
 class SpeakerErrorPayload(BaseModel):
     turn_id: str
     model: str

@@ -50,3 +50,14 @@ def test_state_mutation_kinds():
         StateMutationPayload(turn_id="t-1", seq=1, kind=k, before=None, after={"x": 1})
     with pytest.raises(ValidationError):
         StateMutationPayload(turn_id="t-1", seq=1, kind="random.kind", before=None, after={})
+
+
+def test_speaker_output_empty_payload():
+    from app.modules.interview_engine.audit_events import SpeakerOutputEmptyPayload
+    p = SpeakerOutputEmptyPayload(
+        turn_id="abc",
+        instruction_kind="redirect",
+        fallback_text="Let me restate that. Walk me through Jira.",
+    )
+    assert p.turn_id == "abc"
+    assert p.instruction_kind == "redirect"

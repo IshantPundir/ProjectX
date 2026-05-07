@@ -71,6 +71,7 @@ STATE_MUTATION = "state.mutation"
 SPEAKER_CALL = "speaker.call"
 SPEAKER_CACHED = "speaker.cached"
 SPEAKER_OUTPUT = "speaker.output"
+SPEAKER_OUTPUT_EMPTY = "speaker.output.empty"
 SPEAKER_ERROR = "speaker.error"
 LIFECYCLE_TRANSITION = "lifecycle.transition"
 CHECKPOINT_WRITTEN = "checkpoint.written"
@@ -108,6 +109,7 @@ ALL_EVENT_KINDS: frozenset[str] = frozenset({
     SPEAKER_CALL,
     SPEAKER_CACHED,
     SPEAKER_OUTPUT,
+    SPEAKER_OUTPUT_EMPTY,
     SPEAKER_ERROR,
     LIFECYCLE_TRANSITION,
     CHECKPOINT_WRITTEN,
