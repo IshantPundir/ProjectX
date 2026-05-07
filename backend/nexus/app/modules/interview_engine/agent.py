@@ -214,6 +214,24 @@ async def entrypoint(ctx: JobContext) -> None:
         job_title=session_config.job_title,
     )
 
+    # Bug 2 fix: connect to the room and wait for the candidate BEFORE
+    # constructing the orchestrator / starting the session. Without this,
+    # `session.start` fires `on_enter` while `room.local_participant` is
+    # still pre-connect, and `_publish_attributes` crashes with
+    # "cannot access local participant before connecting" — which kills
+    # the proactive first-question greeting.
+    #
+    # The documented pattern (https://docs.livekit.io/agents/server/job/):
+    #   await ctx.connect()
+    #   participant = await ctx.wait_for_participant()
+    #   await session.start(...)
+    await ctx.connect()
+    participant = await ctx.wait_for_participant()
+    log.info(
+        "engine.participant.joined",
+        participant_identity=getattr(participant, "identity", None),
+    )
+
     # --- StateEngine: ledger + queue + claims + lifecycle ---
     state_engine = StateEngine(
         session_config=session_config,

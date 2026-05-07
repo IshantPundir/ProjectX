@@ -7,6 +7,11 @@ from __future__ import annotations
 
 from typing import Any
 
+import structlog
+
+
+log = structlog.get_logger("interview-engine.frontend_attributes")
+
 
 ATTR_CURRENT_QUESTION_INDEX = "current_question_index"
 ATTR_TOTAL_QUESTIONS = "total_questions"
@@ -15,7 +20,17 @@ ATTR_SESSION_OUTCOME = "session_outcome"
 
 
 class AttributePublisher:
-    """Wraps room.local_participant.set_attributes with last-value diffing."""
+    """Wraps room.local_participant.set_attributes with last-value diffing.
+
+    Bug 2 (belt-and-suspenders): the agent.py entrypoint now awaits
+    ``ctx.connect()`` + ``ctx.wait_for_participant()`` before starting the
+    session, so by the time ``on_enter`` runs the local participant is
+    fully connected. We still defensively swallow exceptions from
+    ``set_attributes`` here so any future race or transient failure on
+    a single push cannot kill the proactive first-question greeting (or
+    any subsequent turn). On failure we log a warning, leave ``self._last``
+    untouched (so the next push retries the same diff), and return ``{}``.
+    """
 
     def __init__(self, *, room: Any) -> None:
         self._room = room
@@ -29,6 +44,15 @@ class AttributePublisher:
                 diff[k] = sv
         if not diff:
             return {}
-        await self._room.local_participant.set_attributes(diff)
+        try:
+            await self._room.local_participant.set_attributes(diff)
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "interview_engine.attribute_publisher.set_attributes_failed",
+                error=str(exc),
+                error_type=type(exc).__name__,
+                attribute_keys=sorted(diff.keys()),
+            )
+            return {}
         self._last.update(diff)
         return diff

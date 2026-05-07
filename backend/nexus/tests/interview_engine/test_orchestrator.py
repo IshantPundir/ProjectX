@@ -358,6 +358,64 @@ async def test_judge_input_carries_recent_turns(make_session_config, make_questi
 
 
 @pytest.mark.asyncio
+async def test_on_enter_robust_to_publish_failure(make_session_config, make_question):
+    """Regression for Bug 2: if attribute publish fails for any reason, on_enter
+    must still deliver the first question (the speaker call must run).
+
+    The primary fix is in agent.py — the entrypoint now awaits ctx.connect()
+    + ctx.wait_for_participant() before constructing the orchestrator and
+    starting the session, so on_enter no longer sees a pre-connect room.
+
+    This test exercises the belt-and-suspenders layer in
+    AttributePublisher.publish: if set_attributes raises (race, transient
+    network, etc.), the publisher swallows + logs and the orchestrator
+    continues on to deliver the first question via session.say.
+    """
+    cfg = make_session_config(
+        questions=[make_question(qid="q1", text="What is your first question response?")],
+        signals=["S1"],
+    )
+
+    # Speaker still works.
+    speaker_service = MagicMock()
+    speaker_service.stream = AsyncMock(return_value=_FakeSpeakerHandle("Hello — first question."))
+
+    # Attribute publisher raises on first call (simulating the original
+    # "cannot access local participant before connecting" race) and
+    # succeeds on subsequent calls.
+    room = MagicMock()
+    call_count = {"n": 0}
+
+    async def _set_attrs(attrs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise Exception("cannot access local participant before connecting")
+
+    room.local_participant.set_attributes = AsyncMock(side_effect=_set_attrs)
+    pub = AttributePublisher(room=room)
+    fake_session = MagicMock()
+    fake_session.say = AsyncMock()
+    fake_agent = MagicMock()
+    fake_agent.session = fake_session
+
+    state_engine = StateEngine(session_config=cfg)
+    collector = _collector()
+    orch = InterviewOrchestrator(
+        session_config=cfg, tenant_settings=MagicMock(engine_agent_name=None),
+        state_engine=state_engine, judge=MagicMock(), speaker=speaker_service,
+        attr_publisher=pub, event_collector=collector,
+        correlation_id="c", config=OrchestratorConfig(),
+        tenant_id="t",
+    )
+    # Should not raise — first attribute publish failure must be tolerated.
+    await orch.on_enter(fake_agent)
+
+    # Speaker call SHOULD have run regardless.
+    speaker_service.stream.assert_awaited_once()
+    fake_session.say.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_orchestrator_uses_tenant_id_not_session_id(make_session_config, make_question):
     """Regression for I2: LLM tracing must receive tenant_id, not session_id."""
     cfg = make_session_config(
