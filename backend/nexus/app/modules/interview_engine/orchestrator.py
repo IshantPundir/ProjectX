@@ -207,12 +207,30 @@ class InterviewOrchestrator:
                         priority=sm.priority,
                     ))
 
+        # Build the remaining-probes dict from the queue's
+        # probes_remaining_ids (probe_ids that have NOT been consumed yet)
+        # mapped to their text. Replaces the old "send full follow_ups
+        # list and let the Judge pick anything" model that triggered
+        # invalid_probe_id self-heals when the Judge re-picked a
+        # consumed probe.
+        remaining_probes_dict: dict[str, str] = {}
+        active_q_state = queue.questions[queue.active_index] if queue.active_index is not None else None
+        if active_q_cfg is not None and active_q_state is not None:
+            for pid in active_q_state.probes_remaining_ids:
+                try:
+                    idx = int(pid)
+                except ValueError:
+                    continue
+                if 0 <= idx < len(active_q_cfg.follow_ups):
+                    remaining_probes_dict[pid] = active_q_cfg.follow_ups[idx]
+
         judge_input = build_judge_input(
             active_question=active_q_cfg,
             ledger_snapshot=ledger, queue_snapshot=queue, claims_snapshot=claims,
             recent_turns=recent, candidate_utterance=candidate_text,
             time_remaining_seconds=time_remaining,
             active_signal_metadata=active_signal_meta,
+            active_remaining_probes=remaining_probes_dict,
         )
 
         result = await self._judge.call(

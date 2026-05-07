@@ -40,7 +40,17 @@ class JudgeInputPayload(BaseModel):
     active_question_text: str | None
     active_question_positive_evidence: list[str] = Field(default_factory=list)
     active_question_red_flags: list[str] = Field(default_factory=list)
-    active_question_follow_ups: list[str] = Field(default_factory=list)
+    active_question_remaining_probes: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Remaining probes for the active question — keys are probe_ids "
+            "(strings), values are the probe text. Probes that have already "
+            "been consumed are NOT in this dict, so the Judge cannot pick a "
+            "consumed probe id. Replaces the prior `active_question_follow_ups` "
+            "list, which exposed every follow-up indexed from 0 and let the "
+            "Judge pick consumed probes (the State Engine then had to self-heal)."
+        ),
+    )
     active_question_rubric: dict[str, str] = Field(default_factory=dict)
     active_question_evaluation_hint: str | None = None
     active_question_signal_metadata: list[ActiveSignalMeta] = Field(
@@ -72,6 +82,7 @@ def build_judge_input(
     candidate_utterance: str,
     time_remaining_seconds: int,
     active_signal_metadata: list[ActiveSignalMeta] | None = None,
+    active_remaining_probes: dict[str, str] | None = None,
 ) -> JudgeInputPayload:
     return JudgeInputPayload(
         active_question_id=active_question.id if active_question else None,
@@ -82,9 +93,7 @@ def build_judge_input(
         active_question_red_flags=(
             list(active_question.red_flags) if active_question else []
         ),
-        active_question_follow_ups=(
-            list(active_question.follow_ups) if active_question else []
-        ),
+        active_question_remaining_probes=dict(active_remaining_probes or {}),
         active_question_rubric=(
             active_question.rubric.model_dump() if active_question else {}
         ),

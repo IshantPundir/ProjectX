@@ -87,7 +87,28 @@ def test_build_judge_input_excludes_other_questions_rubric():
     )
     assert payload.active_question_positive_evidence == ["a", "b", "c"]
     assert payload.active_question_red_flags == ["x", "y"]
-    assert payload.active_question_follow_ups == ["fu0", "fu1"]
+    # The remaining-probes field defaults to an empty dict when the caller
+    # doesn't pass active_remaining_probes — ensures the Judge cannot pick
+    # a probe id whose underlying probe has already been consumed.
+    assert payload.active_question_remaining_probes == {}
+
+
+def test_build_judge_input_remaining_probes_passthrough():
+    """active_remaining_probes is surfaced as a dict keyed by probe_id."""
+    payload = build_judge_input(
+        active_question=_q(),
+        ledger_snapshot=SignalLedgerSnapshot(entries=[], snapshots={}, next_seq=1),
+        queue_snapshot=QuestionQueueSnapshot(),
+        claims_snapshot=ClaimsPoolSnapshot(),
+        recent_turns=[],
+        candidate_utterance="x",
+        time_remaining_seconds=10,
+        active_remaining_probes={"1": "fu1", "2": "fu2"},
+    )
+    # Probe "0" is intentionally NOT in the dict (already consumed); the
+    # Judge will be unable to pick it because it's not in this input map.
+    assert payload.active_question_remaining_probes == {"1": "fu1", "2": "fu2"}
+    assert "0" not in payload.active_question_remaining_probes
 
 
 def test_active_signal_metadata_carries_through():
