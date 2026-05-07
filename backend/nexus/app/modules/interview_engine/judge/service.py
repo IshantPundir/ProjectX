@@ -76,7 +76,7 @@ def _judge_output_text_format() -> dict[str, Any]:
 
 
 class JudgeService:
-    """Calls the Judge LLM with one retry, 3s total budget, and fallback synthesis.
+    """Calls the Judge LLM with one retry, 10s total budget, and fallback synthesis.
 
     Uses the OpenAI Responses API with strict `json_schema` mode. The schema is
     derived from the `JudgeOutput` Pydantic model via the SDK's helper, then
@@ -109,7 +109,7 @@ class JudgeService:
         system_prompt: str,
         system_prompt_hash: str,
         next_pending_mandatory_resolver: Callable[[], str | None],
-        total_budget_ms: int = 3000,
+        total_budget_ms: int = 10000,
         retry_wait_ms: int = 250,
     ) -> None:
         self._client = openai_client

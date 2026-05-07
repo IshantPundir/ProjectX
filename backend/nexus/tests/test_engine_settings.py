@@ -7,7 +7,7 @@ from app.config import Settings
 def test_settings_engine_fields_present(monkeypatch):
     monkeypatch.setenv("ENGINE_JUDGE_MODEL", "gpt-5.4-mini-2026-03-17")
     monkeypatch.setenv("ENGINE_SPEAKER_MODEL", "gpt-5.4-mini-2026-03-17")
-    monkeypatch.setenv("ENGINE_JUDGE_TOTAL_BUDGET_MS", "3000")
+    monkeypatch.setenv("ENGINE_JUDGE_TOTAL_BUDGET_MS", "10000")
     monkeypatch.setenv("ENGINE_JUDGE_RETRY_WAIT_MS", "250")
     monkeypatch.setenv("ENGINE_SPEAKER_MAX_OUTPUT_TOKENS", "200")
     monkeypatch.setenv("ENGINE_CHECKPOINT_TURNS", "10")
@@ -20,7 +20,7 @@ def test_settings_engine_fields_present(monkeypatch):
     s = Settings()
     assert s.engine_judge_model == "gpt-5.4-mini-2026-03-17"
     assert s.engine_speaker_model == "gpt-5.4-mini-2026-03-17"
-    assert s.engine_judge_total_budget_ms == 3000
+    assert s.engine_judge_total_budget_ms == 10000
     assert s.engine_judge_retry_wait_ms == 250
     assert s.engine_speaker_max_output_tokens == 200
     assert s.engine_checkpoint_turns == 10
