@@ -949,3 +949,141 @@ async def test_resolve_close_outcome_error_overrides_lifecycle(
     )
 
     assert orch.resolve_close_outcome(close_reason="error") == "error"
+
+
+# ---------------------------------------------------------------------------
+# Bug D — empty Speaker output fallback
+# ---------------------------------------------------------------------------
+
+def _empty_async_iter():
+    """Empty async generator. Used to mock Speaker handle.stream() when
+    the Speaker LLM streamed nothing audible."""
+    async def _gen():
+        return
+        yield  # pragma: no cover — unreachable, makes this an async generator
+    return _gen()
+
+
+def _build_speaker_input(
+    *, instruction_kind: str, bank_text: str | None,
+) -> SpeakerInput:
+    """Build a minimal SpeakerInput for fallback tests."""
+    return SpeakerInput(
+        instruction_kind=InstructionKind(instruction_kind),
+        bank_text=bank_text,
+        last_candidate_utterance=None,
+        recent_turns=[],
+        claims_pool_snapshot=[],
+        persona_name="Sam",
+        candidate_name="Alice",
+    )
+
+
+def _build_orchestrator_with_mocked_deps(
+    make_session_config, make_question,
+) -> InterviewOrchestrator:
+    """Instantiate an orchestrator with real session_config + state_engine,
+    mocked Judge / Speaker, real EventCollector. The test bodies override
+    ``orch._speaker.stream`` to control the handle returned per call.
+    """
+    cfg = make_session_config(
+        questions=[make_question(
+            qid="q1", text="What is your first question response?",
+        )],
+        signals=["S1"],
+    )
+    state_engine = StateEngine(session_config=cfg)
+    speaker_service = MagicMock()
+    speaker_service.stream = AsyncMock()
+    judge_service = MagicMock()
+    judge_service.call = MagicMock()
+    pub = AttributePublisher(room=MagicMock())
+    return InterviewOrchestrator(
+        session_config=cfg,
+        tenant_settings=MagicMock(engine_agent_name=None),
+        state_engine=state_engine,
+        judge=judge_service,
+        speaker=speaker_service,
+        attr_publisher=pub,
+        event_collector=_collector(),
+        correlation_id="c",
+        config=OrchestratorConfig(),
+        tenant_id="t",
+    )
+
+
+@pytest.mark.asyncio
+async def test_empty_speaker_output_triggers_fallback(
+    make_session_config, make_question,
+):
+    """Bug D — Speaker LLM occasionally streams empty text. Orchestrator
+    must play a deterministic fallback so the candidate doesn't hear
+    silence, and emit speaker.output.empty in the audit envelope."""
+    from app.modules.interview_engine.event_kinds import SPEAKER_OUTPUT_EMPTY
+
+    orch = _build_orchestrator_with_mocked_deps(make_session_config, make_question)
+    speaker_input = _build_speaker_input(
+        instruction_kind="deliver_question",
+        bank_text="Walk me through your Jira workflow.",
+    )
+
+    handle = MagicMock()
+    handle.stream.return_value = _empty_async_iter()
+    handle.final_text = AsyncMock(return_value="")
+    handle.latency_ms_first_token = 0
+    handle.latency_ms_total = 0
+    handle.usage = None
+    orch._speaker.stream = AsyncMock(return_value=handle)
+
+    agent = MagicMock()
+    agent.session.say = AsyncMock()
+
+    final_text = await orch._stream_speaker_and_say(
+        agent=agent, turn_id="t1", speaker_input=speaker_input,
+    )
+
+    # Fallback content includes a restate of bank_text.
+    assert "Walk me through your Jira workflow." in final_text
+    # session.say was called with the fallback text.
+    agent.session.say.assert_awaited()
+    args, kwargs = agent.session.say.call_args
+    assert args[0] == final_text
+    # Audit event was emitted.
+    audit_kinds = [e.kind for e in orch._collector.events]
+    assert SPEAKER_OUTPUT_EMPTY in audit_kinds
+    # The successful-path SPEAKER_CALL / SPEAKER_OUTPUT events MUST NOT
+    # be emitted on the empty-output path — those describe a successful
+    # LLM call.
+    assert SPEAKER_CALL not in audit_kinds
+    assert SPEAKER_OUTPUT not in audit_kinds
+
+
+@pytest.mark.asyncio
+async def test_empty_speaker_output_fallback_without_bank_text(
+    make_session_config, make_question,
+):
+    """No bank_text (e.g., the past redirect_* kinds) → generic fallback.
+
+    Whitespace-only output ("   \\n") also counts as empty — the guard
+    uses .strip() to detect it.
+    """
+    orch = _build_orchestrator_with_mocked_deps(make_session_config, make_question)
+    speaker_input = _build_speaker_input(
+        instruction_kind="redirect", bank_text=None,
+    )
+
+    handle = MagicMock()
+    handle.stream.return_value = _empty_async_iter()
+    handle.final_text = AsyncMock(return_value="   \n")  # whitespace counts as empty
+    handle.latency_ms_first_token = 0
+    handle.latency_ms_total = 0
+    handle.usage = None
+    orch._speaker.stream = AsyncMock(return_value=handle)
+
+    agent = MagicMock()
+    agent.session.say = AsyncMock()
+
+    final_text = await orch._stream_speaker_and_say(
+        agent=agent, turn_id="t2", speaker_input=speaker_input,
+    )
+    assert final_text == "Could you take it from the top?"

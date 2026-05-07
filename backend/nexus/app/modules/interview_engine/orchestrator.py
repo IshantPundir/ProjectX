@@ -512,6 +512,13 @@ class InterviewOrchestrator:
                 stream, allow_interruptions=True, add_to_chat_ctx=True,
             )
             final_text = await handle.final_text()
+
+            if not final_text.strip():
+                return await self._handle_empty_speaker_output(
+                    agent=agent, turn_id=turn_id,
+                    speaker_input=speaker_input, handle=handle,
+                )
+
             self._append(SPEAKER_CALL, SpeakerCallPayload(
                 turn_id=turn_id, model="speaker", prompt_hash="sha256:speaker",
                 instruction_kind=speaker_input.instruction_kind.value,
@@ -546,6 +553,41 @@ class InterviewOrchestrator:
                 instruction_kind=speaker_input.instruction_kind,
             )
             return self._RECOVERY_TEXT
+
+    async def _handle_empty_speaker_output(
+        self, *, agent: Any, turn_id: str, speaker_input: Any, handle: Any,
+    ) -> str:
+        """The Speaker LLM streamed nothing. Play a deterministic fallback so
+        the candidate doesn't hear silence; emit speaker.output.empty for
+        audit visibility (Bug D from session 8317142f-3166-...).
+
+        Bypasses the SPEAKER_CALL / SPEAKER_OUTPUT audit events on purpose
+        — those describe a successful LLM call. The empty-output condition
+        is its own audit kind.
+        """
+        from app.modules.interview_engine.event_kinds import SPEAKER_OUTPUT_EMPTY
+        from app.modules.interview_engine.audit_events import SpeakerOutputEmptyPayload
+        fallback = self._compose_empty_output_fallback(speaker_input)
+        await agent.session.say(
+            fallback, allow_interruptions=True, add_to_chat_ctx=True,
+        )
+        self._append(SPEAKER_OUTPUT_EMPTY, SpeakerOutputEmptyPayload(
+            turn_id=turn_id,
+            instruction_kind=speaker_input.instruction_kind.value,
+            fallback_text=fallback,
+        ).model_dump())
+        self._state.register_agent_utterance(
+            turn_id=turn_id, text=fallback,
+            instruction_kind=speaker_input.instruction_kind,
+        )
+        return fallback
+
+    def _compose_empty_output_fallback(self, speaker_input: Any) -> str:
+        """Deterministic, no LLM. Restates bank_text when available;
+        otherwise a generic re-ask."""
+        if speaker_input.bank_text:
+            return f"Let me restate that. {speaker_input.bank_text}"
+        return "Could you take it from the top?"
 
     async def _publish_attributes(
         self, *, turn_id: str | None,
