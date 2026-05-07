@@ -13,7 +13,7 @@ def test_defaults() -> None:
     tenant_id = uuid.uuid4()
     s = TenantSettings(tenant_id=tenant_id)
     assert s.tenant_id == tenant_id
-    assert s.engine_knockout_policy == "record_only"
+    assert s.engine_knockout_policy == "close_polite"
     assert s.engine_agent_name is None
 
 

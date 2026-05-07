@@ -41,12 +41,12 @@ async def test_partial_row_only_engine_agent_name(db) -> None:
         TenantSettingsModel(
             tenant_id=tenant.id,
             engine_agent_name="Acme-Bot",
-            # engine_knockout_policy uses server_default = 'record_only'
+            # engine_knockout_policy uses server_default = 'close_polite'
         )
     )
     await db.flush()
     s = await get_tenant_settings(db, tenant.id)
-    assert s.engine_knockout_policy == "record_only"
+    assert s.engine_knockout_policy == "close_polite"
     assert s.engine_agent_name == "Acme-Bot"
 
 
@@ -55,5 +55,5 @@ async def test_default_factory_returns_correct_tenant_id() -> None:
     tenant_id = uuid.uuid4()
     s = DEFAULT_TENANT_SETTINGS(tenant_id)
     assert s.tenant_id == tenant_id
-    assert s.engine_knockout_policy == "record_only"
+    assert s.engine_knockout_policy == "close_polite"
     assert s.engine_agent_name is None

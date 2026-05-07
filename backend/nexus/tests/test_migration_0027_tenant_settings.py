@@ -48,7 +48,8 @@ async def test_tenant_settings_default_policy(db) -> None:
             {"t": str(tenant.id)},
         )
     ).first()
-    assert fetched.engine_knockout_policy == "record_only"
+    # Default flipped to close_polite in migration 0030 (post-incident).
+    assert fetched.engine_knockout_policy == "close_polite"
     assert fetched.engine_agent_name is None
 
 

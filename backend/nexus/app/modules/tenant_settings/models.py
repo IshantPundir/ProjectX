@@ -32,7 +32,7 @@ class TenantSettingsModel(Base):
         primary_key=True,
     )
     engine_knockout_policy: Mapped[str] = mapped_column(
-        nullable=False, server_default=text("'record_only'")
+        nullable=False, server_default=text("'close_polite'")
     )
     engine_agent_name: Mapped[str | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(
