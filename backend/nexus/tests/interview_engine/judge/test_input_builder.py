@@ -147,3 +147,26 @@ def test_active_signal_metadata_default_empty_list():
         time_remaining_seconds=10,
     )
     assert payload.active_question_signal_metadata == []
+
+
+def test_judge_input_recent_turns_uncapped():
+    from app.modules.interview_engine.judge.input_builder import JudgeInputPayload
+    from app.modules.interview_engine.models.claims import ClaimsPoolSnapshot
+    from app.modules.interview_engine.models.ledger import SignalLedgerSnapshot
+    from app.modules.interview_engine.models.queue import QuestionQueueSnapshot
+    from app.modules.interview_runtime import TranscriptEntry
+    long_history = [
+        TranscriptEntry(role="agent", text=f"t{i}", timestamp_ms=i, question_id=None)
+        for i in range(50)
+    ]
+    payload = JudgeInputPayload(
+        active_question_id=None,
+        active_question_text=None,
+        ledger_snapshot=SignalLedgerSnapshot(snapshots={}, next_seq=1, entries=[]),
+        queue_snapshot=QuestionQueueSnapshot(questions=[], active_index=None),
+        claims_snapshot=ClaimsPoolSnapshot(entries=[]),
+        recent_turns=long_history,
+        candidate_utterance="hello",
+        time_remaining_seconds=900,
+    )
+    assert len(payload.recent_turns) == 50

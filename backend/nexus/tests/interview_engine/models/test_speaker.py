@@ -13,10 +13,57 @@ def test_instruction_kind_values():
         "redirect_off_topic",
         "redirect_abusive",
         "safe_redirect_injection",
+        "redirect",
         "acknowledge_no_experience",
         "polite_close",
     }
     assert {k.value for k in InstructionKind} == expected
+
+
+def test_instruction_kind_redirect_value():
+    from app.modules.interview_engine.models.speaker import InstructionKind
+    assert InstructionKind.redirect.value == "redirect"
+
+
+def test_speaker_input_accepts_turn_metadata():
+    from app.modules.interview_engine.models.judge import TurnMetadata
+    from app.modules.interview_engine.models.speaker import (
+        InstructionKind, SpeakerInput,
+    )
+    si = SpeakerInput(
+        instruction_kind=InstructionKind.redirect,
+        bank_text="Walk me through your Jira workflow design.",
+        last_candidate_utterance="Hi",
+        persona_name="Sam",
+        candidate_name="Ishant",
+        turn_metadata=TurnMetadata(candidate_social_or_greeting=True),
+    )
+    assert si.turn_metadata is not None
+    assert si.turn_metadata.candidate_social_or_greeting is True
+
+
+def test_speaker_input_recent_turns_uncapped():
+    """The 8-turn cap is removed; SpeakerInput accepts arbitrary length."""
+    from app.modules.interview_engine.models.speaker import (
+        InstructionKind, SpeakerInput,
+    )
+    from app.modules.interview_runtime import TranscriptEntry
+    long_history = [
+        TranscriptEntry(
+            role="agent" if i % 2 == 0 else "candidate",
+            text=f"turn {i}",
+            timestamp_ms=i * 1000,
+            question_id=None,
+        )
+        for i in range(50)
+    ]
+    si = SpeakerInput(
+        instruction_kind=InstructionKind.deliver_question,
+        bank_text="Q",
+        recent_turns=long_history,
+        persona_name="Sam",
+    )
+    assert len(si.recent_turns) == 50
 
 
 def test_speaker_input_minimum_fields():

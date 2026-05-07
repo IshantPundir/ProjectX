@@ -67,7 +67,7 @@ class JudgeInputPayload(BaseModel):
     queue_snapshot: QuestionQueueSnapshot
     claims_snapshot: ClaimsPoolSnapshot
 
-    recent_turns: list[TranscriptEntry] = Field(default_factory=list, max_length=8)
+    recent_turns: list[TranscriptEntry] = Field(default_factory=list)
     candidate_utterance: str
     time_remaining_seconds: int
 
