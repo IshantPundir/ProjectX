@@ -7,6 +7,9 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import select, text as sql_text
 
+from app.modules.interview_engine.models.claims import ClaimsPoolSnapshot
+from app.modules.interview_engine.models.ledger import SignalLedgerSnapshot
+from app.modules.interview_engine.models.queue import QuestionQueueSnapshot
 from app.modules.interview_runtime import (
     KnockoutFailure,
     SessionResult,
@@ -60,7 +63,6 @@ def _result_with_knockouts(session_id: uuid.UUID) -> SessionResult:
         questions_asked=3,
         questions_skipped=0,
         total_probes_fired=1,
-        question_results=[],
         full_transcript=[],
         completed_at=datetime.now(UTC).isoformat(),
         knockout_failures=[
@@ -71,6 +73,10 @@ def _result_with_knockouts(session_id: uuid.UUID) -> SessionResult:
                 occurred_at_ms=120_000,
             )
         ],
+        signal_ledger=SignalLedgerSnapshot(entries=[], snapshots={}, next_seq=1),
+        question_queue=QuestionQueueSnapshot(),
+        claims_pool=ClaimsPoolSnapshot(),
+        audit_envelope_ref=None,
     )
 
 
@@ -142,10 +148,13 @@ async def test_empty_knockout_failures_writes_empty_list(db) -> None:
         questions_asked=3,
         questions_skipped=0,
         total_probes_fired=1,
-        question_results=[],
         full_transcript=[],
         completed_at=datetime.now(UTC).isoformat(),
         # knockout_failures defaults to []
+        signal_ledger=SignalLedgerSnapshot(entries=[], snapshots={}, next_seq=1),
+        question_queue=QuestionQueueSnapshot(),
+        claims_pool=ClaimsPoolSnapshot(),
+        audit_envelope_ref=None,
     )
 
     await record_session_result(

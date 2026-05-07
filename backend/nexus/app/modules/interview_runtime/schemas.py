@@ -14,9 +14,20 @@ Lifted from `backend/interview_engine/models.py` with two intentional changes:
 from __future__ import annotations
 
 import re
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field, field_validator
+
+if TYPE_CHECKING:
+    # Forward refs only — concrete imports at module bottom (post-class
+    # definitions) drive `SessionResult.model_rebuild()`. Doing it this way
+    # avoids a circular-import crash with engine.models.speaker, which
+    # imports `TranscriptEntry` from this module.
+    from app.modules.interview_engine.models import (
+        ClaimsPoolSnapshot,
+        QuestionQueueSnapshot,
+        SignalLedgerSnapshot,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +208,12 @@ class SessionConfig(BaseModel):
 # Steering models (agent's real-time observations)
 # ---------------------------------------------------------------------------
 
+# DEPRECATED — retained only for legacy `raw_result_json` parsing on
+# pre-Phase-7 sessions persisted before the structured-engine cutover.
+# The post-Phase-7 engine emits SignalLedger / QuestionQueue / ClaimsPool
+# snapshots on `SessionResult` instead. New code MUST NOT construct or
+# consume `SteeringObservation`; remove once the legacy rows are
+# migrated/expired.
 class SteeringObservation(BaseModel):
     """What the LLM reports after each candidate answer.
 
@@ -245,19 +262,6 @@ class TranscriptEntry(BaseModel):
         description="Milliseconds since session start.",
     )
     question_id: str | None = None
-
-
-class QuestionResult(BaseModel):
-    """Outcome of a single question within the session."""
-
-    question_id: str
-    question_text: str
-    position: int
-    is_mandatory: bool
-    was_skipped: bool
-    probes_fired: int = Field(ge=0)
-    observations: list[SteeringObservation]
-    transcript_entries: list[TranscriptEntry]
 
 
 # ---------------------------------------------------------------------------
@@ -330,7 +334,6 @@ class SessionResult(BaseModel):
     questions_asked: int = Field(ge=0)
     questions_skipped: int = Field(ge=0)
     total_probes_fired: int = Field(ge=0)
-    question_results: list[QuestionResult]
     full_transcript: list[TranscriptEntry]
     completed_at: str = Field(
         description="ISO 8601 timestamp of session completion.",
@@ -352,3 +355,43 @@ class SessionResult(BaseModel):
             "compute a summary (e.g. session aborted before any audio events)."
         ),
     )
+    signal_ledger: "SignalLedgerSnapshot" = Field(
+        description=(
+            "Append-only evidence log + per-signal coverage snapshots emitted "
+            "by the structured engine at session close (Phase 7+). Forward ref "
+            "resolved via the late import + model_rebuild() below."
+        ),
+    )
+    question_queue: "QuestionQueueSnapshot" = Field(
+        description=(
+            "Per-question state machine snapshot (status, probes, anchors hit) "
+            "emitted by the structured engine at session close."
+        ),
+    )
+    claims_pool: "ClaimsPoolSnapshot" = Field(
+        description=(
+            "Capped pool of biographical claims captured during the interview, "
+            "for downstream report-builder use."
+        ),
+    )
+    audit_envelope_ref: str | None = Field(
+        default=None,
+        description=(
+            "Filesystem path (or future blob URI) of the per-session audit "
+            "envelope written by event_log/. None if the sink was disabled or "
+            "writing failed."
+        ),
+    )
+
+
+# Resolve forward references at module load — must run AFTER SessionResult
+# is fully defined. We import from the leaf submodules directly (not via
+# `engine.models.__init__`) to avoid a partial-init cycle:
+# `engine.models.__init__` triggers `engine.models.speaker`, which imports
+# `TranscriptEntry` back from this very module. Going leaf-direct keeps
+# the late import out of that path entirely.
+from app.modules.interview_engine.models.claims import ClaimsPoolSnapshot  # noqa: E402
+from app.modules.interview_engine.models.ledger import SignalLedgerSnapshot  # noqa: E402
+from app.modules.interview_engine.models.queue import QuestionQueueSnapshot  # noqa: E402
+
+SessionResult.model_rebuild()

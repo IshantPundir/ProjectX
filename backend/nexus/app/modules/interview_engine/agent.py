@@ -82,8 +82,10 @@ from app.modules.interview_engine.event_log import (
     EventLogSink,
     build_sink_from_settings,
 )
+from app.modules.interview_engine.models.claims import ClaimsPoolSnapshot
+from app.modules.interview_engine.models.ledger import SignalLedgerSnapshot
+from app.modules.interview_engine.models.queue import QuestionQueueSnapshot
 from app.modules.interview_runtime import (
-    QuestionResult,
     SessionConfig,
     SessionResult,
     TranscriptEntry,
@@ -799,25 +801,13 @@ def _build_session_result(
 ) -> SessionResult:
     """Compose a minimal SessionResult.
 
-    The generic chatbot doesn't structure per-question evidence — each
-    QuestionConfig becomes a placeholder QuestionResult with
-    was_skipped=True. The real conversation lives in full_transcript;
-    a future structured agent will populate question_results properly.
+    The generic chatbot doesn't structure per-question evidence. The
+    structured engine (Phase 7+) replaces this with real ledger/queue/
+    claims snapshots; until that lands, populate the engine-snapshot
+    fields with empty defaults so the wire contract validates. The real
+    conversation continues to live in `full_transcript`.
     """
     config = agent._config
-    question_results = [
-        QuestionResult(
-            question_id=q.id,
-            question_text=q.text,
-            position=q.position,
-            is_mandatory=q.is_mandatory,
-            was_skipped=True,
-            probes_fired=0,
-            observations=[],
-            transcript_entries=[],
-        )
-        for q in config.stage.questions
-    ]
 
     return SessionResult(
         session_id=config.session_id,
@@ -829,11 +819,14 @@ def _build_session_result(
         questions_asked=0,
         questions_skipped=len(config.stage.questions),
         total_probes_fired=0,
-        question_results=question_results,
         full_transcript=list(transcript_entries),
         completed_at=datetime.now(UTC).isoformat(),
         knockout_failures=[],
         audio_tuning_summary=getattr(agent, "_audio_tuning_summary", None),
+        signal_ledger=SignalLedgerSnapshot(entries=[], snapshots={}, next_seq=1),
+        question_queue=QuestionQueueSnapshot(),
+        claims_pool=ClaimsPoolSnapshot(),
+        audit_envelope_ref=None,
     )
 
 

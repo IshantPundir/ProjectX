@@ -1,6 +1,9 @@
 """Round-trip test for SessionResult.knockout_failures."""
 from __future__ import annotations
 
+from app.modules.interview_engine.models.claims import ClaimsPoolSnapshot
+from app.modules.interview_engine.models.ledger import SignalLedgerSnapshot
+from app.modules.interview_engine.models.queue import QuestionQueueSnapshot
 from app.modules.interview_runtime import KnockoutFailure, SessionResult
 
 
@@ -15,9 +18,12 @@ def _make_minimal_result(**overrides) -> SessionResult:
         questions_asked=4,
         questions_skipped=0,
         total_probes_fired=2,
-        question_results=[],
         full_transcript=[],
         completed_at="2026-05-03T12:00:00Z",
+        signal_ledger=SignalLedgerSnapshot(entries=[], snapshots={}, next_seq=1),
+        question_queue=QuestionQueueSnapshot(),
+        claims_pool=ClaimsPoolSnapshot(),
+        audit_envelope_ref=None,
     )
     base.update(overrides)
     return SessionResult(**base)
