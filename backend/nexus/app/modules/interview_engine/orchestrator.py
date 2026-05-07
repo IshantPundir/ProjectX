@@ -74,7 +74,6 @@ def _map_livekit_close_reason(close_reason: str | None) -> str:
 
 @dataclass(slots=True)
 class OrchestratorConfig:
-    recent_turns_window: int = 8
     checkpoint_turns: int = 10
     checkpoint_seconds: int = 30
     # Canned terminal message played when the candidate keeps talking
@@ -267,7 +266,7 @@ class InterviewOrchestrator:
         ledger = self._state.ledger_snapshot()
         queue = self._state.queue_snapshot()
         claims = self._state.claims_snapshot()
-        recent = self._state.transcript_snapshot()[-self._config.recent_turns_window:]
+        recent = self._state.transcript_snapshot()           # full snapshot
         time_remaining = int(self._state.lifecycle_snapshot().time_remaining_seconds())
 
         # Project the active question's signal_values to ActiveSignalMeta

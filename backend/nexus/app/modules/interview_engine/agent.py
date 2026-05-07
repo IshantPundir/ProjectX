@@ -383,7 +383,6 @@ async def entrypoint(ctx: JobContext) -> None:
         event_collector=event_collector,
         correlation_id=correlation_id,
         config=OrchestratorConfig(
-            recent_turns_window=settings.engine_recent_turns_window,
             checkpoint_turns=settings.engine_checkpoint_turns,
             checkpoint_seconds=settings.engine_checkpoint_seconds,
             session_ended_message=settings.engine_session_ended_message,

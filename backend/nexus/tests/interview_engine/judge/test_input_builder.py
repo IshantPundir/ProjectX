@@ -54,7 +54,8 @@ def test_build_judge_input_carries_active_question_only():
     assert payload.time_remaining_seconds == 350
 
 
-def test_recent_turns_truncated_to_8():
+def test_recent_turns_passed_through_uncapped():
+    """build_judge_input must NOT truncate recent_turns — Judge sees full transcript."""
     turns = [
         TranscriptEntry(role="candidate", text=f"c{i}", timestamp_ms=i, question_id="q1")
         for i in range(20)
@@ -70,8 +71,9 @@ def test_recent_turns_truncated_to_8():
         candidate_utterance="x",
         time_remaining_seconds=10,
     )
-    assert len(payload.recent_turns) == 8
-    assert payload.recent_turns[0].text == "c12"  # last 8
+    assert len(payload.recent_turns) == 20
+    assert payload.recent_turns[0].text == "c0"
+    assert payload.recent_turns[-1].text == "c19"
 
 
 def test_build_judge_input_excludes_other_questions_rubric():

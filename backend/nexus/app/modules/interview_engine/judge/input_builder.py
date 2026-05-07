@@ -104,7 +104,7 @@ def build_judge_input(
         ledger_snapshot=ledger_snapshot,
         queue_snapshot=queue_snapshot,
         claims_snapshot=claims_snapshot,
-        recent_turns=list(recent_turns)[-8:],
+        recent_turns=list(recent_turns),
         candidate_utterance=candidate_utterance,
         time_remaining_seconds=time_remaining_seconds,
     )

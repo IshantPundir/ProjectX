@@ -447,7 +447,7 @@ class StateEngine:
             (q for q in self._cfg.stage.questions if active and q.id == active.question_id),
             None,
         )
-        recent = self._transcript[-8:]
+        recent = self._transcript    # full transcript, no slice
         return build_speaker_input(
             instruction_kind=instruction_kind,
             judge_output=judge_output,
