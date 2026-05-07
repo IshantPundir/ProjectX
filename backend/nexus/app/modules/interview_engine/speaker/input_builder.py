@@ -1,7 +1,7 @@
 """Speaker input builder. Anti-leak: never carries rubric content."""
 from __future__ import annotations
 
-from app.modules.interview_engine.models.judge import JudgeOutput
+from app.modules.interview_engine.models.judge import JudgeOutput, TurnMetadata
 from app.modules.interview_engine.models.speaker import (
     InstructionKind, SpeakerInput,
 )
@@ -24,9 +24,17 @@ def build_speaker_input(
     last_candidate_utterance: str | None,
     candidate_name: str | None = None,
 ) -> SpeakerInput:
-    """Anti-leak guarantee: NEVER include positive_evidence, red_flags, rubric."""
+    """Anti-leak guarantee: NEVER include positive_evidence, red_flags, rubric.
+
+    For instruction_kind=redirect (Task 8), copy JudgeOutput.turn_metadata
+    into SpeakerInput.turn_metadata so the Speaker can pick tone (warm
+    greeting vs neutral redirect vs calm de-escalation vs generic
+    injection deflection). For ALL other kinds, turn_metadata stays
+    None — preventing tone-leak across scaffolds.
+    """
     bank_text: str | None = None
     failed_signal_value: str | None = None
+    turn_metadata: TurnMetadata | None = None
 
     if instruction_kind in (
         InstructionKind.deliver_first_question,
@@ -52,8 +60,17 @@ def build_speaker_input(
         if isinstance(judge_output.next_action_payload, AcknowledgeNoExperiencePayload):
             failed_signal_value = judge_output.next_action_payload.failed_signal_value
 
+    elif instruction_kind == InstructionKind.redirect:
+        # Task 8 NEW path. The Speaker needs bank_text (to restate the
+        # active question) AND turn_metadata (to pick tone). Only the
+        # active_question.text field is exposed — never rubric content.
+        bank_text = active_question.text if active_question else None
+        turn_metadata = judge_output.turn_metadata
+
     # InstructionKind.repeat: bank_text is None; orchestrator uses cached_utterance.
-    # Redirects + polite_close: bank_text is None; Speaker uses canned scaffolds.
+    # Legacy redirect_off_topic/_abusive/safe_redirect_injection +
+    # polite_close: bank_text is None and turn_metadata is None — Speaker
+    # uses canned scaffolds (Task 9 will delete the legacy redirect kinds).
 
     return SpeakerInput(
         instruction_kind=instruction_kind,
@@ -64,4 +81,5 @@ def build_speaker_input(
         persona_name=persona_name,
         candidate_name=candidate_name,
         failed_signal_value=failed_signal_value,
+        turn_metadata=turn_metadata,
     )

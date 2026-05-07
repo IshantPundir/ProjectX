@@ -523,6 +523,37 @@ def test_repeat_replays_last_question_not_redirect():
     assert source_turn == "t0"
 
 
+def test_redirect_action_maps_to_redirect_instruction_kind():
+    """Task 8: NextAction.redirect dispatches to InstructionKind.redirect.
+
+    Verifies the new collapsed redirect action wires through the State
+    Engine without mutating ledger / queue / claims / lifecycle state.
+    """
+    from app.modules.interview_engine.models.judge import RedirectPayload
+
+    eng = _engine()
+    synthetic = eng.initialize_for_session_start()
+    eng.process_judge_output(
+        turn_id="t0", judge_output=synthetic,
+        candidate_utterance_text=None, elapsed_ms=0,
+    )
+    output = JudgeOutput(
+        thought="off-topic; redirect",
+        observations=[],
+        candidate_claims=[],
+        next_action=NextAction.redirect,
+        next_action_payload=RedirectPayload(),
+        turn_metadata=TurnMetadata(candidate_off_topic=True),
+    )
+    decision = eng.process_judge_output(
+        turn_id="t1", judge_output=output,
+        candidate_utterance_text="What's the salary?", elapsed_ms=1000,
+    )
+    assert decision.speaker_input.instruction_kind == InstructionKind.redirect
+    # No state mutation — lifecycle unchanged.
+    assert eng.lifecycle_snapshot().state.value == "active"
+
+
 def test_non_knockout_signal_failure_does_not_record_knockout(make_session_config, make_question):
     """Failure on a non-knockout signal: NO KnockoutFailure recorded."""
     cfg = make_session_config(

@@ -294,6 +294,13 @@ class StateEngine:
             instruction = InstructionKind.redirect_abusive
         elif action == NextAction.safe_redirect_injection:
             instruction = InstructionKind.safe_redirect_injection
+        elif action == NextAction.redirect:
+            # NEW (Task 8): the collapsed redirect action. The legacy
+            # redirect_* branches above remain functional until Task 9
+            # deletes them; this branch is additive. Tone selection
+            # happens in the Speaker via turn_metadata, which
+            # build_speaker_input threads through ONLY for this kind.
+            instruction = InstructionKind.redirect
 
         elif action == NextAction.polite_close:
             instruction = InstructionKind.polite_close
