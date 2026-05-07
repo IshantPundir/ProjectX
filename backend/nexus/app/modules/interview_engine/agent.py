@@ -299,22 +299,27 @@ async def entrypoint(ctx: JobContext) -> None:
         resolve_persona_name(tenant_settings=tenant_settings, settings=settings),
     )
 
-    # --- Judge + Speaker: load prompts (Phase 10 will author them) ---
-    # Until the v1 prompt files land, use placeholder strings so the
-    # entrypoint loads cleanly. Hashes still go into the audit envelope
-    # (different placeholders → different hashes → distinguishable in
-    # logs).
+    # --- Judge + Speaker: load prompts ---
+    # Judge keeps its single system prompt at construction time. Speaker
+    # composes its prompt per-call from engine/speaker/_preamble +
+    # engine/speaker/<instruction_kind>; per-call hashes flow into each
+    # speaker.call audit event. The session-level envelope captures the
+    # preamble hash under task_prompt_hashes["speaker_preamble"] as the
+    # stable proxy for "this session ran on the v1 speaker prompt set".
     try:
         judge_prompt = prompt_loader.get("engine/judge.system")
     except FileNotFoundError:
         judge_prompt = "(engine/judge.system prompt not yet authored)"
-    try:
-        speaker_prompt = prompt_loader.get("engine/speaker.system")
-    except FileNotFoundError:
-        speaker_prompt = "(engine/speaker.system prompt not yet authored)"
 
     judge_hash = "sha256:" + hashlib.sha256(judge_prompt.encode("utf-8")).hexdigest()
-    speaker_hash = "sha256:" + hashlib.sha256(speaker_prompt.encode("utf-8")).hexdigest()
+
+    try:
+        speaker_preamble_body = prompt_loader.get("engine/speaker/_preamble")
+    except FileNotFoundError:
+        speaker_preamble_body = "(engine/speaker/_preamble prompt not yet authored)"
+    speaker_preamble_hash = "sha256:" + hashlib.sha256(
+        speaker_preamble_body.encode("utf-8"),
+    ).hexdigest()
 
     openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
 
@@ -330,8 +335,6 @@ async def entrypoint(ctx: JobContext) -> None:
     speaker_service = SpeakerService(
         openai_client=openai_client,
         model=settings.engine_speaker_model,
-        system_prompt=speaker_prompt,
-        system_prompt_hash=speaker_hash,
     )
 
     attr_pub = AttributePublisher(room=ctx.room)
@@ -348,7 +351,10 @@ async def entrypoint(ctx: JobContext) -> None:
         controller_prompt_hash=judge_hash,
         task_prompt_hashes={
             "judge": judge_hash,
-            "speaker": speaker_hash,
+            # Speaker now composes prompts per-call (preamble + per-action
+            # body). The preamble hash is the stable session-level proxy;
+            # per-call body hashes flow into individual speaker.call events.
+            "speaker_preamble": speaker_preamble_hash,
         },
         model_versions={
             "llm": ai_config.interview_llm_model,

@@ -519,7 +519,13 @@ class InterviewOrchestrator:
                 )
 
             self._append(SPEAKER_CALL, SpeakerCallPayload(
-                turn_id=turn_id, model="speaker", prompt_hash="sha256:speaker",
+                turn_id=turn_id, model="speaker",
+                # Per-call hash from the SpeakerService — sha256 of the
+                # composed (preamble + per-action body) actually sent
+                # to the model on this call. Replaces the static
+                # "sha256:speaker" placeholder so audit trails reflect
+                # exactly which prompt body was used per turn.
+                prompt_hash=handle.prompt_hash,
                 instruction_kind=speaker_input.instruction_kind.value,
                 bank_text_present=speaker_input.bank_text is not None,
                 latency_ms_first_token=handle.latency_ms_first_token,

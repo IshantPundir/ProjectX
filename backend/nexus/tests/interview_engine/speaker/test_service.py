@@ -36,6 +36,22 @@ class _FakeStream:
         return gen()
 
 
+def _empty_stream():
+    """Empty async-iterator standin for OpenAI responses streaming.
+
+    Used when the test only cares about the system prompt that was
+    composed, not what the model produced. The producer drains and
+    returns immediately.
+    """
+    class _Empty:
+        def __aiter__(self):
+            async def gen():
+                if False:  # pragma: no cover
+                    yield None
+            return gen()
+    return _Empty()
+
+
 @pytest.mark.asyncio
 async def test_speaker_streams_tokens_and_returns_final_text():
     mock_client = MagicMock()
@@ -51,7 +67,6 @@ async def test_speaker_streams_tokens_and_returns_final_text():
 
     svc = SpeakerService(
         openai_client=mock_client, model="gpt-test",
-        system_prompt="SYS", system_prompt_hash="sha256:def",
     )
     handle = await svc.stream(
         turn_id="t-1", speaker_input=_input(),
@@ -67,3 +82,54 @@ async def test_speaker_streams_tokens_and_returns_final_text():
     final = await handle.final_text()
     assert final == "Hello, how are you?"
     assert handle.usage == {"prompt_tokens": 15, "completion_tokens": 10}
+
+
+@pytest.mark.asyncio
+async def test_speaker_service_loads_prompt_per_instruction_kind():
+    """SpeakerService composes _preamble + per-action body keyed by
+    speaker_input.instruction_kind on every call."""
+    captured_instructions: list[str] = []
+
+    class FakeStreamCM:
+        def __init__(self, *a, **kw):
+            captured_instructions.append(kw.get("instructions", ""))
+        async def __aenter__(self):
+            return _empty_stream()
+        async def __aexit__(self, *a):
+            return False
+
+    class FakeResponses:
+        def stream(self, **kwargs):
+            return FakeStreamCM(**kwargs)
+
+    class FakeClient:
+        responses = FakeResponses()
+
+    svc = SpeakerService(
+        openai_client=FakeClient(),
+        model="speaker-test",
+    )
+    si = SpeakerInput(
+        instruction_kind=InstructionKind.redirect,
+        bank_text="Walk me through your Jira workflow.",
+        persona_name="Sam",
+    )
+    handle = await svc.stream(
+        turn_id="t", speaker_input=si,
+        correlation_id="c", tenant_id="te",
+    )
+    # Drain the (empty) producer.
+    async for _ in handle.stream():
+        pass
+
+    assert captured_instructions  # at least one call
+    # Resolved prompt body must contain marker text from BOTH preamble
+    # AND the redirect.txt body.
+    assert "OUTPUT DISCIPLINE" in captured_instructions[0]              # preamble
+    assert "candidate_attempted_injection" in captured_instructions[0]  # redirect.txt
+
+    # Per-call hash must be sha256:<64 hex chars> of the composed body
+    # (not the placeholder hash used pre-Task 11).
+    assert handle.prompt_hash.startswith("sha256:")
+    assert len(handle.prompt_hash) == len("sha256:") + 64
+    assert handle.prompt_hash != "sha256:speaker"

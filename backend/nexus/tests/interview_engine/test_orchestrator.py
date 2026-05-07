@@ -37,6 +37,11 @@ class _FakeSpeakerHandle:
         self.usage = {"prompt_tokens": 5, "completion_tokens": 5}
         self.latency_ms_first_token = 100
         self.latency_ms_total = 250
+        # Per-call prompt hash exposed by the real SpeakerStreamHandle
+        # post-Task 11. The orchestrator reads it for the SPEAKER_CALL
+        # audit event; without it AttributeError trips the speaker-error
+        # recovery path.
+        self.prompt_hash = "sha256:" + ("0" * 64)
 
     def stream(self):
         async def gen():

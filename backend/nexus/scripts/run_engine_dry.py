@@ -167,7 +167,6 @@ def _build_live_services(state_engine: StateEngine) -> tuple[Any, Any]:
 
     openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
     judge_prompt = prompt_loader.get("engine/judge.system")
-    speaker_prompt = prompt_loader.get("engine/speaker.system")
     judge = JudgeService(
         openai_client=openai_client,
         model=settings.engine_judge_model,
@@ -177,11 +176,11 @@ def _build_live_services(state_engine: StateEngine) -> tuple[Any, Any]:
         total_budget_ms=settings.engine_judge_total_budget_ms,
         retry_wait_ms=settings.engine_judge_retry_wait_ms,
     )
+    # SpeakerService composes its prompt per-call from
+    # engine/speaker/_preamble + engine/speaker/<instruction_kind>.
     speaker = SpeakerService(
         openai_client=openai_client,
         model=settings.engine_speaker_model,
-        system_prompt=speaker_prompt,
-        system_prompt_hash="sha256:" + hashlib.sha256(speaker_prompt.encode("utf-8")).hexdigest(),
     )
     return judge, speaker
 
