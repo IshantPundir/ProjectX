@@ -226,10 +226,13 @@ class Settings(BaseSettings):
     #   real fix is consuming `on_user_turn_completed` (turn-detector
     #   EOU, not STT finals) — but a longer min_delay also gives the
     #   turn detector more signal before deciding.
-    # max_delay 4.0s (was 2.5): cap the wait so a candidate who's
-    #   truly done isn't held up indefinitely.
+    # max_delay 2.5s (was 6.0): production sessions saw
+    #   end_of_utterance_delay_ms p95=6000ms repeatedly, blowing the
+    #   per-turn latency by ~3.5s. 2.5s feels much snappier; raise
+    #   only for tenants who want extra tolerance for candidates
+    #   pausing mid-thought (e.g. accessibility scenarios).
     engine_endpointing_min_delay: float = 1.0
-    engine_endpointing_max_delay: float = 6.0
+    engine_endpointing_max_delay: float = 2.5
     # Phase 3D — audio pipeline tuning (LK Cloud locked, 2026-05-06)
     # Architecture is locked to LK Cloud + ai-coustics exclusively.
     # "off" and "krisp_nc" are no longer valid values.

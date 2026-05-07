@@ -48,3 +48,16 @@ def test_aiconfig_exposes_engine_models(monkeypatch):
     cfg = AIConfig()
     assert cfg.engine_judge_model == "abc"
     assert cfg.engine_speaker_model == "def"
+
+
+def test_engine_endpointing_max_delay_default_is_snappy(monkeypatch):
+    """The default endpointing max delay was lowered from 6.0 → 2.5
+    after production sessions repeatedly saw end_of_utterance_delay_ms
+    p95 hit the upper bound, blowing per-turn latency budgets.
+
+    The default lives in code, but the test asserts it explicitly so a
+    silent regression to 6.0 (or any value > 5.0) gets flagged in CI.
+    """
+    monkeypatch.delenv("ENGINE_ENDPOINTING_MAX_DELAY", raising=False)
+    s = Settings()
+    assert s.engine_endpointing_max_delay == 2.5

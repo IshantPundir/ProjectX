@@ -626,6 +626,97 @@ async def test_normal_turn_then_knockout_triggers_shutdown(
 
 
 @pytest.mark.asyncio
+async def test_time_remaining_seconds_decreases_each_turn(
+    make_session_config, make_question, make_judge_output, monkeypatch,
+):
+    """time_remaining_seconds must reflect actual elapsed wall-clock,
+    not stay stuck at the initial budget.
+
+    Regression: prior to the orchestrator calling set_time_elapsed each
+    turn, time_elapsed_seconds stayed at 0 — so time_remaining_seconds
+    was always equal to the full budget and the frontend timer never
+    counted down. We assert the published attribute moves below the
+    initial budget after a turn.
+    """
+    cfg = make_session_config(
+        questions=[
+            make_question(qid="q1", text="What is your first question response?"),
+            make_question(qid="q2", text="What is your second question response?"),
+        ],
+        signals=["S1"],
+        duration_minutes=15,
+    )
+    initial_budget = cfg.stage.duration_minutes * 60  # 900s
+
+    speaker = MagicMock()
+    speaker.stream = AsyncMock(return_value=_FakeSpeakerHandle("ok."))
+    judge = MagicMock()
+    judge.call = AsyncMock(return_value=MagicMock(
+        judge_output=make_judge_output(target="q2"),
+        is_fallback=False, fallback_reason=None,
+        original_failure_context=None, latency_ms=10,
+        usage={"prompt_tokens": 1, "completion_tokens": 1}, model_used="gpt-test",
+    ))
+
+    room = MagicMock()
+    room.local_participant.set_attributes = AsyncMock()
+    pub = AttributePublisher(room=room)
+    fake_session = MagicMock()
+    fake_session.say = AsyncMock()
+    fake_session.shutdown = AsyncMock()
+    fake_agent = MagicMock()
+    fake_agent.session = fake_session
+
+    state_engine = StateEngine(session_config=cfg)
+    collector = _collector()
+    orch = InterviewOrchestrator(
+        session_config=cfg, tenant_settings=MagicMock(engine_agent_name=None),
+        state_engine=state_engine, judge=judge, speaker=speaker,
+        attr_publisher=pub, event_collector=collector,
+        correlation_id="c", config=OrchestratorConfig(),
+        tenant_id="t",
+    )
+
+    # Patch time.monotonic so on_enter establishes a t0 and the next
+    # call returns t0 + 5s — guaranteeing elapsed_ms > 0 without sleep.
+    import time as time_module
+    counter = {"calls": 0}
+    real_monotonic = time_module.monotonic
+    base = real_monotonic()
+
+    def _fake_monotonic():
+        counter["calls"] += 1
+        # First call (in on_enter) → base. Subsequent calls advance.
+        return base + (counter["calls"] - 1) * 5.0
+
+    monkeypatch.setattr(
+        "app.modules.interview_engine.orchestrator.time.monotonic",
+        _fake_monotonic,
+    )
+
+    await orch.on_enter(fake_agent)
+
+    from livekit.agents.llm import ChatMessage
+    msg = ChatMessage(role="user", content=["I have JQL experience."])
+    await orch.on_user_turn_completed(fake_agent, MagicMock(), msg)
+
+    # Pull the most recent time_remaining publish — it must be < initial budget.
+    published = []
+    for a in room.local_participant.set_attributes.await_args_list:
+        published.append(a.args[0])
+    time_remaining_values = [
+        int(p[ATTR_TIME_REMAINING_SECONDS])
+        for p in published
+        if ATTR_TIME_REMAINING_SECONDS in p
+    ]
+    assert time_remaining_values, "time_remaining_seconds was never published"
+    assert min(time_remaining_values) < initial_budget, (
+        f"time_remaining never decreased below {initial_budget}; "
+        f"saw {time_remaining_values}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_orchestrator_uses_tenant_id_not_session_id(make_session_config, make_question):
     """Regression for I2: LLM tracing must receive tenant_id, not session_id."""
     cfg = make_session_config(

@@ -458,6 +458,16 @@ class StateEngine:
     def lifecycle_snapshot(self) -> LifecycleSnapshot:
         return self._lifecycle.snapshot()
 
+    def set_time_elapsed(self, seconds: float) -> None:
+        """Public accessor for the orchestrator to update elapsed time per turn.
+
+        Without this the lifecycle's ``time_elapsed_seconds`` stays at 0,
+        which makes ``time_remaining_seconds()`` always return the full
+        budget — and the frontend's ``time_remaining_seconds`` attribute
+        appears stuck.
+        """
+        self._lifecycle.set_time_elapsed(seconds)
+
     # --- Checkpoint ---
 
     def to_checkpoint(self, *, last_audit_seq_flushed: int, captured_at_ms: int) -> EngineCheckpoint:

@@ -137,6 +137,10 @@ class InterviewOrchestrator:
             speaker_input=decision.speaker_input,
         )
 
+        # Tick lifecycle elapsed-time so subsequent attribute publishes
+        # / Judge inputs see a counted-down ``time_remaining_seconds``.
+        self._state.set_time_elapsed(self._elapsed_ms() / 1000.0)
+
         self._append(TURN_COMPLETED, TurnCompletedPayload(
             turn_id=turn_id, turn_index=self._turn_index,
             duration_ms=int((time.monotonic() - self._session_started_monotonic) * 1000),
@@ -263,6 +267,12 @@ class InterviewOrchestrator:
                 agent=agent, turn_id=turn_id,
                 speaker_input=decision.speaker_input,
             )
+
+        # Tick lifecycle elapsed-time so the published
+        # ``time_remaining_seconds`` attribute reflects the most recent
+        # elapsed wall-clock — without this the frontend timer is stuck
+        # at the initial budget and never counts down.
+        self._state.set_time_elapsed(self._elapsed_ms() / 1000.0)
 
         await self._publish_attributes(
             turn_id=turn_id,
