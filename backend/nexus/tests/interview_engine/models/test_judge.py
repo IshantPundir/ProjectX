@@ -2,10 +2,21 @@ import pytest
 from pydantic import ValidationError
 
 from app.modules.interview_engine.models.judge import (
-    NextAction,
-    CoverageTransition,
-    Observation,
+    AcknowledgeNoExperiencePayload,
+    AdvancePayload,
+    ClarifyPayload,
     ClaimEntry as JudgeClaimEntry,
+    CoverageTransition,
+    EndSessionPayload,
+    JudgeOutput,
+    NextAction,
+    Observation,
+    PoliteClosePayload,
+    ProbePayload,
+    RedirectAbusivePayload,
+    RedirectOffTopicPayload,
+    RepeatPayload,
+    SafeRedirectInjectionPayload,
     TurnMetadata,
 )
 
@@ -83,14 +94,6 @@ def test_turn_metadata_defaults_all_false():
         "candidate_wants_to_end",
     ):
         assert getattr(meta, attr) is False
-
-
-from app.modules.interview_engine.models.judge import (
-    AdvancePayload, ProbePayload, ClarifyPayload, RepeatPayload,
-    RedirectOffTopicPayload, RedirectAbusivePayload, SafeRedirectInjectionPayload,
-    AcknowledgeNoExperiencePayload, PoliteClosePayload, EndSessionPayload,
-    JudgeOutput,
-)
 
 
 def test_advance_payload_kind_constant():

@@ -42,3 +42,22 @@ def test_speaker_input_for_acknowledge_no_experience_carries_failed_signal():
         failed_signal_value="JQL fluency",
     )
     assert s.failed_signal_value == "JQL fluency"
+
+
+def test_speaker_input_has_no_rubric_fields():
+    """Anti-leak guarantee: SpeakerInput must NEVER carry rubric content.
+
+    The Judge sees rubric and decides; the Speaker sees only what the State Engine
+    prepared. The input builder enforces this via field-level discipline; this test
+    locks it in at the model level so a future developer who adds a "convenience"
+    field is caught by CI.
+    """
+    forbidden = {
+        "anchors",
+        "positive_evidence",
+        "red_flags",
+        "signal_metadata",
+        "evaluation_hint",
+        "rubric",
+    }
+    assert not forbidden & set(SpeakerInput.model_fields)
