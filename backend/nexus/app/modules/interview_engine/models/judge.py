@@ -69,3 +69,84 @@ class TurnMetadata(BaseModel):
 
 
 # Payload types and JudgeOutput follow in Task 1.6.
+
+
+class AdvancePayload(BaseModel):
+    kind: Literal["advance"] = "advance"
+    target_question_id: str
+
+
+class ProbePayload(BaseModel):
+    kind: Literal["probe"] = "probe"
+    probe_id: str = Field(description="Array index of follow_ups, e.g. '0', '1', '2'")
+    probe_rationale: str = Field(min_length=1, max_length=200)
+
+
+class ClarifyPayload(BaseModel):
+    kind: Literal["clarify"] = "clarify"
+
+
+class RepeatPayload(BaseModel):
+    kind: Literal["repeat"] = "repeat"
+
+
+class RedirectOffTopicPayload(BaseModel):
+    kind: Literal["redirect_off_topic"] = "redirect_off_topic"
+
+
+class RedirectAbusivePayload(BaseModel):
+    kind: Literal["redirect_abusive"] = "redirect_abusive"
+
+
+class SafeRedirectInjectionPayload(BaseModel):
+    kind: Literal["safe_redirect_injection"] = "safe_redirect_injection"
+
+
+class AcknowledgeNoExperiencePayload(BaseModel):
+    kind: Literal["acknowledge_no_experience"] = "acknowledge_no_experience"
+    failed_signal_value: str = Field(min_length=1)
+
+
+class PoliteClosePayload(BaseModel):
+    kind: Literal["polite_close"] = "polite_close"
+    reason: str = Field(min_length=1)
+
+
+class EndSessionPayload(BaseModel):
+    kind: Literal["end_session"] = "end_session"
+    initiated_by: Literal["candidate_initiated", "agent_initiated"]
+
+
+NextActionPayload = Annotated[
+    Union[
+        AdvancePayload,
+        ProbePayload,
+        ClarifyPayload,
+        RepeatPayload,
+        RedirectOffTopicPayload,
+        RedirectAbusivePayload,
+        SafeRedirectInjectionPayload,
+        AcknowledgeNoExperiencePayload,
+        PoliteClosePayload,
+        EndSessionPayload,
+    ],
+    Field(discriminator="kind"),
+]
+
+
+class JudgeOutput(BaseModel):
+    thought: str = Field(max_length=600)
+    observations: list[Observation] = Field(default_factory=list, max_length=10)
+    candidate_claims: list[ClaimEntry] = Field(default_factory=list, max_length=5)
+    next_action: NextAction
+    next_action_payload: NextActionPayload
+    turn_metadata: TurnMetadata = Field(default_factory=TurnMetadata)
+
+    @model_validator(mode="after")
+    def _check_discriminator_alignment(self) -> "JudgeOutput":
+        if self.next_action.value != self.next_action_payload.kind:
+            raise ValueError(
+                f"next_action {self.next_action.value!r} does not match payload kind "
+                f"{self.next_action_payload.kind!r}"
+            )
+        return self

@@ -83,3 +83,86 @@ def test_turn_metadata_defaults_all_false():
         "candidate_wants_to_end",
     ):
         assert getattr(meta, attr) is False
+
+
+from app.modules.interview_engine.models.judge import (
+    AdvancePayload, ProbePayload, ClarifyPayload, RepeatPayload,
+    RedirectOffTopicPayload, RedirectAbusivePayload, SafeRedirectInjectionPayload,
+    AcknowledgeNoExperiencePayload, PoliteClosePayload, EndSessionPayload,
+    JudgeOutput,
+)
+
+
+def test_advance_payload_kind_constant():
+    p = AdvancePayload(target_question_id="q-1")
+    assert p.kind == "advance"
+
+
+def test_probe_payload_requires_id_and_rationale():
+    p = ProbePayload(probe_id="0", probe_rationale="missing anchor 1")
+    assert p.kind == "probe"
+    assert p.probe_id == "0"
+
+
+def test_clarify_payload_no_extra_fields():
+    p = ClarifyPayload()
+    assert p.kind == "clarify"
+
+
+def test_repeat_payload_no_extra_fields():
+    p = RepeatPayload()
+    assert p.kind == "repeat"
+
+
+def test_acknowledge_no_experience_carries_failed_signal():
+    p = AcknowledgeNoExperiencePayload(failed_signal_value="JQL fluency")
+    assert p.failed_signal_value == "JQL fluency"
+
+
+def test_polite_close_carries_reason():
+    p = PoliteClosePayload(reason="knockout_recorded")
+    assert p.reason == "knockout_recorded"
+
+
+def test_end_session_initiated_by_enum():
+    with pytest.raises(ValidationError):
+        EndSessionPayload(initiated_by="random")
+    p = EndSessionPayload(initiated_by="candidate_initiated")
+    assert p.initiated_by == "candidate_initiated"
+
+
+def test_judge_output_discriminator_alignment_passes():
+    out = JudgeOutput(
+        thought="thinking",
+        observations=[],
+        candidate_claims=[],
+        next_action=NextAction.advance,
+        next_action_payload=AdvancePayload(target_question_id="q-1"),
+        turn_metadata=TurnMetadata(),
+    )
+    assert out.next_action_payload.kind == "advance"
+
+
+def test_judge_output_discriminator_mismatch_rejected():
+    with pytest.raises(ValidationError) as exc_info:
+        JudgeOutput(
+            thought="thinking",
+            observations=[],
+            candidate_claims=[],
+            next_action=NextAction.probe,
+            next_action_payload=AdvancePayload(target_question_id="q-1"),
+            turn_metadata=TurnMetadata(),
+        )
+    assert "does not match payload kind" in str(exc_info.value)
+
+
+def test_judge_output_thought_length_capped():
+    with pytest.raises(ValidationError):
+        JudgeOutput(
+            thought="x" * 601,
+            observations=[],
+            candidate_claims=[],
+            next_action=NextAction.advance,
+            next_action_payload=AdvancePayload(target_question_id="q-1"),
+            turn_metadata=TurnMetadata(),
+        )
