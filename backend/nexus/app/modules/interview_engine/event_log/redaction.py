@@ -11,11 +11,40 @@ Adding a new event kind that carries content REQUIRES adding an entry
 to ``_CONTENT_FIELDS_BY_KIND`` in the same PR. CI (when wired) greps for
 new kinds in agent.py and fails if a content-bearing kind is missing
 from this map.
+
+Per spec §6.4: engine event kinds listed in ``_ENGINE_PASSTHROUGH_KINDS``
+are NEVER redacted in either mode — the candidate utterance is the
+audit-grade artifact.  Adding a kind to that set means "no content field
+will ever be stripped here"; removing one is a breaking change to the
+audit contract.
 """
 
 from __future__ import annotations
 
+import copy
 from typing import Any, Literal
+
+# Engine event kinds that are explicitly declared passthrough — not redacted
+# in metadata OR full mode.  Per spec §6.4 the candidate utterance captured
+# inside these events is the audit-grade artifact and must never be stripped.
+_ENGINE_PASSTHROUGH_KINDS: frozenset[str] = frozenset(
+    {
+        "turn.started",
+        "turn.completed",
+        "judge.call",
+        "judge.synthetic",
+        "judge.fallback",
+        "judge.validation",
+        "state.mutation",
+        "speaker.call",
+        "speaker.cached",
+        "speaker.output",
+        "speaker.error",
+        "lifecycle.transition",
+        "checkpoint.written",
+        "frontend.attribute.published",
+    }
+)
 
 # kind -> list of payload keys that carry user-content/PII and must be
 # stripped in metadata mode.
@@ -48,6 +77,13 @@ def redact_payload(
     """
     if mode not in ("metadata", "full"):
         raise ValueError(f"invalid redaction mode: {mode!r}")
+
+    # Engine event kinds are the audit-grade artifact — never redacted in
+    # either mode (spec §6.4).  Check before the content-field dispatch so
+    # a future accidental entry in _CONTENT_FIELDS_BY_KIND cannot override
+    # this guarantee.
+    if kind in _ENGINE_PASSTHROUGH_KINDS:
+        return copy.deepcopy(payload)
 
     if mode == "full":
         return dict(payload)
