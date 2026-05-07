@@ -11,8 +11,8 @@ from typing import Literal
 from app.modules.interview_engine.models.claims import ClaimsPoolSnapshot
 from app.modules.interview_engine.models.judge import (
     AdvancePayload, AcknowledgeNoExperiencePayload, ClarifyPayload,
-    EndSessionPayload, JudgeOutput, NextAction, PoliteClosePayload,
-    ProbePayload, RepeatPayload,
+    EndSessionPayload, JudgeOutput, NextAction, Observation,
+    PoliteClosePayload, ProbePayload, RepeatPayload,
 )
 from app.modules.interview_engine.models.ledger import SignalLedgerSnapshot
 from app.modules.interview_engine.models.queue import QuestionQueueSnapshot
@@ -31,13 +31,17 @@ from app.modules.interview_engine.state.queue import (
     NoActiveQuestionError, QueueError, QuestionQueue,
 )
 from app.modules.interview_runtime import (
-    SessionConfig, TranscriptEntry,
+    KnockoutFailure, SessionConfig, TranscriptEntry,
 )
 
 
 @dataclass(slots=True)
 class StateEngineConfig:
     claims_pool_max: int = 50
+    # Default mirrors the tenant_settings default flipped in migration 0030.
+    # When the entrypoint passes through a tenant override it wins; this
+    # is just the safe-by-default fallback used by tests.
+    knockout_policy: Literal["record_only", "close_polite"] = "close_polite"
 
 
 @dataclass(slots=True)
@@ -89,6 +93,13 @@ class StateEngine:
         budget_seconds = session_config.stage.duration_minutes * 60
         self._lifecycle = SessionLifecycle(time_budget_total_seconds=budget_seconds)
 
+        # Map signal_value → knockout flag for fast lookup during
+        # process_judge_output. Populated once at construction; the
+        # State Engine never mutates signal_metadata mid-session.
+        self._knockout_signals: set[str] = {
+            sig.value for sig in session_config.signal_metadata if sig.knockout
+        }
+
         self._agent_utterances: dict[str, str] = {}
         self._transcript: list[TranscriptEntry] = []
         self._turn_count = 0
@@ -126,6 +137,10 @@ class StateEngine:
             self._lifecycle.transition_to_active()
 
         # 1. Apply observations (drop on illegal transition).
+        # Track which observations succeeded so the knockout-detection
+        # pass below only counts observations that actually mutated the
+        # ledger — an illegal-transition drop must NOT trigger a knockout.
+        applied_observations: list[Observation] = []
         for obs in judge_output.observations:
             try:
                 self._ledger.apply_observation(
@@ -133,11 +148,39 @@ class StateEngine:
                 )
                 if self._queue.active_state() is not None and obs.anchor_id >= 0:
                     self._queue.record_anchor_hit(anchor_id=obs.anchor_id)
+                applied_observations.append(obs)
             except IllegalCoverageTransition as exc:
                 warnings.append(ValidationWarning(
                     code="illegal_coverage_transition",
                     details={"signal": obs.signal_value, "reason": str(exc)},
                 ))
+
+        # 1a. Knockout detection: any successfully-applied observation that
+        # ends in `?→failed` AND targets a knockout=True signal records a
+        # KnockoutFailure on the lifecycle. Recording happens regardless of
+        # policy — `record_only` still gets the audit trail. Policy decides
+        # whether to *also* override the action below.
+        knockout_failures_this_turn: list[KnockoutFailure] = []
+        active_q_id = self._queue.active_question_id() or ""
+        for obs in applied_observations:
+            transition = obs.coverage_transition.value
+            if not transition.endswith("→failed"):
+                continue
+            if obs.signal_value not in self._knockout_signals:
+                continue
+            failure = KnockoutFailure(
+                question_id=active_q_id,
+                # Use the verbatim evidence quote as the reason; the
+                # KnockoutFailure validator runs _scrub_pii on this field
+                # so emails/phone numbers don't leak into the persisted
+                # record. 200-char clamp matches the persisted-summary
+                # convention even though the schema allows up to 500.
+                reason=obs.evidence_quote[:200],
+                signal_values=[obs.signal_value],
+                occurred_at_ms=elapsed_ms,
+            )
+            self._lifecycle.record_knockout(failure)
+            knockout_failures_this_turn.append(failure)
 
         # 2. Apply claims (capped).
         for claim in judge_output.candidate_claims:
@@ -253,6 +296,38 @@ class StateEngine:
                 details={"action": action.value},
             ))
             instruction = self._fallback_advance_to_next_pending(warnings)
+
+        # 6. Policy override: knockout recorded this turn AND policy is
+        # close_polite → force polite_close regardless of the Judge's
+        # action choice. The audit envelope still shows the original
+        # JudgeOutput for replay; only the orchestrator-facing decision
+        # changes. `record_only` keeps the audit trail (the
+        # KnockoutFailure was recorded above) but lets the interview
+        # continue.
+        if (
+            knockout_failures_this_turn
+            and self._eng_cfg.knockout_policy == "close_polite"
+        ):
+            warnings.append(ValidationWarning(
+                code="knockout_policy_override",
+                level="warning",  # not an error — this is correct enforcement
+                details={
+                    "policy": "close_polite",
+                    "knockout_signals": [
+                        str(f.signal_values[0])
+                        for f in knockout_failures_this_turn
+                    ],
+                    "original_action": action.value,
+                },
+            ))
+            instruction = InstructionKind.polite_close
+            self._lifecycle.set_last_outcome(SessionOutcome.knockout_closed)
+            # Guard against double-transition: if the action was already
+            # polite_close (or end_session, fallback_advance with no
+            # remaining mandatory) the lifecycle has already moved to
+            # closing.
+            if self._lifecycle.snapshot().state.value == "active":
+                self._lifecycle.transition_to_closing()
 
         speaker_input = self._build_speaker_input(
             instruction_kind=instruction,

@@ -279,3 +279,157 @@ def test_speaker_input_includes_candidate_name(make_session_config, make_questio
     )
     assert decision.speaker_input.candidate_name == "Alice"
     assert decision.speaker_input.persona_name == "Sam"
+
+
+# ---------------------------------------------------------------------------
+# Knockout enforcement: ?→failed observations on knockout=True signals
+# ---------------------------------------------------------------------------
+
+
+def test_knockout_signal_failure_records_knockout_failure(make_session_config, make_question, make_judge_output):
+    """Layer 1: failure observation on a knockout=True signal records a KnockoutFailure."""
+    cfg = make_session_config(
+        questions=[make_question(qid="q1", text="What is your first question response?")],
+        signals=["S_KO"],
+        knockout_signal="S_KO",
+    )
+    eng = StateEngine(
+        session_config=cfg,
+        config=StateEngineConfig(knockout_policy="record_only"),  # not close, just record
+    )
+    # Get the queue active first
+    eng.process_judge_output(
+        turn_id="t-0",
+        judge_output=eng.initialize_for_session_start(),
+        candidate_utterance_text=None, elapsed_ms=0,
+    )
+    j = JudgeOutput(
+        thought="t", observations=[
+            Observation(signal_value="S_KO", anchor_id=-1,
+                        evidence_quote="I have no experience with this",
+                        coverage_transition=CoverageTransition.none_to_failed),
+        ],
+        candidate_claims=[],
+        next_action=NextAction.acknowledge_no_experience,
+        next_action_payload=AcknowledgeNoExperiencePayload(failed_signal_value="S_KO"),
+        turn_metadata=TurnMetadata(),
+    )
+    eng.process_judge_output(
+        turn_id="t-1", judge_output=j,
+        candidate_utterance_text="I have no experience with this", elapsed_ms=2000,
+    )
+    lifecycle = eng.lifecycle_snapshot()
+    assert len(lifecycle.knockout_failures) == 1
+    assert lifecycle.knockout_failures[0].signal_values == ["S_KO"]
+
+
+def test_close_polite_policy_overrides_action_on_knockout(make_session_config, make_question):
+    """Layer 2: policy=close_polite + knockout failure → instruction overridden to polite_close."""
+    cfg = make_session_config(
+        questions=[make_question(qid="q1", text="What is your first question response?")],
+        signals=["S_KO"],
+        knockout_signal="S_KO",
+    )
+    eng = StateEngine(
+        session_config=cfg,
+        config=StateEngineConfig(knockout_policy="close_polite"),
+    )
+    eng.process_judge_output(
+        turn_id="t-0", judge_output=eng.initialize_for_session_start(),
+        candidate_utterance_text=None, elapsed_ms=0,
+    )
+    j = JudgeOutput(
+        thought="t", observations=[
+            Observation(signal_value="S_KO", anchor_id=-1,
+                        evidence_quote="never used it",
+                        coverage_transition=CoverageTransition.none_to_failed),
+        ],
+        candidate_claims=[],
+        next_action=NextAction.acknowledge_no_experience,
+        next_action_payload=AcknowledgeNoExperiencePayload(failed_signal_value="S_KO"),
+        turn_metadata=TurnMetadata(),
+    )
+    decision = eng.process_judge_output(
+        turn_id="t-1", judge_output=j,
+        candidate_utterance_text="never used it", elapsed_ms=2000,
+    )
+    # Instruction kind should be polite_close, NOT acknowledge_no_experience.
+    assert decision.speaker_input.instruction_kind == InstructionKind.polite_close
+    assert any(w.code == "knockout_policy_override" for w in decision.validation_warnings)
+    # Lifecycle should have transitioned to closing.
+    assert eng.lifecycle_snapshot().state.value == "closing"
+    assert eng.lifecycle_snapshot().last_outcome.value == "knockout_closed"
+
+
+def test_record_only_policy_does_not_close_on_knockout(make_session_config, make_question):
+    """Layer 1+2: policy=record_only records but does NOT override action."""
+    cfg = make_session_config(
+        questions=[make_question(qid="q1", text="What is your first question response?")],
+        signals=["S_KO"],
+        knockout_signal="S_KO",
+    )
+    eng = StateEngine(
+        session_config=cfg,
+        config=StateEngineConfig(knockout_policy="record_only"),
+    )
+    eng.process_judge_output(
+        turn_id="t-0", judge_output=eng.initialize_for_session_start(),
+        candidate_utterance_text=None, elapsed_ms=0,
+    )
+    j = JudgeOutput(
+        thought="t", observations=[
+            Observation(signal_value="S_KO", anchor_id=-1,
+                        evidence_quote="never used",
+                        coverage_transition=CoverageTransition.none_to_failed),
+        ],
+        candidate_claims=[],
+        next_action=NextAction.acknowledge_no_experience,
+        next_action_payload=AcknowledgeNoExperiencePayload(failed_signal_value="S_KO"),
+        turn_metadata=TurnMetadata(),
+    )
+    decision = eng.process_judge_output(
+        turn_id="t-1", judge_output=j,
+        candidate_utterance_text="never used", elapsed_ms=2000,
+    )
+    # KnockoutFailure recorded:
+    assert len(eng.lifecycle_snapshot().knockout_failures) == 1
+    # But action NOT overridden:
+    assert decision.speaker_input.instruction_kind == InstructionKind.acknowledge_no_experience
+    # Lifecycle still active.
+    assert eng.lifecycle_snapshot().state.value == "active"
+
+
+def test_non_knockout_signal_failure_does_not_record_knockout(make_session_config, make_question):
+    """Failure on a non-knockout signal: NO KnockoutFailure recorded."""
+    cfg = make_session_config(
+        questions=[make_question(qid="q1", text="What is your first question response?")],
+        signals=["S_PLAIN"],
+        knockout_signal=None,  # NO knockout signal
+    )
+    eng = StateEngine(
+        session_config=cfg,
+        config=StateEngineConfig(knockout_policy="close_polite"),
+    )
+    eng.process_judge_output(
+        turn_id="t-0", judge_output=eng.initialize_for_session_start(),
+        candidate_utterance_text=None, elapsed_ms=0,
+    )
+    j = JudgeOutput(
+        thought="t", observations=[
+            Observation(signal_value="S_PLAIN", anchor_id=-1,
+                        evidence_quote="never used",
+                        coverage_transition=CoverageTransition.none_to_failed),
+        ],
+        candidate_claims=[],
+        next_action=NextAction.acknowledge_no_experience,
+        next_action_payload=AcknowledgeNoExperiencePayload(failed_signal_value="S_PLAIN"),
+        turn_metadata=TurnMetadata(),
+    )
+    decision = eng.process_judge_output(
+        turn_id="t-1", judge_output=j,
+        candidate_utterance_text="never used", elapsed_ms=2000,
+    )
+    # No KnockoutFailure for non-knockout signal.
+    assert len(eng.lifecycle_snapshot().knockout_failures) == 0
+    # Action NOT overridden.
+    assert decision.speaker_input.instruction_kind == InstructionKind.acknowledge_no_experience
