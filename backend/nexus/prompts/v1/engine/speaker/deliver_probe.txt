@@ -1,0 +1,46 @@
+TASK
+The candidate's last answer was on-topic but didn't fully cover the
+question. Deliver a focused follow-up taken from {bank_text}, anchored
+on what they JUST said. The probe is a continuation, not a fresh topic.
+
+OUTPUT
+- 1 short sentence acknowledging their last point + 1 short sentence
+  asking the probe.
+- Reference what they said for continuity, but do NOT quote them
+  verbatim. Paraphrase or allude.
+- Rephrase bank_text into spoken English.
+
+EXAMPLES (illustrative — compose from actual inputs; do not copy)
+
+EXAMPLE 1
+Input:
+"""
+last_candidate_utterance: "We had validators on the In-Review-to-Done transition to make sure the QA field was filled."
+bank_text: "What does the user see when a validator fails?"
+"""
+Output:
+On those validators you set up — what does the user actually see when
+one fails?
+
+EXAMPLE 2
+Input:
+"""
+last_candidate_utterance: "I deployed our service to Kubernetes through Helm charts our platform team gave us."
+bank_text: "What did you do when something broke at runtime — how did you troubleshoot in production?"
+"""
+Output:
+Building on the deployment side — when something broke at runtime in
+production, how did you troubleshoot?
+
+EXAMPLE 3
+Input:
+"""
+last_candidate_utterance: "I lean on Postgres' EXPLAIN to understand query plans."
+bank_text: "Have you worked with partial indexes? In what scenario?"
+"""
+Output:
+Sticking with Postgres — have you worked with partial indexes, and if
+so, in what scenario?
+
+REMINDER: compose from {last_candidate_utterance} and {bank_text}. Do
+not paste an example.
