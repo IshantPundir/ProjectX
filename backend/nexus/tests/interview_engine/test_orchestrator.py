@@ -123,3 +123,78 @@ async def test_on_enter_delivers_first_question(make_session_config, make_questi
     assert SPEAKER_OUTPUT in kinds
     assert TURN_STARTED in kinds
     assert TURN_COMPLETED in kinds
+
+
+@pytest.mark.asyncio
+async def test_on_user_turn_completed_happy_path(make_session_config, make_question, make_judge_output):
+    cfg = make_session_config(
+        questions=[
+            make_question(qid="q1", position=0, mandatory=True,
+                          text="What is your first question response?", follow_ups=["fu0"]),
+            make_question(qid="q2", position=1, mandatory=True,
+                          text="What is your second question response?", follow_ups=[]),
+        ],
+        signals=["S1"],
+    )
+
+    speaker_service = MagicMock()
+    speaker_service.stream = AsyncMock(return_value=_FakeSpeakerHandle("rephrased."))
+
+    judge_service = MagicMock()
+    judge_service.call = AsyncMock(return_value=MagicMock(
+        judge_output=make_judge_output(
+            action=__import__(
+                "app.modules.interview_engine.models.judge", fromlist=["NextAction"],
+            ).NextAction.advance,
+            target="q2",
+        ),
+        is_fallback=False, fallback_reason=None,
+        original_failure_context=None, latency_ms=120, usage={"prompt_tokens": 8, "completion_tokens": 4},
+        model_used="gpt-test",
+    ))
+
+    room = MagicMock()
+    room.local_participant.set_attributes = AsyncMock()
+    pub = AttributePublisher(room=room)
+
+    fake_session = MagicMock()
+    fake_session.say = AsyncMock()
+
+    fake_agent = MagicMock()
+    fake_agent.session = fake_session
+
+    from app.modules.interview_engine.event_kinds import JUDGE_CALL
+    from livekit.agents.llm import ChatMessage
+    from livekit.agents.llm import StopResponse
+
+    state_engine = StateEngine(session_config=cfg)
+    collector = _collector()
+
+    orch = InterviewOrchestrator(
+        session_config=cfg,
+        tenant_settings=MagicMock(engine_agent_name=None),
+        state_engine=state_engine,
+        judge=judge_service,
+        speaker=speaker_service,
+        attr_publisher=pub,
+        event_collector=collector,
+        correlation_id="c",
+        config=OrchestratorConfig(),
+    )
+    await orch.on_enter(fake_agent)
+    speaker_service.stream.reset_mock()
+
+    msg = ChatMessage(role="user", content=["I have 5 years of JQL experience."])
+    with pytest.raises(StopResponse):
+        await orch.on_user_turn_completed(fake_agent, MagicMock(), msg)
+
+    judge_service.call.assert_awaited_once()
+    speaker_service.stream.assert_awaited_once()
+    kinds = [e.kind for e in collector.events]
+    assert JUDGE_CALL in kinds
+
+    # Frontend index moved to q2 (index 1).
+    pushed = {}
+    for a in room.local_participant.set_attributes.await_args_list:
+        pushed.update(a.args[0])
+    assert pushed.get(ATTR_CURRENT_QUESTION_INDEX) == "1"

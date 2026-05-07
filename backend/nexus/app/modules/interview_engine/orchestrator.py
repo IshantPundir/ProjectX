@@ -109,9 +109,92 @@ class InterviewOrchestrator:
             duration_ms=int((time.monotonic() - self._session_started_monotonic) * 1000),
         ).model_dump())
 
-    async def on_user_turn_completed(self, agent: Any, turn_ctx: Any, new_message: Any) -> None:
-        # Implementation in Task 8.3.
-        raise NotImplementedError("on_user_turn_completed implemented in Task 8.3")
+    async def on_user_turn_completed(
+        self, agent: Any, turn_ctx: Any, new_message: Any,
+    ) -> None:
+        # Local import — `StopResponse` lives at livekit.agents.llm.tool_context
+        # and is re-exported from livekit.agents.llm. LiveKit may not be
+        # available in some test contexts, so keep the import local.
+        from livekit.agents.llm import StopResponse
+
+        candidate_text = getattr(new_message, "text_content", None)
+        # ChatMessage.text_content can be a property — call it if it's a method,
+        # otherwise it's a string already.
+        if callable(candidate_text):
+            candidate_text = candidate_text()
+        if not candidate_text:
+            raise StopResponse()
+
+        turn_id = str(uuid.uuid4())
+        self._turn_index += 1
+        elapsed_ms = self._elapsed_ms()
+        self._append(TURN_STARTED, TurnStartedPayload(
+            turn_id=turn_id, turn_index=self._turn_index,
+            stt_text_raw=candidate_text, stt_text_used=candidate_text,
+        ).model_dump())
+
+        from app.modules.interview_engine.judge.input_builder import build_judge_input
+        active_qid = self._state.queue_snapshot().active_index
+        active_q_cfg = (
+            self._cfg.stage.questions[active_qid] if active_qid is not None else None
+        )
+        ledger = self._state.ledger_snapshot()
+        queue = self._state.queue_snapshot()
+        claims = self._state.claims_snapshot()
+        recent: list = []
+        time_remaining = int(self._state.lifecycle_snapshot().time_remaining_seconds())
+        judge_input = build_judge_input(
+            active_question=active_q_cfg,
+            ledger_snapshot=ledger, queue_snapshot=queue, claims_snapshot=claims,
+            recent_turns=recent, candidate_utterance=candidate_text,
+            time_remaining_seconds=time_remaining,
+        )
+
+        result = await self._judge.call(
+            turn_id=turn_id, input_payload=judge_input,
+            correlation_id=self._correlation_id,
+            tenant_id=str(self._cfg.session_id),
+        )
+        self._append_judge_event(turn_id=turn_id, result=result)
+
+        decision = self._state.process_judge_output(
+            turn_id=turn_id, judge_output=result.judge_output,
+            candidate_utterance_text=candidate_text, elapsed_ms=elapsed_ms,
+        )
+        self._append_validation_warnings(turn_id=turn_id, decision=decision)
+
+        if decision.speaker_input.instruction_kind == InstructionKind.repeat:
+            from app.modules.interview_engine.event_kinds import SPEAKER_CACHED
+            from app.modules.interview_engine.audit_events import SpeakerCachedPayload
+            cached = decision.cached_utterance or ""
+            await agent.session.say(
+                cached, allow_interruptions=True, add_to_chat_ctx=False,
+            )
+            self._append(SPEAKER_CACHED, SpeakerCachedPayload(
+                turn_id=turn_id, instruction_kind="repeat",
+                source_turn_id=decision.cached_source_turn_id or "",
+                final_utterance=cached,
+            ).model_dump())
+        else:
+            await self._stream_speaker_and_say(
+                agent=agent, turn_id=turn_id,
+                speaker_input=decision.speaker_input,
+            )
+
+        await self._publish_attributes(
+            turn_id=turn_id,
+            current_question_index=self._state.queue_snapshot().active_index,
+            time_remaining_seconds=int(
+                self._state.lifecycle_snapshot().time_remaining_seconds()
+            ),
+        )
+
+        self._append(TURN_COMPLETED, TurnCompletedPayload(
+            turn_id=turn_id, turn_index=self._turn_index,
+            duration_ms=self._elapsed_ms() - elapsed_ms,
+        ).model_dump())
+
+        raise StopResponse()
 
     async def on_close(self, agent: Any, audio_tuning_summary: dict | None) -> Any:
         # Implementation in Task 8.5.
@@ -171,3 +254,38 @@ class InterviewOrchestrator:
     def _append(self, kind: str, payload: dict) -> None:
         wall_ms = int(time.time() * 1000)
         self._collector.append(kind=kind, payload=payload, wall_ms=wall_ms)
+
+    def _elapsed_ms(self) -> int:
+        if self._session_started_monotonic is None:
+            return 0
+        return int((time.monotonic() - self._session_started_monotonic) * 1000)
+
+    def _append_judge_event(self, *, turn_id: str, result: Any) -> None:
+        from app.modules.interview_engine.event_kinds import JUDGE_CALL, JUDGE_FALLBACK
+        from app.modules.interview_engine.audit_events import (
+            JudgeCallPayload, JudgeFallbackPayload,
+        )
+        if result.is_fallback:
+            self._append(JUDGE_FALLBACK, JudgeFallbackPayload(
+                turn_id=turn_id, reason=result.fallback_reason.value,
+                original_failure_context=result.original_failure_context or {},
+                synthesized_output=result.judge_output.model_dump(mode="json"),
+            ).model_dump())
+        else:
+            self._append(JUDGE_CALL, JudgeCallPayload(
+                turn_id=turn_id, model=result.model_used,
+                prompt_hash="sha256:judge",
+                input_summary={},
+                output=result.judge_output.model_dump(mode="json"),
+                latency_ms=result.latency_ms,
+                usage=result.usage,
+            ).model_dump())
+
+    def _append_validation_warnings(self, *, turn_id: str, decision: Any) -> None:
+        from app.modules.interview_engine.event_kinds import JUDGE_VALIDATION
+        from app.modules.interview_engine.audit_events import JudgeValidationPayload
+        for w in decision.validation_warnings:
+            self._append(JUDGE_VALIDATION, JudgeValidationPayload(
+                turn_id=turn_id, level=w.level,
+                code=w.code, details=w.details,
+            ).model_dump())
