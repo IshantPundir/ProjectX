@@ -1,0 +1,5 @@
+session_config_fixture: tests/interview_engine/fixtures/sample_session_config.json
+candidate_responses:
+  - utterance: "I have five years of JQL experience writing complex queries."
+  - utterance: "I built validators in ScriptRunner for our Jira workflow."
+  - utterance: "I'd rather not answer that one."

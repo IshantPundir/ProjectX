@@ -1,0 +1,8 @@
+session_config_fixture: tests/interview_engine/fixtures/sample_session_config.json
+candidate_responses:
+  - utterance: "I'm sorry, I've never used JQL at all in my career."
+    expected_next_action: acknowledge_no_experience
+    notes: "Q1 targets JQL; candidate discloses no experience"
+  - utterance: "Can you ask me about something else?"
+    expected_next_action: advance
+    notes: "After acknowledge_no_experience, Judge should advance to Q2"
