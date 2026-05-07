@@ -31,3 +31,21 @@ def test_judge_prompt_lists_all_next_actions():
 def test_judge_prompt_documents_failed_coverage_state():
     text = prompt_loader.get("engine/judge.system").lower()
     assert "failed" in text and "no experience" in text
+
+
+def test_judge_prompt_documents_signal_metadata_field():
+    text = prompt_loader.get("engine/judge.system").lower()
+    assert "active_question_signal_metadata" in text or "signal_metadata" in text
+    assert "knockout" in text  # already present in the prompt, but lock it in
+
+
+def test_judge_prompt_disambiguates_injection_from_hint_asking():
+    text = prompt_loader.get("engine/judge.system").lower()
+    # The prompt must explicitly call out that asking for hints is NOT injection.
+    assert "hint" in text  # innocent request
+    # And there must be language about the distinction.
+    assert (
+        "asking for hints" in text
+        or "innocent" in text
+        or "give me an example" in text
+    )

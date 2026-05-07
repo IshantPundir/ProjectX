@@ -283,7 +283,14 @@ async def entrypoint(ctx: JobContext) -> None:
     # --- StateEngine: ledger + queue + claims + lifecycle ---
     state_engine = StateEngine(
         session_config=session_config,
-        config=StateEngineConfig(claims_pool_max=settings.engine_claims_pool_max),
+        config=StateEngineConfig(
+            claims_pool_max=settings.engine_claims_pool_max,
+            # Tenant-level knockout policy override (close_polite by
+            # default since migration 0030; record_only kept for tenants
+            # that want to keep collecting data after a hard-requirement
+            # failure).
+            knockout_policy=tenant_settings.engine_knockout_policy,
+        ),
     )
     state_engine.set_persona_name(
         resolve_persona_name(tenant_settings=tenant_settings, settings=settings),
