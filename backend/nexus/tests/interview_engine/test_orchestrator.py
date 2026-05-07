@@ -235,6 +235,7 @@ async def test_speaker_error_triggers_canned_recovery(make_session_config, make_
     pub = AttributePublisher(room=room)
     fake_session = MagicMock()
     fake_session.say = AsyncMock()
+    fake_session.shutdown = AsyncMock()
     fake_agent = MagicMock()
     fake_agent.session = fake_session
 
@@ -481,6 +482,147 @@ async def test_on_user_turn_completed_returns_normally_for_chat_history():
     mock_orch.on_user_turn_completed.assert_awaited_once_with(
         agent, turn_ctx, new_message,
     )
+
+
+@pytest.mark.asyncio
+async def test_post_close_turn_plays_canned_message_and_skips_judge(
+    make_session_config, make_question,
+):
+    """Once lifecycle is closing, any candidate input gets the canned
+    terminal message and Judge is NOT called.
+
+    Regression for the "agent keeps talking after polite_close" bug.
+    """
+    cfg = make_session_config(
+        questions=[make_question(qid="q1", text="What is your first question response?")],
+        signals=["S1"],
+    )
+    speaker = MagicMock()
+    speaker.stream = AsyncMock(return_value=_FakeSpeakerHandle("hello"))
+    judge = MagicMock()
+    judge.call = AsyncMock()  # should NOT be called
+
+    room = MagicMock()
+    room.local_participant.set_attributes = AsyncMock()
+    pub = AttributePublisher(room=room)
+    fake_session = MagicMock()
+    fake_session.say = AsyncMock()
+    fake_session.shutdown = AsyncMock()
+    fake_agent = MagicMock()
+    fake_agent.session = fake_session
+
+    state_engine = StateEngine(session_config=cfg)
+    # Manually transition lifecycle to closing.
+    state_engine._lifecycle.transition_to_active()
+    state_engine._lifecycle.transition_to_closing()
+    from app.modules.interview_engine.state.lifecycle import SessionOutcome
+    state_engine._lifecycle.set_last_outcome(SessionOutcome.knockout_closed)
+
+    collector = _collector()
+    orch = InterviewOrchestrator(
+        session_config=cfg, tenant_settings=MagicMock(engine_agent_name=None),
+        state_engine=state_engine, judge=judge, speaker=speaker,
+        attr_publisher=pub, event_collector=collector,
+        correlation_id="c", config=OrchestratorConfig(),
+        tenant_id="t",
+    )
+
+    from livekit.agents.llm import ChatMessage
+    msg = ChatMessage(role="user", content=["Are we still going?"])
+    await orch.on_user_turn_completed(fake_agent, MagicMock(), msg)
+
+    # Judge was NOT called.
+    judge.call.assert_not_awaited()
+    # Speaker was NOT called (Speaker LLM is bypassed in the hard-stop path).
+    speaker.stream.assert_not_awaited()
+    # session.say WAS called with the canned terminal message.
+    fake_session.say.assert_awaited_once()
+    say_args, say_kwargs = fake_session.say.call_args
+    msg_arg = say_args[0] if say_args else say_kwargs.get("text", "")
+    assert "this session has ended" in msg_arg.lower()
+    # Shutdown was scheduled.
+    fake_session.shutdown.assert_called_once()
+    # Audit event recorded.
+    from app.modules.interview_engine.event_kinds import SESSION_TERMINAL_DELIVERED
+    assert SESSION_TERMINAL_DELIVERED in [e.kind for e in collector.events]
+
+
+@pytest.mark.asyncio
+async def test_normal_turn_then_knockout_triggers_shutdown(
+    make_session_config, make_question, make_judge_output,
+):
+    """A normal turn that causes a knockout_policy_override should trigger
+    session.shutdown after the polite_close speaker output.
+
+    Regression for the second half of the same bug — when a knockout
+    legitimately closes the session via Judge → State Engine, the
+    LiveKit session must shut down so the candidate's tab disconnects.
+    """
+    cfg = make_session_config(
+        questions=[make_question(qid="q1", text="What is your first question response?")],
+        signals=["S_KO"],
+        knockout_signal="S_KO",
+    )
+    speaker = MagicMock()
+    speaker.stream = AsyncMock(return_value=_FakeSpeakerHandle("polite close text"))
+
+    from app.modules.interview_engine.models.judge import (
+        Observation, CoverageTransition, AcknowledgeNoExperiencePayload,
+        NextAction, TurnMetadata,
+    )
+    from app.modules.interview_engine.models.judge import JudgeOutput
+    judge = MagicMock()
+    judge.call = AsyncMock(return_value=MagicMock(
+        judge_output=JudgeOutput(
+            thought="t",
+            observations=[Observation(
+                signal_value="S_KO", anchor_id=-1,
+                evidence_quote="never used",
+                coverage_transition=CoverageTransition.none_to_failed,
+            )],
+            candidate_claims=[],
+            next_action=NextAction.acknowledge_no_experience,
+            next_action_payload=AcknowledgeNoExperiencePayload(
+                failed_signal_value="S_KO"),
+            turn_metadata=TurnMetadata(),
+        ),
+        is_fallback=False, fallback_reason=None,
+        original_failure_context=None, latency_ms=10,
+        usage={"prompt_tokens": 1, "completion_tokens": 1}, model_used="gpt-test",
+    ))
+
+    room = MagicMock()
+    room.local_participant.set_attributes = AsyncMock()
+    pub = AttributePublisher(room=room)
+    fake_session = MagicMock()
+    fake_session.say = AsyncMock()
+    fake_session.shutdown = AsyncMock()
+    fake_agent = MagicMock()
+    fake_agent.session = fake_session
+
+    from app.modules.interview_engine.state.engine import StateEngineConfig
+    state_engine = StateEngine(
+        session_config=cfg,
+        config=StateEngineConfig(knockout_policy="close_polite"),
+    )
+    collector = _collector()
+    orch = InterviewOrchestrator(
+        session_config=cfg, tenant_settings=MagicMock(engine_agent_name=None),
+        state_engine=state_engine, judge=judge, speaker=speaker,
+        attr_publisher=pub, event_collector=collector,
+        correlation_id="c", config=OrchestratorConfig(),
+        tenant_id="t",
+    )
+    await orch.on_enter(fake_agent)
+
+    from livekit.agents.llm import ChatMessage
+    msg = ChatMessage(role="user", content=["I have no experience."])
+    await orch.on_user_turn_completed(fake_agent, MagicMock(), msg)
+
+    # Knockout was recorded → policy override → shutdown scheduled.
+    fake_session.shutdown.assert_called_once()
+    # Lifecycle is closing.
+    assert state_engine.lifecycle_snapshot().state.value == "closing"
 
 
 @pytest.mark.asyncio

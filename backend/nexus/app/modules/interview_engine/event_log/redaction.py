@@ -43,6 +43,7 @@ _ENGINE_PASSTHROUGH_KINDS: frozenset[str] = frozenset(
         "lifecycle.transition",
         "checkpoint.written",
         "frontend.attribute.published",
+        "session.terminal_delivered",
     }
 )
 

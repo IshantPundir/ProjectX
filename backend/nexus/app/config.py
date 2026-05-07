@@ -284,6 +284,16 @@ class Settings(BaseSettings):
     engine_judge_prompt_version: str = "v1"
     engine_speaker_prompt_version: str = "v1"
 
+    # Canned terminal message played to the candidate after the session
+    # lifecycle has entered 'closing' or 'closed' (e.g. polite_close was
+    # already delivered but the candidate keeps talking). The
+    # ``{candidate_name}`` placeholder interpolates to the candidate's
+    # first name; falls back gracefully if the name is empty.
+    engine_session_ended_message: str = (
+        "Thanks for your time, {candidate_name}. This session has ended; "
+        "the recruitment team will be in contact with you."
+    )
+
     # Phase 1 (engine redesign) — event log sink config. The engine writes a
     # per-session JSON envelope at session close; the sink chosen here decides
     # where it lands. Production runs `metadata` redaction (no PII content);

@@ -6,18 +6,23 @@ Speaker on each candidate turn. on_close builds the SessionResult.
 """
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from dataclasses import dataclass
 from typing import Any
 
+import structlog
+
 from app.modules.interview_engine.audit_events import (
     FrontendAttributePayload, JudgeSyntheticPayload,
+    SessionTerminalDeliveredPayload,
     SpeakerCallPayload, SpeakerOutputPayload,
     TurnCompletedPayload, TurnStartedPayload,
 )
 from app.modules.interview_engine.event_kinds import (
     FRONTEND_ATTRIBUTE_PUBLISHED, JUDGE_SYNTHETIC,
+    SESSION_TERMINAL_DELIVERED,
     SPEAKER_CALL, SPEAKER_OUTPUT, TURN_COMPLETED, TURN_STARTED,
 )
 from app.modules.interview_engine.event_log.collector import EventCollector
@@ -37,6 +42,15 @@ class OrchestratorConfig:
     recent_turns_window: int = 8
     checkpoint_turns: int = 10
     checkpoint_seconds: int = 30
+    # Canned terminal message played when the candidate keeps talking
+    # after lifecycle has already entered closing/closed. Supports a
+    # ``{candidate_name}`` placeholder. Default has no placeholder so
+    # the entrypoint's env-driven Settings value is the source of truth
+    # in production; this default keeps tests deterministic.
+    session_ended_message: str = (
+        "Thanks for your time. This session has ended; the recruitment "
+        "team will be in contact with you."
+    )
 
 
 class InterviewOrchestrator:
@@ -66,6 +80,23 @@ class InterviewOrchestrator:
         self._config = config or OrchestratorConfig()
         self._turn_index = -1  # incremented to 0 on session-start synthetic turn
         self._session_started_monotonic: float | None = None
+        # Tracks whether ``agent.session.shutdown`` has already been
+        # scheduled for this orchestrator instance. The hard-stop path
+        # (lifecycle in closing/closed + candidate-input arrival) and
+        # the post-Judge knockout-policy-override path both call into
+        # ``_schedule_shutdown``; this flag keeps it idempotent.
+        self._shutdown_scheduled: bool = False
+
+    # --- Public accessors ---
+
+    def lifecycle_snapshot(self) -> Any:
+        """Public passthrough to the underlying StateEngine.
+
+        The close handler in ``agent.py`` needs to read
+        ``lifecycle.last_outcome`` to decide the persisted SessionOutcome
+        without reaching into the orchestrator's private ``_state``.
+        """
+        return self._state.lifecycle_snapshot()
 
     # --- LiveKit lifecycle hooks ---
 
@@ -126,6 +157,19 @@ class InterviewOrchestrator:
             candidate_text = candidate_text()
         if not candidate_text:
             return  # nothing to process; framework's default flow is harmless
+
+        # Hard-stop: lifecycle is closing/closed. Bypass Judge entirely
+        # and play the canned terminal message. Ensure LiveKit session
+        # shutdown is scheduled (idempotent). This is the fix for the
+        # "agent keeps talking after polite_close" bug — without it the
+        # framework keeps listening and the orchestrator would run a full
+        # Judge → State → Speaker turn against an already-closed session.
+        lifecycle_snap = self._state.lifecycle_snapshot()
+        if lifecycle_snap.state.value in ("closing", "closed"):
+            await self._handle_post_close_turn(
+                agent=agent, candidate_text=candidate_text,
+            )
+            return
 
         turn_id = str(uuid.uuid4())
         self._turn_index += 1
@@ -215,6 +259,15 @@ class InterviewOrchestrator:
             duration_ms=self._elapsed_ms() - elapsed_ms,
         ).model_dump())
 
+        # If processing this turn caused the lifecycle to transition to
+        # ``closing`` (e.g. polite_close, end_session, or knockout-policy
+        # override), schedule the actual LiveKit session shutdown. Drain
+        # is True so the closing speech finishes playing before the
+        # connection terminates.
+        new_state = self._state.lifecycle_snapshot().state.value
+        if new_state == "closing" and not self._shutdown_scheduled:
+            self._schedule_shutdown(agent)
+
     async def on_close(
         self, agent: Any, audio_tuning_summary: dict | None,
     ) -> "SessionResult":
@@ -256,6 +309,94 @@ class InterviewOrchestrator:
     # --- Internals ---
 
     _RECOVERY_TEXT = "I apologize — could you say that again?"
+
+    def _format_session_ended_message(self) -> str:
+        """Render the canned terminal message with candidate-name interpolation.
+
+        When ``candidate.name`` is empty, the placeholder is removed and any
+        leading "Thanks for your time, ." artifact is cleaned up so the
+        candidate hears a grammatical sentence regardless of name presence.
+        """
+        template = self._config.session_ended_message
+        name = (self._cfg.candidate.name or "").strip()
+        msg = template.format(candidate_name=name)
+        # Clean up artifacts when name is empty.
+        msg = msg.replace(", .", ".").replace(",  ", " ").replace(" ,", "")
+        return msg.strip()
+
+    async def _handle_post_close_turn(
+        self, *, agent: Any, candidate_text: str,
+    ) -> None:
+        """Hard-stop branch: lifecycle is closing/closed and the candidate
+        spoke. Bypass Judge / State Engine / Speaker entirely; play the
+        canned terminal message and ensure shutdown is scheduled.
+
+        Records a TURN_STARTED → SESSION_TERMINAL_DELIVERED →
+        TURN_COMPLETED triplet so the audit envelope shows exactly what
+        the candidate heard after the session ended.
+        """
+        turn_id = str(uuid.uuid4())
+        self._turn_index += 1
+        elapsed_ms = self._elapsed_ms()
+
+        self._append(TURN_STARTED, TurnStartedPayload(
+            turn_id=turn_id, turn_index=self._turn_index,
+            stt_text_raw=candidate_text, stt_text_used=candidate_text,
+        ).model_dump())
+
+        message = self._format_session_ended_message()
+        lifecycle_snap = self._state.lifecycle_snapshot()
+
+        # Try to play the canned message. The LiveKit session may already
+        # be shutting down (drain in flight), so guard the call — we
+        # still want the audit event for forensic completeness.
+        try:
+            await agent.session.say(
+                message, allow_interruptions=False, add_to_chat_ctx=True,
+            )
+        except Exception as exc:  # noqa: BLE001
+            structlog.get_logger().warning(
+                "interview_engine.terminal_say_failed",
+                error_class=type(exc).__name__,
+                error_message=str(exc)[:200],
+            )
+
+        self._append(SESSION_TERMINAL_DELIVERED, SessionTerminalDeliveredPayload(
+            turn_id=turn_id,
+            lifecycle_state=lifecycle_snap.state.value,  # type: ignore[arg-type]
+            lifecycle_outcome=(
+                lifecycle_snap.last_outcome.value
+                if lifecycle_snap.last_outcome else None
+            ),
+            message=message,
+        ).model_dump())
+
+        # Ensure shutdown is scheduled (idempotent).
+        if not self._shutdown_scheduled:
+            self._schedule_shutdown(agent)
+
+        self._append(TURN_COMPLETED, TurnCompletedPayload(
+            turn_id=turn_id, turn_index=self._turn_index,
+            duration_ms=self._elapsed_ms() - elapsed_ms,
+        ).model_dump())
+
+    def _schedule_shutdown(self, agent: Any) -> None:
+        """Schedule the LiveKit session to shut down. Idempotent.
+
+        ``drain=True`` waits for any in-flight speech to finish playing
+        before closing — the candidate hears the polite_close / canned
+        terminal audio fully and then the connection terminates ~1s
+        later, which is the user-visible behavior change this fixes.
+
+        The shutdown call is intentionally fire-and-forget: we don't
+        await it inside the turn handler because that would block the
+        framework's post-turn pipeline. The background task handles
+        drain semantics on its own.
+        """
+        if self._shutdown_scheduled:
+            return
+        self._shutdown_scheduled = True
+        asyncio.create_task(agent.session.shutdown(drain=True))
 
     async def _stream_speaker_and_say(
         self, *, agent: Any, turn_id: str, speaker_input: Any,

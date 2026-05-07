@@ -383,6 +383,7 @@ async def entrypoint(ctx: JobContext) -> None:
             recent_turns_window=settings.engine_recent_turns_window,
             checkpoint_turns=settings.engine_checkpoint_turns,
             checkpoint_seconds=settings.engine_checkpoint_seconds,
+            session_ended_message=settings.engine_session_ended_message,
         ),
         tenant_id=str(tenant_uuid),
     )
@@ -836,12 +837,26 @@ async def _handle_close(
     )
     agent._audio_tuning_summary = audio_summary
 
+    # Outcome priority:
+    #   1. CloseReason.ERROR  →  "error" (hard override)
+    #   2. lifecycle.last_outcome  →  whatever the structured agent set
+    #      (knockout_closed, completed, candidate_ended, time_expired, …).
+    #      This wins over participant-disconnect labeling so a polite_close
+    #      followed by a candidate-tab-close still reports as
+    #      knockout_closed / completed, not candidate_disconnected.
+    #   3. agent._end_outcome  →  fast-path label set by participant-
+    #      disconnect listener when no structured outcome was recorded.
+    #   4. fallback  →  "candidate_disconnected".
     if ev.reason == CloseReason.ERROR:
         outcome: SessionOutcome = "error"
-    elif agent._end_outcome is not None:
-        outcome = agent._end_outcome
     else:
-        outcome = "candidate_disconnected"
+        lifecycle_last = orchestrator.lifecycle_snapshot().last_outcome
+        if lifecycle_last is not None:
+            outcome = lifecycle_last.value  # type: ignore[assignment]
+        elif agent._end_outcome is not None:
+            outcome = agent._end_outcome
+        else:
+            outcome = "candidate_disconnected"
 
     if not agent._persisted:
         try:

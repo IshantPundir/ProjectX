@@ -121,3 +121,13 @@ class FrontendAttributePayload(BaseModel):
     turn_id: str | None
     attribute_name: str
     value: str
+
+
+# Session terminal — fired when lifecycle is closing/closed and a candidate
+# turn arrives. The orchestrator bypasses Judge entirely and plays a canned
+# terminal message. This event records the attempt for forensic completeness.
+class SessionTerminalDeliveredPayload(BaseModel):
+    turn_id: str
+    lifecycle_state: Literal["closing", "closed"]
+    lifecycle_outcome: str | None  # last_outcome value if set
+    message: str  # the canned terminal text actually delivered

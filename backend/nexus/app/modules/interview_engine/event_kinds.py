@@ -75,6 +75,7 @@ SPEAKER_ERROR = "speaker.error"
 LIFECYCLE_TRANSITION = "lifecycle.transition"
 CHECKPOINT_WRITTEN = "checkpoint.written"
 FRONTEND_ATTRIBUTE_PUBLISHED = "frontend.attribute.published"
+SESSION_TERMINAL_DELIVERED = "session.terminal_delivered"
 
 
 # ---------------------------------------------------------------------------
@@ -111,4 +112,5 @@ ALL_EVENT_KINDS: frozenset[str] = frozenset({
     LIFECYCLE_TRANSITION,
     CHECKPOINT_WRITTEN,
     FRONTEND_ATTRIBUTE_PUBLISHED,
+    SESSION_TERMINAL_DELIVERED,
 })
