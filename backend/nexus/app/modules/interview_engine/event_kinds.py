@@ -58,6 +58,26 @@ LLM_TOOL_EXECUTED = "llm.tool.executed"
 
 
 # ---------------------------------------------------------------------------
+# Engine turn loop (added 2026-05-07 for structured agent)
+# ---------------------------------------------------------------------------
+
+TURN_STARTED = "turn.started"
+TURN_COMPLETED = "turn.completed"
+JUDGE_CALL = "judge.call"
+JUDGE_SYNTHETIC = "judge.synthetic"
+JUDGE_FALLBACK = "judge.fallback"
+JUDGE_VALIDATION = "judge.validation"
+STATE_MUTATION = "state.mutation"
+SPEAKER_CALL = "speaker.call"
+SPEAKER_CACHED = "speaker.cached"
+SPEAKER_OUTPUT = "speaker.output"
+SPEAKER_ERROR = "speaker.error"
+LIFECYCLE_TRANSITION = "lifecycle.transition"
+CHECKPOINT_WRITTEN = "checkpoint.written"
+FRONTEND_ATTRIBUTE_PUBLISHED = "frontend.attribute.published"
+
+
+# ---------------------------------------------------------------------------
 # Aggregate registry — used by tests to assert no duplicates and by any
 # future docs-generator to enumerate every kind. Adding a constant above
 # without adding it here is a programmer error caught by
@@ -77,4 +97,18 @@ ALL_EVENT_KINDS: frozenset[str] = frozenset({
     AUDIO_TUNING_SUMMARY,
     LLM_MESSAGE_ADDED,
     LLM_TOOL_EXECUTED,
+    TURN_STARTED,
+    TURN_COMPLETED,
+    JUDGE_CALL,
+    JUDGE_SYNTHETIC,
+    JUDGE_FALLBACK,
+    JUDGE_VALIDATION,
+    STATE_MUTATION,
+    SPEAKER_CALL,
+    SPEAKER_CACHED,
+    SPEAKER_OUTPUT,
+    SPEAKER_ERROR,
+    LIFECYCLE_TRANSITION,
+    CHECKPOINT_WRITTEN,
+    FRONTEND_ATTRIBUTE_PUBLISHED,
 })
