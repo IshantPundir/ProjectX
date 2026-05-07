@@ -1,5 +1,5 @@
 from app.modules.interview_engine.judge.input_builder import (
-    JudgeInputPayload, build_judge_input,
+    ActiveSignalMeta, JudgeInputPayload, build_judge_input,
 )
 from app.modules.interview_engine.models.ledger import (
     CoverageState, SignalLedgerSnapshot, SignalSnapshot,
@@ -88,3 +88,41 @@ def test_build_judge_input_excludes_other_questions_rubric():
     assert payload.active_question_positive_evidence == ["a", "b", "c"]
     assert payload.active_question_red_flags == ["x", "y"]
     assert payload.active_question_follow_ups == ["fu0", "fu1"]
+
+
+def test_active_signal_metadata_carries_through():
+    """ActiveSignalMeta is surfaced when supplied; default is empty list."""
+    meta = [
+        ActiveSignalMeta(value="S_KO", knockout=True, priority="required"),
+        ActiveSignalMeta(value="S_PLAIN", knockout=False, priority="preferred"),
+    ]
+    payload = build_judge_input(
+        active_question=_q(),
+        ledger_snapshot=SignalLedgerSnapshot(entries=[], snapshots={}, next_seq=1),
+        queue_snapshot=QuestionQueueSnapshot(),
+        claims_snapshot=ClaimsPoolSnapshot(),
+        recent_turns=[],
+        candidate_utterance="x",
+        time_remaining_seconds=10,
+        active_signal_metadata=meta,
+    )
+    assert len(payload.active_question_signal_metadata) == 2
+    assert payload.active_question_signal_metadata[0].value == "S_KO"
+    assert payload.active_question_signal_metadata[0].knockout is True
+    assert payload.active_question_signal_metadata[0].priority == "required"
+    assert payload.active_question_signal_metadata[1].knockout is False
+    assert payload.active_question_signal_metadata[1].priority == "preferred"
+
+
+def test_active_signal_metadata_default_empty_list():
+    """When the caller omits active_signal_metadata, the field is an empty list."""
+    payload = build_judge_input(
+        active_question=_q(),
+        ledger_snapshot=SignalLedgerSnapshot(entries=[], snapshots={}, next_seq=1),
+        queue_snapshot=QuestionQueueSnapshot(),
+        claims_snapshot=ClaimsPoolSnapshot(),
+        recent_turns=[],
+        candidate_utterance="x",
+        time_remaining_seconds=10,
+    )
+    assert payload.active_question_signal_metadata == []

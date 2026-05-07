@@ -6,6 +6,8 @@ post-session by the Report Builder.
 """
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from app.modules.interview_engine.models.claims import ClaimsPoolSnapshot
@@ -14,6 +16,21 @@ from app.modules.interview_engine.models.queue import QuestionQueueSnapshot
 from app.modules.interview_runtime import (
     QuestionConfig, TranscriptEntry,
 )
+
+
+class ActiveSignalMeta(BaseModel):
+    """Per-signal metadata projected from SessionConfig.signal_metadata.
+
+    Surfaces the knockout flag (and priority) for the *active* question's
+    signals so the Judge can phrase its `thought` reasoning with the
+    right context. Enforcement of knockout policy still happens
+    deterministically at the State Engine layer; this is purely
+    informational.
+    """
+
+    value: str
+    knockout: bool
+    priority: Literal["required", "preferred"]
 
 
 class JudgeInputPayload(BaseModel):
@@ -26,6 +43,15 @@ class JudgeInputPayload(BaseModel):
     active_question_follow_ups: list[str] = Field(default_factory=list)
     active_question_rubric: dict[str, str] = Field(default_factory=dict)
     active_question_evaluation_hint: str | None = None
+    active_question_signal_metadata: list[ActiveSignalMeta] = Field(
+        default_factory=list,
+        description=(
+            "Per-signal metadata for the active question's signals — "
+            "carries the knockout flag so the Judge can identify which "
+            "?->failed observations are session-ending. Enforcement is "
+            "still done by the State Engine; this is informational."
+        ),
+    )
 
     ledger_snapshot: SignalLedgerSnapshot
     queue_snapshot: QuestionQueueSnapshot
@@ -45,6 +71,7 @@ def build_judge_input(
     recent_turns: list[TranscriptEntry],
     candidate_utterance: str,
     time_remaining_seconds: int,
+    active_signal_metadata: list[ActiveSignalMeta] | None = None,
 ) -> JudgeInputPayload:
     return JudgeInputPayload(
         active_question_id=active_question.id if active_question else None,
@@ -64,6 +91,7 @@ def build_judge_input(
         active_question_evaluation_hint=(
             active_question.evaluation_hint if active_question else None
         ),
+        active_question_signal_metadata=list(active_signal_metadata or []),
         ledger_snapshot=ledger_snapshot,
         queue_snapshot=queue_snapshot,
         claims_snapshot=claims_snapshot,

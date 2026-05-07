@@ -135,7 +135,9 @@ class InterviewOrchestrator:
             stt_text_raw=candidate_text, stt_text_used=candidate_text,
         ).model_dump())
 
-        from app.modules.interview_engine.judge.input_builder import build_judge_input
+        from app.modules.interview_engine.judge.input_builder import (
+            ActiveSignalMeta, build_judge_input,
+        )
         active_qid = self._state.queue_snapshot().active_index
         active_q_cfg = (
             self._cfg.stage.questions[active_qid] if active_qid is not None else None
@@ -145,11 +147,28 @@ class InterviewOrchestrator:
         claims = self._state.claims_snapshot()
         recent = self._state.transcript_snapshot()[-self._config.recent_turns_window:]
         time_remaining = int(self._state.lifecycle_snapshot().time_remaining_seconds())
+
+        # Project the active question's signal_values to ActiveSignalMeta
+        # so the Judge can see knockout flags. Enforcement still happens
+        # deterministically at the State Engine — this is informational.
+        active_signal_meta: list[ActiveSignalMeta] = []
+        if active_q_cfg is not None:
+            sig_meta_map = {sm.value: sm for sm in self._cfg.signal_metadata}
+            for sv in active_q_cfg.signal_values:
+                sm = sig_meta_map.get(sv)
+                if sm is not None:
+                    active_signal_meta.append(ActiveSignalMeta(
+                        value=sm.value,
+                        knockout=sm.knockout,
+                        priority=sm.priority,
+                    ))
+
         judge_input = build_judge_input(
             active_question=active_q_cfg,
             ledger_snapshot=ledger, queue_snapshot=queue, claims_snapshot=claims,
             recent_turns=recent, candidate_utterance=candidate_text,
             time_remaining_seconds=time_remaining,
+            active_signal_metadata=active_signal_meta,
         )
 
         result = await self._judge.call(
