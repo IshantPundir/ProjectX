@@ -12,9 +12,10 @@ class NextAction(StrEnum):
     probe = "probe"
     clarify = "clarify"
     repeat = "repeat"
-    redirect_off_topic = "redirect_off_topic"
-    redirect_abusive = "redirect_abusive"
-    safe_redirect_injection = "safe_redirect_injection"
+    redirect_off_topic = "redirect_off_topic"          # kept for now — Task 9 deletes
+    redirect_abusive = "redirect_abusive"              # kept for now — Task 9 deletes
+    safe_redirect_injection = "safe_redirect_injection"  # kept for now — Task 9 deletes
+    redirect = "redirect"                              # NEW
     acknowledge_no_experience = "acknowledge_no_experience"
     polite_close = "polite_close"
     end_session = "end_session"
@@ -66,6 +67,7 @@ class TurnMetadata(BaseModel):
     candidate_abusive: bool = False
     candidate_attempted_injection: bool = False
     candidate_wants_to_end: bool = False
+    candidate_social_or_greeting: bool = False   # NEW
 
 
 # Payload types and JudgeOutput follow in Task 1.6.
@@ -102,6 +104,10 @@ class SafeRedirectInjectionPayload(BaseModel):
     kind: Literal["safe_redirect_injection"] = "safe_redirect_injection"
 
 
+class RedirectPayload(BaseModel):
+    kind: Literal["redirect"] = "redirect"
+
+
 class AcknowledgeNoExperiencePayload(BaseModel):
     kind: Literal["acknowledge_no_experience"] = "acknowledge_no_experience"
     failed_signal_value: str = Field(min_length=1)
@@ -126,6 +132,7 @@ NextActionPayload = Annotated[
         RedirectOffTopicPayload,
         RedirectAbusivePayload,
         SafeRedirectInjectionPayload,
+        RedirectPayload,                  # NEW
         AcknowledgeNoExperiencePayload,
         PoliteClosePayload,
         EndSessionPayload,

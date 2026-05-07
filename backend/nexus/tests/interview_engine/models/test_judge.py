@@ -30,6 +30,7 @@ def test_next_action_values():
         "redirect_off_topic",
         "redirect_abusive",
         "safe_redirect_injection",
+        "redirect",
         "acknowledge_no_experience",
         "polite_close",
         "end_session",
@@ -169,3 +170,28 @@ def test_judge_output_thought_length_capped():
             next_action_payload=AdvancePayload(target_question_id="q-1"),
             turn_metadata=TurnMetadata(),
         )
+
+
+def test_redirect_action_with_payload():
+    """New `redirect` action accepts a single RedirectPayload."""
+    from app.modules.interview_engine.models.judge import (
+        JudgeOutput, NextAction, RedirectPayload, TurnMetadata,
+    )
+    output = JudgeOutput(
+        thought="off-topic; redirect",
+        observations=[],
+        candidate_claims=[],
+        next_action=NextAction.redirect,
+        next_action_payload=RedirectPayload(),
+        turn_metadata=TurnMetadata(candidate_off_topic=True),
+    )
+    assert output.next_action == NextAction.redirect
+    assert output.next_action_payload.kind == "redirect"
+
+
+def test_turn_metadata_has_social_greeting_flag():
+    from app.modules.interview_engine.models.judge import TurnMetadata
+    md = TurnMetadata(candidate_social_or_greeting=True)
+    assert md.candidate_social_or_greeting is True
+    # Default false on a fresh instance.
+    assert TurnMetadata().candidate_social_or_greeting is False
