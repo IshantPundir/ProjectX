@@ -196,9 +196,43 @@ class InterviewOrchestrator:
 
         raise StopResponse()
 
-    async def on_close(self, agent: Any, audio_tuning_summary: dict | None) -> Any:
-        # Implementation in Task 8.5.
-        raise NotImplementedError("on_close implemented in Task 8.5")
+    async def on_close(
+        self, agent: Any, audio_tuning_summary: dict | None,
+    ) -> "SessionResult":
+        from app.modules.interview_runtime import SessionResult
+        from datetime import datetime, timezone
+
+        ledger = self._state.ledger_snapshot()
+        queue = self._state.queue_snapshot()
+        claims = self._state.claims_snapshot()
+        lifecycle = self._state.lifecycle_snapshot()
+
+        questions_asked = sum(
+            1 for q in queue.questions
+            if q.main_asked_at_turn is not None
+        )
+        total_probes = sum(len(q.probes_asked_ids) for q in queue.questions)
+        duration = (time.monotonic() - (self._session_started_monotonic or time.monotonic()))
+
+        return SessionResult(
+            session_id=self._cfg.session_id,
+            job_title=self._cfg.job_title,
+            stage_id=self._cfg.stage.stage_id,
+            stage_type=self._cfg.stage.stage_type,
+            candidate_name=self._cfg.candidate.name,
+            duration_seconds=max(0.0, duration),
+            questions_asked=questions_asked,
+            questions_skipped=0,  # locked: structured agent never skips
+            total_probes_fired=total_probes,
+            full_transcript=self._state.transcript_snapshot(),
+            completed_at=datetime.now(timezone.utc).isoformat(),
+            knockout_failures=lifecycle.knockout_failures,
+            audio_tuning_summary=audio_tuning_summary,
+            signal_ledger=ledger,
+            question_queue=queue,
+            claims_pool=claims,
+            audit_envelope_ref=None,  # set by entrypoint after sink.write()
+        )
 
     # --- Internals ---
 
@@ -306,3 +340,38 @@ class InterviewOrchestrator:
                 turn_id=turn_id, level=w.level,
                 code=w.code, details=w.details,
             ).model_dump())
+
+    async def maybe_checkpoint(self, *, db: Any) -> bool:
+        """Write engine_checkpoint if cadence threshold reached. Returns True if written."""
+        if not hasattr(self, "_last_checkpoint_turn"):
+            self._last_checkpoint_turn = -1
+            self._last_checkpoint_monotonic = self._session_started_monotonic or time.monotonic()
+        turns_since = self._turn_index - self._last_checkpoint_turn
+        seconds_since = time.monotonic() - self._last_checkpoint_monotonic
+        if (
+            turns_since < self._config.checkpoint_turns
+            and seconds_since < self._config.checkpoint_seconds
+        ):
+            return False
+        checkpoint = self._state.to_checkpoint(
+            last_audit_seq_flushed=len(self._collector.events),
+            captured_at_ms=int(time.time() * 1000),
+        )
+        from sqlalchemy import update
+        from app.modules.session.models import Session
+        await db.execute(
+            update(Session)
+            .where(Session.id == self._cfg.session_id)
+            .values(engine_checkpoint=checkpoint.model_dump(mode="json"))
+        )
+        await db.commit()
+        from app.modules.interview_engine.event_kinds import CHECKPOINT_WRITTEN
+        from app.modules.interview_engine.audit_events import CheckpointWrittenPayload
+        self._append(CHECKPOINT_WRITTEN, CheckpointWrittenPayload(
+            turn_id="",
+            last_audit_seq_flushed=checkpoint.last_audit_seq_flushed,
+            captured_at_ms=checkpoint.captured_at_ms,
+        ).model_dump())
+        self._last_checkpoint_turn = self._turn_index
+        self._last_checkpoint_monotonic = time.monotonic()
+        return True

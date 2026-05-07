@@ -258,3 +258,42 @@ async def test_speaker_error_triggers_canned_recovery(make_session_config, make_
 
     from app.modules.interview_engine.event_kinds import SPEAKER_ERROR
     assert SPEAKER_ERROR in [e.kind for e in collector.events]
+
+
+@pytest.mark.asyncio
+async def test_on_close_returns_session_result_with_snapshots(make_session_config, make_question, make_judge_output):
+    cfg = make_session_config(
+        questions=[make_question(qid="q1", text="What is your first question response?")],
+        signals=["S1"],
+    )
+    speaker_service = MagicMock()
+    speaker_service.stream = AsyncMock(return_value=_FakeSpeakerHandle("hello"))
+    judge_service = MagicMock()
+
+    room = MagicMock()
+    room.local_participant.set_attributes = AsyncMock()
+    pub = AttributePublisher(room=room)
+    fake_session = MagicMock()
+    fake_session.say = AsyncMock()
+    fake_agent = MagicMock()
+    fake_agent.session = fake_session
+
+    state_engine = StateEngine(session_config=cfg)
+    collector = _collector()
+    orch = InterviewOrchestrator(
+        session_config=cfg,
+        tenant_settings=MagicMock(engine_agent_name=None),
+        state_engine=state_engine,
+        judge=judge_service, speaker=speaker_service,
+        attr_publisher=pub, event_collector=collector,
+        correlation_id="c", config=OrchestratorConfig(),
+    )
+    await orch.on_enter(fake_agent)
+
+    result = await orch.on_close(fake_agent, audio_tuning_summary={"hint": "x"})
+    assert result.session_id == cfg.session_id
+    assert result.signal_ledger.next_seq >= 1
+    assert result.audio_tuning_summary == {"hint": "x"}
+    assert result.questions_skipped == 0
+    assert result.questions_asked >= 1
+    assert isinstance(result.audit_envelope_ref, (str, type(None)))
