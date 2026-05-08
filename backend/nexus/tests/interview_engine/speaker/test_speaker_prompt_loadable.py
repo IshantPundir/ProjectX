@@ -52,3 +52,21 @@ def test_clarify_handles_generic_confusion_via_rephrase():
     # The legacy unconditional pick-a-term phrase must be gone.
     assert "Pick the ONE most relevant term to explain" not in body, \
         "clarify.txt's old pick-a-term-on-your-own logic was the rubric-leak vector"
+
+
+def test_deliver_probe_default_no_recap():
+    """The probe scaffold must default to no-recap (just ask the next
+    question). Echoing the candidate's prior utterance must be the
+    EXCEPTION (only when there's a specific terminology hook), not the
+    default."""
+    from app.ai.prompts import prompt_loader
+    body = prompt_loader.load_pair(
+        "engine/speaker/_preamble",
+        "engine/speaker/deliver_probe",
+    )
+    body_lower = body.lower()
+    # The new prompt must explicitly say "default" + "no recap" or equivalent.
+    assert "default" in body_lower
+    # Recap/echo must be conditional, not unconditional.
+    assert "rare" in body_lower or "exception" in body_lower or "only" in body_lower, \
+        "deliver_probe.txt must mark echo as a rare/exception path, not the default"
