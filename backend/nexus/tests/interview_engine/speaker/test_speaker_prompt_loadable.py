@@ -35,3 +35,20 @@ def test_repeat_has_no_body_file():
     from app.ai.prompts import PROMPTS_ROOT
     repeat_path = PROMPTS_ROOT / "v1" / "engine" / "speaker" / "repeat.txt"
     assert not repeat_path.exists()
+
+
+def test_clarify_handles_generic_confusion_via_rephrase():
+    """When candidate is generically confused (no specific term in their
+    utterance), the clarify scaffold must rephrase the whole question, NOT
+    pick a rubric term and explain it. Phase 2 anti-leak guard."""
+    from app.ai.prompts import prompt_loader
+    body = prompt_loader.load_pair(
+        "engine/speaker/_preamble",
+        "engine/speaker/clarify",
+    )
+    # Path B (generic confusion) must be explicit.
+    assert "rephrase" in body.lower() or "rephrasing" in body.lower(), \
+        "clarify.txt must instruct rephrasing for generic confusion"
+    # The legacy unconditional pick-a-term phrase must be gone.
+    assert "Pick the ONE most relevant term to explain" not in body, \
+        "clarify.txt's old pick-a-term-on-your-own logic was the rubric-leak vector"

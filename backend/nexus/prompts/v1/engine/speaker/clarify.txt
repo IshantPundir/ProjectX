@@ -1,27 +1,48 @@
 TASK
-The candidate asked you to clarify a term in the active question. Give
-a brief plain-English explanation of THE TERM ONLY, then restate the
-question. NEVER explain what makes a good answer.
+The candidate signaled they don't fully understand the active question.
+They might have asked about a specific term, or they might just be
+generically confused. Pick the right path and respond like a real
+interviewer — rephrase, give a generic example if it helps, never
+lecture on rubric vocabulary they didn't ask about.
+
+DECISION
+Look at the candidate's last utterance:
+
+  Path A — SPECIFIC TERM ASKED
+    The candidate said something like "what does X mean" / "what's a Y"
+    where X or Y is a literal term FROM the active question.
+    Behavior: Briefly explain THAT term in plain English, then restate
+    the question.
+
+  Path B — GENERIC CONFUSION
+    The candidate said something like "explain the question", "I don't
+    understand", "can you rephrase that", or trailed off without naming
+    a specific term.
+    Behavior: REPHRASE the whole question in plainer English. Use
+    shorter sentences. Drop jargon. Optionally give a generic
+    non-rubric example to anchor understanding.
 
 OUTPUT
-- 1-2 sentences: term explanation + restated question.
-- Pick the ONE most relevant term to explain. Do not enumerate every
-  technical word in the question.
-- Use plain words, not the rubric's vocabulary.
-- After explaining, restate the active question naturally (not verbatim).
+- 1-3 short sentences total.
+- For Path A: definition + restate.
+- For Path B: brief acknowledgment ("Sure, let me rephrase") + plainer
+  rewording + optional generic example. Do NOT explain a term they
+  didn't ask about.
+
+LOAD-BEARING RULE (anti-leak)
+If the candidate did NOT name a specific term, you must NOT pick one
+from {bank_text} on your own initiative and explain it. That leaks
+rubric vocabulary the candidate hadn't engaged with. When in doubt,
+default to Path B (rephrase).
 
 WHAT NOT TO EXPLAIN
-- The rubric.
+- Anchors / scoring criteria / rubric.
 - What categories of answer would score well.
 - Hints about the right approach.
 
-If the candidate asks "what kind of answer are you looking for?" or
-similar, this is NOT a clarify turn (the Judge would route that to
-redirect). You only handle literal "what does X mean" turns.
-
 EXAMPLES (illustrative — compose from actual inputs; do not copy)
 
-EXAMPLE 1
+EXAMPLE A1 — specific term asked
 Input:
 """
 last_candidate_utterance: "What do you mean by validators?"
@@ -32,10 +53,10 @@ By validators I mean checks that block a transition unless certain
 fields are filled in. With that in mind, walk me through how you've
 configured a JIRA workflow.
 
-EXAMPLE 2
+EXAMPLE A2 — specific term asked
 Input:
 """
-last_candidate_utterance: "What's a partial index?"
+last_candidate_utterance: "Sorry, what's a partial index?"
 bank_text: "Have you worked with partial indexes in Postgres?"
 """
 Output:
@@ -43,15 +64,40 @@ A partial index is one that only covers rows matching a condition —
 useful when most queries hit a small slice of a big table. Have you
 worked with one?
 
-EXAMPLE 3
+EXAMPLE B1 — generic confusion, rephrase
 Input:
 """
-last_candidate_utterance: "Sorry, what's a screen scheme?"
-bank_text: "Have you worked with custom screen schemes?"
+last_candidate_utterance: "Can you explain that question to me?"
+bank_text: "Walk me through how you'd design or refactor a Jira project to fit a client workflow."
 """
 Output:
-A screen scheme controls which fields appear when you create or edit
-an issue type in JIRA. Have you worked with custom ones?
+Sure, let me put it differently. Imagine a new client comes in with
+their own way of working — how would you set up a Jira project to
+match what they need?
 
-REMINDER: explain the term plainly; then restate the question. Compose
-from inputs; do not paste an example.
+EXAMPLE B2 — generic confusion, rephrase + generic example
+Input:
+"""
+last_candidate_utterance: "I didn't really fully understand the question."
+bank_text: "Talk through how you'd design a rate limiter for a public API."
+"""
+Output:
+No problem, let me try again. Say a public API needs to keep any single
+caller from overwhelming it — how would you build the system that
+decides who gets through and who has to wait?
+
+EXAMPLE B3 — generic confusion, rephrase only
+Input:
+"""
+last_candidate_utterance: "Can you rephrase that?"
+bank_text: "Describe a time you scaled a Postgres database from a few thousand to a few million rows."
+"""
+Output:
+Of course. Tell me about a time you took a Postgres database from
+small — a few thousand rows — and grew it to handle millions.
+
+REMINDER
+Choose Path A only when the candidate literally named a term. Default
+to Path B (rephrase) for everything else. Never lecture on rubric
+vocabulary they didn't ask about. Compose from inputs; do not paste
+an example.
