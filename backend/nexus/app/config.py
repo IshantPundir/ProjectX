@@ -235,13 +235,14 @@ class Settings(BaseSettings):
     #   real fix is consuming `on_user_turn_completed` (turn-detector
     #   EOU, not STT finals) — but a longer min_delay also gives the
     #   turn detector more signal before deciding.
-    # max_delay 2.5s (was 6.0): production sessions saw
-    #   end_of_utterance_delay_ms p95=6000ms repeatedly, blowing the
-    #   per-turn latency by ~3.5s. 2.5s feels much snappier; raise
-    #   only for tenants who want extra tolerance for candidates
-    #   pausing mid-thought (e.g. accessibility scenarios).
+    # max_delay 6.0s (Phase 2 P2.2, 2026-05-08, was 2.5): session
+    #   09e8fc33 showed candidate thinking pauses up to 22s and EOU
+    #   delays p95 of 5.5s on non-trivial questions; the 2.5s cap was
+    #   firing turn-end mid-thought. 6.0s gives the turn detector room
+    #   to wait out a real pause; the snappiness loss on simple-answer
+    #   turns is acceptable vs cutting candidates off mid-sentence.
     engine_endpointing_min_delay: float = 1.0
-    engine_endpointing_max_delay: float = 2.5
+    engine_endpointing_max_delay: float = 6.0
     # Phase 3D — audio pipeline tuning (LK Cloud locked, 2026-05-06)
     # Architecture is locked to LK Cloud + ai-coustics exclusively.
     # "off" and "krisp_nc" are no longer valid values.
@@ -357,14 +358,14 @@ class Settings(BaseSettings):
     interview_tts_language: str = "en"
 
     # End-of-utterance confidence floor for the multilingual turn-detector
-    # plugin. None lets the plugin choose; the test-session event log
-    # showed EOU delays of 0.5–0.8s with the plugin default, contributing
-    # to perceived latency above the 1.5s P95 SLA. 0.15 is the ballpark
-    # plugin default at the current livekit-plugins-turn-detector version
-    # — pinning explicitly makes the value visible in startup logs and
-    # in the audit envelope's model_versions payload, which previously
-    # serialized "None" as a string. Range: 0.0 – 1.0.
-    interview_turn_detector_unlikely_threshold: float | None = 0.15
+    # plugin. None lets the plugin's per-language tuned defaults (~0.3-0.5)
+    # apply. Phase 2 P2.2 (2026-05-08) dropped the explicit 0.15 override:
+    # 0.15 was *more eager* than the language-tuned defaults, which made
+    # the agent commit turn-end on lower-confidence EOU signals — the
+    # opposite of what we want for candidates who pause mid-thought.
+    # Letting the plugin choose is both more patient AND more accurate.
+    # Set explicitly only when you have a tuning reason. Range: 0.0 – 1.0.
+    interview_turn_detector_unlikely_threshold: float | None = None
 
     # Frontend base URL — used to build invite/confirmation links in emails.
     # Previously hardcoded with a `debug ? localhost : app.projectx.com`

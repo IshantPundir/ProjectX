@@ -48,14 +48,29 @@ def test_aiconfig_exposes_engine_models(monkeypatch):
     assert cfg.engine_speaker_model == "def"
 
 
-def test_engine_endpointing_max_delay_default_is_snappy(monkeypatch):
-    """The default endpointing max delay was lowered from 6.0 → 2.5
-    after production sessions repeatedly saw end_of_utterance_delay_ms
-    p95 hit the upper bound, blowing per-turn latency budgets.
+def test_engine_endpointing_max_delay_default_is_patient(monkeypatch):
+    """The default endpointing max delay was raised from 2.5 → 6.0 in
+    Phase 2 P2.2 (2026-05-08). Session 09e8fc33 showed candidate
+    thinking pauses up to 22s and EOU delays p95 of 5.5s; the previous
+    2.5s cap was firing turn-end mid-thought.
 
     The default lives in code, but the test asserts it explicitly so a
-    silent regression to 6.0 (or any value > 5.0) gets flagged in CI.
+    silent regression back to a snappier value (which would re-introduce
+    mid-sentence cutoffs) gets flagged.
     """
     monkeypatch.delenv("ENGINE_ENDPOINTING_MAX_DELAY", raising=False)
     s = Settings()
-    assert s.engine_endpointing_max_delay == 2.5
+    assert s.engine_endpointing_max_delay == 6.0
+
+
+def test_interview_turn_detector_unlikely_threshold_default_is_none(monkeypatch):
+    """Phase 2 P2.2 (2026-05-08) dropped the explicit 0.15 override.
+    The plugin's per-language tuned defaults (~0.3-0.5) are both more
+    patient (higher threshold = require higher EOU confidence to commit
+    turn-end) and more accurate than a single hand-picked override.
+    """
+    from app.ai.config import AIConfig
+
+    monkeypatch.delenv("INTERVIEW_TURN_DETECTOR_UNLIKELY_THRESHOLD", raising=False)
+    cfg = AIConfig()
+    assert cfg.interview_turn_detector_unlikely_threshold is None
