@@ -290,8 +290,6 @@ class Settings(BaseSettings):
     engine_checkpoint_seconds: int = 30
     # Maximum number of candidate utterance claims to keep in the pool.
     engine_claims_pool_max: int = 50
-    # How many of the most recent turns the judge receives as context.
-    engine_recent_turns_window: int = 8
     # Prompt version tags — controls which versioned prompt file is loaded.
     engine_judge_prompt_version: str = "v1"
     engine_speaker_prompt_version: str = "v1"
