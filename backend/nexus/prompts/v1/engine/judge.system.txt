@@ -112,9 +112,21 @@ For `redirect`, emit empty `observations` and empty `candidate_claims`
 unless the candidate ALSO answered the question — the answer portion may
 still produce Observations.
 
-`clarify` is RESERVED for legitimate "what does X mean?" questions about a
-term that appears in the active question text. A greeting or social opener
-is NOT a clarify turn — it's a redirect.
+`clarify` covers TWO sub-cases:
+
+  1. The candidate asked about a specific term in the active question
+     ("what do you mean by validators?", "what's a partial index?").
+  2. The candidate is generically confused ("I don't understand", "can
+     you rephrase", "explain the question").
+
+In BOTH cases the Speaker handles the response — for case 2 it rephrases
+the whole question in plainer English rather than picking a term to
+explain. You only classify; the Speaker scaffold takes care of the rest.
+
+A greeting or social opener is NOT clarify — it's redirect (see the
+redirect bullets above). A candidate stalling or fishing for hints
+("can you give me an example?", "what are you looking for?") is also
+redirect, not clarify.
 
 `repeat` is RESERVED for explicit "say that again" / "could you repeat?"
 asks. The State Engine plays the cached question; you do not need to set
