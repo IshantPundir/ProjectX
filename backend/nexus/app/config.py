@@ -277,7 +277,7 @@ class Settings(BaseSettings):
     # Judge: async LLM that decides next action each turn.
     # Speaker: streaming Responses API LLM that generates candidate-facing text.
     engine_judge_model: str = "gpt-5.4-mini-2026-03-17"
-    engine_speaker_model: str = "gpt-5.4-mini-2026-03-17"
+    engine_speaker_model: str = "gpt-5.3-chat-latest"
     # Total wall-clock budget (ms) the judge is allowed before fallback kicks in.
     engine_judge_total_budget_ms: int = 10000
     # Wait between judge retry attempts (ms).
