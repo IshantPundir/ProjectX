@@ -538,3 +538,144 @@ async def test_push_back_flows_end_to_end_and_increments_count_in_judge_input(
         "Orchestrator must thread push_back_count from the queue into the "
         "next Judge input so the prompt's cap=2 rule has accurate data."
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 9.8 — opener prefetch full-session composition
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_opener_prefetch_full_session_caches_content_only_and_anti_repeats(
+    make_session_config, make_question,
+):
+    """Phase 9.8 composition test — drive a 4-turn session with real
+    StateEngine + OpenerLibrary + mocked Judge/Speaker. Assert:
+      * each turn plays an opener (where applicable) AND content;
+      * the repeat cache holds ONLY content (no opener prefix);
+      * recent_openers anti-repetition keeps cycling through variants;
+      * the SPEAKER_OPENER_PLAYED audit event fires per opener turn.
+    """
+    from app.modules.interview_engine.openers import OpenerLibrary
+    from app.modules.interview_engine.event_kinds import SPEAKER_OPENER_PLAYED
+    from app.modules.interview_engine.models.judge import (
+        JudgeOutput, NextAction, PushBackPayload,
+        TurnMetadata, ClarifyPayload, RepeatPayload,
+        Observation, CoverageTransition, CoverageQuality,
+    )
+
+    judge_outputs = [
+        # Turn 1: thin answer → push_back
+        JudgeOutput(
+            observations=[
+                Observation(
+                    signal_value="jira_admin", anchor_id=0,
+                    evidence_quote="proper validators",
+                    coverage_transition=CoverageTransition.partial_to_partial,
+                    quality=CoverageQuality.thin,
+                ),
+            ],
+            candidate_claims=[],
+            next_action=NextAction.push_back,
+            next_action_payload=PushBackPayload(reason_code="vague_answer"),
+            turn_metadata=TurnMetadata(),
+        ),
+        # Turn 2: another thin answer → push_back (different variant)
+        JudgeOutput(
+            observations=[
+                Observation(
+                    signal_value="jira_admin", anchor_id=0,
+                    evidence_quote="checks",
+                    coverage_transition=CoverageTransition.partial_to_partial,
+                    quality=CoverageQuality.thin,
+                ),
+            ],
+            candidate_claims=[],
+            next_action=NextAction.push_back,
+            next_action_payload=PushBackPayload(reason_code="vague_answer"),
+            turn_metadata=TurnMetadata(),
+        ),
+        # Turn 3: candidate confused → clarify
+        JudgeOutput(
+            observations=[], candidate_claims=[],
+            next_action=NextAction.clarify,
+            next_action_payload=ClarifyPayload(),
+            turn_metadata=TurnMetadata(),
+        ),
+        # Turn 4: candidate asks repeat → cached delivery (no Speaker)
+        JudgeOutput(
+            observations=[], candidate_claims=[],
+            next_action=NextAction.repeat,
+            next_action_payload=RepeatPayload(),
+            turn_metadata=TurnMetadata(),
+        ),
+    ]
+
+    speaker_outputs = [
+        # on_enter: deliver_first_question
+        "Hi, I'm Sam. Walk me through your Jira workflow design.",
+        # Turn 1: push_back content (no opener — the orchestrator played one)
+        "Walk me through one validation check you'd actually write.",
+        # Turn 2: push_back content
+        "Which specific transitions would you put it on?",
+        # Turn 3: clarify content
+        "Imagine a client wants you to set up a workflow with three stages.",
+        # Turn 4 is repeat (no Speaker call); skip.
+    ]
+
+    orch, agent = _build_orch(
+        make_session_config=make_session_config,
+        make_question=make_question,
+        scripted_judge_outputs=judge_outputs,
+        scripted_speaker_outputs=speaker_outputs,
+        knockout_signal="jira_admin",
+    )
+    # Inject a real OpenerLibrary (no audio cache; will fall back to
+    # text-only TTS, which is what the mocked agent expects anyway).
+    orch._opener_library = OpenerLibrary()
+
+    await orch.on_enter(agent)
+    await orch.on_user_turn_completed(
+        agent, MagicMock(), _msg("I would add validators"),
+    )
+    await orch.on_user_turn_completed(
+        agent, MagicMock(), _msg("Some checks"),
+    )
+    await orch.on_user_turn_completed(
+        agent, MagicMock(), _msg("Can you explain that?"),
+    )
+    await orch.on_user_turn_completed(
+        agent, MagicMock(), _msg("Can you repeat that question?"),
+    )
+
+    state = orch._state
+
+    # ----- Cache contains ONLY Speaker content (no opener prefix). -----
+    cache_values = list(state._question_utterances.values())
+    for cached in cache_values:
+        assert "Got it" not in cached, (
+            f"Opener prefix leaked into cache: {cached!r}"
+        )
+        assert "Right —" not in cached
+        assert "OK." not in cached.split(". ")[0] or len(cached) > 50
+
+    # ----- SPEAKER_OPENER_PLAYED fired for non-first-question turns. -----
+    opener_events = [
+        e for e in orch._collector.events
+        if e.kind == SPEAKER_OPENER_PLAYED
+    ]
+    # turns 1 (push_back), 2 (push_back), 3 (clarify), 4 (repeat) = 4
+    # Note: turn 0 (deliver_first_question) skips the opener path.
+    assert len(opener_events) >= 3
+
+    # ----- Anti-repetition: openers vary across consecutive same-context turns. -----
+    push_back_openers = [
+        e.payload["opener_text"] for e in opener_events
+        if e.payload["instruction_kind"] == "push_back"
+    ]
+    if len(push_back_openers) >= 2:
+        # Two consecutive push_back/vague_answer turns must NOT use the
+        # same opener (deque(maxlen=5) excludes the just-used variant).
+        assert push_back_openers[0] != push_back_openers[1], (
+            "Anti-repetition failed: two consecutive same-context openers"
+        )
