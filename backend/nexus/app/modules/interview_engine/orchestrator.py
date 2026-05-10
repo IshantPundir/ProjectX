@@ -642,11 +642,31 @@ class InterviewOrchestrator:
         # 5. After opener finishes, await Speaker stream and pipe to TTS.
         # 6. Cache ONLY the Speaker content for repeat replay (no opener).
         sub_ctx = _derive_sub_context(speaker_input)
-        opener = self._opener_library.pick(
-            kind=speaker_input.instruction_kind,
-            sub_context=sub_ctx,
-            recent_openers=self._recent_openers,
-        )
+        # Phase 3 — per-session persona intro routing.
+        # deliver_first_question + intro_variant set → use the per-session
+        # pre-synthesized intro (composed at agent entrypoint with the
+        # tenant's persona_name). All other kinds + sub_contexts route
+        # through the static OpenerLibrary as today.
+        if (
+            speaker_input.instruction_kind == InstructionKind.deliver_first_question
+            and self._intro_variant is not None
+        ):
+            from app.modules.interview_engine.openers import OpenerSelection
+            audio_iter_factory = (
+                (lambda: iter(self._intro_variant.audio_frames))
+                if self._intro_variant.audio_frames is not None
+                else None
+            )
+            opener = OpenerSelection(
+                text=self._intro_variant.text,
+                audio_iter=audio_iter_factory,
+            )
+        else:
+            opener = self._opener_library.pick(
+                kind=speaker_input.instruction_kind,
+                sub_context=sub_ctx,
+                recent_openers=self._recent_openers,
+            )
         speaker_input_with_opener = speaker_input.model_copy(
             update={"pre_spoken_opener": opener.text},
         )
