@@ -83,18 +83,16 @@ def make_judge_output():
         action: NextAction = NextAction.advance,
         target: str = "q1",
         probe_id: str = "0",
-        probe_rationale: str = "r",
         observations: list | None = None,
         claims: list | None = None,
     ) -> JudgeOutput:
         if action == NextAction.advance:
             payload = AdvancePayload(target_question_id=target)
         elif action == NextAction.probe:
-            payload = ProbePayload(probe_id=probe_id, probe_rationale=probe_rationale)
+            payload = ProbePayload(probe_id=probe_id)
         else:
             raise ValueError(f"factory does not support {action}; build directly")
         return JudgeOutput(
-            thought="t",
             observations=observations or [],
             candidate_claims=claims or [],
             next_action=action,

@@ -16,6 +16,21 @@ class NextAction(StrEnum):
     acknowledge_no_experience = "acknowledge_no_experience"
     polite_close = "polite_close"
     end_session = "end_session"
+    push_back = "push_back"
+
+
+class CoverageQuality(StrEnum):
+    """Per-observation quality grade — see judge prompt §4.5.
+
+    Distinguishes "candidate covered the signal" from "covered it well."
+    The State Engine uses this to gate `advance`: at least one observation
+    on the active question must reach ``concrete`` or ``strong`` for an
+    advance to land cleanly. All-thin coverage triggers a downgrade to
+    ``push_back`` with reason_code=missing_specifics.
+    """
+    thin = "thin"
+    concrete = "concrete"
+    strong = "strong"
 
 
 class CoverageTransition(StrEnum):
@@ -43,6 +58,16 @@ class Observation(BaseModel):
     )
     evidence_quote: str = Field(min_length=1, max_length=500)
     coverage_transition: CoverageTransition
+    quality: CoverageQuality = Field(
+        default=CoverageQuality.concrete,
+        description=(
+            "Per-observation density grade. `thin` = generic, no specifics; "
+            "`concrete` = names a tool/technique/example; `strong` = concrete "
+            "+ tradeoffs/numbers/edge cases. Default ``concrete`` keeps "
+            "back-compat with pre-v2 sessions and the synthesizer fallback. "
+            "See judge prompt §4.5 for grading rubric and verbatim examples."
+        ),
+    )
 
 
 class ClaimEntry(BaseModel):
@@ -54,7 +79,11 @@ class ClaimEntry(BaseModel):
 
     claim_topic: str = Field(min_length=1, max_length=40)
     claim_text: str = Field(min_length=1, max_length=200)
-    source_quote: str = Field(min_length=1, max_length=500)
+    # source_quote cap reduced from 500 → 120: the verbatim quote is already
+    # in the transcript carried alongside the claim, and the longer cap was
+    # letting the model spend output tokens re-quoting candidate text. 120
+    # chars is enough for a sentence-level anchor.
+    source_quote: str = Field(min_length=1, max_length=120)
 
 
 class TurnMetadata(BaseModel):
@@ -78,7 +107,6 @@ class AdvancePayload(BaseModel):
 class ProbePayload(BaseModel):
     kind: Literal["probe"] = "probe"
     probe_id: str = Field(description="Array index of follow_ups, e.g. '0', '1', '2'")
-    probe_rationale: str = Field(min_length=1, max_length=200)
 
 
 class ClarifyPayload(BaseModel):
@@ -100,12 +128,30 @@ class AcknowledgeNoExperiencePayload(BaseModel):
 
 class PoliteClosePayload(BaseModel):
     kind: Literal["polite_close"] = "polite_close"
-    reason: str = Field(min_length=1)
 
 
 class EndSessionPayload(BaseModel):
     kind: Literal["end_session"] = "end_session"
     initiated_by: Literal["candidate_initiated", "agent_initiated"]
+
+
+class PushBackPayload(BaseModel):
+    """Push-back payload — see judge prompt §3 push_back entry.
+
+    Fired when the candidate's answer is on-topic but thin, evasive, or
+    partial. NOT a redirect (candidate engaged) and NOT a clarify
+    (candidate understands). The State Engine increments
+    ``QuestionState.push_back_count``; once count >= 2 the engine
+    downgrades to ``advance`` to prevent loops on candidates who
+    genuinely cannot give specifics.
+    """
+    kind: Literal["push_back"] = "push_back"
+    reason_code: Literal[
+        "vague_answer",
+        "deflection",
+        "missing_specifics",
+        "unanswered_subquestion",
+    ]
 
 
 NextActionPayload = Annotated[
@@ -118,13 +164,13 @@ NextActionPayload = Annotated[
         AcknowledgeNoExperiencePayload,
         PoliteClosePayload,
         EndSessionPayload,
+        PushBackPayload,
     ],
     Field(discriminator="kind"),
 ]
 
 
 class JudgeOutput(BaseModel):
-    thought: str = Field(max_length=600)
     observations: list[Observation] = Field(default_factory=list, max_length=10)
     candidate_claims: list[ClaimEntry] = Field(default_factory=list, max_length=5)
     next_action: NextAction
@@ -138,4 +184,82 @@ class JudgeOutput(BaseModel):
                 f"next_action {self.next_action.value!r} does not match payload kind "
                 f"{self.next_action_payload.kind!r}"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _check_no_experience_action_alignment(self) -> "JudgeOutput":
+        """Enforce coupling between turn_metadata and next_action for the
+        no-experience disclosure flag.
+
+        Background — observed misclassification (session 1f02f55d, turns
+        13-14): the Judge correctly set
+        ``turn_metadata.candidate_disclosed_no_experience = true`` but
+        emitted ``clarify``/``redirect`` instead of
+        ``acknowledge_no_experience``. The agent kept "rephrasing the
+        question" for two turns before finally acknowledging the
+        candidate had bowed out — three turns of avoidable dead air.
+
+        The strict JSON schema cannot enforce cross-field consistency,
+        so we validate post-LLM. A misaligned output trips the
+        ValidationError path in JudgeService.call(), which falls back to
+        a synthesized JudgeOutput (advance to next pending mandatory, or
+        polite_close if none) — louder than a silent loop.
+        """
+        if not self.turn_metadata.candidate_disclosed_no_experience:
+            return self
+        # No-experience disclosure was flagged; only two actions are coherent:
+        # acknowledge it (and capture the failure observation for the ledger),
+        # or close the session politely (knockout policy or time-up paths).
+        # Anything else — clarify, redirect, repeat, probe — perpetuates a
+        # loop the candidate already opted out of.
+        allowed = {NextAction.acknowledge_no_experience, NextAction.polite_close}
+        if self.next_action not in allowed:
+            raise ValueError(
+                f"candidate_disclosed_no_experience=true requires next_action in "
+                f"{{acknowledge_no_experience, polite_close}}; got "
+                f"{self.next_action.value!r}. Set the flag iff you also intend "
+                f"to acknowledge the disclosure (with a failure Observation)."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_push_back_alignment(self) -> "JudgeOutput":
+        """Enforce coupling between push_back and observation quality.
+
+        Background — push_back is the new (Phase 9.2) action for "candidate
+        engaged with the topic but the answer was thin/evasive/partial."
+        It exists to break the robotic-advance loop where the Judge probes
+        through bank questions instead of demanding specificity.
+
+        Two consistency rules tied to push_back:
+
+        1. push_back is incompatible with no-experience disclosure.
+           Acknowledge or polite_close, never push_back.
+
+        2. Observations emitted alongside push_back MUST be `quality=thin`.
+           If the Judge had a `concrete` or `strong` observation, it
+           should have advanced or probed instead — emitting push_back
+           with strong evidence is internally contradictory.
+
+        Misalignment trips the ValidationError path in JudgeService.call,
+        which falls back to a synthesized JudgeOutput (advance to next
+        pending mandatory, or polite_close if none) — louder than a
+        silent loop.
+        """
+        if self.next_action != NextAction.push_back:
+            return self
+        if self.turn_metadata.candidate_disclosed_no_experience:
+            raise ValueError(
+                "push_back is incompatible with "
+                "candidate_disclosed_no_experience=true; use "
+                "acknowledge_no_experience instead."
+            )
+        for obs in self.observations:
+            if obs.quality != CoverageQuality.thin:
+                raise ValueError(
+                    f"push_back requires quality='thin' on emitted observations; "
+                    f"got {obs.quality.value!r} on signal "
+                    f"{obs.signal_value!r}. If the candidate gave a concrete "
+                    f"answer, emit probe or advance instead of push_back."
+                )
         return self

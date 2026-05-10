@@ -255,7 +255,17 @@ class JudgeService:
     def _usage_dict(usage: Any) -> dict[str, int] | None:
         if usage is None:
             return None
+        # Responses API: usage.input_tokens_details.cached_tokens.
+        # SDK exposes input_tokens_details as a nested object; tolerate
+        # absence (None / missing attr) so older/mocked responses work.
+        # Use isinstance(int) to guard against MagicMock auto-generated
+        # children in unit tests — int(MagicMock()) returns 1, which would
+        # silently report a phantom cache hit.
+        details = getattr(usage, "input_tokens_details", None)
+        cached_raw = getattr(details, "cached_tokens", 0) if details is not None else 0
+        cached = cached_raw if isinstance(cached_raw, int) else 0
         return {
             "prompt_tokens": getattr(usage, "input_tokens", 0),
             "completion_tokens": getattr(usage, "output_tokens", 0),
+            "cached_tokens": cached,
         }

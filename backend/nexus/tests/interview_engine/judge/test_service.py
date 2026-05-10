@@ -14,24 +14,23 @@ from app.modules.interview_engine.judge.service import (
 from app.modules.interview_engine.models.judge import (
     AdvancePayload, JudgeOutput, NextAction, TurnMetadata,
 )
-from app.modules.interview_engine.models.ledger import SignalLedgerSnapshot
-from app.modules.interview_engine.models.queue import QuestionQueueSnapshot
-from app.modules.interview_engine.models.claims import ClaimsPoolSnapshot
 
 
 def _payload():
     return JudgeInputPayload(
         active_question_id="q1", active_question_text="t",
-        ledger_snapshot=SignalLedgerSnapshot(entries=[], snapshots={}, next_seq=1),
-        queue_snapshot=QuestionQueueSnapshot(),
-        claims_snapshot=ClaimsPoolSnapshot(),
-        recent_turns=[], candidate_utterance="hi", time_remaining_seconds=300,
+        signal_coverage={},
+        candidate_claims=[],
+        recent_turns=[],
+        candidate_utterance="hi",
+        time_remaining_seconds=300,
+        next_pending_mandatory_question_id=None,
     )
 
 
 def _good_judge_dict() -> dict:
     out = JudgeOutput(
-        thought="ok", observations=[], candidate_claims=[],
+        observations=[], candidate_claims=[],
         next_action=NextAction.advance,
         next_action_payload=AdvancePayload(target_question_id="q1"),
         turn_metadata=TurnMetadata(),
@@ -249,7 +248,7 @@ async def test_judge_real_openai_returns_parsed_output():
         model=os.getenv("ENGINE_JUDGE_MODEL", "gpt-5.4-mini-2026-03-17"),
         system_prompt=(
             "You are a forensic evidence extractor for an interview platform. "
-            "For this smoke test, emit a JudgeOutput with thought='smoke', "
+            "For this smoke test, emit a JudgeOutput with "
             "next_action='advance', and next_action_payload={kind:'advance', "
             "target_question_id:'q1'}. Leave observations, candidate_claims, "
             "and turn_metadata at their defaults."

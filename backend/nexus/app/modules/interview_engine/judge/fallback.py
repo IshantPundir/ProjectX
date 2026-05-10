@@ -2,8 +2,9 @@
 
 When the Judge LLM call fails (timeout, parse_error, validation_error) or there
 is no advance target available, we synthesize a JudgeOutput so the State Engine
-has a uniform input shape. The reason is encoded in `thought` for audit
-traceability.
+has a uniform input shape. The fallback reason is recorded on the
+``JUDGE_FALLBACK`` audit event (``original_failure_context``) — the synthesized
+``JudgeOutput`` itself carries no audit-only prose anymore.
 """
 from __future__ import annotations
 
@@ -29,17 +30,13 @@ def synthesize_fallback(
 ) -> JudgeOutput:
     if next_pending_mandatory_id is None:
         return JudgeOutput(
-            thought=f"judge_fallback_{reason.value}",
             observations=[],
             candidate_claims=[],
             next_action=NextAction.polite_close,
-            next_action_payload=PoliteClosePayload(
-                reason="judge_fallback_no_advance_target",
-            ),
+            next_action_payload=PoliteClosePayload(),
             turn_metadata=TurnMetadata(),
         )
     return JudgeOutput(
-        thought=f"judge_fallback_{reason.value}",
         observations=[],
         candidate_claims=[],
         next_action=NextAction.advance,

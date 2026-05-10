@@ -382,6 +382,39 @@ class SessionResult(BaseModel):
             "writing failed."
         ),
     )
+    push_back_total: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Number of push_back actions applied across the session, summed "
+            "over all questions. Per-question detail lives on "
+            "question_queue.questions[i].push_back_count. The Report Builder "
+            "uses both: total for session-level signal, per-question for "
+            "scoring nuance."
+        ),
+    )
+    cap_forced_advance_count: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Number of questions whose advance was forced by hitting the "
+            "push_back cap (>=2 push_backs without surfacing a concrete "
+            "observation). A high count on a session signals a stalling "
+            "candidate; the Report Builder must distinguish 'covered "
+            "concretely' from 'cap-forced advance' when grading."
+        ),
+    )
+    quality_distribution: dict[str, int] = Field(
+        default_factory=dict,
+        description=(
+            "Total observation counts by quality grade across the entire "
+            "session. Keys are 'thin' / 'concrete' / 'strong' (a key may be "
+            "absent when the count is zero). The Report Builder uses this "
+            "as a session-level density signal — many thin observations + "
+            "few concrete ones = weak session even if all questions "
+            "advanced."
+        ),
+    )
 
 
 # Resolve forward references at module load — must run AFTER SessionResult

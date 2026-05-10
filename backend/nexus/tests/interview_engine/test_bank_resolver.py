@@ -24,7 +24,7 @@ def _q(qid="q1", text="Tell me about your work.", follow_ups=None):
 
 def _judge(action, payload):
     return JudgeOutput(
-        thought="t", observations=[], candidate_claims=[],
+        observations=[], candidate_claims=[],
         next_action=action, next_action_payload=payload,
         turn_metadata=TurnMetadata(),
     )
@@ -38,7 +38,7 @@ def test_advance_resolves_bank_text_to_active_question():
 
 
 def test_probe_resolves_to_followup_at_index():
-    j = _judge(NextAction.probe, ProbePayload(probe_id="1", probe_rationale="r"))
+    j = _judge(NextAction.probe, ProbePayload(probe_id="1"))
     r = resolve_bank_text(
         j, active_question=_q(follow_ups=["fu0", "fu1", "fu2"]), active_probe_index=1,
     )
@@ -82,7 +82,7 @@ def test_redirect_with_active_question_carries_question_text():
 
 
 def test_polite_close_no_bank_text():
-    j = _judge(NextAction.polite_close, PoliteClosePayload(reason="x"))
+    j = _judge(NextAction.polite_close, PoliteClosePayload())
     r = resolve_bank_text(j, active_question=None, active_probe_index=None)
     assert r.instruction_kind == InstructionKind.polite_close
     assert r.bank_text is None

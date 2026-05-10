@@ -137,6 +137,89 @@ class QuestionQueue:
         active.turn_count += 1
         active.time_spent_ms += elapsed_ms
 
+    def increment_active_push_back_count(self) -> int:
+        """Bump push_back_count on the active question. Returns the new value.
+
+        The State Engine reads the returned value to decide whether to honor
+        the next push_back (cap=2) — see ``StateEngine._handle_push_back``.
+        """
+        active = self.active_state()
+        if active is None:
+            raise NoActiveQuestionError(
+                "Cannot increment push_back_count without an active question"
+            )
+        active.push_back_count += 1
+        return active.push_back_count
+
+    def active_push_back_count(self) -> int:
+        """Read push_back_count on the active question. Returns 0 if no active."""
+        active = self.active_state()
+        if active is None:
+            return 0
+        return active.push_back_count
+
+    def increment_active_dont_know_count(self) -> int:
+        """Bump consecutive_dont_know_count on the active question. Returns
+        the new value. Phase 9.4 — drives the Judge prompt's 'escalate
+        to acknowledge_no_experience after first I-don't-know on an
+        experience signal' rule. Returns 0 silently when there is no
+        active question (defensive — should not happen in normal flow)."""
+        active = self.active_state()
+        if active is None:
+            return 0
+        active.consecutive_dont_know_count += 1
+        return active.consecutive_dont_know_count
+
+    def reset_active_dont_know_count(self) -> None:
+        """Reset consecutive_dont_know_count on the active question to 0.
+        Called when the candidate gives any non-'I don't know' utterance
+        on the active question (the streak is broken). No-op when there
+        is no active question."""
+        active = self.active_state()
+        if active is None:
+            return
+        active.consecutive_dont_know_count = 0
+
+    def active_dont_know_count(self) -> int:
+        """Read consecutive_dont_know_count on the active question. Returns
+        0 if no active question (matches Judge prompt default)."""
+        active = self.active_state()
+        if active is None:
+            return 0
+        return active.consecutive_dont_know_count
+
+    def record_quality_observation(self, *, quality: str) -> None:
+        """Increment ``quality_observations[quality]`` on the active question.
+
+        Called by the State Engine after every observation that successfully
+        applied to the ledger. The counter is what the advance-gate checks
+        for "at least one concrete or strong observation on this question."
+        Returns silently when there is no active question — gracefully
+        accommodates the synthetic session-start path.
+        """
+        active = self.active_state()
+        if active is None:
+            return
+        active.quality_observations[quality] = (
+            active.quality_observations.get(quality, 0) + 1
+        )
+
+    def active_has_quality_at_least_concrete(self) -> bool:
+        """True iff the active question has accumulated >=1 concrete/strong obs.
+
+        Used by ``StateEngine`` to gate ``advance``: a clean advance requires
+        at least one observation on the active question to have reached
+        ``concrete`` or ``strong`` quality. All-thin coverage triggers a
+        downgrade to push_back with reason_code=missing_specifics.
+        """
+        active = self.active_state()
+        if active is None:
+            return False
+        return (
+            active.quality_observations.get("concrete", 0) > 0
+            or active.quality_observations.get("strong", 0) > 0
+        )
+
     def complete_active(self, *, at_turn: int) -> None:
         """Explicit completion of the currently active question (e.g. session-end while active)."""
         active = self.active_state()

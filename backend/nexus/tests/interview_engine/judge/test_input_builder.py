@@ -48,28 +48,35 @@ def test_build_judge_input_carries_active_question_only():
         ],
         candidate_utterance="I worked on it.",
         time_remaining_seconds=350,
+        next_pending_mandatory_id="q2",
     )
     assert payload.active_question_id == "q1"
     assert payload.candidate_utterance == "I worked on it."
     assert payload.time_remaining_seconds == 350
+    assert payload.next_pending_mandatory_question_id == "q2"
+    # signal_coverage carries the per-signal current state, not the
+    # full append-only entries[] log.
+    assert "S1" in payload.signal_coverage
+    assert payload.signal_coverage["S1"].coverage == CoverageState.none
 
 
-def test_recent_turns_passed_through_uncapped():
-    """build_judge_input must NOT truncate recent_turns — Judge sees full transcript."""
+def test_recent_turns_passthrough_uncapped_at_input_builder_level():
+    """build_judge_input does NOT itself slice recent_turns — the orchestrator
+    is responsible for capping. Treating the builder as a pure projection
+    keeps unit tests deterministic."""
     turns = [
         TranscriptEntry(role="candidate", text=f"c{i}", timestamp_ms=i, question_id="q1")
         for i in range(20)
     ]
     payload = build_judge_input(
         active_question=_q(),
-        ledger_snapshot=SignalLedgerSnapshot(
-            entries=[], snapshots={}, next_seq=1,
-        ),
+        ledger_snapshot=SignalLedgerSnapshot(entries=[], snapshots={}, next_seq=1),
         queue_snapshot=QuestionQueueSnapshot(),
         claims_snapshot=ClaimsPoolSnapshot(),
         recent_turns=turns,
         candidate_utterance="x",
         time_remaining_seconds=10,
+        next_pending_mandatory_id=None,
     )
     assert len(payload.recent_turns) == 20
     assert payload.recent_turns[0].text == "c0"
@@ -86,12 +93,12 @@ def test_build_judge_input_excludes_other_questions_rubric():
         recent_turns=[],
         candidate_utterance="x",
         time_remaining_seconds=10,
+        next_pending_mandatory_id=None,
     )
     assert payload.active_question_positive_evidence == ["a", "b", "c"]
     assert payload.active_question_red_flags == ["x", "y"]
-    # The remaining-probes field defaults to an empty dict when the caller
-    # doesn't pass active_remaining_probes — ensures the Judge cannot pick
-    # a probe id whose underlying probe has already been consumed.
+    # remaining_probes defaults to empty dict so the Judge cannot pick a
+    # probe whose underlying probe has already been consumed.
     assert payload.active_question_remaining_probes == {}
 
 
@@ -105,6 +112,7 @@ def test_build_judge_input_remaining_probes_passthrough():
         recent_turns=[],
         candidate_utterance="x",
         time_remaining_seconds=10,
+        next_pending_mandatory_id=None,
         active_remaining_probes={"1": "fu1", "2": "fu2"},
     )
     # Probe "0" is intentionally NOT in the dict (already consumed); the
@@ -127,6 +135,7 @@ def test_active_signal_metadata_carries_through():
         recent_turns=[],
         candidate_utterance="x",
         time_remaining_seconds=10,
+        next_pending_mandatory_id=None,
         active_signal_metadata=meta,
     )
     assert len(payload.active_question_signal_metadata) == 2
@@ -147,28 +156,85 @@ def test_active_signal_metadata_default_empty_list():
         recent_turns=[],
         candidate_utterance="x",
         time_remaining_seconds=10,
+        next_pending_mandatory_id=None,
     )
     assert payload.active_question_signal_metadata == []
 
 
-def test_judge_input_recent_turns_uncapped():
-    from app.modules.interview_engine.judge.input_builder import JudgeInputPayload
-    from app.modules.interview_engine.models.claims import ClaimsPoolSnapshot
-    from app.modules.interview_engine.models.ledger import SignalLedgerSnapshot
-    from app.modules.interview_engine.models.queue import QuestionQueueSnapshot
-    from app.modules.interview_runtime import TranscriptEntry
-    long_history = [
-        TranscriptEntry(role="agent", text=f"t{i}", timestamp_ms=i, question_id=None)
-        for i in range(50)
+def test_judge_input_payload_does_not_carry_full_ledger_or_queue():
+    """Anti-regression: full SignalLedgerSnapshot.entries[] and
+    QuestionQueueSnapshot fields were removed from the LLM input shape.
+    They contributed ~30 tok/turn of audit data the Judge never used."""
+    fields = set(JudgeInputPayload.model_fields.keys())
+    assert "ledger_snapshot" not in fields
+    assert "queue_snapshot" not in fields
+    assert "claims_snapshot" not in fields
+    # New slim fields are present.
+    assert "signal_coverage" in fields
+    assert "candidate_claims" in fields
+    assert "next_pending_mandatory_question_id" in fields
+
+
+def test_judge_input_field_order_stable_first_dynamic_last():
+    """Pydantic respects declaration order in model_dump_json. The order is
+    the cache-stability contract — moving a dynamic field above a stable
+    one would defeat OpenAI prompt caching."""
+    expected_order = [
+        "active_question_id",
+        "active_question_text",
+        "active_question_positive_evidence",
+        "active_question_red_flags",
+        "active_question_rubric",
+        "active_question_evaluation_hint",
+        "active_question_signal_metadata",
+        "next_pending_mandatory_question_id",
+        "active_question_push_back_count",
+        "active_question_consecutive_dont_know_count",
+        "active_question_remaining_probes",
+        "signal_coverage",
+        "candidate_claims",
+        "recent_turns",
+        "candidate_utterance",
+        "time_remaining_seconds",
     ]
-    payload = JudgeInputPayload(
-        active_question_id=None,
-        active_question_text=None,
-        ledger_snapshot=SignalLedgerSnapshot(snapshots={}, next_seq=1, entries=[]),
-        queue_snapshot=QuestionQueueSnapshot(questions=[], active_index=None),
-        claims_snapshot=ClaimsPoolSnapshot(entries=[]),
-        recent_turns=long_history,
-        candidate_utterance="hello",
-        time_remaining_seconds=900,
+    actual = list(JudgeInputPayload.model_fields.keys())
+    assert actual == expected_order, (
+        f"Field order mismatch — cache-stability contract violated.\n"
+        f"  expected: {expected_order}\n"
+        f"  actual:   {actual}"
     )
-    assert len(payload.recent_turns) == 50
+
+
+def test_push_back_count_defaults_zero():
+    """When the orchestrator omits push_back_count (or there's no active
+    question), the field defaults to 0. The Judge prompt's cap=2 rule is
+    a no-op at 0."""
+    payload = build_judge_input(
+        active_question=_q(),
+        ledger_snapshot=SignalLedgerSnapshot(entries=[], snapshots={}, next_seq=1),
+        queue_snapshot=QuestionQueueSnapshot(),
+        claims_snapshot=ClaimsPoolSnapshot(),
+        recent_turns=[],
+        candidate_utterance="x",
+        time_remaining_seconds=10,
+        next_pending_mandatory_id=None,
+    )
+    assert payload.active_question_push_back_count == 0
+
+
+def test_push_back_count_passthrough():
+    """Orchestrator reads push_back_count from QuestionState and passes it
+    through. The Judge prompt §3 push_back entry depends on this field
+    being accurate to enforce the cap=2 rule."""
+    payload = build_judge_input(
+        active_question=_q(),
+        ledger_snapshot=SignalLedgerSnapshot(entries=[], snapshots={}, next_seq=1),
+        queue_snapshot=QuestionQueueSnapshot(),
+        claims_snapshot=ClaimsPoolSnapshot(),
+        recent_turns=[],
+        candidate_utterance="x",
+        time_remaining_seconds=10,
+        next_pending_mandatory_id=None,
+        active_question_push_back_count=2,
+    )
+    assert payload.active_question_push_back_count == 2
