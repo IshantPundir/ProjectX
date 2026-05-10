@@ -7,7 +7,13 @@ from unittest.mock import patch
 
 import pytest
 
-from app.ai.realtime import build_interruption_options, build_noise_cancellation, build_vad
+from app.ai.realtime import (
+    build_interruption_options,
+    build_noise_cancellation,
+    build_stt_plugin,
+    build_tts_plugin,
+    build_vad,
+)
 
 
 class TestBuildInterruptionOptions:
@@ -52,3 +58,31 @@ class TestBuildVad:
         result = build_vad()
         assert result is not None
         assert "livekit.plugins.ai_coustics" in sys.modules
+
+
+class TestBuildSttPlugin:
+    def test_sarvam_provider_loads_sarvam_plugin(self, monkeypatch) -> None:
+        monkeypatch.setenv("SARVAM_API_KEY", "test-key")
+        with patch("app.ai.realtime.ai_config") as mock_config:
+            mock_config.interview_stt_provider = "sarvam"
+            mock_config.interview_stt_model = "saaras:v3"
+            mock_config.interview_stt_language = "en-IN"
+            mock_config.interview_stt_mode = "transcribe"
+            result = build_stt_plugin()
+        assert result is not None
+        assert "livekit.plugins.sarvam" in sys.modules
+
+    def test_deepgram_provider_loads_deepgram_plugin(self) -> None:
+        with patch("app.ai.realtime.ai_config") as mock_config:
+            mock_config.interview_stt_provider = "deepgram"
+            mock_config.interview_stt_model = "nova-3"
+            mock_config.interview_stt_language = "en"
+            result = build_stt_plugin()
+        assert result is not None
+        assert "livekit.plugins.deepgram" in sys.modules
+
+    def test_unknown_provider_raises(self) -> None:
+        with patch("app.ai.realtime.ai_config") as mock_config:
+            mock_config.interview_stt_provider = "bogus"
+            with pytest.raises(ValueError, match="Unknown interview_stt_provider"):
+                build_stt_plugin()

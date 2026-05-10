@@ -28,16 +28,61 @@ if TYPE_CHECKING:
     # Forward-declared so type checkers see the right return types without
     # forcing a runtime import. Only the engine container has these
     # packages installed.
+    from livekit.agents.stt import STT as _BaseSTT
     from livekit.agents.tts import TTS as _BaseTTS
     from livekit.agents.voice.turn import TurnDetectionMode
-    from livekit.plugins.deepgram import STT
     from livekit.plugins.openai import LLM
 
 logger = structlog.get_logger("ai.realtime")
 
 
-def build_stt_plugin() -> "STT":
-    """Construct the realtime Deepgram STT plugin from AIConfig."""
+def build_stt_plugin() -> "_BaseSTT":
+    """Construct the realtime STT plugin selected by AIConfig.
+
+    Provider is chosen by ``AIConfig.interview_stt_provider``
+    (env: ``INTERVIEW_STT_PROVIDER``). Default ``sarvam`` (``saaras:v3``);
+    ``deepgram`` (``nova-3``) is the alternate / rollback path.
+
+    Sarvam STT specializes in Indian languages (en-IN, hi-IN, code-mix).
+    Deepgram is retained as a switch-back path. Both providers expose the
+    same ``livekit.agents.stt.STT`` abstract surface, so VAD, turn
+    detection, and adaptive interruption see identical event streams.
+    """
+    provider = ai_config.interview_stt_provider
+    if provider == "sarvam":
+        return _build_stt_sarvam()
+    if provider == "deepgram":
+        return _build_stt_deepgram()
+    raise ValueError(
+        f"Unknown interview_stt_provider {provider!r}; "
+        "expected 'sarvam' or 'deepgram'."
+    )
+
+
+def _build_stt_sarvam() -> "_BaseSTT":
+    """Sarvam STT (default). Indian-language tuned. Auth via SARVAM_API_KEY env.
+
+    ``high_vad_sensitivity`` is intentionally left unset (None) so the
+    plugin's internal VAD does not race with our ai-coustics VAD.
+    """
+    from livekit.plugins import sarvam
+
+    logger.info(
+        "ai.realtime.stt.built",
+        provider="sarvam",
+        model=ai_config.interview_stt_model,
+        language=ai_config.interview_stt_language,
+        mode=ai_config.interview_stt_mode,
+    )
+    return sarvam.STT(
+        model=ai_config.interview_stt_model,
+        language=ai_config.interview_stt_language,
+        mode=ai_config.interview_stt_mode,
+    )
+
+
+def _build_stt_deepgram() -> "_BaseSTT":
+    """Deepgram STT (rollback / alternate). Auth via DEEPGRAM_API_KEY env."""
     from livekit.plugins import deepgram
 
     logger.info(
