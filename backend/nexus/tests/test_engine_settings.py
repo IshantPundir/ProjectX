@@ -103,3 +103,15 @@ def test_settings_stt_provider_accepts_deepgram(monkeypatch):
     monkeypatch.setenv("INTERVIEW_STT_PROVIDER", "deepgram")
     s = Settings()
     assert s.interview_stt_provider == "deepgram"
+
+
+def test_aiconfig_exposes_sarvam_fields(monkeypatch):
+    monkeypatch.setenv("INTERVIEW_STT_PROVIDER", "sarvam")
+    monkeypatch.setenv("INTERVIEW_STT_MODE", "codemix")
+    monkeypatch.setenv("INTERVIEW_TTS_PACE", "1.2")
+    monkeypatch.setenv("INTERVIEW_TTS_TEMPERATURE", "0.4")
+    cfg = AIConfig()
+    assert cfg.interview_stt_provider == "sarvam"
+    assert cfg.interview_stt_mode == "codemix"
+    assert cfg.interview_tts_pace == 1.2
+    assert cfg.interview_tts_temperature == 0.4

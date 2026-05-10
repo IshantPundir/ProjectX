@@ -86,12 +86,20 @@ class AIConfig:
         return self._settings.interview_reasoning_effort
 
     @property
+    def interview_stt_provider(self) -> str:
+        return self._settings.interview_stt_provider
+
+    @property
     def interview_stt_model(self) -> str:
         return self._settings.interview_stt_model
 
     @property
     def interview_stt_language(self) -> str:
         return self._settings.interview_stt_language
+
+    @property
+    def interview_stt_mode(self) -> str:
+        return self._settings.interview_stt_mode
 
     @property
     def interview_tts_provider(self) -> str:
@@ -108,6 +116,14 @@ class AIConfig:
     @property
     def interview_tts_language(self) -> str:
         return self._settings.interview_tts_language
+
+    @property
+    def interview_tts_pace(self) -> float:
+        return self._settings.interview_tts_pace
+
+    @property
+    def interview_tts_temperature(self) -> float:
+        return self._settings.interview_tts_temperature
 
     @property
     def interview_turn_detector_unlikely_threshold(self) -> float | None:
