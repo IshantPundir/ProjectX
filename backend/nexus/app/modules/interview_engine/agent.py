@@ -85,7 +85,9 @@ from app.ai.realtime import (
 )
 from app.config import settings
 from app.database import get_bypass_session
-from app.modules.interview_engine.openers import OpenerLibrary, build_opener_cache
+from app.modules.interview_engine.openers import (
+    OpenerLibrary, OpenerVariant, build_opener_cache, synth_one,
+)
 from app.modules.interview_engine.event_log import (
     EventCollector,
     EventLogSink,
@@ -343,9 +345,10 @@ async def entrypoint(ctx: JobContext) -> None:
             knockout_policy=tenant_settings.engine_knockout_policy,
         ),
     )
-    state_engine.set_persona_name(
-        resolve_persona_name(tenant_settings=tenant_settings, settings=settings),
+    persona_name = resolve_persona_name(
+        tenant_settings=tenant_settings, settings=settings,
     )
+    state_engine.set_persona_name(persona_name)
 
     # --- Judge + Speaker: load prompts ---
     # Judge keeps its single system prompt at construction time. Speaker
@@ -432,6 +435,16 @@ async def entrypoint(ctx: JobContext) -> None:
     tts_plugin = build_tts_plugin()
     opener_library = await _get_or_build_opener_library(tts=tts_plugin)
 
+    intro_text = _compose_intro_text(persona_name=persona_name)
+    intro_audio = await synth_one(text=intro_text, tts=tts_plugin)
+    intro_variant = OpenerVariant(text=intro_text, audio_frames=intro_audio)
+    log.info(
+        "engine.intro.built",
+        persona_name=persona_name,
+        cache_hit=intro_audio is not None,
+        text_len=len(intro_text),
+    )
+
     orchestrator = InterviewOrchestrator(
         session_config=session_config,
         tenant_settings=tenant_settings,
@@ -448,6 +461,7 @@ async def entrypoint(ctx: JobContext) -> None:
         ),
         tenant_id=str(tenant_uuid),
         opener_library=opener_library,
+        intro_variant=intro_variant,
     )
 
     agent = StructuredInterviewAgent(
