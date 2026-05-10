@@ -66,7 +66,6 @@ def _config():
 
 def _judge_advance(target: str) -> JudgeOutput:
     return JudgeOutput(
-        thought="advancing",
         observations=[],
         candidate_claims=[],
         next_action=NextAction.advance,
@@ -107,14 +106,13 @@ def test_process_probe_consumes_remaining():
         candidate_utterance_text=None, elapsed_ms=0,
     )
     j = JudgeOutput(
-        thought="probing",
         observations=[
             Observation(signal_value="S1", anchor_id=0, evidence_quote="ev",
                         coverage_transition=CoverageTransition.none_to_partial),
         ],
         candidate_claims=[],
         next_action=NextAction.probe,
-        next_action_payload=ProbePayload(probe_id="0", probe_rationale="r"),
+        next_action_payload=ProbePayload(probe_id="0"),
         turn_metadata=TurnMetadata(),
     )
     decision = eng.process_judge_output(
@@ -132,7 +130,6 @@ def test_no_experience_disclosure_marks_signal_failed():
         candidate_utterance_text=None, elapsed_ms=0,
     )
     j = JudgeOutput(
-        thought="no experience",
         observations=[
             Observation(signal_value="S1", anchor_id=-1, evidence_quote="never used it",
                         coverage_transition=CoverageTransition.none_to_failed),
@@ -161,7 +158,6 @@ def test_repeat_action_uses_cached_utterance():
         instruction_kind=InstructionKind.deliver_first_question,
     )
     j = JudgeOutput(
-        thought="candidate asked to repeat",
         observations=[],
         candidate_claims=[],
         next_action=NextAction.repeat,
@@ -186,7 +182,6 @@ def test_repeat_without_prior_utterance_degrades_to_clarify():
     )
     # NO register_agent_utterance call.
     j = JudgeOutput(
-        thought="candidate asked to repeat",
         observations=[],
         candidate_claims=[],
         next_action=NextAction.repeat,
@@ -210,11 +205,10 @@ def test_invalid_probe_id_falls_back_to_first_unused_followup():
         candidate_utterance_text=None, elapsed_ms=0,
     )
     j = JudgeOutput(
-        thought="probing",
         observations=[],
         candidate_claims=[],
         next_action=NextAction.probe,
-        next_action_payload=ProbePayload(probe_id="99", probe_rationale="r"),
+        next_action_payload=ProbePayload(probe_id="99"),
         turn_metadata=TurnMetadata(),
     )
     decision = eng.process_judge_output(
@@ -229,12 +223,34 @@ def test_invalid_probe_id_falls_back_to_first_unused_followup():
 
 
 def test_advance_to_unknown_target_picks_next_pending_mandatory():
+    """Judge emits advance with bogus target_id -> State Engine falls back
+    to next_pending_mandatory_id. Phase 9.2: a concrete observation is
+    needed in the same turn so the advance-quality-gate doesn't downgrade
+    to push_back before the queue-error path can fire (the gate runs
+    first by design — both checks have to pass for advance to land)."""
+    from app.modules.interview_engine.models.judge import CoverageQuality
     eng = _engine()
     eng.process_judge_output(
         turn_id="t-0", judge_output=eng.initialize_for_session_start(),
         candidate_utterance_text=None, elapsed_ms=0,
     )
-    j = _judge_advance("q-DOES-NOT-EXIST")
+    # Judge advance with bogus target + one concrete obs (post-Phase-9.2,
+    # the gate requires >=1 concrete obs on the active question or the
+    # advance is downgraded to push_back).
+    j = JudgeOutput(
+        observations=[
+            Observation(
+                signal_value="S1", anchor_id=0,
+                evidence_quote="concrete answer fragment",
+                coverage_transition=CoverageTransition.none_to_sufficient,
+                quality=CoverageQuality.concrete,
+            )
+        ],
+        candidate_claims=[],
+        next_action=NextAction.advance,
+        next_action_payload=AdvancePayload(target_question_id="q-DOES-NOT-EXIST"),
+        turn_metadata=TurnMetadata(),
+    )
     decision = eng.process_judge_output(
         turn_id="t-1", judge_output=j, candidate_utterance_text="answer", elapsed_ms=1000,
     )
@@ -250,7 +266,6 @@ def test_end_session_blocked_without_knockout_or_complete():
     )
     from app.modules.interview_engine.models.judge import EndSessionPayload
     j = JudgeOutput(
-        thought="ending",
         observations=[],
         candidate_claims=[],
         next_action=NextAction.end_session,
@@ -307,7 +322,7 @@ def test_knockout_signal_failure_records_knockout_failure(make_session_config, m
         candidate_utterance_text=None, elapsed_ms=0,
     )
     j = JudgeOutput(
-        thought="t", observations=[
+        observations=[
             Observation(signal_value="S_KO", anchor_id=-1,
                         evidence_quote="I have no experience with this",
                         coverage_transition=CoverageTransition.none_to_failed),
@@ -342,7 +357,7 @@ def test_close_polite_policy_overrides_action_on_knockout(make_session_config, m
         candidate_utterance_text=None, elapsed_ms=0,
     )
     j = JudgeOutput(
-        thought="t", observations=[
+        observations=[
             Observation(signal_value="S_KO", anchor_id=-1,
                         evidence_quote="never used it",
                         coverage_transition=CoverageTransition.none_to_failed),
@@ -380,7 +395,7 @@ def test_record_only_policy_does_not_close_on_knockout(make_session_config, make
         candidate_utterance_text=None, elapsed_ms=0,
     )
     j = JudgeOutput(
-        thought="t", observations=[
+        observations=[
             Observation(signal_value="S_KO", anchor_id=-1,
                         evidence_quote="never used",
                         coverage_transition=CoverageTransition.none_to_failed),
@@ -440,7 +455,6 @@ def test_failed_with_positive_anchor_is_dropped(make_session_config, make_questi
     # observation passes the ledger precondition (matching the
     # session 8317142f turn-7 state).
     warmup = JudgeOutput(
-        thought="warmup",
         observations=[
             Observation(
                 signal_value="S_KO", anchor_id=1,
@@ -450,7 +464,7 @@ def test_failed_with_positive_anchor_is_dropped(make_session_config, make_questi
         ],
         candidate_claims=[],
         next_action=NextAction.probe,
-        next_action_payload=ProbePayload(probe_id="0", probe_rationale="r"),
+        next_action_payload=ProbePayload(probe_id="0"),
         turn_metadata=TurnMetadata(),
     )
     engine.process_judge_output(
@@ -466,12 +480,11 @@ def test_failed_with_positive_anchor_is_dropped(make_session_config, make_questi
         coverage_transition=CoverageTransition.sufficient_to_failed,
     )
     output = JudgeOutput(
-        thought="probe further",
         observations=[bogus_obs],
         candidate_claims=[],
         next_action=NextAction.probe,
         next_action_payload=ProbePayload(
-            probe_id="1", probe_rationale="targets the missing X",
+            probe_id="1",
         ),
         turn_metadata=TurnMetadata(),
     )
@@ -538,7 +551,6 @@ def test_redirect_action_maps_to_redirect_instruction_kind():
         candidate_utterance_text=None, elapsed_ms=0,
     )
     output = JudgeOutput(
-        thought="off-topic; redirect",
         observations=[],
         candidate_claims=[],
         next_action=NextAction.redirect,
@@ -570,7 +582,7 @@ def test_non_knockout_signal_failure_does_not_record_knockout(make_session_confi
         candidate_utterance_text=None, elapsed_ms=0,
     )
     j = JudgeOutput(
-        thought="t", observations=[
+        observations=[
             Observation(signal_value="S_PLAIN", anchor_id=-1,
                         evidence_quote="never used",
                         coverage_transition=CoverageTransition.none_to_failed),
@@ -588,3 +600,1035 @@ def test_non_knockout_signal_failure_does_not_record_knockout(make_session_confi
     assert len(eng.lifecycle_snapshot().knockout_failures) == 0
     # Action NOT overridden.
     assert decision.speaker_input.instruction_kind == InstructionKind.acknowledge_no_experience
+
+
+def test_drift_guard_drops_failure_obs_when_action_is_clarify(
+    make_session_config, make_question,
+):
+    """Bug E (session 33f044ce-fb25-4872-a85f-10c19fe7f253, turn 6).
+
+    Candidate said "I didn't understand the question. Can you please
+    elaborate?" The Judge correctly emitted `clarify` BUT also fabricated
+    a `none→failed` observation on a knockout signal — citing the
+    candidate's clarification request as the evidence. The State Engine
+    used to record the knockout, fire the close_polite policy override,
+    and end the session on someone just asking for help.
+
+    The drift guard now drops `→failed` observations whose `next_action`
+    is not `acknowledge_no_experience` or `polite_close`. The
+    clarify action is preserved; the bogus failure obs never reaches the
+    ledger; no knockout fires.
+    """
+    from app.modules.interview_engine.models.judge import (
+        ClarifyPayload, CoverageTransition, JudgeOutput, NextAction,
+        Observation, TurnMetadata,
+    )
+    cfg = make_session_config(
+        questions=[
+            make_question(qid="q1", text="Walk me through workflow design."),
+        ],
+        signals=["S_KO"],
+        knockout_signal="S_KO",
+    )
+    eng = StateEngine(
+        session_config=cfg,
+        config=StateEngineConfig(knockout_policy="close_polite"),
+    )
+    eng.process_judge_output(
+        turn_id="t-0", judge_output=eng.initialize_for_session_start(),
+        candidate_utterance_text=None, elapsed_ms=0,
+    )
+
+    bogus = JudgeOutput(
+        observations=[
+            Observation(
+                signal_value="S_KO",
+                anchor_id=-1,
+                evidence_quote="I didn't understand the question. Can you please elaborate?",
+                coverage_transition=CoverageTransition.none_to_failed,
+            ),
+        ],
+        candidate_claims=[],
+        next_action=NextAction.clarify,
+        next_action_payload=ClarifyPayload(),
+        turn_metadata=TurnMetadata(),
+    )
+    decision = eng.process_judge_output(
+        turn_id="t-1", judge_output=bogus,
+        candidate_utterance_text="I didn't understand the question.",
+        elapsed_ms=1000,
+    )
+
+    # The bogus failure observation is dropped — it never enters the ledger.
+    assert eng.ledger_snapshot().entries == []
+    # No knockout was recorded — the candidate is NOT being closed-out.
+    assert eng.lifecycle_snapshot().knockout_failures == []
+    # The clarify action is preserved — the candidate gets help.
+    assert decision.speaker_input.instruction_kind == InstructionKind.clarify
+    # Lifecycle stays active; no policy override fires.
+    assert eng.lifecycle_snapshot().state.value == "active"
+    # Drift was logged for audit visibility.
+    assert any(
+        w.code == "failure_obs_without_acknowledge_action"
+        for w in decision.validation_warnings
+    )
+
+
+def test_drift_guard_does_not_fire_for_legitimate_acknowledge(
+    make_session_config, make_question,
+):
+    """Negative control: when the Judge correctly pairs a `→failed`
+    observation with `acknowledge_no_experience`, the drift guard MUST
+    NOT fire and the failure SHOULD be recorded."""
+    from app.modules.interview_engine.models.judge import (
+        AcknowledgeNoExperiencePayload, CoverageTransition, JudgeOutput,
+        NextAction, Observation, TurnMetadata,
+    )
+    cfg = make_session_config(
+        questions=[make_question(qid="q1", text="Walk me through X.")],
+        signals=["S_KO"],
+        knockout_signal="S_KO",
+    )
+    eng = StateEngine(
+        session_config=cfg,
+        config=StateEngineConfig(knockout_policy="record_only"),
+    )
+    eng.process_judge_output(
+        turn_id="t-0", judge_output=eng.initialize_for_session_start(),
+        candidate_utterance_text=None, elapsed_ms=0,
+    )
+
+    j = JudgeOutput(
+        observations=[
+            Observation(
+                signal_value="S_KO",
+                anchor_id=-1,
+                evidence_quote="I've never used X.",
+                coverage_transition=CoverageTransition.none_to_failed,
+            ),
+        ],
+        candidate_claims=[],
+        next_action=NextAction.acknowledge_no_experience,
+        next_action_payload=AcknowledgeNoExperiencePayload(failed_signal_value="S_KO"),
+        turn_metadata=TurnMetadata(candidate_disclosed_no_experience=True),
+    )
+    decision = eng.process_judge_output(
+        turn_id="t-1", judge_output=j,
+        candidate_utterance_text="I've never used X.", elapsed_ms=1000,
+    )
+
+    # Legitimate failure obs: applied, knockout recorded.
+    assert len(eng.ledger_snapshot().entries) == 1
+    assert len(eng.lifecycle_snapshot().knockout_failures) == 1
+    # Drift guard MUST NOT fire here.
+    assert not any(
+        w.code == "failure_obs_without_acknowledge_action"
+        for w in decision.validation_warnings
+    )
+
+
+def test_drift_guard_drops_failure_obs_for_redirect_action(
+    make_session_config, make_question,
+):
+    """Generalize beyond clarify — redirect with a fabricated failure
+    obs is the same incoherent shape and must be dropped too."""
+    from app.modules.interview_engine.models.judge import (
+        CoverageTransition, JudgeOutput, NextAction, Observation,
+        RedirectPayload, TurnMetadata,
+    )
+    cfg = make_session_config(
+        questions=[make_question(qid="q1", text="Walk me through X.")],
+        signals=["S_KO"],
+        knockout_signal="S_KO",
+    )
+    eng = StateEngine(
+        session_config=cfg,
+        config=StateEngineConfig(knockout_policy="close_polite"),
+    )
+    eng.process_judge_output(
+        turn_id="t-0", judge_output=eng.initialize_for_session_start(),
+        candidate_utterance_text=None, elapsed_ms=0,
+    )
+
+    bogus = JudgeOutput(
+        observations=[
+            Observation(
+                signal_value="S_KO",
+                anchor_id=-1,
+                evidence_quote="What is the salary?",
+                coverage_transition=CoverageTransition.none_to_failed,
+            ),
+        ],
+        candidate_claims=[],
+        next_action=NextAction.redirect,
+        next_action_payload=RedirectPayload(),
+        turn_metadata=TurnMetadata(candidate_off_topic=True),
+    )
+    decision = eng.process_judge_output(
+        turn_id="t-1", judge_output=bogus,
+        candidate_utterance_text="What is the salary?", elapsed_ms=1000,
+    )
+
+    assert eng.ledger_snapshot().entries == []
+    assert eng.lifecycle_snapshot().knockout_failures == []
+    assert decision.speaker_input.instruction_kind == InstructionKind.redirect
+    assert eng.lifecycle_snapshot().state.value == "active"
+
+
+def test_acknowledge_without_failure_obs_downgrades_to_clarify(
+    make_session_config, make_question,
+):
+    """Bug F (session 06013de7-8e33-4eb5-8edc-f67470aa8a64, turn 6).
+
+    The Judge mis-classified a substantive candidate answer as a
+    no-experience disclosure, emitting `acknowledge_no_experience`
+    with a `→failed` observation that anchored to a positive anchor_id.
+    The existing illegal_failure_observation guard dropped the bogus
+    obs, BUT the action survived — leaving the Speaker asked to
+    acknowledge a non-existent disclosure. Speaker emitted nothing
+    against the contradictory inputs.
+
+    Inverse-coupling guard: when every `→failed` observation gets
+    dropped (so no failure entered the ledger), downgrade the action
+    to clarify so the Speaker rephrases the question rather than
+    fabricating an acknowledgement.
+    """
+    from app.modules.interview_engine.models.judge import (
+        AcknowledgeNoExperiencePayload, CoverageTransition, JudgeOutput,
+        NextAction, Observation, TurnMetadata,
+    )
+    cfg = make_session_config(
+        questions=[make_question(qid="q1", text="Walk me through X.")],
+        signals=["S1"],
+    )
+    eng = StateEngine(session_config=cfg)
+    eng.process_judge_output(
+        turn_id="t-0", judge_output=eng.initialize_for_session_start(),
+        candidate_utterance_text=None, elapsed_ms=0,
+    )
+
+    # Bogus shape: action=acknowledge_no_experience, but the only
+    # failure obs has anchor_id=3 (illegal — →failed requires sentinel)
+    # so the existing guard drops it. Nothing survives → no real failure.
+    bogus = JudgeOutput(
+        observations=[
+            Observation(
+                signal_value="S1",
+                anchor_id=3,  # POSITIVE anchor with →failed → dropped by existing guard
+                evidence_quote="I would use shared schemes and pilots",
+                coverage_transition=CoverageTransition.sufficient_to_failed,
+            ),
+        ],
+        candidate_claims=[],
+        next_action=NextAction.acknowledge_no_experience,
+        next_action_payload=AcknowledgeNoExperiencePayload(failed_signal_value="S1"),
+        # Setting the no-experience flag is ALSO load-bearing here:
+        # the existing model_validator only fails when the flag is set
+        # AND the action is wrong; flag set + acknowledge_no_experience
+        # passes the validator, exposing the inverse-coupling gap that
+        # the new drift guard plugs.
+        turn_metadata=TurnMetadata(candidate_disclosed_no_experience=True),
+    )
+    decision = eng.process_judge_output(
+        turn_id="t-1", judge_output=bogus,
+        candidate_utterance_text="I would use shared schemes and pilots.",
+        elapsed_ms=1000,
+    )
+
+    # Existing guard fired (illegal_failure_observation) AND the new guard
+    # fired (acknowledge_without_failure_obs).
+    codes = [w.code for w in decision.validation_warnings]
+    assert "illegal_failure_observation" in codes
+    assert "acknowledge_without_failure_obs" in codes
+
+    # The action was downgraded — speaker is told to clarify, NOT acknowledge.
+    assert decision.speaker_input.instruction_kind == InstructionKind.clarify
+
+    # No failure entered the ledger (it was dropped before this guard ran).
+    assert eng.ledger_snapshot().entries == []
+
+    # No knockout was recorded; lifecycle stays active.
+    assert eng.lifecycle_snapshot().knockout_failures == []
+    assert eng.lifecycle_snapshot().state.value == "active"
+
+
+def test_acknowledge_with_real_failure_obs_does_not_downgrade(
+    make_session_config, make_question,
+):
+    """Negative control: when the Judge correctly emits
+    acknowledge_no_experience with a valid `→failed` observation
+    (sentinel anchor_id=-1), the inverse-coupling guard MUST NOT fire."""
+    from app.modules.interview_engine.models.judge import (
+        AcknowledgeNoExperiencePayload, CoverageTransition, JudgeOutput,
+        NextAction, Observation, TurnMetadata,
+    )
+    cfg = make_session_config(
+        questions=[make_question(qid="q1", text="Walk me through X.")],
+        signals=["S1"],
+    )
+    eng = StateEngine(session_config=cfg)
+    eng.process_judge_output(
+        turn_id="t-0", judge_output=eng.initialize_for_session_start(),
+        candidate_utterance_text=None, elapsed_ms=0,
+    )
+
+    j = JudgeOutput(
+        observations=[
+            Observation(
+                signal_value="S1", anchor_id=-1,
+                evidence_quote="I've never used X",
+                coverage_transition=CoverageTransition.none_to_failed,
+            ),
+        ],
+        candidate_claims=[],
+        next_action=NextAction.acknowledge_no_experience,
+        next_action_payload=AcknowledgeNoExperiencePayload(failed_signal_value="S1"),
+        turn_metadata=TurnMetadata(candidate_disclosed_no_experience=True),
+    )
+    decision = eng.process_judge_output(
+        turn_id="t-1", judge_output=j,
+        candidate_utterance_text="I've never used X.", elapsed_ms=1000,
+    )
+
+    codes = [w.code for w in decision.validation_warnings]
+    assert "acknowledge_without_failure_obs" not in codes
+    assert decision.speaker_input.instruction_kind == InstructionKind.acknowledge_no_experience
+    assert len(eng.ledger_snapshot().entries) == 1
+
+
+def test_acknowledge_with_no_observations_at_all_downgrades(
+    make_session_config, make_question,
+):
+    """Edge case: Judge emits acknowledge_no_experience with empty
+    observations[] and the no-experience flag set. The Pydantic
+    validator passes (flag + action are aligned), but there's still no
+    actual failure recorded. Downgrade to clarify."""
+    from app.modules.interview_engine.models.judge import (
+        AcknowledgeNoExperiencePayload, JudgeOutput, NextAction, TurnMetadata,
+    )
+    cfg = make_session_config(
+        questions=[make_question(qid="q1", text="Walk me through X.")],
+        signals=["S1"],
+    )
+    eng = StateEngine(session_config=cfg)
+    eng.process_judge_output(
+        turn_id="t-0", judge_output=eng.initialize_for_session_start(),
+        candidate_utterance_text=None, elapsed_ms=0,
+    )
+
+    j = JudgeOutput(
+        observations=[],  # ← no failure obs at all
+        candidate_claims=[],
+        next_action=NextAction.acknowledge_no_experience,
+        next_action_payload=AcknowledgeNoExperiencePayload(failed_signal_value="S1"),
+        turn_metadata=TurnMetadata(candidate_disclosed_no_experience=True),
+    )
+    decision = eng.process_judge_output(
+        turn_id="t-1", judge_output=j,
+        candidate_utterance_text="something", elapsed_ms=1000,
+    )
+
+    codes = [w.code for w in decision.validation_warnings]
+    assert "acknowledge_without_failure_obs" in codes
+    assert decision.speaker_input.instruction_kind == InstructionKind.clarify
+
+
+# ---------------------------------------------------------------------------
+# Phase 9.2 — push_back action handling, quality gate, cap behavior
+# ---------------------------------------------------------------------------
+
+
+def _judge_push_back(reason_code: str, observations=None) -> JudgeOutput:
+    from app.modules.interview_engine.models.judge import (
+        CoverageQuality, PushBackPayload,
+    )
+    return JudgeOutput(
+        observations=observations or [],
+        candidate_claims=[],
+        next_action=NextAction.push_back,
+        next_action_payload=PushBackPayload(reason_code=reason_code),
+        turn_metadata=TurnMetadata(),
+    )
+
+
+def _judge_advance_with_quality(
+    target: str, quality_value: str, signal: str = "S1",
+    transition: CoverageTransition = CoverageTransition.none_to_sufficient,
+) -> JudgeOutput:
+    """Advance with one observation marked at the given quality grade.
+
+    Default transition is ``none→sufficient`` because the test fixture
+    starts both S1 and S2 at coverage=none. Tests that have already moved
+    a signal forward can override ``transition`` to keep the LHS state
+    consistent with the ledger.
+    """
+    from app.modules.interview_engine.models.judge import CoverageQuality
+    return JudgeOutput(
+        observations=[
+            Observation(
+                signal_value=signal,
+                anchor_id=0,
+                evidence_quote="some evidence",
+                coverage_transition=transition,
+                quality=CoverageQuality(quality_value),
+            )
+        ],
+        candidate_claims=[],
+        next_action=NextAction.advance,
+        next_action_payload=AdvancePayload(target_question_id=target),
+        turn_metadata=TurnMetadata(),
+    )
+
+
+def _activate_q1(eng: StateEngine) -> None:
+    """Helper: synthesize the session-start advance to put q1 active."""
+    eng.process_judge_output(
+        turn_id="t-start",
+        judge_output=eng.initialize_for_session_start(),
+        candidate_utterance_text=None,
+        elapsed_ms=0,
+    )
+
+
+def test_push_back_action_increments_count_no_queue_mutation():
+    """push_back leaves the queue position alone (no advance, no probe
+    consumption) and bumps push_back_count on the active question."""
+    eng = _engine()
+    _activate_q1(eng)
+
+    decision = eng.process_judge_output(
+        turn_id="t-1",
+        judge_output=_judge_push_back("vague_answer"),
+        candidate_utterance_text="validation checks",
+        elapsed_ms=1000,
+    )
+    assert decision.speaker_input.instruction_kind == InstructionKind.push_back
+    assert decision.speaker_input.push_back_reason_code == "vague_answer"
+    snap = eng.queue_snapshot()
+    assert snap.questions[snap.active_index].push_back_count == 1
+    # Active question unchanged, no probes consumed (queue stores probe
+    # IDs as integer strings "0", "1", ... — the fu0/fu1 strings in
+    # the fixture are follow-up texts, not IDs).
+    assert snap.active_index == 0
+    assert snap.questions[0].probes_remaining_ids == ["0", "1"]
+
+
+def test_push_back_at_cap_downgrades_to_advance():
+    """3rd incoming push_back on the same question is downgraded to advance
+    (or polite_close if no mandatory remains). Emits push_back_cap_reached."""
+    eng = _engine()
+    _activate_q1(eng)
+
+    # Two push_backs accepted.
+    eng.process_judge_output(
+        turn_id="t-1", judge_output=_judge_push_back("vague_answer"),
+        candidate_utterance_text="thin", elapsed_ms=1000,
+    )
+    eng.process_judge_output(
+        turn_id="t-2", judge_output=_judge_push_back("missing_specifics"),
+        candidate_utterance_text="still thin", elapsed_ms=2000,
+    )
+    assert eng.queue_snapshot().questions[0].push_back_count == 2
+
+    # Third push_back should be downgraded.
+    decision = eng.process_judge_output(
+        turn_id="t-3", judge_output=_judge_push_back("deflection"),
+        candidate_utterance_text="still thin", elapsed_ms=3000,
+    )
+    codes = [w.code for w in decision.validation_warnings]
+    assert "push_back_cap_reached" in codes
+    # Downgraded to advance — moves queue forward to q2.
+    assert decision.speaker_input.instruction_kind == InstructionKind.deliver_question
+    assert eng.queue_snapshot().active_index == 1
+
+
+def test_push_back_at_cap_with_no_mandatory_remaining_polite_closes():
+    """When the cap is hit on the LAST mandatory question, the fallback
+    chain ends at polite_close with last_outcome=completed."""
+    eng = _engine()
+    # Advance straight through q1 to q2 with concrete obs so the gate passes.
+    _activate_q1(eng)
+    eng.process_judge_output(
+        turn_id="t-1",
+        judge_output=_judge_advance_with_quality("q2", "concrete"),
+        candidate_utterance_text="real answer",
+        elapsed_ms=1000,
+    )
+    # Now active=q2, push it three times to trip the cap on the final mandatory.
+    for i in range(3):
+        decision = eng.process_judge_output(
+            turn_id=f"t-pb-{i}",
+            judge_output=_judge_push_back("vague_answer"),
+            candidate_utterance_text="thin",
+            elapsed_ms=2000 + i * 1000,
+        )
+    codes = [w.code for w in decision.validation_warnings]
+    assert "push_back_cap_reached" in codes
+    # No mandatory remains -> fallback to polite_close.
+    assert decision.speaker_input.instruction_kind == InstructionKind.polite_close
+    assert eng.lifecycle_snapshot().state.value == "closing"
+
+
+def test_advance_with_only_thin_observations_is_downgraded_to_push_back():
+    """LOAD-BEARING: the bug from session 4cf43291 turn 18. The Judge
+    advanced after deflection-as-evidence; the State Engine now downgrades
+    to push_back missing_specifics so the Speaker asks for one concrete
+    piece."""
+    eng = _engine()
+    _activate_q1(eng)
+
+    # Advance with quality=thin should be downgraded.
+    decision = eng.process_judge_output(
+        turn_id="t-1",
+        judge_output=_judge_advance_with_quality("q2", "thin"),
+        candidate_utterance_text="not my responsibility but I helped",
+        elapsed_ms=1000,
+    )
+    codes = [w.code for w in decision.validation_warnings]
+    assert "quality_gated_advance" in codes
+    assert decision.speaker_input.instruction_kind == InstructionKind.push_back
+    assert decision.speaker_input.push_back_reason_code == "missing_specifics"
+    # Still on q1, but push_back_count incremented.
+    snap = eng.queue_snapshot()
+    assert snap.active_index == 0
+    assert snap.questions[0].push_back_count == 1
+
+
+def test_advance_with_one_concrete_observation_is_honored():
+    """Inverse: one concrete obs is enough to pass the gate cleanly."""
+    eng = _engine()
+    _activate_q1(eng)
+
+    decision = eng.process_judge_output(
+        turn_id="t-1",
+        judge_output=_judge_advance_with_quality("q2", "concrete"),
+        candidate_utterance_text="I built a workflow validator with ScriptRunner",
+        elapsed_ms=1000,
+    )
+    codes = [w.code for w in decision.validation_warnings]
+    assert "quality_gated_advance" not in codes
+    assert decision.speaker_input.instruction_kind == InstructionKind.deliver_question
+    assert eng.queue_snapshot().active_index == 1
+
+
+def test_advance_with_one_strong_observation_is_honored():
+    """`strong` quality also passes the gate."""
+    eng = _engine()
+    _activate_q1(eng)
+
+    decision = eng.process_judge_output(
+        turn_id="t-1",
+        judge_output=_judge_advance_with_quality("q2", "strong"),
+        candidate_utterance_text="logged via SLF4J to Splunk with sampling",
+        elapsed_ms=1000,
+    )
+    codes = [w.code for w in decision.validation_warnings]
+    assert "quality_gated_advance" not in codes
+    assert eng.queue_snapshot().active_index == 1
+
+
+def test_advance_with_mixed_qualities_is_honored():
+    """Multiple obs in one turn, at least one concrete -> advance honored."""
+    from app.modules.interview_engine.models.judge import CoverageQuality
+    eng = _engine()
+    _activate_q1(eng)
+
+    j = JudgeOutput(
+        observations=[
+            Observation(signal_value="S1", anchor_id=0, evidence_quote="thin1",
+                        coverage_transition=CoverageTransition.none_to_partial,
+                        quality=CoverageQuality.thin),
+            Observation(signal_value="S1", anchor_id=2, evidence_quote="concrete1",
+                        coverage_transition=CoverageTransition.partial_to_sufficient,
+                        quality=CoverageQuality.concrete),
+        ],
+        candidate_claims=[],
+        next_action=NextAction.advance,
+        next_action_payload=AdvancePayload(target_question_id="q2"),
+        turn_metadata=TurnMetadata(),
+    )
+    decision = eng.process_judge_output(
+        turn_id="t-1", judge_output=j,
+        candidate_utterance_text="answer", elapsed_ms=1000,
+    )
+    codes = [w.code for w in decision.validation_warnings]
+    assert "quality_gated_advance" not in codes
+    assert eng.queue_snapshot().active_index == 1
+
+
+def test_quality_gate_bypassed_at_push_back_cap():
+    """Once push_back_count is at the cap, the quality gate stops firing
+    (otherwise we'd loop forever on a candidate who can't give specifics)."""
+    eng = _engine()
+    _activate_q1(eng)
+    # Drive count to 2 with two push_backs.
+    for i in range(2):
+        eng.process_judge_output(
+            turn_id=f"t-pb-{i}", judge_output=_judge_push_back("vague_answer"),
+            candidate_utterance_text="thin", elapsed_ms=1000 + i * 1000,
+        )
+
+    # Now an advance with all-thin obs should be honored (cap escape valve).
+    decision = eng.process_judge_output(
+        turn_id="t-adv",
+        judge_output=_judge_advance_with_quality("q2", "thin"),
+        candidate_utterance_text="still thin",
+        elapsed_ms=4000,
+    )
+    codes = [w.code for w in decision.validation_warnings]
+    assert "quality_gated_advance" not in codes, (
+        "quality gate must NOT downgrade once push_back_count is at cap"
+    )
+    assert eng.queue_snapshot().active_index == 1
+
+
+def test_quality_observation_counts_recorded_per_grade():
+    """Every applied observation increments quality_observations[quality]."""
+    from app.modules.interview_engine.models.judge import CoverageQuality
+    eng = _engine()
+    _activate_q1(eng)
+
+    j = JudgeOutput(
+        observations=[
+            Observation(signal_value="S1", anchor_id=0, evidence_quote="t",
+                        coverage_transition=CoverageTransition.none_to_partial,
+                        quality=CoverageQuality.thin),
+            Observation(signal_value="S1", anchor_id=2, evidence_quote="c",
+                        coverage_transition=CoverageTransition.partial_to_partial,
+                        quality=CoverageQuality.concrete),
+        ],
+        candidate_claims=[],
+        next_action=NextAction.probe,
+        next_action_payload=ProbePayload(probe_id="0"),
+        turn_metadata=TurnMetadata(),
+    )
+    eng.process_judge_output(
+        turn_id="t-1", judge_output=j,
+        candidate_utterance_text="answer", elapsed_ms=1000,
+    )
+    snap = eng.queue_snapshot()
+    counts = snap.questions[0].quality_observations
+    assert counts.get("thin") == 1
+    assert counts.get("concrete") == 1
+
+
+def test_quality_gate_skips_synthetic_session_start():
+    """The session-start synthetic advance has no active question yet —
+    the gate must not fire on it."""
+    eng = _engine()
+    decision = eng.process_judge_output(
+        turn_id="t-start",
+        judge_output=eng.initialize_for_session_start(),
+        candidate_utterance_text=None,
+        elapsed_ms=0,
+    )
+    codes = [w.code for w in decision.validation_warnings]
+    assert "quality_gated_advance" not in codes
+    assert decision.speaker_input.instruction_kind == InstructionKind.deliver_first_question
+
+
+def test_push_back_cap_bookkeeping_resets_per_question():
+    """push_back_count is per-question; advancing to a new question starts
+    fresh at 0 on the new question."""
+    eng = _engine()
+    _activate_q1(eng)
+    # Push q1 once.
+    eng.process_judge_output(
+        turn_id="t-1", judge_output=_judge_push_back("vague_answer"),
+        candidate_utterance_text="thin", elapsed_ms=1000,
+    )
+    assert eng.queue_snapshot().questions[0].push_back_count == 1
+    # Advance to q2 with concrete obs.
+    eng.process_judge_output(
+        turn_id="t-2",
+        judge_output=_judge_advance_with_quality("q2", "concrete"),
+        candidate_utterance_text="real answer", elapsed_ms=2000,
+    )
+    snap = eng.queue_snapshot()
+    assert snap.active_index == 1
+    # q2 starts fresh at 0; q1's count is preserved on the completed entry.
+    assert snap.questions[1].push_back_count == 0
+    assert snap.questions[0].push_back_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Phase 9.3 — Q-2: cap-forced advance flag on SpeakerInput
+# ---------------------------------------------------------------------------
+
+
+def test_cap_forced_advance_sets_is_post_cap_advance_on_speaker_input():
+    """When push_back hits cap=2 and downgrades to advance, the resulting
+    deliver_question SpeakerInput MUST carry is_post_cap_advance=True so
+    the Speaker scaffold adds a topic-shift segue instead of a normal
+    'Got it' acknowledgement."""
+    eng = _engine()
+    _activate_q1(eng)
+    # Drive count to 2.
+    for i in range(2):
+        eng.process_judge_output(
+            turn_id=f"t-pb-{i}",
+            judge_output=_judge_push_back("vague_answer"),
+            candidate_utterance_text="thin", elapsed_ms=1000 + i * 1000,
+        )
+    # Third push_back -> cap downgrade -> deliver_question on q2.
+    decision = eng.process_judge_output(
+        turn_id="t-pb-cap",
+        judge_output=_judge_push_back("vague_answer"),
+        candidate_utterance_text="still thin", elapsed_ms=4000,
+    )
+    assert decision.speaker_input.instruction_kind == InstructionKind.deliver_question
+    assert decision.speaker_input.is_post_cap_advance is True
+
+
+def test_clean_advance_does_not_set_is_post_cap_advance():
+    """Inverse — a normal advance (with concrete obs) does NOT mark the
+    SpeakerInput as post-cap. The Speaker uses the normal acknowledgment."""
+    eng = _engine()
+    _activate_q1(eng)
+    decision = eng.process_judge_output(
+        turn_id="t-1",
+        judge_output=_judge_advance_with_quality("q2", "concrete"),
+        candidate_utterance_text="real concrete answer",
+        elapsed_ms=1000,
+    )
+    assert decision.speaker_input.instruction_kind == InstructionKind.deliver_question
+    assert decision.speaker_input.is_post_cap_advance is False
+
+
+# ---------------------------------------------------------------------------
+# Phase 9.3 — Q-3: knockout-aware polite_close threads failed_signal_value
+# ---------------------------------------------------------------------------
+
+
+def test_knockout_policy_override_threads_failed_signal_to_polite_close():
+    """When a knockout fires under close_polite policy, the resulting
+    polite_close SpeakerInput carries the failed signal so the scaffold
+    can acknowledge the disclosure."""
+    from app.modules.interview_engine.models.judge import CoverageQuality
+    cfg = _config()  # S2 is the knockout signal
+    eng = StateEngine(
+        session_config=cfg,
+        config=StateEngineConfig(
+            claims_pool_max=50, knockout_policy="close_polite",
+        ),
+    )
+    # Activate q1 via the synthetic.
+    eng.process_judge_output(
+        turn_id="t-0",
+        judge_output=eng.initialize_for_session_start(),
+        candidate_utterance_text=None, elapsed_ms=0,
+    )
+    # Advance to q2 (which targets the knockout signal S2) with a concrete
+    # observation on q1 so the gate doesn't downgrade.
+    eng.process_judge_output(
+        turn_id="t-1",
+        judge_output=_judge_advance_with_quality("q2", "concrete"),
+        candidate_utterance_text="answer", elapsed_ms=1000,
+    )
+    # Candidate discloses no experience on q2's knockout signal S2.
+    j = JudgeOutput(
+        observations=[
+            Observation(
+                signal_value="S2", anchor_id=-1,
+                evidence_quote="I don't have any experience with that.",
+                coverage_transition=CoverageTransition.none_to_failed,
+                quality=CoverageQuality.concrete,
+            ),
+        ],
+        candidate_claims=[],
+        next_action=NextAction.acknowledge_no_experience,
+        next_action_payload=AcknowledgeNoExperiencePayload(failed_signal_value="S2"),
+        turn_metadata=TurnMetadata(
+            candidate_disclosed_no_experience=True,
+            candidate_disclosed_knockout=True,
+        ),
+    )
+    decision = eng.process_judge_output(
+        turn_id="t-2", judge_output=j,
+        candidate_utterance_text="I don't have any experience with that.",
+        elapsed_ms=2000,
+    )
+    codes = [w.code for w in decision.validation_warnings]
+    assert "knockout_policy_override" in codes
+    assert decision.speaker_input.instruction_kind == InstructionKind.polite_close
+    assert decision.speaker_input.failed_signal_value == "S2", (
+        "polite_close after knockout must carry failed_signal_value so "
+        "the Speaker scaffold can acknowledge the disclosure"
+    )
+
+
+def test_clean_polite_close_has_no_failed_signal_value():
+    """A non-knockout polite_close (all mandatory complete) leaves
+    failed_signal_value=None — the Speaker takes the clean-completion
+    branch in polite_close.txt."""
+    from app.modules.interview_engine.models.judge import PoliteClosePayload
+    eng = _engine()
+    _activate_q1(eng)
+
+    j = JudgeOutput(
+        observations=[],
+        candidate_claims=[],
+        next_action=NextAction.polite_close,
+        next_action_payload=PoliteClosePayload(),
+        turn_metadata=TurnMetadata(),
+    )
+    decision = eng.process_judge_output(
+        turn_id="t-1", judge_output=j,
+        candidate_utterance_text="That covers everything.",
+        elapsed_ms=1000,
+    )
+    assert decision.speaker_input.instruction_kind == InstructionKind.polite_close
+    assert decision.speaker_input.failed_signal_value is None
+
+
+# ---------------------------------------------------------------------------
+# Phase 9.3 — Q-1: recent_agent_openers extracted from transcript
+# ---------------------------------------------------------------------------
+
+
+def test_recent_agent_openers_extracted_from_transcript():
+    """The Speaker for non-contextual kinds receives opener slugs (first
+    4 words of the last 3 agent utterances) so it can vary phrasing
+    across consecutive redirects/push_backs."""
+    eng = _engine()
+    # Synthesize 4 agent utterances directly via register_agent_utterance.
+    for i, text in enumerate([
+        "First utterance text.",
+        "I hear you, please continue with the question.",
+        "Got it, Ishant, walk me through the rest.",
+        "Sure, let's stay focused on the topic.",
+    ]):
+        eng.register_agent_utterance(
+            turn_id=f"t-{i}", text=text,
+            instruction_kind=InstructionKind.redirect,
+        )
+    # _RECENT_OPENER_WINDOW is 3 → only the last 3 are returned.
+    openers = eng._recent_agent_openers()
+    assert len(openers) == 3
+    assert openers[0] == "I hear you, please"
+    assert openers[1] == "Got it, Ishant, walk"
+    assert openers[2] == "Sure, let's stay focused"
+
+
+def test_recent_agent_openers_empty_at_session_start():
+    """No agent utterances yet -> empty list. Speaker scaffold treats
+    this as 'any opener is fine'."""
+    eng = _engine()
+    assert eng._recent_agent_openers() == []
+
+
+# ---------------------------------------------------------------------------
+# Phase 9.4 — Fix #2: consecutive_dont_know_count + I-don't-know detection
+# ---------------------------------------------------------------------------
+
+
+def test_dont_know_regex_matches_common_phrasings():
+    """The regex must match the common 'I don't know' family verbatim
+    so the State Engine increments the counter correctly."""
+    from app.modules.interview_engine.state.engine import _is_dont_know_utterance
+    POSITIVE = [
+        "I don't know.",
+        "I don't know",
+        "I dont know",
+        "I don't know how to answer that.",
+        "I don't know how to answer.",
+        "I'm not sure.",
+        "I'm not sure how to answer.",
+        "I have no idea.",
+        "no idea",
+        "Don't know.",
+    ]
+    for utt in POSITIVE:
+        assert _is_dont_know_utterance(utt), f"{utt!r} should match"
+
+
+def test_dont_know_regex_does_not_match_substantive_answers():
+    """Conservative anchoring — utterances that mention 'don't know'
+    embedded in a real answer must NOT count as I-don't-know."""
+    from app.modules.interview_engine.state.engine import _is_dont_know_utterance
+    NEGATIVE = [
+        "I don't know the exact API but I'd look at the docs first.",
+        "I know how to write a validator.",
+        "I don't know off the top of my head — let me think.",
+        "I would add validators to the workflow.",
+        "Yes, I have done that.",
+        "",
+    ]
+    for utt in NEGATIVE:
+        assert not _is_dont_know_utterance(utt), f"{utt!r} must NOT match"
+
+
+def test_dont_know_count_increments_on_match():
+    """State Engine bumps consecutive_dont_know_count on each matching
+    utterance against the active question. Reset on substantive answer."""
+    eng = _engine()
+    _activate_q1(eng)
+    # Three "I don't know" responses in a row.
+    for i, utt in enumerate(["I don't know.", "I'm not sure.", "no idea"]):
+        eng.process_judge_output(
+            turn_id=f"t-{i}",
+            judge_output=_judge_push_back("vague_answer"),
+            candidate_utterance_text=utt, elapsed_ms=1000 + i * 1000,
+        )
+        snap = eng.queue_snapshot()
+        assert snap.questions[0].consecutive_dont_know_count == i + 1, (
+            f"After utterance {i+1} the count must be {i+1}"
+        )
+
+
+def test_dont_know_count_resets_on_substantive_answer():
+    """Any non-I-don't-know utterance breaks the streak."""
+    eng = _engine()
+    _activate_q1(eng)
+    # Two I-don't-know.
+    for i, utt in enumerate(["I don't know.", "I'm not sure."]):
+        eng.process_judge_output(
+            turn_id=f"t-{i}",
+            judge_output=_judge_push_back("vague_answer"),
+            candidate_utterance_text=utt, elapsed_ms=1000 + i * 1000,
+        )
+    assert eng.queue_snapshot().questions[0].consecutive_dont_know_count == 2
+
+    # Substantive answer.
+    eng.process_judge_output(
+        turn_id="t-real",
+        judge_output=_judge_push_back("vague_answer"),
+        candidate_utterance_text="I would write a validator that checks PR status.",
+        elapsed_ms=4000,
+    )
+    assert eng.queue_snapshot().questions[0].consecutive_dont_know_count == 0
+
+
+def test_dont_know_count_threaded_into_orchestrator_judge_input():
+    """The orchestrator reads consecutive_dont_know_count off the active
+    QuestionState and passes it to build_judge_input — without this, the
+    Judge prompt's escalation rule has no signal to fire on."""
+    # This is exercised via the orchestrator's on_user_turn_completed path,
+    # which is composition-tested elsewhere. Here we just verify the
+    # State Engine -> queue field is correctly readable from the snapshot.
+    eng = _engine()
+    _activate_q1(eng)
+    eng.process_judge_output(
+        turn_id="t-1",
+        judge_output=_judge_push_back("vague_answer"),
+        candidate_utterance_text="I don't know.", elapsed_ms=1000,
+    )
+    snap = eng.queue_snapshot()
+    assert snap.active_index == 0
+    # Orchestrator reads exactly this field for the Judge input.
+    assert snap.questions[snap.active_index].consecutive_dont_know_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Phase 9.6 — Bug C: push_back + clarify enter the repeat cache
+# ---------------------------------------------------------------------------
+
+
+def test_repeat_after_push_back_replays_push_back_text():
+    """The candidate's last-heard question was the push_back drilling
+    question. A subsequent 'repeat' must replay the push_back text, NOT
+    the original bank question. (Session 403e7d45 turn 2 regression.)"""
+    eng = _engine()
+    _activate_q1(eng)
+    # Q1 was delivered as deliver_first_question — this is the original
+    # cache entry.
+    eng.register_agent_utterance(
+        turn_id="t-q1", text="What is q1 please?",
+        instruction_kind=InstructionKind.deliver_first_question,
+    )
+    push_back_text = "Got it — which specific issue types would you define?"
+    eng.register_agent_utterance(
+        turn_id="t-pb", text=push_back_text,
+        instruction_kind=InstructionKind.push_back,
+    )
+    # Internal contract: push_back text IS in the repeat cache.
+    assert eng._question_utterances.get("t-pb") == push_back_text
+    # _resolve_repeat returns the most recent cache entry (push_back).
+    instruction, cached, source = eng._resolve_repeat(warnings=[])
+    assert instruction == InstructionKind.repeat
+    assert cached == push_back_text
+    assert source == "t-pb"
+
+
+def test_repeat_after_clarify_replays_clarify_text():
+    """The candidate's last-heard question was the clarify rephrase. A
+    subsequent 'repeat' must replay the clarify text. (Session 403e7d45
+    turn 5 regression.)"""
+    eng = _engine()
+    _activate_q1(eng)
+    eng.register_agent_utterance(
+        turn_id="t-q1", text="Original Q1 wording.",
+        instruction_kind=InstructionKind.deliver_first_question,
+    )
+    clarify_text = "Sure, let me rephrase. Imagine a client tells you..."
+    eng.register_agent_utterance(
+        turn_id="t-cl", text=clarify_text,
+        instruction_kind=InstructionKind.clarify,
+    )
+    instruction, cached, source = eng._resolve_repeat(warnings=[])
+    assert instruction == InstructionKind.repeat
+    assert cached == clarify_text
+    assert source == "t-cl"
+
+
+def test_repeat_skips_redirect_intervening_between_clarify_and_repeat():
+    """Even when a redirect happened between the clarify and the
+    repeat (e.g., candidate cursed at the agent before asking repeat),
+    the cache replays the clarify — redirect is excluded from
+    _QUESTION_KINDS so it never enters the cache."""
+    eng = _engine()
+    _activate_q1(eng)
+    eng.register_agent_utterance(
+        turn_id="t-q1", text="Q1 wording.",
+        instruction_kind=InstructionKind.deliver_first_question,
+    )
+    clarify_text = "Let me rephrase. <clarify content>"
+    eng.register_agent_utterance(
+        turn_id="t-cl", text=clarify_text,
+        instruction_kind=InstructionKind.clarify,
+    )
+    eng.register_agent_utterance(
+        turn_id="t-redir", text="Let's keep this professional.",
+        instruction_kind=InstructionKind.redirect,
+    )
+    # The redirect is NOT in the cache; the most recent cache entry
+    # is still the clarify.
+    assert "t-redir" not in eng._question_utterances
+    instruction, cached, source = eng._resolve_repeat(warnings=[])
+    assert cached == clarify_text
+    assert source == "t-cl"
+
+
+def test_redirect_acknowledge_polite_close_still_excluded_from_cache():
+    """Anti-regression: the kinds that were excluded BEFORE Bug C must
+    stay excluded. Caching a redirect/acknowledge/polite_close would
+    re-introduce the original Bug B (replay redirect text on repeat)."""
+    eng = _engine()
+    _activate_q1(eng)
+    for tid, kind in (
+        ("t-r", InstructionKind.redirect),
+        ("t-a", InstructionKind.acknowledge_no_experience),
+        ("t-p", InstructionKind.polite_close),
+    ):
+        eng.register_agent_utterance(
+            turn_id=tid, text=f"text for {kind.value}",
+            instruction_kind=kind,
+        )
+        assert tid not in eng._question_utterances, (
+            f"{kind.value}: must NOT be cached for repeat replay"
+        )
+
+
+def test_question_kinds_set_includes_push_back_and_clarify():
+    """Locks the set of question-bearing kinds. Adding/removing entries
+    here changes the repeat behavior; the test guards both directions."""
+    expected = {
+        InstructionKind.deliver_first_question,
+        InstructionKind.deliver_question,
+        InstructionKind.deliver_probe,
+        InstructionKind.push_back,
+        InstructionKind.clarify,
+    }
+    assert StateEngine._QUESTION_KINDS == frozenset(expected)
+
+

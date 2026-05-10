@@ -37,9 +37,6 @@ from app.modules.interview_engine.speaker.service import SpeakerService
 from app.modules.interview_engine.openers import OpenerLibrary
 from app.modules.interview_engine.state.engine import (
     StateEngine,
-    _strip_cap_advance_segue,
-    _strip_clarify_opener,
-    _strip_push_back_opener,
 )
 from app.modules.interview_runtime import SessionConfig
 
@@ -61,43 +58,6 @@ def _slice_recent_turns(transcript: list) -> list:
     if len(transcript) <= _RECENT_TURNS_WINDOW:
         return transcript
     return transcript[-_RECENT_TURNS_WINDOW:]
-
-
-def _compute_cache_text(*, speaker_input: Any, final_text: str) -> str | None:
-    """Return the opener-stripped version of ``final_text`` for the
-    repeat-cache, or ``None`` when no stripping applies.
-
-    Dispatches on ``speaker_input.instruction_kind``:
-
-      * ``deliver_question`` with ``is_post_cap_advance=True`` →
-        strip the cap-forced-advance segue (Phase 9.5 Bug A).
-      * ``push_back`` → strip the conversational opener
-        ("Got it — ", "Right — ", etc.) (Phase 9.7 Bug C.1).
-      * ``clarify`` → strip the rephrase acknowledgment
-        ("Sure, let me rephrase. ", "Let me restate that. ",
-        "No problem, Ishant. In simple terms: ") (Phase 9.7 Bug C.1).
-      * everything else → ``None`` (cache uses the full spoken text).
-
-    The strippers are conservative — they require recognized prefix
-    patterns and return the input unchanged when the LLM produced
-    something unexpected. Returning ``None`` when no change happened
-    lets ``register_agent_utterance`` use its default (cache=text).
-    """
-    from app.modules.interview_engine.models.speaker import InstructionKind
-
-    kind = speaker_input.instruction_kind
-    if (
-        kind == InstructionKind.deliver_question
-        and getattr(speaker_input, "is_post_cap_advance", False)
-    ):
-        stripped = _strip_cap_advance_segue(final_text)
-    elif kind == InstructionKind.push_back:
-        stripped = _strip_push_back_opener(final_text)
-    elif kind == InstructionKind.clarify:
-        stripped = _strip_clarify_opener(final_text)
-    else:
-        return None
-    return stripped if stripped != final_text else None
 
 
 def _was_interrupted(speech_handle: Any) -> bool:
@@ -782,16 +742,11 @@ class InterviewOrchestrator:
                 turn_id=turn_id, final_utterance=final_text,
             ).model_dump())
 
-            # Cache for repeat replay. The opener is NEVER part of the
-            # Speaker content (the Speaker prompt was updated to skip
-            # openers when pre_spoken_opener is set), so the cache is
-            # clean by construction. The legacy cache_text strip path
-            # (Phase 9.5/9.7) is now redundant — kept None here; will
-            # be deleted entirely in Task 15.
+            # Cache for repeat replay. The opener is played separately, so
+            # final_text contains only Speaker content (clean by construction).
             self._state.register_agent_utterance(
                 turn_id=turn_id, text=final_text,
                 instruction_kind=speaker_input.instruction_kind,
-                cache_text=None,
             )
             return final_text
 
