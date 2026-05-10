@@ -88,6 +88,26 @@ async def _synthesize_variant(
     return variant, last_exc
 
 
+async def synth_one(*, text: str, tts: TTS) -> list | None:
+    """Synthesize a single text into audio frames using the same retry
+    policy as build_opener_cache (3 attempts, 200/400/800ms backoff on
+    OSError + asyncio.TimeoutError).
+
+    Returns None on permanent failure (caller falls back to text-only TTS).
+
+    Used by build_opener_cache (one call per variant) AND by the engine
+    entrypoint for the per-session persona intro (which can't be
+    pre-synthesized at engine boot because persona_name is per-tenant).
+    See spec ``docs/superpowers/specs/2026-05-10-intro-prefetch-and-cache-integrity-design.md``
+    §4.3 for the rationale.
+    """
+    variant = OpenerVariant(text=text)
+    _, exc = await _synthesize_variant(variant, tts)
+    if exc is not None:
+        return None
+    return variant.audio_frames
+
+
 async def build_opener_cache(
     *, library: OpenerLibrary, tts: TTS,
 ) -> BuildReport:

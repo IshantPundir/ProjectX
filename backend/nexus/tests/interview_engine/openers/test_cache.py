@@ -174,3 +174,36 @@ async def test_synthesize_variant_exhausts_retries_then_returns_last_error():
     assert exc is not None
     assert isinstance(exc, OSError)
     assert len(attempts) == 3
+
+
+# ---------------------------------------------------------------------------
+# synth_one helper tests (Task 8 — Phase 3 prep)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_synth_one_returns_audio_frames_on_success():
+    """synth_one is the per-text helper used by both build_opener_cache
+    and the engine entrypoint's per-session intro synthesis."""
+    from app.modules.interview_engine.openers import synth_one
+
+    class GoodTTS:
+        def synthesize(self, text):
+            return _FakeTTSStream([_FakeAudioFrame(b"a"), _FakeAudioFrame(b"b")])
+
+    frames = await synth_one(text="Hi, I'm Sam.", tts=GoodTTS())
+    assert frames is not None
+    assert len(frames) == 2
+
+
+@pytest.mark.asyncio
+async def test_synth_one_returns_none_on_permanent_failure():
+    """When all retries exhausted, synth_one returns None (caller
+    falls back to text-only TTS)."""
+    from app.modules.interview_engine.openers import synth_one
+
+    class AlwaysFailTTS:
+        def synthesize(self, text):
+            raise OSError("permanent")
+
+    frames = await synth_one(text="Hi, I'm Sam.", tts=AlwaysFailTTS())
+    assert frames is None

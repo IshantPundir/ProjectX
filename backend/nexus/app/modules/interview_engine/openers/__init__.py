@@ -2,6 +2,7 @@
 from app.modules.interview_engine.openers.cache import (
     BuildReport,
     build_opener_cache,
+    synth_one,
 )
 from app.modules.interview_engine.openers.library import (
     OpenerLibrary,
@@ -17,4 +18,5 @@ __all__ = [
     "OpenerVariant",
     "SubContext",
     "build_opener_cache",
+    "synth_one",
 ]
