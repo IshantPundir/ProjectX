@@ -7,6 +7,7 @@ sees only what the State Engine prepared. The input builder enforces this.
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -24,6 +25,7 @@ class InstructionKind(StrEnum):
     redirect = "redirect"
     acknowledge_no_experience = "acknowledge_no_experience"
     polite_close = "polite_close"
+    push_back = "push_back"
 
 
 class SpeakerInput(BaseModel):
@@ -47,5 +49,58 @@ class SpeakerInput(BaseModel):
             "Sub-classification flags for redirect turns. Populated by "
             "build_speaker_input ONLY when instruction_kind == redirect; "
             "None for all other kinds (avoids tone-leak)."
+        ),
+    )
+    push_back_reason_code: Literal[
+        "vague_answer",
+        "deflection",
+        "missing_specifics",
+        "unanswered_subquestion",
+    ] | None = Field(
+        default=None,
+        description=(
+            "Reason code for push_back turns. Populated by build_speaker_input "
+            "ONLY when instruction_kind == push_back; None for all other "
+            "kinds. Drives template selection inside speaker/push_back.txt."
+        ),
+    )
+    recent_agent_openers: list[str] = Field(
+        default_factory=list,
+        description=(
+            "First 3-4 words of the most recent agent utterances "
+            "(oldest -> newest). Populated by build_speaker_input for "
+            "non-contextual kinds (redirect / push_back / "
+            "acknowledge_no_experience / polite_close), where "
+            "recent_turns is dropped to save tokens. The Speaker scaffold "
+            "MUST avoid starting its reply with any of these slugs to "
+            "break the robotic 'I hear you, please walk me through' "
+            "loop observed in adversarial sessions."
+        ),
+    )
+    is_post_cap_advance: bool = Field(
+        default=False,
+        description=(
+            "True when this deliver_question fires as a result of the "
+            "push_back cap downgrading to advance (the State Engine "
+            "moved to the next mandatory question because the candidate "
+            "could not give specifics on the previous one). The "
+            "deliver_question scaffold uses this flag to add a soft "
+            "topic-shift segue ('OK, let's move on to something different') "
+            "instead of jumping cold into the next question. False on "
+            "every other path (clean advance, first question, etc.)."
+        ),
+    )
+    pre_spoken_opener: str | None = Field(
+        default=None,
+        description=(
+            "The conversational opener text (e.g., 'Got it.', 'Mhm.', "
+            "'Let me put it differently.') that has ALREADY been spoken "
+            "to the candidate as pre-cached audio BEFORE this Speaker "
+            "call's content plays. The Speaker MUST compose its output "
+            "as a natural continuation of the opener — do NOT include "
+            "another opener, do NOT re-acknowledge with 'Got it' / 'Sure' "
+            "/ etc. at the start. None means no opener was pre-played; "
+            "the Speaker is free to start its content however reads "
+            "naturally."
         ),
     )

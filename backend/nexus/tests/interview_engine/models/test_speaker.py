@@ -13,6 +13,7 @@ def test_instruction_kind_values():
         "redirect",
         "acknowledge_no_experience",
         "polite_close",
+        "push_back",
     }
     assert {k.value for k in InstructionKind} == expected
 
@@ -128,3 +129,30 @@ def test_speaker_input_has_no_rubric_fields():
         "rubric",
     }
     assert not forbidden & set(SpeakerInput.model_fields)
+
+
+def test_speaker_input_pre_spoken_opener_field_default_none():
+    """The Speaker prompt reads pre_spoken_opener to know which opener
+    has already been played. Default None means no opener was pre-played."""
+    s = SpeakerInput(
+        instruction_kind=InstructionKind.deliver_first_question,
+        bank_text="What is your experience with X?",
+        last_candidate_utterance=None,
+        recent_turns=[],
+        claims_pool_snapshot=[],
+        persona_name="Sam",
+    )
+    assert s.pre_spoken_opener is None
+
+
+def test_speaker_input_pre_spoken_opener_carries_through():
+    s = SpeakerInput(
+        instruction_kind=InstructionKind.push_back,
+        bank_text="What about X?",
+        last_candidate_utterance="Vague answer.",
+        recent_turns=[],
+        claims_pool_snapshot=[],
+        persona_name="Sam",
+        pre_spoken_opener="Got it.",
+    )
+    assert s.pre_spoken_opener == "Got it."
