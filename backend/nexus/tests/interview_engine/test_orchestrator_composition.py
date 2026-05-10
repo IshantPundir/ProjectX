@@ -822,3 +822,91 @@ async def test_repeat_after_interrupted_push_back_replays_prior_question_not_emp
     assert final_utterance != "", (
         "SPEAKER_CACHED final_utterance must NEVER be empty — silent-agent disaster."
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 9.9 (closer) — empty-not-interrupted path, then repeat
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_repeat_after_empty_speaker_output_replays_prior_question_not_fallback(
+    make_session_config, make_question,
+):
+    """Phase 9.9 — when Speaker LLM returns empty without interruption
+    (e.g., content filter, model gave up), the orchestrator plays the
+    deterministic "Let me restate that. {bank_text}" fallback. The
+    fallback MUST NOT enter the repeat cache — it's a recovery utterance,
+    not THE agent's question. Subsequent NextAction.repeat must replay
+    the LAST GOOD question, not the fallback."""
+    from app.modules.interview_engine.openers import OpenerLibrary
+    from app.modules.interview_engine.event_kinds import SPEAKER_CACHED
+    from app.modules.interview_engine.models.judge import (
+        JudgeOutput, NextAction, PushBackPayload, RepeatPayload,
+        TurnMetadata, Observation, CoverageTransition, CoverageQuality,
+    )
+
+    judge_outputs = [
+        JudgeOutput(
+            observations=[
+                Observation(
+                    signal_value="S1", anchor_id=0, evidence_quote="vague",
+                    coverage_transition=CoverageTransition.partial_to_partial,
+                    quality=CoverageQuality.thin,
+                ),
+            ],
+            candidate_claims=[],
+            next_action=NextAction.push_back,
+            next_action_payload=PushBackPayload(reason_code="vague_answer"),
+            turn_metadata=TurnMetadata(),
+        ),
+        JudgeOutput(
+            observations=[], candidate_claims=[],
+            next_action=NextAction.repeat,
+            next_action_payload=RepeatPayload(),
+            turn_metadata=TurnMetadata(),
+        ),
+    ]
+    speaker_outputs = [
+        # on_enter: deliver_first_question — clean
+        "Walk me through your tool of choice.",
+        # Turn 1 push_back: empty stream WITHOUT interruption simulation
+        "",
+    ]
+
+    orch, agent = _build_orch(
+        make_session_config=make_session_config,
+        make_question=make_question,
+        scripted_judge_outputs=judge_outputs,
+        scripted_speaker_outputs=speaker_outputs,
+        knockout_signal="S1",
+    )
+    orch._opener_library = OpenerLibrary()
+
+    # Note: NO override of agent.session.say. The default _build_orch
+    # behavior returns interrupted=False for every say() call, which
+    # combined with the empty speaker_output triggers
+    # _handle_empty_speaker_output (not _handle_interrupted_speaker).
+
+    await orch.on_enter(agent)
+    await orch.on_user_turn_completed(
+        agent, MagicMock(), _msg("Some tools"),
+    )
+    await orch.on_user_turn_completed(
+        agent, MagicMock(), _msg("Can you repeat?"),
+    )
+
+    state = orch._state
+
+    cache_values = list(state._question_utterances.values())
+    assert len(cache_values) == 1
+    assert cache_values[0] == "Walk me through your tool of choice."
+
+    cached_events = [
+        e for e in orch._collector.events
+        if e.kind == SPEAKER_CACHED
+    ]
+    assert len(cached_events) == 1
+    assert cached_events[0].payload["final_utterance"] == "Walk me through your tool of choice."
+    # Importantly, NOT the fallback text.
+    assert "Let me restate" not in cached_events[0].payload["final_utterance"]
