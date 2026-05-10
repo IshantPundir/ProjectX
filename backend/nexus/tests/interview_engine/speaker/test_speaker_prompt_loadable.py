@@ -65,33 +65,6 @@ def test_push_back_scaffold_forbids_meta_disclosure():
     assert "scoring" in body or "looking for" in body  # mentioned as forbidden phrasing
 
 
-# ---------------------------------------------------------------------------
-# Phase 9.3 — opener anti-repetition wired into redirect + push_back scaffolds
-# ---------------------------------------------------------------------------
-
-
-def test_redirect_scaffold_consumes_recent_agent_openers():
-    """redirect.txt must explain how to use recent_agent_openers to vary
-    the opener across consecutive redirects (the robotic-loop fix)."""
-    body = prompt_loader.load_pair(
-        "engine/speaker/_preamble",
-        "engine/speaker/redirect",
-    )
-    assert "recent_agent_openers" in body, (
-        "redirect.txt must reference the input field name verbatim"
-    )
-
-
-def test_push_back_scaffold_consumes_recent_agent_openers():
-    """push_back.txt must also reference recent_agent_openers for
-    anti-repetition across consecutive push_backs on the same question."""
-    body = prompt_loader.load_pair(
-        "engine/speaker/_preamble",
-        "engine/speaker/push_back",
-    )
-    assert "recent_agent_openers" in body
-
-
 def test_deliver_question_scaffold_documents_post_cap_advance_segue():
     """deliver_question.txt must include a branch for is_post_cap_advance
     that uses a soft topic-shift segue instead of the standard
@@ -187,3 +160,25 @@ def test_preamble_documents_pre_spoken_opener():
         "do not include another opener" in body_lower
         or "do not include any opener" in body_lower
     )
+
+
+def test_push_back_scaffold_no_longer_teaches_opener_variation():
+    """Phase 9.8 — opener variation is now the orchestrator's job
+    via the OpenerLibrary. push_back.txt must NOT instruct the LLM
+    to vary openers (would conflict with pre_spoken_opener guidance)."""
+    body = prompt_loader.get("engine/speaker/push_back")
+    body_lower = body.lower()
+    # The legacy "vary the opener" guidance must be gone.
+    assert "vary the opener" not in body_lower
+    # And the recent_agent_openers field must no longer be referenced
+    # (it's deleted from SpeakerInput in the new architecture).
+    assert "recent_agent_openers" not in body
+    # NEW: pre_spoken_opener must be referenced.
+    assert "pre_spoken_opener" in body
+
+
+def test_clarify_scaffold_no_longer_teaches_opener_variation():
+    body = prompt_loader.get("engine/speaker/clarify")
+    body_lower = body.lower()
+    assert "vary the opener" not in body_lower
+    assert "pre_spoken_opener" in body
