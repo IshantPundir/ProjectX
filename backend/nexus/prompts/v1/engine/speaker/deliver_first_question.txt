@@ -1,61 +1,59 @@
 TASK
-This is the first turn of the interview. There is no prior answer to
-acknowledge. Open with a brief greeting using {persona_name}, then
-deliver the first question — REPHRASED FROM {bank_text} into the
-shortest, broadest open-ended form that still names the topic.
+The persona intro ("Hi, I'm {persona_name}. To start —") has ALREADY
+been spoken to the candidate as pre-cached audio (see PRE-SPOKEN OPENER
+in the preamble — pre_spoken_opener carries it). Compose ONLY the
+substantive question, rephrased from {bank_text} into the shortest,
+broadest open-ended form that still names the topic.
 
 OUTPUT (HARD CONSTRAINTS — non-negotiable)
-- 2 sentences. ≤ 30 words total.
-- Sentence 1: greeting that includes persona_name. Do NOT thank or
-  address the candidate by name (you've never met them yet —
-  addressing them by name reads as artificial).
-- Sentence 2: ONE open-ended question naming the topic in the
-  broadest form. NEVER enumerate sub-components, sub-systems, or
-  evaluation criteria from bank_text — those are for the candidate
-  to surface, not for you to seed (see ANTI-ENUMERATION in preamble).
-- Plain spoken English. No JSON, no markdown.
+- ONE sentence. ≤ 20 words.
+- Pick up where the intro left off — go straight into the question.
+  Do NOT include another greeting; the candidate already heard one.
+- Use the broadest verb (design, configure, build, scale, refactor,
+  walk-through). Use the broadest object (the workflow, the deployment,
+  the schema). NEVER preserve "X or Y" verb/object lists from bank_text
+  — pick ONE.
+- NEVER enumerate sub-components, sub-systems, or evaluation criteria
+  from bank_text — those are for the candidate to surface, not for you
+  to seed (see ANTI-ENUMERATION in preamble).
 
-HOW TO COMPRESS bank_text
-1. Identify the broadest verb (design, configure, build, scale,
-   refactor, architect, walk-through).
-2. Identify the broadest object (the workflow, the deployment, the
-   schema, the system).
-3. Drop every comma-separated list, parenthetical, or "including X,
-   Y, Z" clause. Those are the rubric — let the candidate surface
-   them.
+ANTI-PATTERN — DO NOT emit anything like this
+Input: bank_text mentions "JIRA workflows including custom statuses,
+       transition rules, validators and post-functions"
+Wrong output: "Walk me through how you would design or refactor a JIRA
+              project to match a client workflow, and how you'd package
+              it as a reusable template."
+Why wrong: enumerated criteria ("design OR refactor", "package as
+           reusable template"), 31 words, two verbs, two objects.
 
 EXAMPLES (illustrative — compose from actual inputs; do not copy)
 
 EXAMPLE 1
 Input:
 """
-persona_name: "Sam"
+pre_spoken_opener: "Hi, I'm Sam. To start —"
 bank_text: "Walk me through how you've configured JIRA workflows in a past role, including custom statuses, transition rules, validators and post-functions."
 """
 Output:
-Hi, I'm Sam. To start, walk me through a JIRA workflow you configured
-in a past role.
+walk me through a JIRA workflow you configured in a past role.
 
 EXAMPLE 2
 Input:
 """
-persona_name: "Maya"
+pre_spoken_opener: "Hi, I'm Maya. To start —"
 bank_text: "Describe a time you scaled a Postgres database from a few thousand to a few million rows. What did you measure?"
 """
 Output:
-Hi, I'm Maya. Tell me about a time you scaled a Postgres database
-into the millions of rows.
+tell me about a time you scaled a Postgres database into the millions of rows.
 
 EXAMPLE 3
 Input:
 """
-persona_name: "Sam"
+pre_spoken_opener: "Hi, I'm Sam. To start —"
 bank_text: "Tell me about your approach to designing a Kubernetes deployment for a high-availability service."
 """
 Output:
-Hi, I'm Sam. Talk me through how you'd design a Kubernetes deployment
-for a high-availability service.
+talk me through how you'd design a Kubernetes deployment for a high-availability service.
 
-REMINDER: ≤ 30 words total. No comma-separated lists from bank_text.
-Compose your output from {persona_name} and the broadest form of
-{bank_text}. Do not paste an example.
+REMINDER: ≤ 20 words. ONE sentence. NO greeting. NO enumeration.
+Compose from the broadest form of {bank_text}.

@@ -32,7 +32,10 @@ ANTI-LEAK (load-bearing — these are non-negotiable)
   templates, performance"). NEVER copy that list into your output.
   Naming the criteria the candidate must touch is rubric leakage —
   the candidate is supposed to surface those themselves. Pick the
-  broadest open form of the topic and stop there.
+  broadest open form of the topic and stop there. This applies to
+  conjunction lists too: "X or Y" verb/object pairs ("design or
+  refactor", "build or scale", "the workflow or the schema") are
+  enumeration in disguise — pick ONE.
 
 ANTI-REPETITION
 - Glance at recent_turns. If you used a particular opener phrase

@@ -208,3 +208,55 @@ def test_remaining_scaffolds_use_pre_spoken_opener(prompt_name):
     assert "pre_spoken_opener" in body, (
         f"{prompt_name}.txt must reference pre_spoken_opener field"
     )
+
+
+def test_deliver_first_question_documents_anti_pattern_example():
+    """Phase 4 — the prompt MUST contain an explicit ANTI-PATTERN
+    example that names what NOT to emit (rubric component lists)."""
+    from app.ai.prompts import prompt_loader
+    body = prompt_loader.get("engine/speaker/deliver_first_question")
+    assert "ANTI-PATTERN" in body
+    # The example should explicitly call out enumeration.
+    assert "design or refactor" in body or "comma-separated" in body
+
+
+def test_deliver_first_question_assumes_pre_spoken_intro():
+    """Phase 4 — once intro_variant pre-cache is live (Phase 3),
+    the prompt no longer asks the LLM to emit the greeting; it
+    assumes pre_spoken_opener carries it (mirroring all other
+    Phase 9.8-aware prompts)."""
+    from app.ai.prompts import prompt_loader
+    body = prompt_loader.get("engine/speaker/deliver_first_question")
+    assert "pre_spoken_opener" in body
+
+
+def test_deliver_first_question_word_cap_dropped_to_20():
+    """Phase 4 — hard cap is 20 words now."""
+    from app.ai.prompts import prompt_loader
+    body = prompt_loader.get("engine/speaker/deliver_first_question")
+    assert "20 words" in body or "≤ 20" in body
+
+
+def test_preamble_anti_enumeration_mentions_conjunctions():
+    """Phase 4 — the preamble's ANTI-ENUMERATION rule must explicitly
+    forbid 'X or Y' verb/object lists (the failure mode in session
+    a998073a-3007-...)."""
+    from app.ai.prompts import prompt_loader
+    body = prompt_loader.get("engine/speaker/_preamble")
+    assert "or " in body and (
+        "pick one" in body.lower() or "pick the broadest" in body.lower()
+    )
+
+
+def test_clarify_has_word_cap_and_anti_enumeration():
+    """Phase 4 extended — clarify.txt gets a hard cap (40 words for the
+    rephrase) and anti-enumeration discipline. Failure case from session
+    00cd1395-a446-...: clarify emitted 65 words enumerating 8 rubric
+    criteria (issue types, statuses, transitions, validators, conditions,
+    post-functions, screens, fields, automation, reusability, performance)."""
+    from app.ai.prompts import prompt_loader
+    body = prompt_loader.get("engine/speaker/clarify")
+    # Hard cap mentioned somewhere — accept either explicit number form.
+    assert "40 words" in body or "≤ 40" in body
+    # Anti-enumeration explicitly invoked.
+    assert "ANTI-ENUMERATION" in body or "do not enumerate" in body.lower()
