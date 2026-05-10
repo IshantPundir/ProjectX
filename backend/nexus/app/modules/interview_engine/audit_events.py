@@ -100,10 +100,32 @@ class SpeakerOutputEmptyPayload(BaseModel):
     orchestrator played a deterministic fallback. Distinguished from
     SpeakerErrorPayload (which fires on an exception) and SpeakerCachedPayload
     (which fires on the deterministic repeat path).
+
+    Phase 9.3 diagnostic fields (added 2026-05-10) capture WHY the
+    Speaker came back empty so we can root-cause the issue without
+    re-enabling verbose logging in production:
+
+      * ``event_types_seen`` — every Responses-API event type we received
+        on the stream. A normal turn includes ``response.created`` →
+        ``response.output_item.added`` → many ``response.output_text.delta``
+        → ``response.completed``. A SAFETY REFUSAL is the most common
+        empty cause and shows ``response.refusal.delta`` + ``response.refusal.done``
+        instead of any ``output_text.delta``.
+      * ``refusal_text`` — content of any ``response.refusal.*`` deltas
+        (joined). When non-empty this is the smoking gun for a content
+        filter rejection.
+      * ``response_id`` — OpenAI's request id for the call (if surfaced),
+        usable to look up the trace upstream.
+      * ``finish_reason`` — the response object's finish_reason if
+        available (``stop`` / ``content_filter`` / ``length`` / etc.).
     """
     turn_id: str
     instruction_kind: str
     fallback_text: str
+    event_types_seen: list[str] = Field(default_factory=list)
+    refusal_text: str | None = None
+    response_id: str | None = None
+    finish_reason: str | None = None
 
 
 class SpeakerErrorPayload(BaseModel):
@@ -112,6 +134,47 @@ class SpeakerErrorPayload(BaseModel):
     error_class: str
     error_message: str = Field(max_length=500)
     recovery_utterance: str
+
+
+class SpeakerInterruptedPayload(BaseModel):
+    """Phase 9.4 (2026-05-10) — fired when the candidate interrupted the
+    Speaker stream BEFORE any output text was produced. Distinct from:
+
+      * ``speaker.output.empty`` — Speaker LLM produced nothing for a
+        non-interruption reason (model decided "nothing to say", safety
+        refusal, etc.). The orchestrator plays a deterministic fallback.
+      * ``speaker.error`` — exception raised mid-stream. The orchestrator
+        plays a canned recovery utterance.
+
+    For ``speaker.interrupted`` the orchestrator does NOT play any
+    fallback — the candidate is already speaking, so playing back would
+    talk over them and create the death-spiral pattern observed in
+    session f665498d (turns 14-18). The agent stays silent and the
+    NEXT user turn drives the next reply.
+
+    The diagnostic fields mirror the empty-output payload so the audit
+    envelope makes the cancellation cause traceable.
+    """
+    turn_id: str
+    instruction_kind: str
+    event_types_seen: list[str] = Field(default_factory=list)
+    response_id: str | None = None
+
+
+class SpeakerOpenerPlayedPayload(BaseModel):
+    """Phase 9.8 — fired when the orchestrator plays a pre-cached opener
+    audio (or its text-only fallback) before the Speaker LLM content.
+
+    Distinct from speaker.call (which fires for the LLM-generated
+    content portion of the same turn). One turn typically emits BOTH:
+    speaker.opener.played + speaker.call. The two together describe the
+    full agent utterance.
+    """
+    turn_id: str
+    instruction_kind: str
+    sub_context: str
+    opener_text: str
+    cache_hit: bool
 
 
 # Lifecycle / checkpoint

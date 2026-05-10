@@ -61,3 +61,18 @@ def test_speaker_output_empty_payload():
     )
     assert p.turn_id == "abc"
     assert p.instruction_kind == "redirect"
+
+
+def test_speaker_opener_played_payload_shape():
+    from app.modules.interview_engine.audit_events import (
+        SpeakerOpenerPlayedPayload,
+    )
+    p = SpeakerOpenerPlayedPayload(
+        turn_id="t-1",
+        instruction_kind="push_back",
+        sub_context="vague_answer",
+        opener_text="Got it.",
+        cache_hit=True,
+    )
+    assert p.turn_id == "t-1"
+    assert p.cache_hit is True

@@ -109,3 +109,13 @@ def test_speaker_output_empty_in_registry():
     )
     assert SPEAKER_OUTPUT_EMPTY == "speaker.output.empty"
     assert SPEAKER_OUTPUT_EMPTY in ALL_EVENT_KINDS
+
+
+def test_speaker_opener_played_event_registered():
+    """SPEAKER_OPENER_PLAYED must be in ALL_EVENT_KINDS so the audit
+    envelope test passes."""
+    from app.modules.interview_engine.event_kinds import (
+        SPEAKER_OPENER_PLAYED, ALL_EVENT_KINDS,
+    )
+    assert SPEAKER_OPENER_PLAYED == "speaker.opener.played"
+    assert SPEAKER_OPENER_PLAYED in ALL_EVENT_KINDS
