@@ -1694,3 +1694,38 @@ def test_register_agent_question_for_repeat_skips_non_question_kinds(
         assert f"t-{non_q_kind.value}" not in engine._question_utterances
 
 
+def test_register_agent_utterance_no_longer_updates_cache(
+    make_session_config, make_question,
+):
+    """Phase 9.9 contract: register_agent_utterance is transcript-only.
+    The repeat cache update was hoisted into a separate method
+    (register_agent_question_for_repeat). Confirm a single call to
+    register_agent_utterance no longer touches _question_utterances."""
+    cfg = make_session_config(questions=[make_question(qid="q1")])
+    engine = StateEngine(session_config=cfg)
+    engine.register_agent_utterance(
+        turn_id="t-1", text="A real agent question",
+        instruction_kind=InstructionKind.deliver_question,
+    )
+    # Transcript IS appended.
+    assert engine._transcript[-1].text == "A real agent question"
+    # Cache is NOT touched.
+    assert "t-1" not in engine._question_utterances
+
+
+def test_register_agent_utterance_appends_empty_text_to_transcript(
+    make_session_config, make_question,
+):
+    """Empty text is a valid transcript fact (the agent emitted nothing
+    on this turn — recorded for forensic completeness alongside the
+    speaker.interrupted / speaker.output.empty audit event)."""
+    cfg = make_session_config(questions=[make_question(qid="q1")])
+    engine = StateEngine(session_config=cfg)
+    engine.register_agent_utterance(
+        turn_id="t-1", text="",
+        instruction_kind=InstructionKind.push_back,
+    )
+    assert engine._transcript[-1].text == ""
+    assert "t-1" not in engine._question_utterances
+
+

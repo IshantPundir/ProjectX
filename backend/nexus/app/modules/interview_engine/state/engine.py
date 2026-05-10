@@ -801,19 +801,22 @@ class StateEngine:
     def register_agent_utterance(
         self, *, turn_id: str, text: str, instruction_kind: InstructionKind,
     ) -> None:
-        """Append the spoken utterance to the transcript; for question-
-        bearing kinds also seed the repeat-cache.
+        """Record an agent utterance to the transcript. ALWAYS appends
+        regardless of text length — empty text is a valid historical
+        fact (the agent emitted nothing on this turn, e.g. interrupted
+        before any output).
 
-        Phase 9.8 — the cache stores text directly. The opener prefetch
-        architecture (orchestrator's parallel opener dispatch) means
-        ``text`` is already opener-free by construction.
+        Does NOT update the repeat-cache. Use
+        ``register_agent_question_for_repeat`` for that — the two
+        intents are deliberately separated (Phase 9.9, see spec
+        ``docs/superpowers/specs/2026-05-10-intro-prefetch-and-cache-integrity-design.md``
+        §4.1) so an interrupted/empty turn cannot poison the repeat
+        cache and cause silent-agent replay.
         """
         self._transcript.append(TranscriptEntry(
             role="agent", text=text, timestamp_ms=0,
             question_id=self._queue.active_question_id(),
         ))
-        if instruction_kind in self._QUESTION_KINDS:
-            self._question_utterances[turn_id] = text
 
     def register_agent_question_for_repeat(
         self, *, turn_id: str, text: str, instruction_kind: InstructionKind,
