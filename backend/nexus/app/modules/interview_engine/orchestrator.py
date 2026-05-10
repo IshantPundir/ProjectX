@@ -34,7 +34,7 @@ from app.modules.interview_engine.frontend_attributes import (
 from app.modules.interview_engine.judge.service import JudgeService
 from app.modules.interview_engine.models.speaker import InstructionKind
 from app.modules.interview_engine.speaker.service import SpeakerService
-from app.modules.interview_engine.openers import OpenerLibrary
+from app.modules.interview_engine.openers import OpenerLibrary, OpenerVariant
 from app.modules.interview_engine.state.engine import (
     StateEngine,
 )
@@ -186,6 +186,7 @@ class InterviewOrchestrator:
         config: OrchestratorConfig | None = None,
         tenant_id: str,
         opener_library: OpenerLibrary,
+        intro_variant: OpenerVariant | None = None,
     ) -> None:
         self._cfg = session_config
         self._tenant = tenant_settings
@@ -206,6 +207,7 @@ class InterviewOrchestrator:
         # ``_schedule_shutdown``; this flag keeps it idempotent.
         self._shutdown_scheduled: bool = False
         self._opener_library = opener_library
+        self._intro_variant = intro_variant
         self._recent_openers: deque[str] = deque(maxlen=5)
 
     # --- Public accessors ---

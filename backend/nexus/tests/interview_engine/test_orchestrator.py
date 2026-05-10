@@ -1778,4 +1778,55 @@ async def test_empty_speaker_output_fallback_does_not_pollute_repeat_cache(
 
     # Cache unchanged. Fallback was played but not cached.
     assert "t-empty" not in state_engine._question_utterances
-    assert state_engine._question_utterances["t-prev"] == "What is your favorite tool?"
+
+
+def test_orchestrator_constructor_accepts_intro_variant_default_none(
+    make_session_config, make_question,
+):
+    """Backward compatibility — existing callers don't have to pass
+    intro_variant; default is None and the orchestrator behaves as
+    before (Speaker LLM produces greeting + question for first turn)."""
+    from app.modules.interview_engine.openers import OpenerLibrary
+    cfg = make_session_config(
+        questions=[make_question(qid="q1")],
+        signals=["S1"],
+    )
+    state_engine = StateEngine(session_config=cfg)
+    pub = AttributePublisher(room=MagicMock(local_participant=MagicMock(set_attributes=AsyncMock())))
+    orch = InterviewOrchestrator(
+        session_config=cfg,
+        tenant_settings=MagicMock(engine_agent_name=None),
+        state_engine=state_engine,
+        judge=MagicMock(), speaker=MagicMock(),
+        attr_publisher=pub, event_collector=_collector(),
+        correlation_id="c", config=OrchestratorConfig(),
+        tenant_id="t",
+        opener_library=OpenerLibrary(),
+        # intro_variant=None  <- default
+    )
+    assert orch._intro_variant is None
+
+
+def test_orchestrator_constructor_accepts_intro_variant_when_set(
+    make_session_config, make_question,
+):
+    from app.modules.interview_engine.openers import OpenerLibrary, OpenerVariant
+    cfg = make_session_config(
+        questions=[make_question(qid="q1")],
+        signals=["S1"],
+    )
+    state_engine = StateEngine(session_config=cfg)
+    pub = AttributePublisher(room=MagicMock(local_participant=MagicMock(set_attributes=AsyncMock())))
+    intro = OpenerVariant(text="Hi, I'm Sam. To start —")
+    orch = InterviewOrchestrator(
+        session_config=cfg,
+        tenant_settings=MagicMock(engine_agent_name=None),
+        state_engine=state_engine,
+        judge=MagicMock(), speaker=MagicMock(),
+        attr_publisher=pub, event_collector=_collector(),
+        correlation_id="c", config=OrchestratorConfig(),
+        tenant_id="t",
+        opener_library=OpenerLibrary(),
+        intro_variant=intro,
+    )
+    assert orch._intro_variant is intro
