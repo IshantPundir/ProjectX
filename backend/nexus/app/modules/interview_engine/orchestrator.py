@@ -778,6 +778,8 @@ class InterviewOrchestrator:
                 self._RECOVERY_TEXT,
                 allow_interruptions=True, add_to_chat_ctx=False,
             )
+            # Cache intentionally NOT updated here (Phase 9.9 contract) —
+            # _RECOVERY_TEXT is a generic apology, not the question.
             self._state.register_agent_utterance(
                 turn_id=turn_id, text=self._RECOVERY_TEXT,
                 instruction_kind=speaker_input.instruction_kind,
@@ -808,12 +810,12 @@ class InterviewOrchestrator:
             event_types_seen=handle.event_types_seen,
             response_id=handle.response_id,
         ).model_dump())
-        # Register an empty agent utterance so the State Engine's
-        # transcript and repeat-cache don't see a phantom-success turn.
-        # Empty text with the instruction_kind preserved keeps the
-        # _question_utterances cache filter (in _QUESTION_KINDS)
-        # working correctly: an interrupted deliver_question still
-        # caches "" rather than the previous turn's question text.
+        # Empty agent transcript entry preserves forensic completeness:
+        # downstream replay tools see an empty utterance next to the
+        # corresponding speaker.interrupted audit event.
+        # Cache is intentionally NOT updated here — Phase 9.9 contract
+        # (see register_agent_question_for_repeat docstring) — empty/
+        # interrupted Speaker turns must not poison the repeat cache.
         self._state.register_agent_utterance(
             turn_id=turn_id, text="",
             instruction_kind=speaker_input.instruction_kind,
@@ -850,6 +852,10 @@ class InterviewOrchestrator:
             response_id=handle.response_id,
             finish_reason=handle.finish_reason,
         ).model_dump())
+        # Cache is intentionally NOT updated here (Phase 9.9 contract) —
+        # the fallback is a recovery utterance ("Let me restate that.
+        # {bank_text}"), not the agent's actual question for repeat
+        # purposes. The transcript records the fallback was played.
         self._state.register_agent_utterance(
             turn_id=turn_id, text=fallback,
             instruction_kind=speaker_input.instruction_kind,

@@ -1657,3 +1657,125 @@ async def test_stream_speaker_skips_opener_when_kind_has_no_variants(
 
     # session.say called once (content only — no opener).
     assert fake_agent.session.say.await_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Phase 9.9 — cache-integrity regression tests (Bug A from session a998073a)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_interrupted_speaker_does_not_pollute_repeat_cache(
+    make_session_config, make_question,
+):
+    """Phase 9.9 — _handle_interrupted_speaker MUST NOT write empty
+    text to _question_utterances. Bug A from session a998073a-3007-...:
+    push_back interrupted by candidate → cache held "" → next repeat
+    replayed silence."""
+    from app.modules.interview_engine.openers import OpenerLibrary
+    from app.modules.interview_engine.models.speaker import (
+        InstructionKind, SpeakerInput,
+    )
+    cfg = make_session_config(
+        questions=[make_question(qid="q1")],
+        signals=["S1"],
+    )
+    state_engine = StateEngine(session_config=cfg)
+    # Pre-seed the cache with a valid prior question via the new method.
+    state_engine.register_agent_question_for_repeat(
+        turn_id="t-prev", text="What is your favorite tool?",
+        instruction_kind=InstructionKind.deliver_question,
+    )
+
+    speaker = MagicMock()
+    speaker.stream = AsyncMock(return_value=_FakeSpeakerHandle(""))  # empty stream
+    judge = MagicMock()
+    pub = AttributePublisher(room=MagicMock(local_participant=MagicMock(set_attributes=AsyncMock())))
+    orch = InterviewOrchestrator(
+        session_config=cfg,
+        tenant_settings=MagicMock(engine_agent_name=None),
+        state_engine=state_engine,
+        judge=judge, speaker=speaker,
+        attr_publisher=pub, event_collector=_collector(),
+        correlation_id="c", config=OrchestratorConfig(),
+        tenant_id="t",
+        opener_library=OpenerLibrary(),
+    )
+
+    speaker_input = SpeakerInput(
+        instruction_kind=InstructionKind.push_back,
+        bank_text="What is your tool?",
+        last_candidate_utterance="hmm",
+        recent_turns=[], claims_pool_snapshot=[],
+        persona_name="Sam",
+        push_back_reason_code="vague_answer",
+    )
+    fake_agent = MagicMock()
+    # Fake an INTERRUPTED handle so _handle_interrupted_speaker fires.
+    interrupted_handle = MagicMock(interrupted=True)
+    fake_agent.session.say = AsyncMock(return_value=interrupted_handle)
+
+    await orch._stream_speaker_and_say(
+        agent=fake_agent, turn_id="t-interrupted", speaker_input=speaker_input,
+    )
+
+    # Cache UNCHANGED — still holds the prior valid question, NOT "".
+    assert "t-interrupted" not in state_engine._question_utterances
+    assert state_engine._question_utterances["t-prev"] == "What is your favorite tool?"
+
+
+@pytest.mark.asyncio
+async def test_empty_speaker_output_fallback_does_not_pollute_repeat_cache(
+    make_session_config, make_question,
+):
+    """Phase 9.9 — _handle_empty_speaker_output plays a deterministic
+    fallback ("Let me restate that. {bank_text}") but MUST NOT cache it.
+    The fallback is a recovery utterance, not the agent's actual question."""
+    from app.modules.interview_engine.openers import OpenerLibrary
+    from app.modules.interview_engine.models.speaker import (
+        InstructionKind, SpeakerInput,
+    )
+    cfg = make_session_config(
+        questions=[make_question(qid="q1")],
+        signals=["S1"],
+    )
+    state_engine = StateEngine(session_config=cfg)
+    state_engine.register_agent_question_for_repeat(
+        turn_id="t-prev", text="What is your favorite tool?",
+        instruction_kind=InstructionKind.deliver_question,
+    )
+
+    speaker = MagicMock()
+    speaker.stream = AsyncMock(return_value=_FakeSpeakerHandle(""))  # empty
+    judge = MagicMock()
+    pub = AttributePublisher(room=MagicMock(local_participant=MagicMock(set_attributes=AsyncMock())))
+    orch = InterviewOrchestrator(
+        session_config=cfg,
+        tenant_settings=MagicMock(engine_agent_name=None),
+        state_engine=state_engine,
+        judge=judge, speaker=speaker,
+        attr_publisher=pub, event_collector=_collector(),
+        correlation_id="c", config=OrchestratorConfig(),
+        tenant_id="t",
+        opener_library=OpenerLibrary(),
+    )
+
+    speaker_input = SpeakerInput(
+        instruction_kind=InstructionKind.push_back,
+        bank_text="What is your tool?",
+        last_candidate_utterance="ok",
+        recent_turns=[], claims_pool_snapshot=[],
+        persona_name="Sam",
+        push_back_reason_code="vague_answer",
+    )
+    fake_agent = MagicMock()
+    not_interrupted_handle = MagicMock(interrupted=False)
+    fake_agent.session.say = AsyncMock(return_value=not_interrupted_handle)
+
+    await orch._stream_speaker_and_say(
+        agent=fake_agent, turn_id="t-empty", speaker_input=speaker_input,
+    )
+
+    # Cache unchanged. Fallback was played but not cached.
+    assert "t-empty" not in state_engine._question_utterances
+    assert state_engine._question_utterances["t-prev"] == "What is your favorite tool?"
