@@ -182,3 +182,12 @@ def test_clarify_scaffold_no_longer_teaches_opener_variation():
     body_lower = body.lower()
     assert "vary the opener" not in body_lower
     assert "pre_spoken_opener" in body
+
+
+def test_redirect_scaffold_uses_pre_spoken_opener():
+    body = prompt_loader.get("engine/speaker/redirect")
+    body_lower = body.lower()
+    assert "pre_spoken_opener" in body
+    # Legacy guidance gone.
+    assert "vary the opener" not in body_lower
+    assert "recent_agent_openers" not in body
