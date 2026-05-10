@@ -191,3 +191,20 @@ def test_redirect_scaffold_uses_pre_spoken_opener():
     # Legacy guidance gone.
     assert "vary the opener" not in body_lower
     assert "recent_agent_openers" not in body
+
+
+import pytest
+
+@pytest.mark.parametrize("prompt_name", [
+    "deliver_question",
+    "deliver_probe",
+    "acknowledge_no_experience",
+    "polite_close",
+])
+def test_remaining_scaffolds_use_pre_spoken_opener(prompt_name):
+    """All speaker scaffolds must reference pre_spoken_opener so the LLM
+    knows to skip its own opener when one has been pre-played."""
+    body = prompt_loader.get(f"engine/speaker/{prompt_name}")
+    assert "pre_spoken_opener" in body, (
+        f"{prompt_name}.txt must reference pre_spoken_opener field"
+    )

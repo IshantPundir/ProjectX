@@ -1,44 +1,31 @@
 TASK
-The candidate disclosed they have no experience with the topic
-identified by {failed_signal_value}. Acknowledge specifically and
-empathetically, then let the framework move on.
+The candidate disclosed they have no experience with the active
+signal. Acknowledge it briefly, then either:
+  - Move to the next question (signal-by-signal probing continues), OR
+  - If this was the last mandatory signal, close (the State Engine
+    will follow with polite_close).
 
 OUTPUT
-- 1 short sentence (rarely 2). Translate failed_signal_value into
-  natural English (e.g. "JIRA administration" not "jira_admin").
-- Empathetic but brief. Do NOT evaluate. Do NOT soothe excessively.
-  Do NOT editorialize about the role's needs.
+- ONE-TWO short sentences total.
+- Do NOT include an acknowledgment opener like "Got it" / "Thanks for
+  being upfront" — the orchestrator played one as pre-cached audio.
+  Go straight into the validation + transition.
+- Keep the validation natural ("That's helpful to know."). Anti-leak:
+  do NOT name the signal verbatim ("X is a hard requirement", "we
+  need 5 years of Y").
+- Plain spoken English.
 
-EXAMPLES (illustrative — compose; do not copy)
+EXAMPLES (illustrative)
 
-EXAMPLE 1
-Input:
-"""
-last_candidate_utterance: "Honestly, I've never used JIRA admin tools."
-failed_signal_value: "jira_admin"
-"""
-Output:
-Got it — no JIRA administration experience on your end. Let's move on.
+WITH FOLLOW-UP QUESTION
+  pre_spoken_opener: "Thanks for being upfront."
+  last_candidate_utterance: "I have not used Jira before."
+  failed_signal_value: "Hands-on Jira administration"
+  → "Let me ask about something different."
 
-EXAMPLE 2
-Input:
-"""
-last_candidate_utterance: "I haven't worked with Kubernetes — we always had a separate platform team."
-failed_signal_value: "kubernetes_ops"
-"""
-Output:
-Understood — you haven't worked directly with Kubernetes operations.
-Let's keep going.
+LAST MANDATORY (lifecycle will fire polite_close next turn)
+  pre_spoken_opener: "Appreciate the honesty."
+  last_candidate_utterance: "I haven't worked at scale with this."
+  → "That's helpful to know."
 
-EXAMPLE 3
-Input:
-"""
-last_candidate_utterance: "I've never written Terraform."
-failed_signal_value: "terraform_iac"
-"""
-Output:
-Thanks for being upfront — no hands-on Terraform experience. Let's move
-on to the next one.
-
-REMINDER: translate the signal value into plain English; one sentence
-of acknowledgment; no evaluation.
+REMINDER: NO opener. NEVER quote failed_signal_value verbatim.

@@ -1,86 +1,37 @@
 TASK
-The candidate's last answer was on-topic but didn't fully cover the
-question. Deliver the probe from {bank_text} naturally — the way a
-real interviewer would transition to a follow-up. Don't recap what
-they just said unless it adds clarity.
+Drill into the candidate's previous answer with a follow-up question
+from the bank's probes list. Bank-text contains the probe text.
 
 OUTPUT
-- 1 short sentence asking the probe. Often that's the whole turn.
-- Optionally 1 brief transition phrase ("And...", "Going further...",
-  "Let's stay with that...") + the probe.
-- Rephrase bank_text into spoken English; don't read verbatim.
+- ONE short sentence delivering the probe. 10-20 words.
+- Do NOT include an acknowledgment opener like "Got it. And —" —
+  the orchestrator has played one as pre-cached audio. Go straight
+  into the probe.
+- Rephrase bank_text for spoken delivery only when needed; the probe
+  is usually concise enough to deliver verbatim.
+- Default: NO recap of the candidate's prior answer. The probe is
+  designed as a follow-up to the bank question, not their utterance.
+- RARE exception: if bank_text uses jargon the candidate clearly
+  hasn't heard ("ScriptRunner" when they've only mentioned
+  "automation"), a brief connective phrase may help ("On the
+  ScriptRunner side — ..."). This is the exception, not the default.
 
-DEFAULT BEHAVIOR — NO RECAP
-The default is: just ask the probe. Don't reference what the candidate
-just said. Real interviewers don't say "You mentioned X..." every turn —
-they trust the candidate remembers what they said.
+EXAMPLES (illustrative)
 
-ECHO PATH (RARE — use only when justified)
-Echo what the candidate said ONLY when:
-  (a) the candidate used a specific term that the probe directly
-      extends ("on those validators specifically — what does the
-      user see when one fails?"), AND
-  (b) without the echo, the probe would feel disconnected.
+NORMAL PROBE (no recap)
+  pre_spoken_opener: "Mhm. And —"
+  last_candidate_utterance: "I'd use validators."
+  bank_text: "How would you handle a transition where the validator
+  itself depends on a slow REST call?"
+  → "How would you handle a transition where the validator depends
+     on a slow REST call?"
 
-If neither is true, default to no recap.
+PROBE WITH BRIEF CONNECTIVE
+  pre_spoken_opener: "OK. And —"
+  last_candidate_utterance: "I would use simple automation."
+  bank_text: "When would you reach for ScriptRunner instead of native
+  automation rules?"
+  → "On the ScriptRunner side — when would you reach for it instead
+     of native automation rules?"
 
-WHAT NOT TO DO
-- Don't paraphrase the candidate's full answer back to them ("So you
-  mentioned validators, conditions, and post-functions...").
-- Don't quote them verbatim.
-- Don't open with "You mentioned" / "You're talking about" / "You said"
-  more than once every several turns.
-
-EXAMPLES (illustrative — compose; do not copy)
-
-EXAMPLE 1 — default, no recap
-Input:
-"""
-last_candidate_utterance: "I usually start by mapping the client's process and identifying issue types."
-bank_text: "How would you migrate existing projects onto that new workflow with minimal disruption?"
-"""
-Output:
-And how would you migrate existing projects onto that new workflow
-with minimal disruption?
-
-EXAMPLE 2 — default, no recap
-Input:
-"""
-last_candidate_utterance: "I'd add notifications and basic error handling."
-bank_text: "What would you log and how would you monitor this rule in production?"
-"""
-Output:
-What would you log, and how would you monitor this rule in production?
-
-EXAMPLE 3 — default, no recap
-Input:
-"""
-last_candidate_utterance: "I lean on Postgres' EXPLAIN to understand query plans."
-bank_text: "Have you worked with partial indexes? In what scenario?"
-"""
-Output:
-Have you worked with partial indexes? If so, in what scenario?
-
-EXAMPLE 4 — echo path (rare, justified by specific terminology)
-Input:
-"""
-last_candidate_utterance: "We had validators on the In-Review-to-Done transition."
-bank_text: "What does the user see when a validator fails?"
-"""
-Output:
-On those validators — what does the user actually see when one fails?
-
-EXAMPLE 5 — default, no recap (even though candidate gave a long answer)
-Input:
-"""
-last_candidate_utterance: "I'd do staging tests, then a pilot rollout, then batches with rollback checkpoints."
-bank_text: "Describe the largest production environment you've administered end to end."
-"""
-Output:
-Now describe the largest production environment you've administered
-end to end.
-
-REMINDER
-Default = no recap, just ask. Use the echo path only when there's a
-specific term the probe directly extends. Don't open every probe with
-"You mentioned..." — that's the robotic pattern this scaffold replaces.
+REMINDER: no opener. Default no recap.

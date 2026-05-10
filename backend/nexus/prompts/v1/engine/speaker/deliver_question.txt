@@ -1,53 +1,43 @@
 TASK
-The candidate just finished answering. Briefly acknowledge that they
-spoke (one short sentence, neutral, no evaluation), then deliver the
-next question rephrased from {bank_text}.
+The candidate just finished answering. Deliver the next question
+rephrased from {bank_text}.
 
 OUTPUT
-- 2 short sentences: acknowledgment + next question.
-- Acknowledgment is neutral ("Got it.", "Thanks for walking me through
-  that.", "Understood."). Never evaluative ("great", "perfect",
-  "interesting"). Vary it across turns.
-- Optionally use candidate_name in the acknowledgment (sparingly — at
-  most every few turns).
+- ONE short sentence delivering the next question. 12-30 words.
+- Do NOT include an acknowledgment opener like "Got it" / "Thanks for
+  walking me through that" — the orchestrator has played one as
+  pre-cached audio (see PRE-SPOKEN OPENER in the preamble). Go
+  straight into the question.
 - Rephrase bank_text for spoken delivery. If bank_text has multiple
-  parts, focus on one ask; secondary parts surface as natural follow-ups
-  later.
+  parts, focus on one ask; secondary parts surface as natural
+  follow-ups.
+- Plain spoken English. No JSON, no markdown.
+- NEVER evaluative ("great", "perfect", "interesting").
 
-EXAMPLES (illustrative — compose from actual inputs; do not copy)
+POST-CAP-ADVANCE — when `is_post_cap_advance` is true
+This deliver_question fires because the State Engine pushed forward
+after the candidate could not give specifics on the previous question.
+The orchestrator's opener carries a topic-shift phrase ("OK, let's
+switch gears.", "Alright, moving on.", etc.). Your output should
+naturally continue from that — go directly into the new question.
 
-EXAMPLE 1
-Input:
-"""
-last_candidate_utterance: "Yeah, we ran two sprints a quarter and I owned the JIRA setup."
-candidate_name: "Alex"
-bank_text: "How have you handled migration of issues between projects when business requirements changed?"
-"""
-Output:
-Got it. Tell me how you've handled migrating issues between projects
-when business requirements changed.
+EXAMPLES (illustrative — compose from actual inputs)
 
-EXAMPLE 2
-Input:
-"""
-last_candidate_utterance: "I've spent the last five years on the backend, mostly Python and some Go."
-candidate_name: "Priya"
-bank_text: "Talk through how you'd design a rate limiter for a public API."
-"""
-Output:
-Thanks for walking me through that, Priya. Now talk me through how
-you'd design a rate limiter for a public API.
+NORMAL ADVANCE
+  pre_spoken_opener: "Got it."
+  last_candidate_utterance: "...we ran two sprints a quarter and I
+  owned the JIRA setup."
+  bank_text: "How have you handled migration of issues between
+  projects when business requirements changed?"
+  → "Tell me how you've handled migrating issues between projects
+     when business requirements changed."
 
-EXAMPLE 3
-Input:
-"""
-last_candidate_utterance: "We had validators on the In-Review-to-Done transition to make sure the QA field was filled."
-candidate_name: null
-bank_text: "Have you worked with custom screen schemes? Walk me through one."
-"""
-Output:
-Understood. Have you worked with custom screen schemes? Walk me through
-one.
+POST-CAP-ADVANCE
+  pre_spoken_opener: "Alright, moving on."
+  last_candidate_utterance: (thin answer)
+  bank_text: "Talk through how you'd design a rate limiter for a
+  public API."
+  is_post_cap_advance: true
+  → "How would you design a rate limiter for a public API?"
 
-REMINDER: compose from {last_candidate_utterance} and {bank_text}. Do
-not paste an example.
+REMINDER: no opener. The candidate already heard one.
