@@ -17,6 +17,9 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger("interview-engine.openers")
 
+_RETRY_ATTEMPTS = 3
+_RETRY_BASE_DELAY_S = 0.2
+
 
 @dataclass
 class BuildReport:
@@ -34,24 +37,55 @@ class BuildReport:
 async def _synthesize_variant(
     variant: OpenerVariant, tts: TTS,
 ) -> tuple[OpenerVariant, Exception | None]:
-    """Synthesize one variant. On success, populates variant.audio_frames
-    in place. On failure, leaves audio_frames=None and returns the
-    exception. Never raises — caller aggregates into BuildReport."""
-    try:
-        frames: list = []
-        # tts.synthesize(text) returns an async context manager wrapping
-        # the audio stream. Each yielded event has a `frame` attribute.
-        async with tts.synthesize(variant.text) as stream:
-            async for ev in stream:
-                frame = getattr(ev, "frame", None)
-                if frame is not None:
-                    frames.append(frame)
-        if not frames:
-            return variant, RuntimeError("empty audio stream")
-        variant.audio_frames = frames
-        return variant, None
-    except Exception as exc:  # noqa: BLE001
-        return variant, exc
+    """Synthesize one variant with bounded exponential-backoff retry on
+    transient errors. Returns (variant, None) on success or (variant,
+    last_error) after all retries exhausted.
+
+    Retried errors: ``asyncio.TimeoutError`` and ``OSError`` (DNS
+    failures bubble up via httpcore as OSError subclasses; TCP resets
+    likewise). Non-retried: every other exception (4xx auth/validation
+    errors, content-filter rejections, schema errors — these will not
+    change on retry and we'd just hide the real problem).
+
+    Bounded budget: 3 attempts with exponential backoff (200ms, 400ms,
+    800ms = 1.4s max wait), tested in
+    ``test_synthesize_variant_exhausts_retries_then_returns_last_error``.
+
+    See spec ``docs/superpowers/specs/2026-05-10-intro-prefetch-and-cache-integrity-design.md``
+    §4.2 for the rationale (Bug C from session a998073a-3007-... boot).
+    """
+    last_exc: Exception | None = None
+    for attempt in range(_RETRY_ATTEMPTS):
+        try:
+            frames: list = []
+            # tts.synthesize(text) returns an async context manager wrapping
+            # the audio stream. Each yielded event has a `frame` attribute.
+            async with tts.synthesize(variant.text) as stream:
+                async for ev in stream:
+                    frame = getattr(ev, "frame", None)
+                    if frame is not None:
+                        frames.append(frame)
+            if not frames:
+                return variant, RuntimeError("empty audio stream")
+            variant.audio_frames = frames
+            return variant, None
+        except (asyncio.TimeoutError, OSError) as exc:
+            last_exc = exc
+            if attempt < _RETRY_ATTEMPTS - 1:
+                backoff_s = _RETRY_BASE_DELAY_S * (2 ** attempt)
+                log.warning(
+                    "openers.cache.synth.retry",
+                    variant_text=variant.text[:40],
+                    attempt=attempt + 1,
+                    error_type=type(exc).__name__,
+                    backoff_ms=int(backoff_s * 1000),
+                )
+                await asyncio.sleep(backoff_s)
+                continue
+            return variant, exc
+        except Exception as exc:  # noqa: BLE001
+            return variant, exc
+    return variant, last_exc
 
 
 async def build_opener_cache(

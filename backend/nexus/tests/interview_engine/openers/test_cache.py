@@ -84,3 +84,93 @@ async def test_build_opener_cache_tolerates_partial_failure():
         for v in variants if v.audio_frames is not None
     )
     assert populated >= 1
+
+
+# ---------------------------------------------------------------------------
+# _synthesize_variant retry-with-backoff tests (Bug C)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_synthesize_variant_retries_on_oserror():
+    """Bug C — DNS failures (httpcore.ConnectError, OSError subclass)
+    should be retried with exponential backoff, not surfaced after the
+    first attempt."""
+    from app.modules.interview_engine.openers.library import OpenerVariant
+    from app.modules.interview_engine.openers.cache import _synthesize_variant
+
+    attempts = []
+
+    class FlakeyTTS:
+        def synthesize(self, text):
+            attempts.append(len(attempts) + 1)
+            if len(attempts) == 1:
+                raise OSError("[Errno -5] No address associated with hostname")
+            return _FakeTTSStream([_FakeAudioFrame(b"ok")])
+
+    variant = OpenerVariant(text="hello")
+    _, exc = await _synthesize_variant(variant, FlakeyTTS())
+    assert exc is None
+    assert variant.audio_frames is not None
+    assert len(attempts) == 2
+
+
+@pytest.mark.asyncio
+async def test_synthesize_variant_retries_on_timeout():
+    """asyncio.TimeoutError is also retryable."""
+    import asyncio as _asyncio
+    from app.modules.interview_engine.openers.library import OpenerVariant
+    from app.modules.interview_engine.openers.cache import _synthesize_variant
+
+    attempts = []
+
+    class TimeoutThenSuccessTTS:
+        def synthesize(self, text):
+            attempts.append(len(attempts) + 1)
+            if len(attempts) == 1:
+                raise _asyncio.TimeoutError("synthesis timeout")
+            return _FakeTTSStream([_FakeAudioFrame(b"ok")])
+
+    variant = OpenerVariant(text="hello")
+    _, exc = await _synthesize_variant(variant, TimeoutThenSuccessTTS())
+    assert exc is None
+    assert len(attempts) == 2
+
+
+@pytest.mark.asyncio
+async def test_synthesize_variant_does_not_retry_on_non_transient_error():
+    """4xx-style errors (BadRequest, auth) MUST NOT be retried."""
+    from app.modules.interview_engine.openers.library import OpenerVariant
+    from app.modules.interview_engine.openers.cache import _synthesize_variant
+
+    attempts = []
+
+    class FatalTTS:
+        def synthesize(self, text):
+            attempts.append(len(attempts) + 1)
+            raise ValueError("invalid voice 'foo'")
+
+    variant = OpenerVariant(text="hello")
+    _, exc = await _synthesize_variant(variant, FatalTTS())
+    assert exc is not None
+    assert isinstance(exc, ValueError)
+    assert len(attempts) == 1
+
+
+@pytest.mark.asyncio
+async def test_synthesize_variant_exhausts_retries_then_returns_last_error():
+    """All 3 attempts fail → returns the last error after the bounded budget."""
+    from app.modules.interview_engine.openers.library import OpenerVariant
+    from app.modules.interview_engine.openers.cache import _synthesize_variant
+
+    attempts = []
+
+    class AlwaysFailTTS:
+        def synthesize(self, text):
+            attempts.append(len(attempts) + 1)
+            raise OSError("permanent network outage")
+
+    variant = OpenerVariant(text="hello")
+    _, exc = await _synthesize_variant(variant, AlwaysFailTTS())
+    assert exc is not None
+    assert isinstance(exc, OSError)
+    assert len(attempts) == 3
