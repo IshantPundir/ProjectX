@@ -1097,6 +1097,9 @@ codecs = [
 images = [
     { name = "pillow" },
 ]
+openai = [
+    { name = "livekit-plugins-openai" },
+]
 turn-detector = [
     { name = "livekit-plugins-turn-detector" },
 ]
@@ -1192,6 +1195,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/4d/8a/55be256fc2af9470f22af2c0a00a167377ed915b7d18a8b7409f6c6106b3/livekit_plugins_openai-1.5.7.tar.gz", hash = "sha256:7475114be92e2b5de4dff8bf1dfe2969e0e5ce57f3af595e123e81418983fa41", size = 42958, upload-time = "2026-04-30T20:40:02.67Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f7/7b/4ace1492b42554bf8c52ba24598a6c8b0b19f30d8739cd4506fb08c8a513/livekit_plugins_openai-1.5.7-py3-none-any.whl", hash = "sha256:79f6c7445e5f610290409f1802224adb1666bb26555c7b33f21978aa64f40db6", size = 49713, upload-time = "2026-04-30T20:40:01.308Z" },
+]
+
+[[package]]
+name = "livekit-plugins-sarvam"
+version = "1.5.7"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "livekit-agents", extra = ["codecs", "openai"] },
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4c/b3/df4a0321df9a39df123cc23639b036cae8cafec017a06c7edc0f7aeff7d8/livekit_plugins_sarvam-1.5.7.tar.gz", hash = "sha256:cc92c677e947e1cc78704c9d3b795ef1800bf35e18858ad3d381c3ac41926fc9", size = 26377, upload-time = "2026-04-30T20:40:23.241Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/da/1c/ca196e3b7a3e46c02c0b5310fc9f1e21d4e2f90236d84de1ad3b29079ee6/livekit_plugins_sarvam-1.5.7-py3-none-any.whl", hash = "sha256:b67b7a98fde670fd3d1c41e90e13926c0197b69b391172d6a9525c04e5bfbace", size = 29081, upload-time = "2026-04-30T20:40:22.111Z" },
 ]
 
 [[package]]
@@ -1462,6 +1478,7 @@ dependencies = [
     { name = "livekit-plugins-cartesia" },
     { name = "livekit-plugins-deepgram" },
     { name = "livekit-plugins-openai" },
+    { name = "livekit-plugins-sarvam" },
     { name = "openai" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-otlp" },
@@ -1507,6 +1524,7 @@ requires-dist = [
     { name = "livekit-plugins-cartesia", specifier = ">=1.5.4,<2" },
     { name = "livekit-plugins-deepgram", specifier = ">=1.5.4,<2" },
     { name = "livekit-plugins-openai", specifier = ">=1.5.4,<2" },
+    { name = "livekit-plugins-sarvam", specifier = ">=1.5.4,<2" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.20,<2" },
     { name = "openai", specifier = ">=2.10,<3" },
     { name = "opentelemetry-api", specifier = ">=1.39,<1.40.dev0" },
