@@ -153,7 +153,12 @@ def test_repeat_action_uses_cached_utterance():
         turn_id="t-0", judge_output=eng.initialize_for_session_start(),
         candidate_utterance_text=None, elapsed_ms=0,
     )
+    # Phase 9.9 — orchestrator now calls both methods (transcript + cache).
     eng.register_agent_utterance(
+        turn_id="t-0", text="Tell me about your work with q1.",
+        instruction_kind=InstructionKind.deliver_first_question,
+    )
+    eng.register_agent_question_for_repeat(
         turn_id="t-0", text="Tell me about your work with q1.",
         instruction_kind=InstructionKind.deliver_first_question,
     )
@@ -518,11 +523,18 @@ def test_repeat_replays_last_question_not_redirect():
     )
 
     # Simulate the orchestrator registering the first-question utterance.
+    # Phase 9.9 — orchestrator now calls both methods (transcript + cache).
     engine.register_agent_utterance(
         turn_id="t0", text="Walk me through your Jira workflow.",
         instruction_kind=InstructionKind.deliver_first_question,
     )
+    engine.register_agent_question_for_repeat(
+        turn_id="t0", text="Walk me through your Jira workflow.",
+        instruction_kind=InstructionKind.deliver_first_question,
+    )
     # Then simulate a redirect utterance from a later turn.
+    # redirect is not a question kind — register_agent_question_for_repeat would no-op,
+    # so only the transcript call is needed here (matches orchestrator behavior).
     engine.register_agent_utterance(
         turn_id="t1",
         text="Let's stay on the Jira workflow side for now.",
@@ -1532,12 +1544,22 @@ def test_repeat_after_push_back_replays_push_back_text():
     _activate_q1(eng)
     # Q1 was delivered as deliver_first_question — this is the original
     # cache entry.
+    # Phase 9.9 — orchestrator now calls both methods (transcript + cache).
     eng.register_agent_utterance(
         turn_id="t-q1", text="What is q1 please?",
         instruction_kind=InstructionKind.deliver_first_question,
     )
+    eng.register_agent_question_for_repeat(
+        turn_id="t-q1", text="What is q1 please?",
+        instruction_kind=InstructionKind.deliver_first_question,
+    )
     push_back_text = "Got it — which specific issue types would you define?"
+    # Phase 9.9 — orchestrator now calls both methods (transcript + cache).
     eng.register_agent_utterance(
+        turn_id="t-pb", text=push_back_text,
+        instruction_kind=InstructionKind.push_back,
+    )
+    eng.register_agent_question_for_repeat(
         turn_id="t-pb", text=push_back_text,
         instruction_kind=InstructionKind.push_back,
     )
@@ -1556,12 +1578,22 @@ def test_repeat_after_clarify_replays_clarify_text():
     turn 5 regression.)"""
     eng = _engine()
     _activate_q1(eng)
+    # Phase 9.9 — orchestrator now calls both methods (transcript + cache).
     eng.register_agent_utterance(
         turn_id="t-q1", text="Original Q1 wording.",
         instruction_kind=InstructionKind.deliver_first_question,
     )
+    eng.register_agent_question_for_repeat(
+        turn_id="t-q1", text="Original Q1 wording.",
+        instruction_kind=InstructionKind.deliver_first_question,
+    )
     clarify_text = "Sure, let me rephrase. Imagine a client tells you..."
+    # Phase 9.9 — orchestrator now calls both methods (transcript + cache).
     eng.register_agent_utterance(
+        turn_id="t-cl", text=clarify_text,
+        instruction_kind=InstructionKind.clarify,
+    )
+    eng.register_agent_question_for_repeat(
         turn_id="t-cl", text=clarify_text,
         instruction_kind=InstructionKind.clarify,
     )
@@ -1578,15 +1610,27 @@ def test_repeat_skips_redirect_intervening_between_clarify_and_repeat():
     _QUESTION_KINDS so it never enters the cache."""
     eng = _engine()
     _activate_q1(eng)
+    # Phase 9.9 — orchestrator now calls both methods (transcript + cache).
     eng.register_agent_utterance(
         turn_id="t-q1", text="Q1 wording.",
         instruction_kind=InstructionKind.deliver_first_question,
     )
+    eng.register_agent_question_for_repeat(
+        turn_id="t-q1", text="Q1 wording.",
+        instruction_kind=InstructionKind.deliver_first_question,
+    )
     clarify_text = "Let me rephrase. <clarify content>"
+    # Phase 9.9 — orchestrator now calls both methods (transcript + cache).
     eng.register_agent_utterance(
         turn_id="t-cl", text=clarify_text,
         instruction_kind=InstructionKind.clarify,
     )
+    eng.register_agent_question_for_repeat(
+        turn_id="t-cl", text=clarify_text,
+        instruction_kind=InstructionKind.clarify,
+    )
+    # redirect is not a question kind — register_agent_question_for_repeat would no-op,
+    # so only the transcript call is needed here (matches orchestrator behavior).
     eng.register_agent_utterance(
         turn_id="t-redir", text="Let's keep this professional.",
         instruction_kind=InstructionKind.redirect,

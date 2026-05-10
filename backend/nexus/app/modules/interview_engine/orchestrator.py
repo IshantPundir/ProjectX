@@ -742,9 +742,14 @@ class InterviewOrchestrator:
                 turn_id=turn_id, final_utterance=final_text,
             ).model_dump())
 
-            # Cache for repeat replay. The opener is played separately, so
-            # final_text contains only Speaker content (clean by construction).
+            # Phase 9.9 — register_agent_utterance is now transcript-only;
+            # register_agent_question_for_repeat does the cache update with
+            # the empty-text + non-question-kind guards.
             self._state.register_agent_utterance(
+                turn_id=turn_id, text=final_text,
+                instruction_kind=speaker_input.instruction_kind,
+            )
+            self._state.register_agent_question_for_repeat(
                 turn_id=turn_id, text=final_text,
                 instruction_kind=speaker_input.instruction_kind,
             )
