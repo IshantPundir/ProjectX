@@ -74,3 +74,32 @@ def test_interview_turn_detector_unlikely_threshold_default_is_none(monkeypatch)
     monkeypatch.delenv("INTERVIEW_TURN_DETECTOR_UNLIKELY_THRESHOLD", raising=False)
     cfg = AIConfig()
     assert cfg.interview_turn_detector_unlikely_threshold is None
+
+
+def test_settings_have_sarvam_fields():
+    """Sarvam-specific Settings fields exist with sensible defaults.
+
+    Uses model_fields introspection to read the *coded* default rather than
+    instantiating Settings — that way local-dev .env values for any of these
+    keys don't interfere with the assertion.
+    """
+    fields = Settings.model_fields
+    assert fields["sarvam_api_key"].default == ""
+    assert fields["interview_stt_provider"].default == "sarvam"
+    assert fields["interview_stt_mode"].default == "transcribe"
+    assert fields["interview_tts_pace"].default == 1.0
+    assert fields["interview_tts_temperature"].default == 0.6
+
+
+def test_settings_tts_provider_accepts_sarvam(monkeypatch):
+    """Widened Literal accepts sarvam alongside openai/cartesia."""
+    monkeypatch.setenv("INTERVIEW_TTS_PROVIDER", "sarvam")
+    s = Settings()
+    assert s.interview_tts_provider == "sarvam"
+
+
+def test_settings_stt_provider_accepts_deepgram(monkeypatch):
+    """interview_stt_provider Literal accepts deepgram (rollback path)."""
+    monkeypatch.setenv("INTERVIEW_STT_PROVIDER", "deepgram")
+    s = Settings()
+    assert s.interview_stt_provider == "deepgram"
