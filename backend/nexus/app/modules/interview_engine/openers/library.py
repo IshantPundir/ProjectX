@@ -4,8 +4,8 @@ See docs/superpowers/specs/2026-05-10-opener-prefetch-architecture-design.md
 """
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable, Iterable
-from dataclasses import dataclass, field
+from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
@@ -41,7 +41,7 @@ class OpenerVariant:
     synthesis); the orchestrator falls back to text-only TTS for those.
     """
     text: str
-    audio_frames: list["rtc.AudioFrame"] | None = None
+    audio_frames: list[rtc.AudioFrame] | None = None
 
 
 @dataclass(frozen=True)
@@ -54,4 +54,4 @@ class OpenerSelection:
     the orchestrator falls back to ``session.say(text=...)``.
     """
     text: str | None
-    audio_iter: Callable[[], AsyncIterator["rtc.AudioFrame"]] | None
+    audio_iter: Callable[[], AsyncIterator[rtc.AudioFrame]] | None
