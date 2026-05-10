@@ -126,22 +126,53 @@ def build_tts_plugin() -> "_BaseTTS":
     """Construct the realtime TTS plugin selected by AIConfig.
 
     Provider is chosen by ``AIConfig.interview_tts_provider``
-    (env: ``INTERVIEW_TTS_PROVIDER``). Default ``openai``
-    (``gpt-4o-mini-tts``); ``cartesia`` (``sonic-2``) is the alternate.
+    (env: ``INTERVIEW_TTS_PROVIDER``). Default ``sarvam`` (``bulbul:v3``);
+    alternates: ``openai`` (``gpt-4o-mini-tts``), ``cartesia`` (``sonic-2``).
 
     Voice / model / language fields on AIConfig are interpreted by the
-    chosen provider — passing a Cartesia voice UUID to OpenAI (or an
+    chosen provider — passing a Sarvam speaker name to OpenAI (or an
     OpenAI preset name to Cartesia) raises at plugin construction. Keep
     voice + model in sync with the provider you pick.
     """
     provider = ai_config.interview_tts_provider
+    if provider == "sarvam":
+        return _build_tts_sarvam()
     if provider == "openai":
         return _build_tts_openai()
     if provider == "cartesia":
         return _build_tts_cartesia()
     raise ValueError(
         f"Unknown interview_tts_provider {provider!r}; "
-        "expected 'openai' or 'cartesia'."
+        "expected 'sarvam', 'openai', or 'cartesia'."
+    )
+
+
+def _build_tts_sarvam() -> "_BaseTTS":
+    """Sarvam TTS (default). Indian-language tuned (bulbul:v3, speaker
+    ``shubh`` by default). Auth via SARVAM_API_KEY env.
+
+    ``target_language_code`` is required by the plugin and is sourced
+    from ``interview_tts_language`` (en-IN by default). ``temperature``
+    only affects bulbul:v3 / bulbul:v3-beta; bulbul:v2 silently ignores
+    it. ``pace`` applies to all bulbul models.
+    """
+    from livekit.plugins import sarvam
+
+    logger.info(
+        "ai.realtime.tts.built",
+        provider="sarvam",
+        model=ai_config.interview_tts_model,
+        speaker=ai_config.interview_tts_voice,
+        language=ai_config.interview_tts_language,
+        pace=ai_config.interview_tts_pace,
+        temperature=ai_config.interview_tts_temperature,
+    )
+    return sarvam.TTS(
+        model=ai_config.interview_tts_model,
+        target_language_code=ai_config.interview_tts_language,
+        speaker=ai_config.interview_tts_voice,
+        pace=ai_config.interview_tts_pace,
+        temperature=ai_config.interview_tts_temperature,
     )
 
 

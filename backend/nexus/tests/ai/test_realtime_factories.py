@@ -86,3 +86,24 @@ class TestBuildSttPlugin:
             mock_config.interview_stt_provider = "bogus"
             with pytest.raises(ValueError, match="Unknown interview_stt_provider"):
                 build_stt_plugin()
+
+
+class TestBuildTtsPlugin:
+    def test_sarvam_provider_loads_sarvam_plugin(self, monkeypatch) -> None:
+        monkeypatch.setenv("SARVAM_API_KEY", "test-key")
+        with patch("app.ai.realtime.ai_config") as mock_config:
+            mock_config.interview_tts_provider = "sarvam"
+            mock_config.interview_tts_model = "bulbul:v3"
+            mock_config.interview_tts_voice = "shubh"
+            mock_config.interview_tts_language = "en-IN"
+            mock_config.interview_tts_pace = 1.0
+            mock_config.interview_tts_temperature = 0.6
+            result = build_tts_plugin()
+        assert result is not None
+        assert "livekit.plugins.sarvam" in sys.modules
+
+    def test_unknown_provider_raises(self) -> None:
+        with patch("app.ai.realtime.ai_config") as mock_config:
+            mock_config.interview_tts_provider = "bogus"
+            with pytest.raises(ValueError, match="Unknown interview_tts_provider"):
+                build_tts_plugin()
