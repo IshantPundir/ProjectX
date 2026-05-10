@@ -1319,9 +1319,10 @@ async def test_interrupted_speaker_does_not_play_fallback(
 
     # Must NOT play the fallback (would talk over the candidate).
     assert final_text == ""
-    # Specifically — session.say is called ONCE (the original stream),
-    # and no SECOND say call for a fallback.
-    assert agent.session.say.await_count == 1
+    # session.say is called TWICE: once for the opener (redirect has
+    # opener variants) and once for the content stream. No THIRD say
+    # call for a fallback — the interrupted path suppresses it.
+    assert agent.session.say.await_count == 2
 
     audit_kinds = [e.kind for e in orch._collector.events]
     assert SPEAKER_INTERRUPTED in audit_kinds
@@ -1409,10 +1410,12 @@ async def test_cap_advance_speaker_output_caches_stripped_question(
     )
     state_engine = StateEngine(session_config=cfg)
     speaker_service = MagicMock()
-    spoken = (
-        "Alright, let's switch topics — how would you enforce that a "
-        "ticket can only move to Ready for QA?"
-    )
+    # Phase 9.8: The opener (segue) is now spoken separately as a
+    # pre-cached opener. The Speaker LLM receives pre_spoken_opener and
+    # produces ONLY the question content — no segue prefix. The
+    # orchestrator passes cache_text=None, so the cache holds the full
+    # Speaker content (which IS the question, already clean).
+    spoken = "How would you enforce that a ticket can only move to Ready for QA?"
     speaker_service.stream = AsyncMock(return_value=_FakeSpeakerHandle(spoken))
     judge_service = MagicMock()
     pub = AttributePublisher(room=MagicMock(local_participant=MagicMock(
@@ -1437,15 +1440,17 @@ async def test_cap_advance_speaker_output_caches_stripped_question(
     )
 
     # Synthesize the SpeakerInput the orchestrator would build for a
-    # cap-forced advance. The is_post_cap_advance=True flag is the
-    # critical signal that triggers the cache_text strip path.
+    # cap-forced advance. The is_post_cap_advance=True flag causes the
+    # opener library to pick a POST_CAP_ADVANCE opener (e.g.
+    # "OK, let's switch gears.") which plays separately before the
+    # Speaker content. The Speaker content itself has no segue.
     speaker_input = SpeakerInput(
         instruction_kind=InstructionKind.deliver_question,
         bank_text="What is q1?",
         last_candidate_utterance="thin answer",
         recent_turns=[], claims_pool_snapshot=[],
         persona_name="Sam", candidate_name="Ishant",
-        is_post_cap_advance=True,  # the flag under test
+        is_post_cap_advance=True,  # causes POST_CAP_ADVANCE opener selection
     )
 
     fake_agent = MagicMock()
@@ -1455,18 +1460,23 @@ async def test_cap_advance_speaker_output_caches_stripped_question(
         agent=fake_agent, turn_id="t-cap", speaker_input=speaker_input,
     )
 
-    # The agent SPOKE the full segue version (live UX is correct).
+    # The agent SPOKE the Speaker-only content (opener was played separately).
     assert final_text == spoken
 
-    # The repeat-cache stores the QUESTION ONLY (segue stripped).
+    # The repeat-cache stores the Speaker content (already clean — no segue).
+    # cache_text=None means the cache uses the full spoken text.
     cached = state_engine._question_utterances.get("t-cap")
     assert cached is not None
     assert "switch topics" not in cached, (
         "Cached repeat text must NOT contain the segue prefix"
     )
-    assert cached.startswith("How would you enforce"), (
-        f"Cached text should be the stripped question; got: {cached!r}"
+    assert cached == spoken, (
+        f"Cache should hold the full Speaker content; got: {cached!r}"
     )
+
+    # Opener was played via the first session.say call (POST_CAP_ADVANCE
+    # variants exist). Content was played via the second call.
+    assert fake_agent.session.say.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -1531,44 +1541,49 @@ async def test_normal_advance_caches_full_speaker_text(
 
 
 # ---------------------------------------------------------------------------
-# Phase 9.7 Bug C.1 — orchestrator strips push_back / clarify openers
+# Phase 9.8 — Speaker content is opener-clean; cache = full Speaker text
+#
+# In the opener-prefetch architecture the opener is spoken by the
+# orchestrator BEFORE the Speaker LLM fires. The Speaker receives
+# ``pre_spoken_opener`` and is instructed NOT to start with an opener
+# of its own. So the Speaker output should be clean content already,
+# and ``cache_text=None`` means the cache stores the full spoken text.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("kind_name,spoken,expected_cache", [
+@pytest.mark.parametrize("kind_name,spoken", [
     (
         "push_back",
-        "Got it — which specific issue types would you define?",
         "Which specific issue types would you define?",
     ),
     (
         "push_back",
-        "Got it, Ishant — walk me through what that does?",
         "Walk me through what that does?",
     ),
     (
         "clarify",
-        "Sure, let me rephrase. Imagine a client tells you their workflow.",
         "Imagine a client tells you their workflow.",
     ),
     (
         "clarify",
-        "No problem, Ishant. In simple terms: when someone tries to move a ticket?",
         "When someone tries to move a ticket?",
     ),
     (
         "clarify",
-        "Let me restate that. You need to block a transition unless...",
         "You need to block a transition unless...",
     ),
 ])
-async def test_orchestrator_strips_opener_for_push_back_and_clarify(
-    make_session_config, make_question, kind_name, spoken, expected_cache,
+async def test_orchestrator_caches_clean_speaker_content_for_push_back_and_clarify(
+    make_session_config, make_question, kind_name, spoken,
 ):
-    """End-to-end: when the Speaker output begins with a recognized
-    conversational opener, the orchestrator passes the opener-stripped
-    version as cache_text. Spoken transcript still gets the full text."""
+    """Phase 9.8: The Speaker LLM receives pre_spoken_opener and produces
+    clean content (no opener prefix). The orchestrator passes
+    cache_text=None so the cache stores the full Speaker content, which
+    is already clean by construction.
+
+    Replaces the Phase 9.7 test that tested opener stripping — stripping
+    is now redundant because the opener is pre-spoken separately."""
     from app.modules.interview_engine.models.speaker import (
         InstructionKind, SpeakerInput,
     )
@@ -1607,23 +1622,9 @@ async def test_orchestrator_strips_opener_for_push_back_and_clarify(
 
     if kind_name == "push_back":
         kind = InstructionKind.push_back
-        # build_speaker_input requires a matching JudgeOutput payload
-        # for the discriminator validator. Synthesize one.
-        judge_out = JudgeOutput(
-            observations=[], candidate_claims=[],
-            next_action=NextAction.push_back,
-            next_action_payload=PushBackPayload(reason_code="vague_answer"),
-            turn_metadata=TurnMetadata(),
-        )
         push_back_reason = "vague_answer"
     else:  # clarify
         kind = InstructionKind.clarify
-        judge_out = JudgeOutput(
-            observations=[], candidate_claims=[],
-            next_action=NextAction.clarify,
-            next_action_payload=ClarifyPayload(),
-            turn_metadata=TurnMetadata(),
-        )
         push_back_reason = None
     speaker_input = SpeakerInput(
         instruction_kind=kind,
@@ -1641,11 +1642,12 @@ async def test_orchestrator_strips_opener_for_push_back_and_clarify(
         agent=fake_agent, turn_id="t-x", speaker_input=speaker_input,
     )
 
-    assert final_text == spoken, "Spoken text must be the full version"
+    assert final_text == spoken, "Speaker content must be returned as spoken text"
+    # Cache holds the full Speaker content (already clean — no opener prefix).
     cached = state_engine._question_utterances.get("t-x")
-    assert cached == expected_cache, (
-        f"Cache mismatch:\n  spoken:   {spoken!r}\n"
-        f"  expected: {expected_cache!r}\n  got:      {cached!r}"
+    assert cached == spoken, (
+        f"Cache must hold the full Speaker content:\n"
+        f"  spoken:  {spoken!r}\n  got:     {cached!r}"
     )
 
 
@@ -1778,3 +1780,151 @@ def test_orchestrator_accepts_opener_library_and_initializes_recent_openers(
     assert isinstance(orch._recent_openers, deque)
     assert orch._recent_openers.maxlen == 5
     assert len(orch._recent_openers) == 0
+
+
+@pytest.mark.asyncio
+async def test_stream_speaker_plays_opener_then_content_and_caches_content_only(
+    make_session_config, make_question,
+):
+    """End-to-end: orchestrator picks opener from library, plays it,
+    then streams Speaker content, and caches ONLY the content (not the
+    opener) for repeat replay."""
+    from app.modules.interview_engine.openers import OpenerLibrary
+    from app.modules.interview_engine.event_kinds import SPEAKER_OPENER_PLAYED
+    from app.modules.interview_engine.models.speaker import (
+        InstructionKind, SpeakerInput,
+    )
+
+    cfg = make_session_config(
+        questions=[make_question(qid="q1", text="What is your first question?")],
+        signals=["S1"],
+    )
+    state_engine = StateEngine(session_config=cfg)
+    state_engine.process_judge_output(
+        turn_id="t-0",
+        judge_output=state_engine.initialize_for_session_start(),
+        candidate_utterance_text=None, elapsed_ms=0,
+    )
+
+    speaker_service = MagicMock()
+    speaker_service.stream = AsyncMock(
+        return_value=_FakeSpeakerHandle(
+            "Walk me through one validation check you'd actually write.",
+        ),
+    )
+    judge_service = MagicMock()
+    pub = AttributePublisher(room=MagicMock(local_participant=MagicMock(
+        set_attributes=AsyncMock(),
+    )))
+    orch = InterviewOrchestrator(
+        session_config=cfg,
+        tenant_settings=MagicMock(engine_agent_name=None),
+        state_engine=state_engine,
+        judge=judge_service, speaker=speaker_service,
+        attr_publisher=pub, event_collector=_collector(),
+        correlation_id="c", config=OrchestratorConfig(),
+        tenant_id="t",
+        opener_library=OpenerLibrary(),
+    )
+
+    speaker_input = SpeakerInput(
+        instruction_kind=InstructionKind.push_back,
+        bank_text="What is your first question?",
+        last_candidate_utterance="thin",
+        recent_turns=[], claims_pool_snapshot=[],
+        persona_name="Sam", candidate_name="Ishant",
+        push_back_reason_code="vague_answer",
+    )
+
+    fake_agent = MagicMock()
+    fake_agent.session.say = AsyncMock(return_value=MagicMock(interrupted=False))
+
+    final_text = await orch._stream_speaker_and_say(
+        agent=fake_agent, turn_id="t-1", speaker_input=speaker_input,
+    )
+
+    # Speaker content was returned and stored in transcript.
+    assert final_text == "Walk me through one validation check you'd actually write."
+
+    # Cache for repeat replay holds ONLY the Speaker content.
+    cached = state_engine._question_utterances.get("t-1")
+    assert cached == final_text
+    assert "Got it" not in cached  # no opener prefix
+
+    # session.say was called twice: once for opener, once for content.
+    assert fake_agent.session.say.await_count == 2
+    # First call: opener (text + audio kwargs).
+    first_call_kwargs = fake_agent.session.say.call_args_list[0].kwargs
+    assert "text" in first_call_kwargs
+    # The orchestrator picked one of the push_back/vague_answer variants.
+    assert first_call_kwargs["text"] in {
+        "Got it.",
+        "OK.",
+        "Right —",
+        "Mhm —",
+        "Hmm —",
+        "OK, let me press on that —",
+    }
+
+    # Audit event SPEAKER_OPENER_PLAYED fired.
+    audit_kinds = [e.kind for e in orch._collector.events]
+    assert SPEAKER_OPENER_PLAYED in audit_kinds
+
+    # Recent openers updated.
+    assert len(orch._recent_openers) == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_speaker_skips_opener_when_kind_has_no_variants(
+    make_session_config, make_question,
+):
+    """deliver_first_question has no library variants — orchestrator
+    must NOT call session.say for an opener; only the content say()
+    runs."""
+    from app.modules.interview_engine.openers import OpenerLibrary
+    from app.modules.interview_engine.models.speaker import (
+        InstructionKind, SpeakerInput,
+    )
+
+    cfg = make_session_config(
+        questions=[make_question(qid="q1", text="What is your first question?")],
+        signals=["S1"],
+    )
+    state_engine = StateEngine(session_config=cfg)
+
+    speaker_service = MagicMock()
+    speaker_service.stream = AsyncMock(
+        return_value=_FakeSpeakerHandle("Hi, I'm Sam. To start, ..."),
+    )
+    judge_service = MagicMock()
+    pub = AttributePublisher(room=MagicMock(local_participant=MagicMock(
+        set_attributes=AsyncMock(),
+    )))
+    orch = InterviewOrchestrator(
+        session_config=cfg,
+        tenant_settings=MagicMock(engine_agent_name=None),
+        state_engine=state_engine,
+        judge=judge_service, speaker=speaker_service,
+        attr_publisher=pub, event_collector=_collector(),
+        correlation_id="c", config=OrchestratorConfig(),
+        tenant_id="t",
+        opener_library=OpenerLibrary(),
+    )
+
+    speaker_input = SpeakerInput(
+        instruction_kind=InstructionKind.deliver_first_question,
+        bank_text="What is your first question?",
+        last_candidate_utterance=None,
+        recent_turns=[], claims_pool_snapshot=[],
+        persona_name="Sam",
+    )
+
+    fake_agent = MagicMock()
+    fake_agent.session.say = AsyncMock(return_value=MagicMock(interrupted=False))
+
+    await orch._stream_speaker_and_say(
+        agent=fake_agent, turn_id="t-0", speaker_input=speaker_input,
+    )
+
+    # session.say called once (content only — no opener).
+    assert fake_agent.session.say.await_count == 1

@@ -6,6 +6,7 @@ Speaker on each candidate turn. on_close builds the SessionResult.
 """
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from collections import deque
@@ -669,12 +670,72 @@ class InterviewOrchestrator:
     async def _stream_speaker_and_say(
         self, *, agent: Any, turn_id: str, speaker_input: Any,
     ) -> str:
+        # Phase 9.8 — opener prefetch architecture.
+        # 1. Pick opener from library based on (kind, sub_context).
+        # 2. Update SpeakerInput with pre_spoken_opener so Speaker LLM
+        #    knows to compose continuation content (no own opener).
+        # 3. Kick off Speaker LLM in parallel with opener playback.
+        # 4. Play opener audio (cache hit) or fall back to text TTS.
+        # 5. After opener finishes, await Speaker stream and pipe to TTS.
+        # 6. Cache ONLY the Speaker content for repeat replay (no opener).
+        sub_ctx = _derive_sub_context(speaker_input)
+        opener = self._opener_library.pick(
+            kind=speaker_input.instruction_kind,
+            sub_context=sub_ctx,
+            recent_openers=self._recent_openers,
+        )
+        speaker_input_with_opener = speaker_input.model_copy(
+            update={"pre_spoken_opener": opener.text},
+        )
+
         try:
-            handle = await self._speaker.stream(
-                turn_id=turn_id, speaker_input=speaker_input,
-                correlation_id=self._correlation_id,
-                tenant_id=self._tenant_id,
+            # Kick off Speaker LLM call in parallel with opener playback.
+            speaker_task = asyncio.create_task(
+                self._speaker.stream(
+                    turn_id=turn_id,
+                    speaker_input=speaker_input_with_opener,
+                    correlation_id=self._correlation_id,
+                    tenant_id=self._tenant_id,
+                ),
             )
+
+            # Play the opener (text + cached audio if available, text-only
+            # TTS as a fallback). Skip entirely when this kind has no
+            # opener variants (deliver_first_question).
+            cache_hit = False
+            if opener.text is not None:
+                say_kwargs: dict[str, Any] = {
+                    "text": opener.text,
+                    "allow_interruptions": True,
+                    "add_to_chat_ctx": True,
+                }
+                if opener.audio_iter is not None:
+                    say_kwargs["audio"] = opener.audio_iter()
+                    cache_hit = True
+                opener_handle = await agent.session.say(**say_kwargs)
+                # Wait for opener playback to complete before piping
+                # the Speaker content. Small audible gap (~150-300ms)
+                # between the two say() calls is acceptable for v1.
+                if opener_handle is not None and hasattr(opener_handle, "wait_for_playout"):
+                    try:
+                        await opener_handle.wait_for_playout()
+                    except Exception:  # noqa: BLE001
+                        # Defensive: mocks may not implement this. Continue.
+                        pass
+                self._recent_openers.append(opener.text)
+
+                from app.modules.interview_engine.event_kinds import SPEAKER_OPENER_PLAYED
+                from app.modules.interview_engine.audit_events import SpeakerOpenerPlayedPayload
+                self._append(SPEAKER_OPENER_PLAYED, SpeakerOpenerPlayedPayload(
+                    turn_id=turn_id,
+                    instruction_kind=speaker_input.instruction_kind.value,
+                    sub_context=sub_ctx.value,
+                    opener_text=opener.text,
+                    cache_hit=cache_hit,
+                ).model_dump())
+
+            # Speaker LLM result — kicked off above, may already be done.
+            handle = await speaker_task
             stream = handle.stream()
             speech_handle = await agent.session.say(
                 stream, allow_interruptions=True, add_to_chat_ctx=True,
@@ -689,10 +750,6 @@ class InterviewOrchestrator:
                 # signal: True means the candidate's voice cancelled
                 # the in-flight TTS pipeline mid-stream, which also
                 # cancels the upstream LLM stream we were consuming.
-                #
-                # The new SPEAKER_INTERRUPTED audit event uses the same
-                # diagnostic fields as SPK_EMPTY so the envelope makes
-                # both cases inspectable side-by-side.
                 if _was_interrupted(speech_handle):
                     return await self._handle_interrupted_speaker(
                         turn_id=turn_id,
@@ -705,11 +762,6 @@ class InterviewOrchestrator:
 
             self._append(SPEAKER_CALL, SpeakerCallPayload(
                 turn_id=turn_id, model="speaker",
-                # Per-call hash from the SpeakerService — sha256 of the
-                # composed (preamble + per-action body) actually sent
-                # to the model on this call. Replaces the static
-                # "sha256:speaker" placeholder so audit trails reflect
-                # exactly which prompt body was used per turn.
                 prompt_hash=handle.prompt_hash,
                 instruction_kind=speaker_input.instruction_kind.value,
                 bank_text_present=speaker_input.bank_text is not None,
@@ -720,29 +772,20 @@ class InterviewOrchestrator:
             self._append(SPEAKER_OUTPUT, SpeakerOutputPayload(
                 turn_id=turn_id, final_utterance=final_text,
             ).model_dump())
-            # Phase 9.5 / 9.7 — strip conversational openers from the
-            # cached version of question-bearing kinds so a subsequent
-            # `repeat` replays the question without the one-time
-            # acknowledgment scaffolding. The spoken transcript ALWAYS
-            # gets the full text; only the repeat-cache is normalized.
-            #
-            # Dispatch by instruction_kind:
-            #   * deliver_question + is_post_cap_advance — strip the
-            #     "Alright, let's switch topics —" segue (Bug A).
-            #   * push_back — strip "Got it —" / "Right —" / etc. (Bug C.1)
-            #   * clarify   — strip "Sure, let me rephrase. " /
-            #                 "Let me restate that. " /
-            #                 "No problem, Ishant. In simple terms: " (Bug C.1)
-            #   * everything else — no-op; cache uses the full spoken text.
-            cache_text: str | None = _compute_cache_text(
-                speaker_input=speaker_input, final_text=final_text,
-            )
+
+            # Cache for repeat replay. The opener is NEVER part of the
+            # Speaker content (the Speaker prompt was updated to skip
+            # openers when pre_spoken_opener is set), so the cache is
+            # clean by construction. The legacy cache_text strip path
+            # (Phase 9.5/9.7) is now redundant — kept None here; will
+            # be deleted entirely in Task 15.
             self._state.register_agent_utterance(
                 turn_id=turn_id, text=final_text,
                 instruction_kind=speaker_input.instruction_kind,
-                cache_text=cache_text,
+                cache_text=None,
             )
             return final_text
+
         except Exception as exc:
             from app.modules.interview_engine.event_kinds import SPEAKER_ERROR
             from app.modules.interview_engine.audit_events import SpeakerErrorPayload
