@@ -34,7 +34,7 @@ from app.modules.interview_engine.frontend_attributes import (
 from app.modules.interview_engine.judge.service import JudgeService
 from app.modules.interview_engine.models.speaker import InstructionKind
 from app.modules.interview_engine.speaker.service import SpeakerService
-from app.modules.interview_engine.openers import OpenerLibrary, OpenerVariant
+from app.modules.interview_engine.openers import OpenerLibrary, OpenerSelection, OpenerVariant
 from app.modules.interview_engine.state.engine import (
     StateEngine,
 )
@@ -651,7 +651,6 @@ class InterviewOrchestrator:
             speaker_input.instruction_kind == InstructionKind.deliver_first_question
             and self._intro_variant is not None
         ):
-            from app.modules.interview_engine.openers import OpenerSelection
             audio_iter_factory = (
                 (lambda: iter(self._intro_variant.audio_frames))
                 if self._intro_variant.audio_frames is not None
