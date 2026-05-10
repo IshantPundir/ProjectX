@@ -352,9 +352,17 @@ class Settings(BaseSettings):
     interview_stt_model: str = "nova-3"
     interview_stt_language: str = "en"
 
-    # TTS — Cartesia realtime
-    interview_tts_model: str = "sonic-2"
-    interview_tts_voice: str = "9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"
+    # TTS — provider-switchable. Default ``openai`` (gpt-4o-mini-tts).
+    # Switch to ``cartesia`` (sonic-2) by setting INTERVIEW_TTS_PROVIDER=cartesia
+    # in .env. The model / voice / language fields below are interpreted by
+    # the chosen provider's plugin factory (build_tts_plugin in
+    # app/ai/realtime.py); incompatible values are caught at plugin
+    # construction, not at config-load time.
+    interview_tts_provider: Literal["openai", "cartesia"] = "openai"
+    interview_tts_model: str = "gpt-4o-mini-tts"
+    # OpenAI voice presets: alloy / ash / ballad / coral / echo / fable /
+    # nova / onyx / sage / shimmer. Cartesia uses voice UUIDs.
+    interview_tts_voice: str = "ash"
     interview_tts_language: str = "en"
 
     # End-of-utterance confidence floor for the multilingual turn-detector

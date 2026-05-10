@@ -28,8 +28,8 @@ if TYPE_CHECKING:
     # Forward-declared so type checkers see the right return types without
     # forcing a runtime import. Only the engine container has these
     # packages installed.
+    from livekit.agents.tts import TTS as _BaseTTS
     from livekit.agents.voice.turn import TurnDetectionMode
-    from livekit.plugins.cartesia import TTS
     from livekit.plugins.deepgram import STT
     from livekit.plugins.openai import LLM
 
@@ -77,8 +77,52 @@ def build_llm_plugin() -> "LLM":
     return openai.LLM(**kwargs)
 
 
-def build_tts_plugin() -> "TTS":
-    """Construct the realtime Cartesia TTS plugin from AIConfig."""
+def build_tts_plugin() -> "_BaseTTS":
+    """Construct the realtime TTS plugin selected by AIConfig.
+
+    Provider is chosen by ``AIConfig.interview_tts_provider``
+    (env: ``INTERVIEW_TTS_PROVIDER``). Default ``openai``
+    (``gpt-4o-mini-tts``); ``cartesia`` (``sonic-2``) is the alternate.
+
+    Voice / model / language fields on AIConfig are interpreted by the
+    chosen provider — passing a Cartesia voice UUID to OpenAI (or an
+    OpenAI preset name to Cartesia) raises at plugin construction. Keep
+    voice + model in sync with the provider you pick.
+    """
+    provider = ai_config.interview_tts_provider
+    if provider == "openai":
+        return _build_tts_openai()
+    if provider == "cartesia":
+        return _build_tts_cartesia()
+    raise ValueError(
+        f"Unknown interview_tts_provider {provider!r}; "
+        "expected 'openai' or 'cartesia'."
+    )
+
+
+def _build_tts_openai() -> "_BaseTTS":
+    """OpenAI TTS plugin (default). Uses gpt-4o-mini-tts.
+
+    Authenticates via the same ``OPENAI_API_KEY`` env var the rest of the
+    codebase uses (no separate key needed). OpenAI TTS auto-detects
+    language from the input text — we don't pass ``interview_tts_language``.
+    """
+    from livekit.plugins import openai as openai_plugin
+
+    logger.info(
+        "ai.realtime.tts.built",
+        provider="openai",
+        model=ai_config.interview_tts_model,
+        voice=ai_config.interview_tts_voice,
+    )
+    return openai_plugin.TTS(
+        model=ai_config.interview_tts_model,
+        voice=ai_config.interview_tts_voice,
+    )
+
+
+def _build_tts_cartesia() -> "_BaseTTS":
+    """Cartesia TTS plugin (alternate)."""
     from livekit.plugins import cartesia
 
     logger.info(

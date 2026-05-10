@@ -94,6 +94,10 @@ class AIConfig:
         return self._settings.interview_stt_language
 
     @property
+    def interview_tts_provider(self) -> str:
+        return self._settings.interview_tts_provider
+
+    @property
     def interview_tts_model(self) -> str:
         return self._settings.interview_tts_model
 
