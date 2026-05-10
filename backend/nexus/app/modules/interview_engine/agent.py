@@ -409,9 +409,11 @@ async def entrypoint(ctx: JobContext) -> None:
         },
         model_versions={
             "llm": ai_config.interview_llm_model,
-            "stt": ai_config.interview_stt_model,
             # Prefix with provider so the audit envelope distinguishes
-            # openai/gpt-4o-mini-tts from cartesia/sonic-2 cleanly.
+            # sarvam/saaras:v3 from deepgram/nova-3 cleanly. Same pattern
+            # for TTS: sarvam/bulbul:v3 vs openai/gpt-4o-mini-tts vs
+            # cartesia/sonic-2.
+            "stt": f"{ai_config.interview_stt_provider}/{ai_config.interview_stt_model}",
             "tts": f"{ai_config.interview_tts_provider}/{ai_config.interview_tts_model}",
             "judge": settings.engine_judge_model,
             "speaker": settings.engine_speaker_model,
