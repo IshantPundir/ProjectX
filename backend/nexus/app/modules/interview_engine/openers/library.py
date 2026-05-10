@@ -4,7 +4,7 @@ See docs/superpowers/specs/2026-05-10-opener-prefetch-architecture-design.md
 """
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
@@ -223,3 +223,61 @@ class OpenerLibrary:
         if variants is not None:
             return variants
         return self._vocabulary.get((kind, SubContext.DEFAULT), [])
+
+    def pick(
+        self,
+        *,
+        kind: InstructionKind,
+        sub_context: SubContext,
+        recent_openers: Iterable[str],
+    ) -> OpenerSelection:
+        """Pick one opener for this turn.
+
+        Selection rule:
+          1. Look up variants for (kind, sub_context). Fall back to
+             (kind, DEFAULT) if no variants.
+          2. Filter out any variant whose text is in recent_openers.
+          3. If filtering empties the pool, return the longest-ago
+             recent entry (first in iteration order — still better
+             than re-using the most recent).
+          4. Otherwise pick the FIRST eligible variant.
+
+        Why first instead of random? Deterministic + audit-friendly.
+        Anti-repetition (excluding recent) gives plenty of variety;
+        the deque-of-5 ensures we cycle through the full pool before
+        any single variant repeats. Random selection on top of that
+        would obscure the rotation pattern in audit traces without
+        meaningfully improving naturalness.
+        """
+        variants = self._variants_for(kind, sub_context)
+        if not variants:
+            # No variants registered (e.g., deliver_first_question) —
+            # signal "no opener for this turn".
+            return OpenerSelection(text=None, audio_iter=None)
+
+        recent_set = set(recent_openers)
+        eligible = [v for v in variants if v.text not in recent_set]
+
+        if eligible:
+            chosen = eligible[0]
+        else:
+            # All variants used recently — use the longest-ago entry
+            # (first item in recent_openers).
+            recent_list = list(recent_openers)
+            target_text = recent_list[0] if recent_list else variants[0].text
+            chosen = next(
+                (v for v in variants if v.text == target_text),
+                variants[0],
+            )
+
+        audio_iter: Callable[[], AsyncIterator[rtc.AudioFrame]] | None = None
+        if chosen.audio_frames is not None:
+            frames = chosen.audio_frames
+
+            async def _replay() -> AsyncIterator[rtc.AudioFrame]:
+                for frame in frames:
+                    yield frame
+
+            audio_iter = _replay
+
+        return OpenerSelection(text=chosen.text, audio_iter=audio_iter)

@@ -84,3 +84,77 @@ def test_library_vocabulary_does_not_use_chatbot_register():
             assert phrase not in text, (
                 f"Chatbot register leak: {phrase!r} appears in {text!r}"
             )
+
+
+def test_pick_returns_opener_for_known_pair():
+    lib = OpenerLibrary()
+    sel = lib.pick(
+        kind=InstructionKind.push_back,
+        sub_context=SubContext.VAGUE_ANSWER,
+        recent_openers=[],
+    )
+    assert sel.text in {
+        "Got it.", "OK.", "Right —", "Mhm —", "Hmm —",
+        "OK, let me press on that —",
+    }
+    # audio_iter is None in tests because cache hasn't been built.
+    assert sel.audio_iter is None
+
+
+def test_pick_excludes_recent_openers():
+    """If 5 of 6 variants are in recent_openers, pick must return the 6th."""
+    lib = OpenerLibrary()
+    recent = ["Got it.", "OK.", "Right —", "Mhm —", "Hmm —"]
+    sel = lib.pick(
+        kind=InstructionKind.push_back,
+        sub_context=SubContext.VAGUE_ANSWER,
+        recent_openers=recent,
+    )
+    assert sel.text == "OK, let me press on that —"
+
+
+def test_pick_falls_back_when_exclusion_empties_pool():
+    """When ALL variants are in recent_openers, pick must still return
+    something (the longest-ago entry — first in recent_openers)."""
+    lib = OpenerLibrary()
+    all_variants = [
+        "Got it.", "OK.", "Right —", "Mhm —", "Hmm —",
+        "OK, let me press on that —",
+    ]
+    sel = lib.pick(
+        kind=InstructionKind.push_back,
+        sub_context=SubContext.VAGUE_ANSWER,
+        recent_openers=all_variants,
+    )
+    # Returns the longest-ago entry from recent_openers (first in list).
+    assert sel.text == "Got it."
+
+
+def test_pick_falls_back_to_default_when_subcontext_missing():
+    """Sub-context with no variants falls back to DEFAULT."""
+    lib = OpenerLibrary()
+    # deliver_question has no variants for SOCIAL_OR_GREETING; should
+    # fall back to deliver_question DEFAULT.
+    sel = lib.pick(
+        kind=InstructionKind.deliver_question,
+        sub_context=SubContext.SOCIAL_OR_GREETING,
+        recent_openers=[],
+    )
+    expected = {
+        "Got it.", "Understood.", "Right.", "OK.", "Mhm.",
+        "Thanks for walking me through that.", "Thanks.",
+    }
+    assert sel.text in expected
+
+
+def test_pick_returns_text_none_when_kind_has_no_variants():
+    """deliver_first_question has no library variants — opener IS the
+    persona intro. pick() returns OpenerSelection(text=None)."""
+    lib = OpenerLibrary()
+    sel = lib.pick(
+        kind=InstructionKind.deliver_first_question,
+        sub_context=SubContext.DEFAULT,
+        recent_openers=[],
+    )
+    assert sel.text is None
+    assert sel.audio_iter is None
