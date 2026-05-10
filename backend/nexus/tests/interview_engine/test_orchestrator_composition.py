@@ -679,3 +679,146 @@ async def test_opener_prefetch_full_session_caches_content_only_and_anti_repeats
         assert push_back_openers[0] != push_back_openers[1], (
             "Anti-repetition failed: two consecutive same-context openers"
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 9.9 — silent-agent disaster: interrupted push_back, then repeat
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_repeat_after_interrupted_push_back_replays_prior_question_not_empty(
+    make_session_config, make_question,
+):
+    """Phase 9.9 composition — drives a 3-turn session that reproduces
+    the silent-agent disaster from session a998073a-3007-... and asserts
+    the fix:
+
+      Turn 0 (on_enter): deliver_first_question (success) → cache holds Q1 text
+      Turn 1 (push_back): Speaker LLM interrupted before any output → cache untouched
+      Turn 2 (repeat):    SPEAKER_CACHED replays the Q1 text, NOT ""
+
+    The interrupt is simulated via a content-vs-opener discriminator on
+    ``agent.session.say``: opener calls pass ``text=`` as a keyword arg
+    (or a string as the first positional arg); content calls pass an
+    AsyncIterable as the first positional arg. The discriminator tracks
+    content-call count and returns ``interrupted=True`` only for the
+    SECOND content call (the push_back content).
+
+    Regression guard for the Phase 9.9 cache integrity contract:
+    ``register_agent_question_for_repeat`` must NOT write empty text
+    and ``_handle_interrupted_speaker`` must NOT update the cache.
+    """
+    from app.modules.interview_engine.models.judge import (
+        CoverageQuality, PushBackPayload, RepeatPayload,
+    )
+
+    judge_outputs = [
+        # Turn 1: candidate gives a vague answer → push_back/vague_answer
+        JudgeOutput(
+            observations=[
+                Observation(
+                    signal_value="S1", anchor_id=0,
+                    evidence_quote="thin",
+                    coverage_transition=CoverageTransition.partial_to_partial,
+                    quality=CoverageQuality.thin,
+                ),
+            ],
+            candidate_claims=[],
+            next_action=NextAction.push_back,
+            next_action_payload=PushBackPayload(reason_code="vague_answer"),
+            turn_metadata=TurnMetadata(),
+        ),
+        # Turn 2: candidate asks for a repeat
+        JudgeOutput(
+            observations=[], candidate_claims=[],
+            next_action=NextAction.repeat,
+            next_action_payload=RepeatPayload(),
+            turn_metadata=TurnMetadata(),
+        ),
+    ]
+
+    speaker_outputs = [
+        # on_enter: deliver_first_question — the cached question text.
+        "Walk me through your tool of choice.",
+        # Turn 1 push_back — empty stream (combined with interrupted=True
+        # on the content say() return, simulates the LLM being cancelled
+        # before producing output).
+        "",
+    ]
+
+    orch, agent = _build_orch(
+        make_session_config=make_session_config,
+        make_question=make_question,
+        scripted_judge_outputs=judge_outputs,
+        scripted_speaker_outputs=speaker_outputs,
+        knockout_signal="S1",
+    )
+    orch._opener_library = OpenerLibrary()
+
+    # Override agent.session.say to return interrupted=True ONLY for the
+    # push_back turn's content say() call (the second content call overall).
+    #
+    # Discrimination strategy (content vs opener / repeat):
+    #   • Opener calls:  say(text=<str>, ...)   — keyword-only text= kwarg
+    #   • Content calls: say(<AsyncIterable>, ...) — first positional arg is
+    #                    an async generator (NOT a str)
+    #   • Repeat calls:  say(<str>, ...)          — first positional arg IS a str
+    #
+    # So "is_content_call" iff the first positional arg exists and is NOT a str.
+    # We interrupt the SECOND content call (push_back content) to leave the
+    # first content call (deliver_first_question) uninterrupted so the cache
+    # is populated.
+    content_call_counter: dict[str, int] = {"n": 0}
+
+    async def say_interrupt_second_content(*args: object, **kwargs: object) -> MagicMock:
+        first_arg = args[0] if args else None
+        is_content_call = first_arg is not None and not isinstance(first_arg, str)
+        if is_content_call:
+            content_call_counter["n"] += 1
+            if content_call_counter["n"] == 2:
+                # Push_back content: simulate candidate interrupted the stream.
+                return MagicMock(interrupted=True)
+        return MagicMock(interrupted=False)
+
+    agent.session.say = AsyncMock(side_effect=say_interrupt_second_content)
+
+    await orch.on_enter(agent)
+    await orch.on_user_turn_completed(
+        agent, MagicMock(), _msg("I use various tools"),
+    )
+    await orch.on_user_turn_completed(
+        agent, MagicMock(), _msg("Can you repeat?"),
+    )
+
+    state = orch._state
+
+    # ----- Cache integrity: only one entry, Q1 text, NOT empty ---------
+    cache_values = list(state._question_utterances.values())
+    assert len(cache_values) == 1, (
+        f"Expected 1 cache entry (Q1 text only); got {len(cache_values)}: {cache_values!r}. "
+        "A second entry would mean the interrupted push_back poisoned the cache."
+    )
+    assert cache_values[0] == "Walk me through your tool of choice.", (
+        f"Cache entry must be the original Q1 text; got {cache_values[0]!r}"
+    )
+
+    # ----- SPEAKER_CACHED event: replays Q1 text, not "" ---------------
+    cached_events = [
+        e for e in orch._collector.events
+        if e.kind == SPEAKER_CACHED
+    ]
+    assert len(cached_events) == 1, (
+        f"Exactly one SPEAKER_CACHED event expected (turn 2 repeat); "
+        f"got {len(cached_events)}."
+    )
+    assert cached_events[0].payload["instruction_kind"] == "repeat"
+    final_utterance = cached_events[0].payload["final_utterance"]
+    assert final_utterance == "Walk me through your tool of choice.", (
+        f"SPEAKER_CACHED must replay the original question text, not {final_utterance!r}. "
+        "This is the Phase 9.9 regression guard: an interrupted push_back must NOT "
+        "poison the repeat cache with an empty string."
+    )
+    assert final_utterance != "", (
+        "SPEAKER_CACHED final_utterance must NEVER be empty — silent-agent disaster."
+    )
