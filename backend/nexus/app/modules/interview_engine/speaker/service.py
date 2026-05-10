@@ -125,7 +125,7 @@ class SpeakerService:
             model=self._model,
             instructions=system_prompt,
             input=speaker_input.model_dump_json(),
-            reasoning={"effort": "minimal"},
+            reasoning={"effort": "none"},
         )
 
         async def _producer() -> AsyncIterator[str]:
