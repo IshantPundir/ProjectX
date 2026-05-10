@@ -32,8 +32,128 @@ from app.modules.interview_engine.frontend_attributes import (
 from app.modules.interview_engine.judge.service import JudgeService
 from app.modules.interview_engine.models.speaker import InstructionKind
 from app.modules.interview_engine.speaker.service import SpeakerService
-from app.modules.interview_engine.state.engine import StateEngine
+from app.modules.interview_engine.state.engine import (
+    StateEngine,
+    _strip_cap_advance_segue,
+    _strip_clarify_opener,
+    _strip_push_back_opener,
+)
 from app.modules.interview_runtime import SessionConfig
+
+
+# Recent-turns window applied to BOTH judge and speaker LLM input payloads.
+# The State Engine still holds the full transcript (for SessionResult and
+# audit); this is purely a per-call slice to bound prompt growth.
+#
+# Sized for ~4 candidate-agent pairs of context — enough to maintain
+# continuity ("you mentioned X earlier") without paying ~200 tok/turn of
+# inflation forever. With 80-turn sessions this caps recent_turns at
+# ~1.5 KB instead of ~12 KB.
+_RECENT_TURNS_WINDOW = 8
+
+
+def _slice_recent_turns(transcript: list) -> list:
+    """Return the last _RECENT_TURNS_WINDOW transcript entries."""
+    if len(transcript) <= _RECENT_TURNS_WINDOW:
+        return transcript
+    return transcript[-_RECENT_TURNS_WINDOW:]
+
+
+def _compute_cache_text(*, speaker_input: Any, final_text: str) -> str | None:
+    """Return the opener-stripped version of ``final_text`` for the
+    repeat-cache, or ``None`` when no stripping applies.
+
+    Dispatches on ``speaker_input.instruction_kind``:
+
+      * ``deliver_question`` with ``is_post_cap_advance=True`` →
+        strip the cap-forced-advance segue (Phase 9.5 Bug A).
+      * ``push_back`` → strip the conversational opener
+        ("Got it — ", "Right — ", etc.) (Phase 9.7 Bug C.1).
+      * ``clarify`` → strip the rephrase acknowledgment
+        ("Sure, let me rephrase. ", "Let me restate that. ",
+        "No problem, Ishant. In simple terms: ") (Phase 9.7 Bug C.1).
+      * everything else → ``None`` (cache uses the full spoken text).
+
+    The strippers are conservative — they require recognized prefix
+    patterns and return the input unchanged when the LLM produced
+    something unexpected. Returning ``None`` when no change happened
+    lets ``register_agent_utterance`` use its default (cache=text).
+    """
+    from app.modules.interview_engine.models.speaker import InstructionKind
+
+    kind = speaker_input.instruction_kind
+    if (
+        kind == InstructionKind.deliver_question
+        and getattr(speaker_input, "is_post_cap_advance", False)
+    ):
+        stripped = _strip_cap_advance_segue(final_text)
+    elif kind == InstructionKind.push_back:
+        stripped = _strip_push_back_opener(final_text)
+    elif kind == InstructionKind.clarify:
+        stripped = _strip_clarify_opener(final_text)
+    else:
+        return None
+    return stripped if stripped != final_text else None
+
+
+def _was_interrupted(speech_handle: Any) -> bool:
+    """True iff LiveKit's SpeechHandle reports the candidate interrupted.
+
+    Defensive: some test mocks return None or AsyncMock from session.say
+    rather than a real SpeechHandle. ``.interrupted`` is the documented
+    LiveKit API (see /agents/multimodality/audio/ docs); when it's
+    missing or unreadable we conservatively return False so the existing
+    fallback path still fires.
+    """
+    if speech_handle is None:
+        return False
+    try:
+        return bool(getattr(speech_handle, "interrupted", False))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _derive_sub_context(speaker_input: Any) -> "SubContext":
+    """Map SpeakerInput context to the OpenerLibrary's SubContext key.
+
+    See spec §4.3 sub-context derivation table.
+    """
+    from app.modules.interview_engine.models.speaker import InstructionKind
+    from app.modules.interview_engine.openers import SubContext
+
+    kind = speaker_input.instruction_kind
+    if kind == InstructionKind.deliver_question:
+        if getattr(speaker_input, "is_post_cap_advance", False):
+            return SubContext.POST_CAP_ADVANCE
+        return SubContext.DEFAULT
+    if kind == InstructionKind.redirect:
+        tm = speaker_input.turn_metadata
+        if tm is not None:
+            if tm.candidate_social_or_greeting:
+                return SubContext.SOCIAL_OR_GREETING
+            if tm.candidate_abusive:
+                return SubContext.ABUSIVE
+            if tm.candidate_attempted_injection:
+                return SubContext.INJECTION
+            if tm.candidate_off_topic:
+                return SubContext.OFF_TOPIC
+        return SubContext.OFF_TOPIC  # default redirect bucket
+    if kind == InstructionKind.push_back:
+        code = speaker_input.push_back_reason_code
+        if code == "vague_answer":
+            return SubContext.VAGUE_ANSWER
+        if code == "deflection":
+            return SubContext.DEFLECTION
+        if code == "missing_specifics":
+            return SubContext.MISSING_SPECIFICS
+        if code == "unanswered_subquestion":
+            return SubContext.UNANSWERED_SUBQUESTION
+        return SubContext.DEFAULT
+    if kind == InstructionKind.polite_close:
+        if speaker_input.failed_signal_value:
+            return SubContext.KNOCKOUT
+        return SubContext.DEFAULT
+    return SubContext.DEFAULT
 
 
 def _map_livekit_close_reason(close_reason: str | None) -> str:
@@ -266,7 +386,10 @@ class InterviewOrchestrator:
         ledger = self._state.ledger_snapshot()
         queue = self._state.queue_snapshot()
         claims = self._state.claims_snapshot()
-        recent = self._state.transcript_snapshot()           # full snapshot
+        # Cap recent_turns to bound per-call prompt growth. The State Engine
+        # retains the full transcript for SessionResult; this slice is only
+        # what the Judge LLM sees this turn.
+        recent = _slice_recent_turns(self._state.transcript_snapshot())
         time_remaining = int(self._state.lifecycle_snapshot().time_remaining_seconds())
 
         # Project the active question's signal_values to ActiveSignalMeta
@@ -301,13 +424,27 @@ class InterviewOrchestrator:
                 if 0 <= idx < len(active_q_cfg.follow_ups):
                     remaining_probes_dict[pid] = active_q_cfg.follow_ups[idx]
 
+        active_push_back_count = (
+            queue.questions[queue.active_index].push_back_count
+            if queue.active_index is not None
+            else 0
+        )
+        active_dont_know_count = (
+            queue.questions[queue.active_index].consecutive_dont_know_count
+            if queue.active_index is not None
+            else 0
+        )
+
         judge_input = build_judge_input(
             active_question=active_q_cfg,
             ledger_snapshot=ledger, queue_snapshot=queue, claims_snapshot=claims,
             recent_turns=recent, candidate_utterance=candidate_text,
             time_remaining_seconds=time_remaining,
+            next_pending_mandatory_id=self._state.next_pending_mandatory_id(),
             active_signal_metadata=active_signal_meta,
             active_remaining_probes=remaining_probes_dict,
+            active_question_push_back_count=active_push_back_count,
+            active_question_consecutive_dont_know_count=active_dont_know_count,
         )
 
         result = await self._judge.call(
@@ -387,6 +524,30 @@ class InterviewOrchestrator:
         total_probes = sum(len(q.probes_asked_ids) for q in queue.questions)
         duration = (time.monotonic() - (self._session_started_monotonic or time.monotonic()))
 
+        # Phase 9.3 — session-level rollups derived from QuestionState +
+        # SignalLedger. Lets the (future) Report Builder LLM consume one
+        # session-level signal without re-walking the per-question queue.
+        # Per-question detail (push_back_count, quality_observations) is
+        # preserved on QuestionState for fine-grained scoring.
+        push_back_total = sum(q.push_back_count for q in queue.questions)
+        # A question whose advance was cap-forced is one where:
+        # the candidate triggered push_back_count >= 2 AND the question
+        # ended up completed/skipped (status != active/pending). The cap
+        # rule (state/engine.py) is "downgrade to advance once count
+        # reaches 2 and a 3rd push_back arrives" — by the time the queue
+        # snapshot lands, count >= 2 + completed/skipped is the deterministic
+        # marker for a cap-forced exit.
+        cap_forced_advance_count = sum(
+            1 for q in queue.questions
+            if q.push_back_count >= 2 and q.status.value in ("completed", "skipped")
+        )
+        quality_distribution: dict[str, int] = {}
+        for q in queue.questions:
+            for grade, count in q.quality_observations.items():
+                quality_distribution[grade] = (
+                    quality_distribution.get(grade, 0) + count
+                )
+
         return SessionResult(
             session_id=self._cfg.session_id,
             job_title=self._cfg.job_title,
@@ -405,6 +566,9 @@ class InterviewOrchestrator:
             question_queue=queue,
             claims_pool=claims,
             audit_envelope_ref=None,  # set by entrypoint after sink.write()
+            push_back_total=push_back_total,
+            cap_forced_advance_count=cap_forced_advance_count,
+            quality_distribution=quality_distribution,
         )
 
     # --- Internals ---
@@ -507,12 +671,28 @@ class InterviewOrchestrator:
                 tenant_id=self._tenant_id,
             )
             stream = handle.stream()
-            await agent.session.say(
+            speech_handle = await agent.session.say(
                 stream, allow_interruptions=True, add_to_chat_ctx=True,
             )
             final_text = await handle.final_text()
 
             if not final_text.strip():
+                # Phase 9.4 — distinguish "candidate interrupted before
+                # the LLM produced output" (don't talk back over them)
+                # from "true empty output" (play a deterministic
+                # fallback). LiveKit's SpeechHandle.interrupted is the
+                # signal: True means the candidate's voice cancelled
+                # the in-flight TTS pipeline mid-stream, which also
+                # cancels the upstream LLM stream we were consuming.
+                #
+                # The new SPEAKER_INTERRUPTED audit event uses the same
+                # diagnostic fields as SPK_EMPTY so the envelope makes
+                # both cases inspectable side-by-side.
+                if _was_interrupted(speech_handle):
+                    return await self._handle_interrupted_speaker(
+                        turn_id=turn_id,
+                        speaker_input=speaker_input, handle=handle,
+                    )
                 return await self._handle_empty_speaker_output(
                     agent=agent, turn_id=turn_id,
                     speaker_input=speaker_input, handle=handle,
@@ -535,9 +715,27 @@ class InterviewOrchestrator:
             self._append(SPEAKER_OUTPUT, SpeakerOutputPayload(
                 turn_id=turn_id, final_utterance=final_text,
             ).model_dump())
+            # Phase 9.5 / 9.7 — strip conversational openers from the
+            # cached version of question-bearing kinds so a subsequent
+            # `repeat` replays the question without the one-time
+            # acknowledgment scaffolding. The spoken transcript ALWAYS
+            # gets the full text; only the repeat-cache is normalized.
+            #
+            # Dispatch by instruction_kind:
+            #   * deliver_question + is_post_cap_advance — strip the
+            #     "Alright, let's switch topics —" segue (Bug A).
+            #   * push_back — strip "Got it —" / "Right —" / etc. (Bug C.1)
+            #   * clarify   — strip "Sure, let me rephrase. " /
+            #                 "Let me restate that. " /
+            #                 "No problem, Ishant. In simple terms: " (Bug C.1)
+            #   * everything else — no-op; cache uses the full spoken text.
+            cache_text: str | None = _compute_cache_text(
+                speaker_input=speaker_input, final_text=final_text,
+            )
             self._state.register_agent_utterance(
                 turn_id=turn_id, text=final_text,
                 instruction_kind=speaker_input.instruction_kind,
+                cache_text=cache_text,
             )
             return final_text
         except Exception as exc:
@@ -559,6 +757,42 @@ class InterviewOrchestrator:
             )
             return self._RECOVERY_TEXT
 
+    async def _handle_interrupted_speaker(
+        self, *, turn_id: str, speaker_input: Any, handle: Any,
+    ) -> str:
+        """The candidate interrupted the Speaker stream before any output
+        text was produced. The candidate is talking — DO NOT play a
+        fallback (would talk over them). Stay silent, audit the cause,
+        and let the next user turn drive the next reply.
+
+        Distinct from ``_handle_empty_speaker_output``, which IS supposed
+        to play a fallback for true empty outputs (model decided nothing
+        to say without a candidate interruption).
+
+        Returns empty string. The transcript reflects the interruption
+        via ``register_agent_utterance(text="", ...)`` so the next
+        Judge turn sees "no agent reply happened on the prior turn."
+        """
+        from app.modules.interview_engine.event_kinds import SPEAKER_INTERRUPTED
+        from app.modules.interview_engine.audit_events import SpeakerInterruptedPayload
+        self._append(SPEAKER_INTERRUPTED, SpeakerInterruptedPayload(
+            turn_id=turn_id,
+            instruction_kind=speaker_input.instruction_kind.value,
+            event_types_seen=handle.event_types_seen,
+            response_id=handle.response_id,
+        ).model_dump())
+        # Register an empty agent utterance so the State Engine's
+        # transcript and repeat-cache don't see a phantom-success turn.
+        # Empty text with the instruction_kind preserved keeps the
+        # _question_utterances cache filter (in _QUESTION_KINDS)
+        # working correctly: an interrupted deliver_question still
+        # caches "" rather than the previous turn's question text.
+        self._state.register_agent_utterance(
+            turn_id=turn_id, text="",
+            instruction_kind=speaker_input.instruction_kind,
+        )
+        return ""
+
     async def _handle_empty_speaker_output(
         self, *, agent: Any, turn_id: str, speaker_input: Any, handle: Any,
     ) -> str:
@@ -569,6 +803,10 @@ class InterviewOrchestrator:
         Bypasses the SPEAKER_CALL / SPEAKER_OUTPUT audit events on purpose
         — those describe a successful LLM call. The empty-output condition
         is its own audit kind.
+
+        Phase 9.3: also propagates the handle's diagnostic state (event
+        types seen, refusal text, response id, finish reason) into the
+        audit payload so we can root-cause the empty output offline.
         """
         from app.modules.interview_engine.event_kinds import SPEAKER_OUTPUT_EMPTY
         from app.modules.interview_engine.audit_events import SpeakerOutputEmptyPayload
@@ -580,6 +818,10 @@ class InterviewOrchestrator:
             turn_id=turn_id,
             instruction_kind=speaker_input.instruction_kind.value,
             fallback_text=fallback,
+            event_types_seen=handle.event_types_seen,
+            refusal_text=handle.refusal_text,
+            response_id=handle.response_id,
+            finish_reason=handle.finish_reason,
         ).model_dump())
         self._state.register_agent_utterance(
             turn_id=turn_id, text=fallback,

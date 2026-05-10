@@ -42,6 +42,14 @@ class _FakeSpeakerHandle:
         # audit event; without it AttributeError trips the speaker-error
         # recovery path.
         self.prompt_hash = "sha256:" + ("0" * 64)
+        # Phase 9.3 diagnostic state — orchestrator reads these on the
+        # speaker.output.empty path. Without them, the AttributeError
+        # routes the empty-fallback branch into the speaker-error
+        # recovery path ("I apologize — could you say that again?").
+        self.event_types_seen: list[str] = []
+        self.refusal_text: str | None = None
+        self.response_id: str | None = None
+        self.finish_reason: str | None = None
 
     def stream(self):
         async def gen():
@@ -146,6 +154,13 @@ async def test_on_user_turn_completed_happy_path(make_session_config, make_quest
     speaker_service = MagicMock()
     speaker_service.stream = AsyncMock(return_value=_FakeSpeakerHandle("rephrased."))
 
+    # Phase 9.2: the State Engine advance-quality-gate downgrades advance
+    # to push_back when no observation on the active question reaches
+    # `concrete`/`strong`. Add one concrete observation so the gate passes
+    # and the advance to q2 lands as the test expects.
+    from app.modules.interview_engine.models.judge import (
+        CoverageQuality, CoverageTransition, Observation,
+    )
     judge_service = MagicMock()
     judge_service.call = AsyncMock(return_value=MagicMock(
         judge_output=make_judge_output(
@@ -153,6 +168,14 @@ async def test_on_user_turn_completed_happy_path(make_session_config, make_quest
                 "app.modules.interview_engine.models.judge", fromlist=["NextAction"],
             ).NextAction.advance,
             target="q2",
+            observations=[
+                Observation(
+                    signal_value="S1", anchor_id=0,
+                    evidence_quote="I have 5 years of JQL experience.",
+                    coverage_transition=CoverageTransition.none_to_sufficient,
+                    quality=CoverageQuality.concrete,
+                ),
+            ],
         ),
         is_fallback=False, fallback_reason=None,
         original_failure_context=None, latency_ms=120, usage={"prompt_tokens": 8, "completion_tokens": 4},
@@ -308,6 +331,121 @@ async def test_on_close_returns_session_result_with_snapshots(make_session_confi
     assert result.questions_skipped == 0
     assert result.questions_asked >= 1
     assert isinstance(result.audit_envelope_ref, (str, type(None)))
+    # Phase 9.3 Bug 2 — session-level rollups for the Report Builder.
+    # No push_backs / cap-forced advances / observations on this path
+    # (only the synthetic session-start advance ran), so all aggregates
+    # default to zero-equivalent values.
+    assert result.push_back_total == 0
+    assert result.cap_forced_advance_count == 0
+    assert result.quality_distribution == {}
+
+
+@pytest.mark.asyncio
+async def test_on_close_session_aggregates_reflect_per_question_state(
+    make_session_config, make_question,
+):
+    """When push_backs and quality observations accumulate over a session,
+    the SessionResult aggregates correctly sum them across questions.
+    Verifies the Report Builder will see truthful session-level totals."""
+    from app.modules.interview_engine.models.judge import (
+        AcknowledgeNoExperiencePayload, AdvancePayload, ClarifyPayload,
+        CoverageQuality, CoverageTransition, JudgeOutput, NextAction,
+        Observation, ProbePayload, PushBackPayload, RepeatPayload,
+        RedirectPayload, TurnMetadata,
+    )
+    from app.modules.interview_engine.models.speaker import InstructionKind
+    cfg = make_session_config(
+        questions=[
+            make_question(qid="q1", text="What is q1 about?", follow_ups=["fu0"]),
+            make_question(qid="q2", text="What is q2 about?", follow_ups=["fu0"]),
+        ],
+        signals=["S1"],
+    )
+    state_engine = StateEngine(session_config=cfg)
+
+    # Synthetic session-start advance.
+    state_engine.process_judge_output(
+        turn_id="t-0",
+        judge_output=state_engine.initialize_for_session_start(),
+        candidate_utterance_text=None, elapsed_ms=0,
+    )
+
+    # Two push_backs on q1, then advance with concrete obs to q2.
+    for i in range(2):
+        state_engine.process_judge_output(
+            turn_id=f"t-pb-{i}",
+            judge_output=JudgeOutput(
+                observations=[Observation(
+                    signal_value="S1", anchor_id=0,
+                    evidence_quote="thin",
+                    coverage_transition=(
+                        CoverageTransition.none_to_partial if i == 0
+                        else CoverageTransition.partial_to_partial
+                    ),
+                    quality=CoverageQuality.thin,
+                )],
+                candidate_claims=[],
+                next_action=NextAction.push_back,
+                next_action_payload=PushBackPayload(reason_code="vague_answer"),
+                turn_metadata=TurnMetadata(),
+            ),
+            candidate_utterance_text="thin", elapsed_ms=1000 + i * 1000,
+        )
+    # Third push_back -> cap-forced advance to q2.
+    state_engine.process_judge_output(
+        turn_id="t-cap",
+        judge_output=JudgeOutput(
+            observations=[],
+            candidate_claims=[],
+            next_action=NextAction.push_back,
+            next_action_payload=PushBackPayload(reason_code="vague_answer"),
+            turn_metadata=TurnMetadata(),
+        ),
+        candidate_utterance_text="still thin", elapsed_ms=3000,
+    )
+    # On q2, give one concrete observation and advance via probe.
+    state_engine.process_judge_output(
+        turn_id="t-q2",
+        judge_output=JudgeOutput(
+            observations=[Observation(
+                signal_value="S1", anchor_id=2,
+                evidence_quote="concrete real example",
+                coverage_transition=CoverageTransition.partial_to_sufficient,
+                quality=CoverageQuality.concrete,
+            )],
+            candidate_claims=[],
+            next_action=NextAction.probe,
+            next_action_payload=ProbePayload(probe_id="0"),
+            turn_metadata=TurnMetadata(),
+        ),
+        candidate_utterance_text="real answer", elapsed_ms=4000,
+    )
+
+    speaker_service = MagicMock()
+    speaker_service.stream = AsyncMock(return_value=_FakeSpeakerHandle("ok"))
+    judge_service = MagicMock()
+    pub = AttributePublisher(room=MagicMock(local_participant=MagicMock(
+        set_attributes=AsyncMock(),
+    )))
+    orch = InterviewOrchestrator(
+        session_config=cfg,
+        tenant_settings=MagicMock(engine_agent_name=None),
+        state_engine=state_engine,
+        judge=judge_service, speaker=speaker_service,
+        attr_publisher=pub, event_collector=_collector(),
+        correlation_id="c", config=OrchestratorConfig(),
+        tenant_id="t",
+    )
+
+    result = await orch.on_close(MagicMock(), audio_tuning_summary=None)
+
+    # 2 push_backs on q1 + cap-downgrade on q1 (count stays at 2 since
+    # the third was downgraded, not consumed). q2 has 0.
+    assert result.push_back_total == 2
+    # q1 hit cap and got force-advanced (status=completed).
+    assert result.cap_forced_advance_count == 1
+    # 2 thin obs (turns t-pb-0, t-pb-1) on q1 + 1 concrete on q2.
+    assert result.quality_distribution == {"thin": 2, "concrete": 1}
 
 
 @pytest.mark.asyncio
@@ -579,7 +717,6 @@ async def test_normal_turn_then_knockout_triggers_shutdown(
     judge = MagicMock()
     judge.call = AsyncMock(return_value=MagicMock(
         judge_output=JudgeOutput(
-            thought="t",
             observations=[Observation(
                 signal_value="S_KO", anchor_id=-1,
                 evidence_quote="never used",
@@ -864,7 +1001,6 @@ async def test_session_close_outcome_reflects_lifecycle_last_outcome(
     judge = MagicMock()
     judge.call = AsyncMock(return_value=MagicMock(
         judge_output=JudgeOutput(
-            thought="t",
             observations=[Observation(
                 signal_value="S_KO", anchor_id=-1,
                 evidence_quote="never used",
@@ -1038,10 +1174,22 @@ async def test_empty_speaker_output_triggers_fallback(
     handle.latency_ms_first_token = 0
     handle.latency_ms_total = 0
     handle.usage = None
+    # Phase 9.3 diagnostic fields — Pydantic SpeakerOutputEmptyPayload
+    # validates these; without explicit values MagicMock returns a child
+    # MagicMock which fails type validation.
+    handle.event_types_seen = []
+    handle.refusal_text = None
+    handle.response_id = None
+    handle.finish_reason = None
     orch._speaker.stream = AsyncMock(return_value=handle)
 
     agent = MagicMock()
-    agent.session.say = AsyncMock()
+    # Phase 9.4: orchestrator now reads SpeechHandle.interrupted from
+    # session.say's return value to distinguish "candidate cancelled the
+    # stream" (interrupted=True, do NOT play fallback) from "true empty"
+    # (interrupted=False, play fallback). Test exercises the latter.
+    not_interrupted = MagicMock(interrupted=False)
+    agent.session.say = AsyncMock(return_value=not_interrupted)
 
     final_text = await orch._stream_speaker_and_say(
         agent=agent, turn_id="t1", speaker_input=speaker_input,
@@ -1083,12 +1231,498 @@ async def test_empty_speaker_output_fallback_without_bank_text(
     handle.latency_ms_first_token = 0
     handle.latency_ms_total = 0
     handle.usage = None
+    # Phase 9.3 diagnostic fields (see other empty-output test for rationale).
+    handle.event_types_seen = []
+    handle.refusal_text = None
+    handle.response_id = None
+    handle.finish_reason = None
     orch._speaker.stream = AsyncMock(return_value=handle)
 
     agent = MagicMock()
-    agent.session.say = AsyncMock()
+    # Phase 9.4: SpeechHandle.interrupted=False so the empty-output path
+    # plays the fallback (test target). interrupted=True would route to
+    # _handle_interrupted_speaker instead and return "".
+    agent.session.say = AsyncMock(return_value=MagicMock(interrupted=False))
 
     final_text = await orch._stream_speaker_and_say(
         agent=agent, turn_id="t2", speaker_input=speaker_input,
     )
     assert final_text == "Could you take it from the top?"
+
+
+# ---------------------------------------------------------------------------
+# Phase 9.4 — Fix #1: SpeechHandle.interrupted -> SPEAKER_INTERRUPTED path
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_interrupted_speaker_does_not_play_fallback(
+    make_session_config, make_question,
+):
+    """When the candidate interrupts the Speaker stream BEFORE any output
+    text is produced, the orchestrator must NOT play the fallback (would
+    talk over the candidate). It emits SPEAKER_INTERRUPTED instead and
+    returns empty so the next user turn drives the next reply.
+
+    This is the death-spiral fix from session f665498d turns 14-18:
+    the candidate kept saying "I don't know", agent's stream got
+    cancelled mid-flight, and the fallback kept restating the question
+    — making the agent feel completely deaf.
+    """
+    from app.modules.interview_engine.event_kinds import (
+        SPEAKER_INTERRUPTED, SPEAKER_OUTPUT_EMPTY,
+    )
+
+    orch = _build_orchestrator_with_mocked_deps(make_session_config, make_question)
+    speaker_input = _build_speaker_input(
+        instruction_kind="redirect", bank_text="Walk me through your Jira workflow.",
+    )
+
+    handle = MagicMock()
+    handle.stream.return_value = _empty_async_iter()
+    handle.final_text = AsyncMock(return_value="")
+    handle.latency_ms_first_token = 0
+    handle.latency_ms_total = 0
+    handle.usage = None
+    handle.event_types_seen = ["response.created"]  # cancelled before deltas
+    handle.refusal_text = None
+    handle.response_id = None
+    handle.finish_reason = None
+    orch._speaker.stream = AsyncMock(return_value=handle)
+
+    agent = MagicMock()
+    # The crucial bit: SpeechHandle.interrupted is True (LiveKit's signal
+    # that the candidate cancelled the stream).
+    interrupted_handle = MagicMock(interrupted=True)
+    agent.session.say = AsyncMock(return_value=interrupted_handle)
+
+    final_text = await orch._stream_speaker_and_say(
+        agent=agent, turn_id="t-int", speaker_input=speaker_input,
+    )
+
+    # Must NOT play the fallback (would talk over the candidate).
+    assert final_text == ""
+    # Specifically — session.say is called ONCE (the original stream),
+    # and no SECOND say call for a fallback.
+    assert agent.session.say.await_count == 1
+
+    audit_kinds = [e.kind for e in orch._collector.events]
+    assert SPEAKER_INTERRUPTED in audit_kinds
+    assert SPEAKER_OUTPUT_EMPTY not in audit_kinds, (
+        "interrupted path must not emit speaker.output.empty (different cause)"
+    )
+
+    # Diagnostic fields are carried into the SPEAKER_INTERRUPTED payload
+    # so the audit envelope can root-cause the cancellation upstream.
+    interrupted_event = next(
+        e for e in orch._collector.events if e.kind == SPEAKER_INTERRUPTED
+    )
+    assert interrupted_event.payload["event_types_seen"] == ["response.created"]
+    assert interrupted_event.payload["instruction_kind"] == "redirect"
+
+
+@pytest.mark.asyncio
+async def test_non_interrupted_empty_still_plays_fallback(
+    make_session_config, make_question,
+):
+    """The complement: SpeechHandle.interrupted=False with empty output
+    means a TRUE empty (model decided nothing to say). Existing fallback
+    path must still fire — there's no candidate speaking to talk over."""
+    from app.modules.interview_engine.event_kinds import (
+        SPEAKER_INTERRUPTED, SPEAKER_OUTPUT_EMPTY,
+    )
+
+    orch = _build_orchestrator_with_mocked_deps(make_session_config, make_question)
+    speaker_input = _build_speaker_input(
+        instruction_kind="deliver_question",
+        bank_text="Tell me about your work.",
+    )
+
+    handle = MagicMock()
+    handle.stream.return_value = _empty_async_iter()
+    handle.final_text = AsyncMock(return_value="")
+    handle.latency_ms_first_token = 0
+    handle.latency_ms_total = 0
+    handle.usage = None
+    handle.event_types_seen = []
+    handle.refusal_text = None
+    handle.response_id = None
+    handle.finish_reason = None
+    orch._speaker.stream = AsyncMock(return_value=handle)
+
+    agent = MagicMock()
+    agent.session.say = AsyncMock(return_value=MagicMock(interrupted=False))
+
+    await orch._stream_speaker_and_say(
+        agent=agent, turn_id="t-empty", speaker_input=speaker_input,
+    )
+
+    audit_kinds = [e.kind for e in orch._collector.events]
+    assert SPEAKER_OUTPUT_EMPTY in audit_kinds
+    assert SPEAKER_INTERRUPTED not in audit_kinds
+
+
+# ---------------------------------------------------------------------------
+# Phase 9.5 Bug A — orchestrator threads cache_text for cap-advance turns
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cap_advance_speaker_output_caches_stripped_question(
+    make_session_config, make_question,
+):
+    """End-to-end: a Speaker output for a cap-forced-advance turn must
+    cache the question-only version (segue stripped) so a subsequent
+    `repeat` action replays clean text.
+
+    This is the regression guard for session 38b2d48c turn 10 — the
+    cached repeat replayed the "Alright, let's switch topics — ..."
+    segue verbatim, which sounded incoherent the second time around.
+    """
+    from app.modules.interview_engine.models.speaker import (
+        InstructionKind, SpeakerInput,
+    )
+    from app.modules.interview_engine.models.judge import (
+        AdvancePayload, JudgeOutput, NextAction, TurnMetadata,
+    )
+
+    cfg = make_session_config(
+        questions=[make_question(qid="q1", text="What is q1?")],
+        signals=["S1"],
+    )
+    state_engine = StateEngine(session_config=cfg)
+    speaker_service = MagicMock()
+    spoken = (
+        "Alright, let's switch topics — how would you enforce that a "
+        "ticket can only move to Ready for QA?"
+    )
+    speaker_service.stream = AsyncMock(return_value=_FakeSpeakerHandle(spoken))
+    judge_service = MagicMock()
+    pub = AttributePublisher(room=MagicMock(local_participant=MagicMock(
+        set_attributes=AsyncMock(),
+    )))
+    orch = InterviewOrchestrator(
+        session_config=cfg,
+        tenant_settings=MagicMock(engine_agent_name=None),
+        state_engine=state_engine,
+        judge=judge_service, speaker=speaker_service,
+        attr_publisher=pub, event_collector=_collector(),
+        correlation_id="c", config=OrchestratorConfig(),
+        tenant_id="t",
+    )
+
+    # Activate q1 so build_speaker_input has an active question.
+    state_engine.process_judge_output(
+        turn_id="t-0",
+        judge_output=state_engine.initialize_for_session_start(),
+        candidate_utterance_text=None, elapsed_ms=0,
+    )
+
+    # Synthesize the SpeakerInput the orchestrator would build for a
+    # cap-forced advance. The is_post_cap_advance=True flag is the
+    # critical signal that triggers the cache_text strip path.
+    speaker_input = SpeakerInput(
+        instruction_kind=InstructionKind.deliver_question,
+        bank_text="What is q1?",
+        last_candidate_utterance="thin answer",
+        recent_turns=[], claims_pool_snapshot=[],
+        persona_name="Sam", candidate_name="Ishant",
+        is_post_cap_advance=True,  # the flag under test
+    )
+
+    fake_agent = MagicMock()
+    fake_agent.session.say = AsyncMock(return_value=MagicMock(interrupted=False))
+
+    final_text = await orch._stream_speaker_and_say(
+        agent=fake_agent, turn_id="t-cap", speaker_input=speaker_input,
+    )
+
+    # The agent SPOKE the full segue version (live UX is correct).
+    assert final_text == spoken
+
+    # The repeat-cache stores the QUESTION ONLY (segue stripped).
+    cached = state_engine._question_utterances.get("t-cap")
+    assert cached is not None
+    assert "switch topics" not in cached, (
+        "Cached repeat text must NOT contain the segue prefix"
+    )
+    assert cached.startswith("How would you enforce"), (
+        f"Cached text should be the stripped question; got: {cached!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_normal_advance_caches_full_speaker_text(
+    make_session_config, make_question,
+):
+    """Inverse — when is_post_cap_advance is False, the cache stores the
+    full spoken text (no stripping). Backward-compat for the normal
+    advance path."""
+    from app.modules.interview_engine.models.speaker import (
+        InstructionKind, SpeakerInput,
+    )
+
+    cfg = make_session_config(
+        questions=[make_question(qid="q1", text="What is q1?")],
+        signals=["S1"],
+    )
+    state_engine = StateEngine(session_config=cfg)
+    speaker_service = MagicMock()
+    spoken = "Got it. How would you set up your monitoring stack?"
+    speaker_service.stream = AsyncMock(return_value=_FakeSpeakerHandle(spoken))
+    judge_service = MagicMock()
+    pub = AttributePublisher(room=MagicMock(local_participant=MagicMock(
+        set_attributes=AsyncMock(),
+    )))
+    orch = InterviewOrchestrator(
+        session_config=cfg,
+        tenant_settings=MagicMock(engine_agent_name=None),
+        state_engine=state_engine,
+        judge=judge_service, speaker=speaker_service,
+        attr_publisher=pub, event_collector=_collector(),
+        correlation_id="c", config=OrchestratorConfig(),
+        tenant_id="t",
+    )
+
+    state_engine.process_judge_output(
+        turn_id="t-0",
+        judge_output=state_engine.initialize_for_session_start(),
+        candidate_utterance_text=None, elapsed_ms=0,
+    )
+
+    speaker_input = SpeakerInput(
+        instruction_kind=InstructionKind.deliver_question,
+        bank_text="What is q1?",
+        last_candidate_utterance="real answer",
+        recent_turns=[], claims_pool_snapshot=[],
+        persona_name="Sam", candidate_name="Ishant",
+        is_post_cap_advance=False,  # NORMAL advance, not cap-forced
+    )
+
+    fake_agent = MagicMock()
+    fake_agent.session.say = AsyncMock(return_value=MagicMock(interrupted=False))
+
+    await orch._stream_speaker_and_say(
+        agent=fake_agent, turn_id="t-normal", speaker_input=speaker_input,
+    )
+
+    # Cache stores the FULL spoken text — no stripping on normal advance.
+    cached = state_engine._question_utterances.get("t-normal")
+    assert cached == spoken
+
+
+# ---------------------------------------------------------------------------
+# Phase 9.7 Bug C.1 — orchestrator strips push_back / clarify openers
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind_name,spoken,expected_cache", [
+    (
+        "push_back",
+        "Got it — which specific issue types would you define?",
+        "Which specific issue types would you define?",
+    ),
+    (
+        "push_back",
+        "Got it, Ishant — walk me through what that does?",
+        "Walk me through what that does?",
+    ),
+    (
+        "clarify",
+        "Sure, let me rephrase. Imagine a client tells you their workflow.",
+        "Imagine a client tells you their workflow.",
+    ),
+    (
+        "clarify",
+        "No problem, Ishant. In simple terms: when someone tries to move a ticket?",
+        "When someone tries to move a ticket?",
+    ),
+    (
+        "clarify",
+        "Let me restate that. You need to block a transition unless...",
+        "You need to block a transition unless...",
+    ),
+])
+async def test_orchestrator_strips_opener_for_push_back_and_clarify(
+    make_session_config, make_question, kind_name, spoken, expected_cache,
+):
+    """End-to-end: when the Speaker output begins with a recognized
+    conversational opener, the orchestrator passes the opener-stripped
+    version as cache_text. Spoken transcript still gets the full text."""
+    from app.modules.interview_engine.models.speaker import (
+        InstructionKind, SpeakerInput,
+    )
+    from app.modules.interview_engine.models.judge import (
+        ClarifyPayload, JudgeOutput, NextAction, PushBackPayload,
+        TurnMetadata,
+    )
+
+    cfg = make_session_config(
+        questions=[make_question(qid="q1", text="What is q1?")],
+        signals=["S1"],
+    )
+    state_engine = StateEngine(session_config=cfg)
+    state_engine.process_judge_output(
+        turn_id="t-0",
+        judge_output=state_engine.initialize_for_session_start(),
+        candidate_utterance_text=None, elapsed_ms=0,
+    )
+
+    speaker_service = MagicMock()
+    speaker_service.stream = AsyncMock(return_value=_FakeSpeakerHandle(spoken))
+    judge_service = MagicMock()
+    pub = AttributePublisher(room=MagicMock(local_participant=MagicMock(
+        set_attributes=AsyncMock(),
+    )))
+    orch = InterviewOrchestrator(
+        session_config=cfg,
+        tenant_settings=MagicMock(engine_agent_name=None),
+        state_engine=state_engine,
+        judge=judge_service, speaker=speaker_service,
+        attr_publisher=pub, event_collector=_collector(),
+        correlation_id="c", config=OrchestratorConfig(),
+        tenant_id="t",
+    )
+
+    if kind_name == "push_back":
+        kind = InstructionKind.push_back
+        # build_speaker_input requires a matching JudgeOutput payload
+        # for the discriminator validator. Synthesize one.
+        judge_out = JudgeOutput(
+            observations=[], candidate_claims=[],
+            next_action=NextAction.push_back,
+            next_action_payload=PushBackPayload(reason_code="vague_answer"),
+            turn_metadata=TurnMetadata(),
+        )
+        push_back_reason = "vague_answer"
+    else:  # clarify
+        kind = InstructionKind.clarify
+        judge_out = JudgeOutput(
+            observations=[], candidate_claims=[],
+            next_action=NextAction.clarify,
+            next_action_payload=ClarifyPayload(),
+            turn_metadata=TurnMetadata(),
+        )
+        push_back_reason = None
+    speaker_input = SpeakerInput(
+        instruction_kind=kind,
+        bank_text="What is q1?",
+        last_candidate_utterance="thin",
+        recent_turns=[], claims_pool_snapshot=[],
+        persona_name="Sam", candidate_name="Ishant",
+        push_back_reason_code=push_back_reason,
+    )
+
+    fake_agent = MagicMock()
+    fake_agent.session.say = AsyncMock(return_value=MagicMock(interrupted=False))
+
+    final_text = await orch._stream_speaker_and_say(
+        agent=fake_agent, turn_id="t-x", speaker_input=speaker_input,
+    )
+
+    assert final_text == spoken, "Spoken text must be the full version"
+    cached = state_engine._question_utterances.get("t-x")
+    assert cached == expected_cache, (
+        f"Cache mismatch:\n  spoken:   {spoken!r}\n"
+        f"  expected: {expected_cache!r}\n  got:      {cached!r}"
+    )
+
+
+def test_derive_sub_context_post_cap_advance():
+    from app.modules.interview_engine.openers import SubContext
+    from app.modules.interview_engine.orchestrator import _derive_sub_context
+    from app.modules.interview_engine.models.speaker import (
+        InstructionKind, SpeakerInput,
+    )
+    from app.modules.interview_engine.models.judge import TurnMetadata
+
+    si = SpeakerInput(
+        instruction_kind=InstructionKind.deliver_question,
+        bank_text="Q?", last_candidate_utterance="x",
+        recent_turns=[], claims_pool_snapshot=[], persona_name="Sam",
+        is_post_cap_advance=True,
+    )
+    assert _derive_sub_context(si) == SubContext.POST_CAP_ADVANCE
+
+
+def test_derive_sub_context_redirect_flags():
+    from app.modules.interview_engine.openers import SubContext
+    from app.modules.interview_engine.orchestrator import _derive_sub_context
+    from app.modules.interview_engine.models.speaker import (
+        InstructionKind, SpeakerInput,
+    )
+    from app.modules.interview_engine.models.judge import TurnMetadata
+
+    cases = [
+        (TurnMetadata(candidate_social_or_greeting=True), SubContext.SOCIAL_OR_GREETING),
+        (TurnMetadata(candidate_abusive=True), SubContext.ABUSIVE),
+        (TurnMetadata(candidate_attempted_injection=True), SubContext.INJECTION),
+        (TurnMetadata(candidate_off_topic=True), SubContext.OFF_TOPIC),
+        (TurnMetadata(), SubContext.OFF_TOPIC),  # default redirect
+    ]
+    for tm, expected in cases:
+        si = SpeakerInput(
+            instruction_kind=InstructionKind.redirect,
+            bank_text=None, last_candidate_utterance="x",
+            recent_turns=[], claims_pool_snapshot=[], persona_name="Sam",
+            turn_metadata=tm,
+        )
+        assert _derive_sub_context(si) == expected, (
+            f"redirect with {tm} → expected {expected}, got "
+            f"{_derive_sub_context(si)}"
+        )
+
+
+def test_derive_sub_context_push_back_reason_codes():
+    from app.modules.interview_engine.openers import SubContext
+    from app.modules.interview_engine.orchestrator import _derive_sub_context
+    from app.modules.interview_engine.models.speaker import (
+        InstructionKind, SpeakerInput,
+    )
+
+    cases = [
+        ("vague_answer", SubContext.VAGUE_ANSWER),
+        ("deflection", SubContext.DEFLECTION),
+        ("missing_specifics", SubContext.MISSING_SPECIFICS),
+        ("unanswered_subquestion", SubContext.UNANSWERED_SUBQUESTION),
+    ]
+    for code, expected in cases:
+        si = SpeakerInput(
+            instruction_kind=InstructionKind.push_back,
+            bank_text="Q?", last_candidate_utterance="x",
+            recent_turns=[], claims_pool_snapshot=[], persona_name="Sam",
+            push_back_reason_code=code,
+        )
+        assert _derive_sub_context(si) == expected
+
+
+def test_derive_sub_context_polite_close_with_failed_signal():
+    from app.modules.interview_engine.openers import SubContext
+    from app.modules.interview_engine.orchestrator import _derive_sub_context
+    from app.modules.interview_engine.models.speaker import (
+        InstructionKind, SpeakerInput,
+    )
+
+    si = SpeakerInput(
+        instruction_kind=InstructionKind.polite_close,
+        bank_text=None, last_candidate_utterance="I have no experience.",
+        recent_turns=[], claims_pool_snapshot=[], persona_name="Sam",
+        failed_signal_value="X experience",
+    )
+    assert _derive_sub_context(si) == SubContext.KNOCKOUT
+
+
+def test_derive_sub_context_default():
+    from app.modules.interview_engine.openers import SubContext
+    from app.modules.interview_engine.orchestrator import _derive_sub_context
+    from app.modules.interview_engine.models.speaker import (
+        InstructionKind, SpeakerInput,
+    )
+
+    si = SpeakerInput(
+        instruction_kind=InstructionKind.deliver_question,
+        bank_text="Q?", last_candidate_utterance="x",
+        recent_turns=[], claims_pool_snapshot=[], persona_name="Sam",
+    )
+    assert _derive_sub_context(si) == SubContext.DEFAULT
