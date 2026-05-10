@@ -40,6 +40,18 @@ class SpeakerStreamHandle:
         # (preamble + per-action body) so the orchestrator can record
         # the exact prompt used in the speaker.call audit event.
         self._prompt_hash: str = ""
+        # Phase 9.3 diagnostic state — populated by the producer for
+        # every call, but only consumed by the orchestrator's
+        # speaker.output.empty audit path. Captures every Responses-API
+        # event type we observed (so the absence of any
+        # ``response.output_text.delta`` is visible), plus any refusal
+        # deltas (the most common cause of empty output is a content
+        # filter rejection, which the API signals via
+        # ``response.refusal.delta`` + ``response.refusal.done``).
+        self._event_types_seen: list[str] = []
+        self._refusal_chunks: list[str] = []
+        self._response_id: str | None = None
+        self._finish_reason: str | None = None
 
     @property
     def latency_ms_first_token(self) -> int:
@@ -57,6 +69,44 @@ class SpeakerStreamHandle:
     def prompt_hash(self) -> str:
         """sha256:<hex> of the composed (preamble + per-action body)."""
         return self._prompt_hash
+
+    @property
+    def event_types_seen(self) -> list[str]:
+        """Every Responses-API event type observed during streaming.
+
+        Useful only when ``final_text()`` returns empty: a normal turn
+        contains ``response.output_text.delta`` events; an empty turn
+        typically does not, and may instead show ``response.refusal.delta``
+        (content filter) or only ``response.completed`` (model gave up).
+        """
+        return list(self._event_types_seen)
+
+    @property
+    def refusal_text(self) -> str | None:
+        """Joined ``response.refusal.delta`` content if any, else None.
+
+        Non-None means OpenAI's content filter or alignment guardrail
+        rejected the request. The string itself is the model's refusal
+        message (typically a short safety boilerplate).
+        """
+        if not self._refusal_chunks:
+            return None
+        return "".join(self._refusal_chunks)
+
+    @property
+    def response_id(self) -> str | None:
+        """OpenAI's request id (when surfaced) — for upstream trace lookup."""
+        return self._response_id
+
+    @property
+    def finish_reason(self) -> str | None:
+        """``stop`` / ``content_filter`` / ``length`` / ``tool_calls`` etc.
+
+        ``content_filter`` paired with empty output is the textbook
+        safety-rejection shape; ``stop`` with empty output usually means
+        the model decided there was nothing to say given the prompt.
+        """
+        return self._finish_reason
 
     def stream(self) -> AsyncIterator[str]:
         if self._stream_iterator is None:
@@ -132,6 +182,12 @@ class SpeakerService:
             async with cm as stream:
                 async for event in stream:
                     etype = getattr(event, "type", "")
+                    # Diagnostic capture (Phase 9.3): record every event
+                    # type so an empty-output turn surfaces the actual
+                    # API shape (refusal? completed-without-deltas?
+                    # only error events?) in the audit envelope.
+                    if etype:
+                        handle._event_types_seen.append(etype)
                     if etype == "response.output_text.delta":
                         delta = getattr(event, "delta", "")
                         if not delta:
@@ -142,13 +198,47 @@ class SpeakerService:
                             )
                         handle._chunks.append(delta)
                         yield delta
+                    elif etype == "response.refusal.delta":
+                        # Content-filter / safety refusal. The model is
+                        # explicitly declining to respond — this is the
+                        # most common cause of empty output we have seen
+                        # on adversarial candidate inputs.
+                        delta = getattr(event, "delta", "")
+                        if delta:
+                            handle._refusal_chunks.append(delta)
                     elif etype == "response.completed":
                         response = getattr(event, "response", None)
+                        if response is not None:
+                            rid = getattr(response, "id", None)
+                            if isinstance(rid, str):
+                                handle._response_id = rid
+                            # Best-effort: finish_reason can live on the
+                            # response object directly OR per-output-item
+                            # depending on SDK version. Try both.
+                            fr = getattr(response, "finish_reason", None)
+                            if not isinstance(fr, str):
+                                outputs = getattr(response, "output", None) or []
+                                for item in outputs:
+                                    fr = getattr(item, "finish_reason", None)
+                                    if isinstance(fr, str):
+                                        break
+                            if isinstance(fr, str):
+                                handle._finish_reason = fr
                         usage = getattr(response, "usage", None) if response else None
                         if usage is not None:
+                            # Responses API: usage.input_tokens_details.cached_tokens.
+                            # isinstance(int) guards against MagicMock auto-generated
+                            # children in unit tests (int(MagicMock()) returns 1).
+                            details = getattr(usage, "input_tokens_details", None)
+                            cached_raw = (
+                                getattr(details, "cached_tokens", 0)
+                                if details is not None else 0
+                            )
+                            cached = cached_raw if isinstance(cached_raw, int) else 0
                             handle._usage = {
                                 "prompt_tokens": getattr(usage, "input_tokens", 0),
                                 "completion_tokens": getattr(usage, "output_tokens", 0),
+                                "cached_tokens": cached,
                             }
             handle._final_text = "".join(handle._chunks)
             handle._latency_ms_total = int((time.monotonic() - started) * 1000)
