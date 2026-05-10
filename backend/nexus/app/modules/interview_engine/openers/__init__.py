@@ -7,12 +7,14 @@ opener was spoken so the LLM can compose natural continuation content.
 See docs/superpowers/specs/2026-05-10-opener-prefetch-architecture-design.md
 """
 from app.modules.interview_engine.openers.library import (
+    OpenerLibrary,
     OpenerSelection,
     OpenerVariant,
     SubContext,
 )
 
 __all__ = [
+    "OpenerLibrary",
     "OpenerSelection",
     "OpenerVariant",
     "SubContext",
