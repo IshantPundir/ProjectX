@@ -143,6 +143,21 @@ async def _get_or_build_opener_library(tts: Any) -> OpenerLibrary:
         return _opener_library
 
 
+def _compose_intro_text(*, persona_name: str) -> str:
+    """The persona intro spoken before the FIRST question of every
+    session. Pre-synthesized at agent entrypoint and played in parallel
+    with the first-question Speaker LLM call.
+
+    See spec ``docs/superpowers/specs/2026-05-10-intro-prefetch-and-cache-integrity-design.md``
+    §4.3 (Phase 3 of the intro-prefetch architecture).
+
+    Kept deliberately short — the question is the substance, the intro
+    just sets pacing. The trailing ``—`` cues the next sentence to flow
+    naturally from the intro (matching how speakers actually pause).
+    """
+    return f"Hi, I'm {persona_name}. To start —"
+
+
 SessionOutcome = Literal[
     "completed",
     "candidate_ended",
