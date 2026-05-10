@@ -102,6 +102,25 @@ class TestBuildTtsPlugin:
         assert result is not None
         assert "livekit.plugins.sarvam" in sys.modules
 
+    def test_openai_provider_loads_openai_plugin(self) -> None:
+        with patch("app.ai.realtime.ai_config") as mock_config:
+            mock_config.interview_tts_provider = "openai"
+            mock_config.interview_tts_model = "gpt-4o-mini-tts"
+            mock_config.interview_tts_voice = "ash"
+            result = build_tts_plugin()
+        assert result is not None
+        assert "livekit.plugins.openai" in sys.modules
+
+    def test_cartesia_provider_loads_cartesia_plugin(self) -> None:
+        with patch("app.ai.realtime.ai_config") as mock_config:
+            mock_config.interview_tts_provider = "cartesia"
+            mock_config.interview_tts_model = "sonic-2"
+            mock_config.interview_tts_voice = "f8f5f1b2-f02d-4d8e-a40d-fd850a487b3d"
+            mock_config.interview_tts_language = "en"
+            result = build_tts_plugin()
+        assert result is not None
+        assert "livekit.plugins.cartesia" in sys.modules
+
     def test_unknown_provider_raises(self) -> None:
         with patch("app.ai.realtime.ai_config") as mock_config:
             mock_config.interview_tts_provider = "bogus"
