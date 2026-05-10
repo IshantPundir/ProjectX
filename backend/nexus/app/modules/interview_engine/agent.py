@@ -85,7 +85,7 @@ from app.ai.realtime import (
 )
 from app.config import settings
 from app.database import get_bypass_session
-from app.modules.interview_engine.openers import OpenerLibrary
+from app.modules.interview_engine.openers import OpenerLibrary, build_opener_cache
 from app.modules.interview_engine.event_log import (
     EventCollector,
     EventLogSink,
@@ -109,6 +109,38 @@ from app.modules.interview_runtime import (
 from app.modules.tenant_settings import get_tenant_settings
 
 log = structlog.get_logger("interview-engine")
+
+# Process-wide opener library + cache. Built lazily at first session
+# (TTS plugin isn't available until entrypoint runs). Subsequent sessions
+# in the same worker process reuse the same library.
+_opener_library: OpenerLibrary | None = None
+_opener_cache_lock: asyncio.Lock | None = None
+
+
+def _get_opener_library_lock() -> asyncio.Lock:
+    """Lazy lock — asyncio.Lock must be created inside an event loop."""
+    global _opener_cache_lock
+    if _opener_cache_lock is None:
+        _opener_cache_lock = asyncio.Lock()
+    return _opener_cache_lock
+
+
+async def _get_or_build_opener_library(tts: Any) -> OpenerLibrary:
+    """Return the process-wide OpenerLibrary, building the audio cache
+    on first call. Subsequent calls reuse the populated library."""
+    global _opener_library
+    async with _get_opener_library_lock():
+        if _opener_library is None:
+            lib = OpenerLibrary()
+            report = await build_opener_cache(library=lib, tts=tts)
+            log.info(
+                "engine.opener_cache.built",
+                success_count=report.success_count,
+                failed_count=len(report.failed_variants),
+                elapsed_ms=report.total_synthesis_time_ms,
+            )
+            _opener_library = lib
+        return _opener_library
 
 
 SessionOutcome = Literal[
@@ -382,6 +414,9 @@ async def entrypoint(ctx: JobContext) -> None:
         redaction=settings.engine_event_log_redaction,
     )
 
+    tts_plugin = build_tts_plugin()
+    opener_library = await _get_or_build_opener_library(tts=tts_plugin)
+
     orchestrator = InterviewOrchestrator(
         session_config=session_config,
         tenant_settings=tenant_settings,
@@ -397,11 +432,7 @@ async def entrypoint(ctx: JobContext) -> None:
             session_ended_message=settings.engine_session_ended_message,
         ),
         tenant_id=str(tenant_uuid),
-        # Task 14 will wire the process-level shared library here.
-        # For Task 12 (structural wiring), a fresh per-session instance
-        # keeps the engine functional while the parallel-dispatch rewrite
-        # (Task 13) lands.
-        opener_library=OpenerLibrary(),
+        opener_library=opener_library,
     )
 
     agent = StructuredInterviewAgent(
@@ -412,7 +443,7 @@ async def entrypoint(ctx: JobContext) -> None:
     session = AgentSession(
         stt=build_stt_plugin_for_session(session_config=session_config),
         llm=build_llm_plugin(),
-        tts=build_tts_plugin(),
+        tts=tts_plugin,
         vad=build_vad(),
         turn_handling=TurnHandlingOptions(
             turn_detection=build_turn_detector(),
