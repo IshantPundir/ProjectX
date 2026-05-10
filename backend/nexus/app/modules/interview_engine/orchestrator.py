@@ -43,6 +43,7 @@ from app.modules.interview_engine.state.engine import (
 )
 from app.modules.interview_runtime import SessionConfig
 
+_log = structlog.get_logger(__name__)
 
 # Recent-turns window applied to BOTH judge and speaker LLM input payloads.
 # The State Engine still holds the full transcript (for SessionResult and
@@ -720,8 +721,16 @@ class InterviewOrchestrator:
                     try:
                         await opener_handle.wait_for_playout()
                     except Exception:  # noqa: BLE001
-                        # Defensive: mocks may not implement this. Continue.
-                        pass
+                        # Mocks may not implement wait_for_playout cleanly; in
+                        # production this is a real playout failure (room close
+                        # mid-opener, TTS stall). Continue anyway so the Speaker
+                        # content still gets piped — but surface the failure so
+                        # it's diagnosable.
+                        _log.warning(
+                            "opener.playout_wait_failed",
+                            turn_id=turn_id,
+                            opener_text=opener.text[:40] if opener.text else None,
+                        )
                 self._recent_openers.append(opener.text)
 
                 from app.modules.interview_engine.event_kinds import SPEAKER_OPENER_PLAYED
@@ -787,6 +796,16 @@ class InterviewOrchestrator:
             return final_text
 
         except Exception as exc:
+            # Cancel the in-flight Speaker LLM call if the opener path errored
+            # before we reached `await speaker_task`. Without this the task is
+            # orphaned: it keeps running, costs tokens, and Python 3.11+ logs
+            # "Task exception was never retrieved" to stderr.
+            if "speaker_task" in locals() and not speaker_task.done():
+                speaker_task.cancel()
+                try:
+                    await speaker_task
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                    pass
             from app.modules.interview_engine.event_kinds import SPEAKER_ERROR
             from app.modules.interview_engine.audit_events import SpeakerErrorPayload
             self._append(SPEAKER_ERROR, SpeakerErrorPayload(
