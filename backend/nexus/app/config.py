@@ -358,28 +358,29 @@ class Settings(BaseSettings):
     # plugin factory (see app/ai/realtime.py); incompatible values are caught at
     # plugin construction.
     interview_stt_provider: Literal["sarvam", "deepgram"] = "sarvam"
-    interview_stt_model: str = "nova-3"
-    interview_stt_language: str = "en"
+    interview_stt_model: str = "saaras:v3"
+    interview_stt_language: str = "en-IN"
     # Sarvam-only knob; ignored when interview_stt_provider="deepgram".
     # Allowed values for ``saaras:v3``: transcribe, translate, verbatim, translit, codemix.
     # Default ``transcribe`` matches the plugin default.
     interview_stt_mode: str = "transcribe"
 
     # ───────── TTS (realtime) — provider-switchable ─────────
-    # Default stays ``openai`` until Task 6 of the Sarvam swap flips it to
-    # ``sarvam`` (after the build_tts_plugin Sarvam branch lands in Task 5).
+    # Default ``sarvam`` (bulbul:v3, speaker shubh, en-IN). Switch to
+    # ``openai`` (gpt-4o-mini-tts) by setting INTERVIEW_TTS_PROVIDER=openai
+    # AND INTERVIEW_TTS_MODEL=gpt-4o-mini-tts AND INTERVIEW_TTS_VOICE=ash.
     # Switch to ``cartesia`` (sonic-2) by setting INTERVIEW_TTS_PROVIDER=cartesia
-    # in .env. The model / voice / language fields below are interpreted by
-    # the chosen provider's plugin factory (build_tts_plugin in
-    # app/ai/realtime.py); incompatible values are caught at plugin
-    # construction, not at config-load time.
-    interview_tts_provider: Literal["sarvam", "openai", "cartesia"] = "openai"
-    interview_tts_model: str = "gpt-4o-mini-tts"
-    # OpenAI voice presets: alloy / ash / ballad / coral / echo / fable /
-    # nova / onyx / sage / shimmer. Cartesia uses voice UUIDs.
-    # Sarvam uses speaker names (e.g. shubh, anushka).
-    interview_tts_voice: str = "ash"
-    interview_tts_language: str = "en"
+    # AND INTERVIEW_TTS_MODEL=sonic-2 AND INTERVIEW_TTS_VOICE=<cartesia-voice-uuid>.
+    # The model / voice / language fields below are interpreted by the chosen
+    # provider's plugin factory (build_tts_plugin in app/ai/realtime.py);
+    # incompatible values are caught at plugin construction, not at config-load time.
+    interview_tts_provider: Literal["sarvam", "openai", "cartesia"] = "sarvam"
+    interview_tts_model: str = "bulbul:v3"
+    # Sarvam uses speaker names (e.g. shubh, anushka). OpenAI voice presets:
+    # alloy / ash / ballad / coral / echo / fable / nova / onyx / sage /
+    # shimmer. Cartesia uses voice UUIDs.
+    interview_tts_voice: str = "shubh"
+    interview_tts_language: str = "en-IN"
     # Sarvam-only TTS knobs; ignored when interview_tts_provider in {openai, cartesia}.
     # pace: 0.5–2.0; temperature: 0.01–1.0 (only used by bulbul:v3 / bulbul:v3-beta).
     interview_tts_pace: float = 1.0

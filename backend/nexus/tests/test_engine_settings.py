@@ -115,3 +115,20 @@ def test_aiconfig_exposes_sarvam_fields(monkeypatch):
     assert cfg.interview_stt_mode == "codemix"
     assert cfg.interview_tts_pace == 1.2
     assert cfg.interview_tts_temperature == 0.4
+
+
+def test_settings_default_to_sarvam_values():
+    """In-code defaults select the Sarvam pipeline so a no-.env-override boot works.
+
+    Uses model_fields introspection so local-dev .env values can't interfere
+    with the assertion (consistent with test_settings_have_sarvam_fields).
+    """
+    fields = Settings.model_fields
+    assert fields["interview_stt_provider"].default == "sarvam"
+    assert fields["interview_stt_model"].default == "saaras:v3"
+    assert fields["interview_stt_language"].default == "en-IN"
+    assert fields["interview_stt_mode"].default == "transcribe"
+    assert fields["interview_tts_provider"].default == "sarvam"
+    assert fields["interview_tts_model"].default == "bulbul:v3"
+    assert fields["interview_tts_voice"].default == "shubh"
+    assert fields["interview_tts_language"].default == "en-IN"
