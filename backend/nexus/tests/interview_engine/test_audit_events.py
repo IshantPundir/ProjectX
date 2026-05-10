@@ -76,3 +76,30 @@ def test_speaker_opener_played_payload_shape():
     )
     assert p.turn_id == "t-1"
     assert p.cache_hit is True
+
+
+def test_speaker_opener_played_payload_default_is_session_intro_false():
+    """Backward compatibility — existing emitters that don't pass
+    is_session_intro get False by default."""
+    from app.modules.interview_engine.audit_events import SpeakerOpenerPlayedPayload
+    p = SpeakerOpenerPlayedPayload(
+        turn_id="t-1",
+        instruction_kind="push_back",
+        sub_context="vague_answer",
+        opener_text="Got it.",
+        cache_hit=True,
+    )
+    assert p.is_session_intro is False
+
+
+def test_speaker_opener_played_payload_accepts_is_session_intro_true():
+    from app.modules.interview_engine.audit_events import SpeakerOpenerPlayedPayload
+    p = SpeakerOpenerPlayedPayload(
+        turn_id="t-0",
+        instruction_kind="deliver_first_question",
+        sub_context="default",
+        opener_text="Hi, I'm Sam. To start —",
+        cache_hit=True,
+        is_session_intro=True,
+    )
+    assert p.is_session_intro is True

@@ -169,12 +169,19 @@ class SpeakerOpenerPlayedPayload(BaseModel):
     content portion of the same turn). One turn typically emits BOTH:
     speaker.opener.played + speaker.call. The two together describe the
     full agent utterance.
+
+    Phase 3 (Bug B fix, 2026-05-10) — when the orchestrator routes
+    deliver_first_question through the per-session persona intro
+    (instead of the static OpenerLibrary), the audit event fires with
+    ``is_session_intro=True``. Forensic queries can filter on this to
+    locate the intro turn within an envelope.
     """
     turn_id: str
     instruction_kind: str
     sub_context: str
     opener_text: str
     cache_hit: bool
+    is_session_intro: bool = False
 
 
 # Lifecycle / checkpoint

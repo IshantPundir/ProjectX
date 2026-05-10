@@ -1970,3 +1970,58 @@ async def test_orchestrator_falls_back_to_library_for_other_kinds_when_intro_var
         "Got it.", "OK.", "Right —", "Mhm —", "Hmm —",
         "OK, let me press on that —",
     }
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_emits_is_session_intro_true_for_intro_path(
+    make_session_config, make_question,
+):
+    """The SPEAKER_OPENER_PLAYED audit fired by the intro path has
+    is_session_intro=True; the same audit fired for opener-library
+    openers stays False."""
+    from app.modules.interview_engine.openers import OpenerLibrary, OpenerVariant
+    from app.modules.interview_engine.event_kinds import SPEAKER_OPENER_PLAYED
+    cfg = make_session_config(
+        questions=[make_question(qid="q1")],
+        signals=["S1"],
+    )
+    state_engine = StateEngine(session_config=cfg)
+    state_engine.process_judge_output(
+        turn_id="t-0",
+        judge_output=state_engine.initialize_for_session_start(),
+        candidate_utterance_text=None, elapsed_ms=0,
+    )
+
+    speaker = MagicMock()
+    speaker.stream = AsyncMock(return_value=_FakeSpeakerHandle("Walk me through your tool."))
+    pub = AttributePublisher(room=MagicMock(local_participant=MagicMock(set_attributes=AsyncMock())))
+
+    orch = InterviewOrchestrator(
+        session_config=cfg,
+        tenant_settings=MagicMock(engine_agent_name=None),
+        state_engine=state_engine,
+        judge=MagicMock(), speaker=speaker,
+        attr_publisher=pub, event_collector=_collector(),
+        correlation_id="c", config=OrchestratorConfig(),
+        tenant_id="t",
+        opener_library=OpenerLibrary(),
+        intro_variant=OpenerVariant(text="Hi, I'm Sam. To start —"),
+    )
+
+    speaker_input = SpeakerInput(
+        instruction_kind=InstructionKind.deliver_first_question,
+        bank_text="What is your tool?",
+        last_candidate_utterance=None,
+        recent_turns=[], claims_pool_snapshot=[],
+        persona_name="Sam",
+    )
+    fake_agent = MagicMock()
+    fake_agent.session.say = AsyncMock(return_value=MagicMock(interrupted=False))
+
+    await orch._stream_speaker_and_say(
+        agent=fake_agent, turn_id="t-intro", speaker_input=speaker_input,
+    )
+
+    opener_events = [e for e in orch._collector.events if e.kind == SPEAKER_OPENER_PLAYED]
+    assert len(opener_events) == 1
+    assert opener_events[0].payload["is_session_intro"] is True

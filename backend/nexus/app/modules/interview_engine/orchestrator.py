@@ -647,10 +647,11 @@ class InterviewOrchestrator:
         # pre-synthesized intro (composed at agent entrypoint with the
         # tenant's persona_name). All other kinds + sub_contexts route
         # through the static OpenerLibrary as today.
-        if (
+        is_session_intro = (
             speaker_input.instruction_kind == InstructionKind.deliver_first_question
             and self._intro_variant is not None
-        ):
+        )
+        if is_session_intro:
             audio_iter_factory = (
                 (lambda: iter(self._intro_variant.audio_frames))
                 if self._intro_variant.audio_frames is not None
@@ -722,6 +723,7 @@ class InterviewOrchestrator:
                     sub_context=sub_ctx.value,
                     opener_text=opener.text,
                     cache_hit=cache_hit,
+                    is_session_intro=is_session_intro,
                 ).model_dump())
 
             # Speaker LLM result — kicked off above, may already be done.
