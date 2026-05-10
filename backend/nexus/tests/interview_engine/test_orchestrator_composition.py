@@ -57,6 +57,7 @@ from app.modules.interview_engine.models.judge import (
     CoverageTransition, JudgeOutput, NextAction, Observation, ProbePayload,
     RedirectPayload, RepeatPayload, TurnMetadata,
 )
+from app.modules.interview_engine.openers import OpenerLibrary
 from app.modules.interview_engine.orchestrator import (
     InterviewOrchestrator, OrchestratorConfig,
 )
@@ -89,6 +90,14 @@ class _ScriptedSpeakerHandle:
         self.latency_ms_first_token = 100
         self.latency_ms_total = 250
         self.prompt_hash = "sha256:" + ("0" * 64)
+        # Phase 9.3 diagnostic fields. Real SpeakerStreamHandle exposes
+        # these and the orchestrator's speaker.output.empty path reads
+        # them; without them the test would hit AttributeError and route
+        # into the speaker-error recovery branch instead.
+        self.event_types_seen: list[str] = []
+        self.refusal_text: str | None = None
+        self.response_id: str | None = None
+        self.finish_reason: str | None = None
 
     def stream(self):
         text = self._text
@@ -171,7 +180,11 @@ def _build_orch(
     pub = AttributePublisher(room=room)
 
     fake_session = MagicMock()
-    fake_session.say = AsyncMock()
+    # Phase 9.4: orchestrator now reads SpeechHandle.interrupted from
+    # session.say's return value. Default to interrupted=False so the
+    # composition test's empty-output assertions exercise the true-empty
+    # fallback path (rather than the new SPEAKER_INTERRUPTED path).
+    fake_session.say = AsyncMock(return_value=MagicMock(interrupted=False))
     fake_session.shutdown = MagicMock()
     fake_agent = MagicMock()
     fake_agent.session = fake_session
@@ -187,6 +200,7 @@ def _build_orch(
         correlation_id="c",
         config=OrchestratorConfig(),
         tenant_id="t",
+        opener_library=OpenerLibrary(),
     )
     return orch, fake_agent
 
@@ -230,7 +244,6 @@ async def test_full_session_no_false_knockout_no_silence_correct_repeat(
     judge_outputs = [
         # Turn 1: candidate says "Hi" → redirect (social).
         JudgeOutput(
-            thought="greeting",
             observations=[],
             candidate_claims=[],
             next_action=NextAction.redirect,
@@ -239,7 +252,6 @@ async def test_full_session_no_false_knockout_no_silence_correct_repeat(
         ),
         # Turn 2: "How are you?" → redirect (Speaker output empty — Bug D).
         JudgeOutput(
-            thought="social",
             observations=[],
             candidate_claims=[],
             next_action=NextAction.redirect,
@@ -248,7 +260,6 @@ async def test_full_session_no_false_knockout_no_silence_correct_repeat(
         ),
         # Turn 3: "Can you repeat?" → repeat (cached delivery, no Speaker call).
         JudgeOutput(
-            thought="repeat ask",
             observations=[],
             candidate_claims=[],
             next_action=NextAction.repeat,
@@ -259,7 +270,6 @@ async def test_full_session_no_false_knockout_no_silence_correct_repeat(
         # simulation. The ->failed guard MUST drop this; the lifecycle
         # MUST NOT record a knockout. The probe action proceeds normally.
         JudgeOutput(
-            thought="strong answer; spurious failed observation",
             observations=[
                 Observation(
                     signal_value=KNOCKOUT_SIGNAL,
@@ -271,7 +281,7 @@ async def test_full_session_no_false_knockout_no_silence_correct_repeat(
             candidate_claims=[],
             next_action=NextAction.probe,
             next_action_payload=ProbePayload(
-                probe_id="0", probe_rationale="targets the missing X",
+                probe_id="0",
             ),
             turn_metadata=TurnMetadata(),
         ),
@@ -411,4 +421,120 @@ async def test_full_session_no_false_knockout_no_silence_correct_repeat(
     # uses a synthetic JudgeOutput, no LLM call).
     assert orch._judge.call.await_count == 4, (
         f"Judge call count mismatch (expected 4, got {orch._judge.call.await_count})"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 9.2 — push_back end-to-end composition
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_push_back_flows_end_to_end_and_increments_count_in_judge_input(
+    make_session_config, make_question,
+):
+    """End-to-end: candidate gives a thin answer, Judge emits push_back,
+    Speaker is invoked with InstructionKind.push_back + reason_code,
+    push_back_count is incremented on the active question, and the NEXT
+    Judge call sees active_question_push_back_count=1 in its input.
+
+    This is the regression guard for the bug from session 4cf43291: a
+    candidate gave thin answers turn after turn, and the Judge advanced
+    instead of pushing back.
+    """
+    from app.modules.interview_engine.models.judge import (
+        CoverageQuality, PushBackPayload,
+    )
+
+    judge_outputs = [
+        # Turn 1: candidate says "I would add validation checks" (vague).
+        # Judge emits push_back vague_answer with one thin observation.
+        JudgeOutput(
+            observations=[
+                Observation(
+                    signal_value="S1", anchor_id=0,
+                    evidence_quote="I would add validation checks",
+                    coverage_transition=CoverageTransition.partial_to_partial,
+                    quality=CoverageQuality.thin,
+                ),
+            ],
+            candidate_claims=[],
+            next_action=NextAction.push_back,
+            next_action_payload=PushBackPayload(reason_code="vague_answer"),
+            turn_metadata=TurnMetadata(),
+        ),
+        # Turn 2: candidate gives a concrete follow-up. Judge probes
+        # for one more detail with a concrete observation. (Probe rather
+        # than advance keeps the assertion focused on push_back_count
+        # threading; the state engine's advance-quality-gate has its own
+        # dedicated tests in test_engine.py.)
+        JudgeOutput(
+            observations=[
+                Observation(
+                    signal_value="S1", anchor_id=2,
+                    evidence_quote="I'd add a workflow validator that checks "
+                                   "the linked PR status",
+                    coverage_transition=CoverageTransition.partial_to_sufficient,
+                    quality=CoverageQuality.concrete,
+                ),
+            ],
+            candidate_claims=[],
+            next_action=NextAction.probe,
+            next_action_payload=ProbePayload(probe_id="0"),
+            turn_metadata=TurnMetadata(),
+        ),
+    ]
+
+    speaker_outputs = [
+        "First question delivered to the candidate.",  # on_enter
+        "OK — walk me through one validation check you'd actually write.",  # turn 1 push_back
+        "And how does it handle PR-system timeouts?",  # turn 2 probe
+    ]
+
+    orch, agent = _build_orch(
+        make_session_config=make_session_config,
+        make_question=make_question,
+        scripted_judge_outputs=judge_outputs,
+        scripted_speaker_outputs=speaker_outputs,
+        knockout_signal="never_used",
+    )
+
+    await orch.on_enter(agent)
+    # Turn 1: thin answer triggers push_back.
+    await orch.on_user_turn_completed(
+        agent, MagicMock(), _msg("I would add, like, validation checks"),
+    )
+    # Turn 2: concrete follow-up.
+    await orch.on_user_turn_completed(
+        agent, MagicMock(),
+        _msg("I'd add a workflow validator that checks the linked PR status"),
+    )
+
+    state = orch._state
+
+    # ----- push_back_count must be 1 after turn 1 ---------------------------
+    snap = state.queue_snapshot()
+    assert snap.questions[0].push_back_count == 1, (
+        "push_back action must increment push_back_count on the active question"
+    )
+
+    # ----- Speaker was invoked with InstructionKind.push_back on turn 1 -----
+    # speaker.stream calls: on_enter (#0) + turn 1 (#1) + turn 2 (#2)
+    speaker_calls = orch._speaker.stream.call_args_list
+    assert len(speaker_calls) == 3
+    turn1_speaker_input = speaker_calls[1].kwargs["speaker_input"]
+    from app.modules.interview_engine.models.speaker import InstructionKind
+    assert turn1_speaker_input.instruction_kind == InstructionKind.push_back
+    assert turn1_speaker_input.push_back_reason_code == "vague_answer"
+
+    # ----- Turn 2 Judge input carries push_back_count=1 ---------------------
+    # The orchestrator reads queue.questions[active_index].push_back_count
+    # off the CURRENT snapshot at Judge-call time. After turn 1 the count
+    # is 1; the turn-2 Judge call must reflect that.
+    judge_call_args = orch._judge.call.call_args_list
+    assert len(judge_call_args) == 2
+    turn2_judge_input = judge_call_args[1].kwargs["input_payload"]
+    assert turn2_judge_input.active_question_push_back_count == 1, (
+        "Orchestrator must thread push_back_count from the queue into the "
+        "next Judge input so the prompt's cap=2 rule has accurate data."
     )

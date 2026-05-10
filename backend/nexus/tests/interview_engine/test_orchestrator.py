@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.modules.interview_engine.openers import OpenerLibrary
 from app.modules.interview_engine.orchestrator import (
     InterviewOrchestrator, OrchestratorConfig,
 )
@@ -107,6 +108,7 @@ async def test_on_enter_delivers_first_question(make_session_config, make_questi
         correlation_id="c",
         config=OrchestratorConfig(),
         tenant_id="t",
+        opener_library=OpenerLibrary(),
     )
 
     await orch.on_enter(fake_agent)
@@ -209,6 +211,7 @@ async def test_on_user_turn_completed_happy_path(make_session_config, make_quest
         correlation_id="c",
         config=OrchestratorConfig(),
         tenant_id="t",
+        opener_library=OpenerLibrary(),
     )
     await orch.on_enter(fake_agent)
     speaker_service.stream.reset_mock()
@@ -277,6 +280,7 @@ async def test_speaker_error_triggers_canned_recovery(make_session_config, make_
         attr_publisher=pub, event_collector=collector,
         correlation_id="c", config=OrchestratorConfig(),
         tenant_id="t",
+        opener_library=OpenerLibrary(),
     )
     await orch.on_enter(fake_agent)
 
@@ -321,6 +325,7 @@ async def test_on_close_returns_session_result_with_snapshots(make_session_confi
         attr_publisher=pub, event_collector=collector,
         correlation_id="c", config=OrchestratorConfig(),
         tenant_id="t",
+        opener_library=OpenerLibrary(),
     )
     await orch.on_enter(fake_agent)
 
@@ -435,6 +440,7 @@ async def test_on_close_session_aggregates_reflect_per_question_state(
         attr_publisher=pub, event_collector=_collector(),
         correlation_id="c", config=OrchestratorConfig(),
         tenant_id="t",
+        opener_library=OpenerLibrary(),
     )
 
     result = await orch.on_close(MagicMock(), audio_tuning_summary=None)
@@ -488,6 +494,7 @@ async def test_judge_input_carries_recent_turns(make_session_config, make_questi
         attr_publisher=pub, event_collector=collector,
         correlation_id="c", config=OrchestratorConfig(),
         tenant_id="t",
+        opener_library=OpenerLibrary(),
     )
     await orch.on_enter(fake_agent)
 
@@ -551,6 +558,7 @@ async def test_on_enter_robust_to_publish_failure(make_session_config, make_ques
         attr_publisher=pub, event_collector=collector,
         correlation_id="c", config=OrchestratorConfig(),
         tenant_id="t",
+        opener_library=OpenerLibrary(),
     )
     # Should not raise — first attribute publish failure must be tolerated.
     await orch.on_enter(fake_agent)
@@ -668,6 +676,7 @@ async def test_post_close_turn_plays_canned_message_and_skips_judge(
         attr_publisher=pub, event_collector=collector,
         correlation_id="c", config=OrchestratorConfig(),
         tenant_id="t",
+        opener_library=OpenerLibrary(),
     )
 
     from livekit.agents.llm import ChatMessage
@@ -754,6 +763,7 @@ async def test_normal_turn_then_knockout_triggers_shutdown(
         attr_publisher=pub, event_collector=collector,
         correlation_id="c", config=OrchestratorConfig(),
         tenant_id="t",
+        opener_library=OpenerLibrary(),
     )
     await orch.on_enter(fake_agent)
 
@@ -817,6 +827,7 @@ async def test_time_remaining_seconds_decreases_each_turn(
         attr_publisher=pub, event_collector=collector,
         correlation_id="c", config=OrchestratorConfig(),
         tenant_id="t",
+        opener_library=OpenerLibrary(),
     )
 
     # Patch time.monotonic so on_enter establishes a t0 and the next
@@ -885,6 +896,7 @@ async def test_orchestrator_uses_tenant_id_not_session_id(make_session_config, m
         attr_publisher=pub, event_collector=collector,
         correlation_id="c", config=OrchestratorConfig(),
         tenant_id="my-tenant-uuid-not-the-session-id",
+        opener_library=OpenerLibrary(),
     )
     await orch.on_enter(fake_agent)
 
@@ -930,6 +942,7 @@ async def test_resolve_close_outcome_returns_lifecycle_last_outcome(
         event_collector=_collector(),
         correlation_id="c", config=OrchestratorConfig(),
         tenant_id="t",
+        opener_library=OpenerLibrary(),
     )
 
     # LiveKit reports user_initiated (because the agent called shutdown),
@@ -961,6 +974,7 @@ async def test_resolve_close_outcome_falls_back_to_livekit_reason(
         event_collector=_collector(),
         correlation_id="c", config=OrchestratorConfig(),
         tenant_id="t",
+        opener_library=OpenerLibrary(),
     )
 
     assert orch.resolve_close_outcome(close_reason="participant_disconnected") == "candidate_disconnected"
@@ -1038,6 +1052,7 @@ async def test_session_close_outcome_reflects_lifecycle_last_outcome(
         attr_publisher=pub, event_collector=collector,
         correlation_id="c", config=OrchestratorConfig(),
         tenant_id="t",
+        opener_library=OpenerLibrary(),
     )
     await orch.on_enter(fake_agent)
 
@@ -1087,6 +1102,7 @@ async def test_resolve_close_outcome_error_overrides_lifecycle(
         event_collector=_collector(),
         correlation_id="c", config=OrchestratorConfig(),
         tenant_id="t",
+        opener_library=OpenerLibrary(),
     )
 
     assert orch.resolve_close_outcome(close_reason="error") == "error"
@@ -1150,6 +1166,7 @@ def _build_orchestrator_with_mocked_deps(
         correlation_id="c",
         config=OrchestratorConfig(),
         tenant_id="t",
+        opener_library=OpenerLibrary(),
     )
 
 
@@ -1409,6 +1426,7 @@ async def test_cap_advance_speaker_output_caches_stripped_question(
         attr_publisher=pub, event_collector=_collector(),
         correlation_id="c", config=OrchestratorConfig(),
         tenant_id="t",
+        opener_library=OpenerLibrary(),
     )
 
     # Activate q1 so build_speaker_input has an active question.
@@ -1482,6 +1500,7 @@ async def test_normal_advance_caches_full_speaker_text(
         attr_publisher=pub, event_collector=_collector(),
         correlation_id="c", config=OrchestratorConfig(),
         tenant_id="t",
+        opener_library=OpenerLibrary(),
     )
 
     state_engine.process_judge_output(
@@ -1583,6 +1602,7 @@ async def test_orchestrator_strips_opener_for_push_back_and_clarify(
         attr_publisher=pub, event_collector=_collector(),
         correlation_id="c", config=OrchestratorConfig(),
         tenant_id="t",
+        opener_library=OpenerLibrary(),
     )
 
     if kind_name == "push_back":
@@ -1726,3 +1746,35 @@ def test_derive_sub_context_default():
         recent_turns=[], claims_pool_snapshot=[], persona_name="Sam",
     )
     assert _derive_sub_context(si) == SubContext.DEFAULT
+
+
+def test_orchestrator_accepts_opener_library_and_initializes_recent_openers(
+    make_session_config, make_question,
+):
+    """InterviewOrchestrator constructor accepts opener_library and
+    seeds _recent_openers as an empty deque (capacity 5)."""
+    from collections import deque
+
+    cfg = make_session_config(
+        questions=[make_question(qid="q1", text="What is your first question?")],
+        signals=["S1"],
+    )
+    state_engine = StateEngine(session_config=cfg)
+    pub = AttributePublisher(room=MagicMock(local_participant=MagicMock(
+        set_attributes=AsyncMock(),
+    )))
+    orch = InterviewOrchestrator(
+        session_config=cfg,
+        tenant_settings=MagicMock(engine_agent_name=None),
+        state_engine=state_engine,
+        judge=MagicMock(),
+        speaker=MagicMock(),
+        attr_publisher=pub,
+        event_collector=_collector(),
+        correlation_id="c", config=OrchestratorConfig(),
+        tenant_id="t",
+        opener_library=OpenerLibrary(),
+    )
+    assert isinstance(orch._recent_openers, deque)
+    assert orch._recent_openers.maxlen == 5
+    assert len(orch._recent_openers) == 0
