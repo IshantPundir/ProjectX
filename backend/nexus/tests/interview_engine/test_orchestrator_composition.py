@@ -910,3 +910,77 @@ async def test_repeat_after_empty_speaker_output_replays_prior_question_not_fall
     assert cached_events[0].payload["final_utterance"] == "Walk me through your tool of choice."
     # Importantly, NOT the fallback text.
     assert "Let me restate" not in cached_events[0].payload["final_utterance"]
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 (closer) — intro_variant pre-spoken; repeat replays only question
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_first_question_repeat_replays_only_question_no_intro(
+    make_session_config, make_question,
+):
+    """Phase 3 composition test — drives a 2-turn session:
+      Turn 1 (on_enter): deliver_first_question
+              - intro pre-spoken via intro_variant
+              - Speaker emits ONLY the question content
+              - cache stores ONLY the question
+      Turn 2: NextAction.repeat
+              - SPEAKER_CACHED replays ONLY the question, NOT the intro
+    Bug B from session a998073a-3007-...: the intro got replayed on
+    every repeat, sounding robotic and confusing the candidate.
+    """
+    from app.modules.interview_engine.openers import OpenerLibrary, OpenerVariant
+    from app.modules.interview_engine.event_kinds import SPEAKER_CACHED
+    from app.modules.interview_engine.models.judge import (
+        JudgeOutput, NextAction, RepeatPayload, TurnMetadata,
+    )
+
+    judge_outputs = [
+        JudgeOutput(
+            observations=[], candidate_claims=[],
+            next_action=NextAction.repeat,
+            next_action_payload=RepeatPayload(),
+            turn_metadata=TurnMetadata(),
+        ),
+    ]
+    speaker_outputs = [
+        # on_enter: deliver_first_question — Speaker emits ONLY the
+        # question (intro is pre-spoken via intro_variant).
+        "Walk me through your tool of choice.",
+    ]
+
+    orch, agent = _build_orch(
+        make_session_config=make_session_config,
+        make_question=make_question,
+        scripted_judge_outputs=judge_outputs,
+        scripted_speaker_outputs=speaker_outputs,
+        knockout_signal="S1",
+    )
+    orch._opener_library = OpenerLibrary()
+    orch._intro_variant = OpenerVariant(text="Hi, I'm Sam. To start —")
+
+    await orch.on_enter(agent)
+    await orch.on_user_turn_completed(
+        agent, MagicMock(), _msg("Can you repeat that question?"),
+    )
+
+    state = orch._state
+
+    # The cache holds ONLY the question text — intro never enters the cache.
+    cache_values = list(state._question_utterances.values())
+    assert len(cache_values) == 1
+    assert cache_values[0] == "Walk me through your tool of choice."
+    assert "Hi, I'm Sam" not in cache_values[0]
+
+    # The repeat turn fired SPEAKER_CACHED with ONLY the question text.
+    cached_events = [
+        e for e in orch._collector.events
+        if e.kind == SPEAKER_CACHED
+    ]
+    assert len(cached_events) == 1
+    assert cached_events[0].payload["final_utterance"] == (
+        "Walk me through your tool of choice."
+    )
+    assert "Hi, I'm Sam" not in cached_events[0].payload["final_utterance"]
