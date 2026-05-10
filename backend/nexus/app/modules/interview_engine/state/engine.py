@@ -815,6 +815,27 @@ class StateEngine:
         if instruction_kind in self._QUESTION_KINDS:
             self._question_utterances[turn_id] = text
 
+    def register_agent_question_for_repeat(
+        self, *, turn_id: str, text: str, instruction_kind: InstructionKind,
+    ) -> None:
+        """Update the repeat-cache. Only call this when the agent
+        SUCCESSFULLY emitted a question-bearing utterance — empty text
+        and non-question kinds are silently no-ops.
+
+        The repeat cache (``_question_utterances``) holds the most
+        recent good question text for ``NextAction.repeat`` resolution.
+        Empty entries would cause silent-agent replays — strictly
+        forbidden by the Phase 9.9 cache integrity contract.
+
+        See spec ``docs/superpowers/specs/2026-05-10-intro-prefetch-and-cache-integrity-design.md``
+        §4.1 for the rationale.
+        """
+        if not text.strip():
+            return
+        if instruction_kind not in self._QUESTION_KINDS:
+            return
+        self._question_utterances[turn_id] = text
+
     # --- Snapshot accessors ---
 
     def next_pending_mandatory_id(self) -> str | None:

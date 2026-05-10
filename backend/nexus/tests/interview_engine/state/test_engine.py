@@ -1632,3 +1632,65 @@ def test_question_kinds_set_includes_push_back_and_clarify():
     assert StateEngine._QUESTION_KINDS == frozenset(expected)
 
 
+def test_register_agent_question_for_repeat_writes_for_question_kinds_with_non_empty_text(
+    make_session_config, make_question,
+):
+    """Happy path: a question-bearing kind with non-empty text updates
+    the repeat cache."""
+    cfg = make_session_config(questions=[make_question(qid="q1")])
+    engine = StateEngine(session_config=cfg)
+    engine.register_agent_question_for_repeat(
+        turn_id="t-1", text="What is your favorite tool?",
+        instruction_kind=InstructionKind.deliver_question,
+    )
+    assert engine._question_utterances["t-1"] == "What is your favorite tool?"
+
+
+def test_register_agent_question_for_repeat_skips_empty_text(
+    make_session_config, make_question,
+):
+    """An empty text MUST NOT update the cache (Phase 9.9 contract).
+    The interrupted/empty Speaker handlers depend on this — if they
+    pollute the cache with empty entries, NextAction.repeat replays
+    silence and the candidate hears nothing."""
+    cfg = make_session_config(questions=[make_question(qid="q1")])
+    engine = StateEngine(session_config=cfg)
+    engine.register_agent_question_for_repeat(
+        turn_id="t-1", text="",
+        instruction_kind=InstructionKind.push_back,
+    )
+    assert "t-1" not in engine._question_utterances
+
+
+def test_register_agent_question_for_repeat_skips_whitespace_only(
+    make_session_config, make_question,
+):
+    """Whitespace-only counts as empty for cache purposes."""
+    cfg = make_session_config(questions=[make_question(qid="q1")])
+    engine = StateEngine(session_config=cfg)
+    engine.register_agent_question_for_repeat(
+        turn_id="t-1", text="   \n  ",
+        instruction_kind=InstructionKind.deliver_question,
+    )
+    assert "t-1" not in engine._question_utterances
+
+
+def test_register_agent_question_for_repeat_skips_non_question_kinds(
+    make_session_config, make_question,
+):
+    """Non-question kinds (redirect, repeat, polite_close,
+    acknowledge_no_experience) MUST NOT enter the repeat cache —
+    same as today's contract on the underlying _QUESTION_KINDS filter."""
+    cfg = make_session_config(questions=[make_question(qid="q1")])
+    engine = StateEngine(session_config=cfg)
+    for non_q_kind in [
+        InstructionKind.redirect, InstructionKind.polite_close,
+        InstructionKind.acknowledge_no_experience,
+    ]:
+        engine.register_agent_question_for_repeat(
+            turn_id=f"t-{non_q_kind.value}", text="something",
+            instruction_kind=non_q_kind,
+        )
+        assert f"t-{non_q_kind.value}" not in engine._question_utterances
+
+
