@@ -1,4 +1,7 @@
-from app.modules.interview_engine.event_log.redaction import redact_payload
+from app.modules.interview_engine.event_log.redaction import (
+    _ENGINE_PASSTHROUGH_KINDS,
+    redact_payload,
+)
 
 
 def test_judge_call_input_summary_kept_metadata_mode():
@@ -33,3 +36,53 @@ def test_state_mutation_keeps_full_payload():
     }
     out = redact_payload(kind="state.mutation", payload=payload, mode="metadata")
     assert out == payload
+
+
+def test_turn_coalesced_kept_verbatim_both_modes():
+    """Per spec §6.4 + turn-text convention: turn.coalesced is registered in
+    _ENGINE_PASSTHROUGH_KINDS alongside turn.started and turn.completed.
+
+    Policy decision: the spec's "length+hash" wording described the
+    *desired* outcome, but the existing convention for turn-text events
+    (turn.started carries stt_text_raw / stt_text_used; turn.completed
+    carries stt_text) is verbatim passthrough — the candidate utterance is
+    the audit-grade artifact (§6.4). turn.coalesced carries prior_text,
+    current_text, and combined_text — all candidate-utterance content of
+    the same kind. Registering it in _ENGINE_PASSTHROUGH_KINDS keeps the
+    policy symmetric with its sibling turn-text events.
+    """
+    payload = {
+        "turn_id": "turn-b",
+        "prior_turn_id": "turn-a",
+        "prior_text": "I worked on distributed",
+        "current_text": "systems at scale.",
+        "combined_text": "I worked on distributed systems at scale.",
+        "window_ms": 420,
+        "prior_speaker_delivered": False,
+    }
+    out_meta = redact_payload(kind="turn.coalesced", payload=payload, mode="metadata")
+    out_full = redact_payload(kind="turn.coalesced", payload=payload, mode="full")
+
+    # All three content fields must be present verbatim in metadata mode —
+    # passthrough, not redacted.
+    assert out_meta["prior_text"] == "I worked on distributed"
+    assert out_meta["current_text"] == "systems at scale."
+    assert out_meta["combined_text"] == "I worked on distributed systems at scale."
+
+    # Full mode: identical expectation (passthrough by definition).
+    assert out_full["prior_text"] == "I worked on distributed"
+    assert out_full["current_text"] == "systems at scale."
+    assert out_full["combined_text"] == "I worked on distributed systems at scale."
+
+    # Non-content fields preserved too.
+    assert out_meta["window_ms"] == 420
+    assert out_meta["prior_speaker_delivered"] is False
+
+    # Verify explicit passthrough registration — not falling through the
+    # unknown-kind default path.  This is the load-bearing assertion: without
+    # it the test would pass even before the fix (unknown kinds also passthrough
+    # today), hiding the policy gap.
+    assert "turn.coalesced" in _ENGINE_PASSTHROUGH_KINDS, (
+        "turn.coalesced must be explicitly registered in _ENGINE_PASSTHROUGH_KINDS "
+        "so the audit contract is intentional, not accidental."
+    )

@@ -31,6 +31,7 @@ _ENGINE_PASSTHROUGH_KINDS: frozenset[str] = frozenset(
     {
         "turn.started",
         "turn.completed",
+        "turn.coalesced",
         "judge.call",
         "judge.synthetic",
         "judge.fallback",
