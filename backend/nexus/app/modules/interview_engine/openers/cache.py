@@ -5,6 +5,8 @@ See docs/superpowers/specs/2026-05-10-opener-prefetch-architecture-design.md §4
 from __future__ import annotations
 
 import asyncio
+import contextlib
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -88,7 +90,30 @@ async def _synthesize_variant(
     return variant, last_exc
 
 
-async def synth_one(*, text: str, tts: TTS) -> list | None:
+def _slot(
+    semaphore: asyncio.Semaphore | None,
+) -> AbstractAsyncContextManager[None]:
+    """Return an async context manager that gates entry on ``semaphore``,
+    or a no-op when ``semaphore`` is None.
+
+    Centralized here so both the per-variant gather in
+    ``build_opener_cache`` and the single-shot ``synth_one`` use the
+    same acquire-during-entire-attempt-and-its-retries semantics. The
+    slot is held across the inner _synthesize_variant's retry sleeps
+    on purpose — releasing during backoff would let a fresh wave fire
+    into the same rate-limit window we're trying to escape.
+    """
+    if semaphore is None:
+        return contextlib.nullcontext()
+    return semaphore
+
+
+async def synth_one(
+    *,
+    text: str,
+    tts: TTS,
+    semaphore: asyncio.Semaphore | None = None,
+) -> list | None:
     """Synthesize a single text into audio frames using the same retry
     policy as build_opener_cache (3 attempts, 200/400/800ms backoff on
     OSError + asyncio.TimeoutError).
@@ -100,16 +125,28 @@ async def synth_one(*, text: str, tts: TTS) -> list | None:
     pre-synthesized at engine boot because persona_name is per-tenant).
     See spec ``docs/superpowers/specs/2026-05-10-intro-prefetch-and-cache-integrity-design.md``
     §4.3 for the rationale.
+
+    ``semaphore`` is the process-wide TTS prewarm gate. When provided,
+    the entire synthesize-and-retry block runs under the semaphore so
+    concurrent sessions on the same worker cannot collectively exceed
+    the provider's rate limit (see
+    ``docs/superpowers/specs/2026-05-11-tts-prewarm-concurrency-design.md``
+    — Sarvam 429 burst from session start, 2026-05-11). Pass ``None`` in
+    tests or in code paths where concurrency control happens elsewhere.
     """
     variant = OpenerVariant(text=text)
-    _, exc = await _synthesize_variant(variant, tts)
+    async with _slot(semaphore):
+        _, exc = await _synthesize_variant(variant, tts)
     if exc is not None:
         return None
     return variant.audio_frames
 
 
 async def build_opener_cache(
-    *, library: OpenerLibrary, tts: TTS,
+    *,
+    library: OpenerLibrary,
+    tts: TTS,
+    semaphore: asyncio.Semaphore | None = None,
 ) -> BuildReport:
     """Pre-synthesize every variant in ``library`` via ``tts``.
 
@@ -117,9 +154,19 @@ async def build_opener_cache(
     field is populated. Failed variants are left with audio_frames=None
     (orchestrator falls back to text-based TTS for those).
 
-    Synthesis runs in parallel via asyncio.gather. Per-variant exceptions
-    are caught and recorded in the BuildReport so a partial failure
-    doesn't poison the whole cache.
+    Synthesis is dispatched via ``asyncio.gather`` for maximum
+    parallelism, with each call gated by ``semaphore`` (when provided)
+    so the in-flight count never exceeds the configured concurrency.
+    Per-variant exceptions are caught and recorded in the BuildReport so
+    a partial failure doesn't poison the whole cache.
+
+    ``semaphore`` is the process-wide TTS prewarm gate. The library
+    contains ~76 variants today; with no semaphore, all 76 fire at once
+    and trip the provider's per-second rate limit (Sarvam 429s on the
+    starter tier, 2026-05-11 incident). With ``semaphore=Semaphore(N)``,
+    the burst becomes ``ceil(76 / N)`` serial waves of N which fits
+    inside typical rate-limit windows. Pass ``None`` to opt out (tests,
+    or providers known to handle the unbounded burst).
     """
     import time
     started = time.monotonic()
@@ -141,10 +188,17 @@ async def build_opener_cache(
         "openers.cache.build.started",
         variant_count=len(all_variants),
         unique_texts=len(seen),
+        bounded_concurrency=semaphore is not None,
     )
 
+    async def _bounded_synth(
+        variant: OpenerVariant,
+    ) -> tuple[OpenerVariant, Exception | None]:
+        async with _slot(semaphore):
+            return await _synthesize_variant(variant, tts)
+
     results = await asyncio.gather(
-        *[_synthesize_variant(v, tts) for v in all_variants],
+        *[_bounded_synth(v) for v in all_variants],
         return_exceptions=False,
     )
 

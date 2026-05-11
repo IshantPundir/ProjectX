@@ -207,3 +207,149 @@ async def test_synth_one_returns_none_on_permanent_failure():
 
     frames = await synth_one(text="Hi, I'm Sam.", tts=AlwaysFailTTS())
     assert frames is None
+
+
+# ---------------------------------------------------------------------------
+# Bounded-concurrency semaphore tests
+# (Sarvam 429 burst regression — 2026-05-11)
+# ---------------------------------------------------------------------------
+
+class _ConcurrencyTrackingTTS:
+    """Records peak concurrent synthesize() calls.
+
+    Each call enters via the stream's __aenter__, sleeps a fixed window
+    to overlap with sibling calls, yields one frame, and exits. The
+    tracker dict observes the running in-flight count.
+    """
+
+    def __init__(self, *, work_delay_s: float = 0.02) -> None:
+        self.in_flight = 0
+        self.max_in_flight = 0
+        self.total_calls = 0
+        self._work_delay_s = work_delay_s
+
+    def synthesize(self, text: str):
+        return _ConcurrencyTrackingStream(self, self._work_delay_s)
+
+
+class _ConcurrencyTrackingStream:
+    def __init__(self, tts: _ConcurrencyTrackingTTS, work_delay_s: float) -> None:
+        self._tts = tts
+        self._work_delay_s = work_delay_s
+        self._yielded = False
+
+    async def __aenter__(self):
+        self._tts.total_calls += 1
+        self._tts.in_flight += 1
+        if self._tts.in_flight > self._tts.max_in_flight:
+            self._tts.max_in_flight = self._tts.in_flight
+        # Hold the slot long enough that the gather sees overlap.
+        import asyncio as _asyncio
+        await _asyncio.sleep(self._work_delay_s)
+        return self
+
+    async def __aexit__(self, *exc_info):
+        self._tts.in_flight -= 1
+        return False
+
+    def __aiter__(self):
+        return self._aiter()
+
+    async def _aiter(self):
+        yield MagicMock(frame=_FakeAudioFrame(b"x"))
+
+
+@pytest.mark.asyncio
+async def test_build_opener_cache_caps_concurrency_with_semaphore():
+    """The semaphore must hard-cap concurrent synthesize() calls.
+
+    Regression: the unbounded asyncio.gather of 76 calls overwhelmed
+    Sarvam's per-second rate limit on 2026-05-11. The fix is a process-
+    wide semaphore. This test verifies the cap is honored end-to-end:
+    with a Semaphore(3) and a library of 10 variants, the peak in-flight
+    count must be exactly 3.
+    """
+    import asyncio as _asyncio
+
+    lib = OpenerLibrary()
+    # Trim the library to exactly 10 variants so the peak observation is
+    # deterministic — every variant enters the gather queue before the
+    # first one releases its slot.
+    from app.modules.interview_engine.openers.library import OpenerVariant
+    lib._vocabulary = {
+        list(lib._vocabulary.keys())[0]: [
+            OpenerVariant(text=f"variant-{i}") for i in range(10)
+        ]
+    }
+
+    tts = _ConcurrencyTrackingTTS(work_delay_s=0.02)
+    sem = _asyncio.Semaphore(3)
+
+    report = await build_opener_cache(library=lib, tts=tts, semaphore=sem)
+
+    assert report.success_count == 10
+    assert tts.total_calls == 10
+    assert tts.max_in_flight == 3, (
+        f"semaphore breached: peaked at {tts.max_in_flight} concurrent calls "
+        f"(expected exactly 3)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_build_opener_cache_without_semaphore_runs_unbounded():
+    """When ``semaphore=None``, the gather runs unbounded (legacy /
+    test-only path). All variants fire concurrently."""
+    from app.modules.interview_engine.openers.library import OpenerVariant
+
+    lib = OpenerLibrary()
+    lib._vocabulary = {
+        list(lib._vocabulary.keys())[0]: [
+            OpenerVariant(text=f"variant-{i}") for i in range(8)
+        ]
+    }
+
+    tts = _ConcurrencyTrackingTTS(work_delay_s=0.02)
+    report = await build_opener_cache(library=lib, tts=tts, semaphore=None)
+
+    assert report.success_count == 8
+    assert tts.max_in_flight == 8, (
+        f"expected unbounded gather to peak at 8; got {tts.max_in_flight}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_synth_one_acquires_semaphore_when_provided():
+    """synth_one runs its entire synthesize-and-retry block under the
+    semaphore so concurrent intro-line calls from parallel sessions
+    cannot collectively bypass the rate-limit cap."""
+    import asyncio as _asyncio
+
+    from app.modules.interview_engine.openers import synth_one
+
+    tts = _ConcurrencyTrackingTTS(work_delay_s=0.02)
+    sem = _asyncio.Semaphore(2)
+
+    # Fire 5 intro syntheses concurrently — model 5 sessions starting
+    # at once on the same worker process. The semaphore must cap them.
+    results = await _asyncio.gather(
+        *[synth_one(text=f"hi {i}", tts=tts, semaphore=sem) for i in range(5)]
+    )
+
+    assert all(r is not None for r in results)
+    assert tts.total_calls == 5
+    assert tts.max_in_flight == 2, (
+        f"synth_one ignored semaphore: peaked at {tts.max_in_flight} "
+        f"(expected exactly 2)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_synth_one_without_semaphore_runs_immediately():
+    """When ``semaphore=None``, synth_one fires without gating
+    (preserves the existing zero-arg call signature for tests)."""
+    from app.modules.interview_engine.openers import synth_one
+
+    tts = _ConcurrencyTrackingTTS(work_delay_s=0.01)
+    frames = await synth_one(text="hello", tts=tts, semaphore=None)
+    assert frames is not None
+    assert tts.total_calls == 1
