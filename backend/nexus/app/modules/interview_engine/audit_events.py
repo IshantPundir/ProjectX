@@ -26,6 +26,25 @@ class TurnCompletedPayload(BaseModel):
     duration_ms: int = Field(ge=0)
 
 
+class TurnCoalescedPayload(BaseModel):
+    """Audit payload for a coalesced turn — the new turn's candidate text was
+    prepended with the prior turn's text before the Judge call because the
+    prior turn's Speaker did not deliver its body and the (instruction_kind,
+    sub_context) was eligible for coalescing.
+
+    See ``docs/superpowers/specs/2026-05-11-turn-continuation-coalescing-design.md``.
+    """
+    prior_turn_id: str
+    current_turn_id: str
+    prior_text: str             # prior turn's candidate utterance (redacted to length+hash in metadata mode)
+    current_text: str           # new turn's candidate utterance pre-merge
+    combined_text: str          # what the Judge actually sees
+    prior_instruction_kind: str # InstructionKind.value as string
+    prior_sub_context: str      # SubContext.value as string ("default" if none)
+    gap_ms: int = Field(ge=0)   # ms between prior TURN_COMPLETED and this TURN_STARTED
+    coalesce_window_ms: int = Field(ge=1, le=30000)  # config snapshot for audit clarity
+
+
 # Judge
 class JudgeCallPayload(BaseModel):
     turn_id: str

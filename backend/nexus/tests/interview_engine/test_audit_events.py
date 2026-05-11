@@ -103,3 +103,52 @@ def test_speaker_opener_played_payload_accepts_is_session_intro_true():
         is_session_intro=True,
     )
     assert p.is_session_intro is True
+
+
+def test_turn_coalesced_payload_roundtrip():
+    """TurnCoalescedPayload serializes and validates correctly."""
+    from app.modules.interview_engine.audit_events import TurnCoalescedPayload
+
+    payload = TurnCoalescedPayload(
+        prior_turn_id="prior-abc",
+        current_turn_id="current-xyz",
+        prior_text="First one, like, I would communicate with the client.",
+        current_text="They are trying to achieve what their existing workflow is.",
+        combined_text=(
+            "First one, like, I would communicate with the client. "
+            "They are trying to achieve what their existing workflow is."
+        ),
+        prior_instruction_kind="push_back",
+        prior_sub_context="missing_specifics",
+        gap_ms=850,
+        coalesce_window_ms=5000,
+    )
+    dumped = payload.model_dump()
+    assert dumped["prior_turn_id"] == "prior-abc"
+    assert dumped["current_turn_id"] == "current-xyz"
+    assert dumped["gap_ms"] == 850
+    assert dumped["coalesce_window_ms"] == 5000
+    assert dumped["prior_instruction_kind"] == "push_back"
+    assert dumped["prior_sub_context"] == "missing_specifics"
+    # Roundtrip
+    restored = TurnCoalescedPayload.model_validate(dumped)
+    assert restored == payload
+
+
+def test_turn_coalesced_payload_rejects_negative_gap_ms():
+    """gap_ms is a duration; negatives are model bugs."""
+    from pydantic import ValidationError
+    from app.modules.interview_engine.audit_events import TurnCoalescedPayload
+
+    with pytest.raises(ValidationError):
+        TurnCoalescedPayload(
+            prior_turn_id="a",
+            current_turn_id="b",
+            prior_text="x",
+            current_text="y",
+            combined_text="x y",
+            prior_instruction_kind="push_back",
+            prior_sub_context="default",
+            gap_ms=-1,
+            coalesce_window_ms=5000,
+        )
