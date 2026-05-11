@@ -217,3 +217,118 @@ class TestCapturePriorTurnSnapshot:
             interrupted=False,
         )
         assert orch._last_turn.speaker_emitted_content is False
+
+
+class TestCoalescingIntegration:
+    """End-to-end check that the orchestrator merges adjacent turns correctly.
+
+    Uses a thin in-test helper that exercises just the coalesce-application
+    block at the top of on_user_turn_completed, bypassing the full Judge /
+    Speaker pipeline. The pure decision function is already covered by
+    TestShouldCoalesce; the snapshot capture is covered by
+    TestCapturePriorTurnSnapshot. This test focuses on the wiring between
+    them — that a populated _last_turn + a new utterance produces the
+    correct combined_text, emits TURN_COALESCED, and clears _last_turn.
+    """
+
+    def test_coalesces_two_utterances_and_emits_audit_event(self):
+        from unittest.mock import MagicMock
+        from app.modules.interview_engine.orchestrator import (
+            InterviewOrchestrator, _PriorTurnSnapshot,
+        )
+        from app.modules.interview_engine.event_kinds import TURN_COALESCED
+
+        orch = MagicMock(spec=InterviewOrchestrator)
+        # Pre-populate _last_turn as if a prior push_back turn finished
+        # without delivering its Speaker body.
+        prior_text = "First one, like, I would communicate with the client."
+        orch._last_turn = _PriorTurnSnapshot(
+            turn_id="prior-1",
+            completed_monotonic=100.0,
+            candidate_text=prior_text,
+            instruction_kind="push_back",
+            sub_context="missing_specifics",
+            speaker_emitted_content=False,
+        )
+        orch._config = MagicMock(coalesce_enabled=True, coalesce_window_ms=5000)
+        orch._collector = MagicMock()
+        orch._append = MagicMock()
+
+        new_text = "They are trying to achieve what their existing workflow is."
+        # Bind the real method to our mock orchestrator and call it.
+        result = InterviewOrchestrator._maybe_coalesce(
+            orch,
+            current_turn_id="new-1",
+            candidate_text=new_text,
+            now_monotonic=100.5,  # 500ms after prior → within window
+        )
+        assert result == prior_text + " " + new_text
+        # _last_turn was cleared after coalescing
+        assert orch._last_turn is None
+        # TURN_COALESCED emitted with correct payload
+        orch._append.assert_called_once()
+        (kind_arg, payload_arg) = orch._append.call_args.args
+        assert kind_arg == TURN_COALESCED
+        assert payload_arg["prior_turn_id"] == "prior-1"
+        assert payload_arg["current_turn_id"] == "new-1"
+        assert payload_arg["combined_text"] == prior_text + " " + new_text
+        assert payload_arg["prior_instruction_kind"] == "push_back"
+        assert payload_arg["prior_sub_context"] == "missing_specifics"
+        assert payload_arg["gap_ms"] == 500
+        assert payload_arg["coalesce_window_ms"] == 5000
+
+    def test_no_coalesce_when_speaker_delivered(self):
+        from unittest.mock import MagicMock
+        from app.modules.interview_engine.orchestrator import (
+            InterviewOrchestrator, _PriorTurnSnapshot,
+        )
+
+        orch = MagicMock(spec=InterviewOrchestrator)
+        orch._last_turn = _PriorTurnSnapshot(
+            turn_id="prior-2",
+            completed_monotonic=200.0,
+            candidate_text="prior text",
+            instruction_kind="push_back",
+            sub_context="missing_specifics",
+            speaker_emitted_content=True,  # ← delivered
+        )
+        orch._config = MagicMock(coalesce_enabled=True, coalesce_window_ms=5000)
+        orch._append = MagicMock()
+
+        result = InterviewOrchestrator._maybe_coalesce(
+            orch,
+            current_turn_id="new-2",
+            candidate_text="new text",
+            now_monotonic=200.5,
+        )
+        assert result == "new text"
+        # _last_turn is NOT cleared by the no-coalesce path
+        assert orch._last_turn is not None
+        orch._append.assert_not_called()
+
+    def test_no_coalesce_when_disabled(self):
+        from unittest.mock import MagicMock
+        from app.modules.interview_engine.orchestrator import (
+            InterviewOrchestrator, _PriorTurnSnapshot,
+        )
+
+        orch = MagicMock(spec=InterviewOrchestrator)
+        orch._last_turn = _PriorTurnSnapshot(
+            turn_id="prior-3",
+            completed_monotonic=300.0,
+            candidate_text="prior text",
+            instruction_kind="push_back",
+            sub_context="missing_specifics",
+            speaker_emitted_content=False,
+        )
+        orch._config = MagicMock(coalesce_enabled=False, coalesce_window_ms=5000)
+        orch._append = MagicMock()
+
+        result = InterviewOrchestrator._maybe_coalesce(
+            orch,
+            current_turn_id="new-3",
+            candidate_text="new text",
+            now_monotonic=300.5,
+        )
+        assert result == "new text"
+        orch._append.assert_not_called()

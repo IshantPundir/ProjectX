@@ -19,12 +19,12 @@ from app.modules.interview_engine.audit_events import (
     FrontendAttributePayload, JudgeSyntheticPayload,
     SessionTerminalDeliveredPayload,
     SpeakerCallPayload, SpeakerOutputPayload,
-    TurnCompletedPayload, TurnStartedPayload,
+    TurnCoalescedPayload, TurnCompletedPayload, TurnStartedPayload,
 )
 from app.modules.interview_engine.event_kinds import (
     FRONTEND_ATTRIBUTE_PUBLISHED, JUDGE_SYNTHETIC,
     SESSION_TERMINAL_DELIVERED,
-    SPEAKER_CALL, SPEAKER_OUTPUT, TURN_COMPLETED, TURN_STARTED,
+    SPEAKER_CALL, SPEAKER_OUTPUT, TURN_COALESCED, TURN_COMPLETED, TURN_STARTED,
 )
 from app.modules.interview_engine.event_log.collector import EventCollector
 from app.modules.interview_engine.frontend_attributes import (
@@ -429,7 +429,14 @@ class InterviewOrchestrator:
             )
             return
 
+        # Pre-generate turn_id so the coalesce-audit event references the
+        # same value that TURN_STARTED will carry below.
         turn_id = str(uuid.uuid4())
+        candidate_text = self._maybe_coalesce(
+            current_turn_id=turn_id,
+            candidate_text=candidate_text,
+            now_monotonic=time.monotonic(),
+        )
         self._turn_index += 1
         elapsed_ms = self._elapsed_ms()
         self._append(TURN_STARTED, TurnStartedPayload(
@@ -1040,6 +1047,58 @@ class InterviewOrchestrator:
             self._append(FRONTEND_ATTRIBUTE_PUBLISHED, FrontendAttributePayload(
                 turn_id=turn_id, attribute_name=k, value=v,
             ).model_dump())
+
+    def _maybe_coalesce(
+        self,
+        *,
+        current_turn_id: str,
+        candidate_text: str,
+        now_monotonic: float,
+    ) -> str:
+        """Apply Continuation Coalescing if eligible. Returns the candidate
+        text the Judge should see — either ``candidate_text`` unchanged or
+        the prior turn's text prepended.
+
+        When coalescing fires:
+        * Emits a ``turn.coalesced`` audit event with the full merge context.
+        * Clears ``self._last_turn`` so a third consecutive fragment doesn't
+          double-merge. The new turn's outcome will repopulate
+          ``self._last_turn`` for the next decision.
+
+        See ``docs/superpowers/specs/2026-05-11-turn-continuation-coalescing-design.md``.
+        """
+        decision = _should_coalesce(
+            prior=self._last_turn,
+            now_monotonic=now_monotonic,
+            coalesce_enabled=self._config.coalesce_enabled,
+            coalesce_window_ms=self._config.coalesce_window_ms,
+        )
+        if not decision.should:
+            return candidate_text
+
+        # decision.should is True implies self._last_turn is not None — invariant
+        # from _should_coalesce. Pull it out so type-checkers and readers see it.
+        prior = self._last_turn
+        assert prior is not None
+        gap_ms = int((now_monotonic - prior.completed_monotonic) * 1000)
+        combined_text = prior.candidate_text + " " + candidate_text
+
+        self._append(TURN_COALESCED, TurnCoalescedPayload(
+            prior_turn_id=prior.turn_id,
+            current_turn_id=current_turn_id,
+            prior_text=prior.candidate_text,
+            current_text=candidate_text,
+            combined_text=combined_text,
+            prior_instruction_kind=prior.instruction_kind,
+            prior_sub_context=prior.sub_context,
+            gap_ms=gap_ms,
+            coalesce_window_ms=self._config.coalesce_window_ms,
+        ).model_dump())
+
+        # Clear so a third fragment doesn't double-merge. The new turn's
+        # _capture_prior_turn_snapshot call at end-of-turn repopulates this.
+        self._last_turn = None
+        return combined_text
 
     def _capture_prior_turn_snapshot(
         self,
