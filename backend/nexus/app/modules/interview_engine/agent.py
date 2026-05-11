@@ -118,6 +118,22 @@ log = structlog.get_logger("interview-engine")
 _opener_library: OpenerLibrary | None = None
 _opener_cache_lock: asyncio.Lock | None = None
 
+# Process-wide TTS prewarm semaphore. Single instance is shared by both
+# the one-time build_opener_cache burst (76 calls fired by the first
+# session on this worker) and every per-session intro-line synth_one
+# call. Sharing across sessions means a fleet of starts on the same
+# worker can't collectively exceed the provider's rate-limit budget —
+# even though build_opener_cache is awaited under _opener_cache_lock and
+# therefore can't actually race with itself, parallel sessions still
+# race on intro-line synth_one, and a future prewarm path would
+# similarly race. One semaphore, one cap, one source of truth.
+#
+# Sized by AIConfig.interview_tts_prewarm_concurrency (default 4). See
+# the design rationale in app/config.py and the Sarvam 429 incident
+# (2026-05-11) that motivated this gate.
+_tts_prewarm_semaphore: asyncio.Semaphore | None = None
+_tts_prewarm_semaphore_lock: asyncio.Lock | None = None
+
 
 def _get_opener_library_lock() -> asyncio.Lock:
     """Lazy lock — asyncio.Lock must be created inside an event loop."""
@@ -127,14 +143,49 @@ def _get_opener_library_lock() -> asyncio.Lock:
     return _opener_cache_lock
 
 
-async def _get_or_build_opener_library(tts: Any) -> OpenerLibrary:
+def _get_tts_prewarm_semaphore_lock() -> asyncio.Lock:
+    """Lazy guard around lazy-construction of the prewarm semaphore."""
+    global _tts_prewarm_semaphore_lock
+    if _tts_prewarm_semaphore_lock is None:
+        _tts_prewarm_semaphore_lock = asyncio.Lock()
+    return _tts_prewarm_semaphore_lock
+
+
+async def _get_tts_prewarm_semaphore() -> asyncio.Semaphore:
+    """Return the process-wide TTS prewarm semaphore, constructing it
+    on first use.
+
+    Lazy because ``asyncio.Semaphore`` binds to the running event loop
+    at construction; instantiating at module import time would either
+    fail (no loop yet) or bind to the wrong loop. The lock guards
+    against a race when two sessions enter this function concurrently
+    on a fresh worker — only the first creates the semaphore.
+    """
+    global _tts_prewarm_semaphore
+    async with _get_tts_prewarm_semaphore_lock():
+        if _tts_prewarm_semaphore is None:
+            limit = ai_config.interview_tts_prewarm_concurrency
+            _tts_prewarm_semaphore = asyncio.Semaphore(limit)
+            log.info("engine.tts_prewarm_semaphore.created", limit=limit)
+        return _tts_prewarm_semaphore
+
+
+async def _get_or_build_opener_library(
+    tts: Any, *, semaphore: asyncio.Semaphore,
+) -> OpenerLibrary:
     """Return the process-wide OpenerLibrary, building the audio cache
-    on first call. Subsequent calls reuse the populated library."""
+    on first call. Subsequent calls reuse the populated library.
+
+    The ``semaphore`` caps in-flight TTS calls during the build (see
+    Sarvam 429 incident, 2026-05-11).
+    """
     global _opener_library
     async with _get_opener_library_lock():
         if _opener_library is None:
             lib = OpenerLibrary()
-            report = await build_opener_cache(library=lib, tts=tts)
+            report = await build_opener_cache(
+                library=lib, tts=tts, semaphore=semaphore,
+            )
             log.info(
                 "engine.opener_cache.built",
                 success_count=report.success_count,
@@ -435,10 +486,20 @@ async def entrypoint(ctx: JobContext) -> None:
     )
 
     tts_plugin = build_tts_plugin()
-    opener_library = await _get_or_build_opener_library(tts=tts_plugin)
+
+    # Process-wide TTS prewarm gate. Both the opener cache build (76
+    # calls on the first session of this worker) and the per-session
+    # intro synthesis run under this single semaphore so concurrent
+    # sessions on the same worker share one rate-limit budget.
+    tts_prewarm_semaphore = await _get_tts_prewarm_semaphore()
+    opener_library = await _get_or_build_opener_library(
+        tts=tts_plugin, semaphore=tts_prewarm_semaphore,
+    )
 
     intro_text = _compose_intro_text(persona_name=persona_name)
-    intro_audio = await synth_one(text=intro_text, tts=tts_plugin)
+    intro_audio = await synth_one(
+        text=intro_text, tts=tts_plugin, semaphore=tts_prewarm_semaphore,
+    )
     intro_variant = OpenerVariant(text=intro_text, audio_frames=intro_audio)
     log.info(
         "engine.intro.built",
