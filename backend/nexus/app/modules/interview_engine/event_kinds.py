@@ -63,6 +63,7 @@ LLM_TOOL_EXECUTED = "llm.tool.executed"
 
 TURN_STARTED = "turn.started"
 TURN_COMPLETED = "turn.completed"
+TURN_COALESCED = "turn.coalesced"
 JUDGE_CALL = "judge.call"
 JUDGE_SYNTHETIC = "judge.synthetic"
 JUDGE_FALLBACK = "judge.fallback"
@@ -103,6 +104,7 @@ ALL_EVENT_KINDS: frozenset[str] = frozenset({
     LLM_TOOL_EXECUTED,
     TURN_STARTED,
     TURN_COMPLETED,
+    TURN_COALESCED,
     JUDGE_CALL,
     JUDGE_SYNTHETIC,
     JUDGE_FALLBACK,

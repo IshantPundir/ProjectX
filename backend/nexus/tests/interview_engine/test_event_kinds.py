@@ -119,3 +119,13 @@ def test_speaker_opener_played_event_registered():
     )
     assert SPEAKER_OPENER_PLAYED == "speaker.opener.played"
     assert SPEAKER_OPENER_PLAYED in ALL_EVENT_KINDS
+
+
+def test_turn_coalesced_in_registry():
+    """TURN_COALESCED constant exists with expected value and is in ALL_EVENT_KINDS."""
+    from app.modules.interview_engine.event_kinds import (
+        ALL_EVENT_KINDS,
+        TURN_COALESCED,
+    )
+    assert TURN_COALESCED == "turn.coalesced"
+    assert TURN_COALESCED in ALL_EVENT_KINDS
