@@ -210,9 +210,22 @@ class JudgeService:
         try:
             judge_output = JudgeOutput.model_validate(data)
         except ValidationError as exc:
+            # Strip ``ctx`` and ``url`` from each error entry. Pydantic v2
+            # embeds the raw underlying exception object (e.g., the
+            # ValueError raised by a model_validator) in ``ctx['error']``
+            # — that's a non-JSON-serializable Python object. When this
+            # dict later flows into the audit envelope and the envelope
+            # is serialized for the sink, Pydantic raises
+            # ``PydanticSerializationError: Unable to serialize unknown
+            # type: <class 'ValueError'>`` and the entire envelope write
+            # fails (root cause: session 83c4d309-247d-44fd-9312-8ab1d48105b5).
+            # The ``msg`` field already carries the validator's message,
+            # so dropping ``ctx`` loses no debugging detail that isn't
+            # already covered.
+            safe_errors = exc.errors(include_url=False, include_context=False)
             return self._fallback(
                 FallbackReason.validation_error,
-                {"raw_data": data, "errors": exc.errors()},
+                {"raw_data": data, "errors": safe_errors},
                 latency_ms=latency_ms,
                 usage=self._usage_dict(usage),
             )

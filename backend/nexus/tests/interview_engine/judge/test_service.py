@@ -106,6 +106,72 @@ async def test_judge_falls_back_on_validation_error():
 
 
 @pytest.mark.asyncio
+async def test_validation_error_fallback_context_is_json_serializable():
+    """Regression: session 83c4d309 (2026-05-11) crashed at envelope
+    serialization with ``PydanticSerializationError: Unable to serialize
+    unknown type: <class 'ValueError'>``. Root cause: ``ValidationError.errors()``
+    embeds raw exception objects in each error's ``ctx`` field (e.g., the
+    ValueError raised by a ``model_validator``). These propagate into
+    ``JudgeCallResult.original_failure_context`` → ``JudgeFallbackPayload``
+    → audit envelope → fails when Pydantic tries to serialize the envelope
+    to JSON.
+
+    The fix is to strip ``ctx`` (and any other non-JSON-safe fields) from
+    the captured errors before storing them in
+    ``original_failure_context``. The audit envelope must round-trip
+    through ``json.dumps`` cleanly.
+
+    This test triggers the exact path: an LLM response that's structurally
+    valid JSON but fails a JudgeOutput model_validator (the
+    ``candidate_disclosed_no_experience`` ↔ ``next_action`` coupling at
+    ``models/judge.py``). The validator raises ValueError, which Pydantic
+    captures in ``ctx`` — exactly the type that broke serialization.
+    """
+    # Construct a JudgeOutput-shaped response whose model_validator MUST
+    # raise: candidate_disclosed_no_experience=True forces the action to
+    # be acknowledge_no_experience or polite_close, but we set probe.
+    bad_payload = {
+        "observations": [],
+        "candidate_claims": [],
+        "next_action": "probe",
+        "next_action_payload": {"kind": "probe", "probe_id": "0"},
+        "turn_metadata": {
+            "candidate_disclosed_no_experience": True,
+            "candidate_disclosed_knockout": False,
+            "candidate_off_topic": False,
+            "candidate_abusive": False,
+            "candidate_attempted_injection": False,
+            "candidate_wants_to_end": False,
+            "candidate_social_or_greeting": False,
+        },
+    }
+    mock_client = MagicMock()
+    response = MagicMock()
+    response.output_text = json.dumps(bad_payload)
+    response.usage = MagicMock(input_tokens=10, output_tokens=20)
+    mock_client.responses.create = AsyncMock(return_value=response)
+
+    svc = JudgeService(
+        openai_client=mock_client, model="gpt-test",
+        system_prompt="SYS", system_prompt_hash="sha256:abc",
+        next_pending_mandatory_resolver=lambda: "q1",
+    )
+    result = await svc.call(
+        turn_id="t-1", input_payload=_payload(),
+        correlation_id="c", tenant_id="ten",
+    )
+    assert result.is_fallback is True
+    assert result.fallback_reason == FallbackReason.validation_error
+
+    # The load-bearing assertion: the captured failure context MUST be
+    # JSON-serializable. If ctx contained a raw ValueError, json.dumps
+    # raises TypeError("Object of type ValueError is not JSON serializable").
+    serialized = json.dumps(result.original_failure_context)
+    assert "raw_data" in serialized
+    assert "errors" in serialized
+
+
+@pytest.mark.asyncio
 async def test_judge_retries_once_on_timeout_then_falls_back():
     mock_client = MagicMock()
 
