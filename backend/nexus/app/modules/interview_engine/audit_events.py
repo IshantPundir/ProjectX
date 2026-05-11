@@ -45,7 +45,7 @@ class TurnCoalescedPayload(BaseModel):
     current_text: str           # new turn's candidate utterance pre-merge
     combined_text: str          # what the Judge actually sees
     prior_instruction_kind: str # InstructionKind.value as string
-    prior_sub_context: str      # SubContext.value as string ("default" if none)
+    prior_sub_context: str      # sub-context discriminator string ("default" if none)
     gap_ms: int = Field(ge=0)   # ms between prior TURN_COMPLETED and this TURN_STARTED
     # ms between the candidate's most recent silence onset and this TURN_STARTED.
     # Non-None ONLY when the silence-aware window reference was load-bearing
@@ -219,29 +219,6 @@ class SpeakerInterruptedPayload(BaseModel):
     instruction_kind: str
     event_types_seen: list[str] = Field(default_factory=list)
     response_id: str | None = None
-
-
-class SpeakerOpenerPlayedPayload(BaseModel):
-    """Phase 9.8 — fired when the orchestrator plays a pre-cached opener
-    audio (or its text-only fallback) before the Speaker LLM content.
-
-    Distinct from speaker.call (which fires for the LLM-generated
-    content portion of the same turn). One turn typically emits BOTH:
-    speaker.opener.played + speaker.call. The two together describe the
-    full agent utterance.
-
-    Phase 3 (Bug B fix, 2026-05-10) — when the orchestrator routes
-    deliver_first_question through the per-session persona intro
-    (instead of the static OpenerLibrary), the audit event fires with
-    ``is_session_intro=True``. Forensic queries can filter on this to
-    locate the intro turn within an envelope.
-    """
-    turn_id: str
-    instruction_kind: str
-    sub_context: str
-    opener_text: str
-    cache_hit: bool
-    is_session_intro: bool = False
 
 
 # Lifecycle / checkpoint

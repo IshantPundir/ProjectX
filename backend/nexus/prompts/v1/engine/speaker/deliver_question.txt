@@ -1,43 +1,47 @@
-TASK
-The candidate just finished answering. Deliver the next question
-rephrased from {bank_text}.
+# TASK
+The candidate just finished answering. Deliver the next question,
+rephrased from bank_text.
 
-OUTPUT
-- ONE short sentence delivering the next question. 12-30 words.
-- Do NOT include an acknowledgment opener like "Got it" / "Thanks for
-  walking me through that" — the orchestrator has played one as
-  pre-cached audio (see PRE-SPOKEN OPENER in the preamble). Go
-  straight into the question.
+# HARD CONSTRAINTS — NON-NEGOTIABLE
+- ONE sentence. Target 12-22 words. HARD CAP: 25 words.
+- Brief acknowledgment (≤ 4 words) is welcome when natural —
+  "Got it.", "Right.", "Thanks for that." — vary per the preamble's
+  ANTI-REPETITION rule. SKIP the acknowledgment entirely if it
+  would push you over the cap.
 - Rephrase bank_text for spoken delivery. If bank_text has multiple
-  parts, focus on one ask; secondary parts surface as natural
-  follow-ups.
-- Plain spoken English. No JSON, no markdown.
-- NEVER evaluative ("great", "perfect", "interesting").
+  parts, focus on ONE ask. The other parts will surface as probes
+  on a later turn.
+- NEVER evaluate the candidate's answer.
+- NEVER enumerate sub-components from bank_text (see preamble).
 
-POST-CAP-ADVANCE — when `is_post_cap_advance` is true
-This deliver_question fires because the State Engine pushed forward
-after the candidate could not give specifics on the previous question.
-The orchestrator's opener carries a topic-shift phrase ("OK, let's
-switch gears.", "Alright, moving on.", etc.). Your output should
-naturally continue from that — go directly into the new question.
+# POST-CAP-ADVANCE (when is_post_cap_advance is true)
+This deliver_question fires because the candidate could not give
+specifics on the previous question — the State Engine moved on.
+Add a soft topic-shift segue before the question:
+  "OK, let's switch gears."
+  "Moving on."
+  "Different question —"
+  "Alright, next one —"
+Then deliver the new question. Still ≤ 25 words total including
+the segue. The segue REPLACES a normal acknowledgment.
 
-EXAMPLES (illustrative — compose from actual inputs)
+# EXAMPLES (illustrative)
 
 NORMAL ADVANCE
-  pre_spoken_opener: "Got it."
   last_candidate_utterance: "...we ran two sprints a quarter and I
-  owned the JIRA setup."
+     owned the JIRA setup."
   bank_text: "How have you handled migration of issues between
-  projects when business requirements changed?"
-  → "Tell me how you've handled migrating issues between projects
-     when business requirements changed."
+     projects when business requirements changed?"
+  → Got it. How have you handled migrating issues between projects
+    when business requirements changed?
 
 POST-CAP-ADVANCE
-  pre_spoken_opener: "Alright, moving on."
   last_candidate_utterance: (thin answer)
   bank_text: "Talk through how you'd design a rate limiter for a
-  public API."
+     public API."
   is_post_cap_advance: true
-  → "How would you design a rate limiter for a public API?"
+  → OK, let's switch gears. How would you design a rate limiter
+    for a public API?
 
-REMINDER: no opener. The candidate already heard one.
+# REMINDER
+12-22 words. ONE sentence. Brief acknowledgment optional. ONE ask.

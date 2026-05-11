@@ -64,7 +64,7 @@ class SpeakerInput(BaseModel):
             "kinds. Drives template selection inside speaker/push_back.txt."
         ),
     )
-    recent_agent_openers: list[str] = Field(
+    recent_reply_starts: list[str] = Field(
         default_factory=list,
         description=(
             "First 3-4 words of the most recent agent utterances "
@@ -88,19 +88,5 @@ class SpeakerInput(BaseModel):
             "topic-shift segue ('OK, let's move on to something different') "
             "instead of jumping cold into the next question. False on "
             "every other path (clean advance, first question, etc.)."
-        ),
-    )
-    pre_spoken_opener: str | None = Field(
-        default=None,
-        description=(
-            "The conversational opener text (e.g., 'Got it.', 'Mhm.', "
-            "'Let me put it differently.') that has ALREADY been spoken "
-            "to the candidate as pre-cached audio BEFORE this Speaker "
-            "call's content plays. The Speaker MUST compose its output "
-            "as a natural continuation of the opener — do NOT include "
-            "another opener, do NOT re-acknowledge with 'Got it' / 'Sure' "
-            "/ etc. at the start. None means no opener was pre-played; "
-            "the Speaker is free to start its content however reads "
-            "naturally."
         ),
     )

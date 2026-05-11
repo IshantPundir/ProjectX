@@ -131,9 +131,18 @@ def test_speaker_input_has_no_rubric_fields():
     assert not forbidden & set(SpeakerInput.model_fields)
 
 
-def test_speaker_input_pre_spoken_opener_field_default_none():
-    """The Speaker prompt reads pre_spoken_opener to know which opener
-    has already been played. Default None means no opener was pre-played."""
+def test_speaker_input_has_no_opener_layer_fields():
+    """The opener layer was removed in 2026-05-11. SpeakerInput must not
+    expose pre_spoken_opener (which used to inform the Speaker which
+    canned opener had pre-played). The Speaker now owns the entire
+    utterance per turn."""
+    forbidden = {"pre_spoken_opener"}
+    assert not forbidden & set(SpeakerInput.model_fields)
+
+
+def test_speaker_input_recent_reply_starts_field_default_empty():
+    """recent_reply_starts is the anti-repetition signal that replaced
+    the orchestrator-managed opener variety. Default empty list."""
     s = SpeakerInput(
         instruction_kind=InstructionKind.deliver_first_question,
         bank_text="What is your experience with X?",
@@ -142,10 +151,10 @@ def test_speaker_input_pre_spoken_opener_field_default_none():
         claims_pool_snapshot=[],
         persona_name="Sam",
     )
-    assert s.pre_spoken_opener is None
+    assert s.recent_reply_starts == []
 
 
-def test_speaker_input_pre_spoken_opener_carries_through():
+def test_speaker_input_recent_reply_starts_carries_through():
     s = SpeakerInput(
         instruction_kind=InstructionKind.push_back,
         bank_text="What about X?",
@@ -153,6 +162,6 @@ def test_speaker_input_pre_spoken_opener_carries_through():
         recent_turns=[],
         claims_pool_snapshot=[],
         persona_name="Sam",
-        pre_spoken_opener="Got it.",
+        recent_reply_starts=["Got it.", "Right —"],
     )
-    assert s.pre_spoken_opener == "Got it."
+    assert s.recent_reply_starts == ["Got it.", "Right —"]

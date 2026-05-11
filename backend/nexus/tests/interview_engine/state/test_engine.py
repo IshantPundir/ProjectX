@@ -1394,13 +1394,13 @@ def test_clean_polite_close_has_no_failed_signal_value():
 
 
 # ---------------------------------------------------------------------------
-# Phase 9.3 — Q-1: recent_agent_openers extracted from transcript
+# recent_reply_starts — anti-repetition signal extracted from transcript
 # ---------------------------------------------------------------------------
 
 
-def test_recent_agent_openers_extracted_from_transcript():
-    """The Speaker for non-contextual kinds receives opener slugs (first
-    4 words of the last 3 agent utterances) so it can vary phrasing
+def test_recent_reply_starts_extracted_from_transcript():
+    """The Speaker for non-contextual kinds receives the first 4 words
+    of the last 3 agent utterances so it can vary its reply opening
     across consecutive redirects/push_backs."""
     eng = _engine()
     # Synthesize 4 agent utterances directly via register_agent_utterance.
@@ -1414,19 +1414,19 @@ def test_recent_agent_openers_extracted_from_transcript():
             turn_id=f"t-{i}", text=text,
             instruction_kind=InstructionKind.redirect,
         )
-    # _RECENT_OPENER_WINDOW is 3 → only the last 3 are returned.
-    openers = eng._recent_agent_openers()
-    assert len(openers) == 3
-    assert openers[0] == "I hear you, please"
-    assert openers[1] == "Got it, Ishant, walk"
-    assert openers[2] == "Sure, let's stay focused"
+    # _RECENT_REPLY_WINDOW is 3 → only the last 3 are returned.
+    starts = eng._recent_reply_starts()
+    assert len(starts) == 3
+    assert starts[0] == "I hear you, please"
+    assert starts[1] == "Got it, Ishant, walk"
+    assert starts[2] == "Sure, let's stay focused"
 
 
-def test_recent_agent_openers_empty_at_session_start():
+def test_recent_reply_starts_empty_at_session_start():
     """No agent utterances yet -> empty list. Speaker scaffold treats
-    this as 'any opener is fine'."""
+    this as 'any opening is fine'."""
     eng = _engine()
-    assert eng._recent_agent_openers() == []
+    assert eng._recent_reply_starts() == []
 
 
 # ---------------------------------------------------------------------------

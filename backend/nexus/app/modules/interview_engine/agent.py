@@ -85,9 +85,6 @@ from app.ai.realtime import (
 )
 from app.config import settings
 from app.database import get_bypass_session
-from app.modules.interview_engine.openers import (
-    OpenerLibrary, OpenerVariant,
-)
 from app.modules.interview_engine.event_log import (
     EventCollector,
     EventLogSink,
@@ -111,40 +108,6 @@ from app.modules.interview_runtime import (
 from app.modules.tenant_settings import get_tenant_settings
 
 log = structlog.get_logger("interview-engine")
-
-# Opener pre-synthesis is currently disabled. Both the static
-# OpenerLibrary cache build and the per-session intro pre-synth were
-# removed (2026-05-11) because they caused session-start bugs and
-# imposed an unrecoverable rate-limit burst on the TTS provider.
-#
-# Runtime behavior with prewarm disabled: every opener (and the
-# per-session intro line) routes through live TTS via
-# ``agent.session.say(text=...)``. The orchestrator already kicks off
-# the Speaker LLM as ``asyncio.create_task`` BEFORE awaiting opener
-# playout (see ``orchestrator._stream_speaker_and_say``), so Speaker
-# content generation runs in parallel with opener TTS — the cost is
-# bounded by opener TTFB only (typically 300–500ms).
-#
-# To re-enable the prewarm path: restore ``build_opener_cache`` and
-# ``synth_one`` callers in :func:`entrypoint`, gated by the process-
-# wide semaphore sized by ``AIConfig.interview_tts_prewarm_concurrency``.
-# The library + cache module APIs continue to support that path; it's
-# the call sites that are removed, not the building blocks.
-
-
-def _compose_intro_text(*, persona_name: str) -> str:
-    """The persona intro spoken before the FIRST question of every
-    session. Pre-synthesized at agent entrypoint and played in parallel
-    with the first-question Speaker LLM call.
-
-    See spec ``docs/superpowers/specs/2026-05-10-intro-prefetch-and-cache-integrity-design.md``
-    §4.3 (Phase 3 of the intro-prefetch architecture).
-
-    Kept deliberately short — the question is the substance, the intro
-    just sets pacing. The trailing ``—`` cues the next sentence to flow
-    naturally from the intro (matching how speakers actually pause).
-    """
-    return f"Hi, I'm {persona_name}. To start —"
 
 
 SessionOutcome = Literal[
@@ -423,31 +386,6 @@ async def entrypoint(ctx: JobContext) -> None:
 
     tts_plugin = build_tts_plugin()
 
-    # Opener pre-synthesis is disabled (see module-level rationale).
-    # A fresh OpenerLibrary is constructed per session with every
-    # OpenerVariant.audio_frames=None, which makes
-    # ``OpenerLibrary.pick()`` always return an OpenerSelection with
-    # ``audio_iter=None``. The orchestrator's existing fallback path
-    # (``orchestrator._stream_speaker_and_say``) routes those through
-    # ``session.say(text=...)`` — live TTS — while the Speaker LLM
-    # streams in parallel as ``asyncio.create_task``. Per-session
-    # construction is cheap: the library is a dict comprehension over
-    # ~76 OpenerVariant(text=...) instances.
-    opener_library = OpenerLibrary()
-
-    # Same story for the per-session persona intro: text only, no
-    # pre-synth. The orchestrator wraps it as an OpenerSelection with
-    # ``audio_iter=None`` and falls through to live TTS for the first
-    # question turn.
-    intro_text = _compose_intro_text(persona_name=persona_name)
-    intro_variant = OpenerVariant(text=intro_text, audio_frames=None)
-    log.info(
-        "engine.intro.deferred",
-        persona_name=persona_name,
-        text_len=len(intro_text),
-        reason="opener_prewarm_disabled",
-    )
-
     orchestrator = InterviewOrchestrator(
         session_config=session_config,
         tenant_settings=tenant_settings,
@@ -468,8 +406,6 @@ async def entrypoint(ctx: JobContext) -> None:
             post_judge_resumption_epsilon_ms=settings.engine_post_judge_resumption_epsilon_ms,
         ),
         tenant_id=str(tenant_uuid),
-        opener_library=opener_library,
-        intro_variant=intro_variant,
     )
 
     agent = StructuredInterviewAgent(

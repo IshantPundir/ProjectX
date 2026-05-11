@@ -126,10 +126,6 @@ class AIConfig:
         return self._settings.interview_tts_temperature
 
     @property
-    def interview_tts_prewarm_concurrency(self) -> int:
-        return self._settings.interview_tts_prewarm_concurrency
-
-    @property
     def interview_turn_detector_unlikely_threshold(self) -> float | None:
         return self._settings.interview_turn_detector_unlikely_threshold
 

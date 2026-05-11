@@ -34,16 +34,10 @@ class TestRenderTranscript:
     def test_empty_envelope_returns_empty_list(self):
         assert render_transcript_from_envelope(_make_envelope([])) == []
 
-    def test_renders_opener_then_body_for_one_turn(self):
+    def test_renders_body_for_one_turn(self):
+        """Post opener-removal: each agent turn produces a single
+        speaker.output event. The renderer maps it to kind='body'."""
         envelope = _make_envelope([
-            {
-                "kind": "speaker.opener.played",
-                "wall_ms": 1000,
-                "payload": {
-                    "turn_id": "turn-a",
-                    "opener_text": "Hi, I'm Punar.",
-                },
-            },
             {
                 "kind": "speaker.output",
                 "wall_ms": 2000,
@@ -56,15 +50,34 @@ class TestRenderTranscript:
         items = render_transcript_from_envelope(envelope)
         assert items == [
             TranscriptItem(
-                role="agent", kind="opener", text="Hi, I'm Punar.",
-                wall_ms=1000, turn_id="turn-a",
-            ),
-            TranscriptItem(
                 role="agent", kind="body",
                 text="Walk me through the architecture.",
                 wall_ms=2000, turn_id="turn-a",
             ),
         ]
+
+
+    def test_ignores_legacy_opener_played_events(self):
+        """Old session envelopes may contain speaker.opener.played
+        events from before the opener layer was removed. The renderer
+        must silently ignore them so historic envelopes still render."""
+        envelope = _make_envelope([
+            {
+                "kind": "speaker.opener.played",
+                "wall_ms": 1000,
+                "payload": {"turn_id": "turn-a", "opener_text": "Hi."},
+            },
+            {
+                "kind": "speaker.output",
+                "wall_ms": 2000,
+                "payload": {"turn_id": "turn-a", "final_utterance": "Walk me through it."},
+            },
+        ])
+        items = render_transcript_from_envelope(envelope)
+        # The opener event is ignored; only the body shows up.
+        assert len(items) == 1
+        assert items[0].kind == "body"
+        assert items[0].text == "Walk me through it."
 
     def test_renders_user_stt_finals_only(self):
         """Non-final STT events MUST be filtered. They're partial
@@ -117,11 +130,6 @@ class TestRenderTranscript:
                 "kind": "speaker.output",
                 "wall_ms": 1000,
                 "payload": {"turn_id": "t", "final_utterance": ""},
-            },
-            {
-                "kind": "speaker.opener.played",
-                "wall_ms": 2000,
-                "payload": {"turn_id": "t", "opener_text": "   "},
             },
             {
                 "kind": "audio.stt.transcribed",
@@ -243,9 +251,9 @@ class TestRendersRealSession:
     """Smoke test against the real session 0931c162 envelope to verify
     the renderer recovers messages that LK's chat_history dropped.
 
-    Specifically, this session's chat_history is missing 2 agent bodies
-    and 3 openers that demonstrably played per the OTel agent_turn spans.
-    Our envelope-based renderer must surface them all.
+    Specifically, this session's chat_history is missing agent bodies
+    that demonstrably played per the OTel agent_turn spans. Our
+    envelope-based renderer must surface them all.
     """
 
     REAL_SESSION_PATH = Path(
@@ -263,14 +271,3 @@ class TestRendersRealSession:
         # This body was missing from LK's chat_history.json but our
         # renderer must surface it from the speaker.output event.
         assert any("Compare how your frontend approach" in t for t in agent_bodies)
-
-    @pytest.mark.skipif(
-        not REAL_SESSION_PATH.exists(),
-        reason="Real session envelope not present in this environment",
-    )
-    def test_real_session_includes_switch_gears_opener(self):
-        envelope = load_envelope(self.REAL_SESSION_PATH)
-        items = render_transcript_from_envelope(envelope)
-        openers = [it.text for it in items if it.role == "agent" and it.kind == "opener"]
-        # This opener was missing from LK's chat_history.json.
-        assert any("switch gears" in t for t in openers)

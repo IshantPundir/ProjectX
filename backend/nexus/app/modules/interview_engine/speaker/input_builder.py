@@ -39,7 +39,7 @@ def build_speaker_input(
     persona_name: str,
     last_candidate_utterance: str | None,
     candidate_name: str | None = None,
-    recent_agent_openers: list[str] | None = None,
+    recent_reply_starts: list[str] | None = None,
     is_post_cap_advance: bool = False,
     closing_disclosure_signal: str | None = None,
 ) -> SpeakerInput:
@@ -127,12 +127,12 @@ def build_speaker_input(
         recent_turns_payload = list(recent_turns)
         claims_payload = claims_pool.snapshot().entries
 
-    # recent_agent_openers (Q-1, Phase 9.3): only useful for non-contextual
-    # kinds where recent_turns is dropped. For contextual kinds the Speaker
-    # already sees the agent's prior turns in recent_turns and can vary
-    # naturally; threading openers there would be redundant prompt bloat.
-    openers_payload: list[str] = (
-        list(recent_agent_openers or [])
+    # recent_reply_starts: only useful for non-contextual kinds where
+    # recent_turns is dropped. For contextual kinds the Speaker already
+    # sees the agent's prior turns in recent_turns and can vary
+    # naturally; threading these there would be redundant prompt bloat.
+    reply_starts_payload: list[str] = (
+        list(recent_reply_starts or [])
         if instruction_kind in _NON_CONTEXTUAL_KINDS
         else []
     )
@@ -158,6 +158,6 @@ def build_speaker_input(
         failed_signal_value=failed_signal_value,
         turn_metadata=turn_metadata,
         push_back_reason_code=push_back_reason_code,
-        recent_agent_openers=openers_payload,
+        recent_reply_starts=reply_starts_payload,
         is_post_cap_advance=post_cap_payload,
     )

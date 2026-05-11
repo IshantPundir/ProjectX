@@ -3,7 +3,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.modules.interview_engine.openers import OpenerLibrary
 from app.modules.interview_engine.orchestrator import (
     InterviewOrchestrator, OrchestratorConfig,
 )
@@ -108,7 +107,6 @@ async def test_on_enter_delivers_first_question(make_session_config, make_questi
         correlation_id="c",
         config=OrchestratorConfig(),
         tenant_id="t",
-        opener_library=OpenerLibrary(),
     )
 
     await orch.on_enter(fake_agent)
@@ -211,7 +209,6 @@ async def test_on_user_turn_completed_happy_path(make_session_config, make_quest
         correlation_id="c",
         config=OrchestratorConfig(),
         tenant_id="t",
-        opener_library=OpenerLibrary(),
     )
     await orch.on_enter(fake_agent)
     speaker_service.stream.reset_mock()
@@ -280,7 +277,6 @@ async def test_speaker_error_triggers_canned_recovery(make_session_config, make_
         attr_publisher=pub, event_collector=collector,
         correlation_id="c", config=OrchestratorConfig(),
         tenant_id="t",
-        opener_library=OpenerLibrary(),
     )
     await orch.on_enter(fake_agent)
 
@@ -325,7 +321,6 @@ async def test_on_close_returns_session_result_with_snapshots(make_session_confi
         attr_publisher=pub, event_collector=collector,
         correlation_id="c", config=OrchestratorConfig(),
         tenant_id="t",
-        opener_library=OpenerLibrary(),
     )
     await orch.on_enter(fake_agent)
 
@@ -440,7 +435,6 @@ async def test_on_close_session_aggregates_reflect_per_question_state(
         attr_publisher=pub, event_collector=_collector(),
         correlation_id="c", config=OrchestratorConfig(),
         tenant_id="t",
-        opener_library=OpenerLibrary(),
     )
 
     result = await orch.on_close(MagicMock(), audio_tuning_summary=None)
@@ -494,7 +488,6 @@ async def test_judge_input_carries_recent_turns(make_session_config, make_questi
         attr_publisher=pub, event_collector=collector,
         correlation_id="c", config=OrchestratorConfig(),
         tenant_id="t",
-        opener_library=OpenerLibrary(),
     )
     await orch.on_enter(fake_agent)
 
@@ -558,7 +551,6 @@ async def test_on_enter_robust_to_publish_failure(make_session_config, make_ques
         attr_publisher=pub, event_collector=collector,
         correlation_id="c", config=OrchestratorConfig(),
         tenant_id="t",
-        opener_library=OpenerLibrary(),
     )
     # Should not raise — first attribute publish failure must be tolerated.
     await orch.on_enter(fake_agent)
@@ -676,7 +668,6 @@ async def test_post_close_turn_plays_canned_message_and_skips_judge(
         attr_publisher=pub, event_collector=collector,
         correlation_id="c", config=OrchestratorConfig(),
         tenant_id="t",
-        opener_library=OpenerLibrary(),
     )
 
     from livekit.agents.llm import ChatMessage
@@ -763,7 +754,6 @@ async def test_normal_turn_then_knockout_triggers_shutdown(
         attr_publisher=pub, event_collector=collector,
         correlation_id="c", config=OrchestratorConfig(),
         tenant_id="t",
-        opener_library=OpenerLibrary(),
     )
     await orch.on_enter(fake_agent)
 
@@ -827,7 +817,6 @@ async def test_time_remaining_seconds_decreases_each_turn(
         attr_publisher=pub, event_collector=collector,
         correlation_id="c", config=OrchestratorConfig(),
         tenant_id="t",
-        opener_library=OpenerLibrary(),
     )
 
     # Patch time.monotonic so on_enter establishes a t0 and the next
@@ -896,7 +885,6 @@ async def test_orchestrator_uses_tenant_id_not_session_id(make_session_config, m
         attr_publisher=pub, event_collector=collector,
         correlation_id="c", config=OrchestratorConfig(),
         tenant_id="my-tenant-uuid-not-the-session-id",
-        opener_library=OpenerLibrary(),
     )
     await orch.on_enter(fake_agent)
 
@@ -942,7 +930,6 @@ async def test_resolve_close_outcome_returns_lifecycle_last_outcome(
         event_collector=_collector(),
         correlation_id="c", config=OrchestratorConfig(),
         tenant_id="t",
-        opener_library=OpenerLibrary(),
     )
 
     # LiveKit reports user_initiated (because the agent called shutdown),
@@ -974,7 +961,6 @@ async def test_resolve_close_outcome_falls_back_to_livekit_reason(
         event_collector=_collector(),
         correlation_id="c", config=OrchestratorConfig(),
         tenant_id="t",
-        opener_library=OpenerLibrary(),
     )
 
     assert orch.resolve_close_outcome(close_reason="participant_disconnected") == "candidate_disconnected"
@@ -1052,7 +1038,6 @@ async def test_session_close_outcome_reflects_lifecycle_last_outcome(
         attr_publisher=pub, event_collector=collector,
         correlation_id="c", config=OrchestratorConfig(),
         tenant_id="t",
-        opener_library=OpenerLibrary(),
     )
     await orch.on_enter(fake_agent)
 
@@ -1102,7 +1087,6 @@ async def test_resolve_close_outcome_error_overrides_lifecycle(
         event_collector=_collector(),
         correlation_id="c", config=OrchestratorConfig(),
         tenant_id="t",
-        opener_library=OpenerLibrary(),
     )
 
     assert orch.resolve_close_outcome(close_reason="error") == "error"
@@ -1166,7 +1150,6 @@ def _build_orchestrator_with_mocked_deps(
         correlation_id="c",
         config=OrchestratorConfig(),
         tenant_id="t",
-        opener_library=OpenerLibrary(),
     )
 
 
@@ -1329,10 +1312,11 @@ async def test_interrupted_speaker_does_not_play_fallback(
     # coalesce snapshot stores None so the next turn's gate falls through
     # to the existing speaker_emitted_content=False branch.
     assert outcome.body_started_wall_at is None
-    # session.say is called TWICE: once for the opener (redirect has
-    # opener variants) and once for the content stream. No THIRD say
-    # call for a fallback — the interrupted path suppresses it.
-    assert agent.session.say.await_count == 2
+    # session.say is called exactly ONCE (the body stream). With the
+    # opener layer removed, there's no separate opener TTS call. No
+    # SECOND say call for a fallback — the interrupted path suppresses
+    # it.
+    assert agent.session.say.await_count == 1
 
     audit_kinds = [e.kind for e in orch._collector.events]
     assert SPEAKER_INTERRUPTED in audit_kinds
@@ -1391,12 +1375,12 @@ async def test_non_interrupted_empty_still_plays_fallback(
 
 
 def test_derive_sub_context_post_cap_advance():
-    from app.modules.interview_engine.openers import SubContext
+    """_derive_sub_context returns plain strings (not an enum) — the
+    SubContext enum was deleted with the opener layer."""
     from app.modules.interview_engine.orchestrator import _derive_sub_context
     from app.modules.interview_engine.models.speaker import (
         InstructionKind, SpeakerInput,
     )
-    from app.modules.interview_engine.models.judge import TurnMetadata
 
     si = SpeakerInput(
         instruction_kind=InstructionKind.deliver_question,
@@ -1404,11 +1388,10 @@ def test_derive_sub_context_post_cap_advance():
         recent_turns=[], claims_pool_snapshot=[], persona_name="Sam",
         is_post_cap_advance=True,
     )
-    assert _derive_sub_context(si) == SubContext.POST_CAP_ADVANCE
+    assert _derive_sub_context(si) == "post_cap_advance"
 
 
 def test_derive_sub_context_redirect_flags():
-    from app.modules.interview_engine.openers import SubContext
     from app.modules.interview_engine.orchestrator import _derive_sub_context
     from app.modules.interview_engine.models.speaker import (
         InstructionKind, SpeakerInput,
@@ -1416,11 +1399,11 @@ def test_derive_sub_context_redirect_flags():
     from app.modules.interview_engine.models.judge import TurnMetadata
 
     cases = [
-        (TurnMetadata(candidate_social_or_greeting=True), SubContext.SOCIAL_OR_GREETING),
-        (TurnMetadata(candidate_abusive=True), SubContext.ABUSIVE),
-        (TurnMetadata(candidate_attempted_injection=True), SubContext.INJECTION),
-        (TurnMetadata(candidate_off_topic=True), SubContext.OFF_TOPIC),
-        (TurnMetadata(), SubContext.OFF_TOPIC),  # default redirect
+        (TurnMetadata(candidate_social_or_greeting=True), "social_or_greeting"),
+        (TurnMetadata(candidate_abusive=True), "abusive"),
+        (TurnMetadata(candidate_attempted_injection=True), "injection"),
+        (TurnMetadata(candidate_off_topic=True), "off_topic"),
+        (TurnMetadata(), "off_topic"),  # default redirect bucket
     ]
     for tm, expected in cases:
         si = SpeakerInput(
@@ -1430,36 +1413,29 @@ def test_derive_sub_context_redirect_flags():
             turn_metadata=tm,
         )
         assert _derive_sub_context(si) == expected, (
-            f"redirect with {tm} → expected {expected}, got "
-            f"{_derive_sub_context(si)}"
+            f"redirect with {tm} → expected {expected!r}, got "
+            f"{_derive_sub_context(si)!r}"
         )
 
 
 def test_derive_sub_context_push_back_reason_codes():
-    from app.modules.interview_engine.openers import SubContext
     from app.modules.interview_engine.orchestrator import _derive_sub_context
     from app.modules.interview_engine.models.speaker import (
         InstructionKind, SpeakerInput,
     )
 
-    cases = [
-        ("vague_answer", SubContext.VAGUE_ANSWER),
-        ("deflection", SubContext.DEFLECTION),
-        ("missing_specifics", SubContext.MISSING_SPECIFICS),
-        ("unanswered_subquestion", SubContext.UNANSWERED_SUBQUESTION),
-    ]
-    for code, expected in cases:
+    for code in ("vague_answer", "deflection", "missing_specifics",
+                 "unanswered_subquestion"):
         si = SpeakerInput(
             instruction_kind=InstructionKind.push_back,
             bank_text="Q?", last_candidate_utterance="x",
             recent_turns=[], claims_pool_snapshot=[], persona_name="Sam",
             push_back_reason_code=code,
         )
-        assert _derive_sub_context(si) == expected
+        assert _derive_sub_context(si) == code
 
 
 def test_derive_sub_context_polite_close_with_failed_signal():
-    from app.modules.interview_engine.openers import SubContext
     from app.modules.interview_engine.orchestrator import _derive_sub_context
     from app.modules.interview_engine.models.speaker import (
         InstructionKind, SpeakerInput,
@@ -1471,11 +1447,10 @@ def test_derive_sub_context_polite_close_with_failed_signal():
         recent_turns=[], claims_pool_snapshot=[], persona_name="Sam",
         failed_signal_value="X experience",
     )
-    assert _derive_sub_context(si) == SubContext.KNOCKOUT
+    assert _derive_sub_context(si) == "knockout"
 
 
 def test_derive_sub_context_default():
-    from app.modules.interview_engine.openers import SubContext
     from app.modules.interview_engine.orchestrator import _derive_sub_context
     from app.modules.interview_engine.models.speaker import (
         InstructionKind, SpeakerInput,
@@ -1486,198 +1461,9 @@ def test_derive_sub_context_default():
         bank_text="Q?", last_candidate_utterance="x",
         recent_turns=[], claims_pool_snapshot=[], persona_name="Sam",
     )
-    assert _derive_sub_context(si) == SubContext.DEFAULT
+    assert _derive_sub_context(si) == "default"
 
 
-def test_orchestrator_accepts_opener_library_and_initializes_recent_openers(
-    make_session_config, make_question,
-):
-    """InterviewOrchestrator constructor accepts opener_library and
-    seeds _recent_openers as an empty deque (capacity 5)."""
-    from collections import deque
-
-    cfg = make_session_config(
-        questions=[make_question(qid="q1", text="What is your first question?")],
-        signals=["S1"],
-    )
-    state_engine = StateEngine(session_config=cfg)
-    pub = AttributePublisher(room=MagicMock(local_participant=MagicMock(
-        set_attributes=AsyncMock(),
-    )))
-    orch = InterviewOrchestrator(
-        session_config=cfg,
-        tenant_settings=MagicMock(engine_agent_name=None),
-        state_engine=state_engine,
-        judge=MagicMock(),
-        speaker=MagicMock(),
-        attr_publisher=pub,
-        event_collector=_collector(),
-        correlation_id="c", config=OrchestratorConfig(),
-        tenant_id="t",
-        opener_library=OpenerLibrary(),
-    )
-    assert isinstance(orch._recent_openers, deque)
-    assert orch._recent_openers.maxlen == 5
-    assert len(orch._recent_openers) == 0
-
-
-@pytest.mark.asyncio
-async def test_stream_speaker_plays_opener_then_content_and_caches_content_only(
-    make_session_config, make_question,
-):
-    """End-to-end: orchestrator picks opener from library, plays it,
-    then streams Speaker content, and caches ONLY the content (not the
-    opener) for repeat replay."""
-    from app.modules.interview_engine.openers import OpenerLibrary
-    from app.modules.interview_engine.event_kinds import SPEAKER_OPENER_PLAYED
-    from app.modules.interview_engine.models.speaker import (
-        InstructionKind, SpeakerInput,
-    )
-
-    cfg = make_session_config(
-        questions=[make_question(qid="q1", text="What is your first question?")],
-        signals=["S1"],
-    )
-    state_engine = StateEngine(session_config=cfg)
-    state_engine.process_judge_output(
-        turn_id="t-0",
-        judge_output=state_engine.initialize_for_session_start(),
-        candidate_utterance_text=None, elapsed_ms=0,
-    )
-
-    speaker_service = MagicMock()
-    speaker_service.stream = AsyncMock(
-        return_value=_FakeSpeakerHandle(
-            "Walk me through one validation check you'd actually write.",
-        ),
-    )
-    judge_service = MagicMock()
-    pub = AttributePublisher(room=MagicMock(local_participant=MagicMock(
-        set_attributes=AsyncMock(),
-    )))
-    orch = InterviewOrchestrator(
-        session_config=cfg,
-        tenant_settings=MagicMock(engine_agent_name=None),
-        state_engine=state_engine,
-        judge=judge_service, speaker=speaker_service,
-        attr_publisher=pub, event_collector=_collector(),
-        correlation_id="c", config=OrchestratorConfig(),
-        tenant_id="t",
-        opener_library=OpenerLibrary(),
-    )
-
-    speaker_input = SpeakerInput(
-        instruction_kind=InstructionKind.push_back,
-        bank_text="What is your first question?",
-        last_candidate_utterance="thin",
-        recent_turns=[], claims_pool_snapshot=[],
-        persona_name="Sam", candidate_name="Ishant",
-        push_back_reason_code="vague_answer",
-    )
-
-    fake_agent = MagicMock()
-    fake_agent.session.say = AsyncMock(return_value=MagicMock(interrupted=False))
-
-    outcome = await orch._stream_speaker_and_say(
-        agent=fake_agent, turn_id="t-1", speaker_input=speaker_input,
-    )
-
-    # Speaker content was returned and stored in transcript.
-    assert outcome.final_text == "Walk me through one validation check you'd actually write."
-    # Body was scheduled (not interrupted, non-empty) — body_started_wall_at
-    # is populated. Exact value depends on time.time() at call time; assert
-    # only that the gate has a usable timestamp.
-    assert outcome.body_started_wall_at is not None
-    assert outcome.interrupted is False
-    final_text = outcome.final_text  # rebind for downstream legacy assertions
-
-    # Cache for repeat replay holds ONLY the Speaker content.
-    cached = state_engine._question_utterances.get("t-1")
-    assert cached == final_text
-    assert "Got it" not in cached  # no opener prefix
-
-    # session.say was called twice: once for opener, once for content.
-    assert fake_agent.session.say.await_count == 2
-    # First call: opener (text + audio kwargs).
-    first_call_kwargs = fake_agent.session.say.call_args_list[0].kwargs
-    assert "text" in first_call_kwargs
-    # The orchestrator picked one of the push_back/vague_answer variants.
-    assert first_call_kwargs["text"] in {
-        "Got it.",
-        "OK.",
-        "Right —",
-        "Mhm —",
-        "Hmm —",
-        "OK, let me press on that —",
-    }
-
-    # Audit event SPEAKER_OPENER_PLAYED fired.
-    audit_kinds = [e.kind for e in orch._collector.events]
-    assert SPEAKER_OPENER_PLAYED in audit_kinds
-
-    # Recent openers updated.
-    assert len(orch._recent_openers) == 1
-
-
-@pytest.mark.asyncio
-async def test_stream_speaker_skips_opener_when_kind_has_no_variants(
-    make_session_config, make_question,
-):
-    """deliver_first_question has no library variants — orchestrator
-    must NOT call session.say for an opener; only the content say()
-    runs."""
-    from app.modules.interview_engine.openers import OpenerLibrary
-    from app.modules.interview_engine.models.speaker import (
-        InstructionKind, SpeakerInput,
-    )
-
-    cfg = make_session_config(
-        questions=[make_question(qid="q1", text="What is your first question?")],
-        signals=["S1"],
-    )
-    state_engine = StateEngine(session_config=cfg)
-
-    speaker_service = MagicMock()
-    speaker_service.stream = AsyncMock(
-        return_value=_FakeSpeakerHandle("Hi, I'm Sam. To start, ..."),
-    )
-    judge_service = MagicMock()
-    pub = AttributePublisher(room=MagicMock(local_participant=MagicMock(
-        set_attributes=AsyncMock(),
-    )))
-    orch = InterviewOrchestrator(
-        session_config=cfg,
-        tenant_settings=MagicMock(engine_agent_name=None),
-        state_engine=state_engine,
-        judge=judge_service, speaker=speaker_service,
-        attr_publisher=pub, event_collector=_collector(),
-        correlation_id="c", config=OrchestratorConfig(),
-        tenant_id="t",
-        opener_library=OpenerLibrary(),
-    )
-
-    speaker_input = SpeakerInput(
-        instruction_kind=InstructionKind.deliver_first_question,
-        bank_text="What is your first question?",
-        last_candidate_utterance=None,
-        recent_turns=[], claims_pool_snapshot=[],
-        persona_name="Sam",
-    )
-
-    fake_agent = MagicMock()
-    fake_agent.session.say = AsyncMock(return_value=MagicMock(interrupted=False))
-
-    await orch._stream_speaker_and_say(
-        agent=fake_agent, turn_id="t-0", speaker_input=speaker_input,
-    )
-
-    # session.say called once (content only — no opener).
-    assert fake_agent.session.say.await_count == 1
-
-
-# ---------------------------------------------------------------------------
-# Phase 9.9 — cache-integrity regression tests (Bug A from session a998073a)
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -1688,7 +1474,6 @@ async def test_interrupted_speaker_does_not_pollute_repeat_cache(
     text to _question_utterances. Bug A from session a998073a-3007-...:
     push_back interrupted by candidate → cache held "" → next repeat
     replayed silence."""
-    from app.modules.interview_engine.openers import OpenerLibrary
     from app.modules.interview_engine.models.speaker import (
         InstructionKind, SpeakerInput,
     )
@@ -1715,7 +1500,6 @@ async def test_interrupted_speaker_does_not_pollute_repeat_cache(
         attr_publisher=pub, event_collector=_collector(),
         correlation_id="c", config=OrchestratorConfig(),
         tenant_id="t",
-        opener_library=OpenerLibrary(),
     )
 
     speaker_input = SpeakerInput(
@@ -1747,7 +1531,6 @@ async def test_empty_speaker_output_fallback_does_not_pollute_repeat_cache(
     """Phase 9.9 — _handle_empty_speaker_output plays a deterministic
     fallback ("Let me restate that. {bank_text}") but MUST NOT cache it.
     The fallback is a recovery utterance, not the agent's actual question."""
-    from app.modules.interview_engine.openers import OpenerLibrary
     from app.modules.interview_engine.models.speaker import (
         InstructionKind, SpeakerInput,
     )
@@ -1773,7 +1556,6 @@ async def test_empty_speaker_output_fallback_does_not_pollute_repeat_cache(
         attr_publisher=pub, event_collector=_collector(),
         correlation_id="c", config=OrchestratorConfig(),
         tenant_id="t",
-        opener_library=OpenerLibrary(),
     )
 
     speaker_input = SpeakerInput(
@@ -1794,252 +1576,3 @@ async def test_empty_speaker_output_fallback_does_not_pollute_repeat_cache(
 
     # Cache unchanged. Fallback was played but not cached.
     assert "t-empty" not in state_engine._question_utterances
-
-
-def test_orchestrator_constructor_accepts_intro_variant_default_none(
-    make_session_config, make_question,
-):
-    """Backward compatibility — existing callers don't have to pass
-    intro_variant; default is None and the orchestrator behaves as
-    before (Speaker LLM produces greeting + question for first turn)."""
-    from app.modules.interview_engine.openers import OpenerLibrary
-    cfg = make_session_config(
-        questions=[make_question(qid="q1")],
-        signals=["S1"],
-    )
-    state_engine = StateEngine(session_config=cfg)
-    pub = AttributePublisher(room=MagicMock(local_participant=MagicMock(set_attributes=AsyncMock())))
-    orch = InterviewOrchestrator(
-        session_config=cfg,
-        tenant_settings=MagicMock(engine_agent_name=None),
-        state_engine=state_engine,
-        judge=MagicMock(), speaker=MagicMock(),
-        attr_publisher=pub, event_collector=_collector(),
-        correlation_id="c", config=OrchestratorConfig(),
-        tenant_id="t",
-        opener_library=OpenerLibrary(),
-        # intro_variant=None  <- default
-    )
-    assert orch._intro_variant is None
-
-
-def test_orchestrator_constructor_accepts_intro_variant_when_set(
-    make_session_config, make_question,
-):
-    from app.modules.interview_engine.openers import OpenerLibrary, OpenerVariant
-    cfg = make_session_config(
-        questions=[make_question(qid="q1")],
-        signals=["S1"],
-    )
-    state_engine = StateEngine(session_config=cfg)
-    pub = AttributePublisher(room=MagicMock(local_participant=MagicMock(set_attributes=AsyncMock())))
-    intro = OpenerVariant(text="Hi, I'm Sam. To start —")
-    orch = InterviewOrchestrator(
-        session_config=cfg,
-        tenant_settings=MagicMock(engine_agent_name=None),
-        state_engine=state_engine,
-        judge=MagicMock(), speaker=MagicMock(),
-        attr_publisher=pub, event_collector=_collector(),
-        correlation_id="c", config=OrchestratorConfig(),
-        tenant_id="t",
-        opener_library=OpenerLibrary(),
-        intro_variant=intro,
-    )
-    assert orch._intro_variant is intro
-
-
-@pytest.mark.asyncio
-async def test_orchestrator_uses_intro_variant_for_deliver_first_question(
-    make_session_config, make_question,
-):
-    """When intro_variant is set, deliver_first_question routes through
-    it (not the OpenerLibrary which has no entry for this kind). The
-    intro plays as opener, Speaker generates only the question, and the
-    cache holds only the question."""
-    from app.modules.interview_engine.openers import OpenerLibrary, OpenerVariant
-    from app.modules.interview_engine.event_kinds import SPEAKER_OPENER_PLAYED
-    from app.modules.interview_engine.models.speaker import (
-        InstructionKind, SpeakerInput,
-    )
-    cfg = make_session_config(
-        questions=[make_question(qid="q1")],
-        signals=["S1"],
-    )
-    state_engine = StateEngine(session_config=cfg)
-    state_engine.process_judge_output(
-        turn_id="t-0",
-        judge_output=state_engine.initialize_for_session_start(),
-        candidate_utterance_text=None, elapsed_ms=0,
-    )
-
-    speaker = MagicMock()
-    speaker.stream = AsyncMock(return_value=_FakeSpeakerHandle(
-        "Walk me through your tool.",
-    ))
-    pub = AttributePublisher(room=MagicMock(local_participant=MagicMock(set_attributes=AsyncMock())))
-
-    intro = OpenerVariant(
-        text="Hi, I'm Sam. To start —",
-        # No audio_frames → orchestrator falls back to text-only TTS
-        # (the test agent mock doesn't actually need audio).
-    )
-    orch = InterviewOrchestrator(
-        session_config=cfg,
-        tenant_settings=MagicMock(engine_agent_name=None),
-        state_engine=state_engine,
-        judge=MagicMock(), speaker=speaker,
-        attr_publisher=pub, event_collector=_collector(),
-        correlation_id="c", config=OrchestratorConfig(),
-        tenant_id="t",
-        opener_library=OpenerLibrary(),
-        intro_variant=intro,
-    )
-
-    speaker_input = SpeakerInput(
-        instruction_kind=InstructionKind.deliver_first_question,
-        bank_text="What is your tool?",
-        last_candidate_utterance=None,
-        recent_turns=[], claims_pool_snapshot=[],
-        persona_name="Sam",
-    )
-
-    fake_agent = MagicMock()
-    fake_agent.session.say = AsyncMock(return_value=MagicMock(interrupted=False))
-
-    outcome = await orch._stream_speaker_and_say(
-        agent=fake_agent, turn_id="t-1", speaker_input=speaker_input,
-    )
-
-    # Speaker content (only the question) is what's returned and cached.
-    assert outcome.final_text == "Walk me through your tool."
-    assert outcome.body_started_wall_at is not None
-    final_text = outcome.final_text  # rebind for downstream legacy assertions
-    cache = state_engine._question_utterances.get("t-1")
-    assert cache == "Walk me through your tool."
-    assert "Hi, I'm Sam" not in cache  # intro is NOT in the cache
-
-    # session.say called twice: once for intro, once for content.
-    assert fake_agent.session.say.await_count == 2
-    first_call_kwargs = fake_agent.session.say.call_args_list[0].kwargs
-    assert first_call_kwargs["text"] == "Hi, I'm Sam. To start —"
-
-    # SPEAKER_OPENER_PLAYED audit fires for the intro turn.
-    opener_events = [e for e in orch._collector.events if e.kind == SPEAKER_OPENER_PLAYED]
-    assert len(opener_events) == 1
-    assert opener_events[0].payload["instruction_kind"] == "deliver_first_question"
-    assert opener_events[0].payload["opener_text"] == "Hi, I'm Sam. To start —"
-
-
-@pytest.mark.asyncio
-async def test_orchestrator_falls_back_to_library_for_other_kinds_when_intro_variant_set(
-    make_session_config, make_question,
-):
-    """Setting intro_variant only affects deliver_first_question. Other
-    kinds still go through OpenerLibrary.pick as before."""
-    from app.modules.interview_engine.openers import OpenerLibrary, OpenerVariant
-    from app.modules.interview_engine.models.speaker import (
-        InstructionKind, SpeakerInput,
-    )
-    cfg = make_session_config(
-        questions=[make_question(qid="q1")],
-        signals=["S1"],
-    )
-    state_engine = StateEngine(session_config=cfg)
-    speaker = MagicMock()
-    speaker.stream = AsyncMock(return_value=_FakeSpeakerHandle(
-        "Which validators would you configure?",
-    ))
-    pub = AttributePublisher(room=MagicMock(local_participant=MagicMock(set_attributes=AsyncMock())))
-
-    intro = OpenerVariant(text="Hi, I'm Sam. To start —")
-    orch = InterviewOrchestrator(
-        session_config=cfg,
-        tenant_settings=MagicMock(engine_agent_name=None),
-        state_engine=state_engine,
-        judge=MagicMock(), speaker=speaker,
-        attr_publisher=pub, event_collector=_collector(),
-        correlation_id="c", config=OrchestratorConfig(),
-        tenant_id="t",
-        opener_library=OpenerLibrary(),
-        intro_variant=intro,
-    )
-
-    speaker_input = SpeakerInput(
-        instruction_kind=InstructionKind.push_back,
-        bank_text="What is your tool?",
-        last_candidate_utterance="vague",
-        recent_turns=[], claims_pool_snapshot=[],
-        persona_name="Sam",
-        push_back_reason_code="vague_answer",
-    )
-    fake_agent = MagicMock()
-    fake_agent.session.say = AsyncMock(return_value=MagicMock(interrupted=False))
-
-    await orch._stream_speaker_and_say(
-        agent=fake_agent, turn_id="t-pb", speaker_input=speaker_input,
-    )
-
-    # First say call is the LIBRARY opener for push_back/vague_answer,
-    # NOT the intro.
-    first_call = fake_agent.session.say.call_args_list[0].kwargs
-    assert first_call["text"] != "Hi, I'm Sam. To start —"
-    # Should be one of the push_back/vague_answer variants.
-    assert first_call["text"] in {
-        "Got it.", "OK.", "Right —", "Mhm —", "Hmm —",
-        "OK, let me press on that —",
-    }
-
-
-@pytest.mark.asyncio
-async def test_orchestrator_emits_is_session_intro_true_for_intro_path(
-    make_session_config, make_question,
-):
-    """The SPEAKER_OPENER_PLAYED audit fired by the intro path has
-    is_session_intro=True; the same audit fired for opener-library
-    openers stays False."""
-    from app.modules.interview_engine.openers import OpenerLibrary, OpenerVariant
-    from app.modules.interview_engine.event_kinds import SPEAKER_OPENER_PLAYED
-    cfg = make_session_config(
-        questions=[make_question(qid="q1")],
-        signals=["S1"],
-    )
-    state_engine = StateEngine(session_config=cfg)
-    state_engine.process_judge_output(
-        turn_id="t-0",
-        judge_output=state_engine.initialize_for_session_start(),
-        candidate_utterance_text=None, elapsed_ms=0,
-    )
-
-    speaker = MagicMock()
-    speaker.stream = AsyncMock(return_value=_FakeSpeakerHandle("Walk me through your tool."))
-    pub = AttributePublisher(room=MagicMock(local_participant=MagicMock(set_attributes=AsyncMock())))
-
-    orch = InterviewOrchestrator(
-        session_config=cfg,
-        tenant_settings=MagicMock(engine_agent_name=None),
-        state_engine=state_engine,
-        judge=MagicMock(), speaker=speaker,
-        attr_publisher=pub, event_collector=_collector(),
-        correlation_id="c", config=OrchestratorConfig(),
-        tenant_id="t",
-        opener_library=OpenerLibrary(),
-        intro_variant=OpenerVariant(text="Hi, I'm Sam. To start —"),
-    )
-
-    speaker_input = SpeakerInput(
-        instruction_kind=InstructionKind.deliver_first_question,
-        bank_text="What is your tool?",
-        last_candidate_utterance=None,
-        recent_turns=[], claims_pool_snapshot=[],
-        persona_name="Sam",
-    )
-    fake_agent = MagicMock()
-    fake_agent.session.say = AsyncMock(return_value=MagicMock(interrupted=False))
-
-    await orch._stream_speaker_and_say(
-        agent=fake_agent, turn_id="t-intro", speaker_input=speaker_input,
-    )
-
-    opener_events = [e for e in orch._collector.events if e.kind == SPEAKER_OPENER_PLAYED]
-    assert len(opener_events) == 1
-    assert opener_events[0].payload["is_session_intro"] is True

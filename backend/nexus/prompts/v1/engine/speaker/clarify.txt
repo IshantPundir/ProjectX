@@ -1,69 +1,79 @@
-TASK
-The candidate doesn't understand the question (or asked about a
-specific term). Rephrase the active question so it's clearer or more
-concrete, OR define the term in plain English.
+# TASK
+The candidate doesn't understand the question, or asked about a
+specific term in it. Either define the term, or rephrase the active
+question so it's clearer.
 
-OUTPUT (HARD CONSTRAINTS — non-negotiable)
-- ≤ 40 words total. 1-2 sentences.
-- Do NOT include an opener like "Sure, let me rephrase" / "Of course"
-  / "No problem" — the orchestrator has played one as pre-cached audio
-  (see PRE-SPOKEN OPENER in the preamble). Go straight into the
-  rephrasing.
-- Anchor the rephrasing to a concrete scenario when possible
-  ("Imagine...", "Think of...", "Say you're working with...").
-- Never reveal rubric content. Rephrase based on the question, NOT
-  on what we're looking for in the answer.
-- ANTI-ENUMERATION (load-bearing): do NOT enumerate the sub-components
-  or sub-criteria from bank_text (validators, conditions, post-functions,
-  screens, fields, automation, reusable templates, performance, etc.).
-  Pick the broadest scenario shape and let the candidate surface
-  the criteria themselves.
+# HARD CONSTRAINTS — NON-NEGOTIABLE
+- 1 sentence. Target 25-35 words. HARD CAP: 38 words.
+- ONE concrete scenario. ONE final ask.
+- Brief lead-in acceptable ("OK, let me put it differently.", "Hmm —
+  let me reword that.") — vary per ANTI-REPETITION; counts toward
+  the cap.
+- Anchor the rephrasing to a scenario with "Imagine...", "Think
+  of...", "Say you're working with..."
+- NEVER reveal rubric content. You rephrase the QUESTION SHAPE,
+  not the answer criteria.
 
-PATH SELECTION
+# ANTI-ENUMERATION — THIS IS THE PRIMARY FAILURE MODE OF CLARIFY
+Do NOT enumerate the sub-components of bank_text. Forbidden shapes:
+  • "How does it fetch data AND handle errors AND retry AND cancel
+    in-flight requests?" — a four-part question disguised as one.
+  • "Where would you model the steps, what would you attach to
+    transitions, and how would you make it reusable?" — three
+    explicit rubric criteria.
 
-Path A — candidate asked about a specific term in the question:
-  Define the term in plain English (one sentence), then re-ask
-  in the broadest form. ≤ 40 words total.
+Pick the BROADEST scenario shape and let the candidate surface the
+criteria themselves.
 
-Path B — candidate is generically confused ("I don't understand",
-"Can you rephrase?", "Explain the question"):
-  Rephrase the entire question with a concrete but BROAD scenario.
-  Pick a single scenario; do not enumerate components. ≤ 40 words.
+# PATH SELECTION
+
+PATH A — candidate asked about a specific term in the question
+  Define the term in plain English (one short clause), then re-ask
+  in the broadest form. ≤ 38 words total.
+
+PATH B — candidate is generically confused
+  ("I don't understand", "Can you rephrase?", "Explain the question")
+  Rephrase with a SINGLE concrete but BROAD scenario. ≤ 38 words.
 
 The candidate's utterance + active question text together tell you
 which path applies.
 
-EXAMPLES (illustrative — compose from actual inputs)
+# ANTI-PATTERN — DO NOT EMIT ANYTHING LIKE THIS
+WRONG:
+  "Imagine you worked on a large React app: how does it fetch data
+   from REST APIs and present it in screens? Also, how did you
+   manage the non-happy-path behaviors like loading, errors, and
+   stopping an in-flight request when needed?"
+Why wrong:
+  • 41 words (over cap)
+  • TWO questions ("Also, how...")
+  • Enumerates four rubric criteria (fetch, present, error handling,
+    cancellation)
+
+WRONG:
+  "Think of a client with a specific process, like 'Intake, Review,
+   Approval, Done,' and they want that reflected in Jira. Where
+   would you model those steps using issue types, statuses, and
+   transitions, and what would you attach to transitions to enforce
+   required data, automate changes, and gather inputs?"
+Why wrong: 50 words; enumerates 7 rubric criteria.
+
+# EXAMPLES (illustrative — compose from actual inputs)
 
 PATH B — generic confusion
-  pre_spoken_opener: "OK, let me put it differently."
   last_candidate_utterance: "I don't understand the question"
   bank_text: "How would you enforce a Ready for QA transition rule
-              with merged-PR and Test-Cases-filled checks via
-              ScriptRunner?"
-  → Imagine you want issues to only move to "Ready for QA" once a
-     pull request is merged. Where in Jira would you enforce that?
+     with merged-PR and Test-Cases-filled checks via ScriptRunner?"
+  → OK, let me put it differently. Imagine you want issues to only
+    move to Ready for QA once a pull request is merged. Where in
+    Jira would you enforce that?
 
 PATH A — specific term
-  pre_spoken_opener: "Hmm, OK — let me reword that."
   last_candidate_utterance: "What do you mean by validators?"
   bank_text: "How would you design Jira validators for project A?"
   → Validators are workflow rules that block a transition unless
-     conditions are met. With that in mind, how would you design
-     them for project A?
+    conditions are met. With that in mind, how would you design
+    them for project A?
 
-ANTI-PATTERN — DO NOT emit anything like this
-Wrong output: "Think of a client who has a specific process, like
-              'Intake, Review, Approval, and Done,' and they want
-              that reflected in Jira. Where would you model those
-              steps using issue types, statuses, and transitions,
-              and what would you attach to transitions to enforce
-              required data, automate changes, and gather inputs?
-              Also, how would you reuse the setup across multiple
-              teams without slowing down Jira?"
-Why wrong: 65 words, three sentences, enumerates 8+ rubric criteria
-           (issue types, statuses, transitions, required data,
-           automation, inputs, reusability, performance).
-
-REMINDER: ≤ 40 words. ONE concrete scenario. NO opener at the start.
-NO enumeration of bank_text components.
+# REMINDER
+≤ 38 words. ONE concrete scenario. ONE final ask. NO enumeration.

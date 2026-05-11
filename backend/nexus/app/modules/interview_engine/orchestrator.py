@@ -6,10 +6,8 @@ Speaker on each candidate turn. on_close builds the SessionResult.
 """
 from __future__ import annotations
 
-import asyncio
 import time
 import uuid
-from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
@@ -34,7 +32,6 @@ from app.modules.interview_engine.frontend_attributes import (
 from app.modules.interview_engine.judge.service import JudgeService
 from app.modules.interview_engine.models.speaker import InstructionKind
 from app.modules.interview_engine.speaker.service import SpeakerService
-from app.modules.interview_engine.openers import OpenerLibrary, OpenerSelection, OpenerVariant
 from app.modules.interview_engine.state.engine import (
     StateEngine,
 )
@@ -77,47 +74,38 @@ def _was_interrupted(speech_handle: Any) -> bool:
         return False
 
 
-def _derive_sub_context(speaker_input: Any) -> "SubContext":
-    """Map SpeakerInput context to the OpenerLibrary's SubContext key.
+def _derive_sub_context(speaker_input: Any) -> str:
+    """Discriminator string for the current turn's sub-kind.
 
-    See spec §4.3 sub-context derivation table.
+    Used by Continuation Coalescing (``_COALESCIBLE_KINDS``) and by the
+    ``turn.coalesced`` audit event's ``prior_sub_context`` field for
+    forensic replay. Values are stable strings — never persist the
+    raw Python identity, only this discriminator.
     """
-    from app.modules.interview_engine.models.speaker import InstructionKind
-    from app.modules.interview_engine.openers import SubContext
-
     kind = speaker_input.instruction_kind
     if kind == InstructionKind.deliver_question:
         if getattr(speaker_input, "is_post_cap_advance", False):
-            return SubContext.POST_CAP_ADVANCE
-        return SubContext.DEFAULT
+            return "post_cap_advance"
+        return "default"
     if kind == InstructionKind.redirect:
         tm = speaker_input.turn_metadata
         if tm is not None:
             if tm.candidate_social_or_greeting:
-                return SubContext.SOCIAL_OR_GREETING
+                return "social_or_greeting"
             if tm.candidate_abusive:
-                return SubContext.ABUSIVE
+                return "abusive"
             if tm.candidate_attempted_injection:
-                return SubContext.INJECTION
+                return "injection"
             if tm.candidate_off_topic:
-                return SubContext.OFF_TOPIC
-        return SubContext.OFF_TOPIC  # default redirect bucket
+                return "off_topic"
+        return "off_topic"  # default redirect bucket
     if kind == InstructionKind.push_back:
-        code = speaker_input.push_back_reason_code
-        if code == "vague_answer":
-            return SubContext.VAGUE_ANSWER
-        if code == "deflection":
-            return SubContext.DEFLECTION
-        if code == "missing_specifics":
-            return SubContext.MISSING_SPECIFICS
-        if code == "unanswered_subquestion":
-            return SubContext.UNANSWERED_SUBQUESTION
-        return SubContext.DEFAULT
+        return speaker_input.push_back_reason_code or "default"
     if kind == InstructionKind.polite_close:
         if speaker_input.failed_signal_value:
-            return SubContext.KNOCKOUT
-        return SubContext.DEFAULT
-    return SubContext.DEFAULT
+            return "knockout"
+        return "default"
+    return "default"
 
 
 def _map_livekit_close_reason(close_reason: str | None) -> str:
@@ -166,11 +154,11 @@ class _PriorTurnSnapshot:
     ``body_started_wall_at`` is the wall-clock timestamp (seconds since the
     Unix epoch, ``time.time()`` units) at which the Speaker body's audio
     playback was scheduled with LiveKit. It is ``None`` when no body played
-    on this turn — opener-only paths, interrupted/empty Speaker output, the
-    error-recovery branch, or the synthetic session-start turn. Used by the
-    pre-body coalescing gate to detect the case where the candidate
-    produced a continuation utterance BEFORE the agent's response was
-    audible (so the continuation cannot be a reply to it).
+    on this turn — interrupted/empty Speaker output, the error-recovery
+    branch, or the synthetic session-start turn. Used by the pre-body
+    coalescing gate to detect the case where the candidate produced a
+    continuation utterance BEFORE the agent's response was audible (so the
+    continuation cannot be a reply to it).
     """
     turn_id: str
     completed_monotonic: float
@@ -390,8 +378,6 @@ class InterviewOrchestrator:
         correlation_id: str,
         config: OrchestratorConfig | None = None,
         tenant_id: str,
-        opener_library: OpenerLibrary,
-        intro_variant: OpenerVariant | None = None,
     ) -> None:
         self._cfg = session_config
         self._tenant = tenant_settings
@@ -441,9 +427,6 @@ class InterviewOrchestrator:
         # utterance while I was running Judge." See
         # ``_user_resumed_speaking_after``.
         self._resumed_speaking_at: float | None = None
-        self._opener_library = opener_library
-        self._intro_variant = intro_variant
-        self._recent_openers: deque[str] = deque(maxlen=5)
 
     # --- Public accessors ---
 
@@ -1156,163 +1139,75 @@ class InterviewOrchestrator:
     async def _stream_speaker_and_say(
         self, *, agent: Any, turn_id: str, speaker_input: Any,
     ) -> _SpeakerStreamOutcome:
-        """Run the Speaker LLM + TTS pipeline.
+        """Run the Speaker LLM + TTS pipeline. Single utterance per turn.
 
-        Returns a :class:`_SpeakerStreamOutcome` so callers can capture the
-        prior-turn snapshot without re-deriving sub-context or scraping
-        timestamps from audit events. Field semantics:
+        Returns a :class:`_SpeakerStreamOutcome` so callers can capture
+        the prior-turn snapshot without re-deriving sub-context or
+        scraping timestamps from audit events. Field semantics:
 
         * ``final_text`` — utterance actually produced (empty string for
           interrupted, empty-output, or error paths).
-        * ``interrupted`` — True only when the candidate's voice cancelled
-          the in-flight body TTS stream.
-        * ``sub_context`` — the ``SubContext.value`` string derived from
-          ``speaker_input``.
-        * ``body_started_wall_at`` — wall-clock seconds (``time.time()``)
-          at the moment the body's TTS playback was scheduled with LiveKit
-          (``session.say(stream, ...)`` returned). ``None`` for code paths
-          that never reached body playback (opener-only paths,
-          ``_handle_interrupted_speaker``, ``_handle_empty_speaker_output``,
-          or the error-recovery branch).
+        * ``interrupted`` — True only when the candidate's voice
+          cancelled the in-flight TTS stream.
+        * ``sub_context`` — string discriminator derived from
+          ``speaker_input``; used by Continuation Coalescing and audit
+          replay.
+        * ``body_started_wall_at`` — wall-clock seconds when the
+          Speaker's TTS playback was scheduled with LiveKit. ``None``
+          on code paths that never reached playback (interrupted /
+          empty / error).
         """
-        # Phase 9.8 — opener prefetch architecture.
-        # 1. Pick opener from library based on (kind, sub_context).
-        # 2. Update SpeakerInput with pre_spoken_opener so Speaker LLM
-        #    knows to compose continuation content (no own opener).
-        # 3. Kick off Speaker LLM in parallel with opener playback.
-        # 4. Play opener audio (cache hit) or fall back to text TTS.
-        # 5. After opener finishes, await Speaker stream and pipe to TTS.
-        # 6. Cache ONLY the Speaker content for repeat replay (no opener).
-        sub_ctx = _derive_sub_context(speaker_input)
-        # Phase 3 — per-session persona intro routing.
-        # deliver_first_question + intro_variant set → use the per-session
-        # pre-synthesized intro (composed at agent entrypoint with the
-        # tenant's persona_name). All other kinds + sub_contexts route
-        # through the static OpenerLibrary as today.
-        is_session_intro = (
-            speaker_input.instruction_kind == InstructionKind.deliver_first_question
-            and self._intro_variant is not None
-        )
-        if is_session_intro:
-            audio_iter_factory = (
-                (lambda: iter(self._intro_variant.audio_frames))
-                if self._intro_variant.audio_frames is not None
-                else None
-            )
-            opener = OpenerSelection(
-                text=self._intro_variant.text,
-                audio_iter=audio_iter_factory,
-            )
-        else:
-            opener = self._opener_library.pick(
-                kind=speaker_input.instruction_kind,
-                sub_context=sub_ctx,
-                recent_openers=self._recent_openers,
-            )
-        speaker_input_with_opener = speaker_input.model_copy(
-            update={"pre_spoken_opener": opener.text},
-        )
+        sub_context = _derive_sub_context(speaker_input)
 
         try:
-            # Kick off Speaker LLM call in parallel with opener playback.
-            speaker_task = asyncio.create_task(
-                self._speaker.stream(
-                    turn_id=turn_id,
-                    speaker_input=speaker_input_with_opener,
-                    correlation_id=self._correlation_id,
-                    tenant_id=self._tenant_id,
-                ),
+            handle = await self._speaker.stream(
+                turn_id=turn_id,
+                speaker_input=speaker_input,
+                correlation_id=self._correlation_id,
+                tenant_id=self._tenant_id,
             )
-
-            # Play the opener (text + cached audio if available, text-only
-            # TTS as a fallback). Skip entirely when this kind has no
-            # opener variants (deliver_first_question).
-            cache_hit = False
-            if opener.text is not None:
-                say_kwargs: dict[str, Any] = {
-                    "text": opener.text,
-                    "allow_interruptions": True,
-                    "add_to_chat_ctx": True,
-                }
-                if opener.audio_iter is not None:
-                    say_kwargs["audio"] = opener.audio_iter()
-                    cache_hit = True
-                opener_handle = await agent.session.say(**say_kwargs)
-                # Wait for opener playback to complete before piping
-                # the Speaker content. Small audible gap (~150-300ms)
-                # between the two say() calls is acceptable for v1.
-                if opener_handle is not None and hasattr(opener_handle, "wait_for_playout"):
-                    try:
-                        await opener_handle.wait_for_playout()
-                    except Exception:  # noqa: BLE001
-                        # Mocks may not implement wait_for_playout cleanly; in
-                        # production this is a real playout failure (room close
-                        # mid-opener, TTS stall). Continue anyway so the Speaker
-                        # content still gets piped — but surface the failure so
-                        # it's diagnosable.
-                        _log.warning(
-                            "opener.playout_wait_failed",
-                            turn_id=turn_id,
-                            opener_text=opener.text[:40] if opener.text else None,
-                        )
-                self._recent_openers.append(opener.text)
-
-                from app.modules.interview_engine.event_kinds import SPEAKER_OPENER_PLAYED
-                from app.modules.interview_engine.audit_events import SpeakerOpenerPlayedPayload
-                self._append(SPEAKER_OPENER_PLAYED, SpeakerOpenerPlayedPayload(
-                    turn_id=turn_id,
-                    instruction_kind=speaker_input.instruction_kind.value,
-                    sub_context=sub_ctx.value,
-                    opener_text=opener.text,
-                    cache_hit=cache_hit,
-                    is_session_intro=is_session_intro,
-                ).model_dump())
-
-            # Speaker LLM result — kicked off above, may already be done.
-            handle = await speaker_task
             stream = handle.stream()
             speech_handle = await agent.session.say(
                 stream, allow_interruptions=True, add_to_chat_ctx=True,
             )
-            # Capture the wall-clock at which the body's audio playback was
-            # scheduled with LiveKit. Used by the pre-body coalescing gate
-            # (see ``_should_coalesce``) to detect candidate utterances
-            # that ended before the body became audible. This is the
+            # Wall-clock at which the body's audio playback was scheduled
+            # with LiveKit. Used by the pre-body coalescing gate (see
+            # ``_should_coalesce``) to detect candidate utterances that
+            # ended before the body became audible. This is the
             # scheduling time, not the first-audio-frame time — TTS TTFB
-            # (~200-500ms) means actual audio plays slightly later, which
-            # makes the discriminator conservative in the safe direction
-            # (a candidate utterance that ended before scheduling could
-            # never have been a response to the body).
+            # (~200-500ms) means actual audio plays slightly later,
+            # which makes the discriminator conservative in the safe
+            # direction.
             body_started_wall_at = time.time()
             final_text = await handle.final_text()
 
             if not final_text.strip():
-                # Phase 9.4 — distinguish "candidate interrupted before
-                # the LLM produced output" (don't talk back over them)
-                # from "true empty output" (play a deterministic
-                # fallback). LiveKit's SpeechHandle.interrupted is the
-                # signal: True means the candidate's voice cancelled
-                # the in-flight TTS pipeline mid-stream, which also
-                # cancels the upstream LLM stream we were consuming.
+                # Distinguish "candidate interrupted before the LLM
+                # produced output" (don't talk back over them) from
+                # "true empty output" (play a deterministic fallback).
+                # LiveKit's SpeechHandle.interrupted is the signal: True
+                # means the candidate's voice cancelled the in-flight
+                # TTS pipeline mid-stream, which also cancels the
+                # upstream LLM stream we were consuming.
                 if _was_interrupted(speech_handle):
-                    _interrupted_text = await self._handle_interrupted_speaker(
+                    interrupted_text = await self._handle_interrupted_speaker(
                         turn_id=turn_id,
                         speaker_input=speaker_input, handle=handle,
                     )
                     return _SpeakerStreamOutcome(
-                        final_text=_interrupted_text,
+                        final_text=interrupted_text,
                         interrupted=True,
-                        sub_context=sub_ctx.value,
+                        sub_context=sub_context,
                         body_started_wall_at=None,
                     )
-                _empty_text = await self._handle_empty_speaker_output(
+                empty_text = await self._handle_empty_speaker_output(
                     agent=agent, turn_id=turn_id,
                     speaker_input=speaker_input, handle=handle,
                 )
                 return _SpeakerStreamOutcome(
-                    final_text=_empty_text,
+                    final_text=empty_text,
                     interrupted=False,
-                    sub_context=sub_ctx.value,
+                    sub_context=sub_context,
                     body_started_wall_at=None,
                 )
 
@@ -1329,9 +1224,9 @@ class InterviewOrchestrator:
                 turn_id=turn_id, final_utterance=final_text,
             ).model_dump())
 
-            # Phase 9.9 — register_agent_utterance is now transcript-only;
-            # register_agent_question_for_repeat does the cache update with
-            # the empty-text + non-question-kind guards.
+            # register_agent_utterance is transcript-only;
+            # register_agent_question_for_repeat does the cache update
+            # with the empty-text + non-question-kind guards.
             self._state.register_agent_utterance(
                 turn_id=turn_id, text=final_text,
                 instruction_kind=speaker_input.instruction_kind,
@@ -1343,21 +1238,11 @@ class InterviewOrchestrator:
             return _SpeakerStreamOutcome(
                 final_text=final_text,
                 interrupted=False,
-                sub_context=sub_ctx.value,
+                sub_context=sub_context,
                 body_started_wall_at=body_started_wall_at,
             )
 
         except Exception as exc:
-            # Cancel the in-flight Speaker LLM call if the opener path errored
-            # before we reached `await speaker_task`. Without this the task is
-            # orphaned: it keeps running, costs tokens, and Python 3.11+ logs
-            # "Task exception was never retrieved" to stderr.
-            if "speaker_task" in locals() and not speaker_task.done():
-                speaker_task.cancel()
-                try:
-                    await speaker_task
-                except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                    pass
             from app.modules.interview_engine.event_kinds import SPEAKER_ERROR
             from app.modules.interview_engine.audit_events import SpeakerErrorPayload
             self._append(SPEAKER_ERROR, SpeakerErrorPayload(
@@ -1370,8 +1255,8 @@ class InterviewOrchestrator:
                 self._RECOVERY_TEXT,
                 allow_interruptions=True, add_to_chat_ctx=False,
             )
-            # Cache intentionally NOT updated here (Phase 9.9 contract) —
-            # _RECOVERY_TEXT is a generic apology, not the question.
+            # Cache intentionally NOT updated — _RECOVERY_TEXT is a
+            # generic apology, not the question.
             self._state.register_agent_utterance(
                 turn_id=turn_id, text=self._RECOVERY_TEXT,
                 instruction_kind=speaker_input.instruction_kind,
@@ -1379,7 +1264,7 @@ class InterviewOrchestrator:
             return _SpeakerStreamOutcome(
                 final_text=self._RECOVERY_TEXT,
                 interrupted=False,
-                sub_context=sub_ctx.value,
+                sub_context=sub_context,
                 body_started_wall_at=None,
             )
 
@@ -1578,9 +1463,9 @@ class InterviewOrchestrator:
 
         ``speaker_emitted_content`` is True iff the Speaker produced
         non-whitespace output AND was not interrupted — i.e., the candidate
-        actually heard a body, not just an opener. Cache-replay branches
-        (``repeat``) pass the cached utterance as ``final_text`` with
-        ``interrupted=False``, so they correctly count as delivered.
+        actually heard the agent. Cache-replay branches (``repeat``) pass
+        the cached utterance as ``final_text`` with ``interrupted=False``,
+        so they correctly count as delivered.
 
         ``body_started_wall_at`` is the wall-clock timestamp when the body
         audio was scheduled with LiveKit, or ``None`` when no body played

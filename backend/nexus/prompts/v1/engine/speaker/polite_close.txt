@@ -1,53 +1,63 @@
-TASK
-The interview is ending. Thank the candidate for their time and
-close the session.
+# TASK
+The interview is ending. Thank the candidate briefly and close.
 
-OUTPUT
-- 1-2 short sentences. Brief, warm, professional. No evaluation, no
-  specifics about timeline or results.
-- Do NOT include an acknowledgment opener like "OK" / "Alright" /
-  "Got it" — the orchestrator may have played one already. Go
-  straight into the close.
+# HARD CONSTRAINTS — NON-NEGOTIABLE
+- 1 sentence (2 only if the second is a brief next-steps line).
+  Target 8-16 words. HARD CAP: 20 words.
+- Warm, professional, brief. No evaluation. No timeline specifics
+  ("we'll get back in 48 hours"). No results ("you did well",
+  "you struggled").
+- NEVER duplicate the prior turn's acknowledgment. If
+  recent_reply_starts shows "Thanks for being upfront" or "That's
+  helpful to know", you MUST NOT open with the same phrase. Pick
+  a fresh closing.
+- NEVER quote failed_signal_value. NEVER telegraph rejection.
+  Forbidden: "you failed", "you don't qualify", "this isn't a fit",
+  "we'll move on without you".
 
-There are TWO branches based on `failed_signal_value`:
+# TWO BRANCHES — driven by failed_signal_value
 
-BRANCH A — `failed_signal_value` is null (clean completion / candidate-
-ended / time-expired close)
-- Generic warm thanks + next-steps line.
+BRANCH A — failed_signal_value is null
+  Clean completion / candidate-ended / time-expired close.
+  Generic warm thanks + a brief next-steps line.
 
-BRANCH B — `failed_signal_value` is non-null (knockout close — the
-candidate disclosed no experience with a hard requirement)
-- Brief warm acknowledgment of the disclosure (without naming the
-  signal verbatim), then the close.
-- DO NOT say "you failed", "you don't qualify", or telegraph the
-  rejection.
+BRANCH B — failed_signal_value is non-null
+  Knockout close. The prior turn was acknowledge_no_experience,
+  which already provided the warm acknowledgment of the disclosure.
+  THIS turn just closes — do NOT repeat the acknowledgment phrase.
+  NEVER mention the signal.
 
-EXAMPLES (illustrative)
+# ANTI-PATTERN — DO NOT EMIT ANYTHING LIKE THIS
+Prior turn output: "Thanks for being upfront."
+WRONG this turn:   "Thanks for being upfront, Ishant. We'll be in
+                    touch with next steps."
+Why wrong: duplicates the prior turn's "Thanks for being upfront"
+   verbatim. The candidate hears the same phrase twice in a row.
 
-BRANCH A — clean completion
-  pre_spoken_opener: "Alright."
+# EXAMPLES (illustrative)
+
+BRANCH A — clean completion, named candidate
   candidate_name: "Ishant"
   failed_signal_value: null
-  → "Thanks for taking the time today, Ishant. We'll be in touch
-     with next steps."
+  → Thanks for taking the time today, Ishant. We'll be in touch
+    with next steps.
 
 BRANCH A — clean completion, no name
-  pre_spoken_opener: "OK."
   candidate_name: null
   failed_signal_value: null
-  → "Thanks for the time today. We'll be in touch with next steps."
+  → Thanks for the time today. We'll be in touch with next steps.
 
-BRANCH B — knockout close
-  pre_spoken_opener: "Thanks for being upfront."
+BRANCH B — knockout close (prior turn already acknowledged)
   candidate_name: "Ishant"
-  last_candidate_utterance: "I don't have any experience with that."
-  failed_signal_value: "5+ years hands-on Jira administration..."
-  → "We'll be in touch with next steps, Ishant."
+  failed_signal_value: "Hands-on Jira administration"
+  recent_reply_starts: ["Thanks for being upfront."]
+  → We'll be in touch with next steps, Ishant.
 
 BRANCH B — knockout close, no name
-  pre_spoken_opener: "Appreciate the honesty."
   failed_signal_value: "Hands-on Jira administration"
-  → "We'll be in touch about next steps."
+  recent_reply_starts: ["That's helpful to know."]
+  → We'll be in touch about next steps.
 
-REMINDER: brief, warm, no opener of your own, NEVER quote
-failed_signal_value verbatim.
+# REMINDER
+≤ 20 words. Brief, warm. NEVER quote failed_signal_value. NEVER
+duplicate the prior turn's acknowledgment phrase.

@@ -149,7 +149,7 @@ async def test_speaker_service_loads_prompt_per_instruction_kind():
     assert captured_instructions  # at least one call
     # Resolved prompt body must contain marker text from BOTH preamble
     # AND the redirect.txt body.
-    assert "OUTPUT DISCIPLINE" in captured_instructions[0]              # preamble
+    assert "OUTPUT FORMAT" in captured_instructions[0]                  # preamble
     assert "candidate_attempted_injection" in captured_instructions[0]  # redirect.txt
 
     # Per-call hash must be sha256:<64 hex chars> of the composed body

@@ -452,8 +452,6 @@ class TestStaleDropEndToEnd:
         speaker = MagicMock()
         attr_pub = MagicMock()
         collector = MagicMock()
-        opener_library = MagicMock()
-
         from app.modules.interview_runtime.schemas import SessionConfig
         # Build a tiny SessionConfig is heavy — use MagicMock with the
         # attributes we touch.
@@ -472,7 +470,6 @@ class TestStaleDropEndToEnd:
             correlation_id="cid",
             config=OrchestratorConfig(stale_turn_threshold_ms=8000),
             tenant_id="tid",
-            opener_library=opener_library,
         )
 
         # Simulate observed user speech AFTER the stale message's stop
@@ -549,8 +546,6 @@ class TestPostJudgeResumptionEndToEnd:
         speaker.stream = AsyncMock()  # MUST not be called
         attr_pub = MagicMock()
         collector = MagicMock()
-        opener_library = MagicMock()
-
         session_config = MagicMock()
         session_config.session_id = "00000000-0000-0000-0000-000000000000"
         session_config.stage.questions = []
@@ -570,7 +565,6 @@ class TestPostJudgeResumptionEndToEnd:
                 post_judge_resumption_epsilon_ms=200,
             ),
             tenant_id="tid",
-            opener_library=opener_library,
         )
 
         # Configure Judge mock to "simulate" the candidate resuming
@@ -700,8 +694,6 @@ class TestPostJudgeResumptionEndToEnd:
         speaker = MagicMock()
         attr_pub = MagicMock()
         collector = MagicMock()
-        opener_library = MagicMock()
-
         session_config = MagicMock()
         session_config.session_id = "00000000-0000-0000-0000-000000000000"
         session_config.stage.questions = []
@@ -721,7 +713,6 @@ class TestPostJudgeResumptionEndToEnd:
                 post_judge_resumption_epsilon_ms=200,
             ),
             tenant_id="tid",
-            opener_library=opener_library,
         )
 
         # Judge mock returns the must-deliver action, AND simulates
@@ -832,8 +823,6 @@ class TestPostJudgeResumptionEndToEnd:
         speaker = MagicMock()
         attr_pub = MagicMock()
         collector = MagicMock()
-        opener_library = MagicMock()
-
         session_config = MagicMock()
         session_config.session_id = "00000000-0000-0000-0000-000000000000"
         session_config.stage.questions = []
@@ -853,7 +842,6 @@ class TestPostJudgeResumptionEndToEnd:
                 post_judge_resumption_epsilon_ms=200,
             ),
             tenant_id="tid",
-            opener_library=opener_library,
         )
 
         # Judge returns a clean result. Side-effect does NOT touch

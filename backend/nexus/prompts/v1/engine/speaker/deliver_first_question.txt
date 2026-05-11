@@ -1,59 +1,50 @@
-TASK
-The persona intro ("Hi, I'm {persona_name}. To start —") has ALREADY
-been spoken to the candidate as pre-cached audio (see PRE-SPOKEN OPENER
-in the preamble — pre_spoken_opener carries it). Compose ONLY the
-substantive question, rephrased from {bank_text} into the shortest,
-broadest open-ended form that still names the topic.
+# TASK
+Deliver the FIRST question of the session, rephrased from bank_text.
 
-OUTPUT (HARD CONSTRAINTS — non-negotiable)
-- ONE sentence. ≤ 20 words.
-- Pick up where the intro left off — go straight into the question.
-  Do NOT include another greeting; the candidate already heard one.
-- Use the broadest verb (design, configure, build, scale, refactor,
-  walk-through). Use the broadest object (the workflow, the deployment,
-  the schema). NEVER preserve "X or Y" verb/object lists from bank_text
-  — pick ONE.
-- NEVER enumerate sub-components, sub-systems, or evaluation criteria
-  from bank_text — those are for the candidate to surface, not for you
-  to seed (see ANTI-ENUMERATION in preamble).
+# HARD CONSTRAINTS — NON-NEGOTIABLE
+- ONE sentence. Target 12-20 words. HARD CAP: 22 words.
+- NO greeting. NO self-introduction. The candidate already knows the
+  session has started and who's interviewing them.
+- NO acknowledgment lead-in ("Got it", "OK", "Right") — there's
+  nothing to acknowledge yet. This is the first agent line.
+- Use the BROADEST verb (walk-through, design, configure, build,
+  scale, refactor). Use the BROADEST object (the workflow, the
+  deployment, the schema).
+- NEVER preserve "X or Y" verb/object lists from bank_text — pick ONE.
+- NEVER enumerate sub-components, sub-systems, or evaluation
+  criteria from bank_text. See ANTI-ENUMERATION in the preamble.
 
-ANTI-PATTERN — DO NOT emit anything like this
-Input: bank_text mentions "JIRA workflows including custom statuses,
-       transition rules, validators and post-functions"
-Wrong output: "Walk me through how you would design or refactor a JIRA
-              project to match a client workflow, and how you'd package
-              it as a reusable template."
-Why wrong: enumerated criteria ("design OR refactor", "package as
-           reusable template"), 31 words, two verbs, two objects.
+# ANTI-PATTERN — DO NOT EMIT ANYTHING LIKE THIS
+Input bank_text mentions: "JIRA workflows including custom statuses,
+   transition rules, validators and post-functions"
+WRONG: "Walk me through how you would design or refactor a JIRA
+   project to match a client workflow, and how you'd package it
+   as a reusable template."
+Why wrong:
+  • 31 words (over cap)
+  • "design OR refactor" (verb list)
+  • "package it as a reusable template" (seeds rubric criterion)
 
-EXAMPLES (illustrative — compose from actual inputs; do not copy)
+# EXAMPLES (illustrative — compose from actual inputs; do not copy)
 
 EXAMPLE 1
-Input:
-"""
-pre_spoken_opener: "Hi, I'm Sam. To start —"
-bank_text: "Walk me through how you've configured JIRA workflows in a past role, including custom statuses, transition rules, validators and post-functions."
-"""
-Output:
-walk me through a JIRA workflow you configured in a past role.
+  bank_text: "Walk me through how you've configured JIRA workflows
+     in a past role, including custom statuses, transition rules,
+     validators and post-functions."
+  → Walk me through a JIRA workflow you configured in a past role.
 
 EXAMPLE 2
-Input:
-"""
-pre_spoken_opener: "Hi, I'm Maya. To start —"
-bank_text: "Describe a time you scaled a Postgres database from a few thousand to a few million rows. What did you measure?"
-"""
-Output:
-tell me about a time you scaled a Postgres database into the millions of rows.
+  bank_text: "Describe a time you scaled a Postgres database from a
+     few thousand to a few million rows. What did you measure?"
+  → Tell me about a time you scaled a Postgres database into the
+    millions of rows.
 
 EXAMPLE 3
-Input:
-"""
-pre_spoken_opener: "Hi, I'm Sam. To start —"
-bank_text: "Tell me about your approach to designing a Kubernetes deployment for a high-availability service."
-"""
-Output:
-talk me through how you'd design a Kubernetes deployment for a high-availability service.
+  bank_text: "Tell me about your approach to designing a Kubernetes
+     deployment for a high-availability service."
+  → Talk me through how you'd design a Kubernetes deployment for a
+    high-availability service.
 
-REMINDER: ≤ 20 words. ONE sentence. NO greeting. NO enumeration.
-Compose from the broadest form of {bank_text}.
+# REMINDER
+≤ 22 words. ONE sentence. NO greeting. NO enumeration. Broadest form
+of bank_text.

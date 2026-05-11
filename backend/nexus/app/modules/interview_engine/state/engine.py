@@ -744,7 +744,7 @@ class StateEngine:
             if len(self._transcript) > self._RECENT_TURNS_WINDOW
             else self._transcript
         )
-        recent_openers = self._recent_agent_openers()
+        recent_starts = self._recent_reply_starts()
         return build_speaker_input(
             instruction_kind=instruction_kind,
             judge_output=judge_output,
@@ -755,38 +755,38 @@ class StateEngine:
             persona_name=self._persona_name(),
             last_candidate_utterance=candidate_utterance_text,
             candidate_name=self._cfg.candidate.name,
-            recent_agent_openers=recent_openers,
+            recent_reply_starts=recent_starts,
             is_post_cap_advance=is_post_cap_advance,
             closing_disclosure_signal=closing_disclosure_signal,
         )
 
-    # Q-1 (Phase 9.3) — number of recent agent utterances we extract opener
-    # slugs from. 3 covers the windowed-anti-repetition behavior without
-    # blowing prompt tokens. The Speaker uses these to vary its first
-    # 2-4 words across consecutive non-contextual replies.
-    _RECENT_OPENER_WINDOW: ClassVar[int] = 3
-    # Words per opener slug. 4 captures "I hear you,", "Let's stay focused",
+    # Anti-repetition signal: number of recent agent utterances we
+    # extract the first-words slug from. 3 covers windowed anti-repetition
+    # without blowing prompt tokens. The Speaker uses these to vary its
+    # first 2-4 words across consecutive non-contextual replies.
+    _RECENT_REPLY_WINDOW: ClassVar[int] = 3
+    # Words per slug. 4 captures "I hear you,", "Let's stay focused",
     # "Got it -" naturally without overfitting to specific phrasings.
-    _OPENER_WORD_COUNT: ClassVar[int] = 4
+    _REPLY_START_WORD_COUNT: ClassVar[int] = 4
 
-    def _recent_agent_openers(self) -> list[str]:
-        """Extract opener slugs from the last few agent utterances.
+    def _recent_reply_starts(self) -> list[str]:
+        """Extract first-N-words slugs from the last few agent utterances.
 
-        Returns the first ``_OPENER_WORD_COUNT`` whitespace-tokens of each
-        of the last ``_RECENT_OPENER_WINDOW`` agent transcript entries
-        (oldest -> newest order). Used as the SpeakerInput
-        ``recent_agent_openers`` payload for non-contextual kinds, where
+        Returns the first ``_REPLY_START_WORD_COUNT`` whitespace-tokens
+        of each of the last ``_RECENT_REPLY_WINDOW`` agent transcript
+        entries (oldest -> newest order). Used as the SpeakerInput
+        ``recent_reply_starts`` payload for non-contextual kinds, where
         the full ``recent_turns`` list is dropped to save tokens but the
-        Speaker still needs anti-repetition signal.
+        Speaker still needs an anti-repetition signal.
         """
         agent_turns = [t for t in self._transcript if t.role == "agent"]
-        recent = agent_turns[-self._RECENT_OPENER_WINDOW:]
+        recent = agent_turns[-self._RECENT_REPLY_WINDOW:]
         out: list[str] = []
         for entry in recent:
             words = entry.text.strip().split()
             if not words:
                 continue
-            slug = " ".join(words[:self._OPENER_WORD_COUNT])
+            slug = " ".join(words[:self._REPLY_START_WORD_COUNT])
             out.append(slug)
         return out
 

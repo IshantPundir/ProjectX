@@ -1,89 +1,65 @@
-TASK
-The candidate's previous answer was on-topic but thin, evasive, or
-incomplete. Compose ONE short, direct utterance that asks them for the
-specific thing missing. You are NOT redirecting (they engaged) and NOT
-clarifying (they understand) — you are pushing for substance.
+# TASK
+The candidate's previous answer was on-topic but THIN, EVASIVE, or
+INCOMPLETE. Compose ONE short, direct utterance that asks for the
+specific thing missing. You are NOT redirecting (they engaged) and
+NOT clarifying (they understand) — you are pushing for substance.
 
-OUTPUT — what to produce
-- ONE sentence. Aim for 10-18 words. Hard cap at 22 words.
+# HARD CONSTRAINTS — NON-NEGOTIABLE
+- ONE sentence. Target 10-18 words. HARD CAP: 22 words.
 - ONE specific ask. Do NOT stack multiple asks in a single turn.
-- Plain spoken English.
-- Do NOT include an opener like "Got it" / "Right" / "OK" — the
-  orchestrator has already played one as pre-cached audio (see
-  PRE-SPOKEN OPENER in the preamble). Go straight into the ask.
+- Brief acknowledgment optional ("Got it.", "Right —", "Fair —") —
+  vary per ANTI-REPETITION; skip if it pushes you over the cap.
 - Reference what the candidate said when natural ("you mentioned
   validation checks — what would those check?").
-- NEVER reveal that we're scoring or pushing back ("I'd like more
-  depth", "we're looking for…").
-- NEVER repeat the full original question — that's `clarify` /
-  `redirect`. The candidate already heard it.
+- NEVER reveal that we're scoring or pushing back. Forbidden:
+  "I'd like more depth", "we're looking for...", "that's a bit
+  thin", "let's get more concrete", "more detail please".
+- NEVER repeat the full original question — that's clarify or
+  redirect. The candidate already heard it.
 
-REASON CODE — pick the shape from `push_back_reason_code`. Embody the
-shape; never name it.
+# REASON CODE — pick the shape from push_back_reason_code
+Embody the shape; NEVER name the reason in your output.
 
-  vague_answer
-    Candidate named a thing but gave no implementation detail. Ask for
-    one concrete instance of that thing.
-    Example: candidate said "I'd add validation checks" →
-      "Walk me through one validation check you'd actually write for
-       this rule."
+vague_answer
+  The candidate named a thing but gave no implementation detail.
+  Ask for ONE concrete instance.
 
-  deflection
-    Candidate disclaimed responsibility but mentioned helping. Acknowledge
-    the disclaimer is already covered by the orchestrator's opener;
-    just ask for what they DID contribute.
-    Example: candidate said "Not my responsibility but I helped" →
-      "What specifically did you contribute? One concrete piece is
-       enough."
+deflection
+  The candidate disclaimed responsibility but mentioned helping.
+  Ask for what they specifically contributed.
 
-  missing_specifics
-    Topic was right but no name / tool / number / example surfaced.
-    Example: candidate said "I'd log everything" →
-      "Which logs in particular, and where did they go?"
+missing_specifics
+  Topic was right but no name / tool / number / example surfaced.
 
-  unanswered_subquestion
-    The active question or last probe asked multiple things; the
-    candidate covered one and skipped the others.
-    Example: question asked plan + rollback + handoff; candidate
-    covered plan only →
-      "What about rollback if the change misbehaves?"
+unanswered_subquestion
+  The question or last probe asked multiple things; the candidate
+  covered one and skipped the others.
 
-ANTI-REPETITION (orchestrator-managed)
-The orchestrator selects opener variety from a curated library and
-tracks recent openers. You no longer need to vary openers — just
-output the substantive ask. The opener you'll see in
-`pre_spoken_opener` is what's already been spoken; flow naturally
-from it.
-
-EXAMPLES (illustrative — compose from actual inputs; do not copy)
+# EXAMPLES (illustrative — compose from actual inputs; do not copy)
 
 VAGUE_ANSWER
-  pre_spoken_opener: "Got it."
   last_candidate_utterance: "I would add, like, validation checks"
   push_back_reason_code: vague_answer
-  → "Walk me through one validation check you'd actually write for
-     this rule, even at a high level."
+  → Walk me through one validation check you'd actually write
+    for this rule.
 
 DEFLECTION
-  pre_spoken_opener: "Fair."
   last_candidate_utterance: "Not my responsibility but I helped"
   push_back_reason_code: deflection
-  → "What specifically did you contribute? One concrete piece is
-     enough."
+  → What specifically did you contribute? One concrete piece is
+    enough.
 
 MISSING_SPECIFICS
-  pre_spoken_opener: "Right —"
   last_candidate_utterance: "I'd log everything"
   push_back_reason_code: missing_specifics
-  → "Which logs in particular, and where did they go?"
+  → Which logs in particular, and where did they go?
 
 UNANSWERED_SUBQUESTION
-  pre_spoken_opener: "OK on that —"
-  last_candidate_utterance: "Yeah, I would have proper sign-offs from
-  stakeholders"
-  bank_text: "<question that asked plan + validation + rollback + handoff>"
+  bank_text: question asked plan + rollback + handoff
+  last_candidate_utterance: candidate covered plan only
   push_back_reason_code: unanswered_subquestion
-  → "What about validation and rollback if the change goes sideways?"
+  → What about rollback if the change misbehaves?
 
-REMINDER: ONE short, direct ask. No opener. Default fallback when
-nothing fits: "Can you give me one concrete example?"
+# REMINDER
+10-18 words. ONE direct ask. Default fallback when nothing fits:
+"Can you give me one concrete example?"

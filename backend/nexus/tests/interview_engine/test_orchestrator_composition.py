@@ -57,7 +57,6 @@ from app.modules.interview_engine.models.judge import (
     CoverageTransition, JudgeOutput, NextAction, Observation, ProbePayload,
     RedirectPayload, RepeatPayload, TurnMetadata,
 )
-from app.modules.interview_engine.openers import OpenerLibrary
 from app.modules.interview_engine.orchestrator import (
     InterviewOrchestrator, OrchestratorConfig,
 )
@@ -200,7 +199,6 @@ def _build_orch(
         correlation_id="c",
         config=OrchestratorConfig(),
         tenant_id="t",
-        opener_library=OpenerLibrary(),
     )
     return orch, fake_agent
 
@@ -540,150 +538,6 @@ async def test_push_back_flows_end_to_end_and_increments_count_in_judge_input(
     )
 
 
-# ---------------------------------------------------------------------------
-# Phase 9.8 — opener prefetch full-session composition
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_opener_prefetch_full_session_caches_content_only_and_anti_repeats(
-    make_session_config, make_question,
-):
-    """Phase 9.8 composition test — drive a 4-turn session with real
-    StateEngine + OpenerLibrary + mocked Judge/Speaker. Assert:
-      * each turn plays an opener (where applicable) AND content;
-      * the repeat cache holds ONLY content (no opener prefix);
-      * recent_openers anti-repetition keeps cycling through variants;
-      * the SPEAKER_OPENER_PLAYED audit event fires per opener turn.
-    """
-    from app.modules.interview_engine.openers import OpenerLibrary
-    from app.modules.interview_engine.event_kinds import SPEAKER_OPENER_PLAYED
-    from app.modules.interview_engine.models.judge import (
-        JudgeOutput, NextAction, PushBackPayload,
-        TurnMetadata, ClarifyPayload, RepeatPayload,
-        Observation, CoverageTransition, CoverageQuality,
-    )
-
-    judge_outputs = [
-        # Turn 1: thin answer → push_back
-        JudgeOutput(
-            observations=[
-                Observation(
-                    signal_value="jira_admin", anchor_id=0,
-                    evidence_quote="proper validators",
-                    coverage_transition=CoverageTransition.partial_to_partial,
-                    quality=CoverageQuality.thin,
-                ),
-            ],
-            candidate_claims=[],
-            next_action=NextAction.push_back,
-            next_action_payload=PushBackPayload(reason_code="vague_answer"),
-            turn_metadata=TurnMetadata(),
-        ),
-        # Turn 2: another thin answer → push_back (different variant)
-        JudgeOutput(
-            observations=[
-                Observation(
-                    signal_value="jira_admin", anchor_id=0,
-                    evidence_quote="checks",
-                    coverage_transition=CoverageTransition.partial_to_partial,
-                    quality=CoverageQuality.thin,
-                ),
-            ],
-            candidate_claims=[],
-            next_action=NextAction.push_back,
-            next_action_payload=PushBackPayload(reason_code="vague_answer"),
-            turn_metadata=TurnMetadata(),
-        ),
-        # Turn 3: candidate confused → clarify
-        JudgeOutput(
-            observations=[], candidate_claims=[],
-            next_action=NextAction.clarify,
-            next_action_payload=ClarifyPayload(),
-            turn_metadata=TurnMetadata(),
-        ),
-        # Turn 4: candidate asks repeat → cached delivery (no Speaker)
-        JudgeOutput(
-            observations=[], candidate_claims=[],
-            next_action=NextAction.repeat,
-            next_action_payload=RepeatPayload(),
-            turn_metadata=TurnMetadata(),
-        ),
-    ]
-
-    speaker_outputs = [
-        # on_enter: deliver_first_question
-        "Hi, I'm Sam. Walk me through your Jira workflow design.",
-        # Turn 1: push_back content (no opener — the orchestrator played one)
-        "Walk me through one validation check you'd actually write.",
-        # Turn 2: push_back content
-        "Which specific transitions would you put it on?",
-        # Turn 3: clarify content
-        "Imagine a client wants you to set up a workflow with three stages.",
-        # Turn 4 is repeat (no Speaker call); skip.
-    ]
-
-    orch, agent = _build_orch(
-        make_session_config=make_session_config,
-        make_question=make_question,
-        scripted_judge_outputs=judge_outputs,
-        scripted_speaker_outputs=speaker_outputs,
-        knockout_signal="jira_admin",
-    )
-    # Inject a real OpenerLibrary (no audio cache; will fall back to
-    # text-only TTS, which is what the mocked agent expects anyway).
-    orch._opener_library = OpenerLibrary()
-
-    await orch.on_enter(agent)
-    await orch.on_user_turn_completed(
-        agent, MagicMock(), _msg("I would add validators"),
-    )
-    await orch.on_user_turn_completed(
-        agent, MagicMock(), _msg("Some checks"),
-    )
-    await orch.on_user_turn_completed(
-        agent, MagicMock(), _msg("Can you explain that?"),
-    )
-    await orch.on_user_turn_completed(
-        agent, MagicMock(), _msg("Can you repeat that question?"),
-    )
-
-    state = orch._state
-
-    # ----- Cache contains ONLY Speaker content (no opener prefix). -----
-    cache_values = list(state._question_utterances.values())
-    for cached in cache_values:
-        assert "Got it" not in cached, (
-            f"Opener prefix leaked into cache: {cached!r}"
-        )
-        assert "Right —" not in cached
-        assert "OK." not in cached.split(". ")[0] or len(cached) > 50
-
-    # ----- SPEAKER_OPENER_PLAYED fired for non-first-question turns. -----
-    opener_events = [
-        e for e in orch._collector.events
-        if e.kind == SPEAKER_OPENER_PLAYED
-    ]
-    # turns 1 (push_back), 2 (push_back), 3 (clarify), 4 (repeat) = 4
-    # Note: turn 0 (deliver_first_question) skips the opener path.
-    assert len(opener_events) >= 3
-
-    # ----- Anti-repetition: openers vary across consecutive same-context turns. -----
-    push_back_openers = [
-        e.payload["opener_text"] for e in opener_events
-        if e.payload["instruction_kind"] == "push_back"
-    ]
-    if len(push_back_openers) >= 2:
-        # Two consecutive push_back/vague_answer turns must NOT use the
-        # same opener (deque(maxlen=5) excludes the just-used variant).
-        assert push_back_openers[0] != push_back_openers[1], (
-            "Anti-repetition failed: two consecutive same-context openers"
-        )
-
-
-# ---------------------------------------------------------------------------
-# Phase 9.9 — silent-agent disaster: interrupted push_back, then repeat
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -698,14 +552,14 @@ async def test_repeat_after_interrupted_push_back_replays_prior_question_not_emp
       Turn 1 (push_back): Speaker LLM interrupted before any output → cache untouched
       Turn 2 (repeat):    SPEAKER_CACHED replays the Q1 text, NOT ""
 
-    The interrupt is simulated via a content-vs-opener discriminator on
-    ``agent.session.say``: opener calls pass ``text=`` as a keyword arg
-    (or a string as the first positional arg); content calls pass an
-    AsyncIterable as the first positional arg. The discriminator tracks
-    content-call count and returns ``interrupted=True`` only for the
-    SECOND content call (the push_back content).
+    The interrupt is simulated by returning ``interrupted=True`` from
+    ``agent.session.say`` on the SECOND call (the push_back body). With
+    the opener layer removed, every turn issues exactly ONE session.say
+    call, so discrimination is simply by call order: call 1 is
+    deliver_first_question (clean), call 2 is push_back (interrupted),
+    call 3 is the cached repeat replay.
 
-    Regression guard for the Phase 9.9 cache integrity contract:
+    Regression guard for the cache integrity contract:
     ``register_agent_question_for_repeat`` must NOT write empty text
     and ``_handle_interrupted_speaker`` must NOT update the cache.
     """
@@ -742,7 +596,7 @@ async def test_repeat_after_interrupted_push_back_replays_prior_question_not_emp
         # on_enter: deliver_first_question — the cached question text.
         "Walk me through your tool of choice.",
         # Turn 1 push_back — empty stream (combined with interrupted=True
-        # on the content say() return, simulates the LLM being cancelled
+        # on the body say() return, simulates the LLM being cancelled
         # before producing output).
         "",
     ]
@@ -754,34 +608,20 @@ async def test_repeat_after_interrupted_push_back_replays_prior_question_not_emp
         scripted_speaker_outputs=speaker_outputs,
         knockout_signal="S1",
     )
-    orch._opener_library = OpenerLibrary()
 
-    # Override agent.session.say to return interrupted=True ONLY for the
-    # push_back turn's content say() call (the second content call overall).
-    #
-    # Discrimination strategy (content vs opener / repeat):
-    #   • Opener calls:  say(text=<str>, ...)   — keyword-only text= kwarg
-    #   • Content calls: say(<AsyncIterable>, ...) — first positional arg is
-    #                    an async generator (NOT a str)
-    #   • Repeat calls:  say(<str>, ...)          — first positional arg IS a str
-    #
-    # So "is_content_call" iff the first positional arg exists and is NOT a str.
-    # We interrupt the SECOND content call (push_back content) to leave the
-    # first content call (deliver_first_question) uninterrupted so the cache
-    # is populated.
-    content_call_counter: dict[str, int] = {"n": 0}
+    # Override agent.session.say so call #2 (push_back body) returns
+    # interrupted=True. Call #1 (deliver_first_question body) and call
+    # #3 (cached repeat replay) return interrupted=False so the cache
+    # gets populated by call #1 and replayed by call #3.
+    call_counter: dict[str, int] = {"n": 0}
 
-    async def say_interrupt_second_content(*args: object, **kwargs: object) -> MagicMock:
-        first_arg = args[0] if args else None
-        is_content_call = first_arg is not None and not isinstance(first_arg, str)
-        if is_content_call:
-            content_call_counter["n"] += 1
-            if content_call_counter["n"] == 2:
-                # Push_back content: simulate candidate interrupted the stream.
-                return MagicMock(interrupted=True)
+    async def say_interrupt_second(*args: object, **kwargs: object) -> MagicMock:
+        call_counter["n"] += 1
+        if call_counter["n"] == 2:
+            return MagicMock(interrupted=True)
         return MagicMock(interrupted=False)
 
-    agent.session.say = AsyncMock(side_effect=say_interrupt_second_content)
+    agent.session.say = AsyncMock(side_effect=say_interrupt_second)
 
     await orch.on_enter(agent)
     await orch.on_user_turn_completed(
@@ -839,7 +679,6 @@ async def test_repeat_after_empty_speaker_output_replays_prior_question_not_fall
     fallback MUST NOT enter the repeat cache — it's a recovery utterance,
     not THE agent's question. Subsequent NextAction.repeat must replay
     the LAST GOOD question, not the fallback."""
-    from app.modules.interview_engine.openers import OpenerLibrary
     from app.modules.interview_engine.event_kinds import SPEAKER_CACHED
     from app.modules.interview_engine.models.judge import (
         JudgeOutput, NextAction, PushBackPayload, RepeatPayload,
@@ -881,7 +720,6 @@ async def test_repeat_after_empty_speaker_output_replays_prior_question_not_fall
         scripted_speaker_outputs=speaker_outputs,
         knockout_signal="S1",
     )
-    orch._opener_library = OpenerLibrary()
 
     # Note: NO override of agent.session.say. The default _build_orch
     # behavior returns interrupted=False for every say() call, which
@@ -910,77 +748,3 @@ async def test_repeat_after_empty_speaker_output_replays_prior_question_not_fall
     assert cached_events[0].payload["final_utterance"] == "Walk me through your tool of choice."
     # Importantly, NOT the fallback text.
     assert "Let me restate" not in cached_events[0].payload["final_utterance"]
-
-
-# ---------------------------------------------------------------------------
-# Phase 3 (closer) — intro_variant pre-spoken; repeat replays only question
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_first_question_repeat_replays_only_question_no_intro(
-    make_session_config, make_question,
-):
-    """Phase 3 composition test — drives a 2-turn session:
-      Turn 1 (on_enter): deliver_first_question
-              - intro pre-spoken via intro_variant
-              - Speaker emits ONLY the question content
-              - cache stores ONLY the question
-      Turn 2: NextAction.repeat
-              - SPEAKER_CACHED replays ONLY the question, NOT the intro
-    Bug B from session a998073a-3007-...: the intro got replayed on
-    every repeat, sounding robotic and confusing the candidate.
-    """
-    from app.modules.interview_engine.openers import OpenerLibrary, OpenerVariant
-    from app.modules.interview_engine.event_kinds import SPEAKER_CACHED
-    from app.modules.interview_engine.models.judge import (
-        JudgeOutput, NextAction, RepeatPayload, TurnMetadata,
-    )
-
-    judge_outputs = [
-        JudgeOutput(
-            observations=[], candidate_claims=[],
-            next_action=NextAction.repeat,
-            next_action_payload=RepeatPayload(),
-            turn_metadata=TurnMetadata(),
-        ),
-    ]
-    speaker_outputs = [
-        # on_enter: deliver_first_question — Speaker emits ONLY the
-        # question (intro is pre-spoken via intro_variant).
-        "Walk me through your tool of choice.",
-    ]
-
-    orch, agent = _build_orch(
-        make_session_config=make_session_config,
-        make_question=make_question,
-        scripted_judge_outputs=judge_outputs,
-        scripted_speaker_outputs=speaker_outputs,
-        knockout_signal="S1",
-    )
-    orch._opener_library = OpenerLibrary()
-    orch._intro_variant = OpenerVariant(text="Hi, I'm Sam. To start —")
-
-    await orch.on_enter(agent)
-    await orch.on_user_turn_completed(
-        agent, MagicMock(), _msg("Can you repeat that question?"),
-    )
-
-    state = orch._state
-
-    # The cache holds ONLY the question text — intro never enters the cache.
-    cache_values = list(state._question_utterances.values())
-    assert len(cache_values) == 1
-    assert cache_values[0] == "Walk me through your tool of choice."
-    assert "Hi, I'm Sam" not in cache_values[0]
-
-    # The repeat turn fired SPEAKER_CACHED with ONLY the question text.
-    cached_events = [
-        e for e in orch._collector.events
-        if e.kind == SPEAKER_CACHED
-    ]
-    assert len(cached_events) == 1
-    assert cached_events[0].payload["final_utterance"] == (
-        "Walk me through your tool of choice."
-    )
-    assert "Hi, I'm Sam" not in cached_events[0].payload["final_utterance"]

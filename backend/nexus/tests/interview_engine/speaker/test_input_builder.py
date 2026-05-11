@@ -407,22 +407,23 @@ def test_non_push_back_kinds_have_null_reason_code():
 
 
 # ---------------------------------------------------------------------------
-# Phase 9.3 — recent_agent_openers (Q-1) routing
+# recent_reply_starts — anti-repetition signal routing
 # ---------------------------------------------------------------------------
 
 
-def test_recent_agent_openers_threaded_for_non_contextual_kinds():
+def test_recent_reply_starts_threaded_for_non_contextual_kinds():
     """Non-contextual kinds (redirect / push_back / acknowledge_no_experience
     / polite_close) drop recent_turns to save tokens; in exchange they
-    receive recent_agent_openers so the Speaker can vary its opener."""
+    receive recent_reply_starts so the Speaker can vary its reply
+    opening across consecutive same-kind turns."""
     from app.modules.interview_engine.models.judge import (
-        ClarifyPayload, PoliteClosePayload, PushBackPayload,
+        PoliteClosePayload, PushBackPayload,
     )
     queue = QuestionQueue.from_initial(
         questions=[{"question_id": "q1", "is_mandatory": True, "follow_ups": []}],
     )
     queue.advance_to("q1", at_turn=0)
-    openers = ["I hear you,", "Got it, Ishant", "Sure, let's"]
+    starts = ["I hear you,", "Got it, Ishant", "Sure, let's"]
 
     cases = [
         (InstructionKind.redirect, NextAction.redirect, RedirectPayload()),
@@ -440,18 +441,18 @@ def test_recent_agent_openers_threaded_for_non_contextual_kinds():
             recent_turns=[],
             persona_name="Sam",
             last_candidate_utterance="x",
-            recent_agent_openers=openers,
+            recent_reply_starts=starts,
         )
-        assert s.recent_agent_openers == openers, (
-            f"{kind.value}: recent_agent_openers must be threaded through "
+        assert s.recent_reply_starts == starts, (
+            f"{kind.value}: recent_reply_starts must be threaded through "
             "for non-contextual kinds"
         )
 
 
-def test_recent_agent_openers_dropped_for_contextual_kinds():
+def test_recent_reply_starts_dropped_for_contextual_kinds():
     """Contextual kinds (deliver_*, clarify, deliver_probe) already see
-    recent_turns; threading openers there is redundant prompt bloat."""
-    from app.modules.interview_engine.models.judge import ClarifyPayload
+    recent_turns; threading reply-start slugs there is redundant prompt
+    bloat."""
     queue = QuestionQueue.from_initial(
         questions=[{"question_id": "q1", "is_mandatory": True, "follow_ups": ["FU-0"]}],
     )
@@ -466,10 +467,10 @@ def test_recent_agent_openers_dropped_for_contextual_kinds():
         recent_turns=[],
         persona_name="Sam",
         last_candidate_utterance="x",
-        recent_agent_openers=["Should not appear"],
+        recent_reply_starts=["Should not appear"],
     )
-    assert s.recent_agent_openers == [], (
-        "Contextual kind must NOT carry recent_agent_openers"
+    assert s.recent_reply_starts == [], (
+        "Contextual kind must NOT carry recent_reply_starts"
     )
 
 

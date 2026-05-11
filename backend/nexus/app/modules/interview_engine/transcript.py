@@ -5,13 +5,13 @@ Why this exists
 LiveKit's framework-level `chat_history` (the one surfaced in the LK
 Cloud dashboard) drops conversation items when `_tts_task_impl` returns
 early on interrupted/retried `session.say` calls — observed in session
-0931c162-2c0e-4581-8a20-1717dae4501b, where 2 agent bodies and 3 openers
+0931c162-2c0e-4581-8a20-1717dae4501b, where multiple agent utterances
 that demonstrably played (per OTel `agent_turn` spans with
 `interrupted=False`) never made it into the chat_history JSON.
 
-Our own engine audit envelope (`engine-events/<session_id>.json`) is the
-source of truth — it records every Speaker output, opener playback, and
-user STT final independently of the framework's pipeline. This module
+Our own engine audit envelope (`engine-events/<session_id>.json`) is
+the source of truth — it records every Speaker output and user STT
+final independently of the framework's pipeline. This module
 reconstructs a clean speaker-ordered transcript from those events for
 human review and downstream tooling (e.g., post-session reports, eval
 runs).
@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 TranscriptRole = Literal["agent", "user"]
-TranscriptKind = Literal["opener", "body", "repeat", "user_stt"]
+TranscriptKind = Literal["body", "repeat", "user_stt"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,16 +51,14 @@ class TranscriptItem:
     """One logical line in the rendered transcript.
 
     * ``role`` — "agent" or "user".
-    * ``kind`` — provenance signal: "opener" (Speaker opener that played),
-      "body" (Speaker body LLM output), "repeat" (cached-question replay),
-      "user_stt" (user STT final). Useful for filtering when building
-      analytics or human-review surfaces.
+    * ``kind`` — provenance signal: "body" (Speaker LLM output),
+      "repeat" (cached-question replay), "user_stt" (user STT final).
+      Useful for filtering when building analytics or human-review
+      surfaces.
     * ``text`` — what was said (already redacted by the upstream audit
       envelope according to its redaction_mode).
     * ``wall_ms`` — wall-clock timestamp from the source event.
-    * ``turn_id`` — the orchestrator turn this item belongs to. Multiple
-      transcript items can share a turn_id (e.g., opener + body) when
-      the orchestrator emitted both within one turn.
+    * ``turn_id`` — the orchestrator turn this item belongs to.
     """
     role: TranscriptRole
     kind: TranscriptKind
@@ -72,7 +70,6 @@ class TranscriptItem:
 # Event-kind constants. Duplicated here intentionally — this module
 # should be runnable as a CLI without dragging in audit_events.py's
 # import graph (which pulls Pydantic + module-public-API discipline).
-_KIND_OPENER_PLAYED = "speaker.opener.played"
 _KIND_SPEAKER_OUTPUT = "speaker.output"
 _KIND_SPEAKER_CACHED = "speaker.cached"
 _KIND_STT_TRANSCRIBED = "audio.stt.transcribed"
@@ -110,18 +107,7 @@ def render_transcript_from_envelope(
             continue
         # Skip empty-text items — they don't contribute to the
         # human-readable transcript.
-        if kind == _KIND_OPENER_PLAYED:
-            text = (payload.get("opener_text") or "").strip()
-            if not text:
-                continue
-            items.append(TranscriptItem(
-                role="agent",
-                kind="opener",
-                text=text,
-                wall_ms=wall_ms,
-                turn_id=payload.get("turn_id") or "",
-            ))
-        elif kind == _KIND_SPEAKER_OUTPUT:
+        if kind == _KIND_SPEAKER_OUTPUT:
             text = (payload.get("final_utterance") or "").strip()
             if not text:
                 continue

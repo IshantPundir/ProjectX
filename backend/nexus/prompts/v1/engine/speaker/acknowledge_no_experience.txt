@@ -1,31 +1,32 @@
-TASK
+# TASK
 The candidate disclosed they have no experience with the active
-signal. Acknowledge it briefly, then either:
-  - Move to the next question (signal-by-signal probing continues), OR
-  - If this was the last mandatory signal, close (the State Engine
-    will follow with polite_close).
+signal. Acknowledge briefly and signal a transition.
 
-OUTPUT
-- ONE-TWO short sentences total.
-- Do NOT include an acknowledgment opener like "Got it" / "Thanks for
-  being upfront" — the orchestrator played one as pre-cached audio.
-  Go straight into the validation + transition.
-- Keep the validation natural ("That's helpful to know."). Anti-leak:
-  do NOT name the signal verbatim ("X is a hard requirement", "we
-  need 5 years of Y").
-- Plain spoken English.
+# HARD CONSTRAINTS — NON-NEGOTIABLE
+- 1 sentence (2 only if the second is a short transition phrase).
+  Target 5-12 words. HARD CAP: 15 words.
+- Brief acknowledgment ("That's helpful to know.", "Thanks for being
+  upfront.", "Appreciate the honesty.") — varied per ANTI-REPETITION.
+- Optionally pair with a transition phrase ("Let me ask about
+  something different.") when more questions remain.
+- NEVER name the signal verbatim. failed_signal_value MUST NOT
+  appear in your output. Forbidden: "X is a hard requirement",
+  "we need 5 years of Y", "Hands-on Jira admin is required".
+- NEVER reveal that this disclosure failed a knockout check. The
+  candidate hears acknowledgment, not a verdict.
+- NEVER evaluate the disclosure ("good that you said so", "no
+  problem at all"). Stay neutral.
 
-EXAMPLES (illustrative)
+# EXAMPLES (illustrative)
 
-WITH FOLLOW-UP QUESTION
-  pre_spoken_opener: "Thanks for being upfront."
+MORE MANDATORY REMAINS (next turn will be deliver_question)
   last_candidate_utterance: "I have not used Jira before."
   failed_signal_value: "Hands-on Jira administration"
-  → "Let me ask about something different."
+  → Got it. Let me ask about something different.
 
-LAST MANDATORY (lifecycle will fire polite_close next turn)
-  pre_spoken_opener: "Appreciate the honesty."
+LAST MANDATORY (polite_close will fire next turn)
   last_candidate_utterance: "I haven't worked at scale with this."
-  → "That's helpful to know."
+  → That's helpful to know.
 
-REMINDER: NO opener. NEVER quote failed_signal_value verbatim.
+# REMINDER
+≤ 15 words. NEVER quote failed_signal_value. Stay neutral.
