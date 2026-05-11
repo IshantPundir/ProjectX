@@ -36,11 +36,20 @@ class SubContext(StrEnum):
 
 @dataclass
 class OpenerVariant:
-    """One opener phrase + its pre-synthesized audio.
+    """One opener phrase + optionally pre-synthesized audio.
 
-    ``audio_frames`` is populated by ``build_opener_cache`` at engine
-    startup. None means the cache wasn't built (or this variant failed
-    synthesis); the orchestrator falls back to text-only TTS for those.
+    ``audio_frames`` is ``None`` by default. When populated by
+    ``build_opener_cache``, the orchestrator can replay the cached PCM
+    frames directly instead of paying a TTS round-trip per turn. When
+    ``None``, the orchestrator falls back to live TTS via
+    ``session.say(text=...)``.
+
+    Current production state (2026-05-11): pre-synthesis is disabled in
+    ``agent.py`` while we debug session-start bugs and rate-limit
+    pressure on the TTS provider. ``audio_frames`` stays ``None`` for
+    every variant; the orchestrator's live-TTS fallback is the active
+    path. Re-enabling prewarm is a single-call-site change — see the
+    module-level comment in ``agent.py`` for the re-enable contract.
     """
     text: str
     audio_frames: list[rtc.AudioFrame] | None = None
@@ -198,8 +207,12 @@ _VOCABULARY: dict[tuple[InstructionKind, SubContext], list[str]] = {
 class OpenerLibrary:
     """Curated vocabulary + selection logic for opener prefetch.
 
-    Variants are mutable dataclasses — ``build_opener_cache`` populates
-    each variant's ``audio_frames`` field in place at engine startup.
+    Variants are mutable dataclasses. When prewarm is enabled,
+    ``build_opener_cache`` populates each variant's ``audio_frames``
+    field in place at engine startup. When prewarm is disabled (current
+    state, 2026-05-11), ``audio_frames`` stays ``None`` and
+    ``OpenerSelection.audio_iter`` returned by :meth:`pick` is ``None``,
+    routing the orchestrator to the live-TTS fallback path.
     """
 
     def __init__(self) -> None:
