@@ -175,3 +175,41 @@ def test_aiconfig_exposes_prewarm_concurrency(monkeypatch):
     monkeypatch.setenv("INTERVIEW_TTS_PREWARM_CONCURRENCY", "6")
     cfg = AIConfig()
     assert cfg.interview_tts_prewarm_concurrency == 6
+
+
+def test_settings_have_coalesce_fields():
+    """Coalescing-related Settings fields exist with sensible defaults."""
+    fields = Settings.model_fields
+    assert fields["engine_coalesce_enabled"].default is True
+    assert fields["engine_coalesce_window_ms"].default == 5000
+
+
+def test_settings_coalesce_window_rejects_below_one(monkeypatch):
+    import pytest
+    from pydantic import ValidationError
+    monkeypatch.setenv("ENGINE_COALESCE_WINDOW_MS", "0")
+    with pytest.raises(ValidationError, match=r"must be in \[1, 30000\]"):
+        Settings()
+
+
+def test_settings_coalesce_window_rejects_above_thirty_thousand(monkeypatch):
+    import pytest
+    from pydantic import ValidationError
+    monkeypatch.setenv("ENGINE_COALESCE_WINDOW_MS", "30001")
+    with pytest.raises(ValidationError, match=r"must be in \[1, 30000\]"):
+        Settings()
+
+
+def test_settings_coalesce_window_accepts_boundary_values(monkeypatch):
+    monkeypatch.setenv("ENGINE_COALESCE_WINDOW_MS", "1")
+    assert Settings().engine_coalesce_window_ms == 1
+    monkeypatch.setenv("ENGINE_COALESCE_WINDOW_MS", "30000")
+    assert Settings().engine_coalesce_window_ms == 30000
+
+
+def test_aiconfig_exposes_coalesce_fields(monkeypatch):
+    monkeypatch.setenv("ENGINE_COALESCE_ENABLED", "false")
+    monkeypatch.setenv("ENGINE_COALESCE_WINDOW_MS", "2500")
+    cfg = AIConfig()
+    assert cfg.engine_coalesce_enabled is False
+    assert cfg.engine_coalesce_window_ms == 2500

@@ -150,5 +150,14 @@ class AIConfig:
     def engine_speaker_model(self) -> str:
         return self._settings.engine_speaker_model
 
+    # Turn continuation coalescing (2026-05-11)
+    @property
+    def engine_coalesce_enabled(self) -> bool:
+        return self._settings.engine_coalesce_enabled
+
+    @property
+    def engine_coalesce_window_ms(self) -> int:
+        return self._settings.engine_coalesce_window_ms
+
 
 ai_config = AIConfig(settings)

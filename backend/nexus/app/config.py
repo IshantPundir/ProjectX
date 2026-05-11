@@ -298,6 +298,26 @@ class Settings(BaseSettings):
     engine_judge_prompt_version: str = "v1"
     engine_speaker_prompt_version: str = "v1"
 
+    # Continuation coalescing (Lever 3 for noisy-office multi-segment answers,
+    # 2026-05-11). When a new turn arrives within the window of the prior
+    # turn's TURN_COMPLETED AND the prior turn's Speaker did not deliver its
+    # body, the new turn's candidate text is prepended with the prior turn's
+    # text before the Judge call. State mutations from the prior turn are
+    # NOT reverted — only the user-utterance text is merged.
+    engine_coalesce_enabled: bool = True
+    # Generous safety net; the primary gate is whether the prior turn's
+    # Speaker delivered its body. Range [1, 30000] enforced at startup.
+    engine_coalesce_window_ms: int = 5000
+
+    @field_validator("engine_coalesce_window_ms")
+    @classmethod
+    def _coalesce_window_range(cls, v: int) -> int:
+        if not 1 <= v <= 30000:
+            raise ValueError(
+                f"engine_coalesce_window_ms must be in [1, 30000]; got {v}"
+            )
+        return v
+
     # Canned terminal message played to the candidate after the session
     # lifecycle has entered 'closing' or 'closed' (e.g. polite_close was
     # already delivered but the candidate keeps talking). The
