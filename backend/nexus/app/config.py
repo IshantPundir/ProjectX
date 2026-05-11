@@ -386,6 +386,38 @@ class Settings(BaseSettings):
     interview_tts_pace: float = 1.0
     interview_tts_temperature: float = 0.6
 
+    # ───────── TTS prewarm concurrency (provider-agnostic) ─────────
+    # Caps in-flight TTS synthesis calls during the per-worker-process
+    # opener-cache build (76 calls fired by build_opener_cache) and the
+    # per-session intro line (synth_one in agent.py). A single
+    # asyncio.Semaphore sized to this value is shared process-wide across
+    # all concurrent sessions, so a fleet of sessions starting on the
+    # same worker cannot collectively exceed the cap.
+    #
+    # Why: Sarvam's free / starter tier enforces a tight per-second rate
+    # limit (HTTP 429 from sarvam.ai/text-to-speech). Firing the cache
+    # build's 76-call gather() in one wave exceeds it deterministically;
+    # the framework's own 3× retry-on-429 just re-fires the same wave
+    # 2s later and fails again, leaving variants with audio_frames=None
+    # and forcing fallback to live per-turn TTS that ALSO trips the
+    # limit. Bounded concurrency turns the burst into ~ceil(76 / N)
+    # serial waves of N calls, which fits inside the rate-limit window.
+    #
+    # Default 4 is conservative; raise on production tiers with higher
+    # limits to reduce first-session warmup latency. Range [1, 16] is
+    # enforced — below 1 stalls forever, above 16 has no realistic
+    # provider where it pays off.
+    interview_tts_prewarm_concurrency: int = 4
+
+    @field_validator("interview_tts_prewarm_concurrency")
+    @classmethod
+    def _prewarm_concurrency_range(cls, v: int) -> int:
+        if not 1 <= v <= 16:
+            raise ValueError(
+                f"interview_tts_prewarm_concurrency must be in [1, 16]; got {v}"
+            )
+        return v
+
     # End-of-utterance confidence floor for the multilingual turn-detector
     # plugin. None lets the plugin's per-language tuned defaults (~0.3-0.5)
     # apply. Phase 2 P2.2 (2026-05-08) dropped the explicit 0.15 override:

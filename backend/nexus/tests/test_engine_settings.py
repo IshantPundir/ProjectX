@@ -132,3 +132,46 @@ def test_settings_default_to_sarvam_values():
     assert fields["interview_tts_model"].default == "bulbul:v3"
     assert fields["interview_tts_voice"].default == "shubh"
     assert fields["interview_tts_language"].default == "en-IN"
+
+
+def test_settings_tts_prewarm_concurrency_default_is_four():
+    """Conservative default cap on the opener-cache + intro TTS burst.
+
+    Sized to fit inside Sarvam's per-second rate-limit window on the
+    starter tier; production tiers with higher limits can raise this
+    via INTERVIEW_TTS_PREWARM_CONCURRENCY for faster first-session
+    warmup.
+    """
+    assert Settings.model_fields["interview_tts_prewarm_concurrency"].default == 4
+
+
+def test_settings_tts_prewarm_concurrency_rejects_below_one(monkeypatch):
+    """Validator rejects values < 1 (which would deadlock the cache build)."""
+    import pytest
+    from pydantic import ValidationError
+    monkeypatch.setenv("INTERVIEW_TTS_PREWARM_CONCURRENCY", "0")
+    with pytest.raises(ValidationError, match=r"must be in \[1, 16\]"):
+        Settings()
+
+
+def test_settings_tts_prewarm_concurrency_rejects_above_sixteen(monkeypatch):
+    """Validator rejects values > 16 (no realistic provider benefits)."""
+    import pytest
+    from pydantic import ValidationError
+    monkeypatch.setenv("INTERVIEW_TTS_PREWARM_CONCURRENCY", "17")
+    with pytest.raises(ValidationError, match=r"must be in \[1, 16\]"):
+        Settings()
+
+
+def test_settings_tts_prewarm_concurrency_accepts_boundary_values(monkeypatch):
+    """The [1, 16] interval is inclusive on both ends."""
+    monkeypatch.setenv("INTERVIEW_TTS_PREWARM_CONCURRENCY", "1")
+    assert Settings().interview_tts_prewarm_concurrency == 1
+    monkeypatch.setenv("INTERVIEW_TTS_PREWARM_CONCURRENCY", "16")
+    assert Settings().interview_tts_prewarm_concurrency == 16
+
+
+def test_aiconfig_exposes_prewarm_concurrency(monkeypatch):
+    monkeypatch.setenv("INTERVIEW_TTS_PREWARM_CONCURRENCY", "6")
+    cfg = AIConfig()
+    assert cfg.interview_tts_prewarm_concurrency == 6
