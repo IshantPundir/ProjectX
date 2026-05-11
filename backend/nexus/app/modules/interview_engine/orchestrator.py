@@ -162,6 +162,15 @@ class _PriorTurnSnapshot:
 
     Captured at end of each turn, read at the start of the next. See
     ``docs/superpowers/specs/2026-05-11-turn-continuation-coalescing-design.md``.
+
+    ``body_started_wall_at`` is the wall-clock timestamp (seconds since the
+    Unix epoch, ``time.time()`` units) at which the Speaker body's audio
+    playback was scheduled with LiveKit. It is ``None`` when no body played
+    on this turn — opener-only paths, interrupted/empty Speaker output, the
+    error-recovery branch, or the synthetic session-start turn. Used by the
+    pre-body coalescing gate to detect the case where the candidate
+    produced a continuation utterance BEFORE the agent's response was
+    audible (so the continuation cannot be a reply to it).
     """
     turn_id: str
     completed_monotonic: float
@@ -169,6 +178,46 @@ class _PriorTurnSnapshot:
     instruction_kind: str
     sub_context: str
     speaker_emitted_content: bool
+    body_started_wall_at: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _SpeakerStreamOutcome:
+    """Return shape for ``_stream_speaker_and_say``.
+
+    Named fields beat a 4-tuple at the call site — the prior-turn snapshot
+    capture is explicit about which value goes into which field of
+    ``_PriorTurnSnapshot``.
+    """
+    final_text: str
+    interrupted: bool
+    sub_context: str
+    body_started_wall_at: float | None
+
+
+# Judge actions whose response MUST be delivered to the candidate, even
+# if the candidate resumed speaking during the Judge LLM call. These are
+# explicit candidate-intent acknowledgements (or terminal states); silently
+# dropping them is catastrophic UX — the candidate is left hanging and
+# typically forced to re-issue the request.
+#
+# Diagnosed in session 11b3c321 (2026-05-11): the candidate said "I would
+# like to end this interview now.", Judge correctly returned end_session,
+# but the post-Judge resumption gate dropped the response because the
+# candidate had already started saying "End this interview now." (a
+# re-issue, because the agent hadn't yet acknowledged the first request).
+# The candidate had to say end twice.
+#
+# Source of truth for the action names: NextAction StrEnum in
+# ``app/modules/interview_engine/models/judge.py``. Values are checked
+# as strings (StrEnum compares equal to its string value), so the test
+# whitelist below stays in sync regardless of import-cycle concerns.
+_MUST_DELIVER_JUDGE_ACTIONS: frozenset[str] = frozenset({
+    "end_session",                # candidate asked to end
+    "polite_close",               # engine-initiated terminal close
+    "acknowledge_no_experience",  # candidate disclosed "I don't know"
+    "repeat",                     # candidate asked to hear the question again
+})
 
 
 # (instruction_kind, sub_context) pairs whose prior turn is eligible to be
@@ -209,35 +258,88 @@ def _should_coalesce(
     now_monotonic: float,
     coalesce_enabled: bool,
     coalesce_window_ms: int,
+    current_user_stopped_speaking_at: float | None = None,
+    last_user_speech_end_monotonic: float | None = None,
 ) -> _CoalesceDecision:
     """Pure decision function for Continuation Coalescing.
 
-    Returns ``_CoalesceDecision(should=True, reason="coalesced")`` when ALL of:
+    Two coalescing gates are evaluated. The first is the original
+    "Speaker did not deliver" path; the second handles the case where the
+    Speaker DID deliver a body but the candidate's new utterance ended
+    BEFORE that body became audible — they cannot have been responding
+    to it (root-cause for session 3a8ebdaa, turn 5 → turn 6).
 
-    * Coalescing is enabled (``coalesce_enabled=True``).
-    * A prior turn exists.
-    * The prior turn's Speaker did not successfully deliver its body
-      (``prior.speaker_emitted_content is False``).
-    * The gap from the prior turn's TURN_COMPLETED to now is strictly
-      less than ``coalesce_window_ms``.
-    * The prior turn's ``(instruction_kind, sub_context)`` is in
-      ``_COALESCIBLE_KINDS``.
+    The window check uses a **silence-aware reference**: when
+    ``last_user_speech_end_monotonic`` is more recent than
+    ``prior.completed_monotonic``, the gap is measured from the
+    candidate's most recent silence onset rather than from the prior
+    turn's completion. This keeps continuous-speech continuations
+    eligible even when the orchestrator's queue lag pushes the new
+    turn past ``coalesce_window_ms`` of the prior turn's completion
+    (root-cause for session 741c2910, turn 11 → turn 12: 12.5s
+    between turn boundaries, but only 0.5s of actual silence).
 
-    Otherwise returns ``should=False`` with a reason string identifying
-    which gate failed. The reason is consumed by audit logging and tests.
+    Returns ``_CoalesceDecision(should=True, ...)`` with reason ``"coalesced"``
+    or ``"coalesced_pre_body"`` when ALL gates pass. Otherwise returns
+    ``should=False`` with a reason string identifying which gate failed.
+    The reason is consumed by audit logging and tests.
+
+    Preconditions evaluated in order:
+
+    1. ``coalesce_enabled`` is True.
+    2. A ``prior`` snapshot exists.
+    3. Either:
+       a. ``prior.speaker_emitted_content`` is False — reason ``"coalesced"``, or
+       b. ``prior.speaker_emitted_content`` is True AND
+          ``prior.body_started_wall_at`` is not None AND
+          ``current_user_stopped_speaking_at`` is not None AND
+          ``current_user_stopped_speaking_at < prior.body_started_wall_at``
+          — reason ``"coalesced_pre_body"``.
+       Otherwise returns ``"speaker_delivered"``.
+    4. The gap from the window reference (the more recent of
+       ``prior.completed_monotonic`` and ``last_user_speech_end_monotonic``)
+       to ``now_monotonic`` is strictly less than ``coalesce_window_ms``.
+    5. The prior turn's ``(instruction_kind, sub_context)`` is in
+       ``_COALESCIBLE_KINDS``.
     """
     if not coalesce_enabled:
         return _CoalesceDecision(False, "disabled")
     if prior is None:
         return _CoalesceDecision(False, "no_prior_turn")
-    if prior.speaker_emitted_content:
+
+    # Gate 3 — Speaker-delivery discriminator. Computes the coalesce reason
+    # (or rejects) BEFORE evaluating the window / kind preconditions so the
+    # reason strings match the existing audit contract.
+    if not prior.speaker_emitted_content:
+        coalesce_reason = "coalesced"
+    elif (
+        prior.body_started_wall_at is not None
+        and current_user_stopped_speaking_at is not None
+        and current_user_stopped_speaking_at < prior.body_started_wall_at
+    ):
+        # Speaker delivered, but the candidate finished speaking before
+        # the body became audible — treat as continuation, not response.
+        coalesce_reason = "coalesced_pre_body"
+    else:
         return _CoalesceDecision(False, "speaker_delivered")
-    gap_ms = (now_monotonic - prior.completed_monotonic) * 1000
+
+    # Silence-aware window reference: prefer the candidate's most recent
+    # silence onset when it postdates the prior turn's completion. Strict
+    # ">" so that an equal timestamp falls back to the original semantic
+    # (no behavioral change at the boundary).
+    window_reference = prior.completed_monotonic
+    if (
+        last_user_speech_end_monotonic is not None
+        and last_user_speech_end_monotonic > prior.completed_monotonic
+    ):
+        window_reference = last_user_speech_end_monotonic
+
+    gap_ms = (now_monotonic - window_reference) * 1000
     if gap_ms >= coalesce_window_ms:
         return _CoalesceDecision(False, "window_expired")
     if (prior.instruction_kind, prior.sub_context) not in _COALESCIBLE_KINDS:
         return _CoalesceDecision(False, "kind_not_coalescible")
-    return _CoalesceDecision(True, "coalesced")
+    return _CoalesceDecision(True, coalesce_reason)
 
 
 @dataclass(slots=True)
@@ -258,6 +360,20 @@ class OrchestratorConfig:
     # docs/superpowers/specs/2026-05-11-turn-continuation-coalescing-design.md
     coalesce_enabled: bool = True
     coalesce_window_ms: int = 5000
+    # Stale-turn drop-and-drain — see _is_stale_turn and
+    # _buffer_dropped_text. When on_user_turn_completed fires with a
+    # fragment older than this threshold AND a more-recent silence
+    # onset has been observed, the text is buffered and the reply
+    # suppressed; the buffer drains into the next non-dropped turn.
+    stale_turn_threshold_ms: int = 8000
+    stale_buffer_max: int = 8
+    # Post-Judge resumption gate — see _user_resumed_speaking_after.
+    # Tolerance for the speech-resumption check that runs AFTER Judge
+    # returns and BEFORE Speaker. A listening→speaking transition
+    # observed within this window of the on_user_turn_completed entry
+    # is treated as the tail of the just-finished utterance, not a
+    # genuine new turn.
+    post_judge_resumption_epsilon_ms: int = 200
 
 
 class InterviewOrchestrator:
@@ -298,6 +414,33 @@ class InterviewOrchestrator:
         # Continuation coalescing — see _should_coalesce / _capture_prior_turn_snapshot.
         # Populated at end of each turn; consulted at the start of the next turn.
         self._last_turn: _PriorTurnSnapshot | None = None
+        # Silence-aware coalescing window reference. Tracks the wall-monotonic
+        # timestamp of the candidate's most recent speaking→listening
+        # transition (silence onset). Populated by ``observe_user_state``,
+        # which is wired from agent.py's session.user_state_changed listener.
+        # When more recent than the prior turn's completion timestamp,
+        # ``_should_coalesce`` uses it as the window reference so a
+        # continuously-talking candidate isn't fragmented across multiple
+        # un-coalesced turns by orchestrator queue lag.
+        self._last_user_speech_end_monotonic: float | None = None
+        # Wall-clock companion of the field above. Used by ``_is_stale_turn``
+        # to compare against ``new_message.metrics.stopped_speaking_at``
+        # (a wall-clock value) so we can detect "the candidate produced
+        # speech AFTER this fragment was sealed." Both clocks are updated
+        # together in ``observe_user_state`` so they stay consistent.
+        self._last_user_speech_end_wall: float | None = None
+        # Stale-turn drop buffer. Holds candidate texts that were dropped
+        # because they arrived past the staleness threshold; drained into
+        # the next non-dropped turn's candidate_text BEFORE the coalesce
+        # gate runs. List order is preservation-order (oldest first).
+        self._stale_buffer: list[str] = []
+        # Wall-clock timestamp of the candidate's most recent
+        # listening→speaking transition (i.e., "user resumed talking").
+        # Populated by ``observe_user_state`` and consulted by the
+        # post-Judge resumption gate to detect "the user started a new
+        # utterance while I was running Judge." See
+        # ``_user_resumed_speaking_after``.
+        self._resumed_speaking_at: float | None = None
         self._opener_library = opener_library
         self._intro_variant = intro_variant
         self._recent_openers: deque[str] = deque(maxlen=5)
@@ -351,6 +494,162 @@ class InterviewOrchestrator:
         if lifecycle_outcome is not None:
             return lifecycle_outcome.value
         return _map_livekit_close_reason(close_reason)
+
+    def observe_user_state(
+        self,
+        *,
+        new_state: str,
+        now_monotonic: float | None = None,
+        now_wall: float | None = None,
+    ) -> None:
+        """Record a candidate speech-state transition.
+
+        Updates three pieces of state, all load-bearing:
+
+        * ``_last_user_speech_end_monotonic`` (on ``"listening"``) —
+          referenced by the silence-aware coalescing window (compared
+          against ``prior.completed_monotonic``).
+        * ``_last_user_speech_end_wall`` (on ``"listening"``) —
+          referenced by stale-turn drop detection (compared against
+          ``new_message.metrics.stopped_speaking_at``, a wall-clock
+          value).
+        * ``_resumed_speaking_at`` (on ``"speaking"``) — referenced by
+          the post-Judge resumption gate. When a listening→speaking
+          transition is observed while the orchestrator is mid-Judge,
+          this timestamp drives the gate's "user started a new
+          utterance" decision.
+
+        Called from agent.py's ``user_state_changed`` event handler.
+        ``now_monotonic`` / ``now_wall`` default to ``time.monotonic()``
+        / ``time.time()`` so production callers don't need to capture
+        timestamps themselves; tests pass explicit values for
+        determinism.
+
+        Thread-safety: invoked on the same asyncio loop as
+        ``on_user_turn_completed``, so simple attribute writes are
+        race-free under Python's GIL semantics.
+        """
+        if new_state == "listening":
+            self._last_user_speech_end_monotonic = (
+                now_monotonic if now_monotonic is not None else time.monotonic()
+            )
+            self._last_user_speech_end_wall = (
+                now_wall if now_wall is not None else time.time()
+            )
+        elif new_state == "speaking":
+            self._resumed_speaking_at = (
+                now_wall if now_wall is not None else time.time()
+            )
+
+    def _is_stale_turn(
+        self,
+        *,
+        stopped_speaking_at: float | None,
+        now_wall: float | None = None,
+    ) -> bool:
+        """Decide whether a delivered user-turn is stale enough to drop.
+
+        Two preconditions must BOTH hold:
+
+        1. ``staleness_ms = (now_wall - stopped_speaking_at) * 1000``
+           strictly exceeds ``config.stale_turn_threshold_ms``.
+        2. ``_last_user_speech_end_wall`` is strictly more recent than
+           ``stopped_speaking_at`` — evidence that the candidate
+           produced speech AFTER this fragment was sealed, i.e. a
+           fresher turn is queued behind it.
+
+        Returns False (don't drop) when either signal is missing —
+        we'd rather over-process a fragment than drop a legitimate
+        user turn whose timestamps we couldn't observe.
+        """
+        if stopped_speaking_at is None:
+            return False
+        if self._last_user_speech_end_wall is None:
+            return False
+        if now_wall is None:
+            now_wall = time.time()
+        staleness_ms = (now_wall - stopped_speaking_at) * 1000
+        if staleness_ms <= self._config.stale_turn_threshold_ms:
+            return False
+        # Both timestamps are wall-clock seconds; the strict ">" semantics
+        # mirror _should_coalesce so equal timestamps do not flip the
+        # decision at the boundary.
+        return self._last_user_speech_end_wall > stopped_speaking_at
+
+    def _user_resumed_speaking_after(self, t_wall: float) -> bool:
+        """Was a listening→speaking transition observed STRICTLY after
+        ``t_wall + epsilon``?
+
+        Used by the post-Judge resumption gate: ``t_wall`` is the
+        wall-clock at which ``on_user_turn_completed`` entered; the gate
+        fires if the candidate started a new utterance during Judge
+        processing. The epsilon comes from
+        ``config.post_judge_resumption_epsilon_ms`` and tolerates
+        clock skew between LiveKit's ``stopped_speaking_at`` and our
+        own ``observe_user_state`` timing — a "resumption" within
+        epsilon of the callback fire is the tail of the just-finished
+        utterance, not a fresh turn.
+        """
+        if self._resumed_speaking_at is None:
+            return False
+        epsilon_s = self._config.post_judge_resumption_epsilon_ms / 1000.0
+        return self._resumed_speaking_at > t_wall + epsilon_s
+
+    def _buffer_dropped_text(
+        self,
+        *,
+        candidate_text: str,
+        turn_id: str,
+        stopped_speaking_at: float | None,
+        staleness_ms: int,
+    ) -> None:
+        """Append a dropped turn's text to ``_stale_buffer`` and emit
+        the ``turn.dropped`` audit event. Enforces the configured
+        ``stale_buffer_max`` cap by evicting the oldest entry FIFO.
+        """
+        from app.modules.interview_engine.audit_events import TurnDroppedPayload
+        from app.modules.interview_engine.event_kinds import TURN_DROPPED
+
+        self._stale_buffer.append(candidate_text)
+        while len(self._stale_buffer) > self._config.stale_buffer_max:
+            self._stale_buffer.pop(0)
+
+        self._append(TURN_DROPPED, TurnDroppedPayload(
+            turn_id=turn_id,
+            candidate_text=candidate_text,
+            stopped_speaking_at=stopped_speaking_at,
+            staleness_ms=staleness_ms,
+            buffer_size_after=len(self._stale_buffer),
+        ).model_dump())
+
+    def _drain_stale_buffer(
+        self,
+        *,
+        candidate_text: str,
+        current_turn_id: str,
+    ) -> str:
+        """Drain buffered stale texts (if any) into the front of
+        ``candidate_text``. Emits ``turn.drain_replayed`` and clears
+        the buffer. Returns the candidate text the coalesce gate
+        should then operate on.
+        """
+        if not self._stale_buffer:
+            return candidate_text
+
+        from app.modules.interview_engine.audit_events import TurnDrainReplayedPayload
+        from app.modules.interview_engine.event_kinds import TURN_DRAIN_REPLAYED
+
+        dropped_texts = list(self._stale_buffer)
+        combined = " ".join(dropped_texts + [candidate_text])
+        self._stale_buffer.clear()
+
+        self._append(TURN_DRAIN_REPLAYED, TurnDrainReplayedPayload(
+            current_turn_id=current_turn_id,
+            dropped_count=len(dropped_texts),
+            dropped_texts=dropped_texts,
+            combined_text=combined,
+        ).model_dump())
+        return combined
 
     # --- LiveKit lifecycle hooks ---
 
@@ -429,13 +728,66 @@ class InterviewOrchestrator:
             )
             return
 
+        # Wall-clock timestamp at which on_user_turn_completed fired.
+        # Captured up-front so the post-Judge resumption gate can ask
+        # "did the candidate start a new utterance AFTER we got the
+        # callback?" using a stable reference point. ``time.monotonic()``
+        # is not used here because we compare against
+        # ``_resumed_speaking_at``, which is a wall-clock value.
+        original_callback_wall = time.time()
+
+        # Wall-clock timestamp at which the candidate stopped speaking on
+        # this turn. LiveKit's ChatMessage exposes a ``metrics`` object
+        # (``AgentMetrics``) with ``stopped_speaking_at: float | None``.
+        # Both attribute lookups are defensive: some test mocks pass a
+        # plain object without a ``metrics`` attribute, and the framework
+        # itself can produce STT-edge cases where ``stopped_speaking_at``
+        # is None. Either way, the pre-body coalescing gate and the
+        # stale-turn drop detector degrade to safe defaults.
+        current_user_stopped_speaking_at = getattr(
+            getattr(new_message, "metrics", None),
+            "stopped_speaking_at",
+            None,
+        )
+
+        # Stale-turn drop-and-drain: if this fragment is older than
+        # ``stale_turn_threshold_ms`` AND we've observed a more recent
+        # silence onset, the orchestrator's queue is behind the
+        # candidate's real-time speech. Buffer the text and return
+        # early; the framework's `llm_node` override is a no-op so no
+        # reply plays. The buffer drains into the next non-dropped
+        # turn (see _drain_stale_buffer below).
+        if self._is_stale_turn(stopped_speaking_at=current_user_stopped_speaking_at):
+            dropped_turn_id = str(uuid.uuid4())
+            now_wall = time.time()
+            staleness_ms = int(
+                (now_wall - (current_user_stopped_speaking_at or now_wall)) * 1000
+            )
+            self._buffer_dropped_text(
+                candidate_text=candidate_text,
+                turn_id=dropped_turn_id,
+                stopped_speaking_at=current_user_stopped_speaking_at,
+                staleness_ms=staleness_ms,
+            )
+            return
+
         # Pre-generate turn_id so the coalesce-audit event references the
         # same value that TURN_STARTED will carry below.
         turn_id = str(uuid.uuid4())
+
+        # Drain any buffered stale fragments BEFORE the coalesce gate.
+        # The drain prepends them to candidate_text in original-drop
+        # order; coalescing then sees the merged text.
+        candidate_text = self._drain_stale_buffer(
+            candidate_text=candidate_text,
+            current_turn_id=turn_id,
+        )
+
         candidate_text = self._maybe_coalesce(
             current_turn_id=turn_id,
             candidate_text=candidate_text,
             now_monotonic=time.monotonic(),
+            current_user_stopped_speaking_at=current_user_stopped_speaking_at,
         )
         self._turn_index += 1
         elapsed_ms = self._elapsed_ms()
@@ -522,17 +874,57 @@ class InterviewOrchestrator:
         )
         self._append_judge_event(turn_id=turn_id, result=result)
 
+        # Post-Judge resumption gate. If the candidate produced a new
+        # listening→speaking transition WHILE Judge was running, the
+        # response we're about to commit is to the prior fragment — but
+        # the candidate has already moved on. Buffer the text and abort:
+        # no State Engine mutation, no Speaker call, no audio reply. The
+        # next on_user_turn_completed callback drains the buffer + new
+        # text and runs Judge on the merged input.
+        #
+        # EXCEPTION: when Judge's action is in ``_MUST_DELIVER_JUDGE_ACTIONS``,
+        # the response is an explicit candidate-intent acknowledgement
+        # (end_session, polite_close, acknowledge_no_experience, repeat)
+        # — silently dropping it would leave the candidate hanging and
+        # typically force them to re-issue the request. Deliver the
+        # response immediately and let the resumed speech become the
+        # next turn (which the framework will deliver after the close
+        # speech finishes or, for non-terminal actions, after the agent
+        # finishes speaking).
+        #
+        # The Judge audit event above is kept intentionally: the Judge
+        # ran, the LLM result exists, and it's forensically useful for
+        # replay tooling to see what Judge classified the stale text as
+        # before the orchestrator decided to abandon it.
+        judge_action = result.judge_output.next_action
+        is_must_deliver = (
+            str(judge_action) in _MUST_DELIVER_JUDGE_ACTIONS
+        )
+        if (
+            not is_must_deliver
+            and self._user_resumed_speaking_after(original_callback_wall)
+        ):
+            now_wall = time.time()
+            staleness_ms = int(
+                (now_wall - (current_user_stopped_speaking_at or now_wall)) * 1000
+            )
+            self._buffer_dropped_text(
+                candidate_text=candidate_text,
+                turn_id=turn_id,
+                stopped_speaking_at=current_user_stopped_speaking_at,
+                staleness_ms=staleness_ms,
+            )
+            return
+
         decision = self._state.process_judge_output(
             turn_id=turn_id, judge_output=result.judge_output,
             candidate_utterance_text=candidate_text, elapsed_ms=elapsed_ms,
         )
         self._append_validation_warnings(turn_id=turn_id, decision=decision)
 
-        # Variables populated in the repeat/stream branches below; used to
+        # Outcome populated by the repeat/stream branches below; used to
         # capture the prior-turn snapshot immediately before TURN_COMPLETED.
-        _snap_final_text: str = ""
-        _snap_interrupted: bool = False
-        _snap_sub_ctx: str = "default"
+        outcome: _SpeakerStreamOutcome
 
         if decision.speaker_input.instruction_kind == InstructionKind.repeat:
             from app.modules.interview_engine.event_kinds import SPEAKER_CACHED
@@ -541,22 +933,26 @@ class InterviewOrchestrator:
             await agent.session.say(
                 cached, allow_interruptions=True, add_to_chat_ctx=False,
             )
+            # Repeat branch: the cached utterance was just scheduled with
+            # LiveKit, so the body-playback wall-clock is now. The
+            # candidate hears this just like a freshly-streamed body, so
+            # the pre-body coalescing gate must see a non-None timestamp.
+            repeat_body_started_wall_at = time.time()
             self._append(SPEAKER_CACHED, SpeakerCachedPayload(
                 turn_id=turn_id, instruction_kind="repeat",
                 source_turn_id=decision.cached_source_turn_id or "",
                 final_utterance=cached,
             ).model_dump())
-            # Repeat branch: the candidate heard the cached utterance so it
-            # counts as delivered; sub_context for repeat is always "default".
-            _snap_final_text = cached
-            _snap_interrupted = False
-            _snap_sub_ctx = "default"
+            outcome = _SpeakerStreamOutcome(
+                final_text=cached,
+                interrupted=False,
+                sub_context="default",
+                body_started_wall_at=repeat_body_started_wall_at,
+            )
         else:
-            _snap_final_text, _snap_interrupted, _snap_sub_ctx = (
-                await self._stream_speaker_and_say(
-                    agent=agent, turn_id=turn_id,
-                    speaker_input=decision.speaker_input,
-                )
+            outcome = await self._stream_speaker_and_say(
+                agent=agent, turn_id=turn_id,
+                speaker_input=decision.speaker_input,
             )
 
         # Tick lifecycle elapsed-time so the published
@@ -582,9 +978,10 @@ class InterviewOrchestrator:
             completed_monotonic=time.monotonic(),
             candidate_text=candidate_text,
             instruction_kind=decision.speaker_input.instruction_kind.value,
-            sub_context=_snap_sub_ctx,
-            final_text=_snap_final_text,
-            interrupted=_snap_interrupted,
+            sub_context=outcome.sub_context,
+            final_text=outcome.final_text,
+            interrupted=outcome.interrupted,
+            body_started_wall_at=outcome.body_started_wall_at,
         )
 
         self._append(TURN_COMPLETED, TurnCompletedPayload(
@@ -758,15 +1155,25 @@ class InterviewOrchestrator:
 
     async def _stream_speaker_and_say(
         self, *, agent: Any, turn_id: str, speaker_input: Any,
-    ) -> tuple[str, bool, str]:
-        """Run the Speaker LLM + TTS pipeline and return a 3-tuple:
-        ``(final_text, interrupted, sub_ctx_value)`` so callers can capture
-        the prior-turn snapshot without re-deriving the sub-context.
+    ) -> _SpeakerStreamOutcome:
+        """Run the Speaker LLM + TTS pipeline.
 
-        ``final_text`` is the utterance actually produced (empty string for
-        interrupted or error paths). ``interrupted`` is True only when the
-        candidate's voice cancelled the in-flight TTS stream. ``sub_ctx_value``
-        is the ``SubContext.value`` string derived from ``speaker_input``.
+        Returns a :class:`_SpeakerStreamOutcome` so callers can capture the
+        prior-turn snapshot without re-deriving sub-context or scraping
+        timestamps from audit events. Field semantics:
+
+        * ``final_text`` — utterance actually produced (empty string for
+          interrupted, empty-output, or error paths).
+        * ``interrupted`` — True only when the candidate's voice cancelled
+          the in-flight body TTS stream.
+        * ``sub_context`` — the ``SubContext.value`` string derived from
+          ``speaker_input``.
+        * ``body_started_wall_at`` — wall-clock seconds (``time.time()``)
+          at the moment the body's TTS playback was scheduled with LiveKit
+          (``session.say(stream, ...)`` returned). ``None`` for code paths
+          that never reached body playback (opener-only paths,
+          ``_handle_interrupted_speaker``, ``_handle_empty_speaker_output``,
+          or the error-recovery branch).
         """
         # Phase 9.8 — opener prefetch architecture.
         # 1. Pick opener from library based on (kind, sub_context).
@@ -867,6 +1274,16 @@ class InterviewOrchestrator:
             speech_handle = await agent.session.say(
                 stream, allow_interruptions=True, add_to_chat_ctx=True,
             )
+            # Capture the wall-clock at which the body's audio playback was
+            # scheduled with LiveKit. Used by the pre-body coalescing gate
+            # (see ``_should_coalesce``) to detect candidate utterances
+            # that ended before the body became audible. This is the
+            # scheduling time, not the first-audio-frame time — TTS TTFB
+            # (~200-500ms) means actual audio plays slightly later, which
+            # makes the discriminator conservative in the safe direction
+            # (a candidate utterance that ended before scheduling could
+            # never have been a response to the body).
+            body_started_wall_at = time.time()
             final_text = await handle.final_text()
 
             if not final_text.strip():
@@ -882,12 +1299,22 @@ class InterviewOrchestrator:
                         turn_id=turn_id,
                         speaker_input=speaker_input, handle=handle,
                     )
-                    return (_interrupted_text, True, sub_ctx.value)
+                    return _SpeakerStreamOutcome(
+                        final_text=_interrupted_text,
+                        interrupted=True,
+                        sub_context=sub_ctx.value,
+                        body_started_wall_at=None,
+                    )
                 _empty_text = await self._handle_empty_speaker_output(
                     agent=agent, turn_id=turn_id,
                     speaker_input=speaker_input, handle=handle,
                 )
-                return (_empty_text, False, sub_ctx.value)
+                return _SpeakerStreamOutcome(
+                    final_text=_empty_text,
+                    interrupted=False,
+                    sub_context=sub_ctx.value,
+                    body_started_wall_at=None,
+                )
 
             self._append(SPEAKER_CALL, SpeakerCallPayload(
                 turn_id=turn_id, model="speaker",
@@ -913,7 +1340,12 @@ class InterviewOrchestrator:
                 turn_id=turn_id, text=final_text,
                 instruction_kind=speaker_input.instruction_kind,
             )
-            return (final_text, False, sub_ctx.value)
+            return _SpeakerStreamOutcome(
+                final_text=final_text,
+                interrupted=False,
+                sub_context=sub_ctx.value,
+                body_started_wall_at=body_started_wall_at,
+            )
 
         except Exception as exc:
             # Cancel the in-flight Speaker LLM call if the opener path errored
@@ -944,7 +1376,12 @@ class InterviewOrchestrator:
                 turn_id=turn_id, text=self._RECOVERY_TEXT,
                 instruction_kind=speaker_input.instruction_kind,
             )
-            return (self._RECOVERY_TEXT, False, sub_ctx.value)
+            return _SpeakerStreamOutcome(
+                final_text=self._RECOVERY_TEXT,
+                interrupted=False,
+                sub_context=sub_ctx.value,
+                body_started_wall_at=None,
+            )
 
     async def _handle_interrupted_speaker(
         self, *, turn_id: str, speaker_input: Any, handle: Any,
@@ -1054,10 +1491,21 @@ class InterviewOrchestrator:
         current_turn_id: str,
         candidate_text: str,
         now_monotonic: float,
+        current_user_stopped_speaking_at: float | None = None,
     ) -> str:
         """Apply Continuation Coalescing if eligible. Returns the candidate
         text the Judge should see — either ``candidate_text`` unchanged or
         the prior turn's text prepended.
+
+        ``current_user_stopped_speaking_at`` is the wall-clock timestamp at
+        which the candidate stopped speaking on this new turn, sourced from
+        LiveKit's ``ChatMessage.metrics.stopped_speaking_at``. Defaults to
+        ``None`` for callers (tests) that don't supply it; the pre-body
+        coalescing gate then degrades gracefully to the original behavior.
+
+        The silence-aware window reference is read from
+        ``self._last_user_speech_end_monotonic`` (populated by
+        :meth:`observe_user_state`).
 
         When coalescing fires:
         * Emits a ``turn.coalesced`` audit event with the full merge context.
@@ -1072,6 +1520,8 @@ class InterviewOrchestrator:
             now_monotonic=now_monotonic,
             coalesce_enabled=self._config.coalesce_enabled,
             coalesce_window_ms=self._config.coalesce_window_ms,
+            current_user_stopped_speaking_at=current_user_stopped_speaking_at,
+            last_user_speech_end_monotonic=self._last_user_speech_end_monotonic,
         )
         if not decision.should:
             return candidate_text
@@ -1081,6 +1531,15 @@ class InterviewOrchestrator:
         prior = self._last_turn
         assert prior is not None
         gap_ms = int((now_monotonic - prior.completed_monotonic) * 1000)
+        # silence_gap_ms is non-None ONLY when the silence-aware reference
+        # was load-bearing (i.e., more recent than the prior turn's
+        # completion). Otherwise the original gap_ms field tells the full
+        # story. This keeps the audit payload self-documenting about which
+        # reference was used without breaking the existing gap_ms semantic.
+        silence_gap_ms: int | None = None
+        last_silence = self._last_user_speech_end_monotonic
+        if last_silence is not None and last_silence > prior.completed_monotonic:
+            silence_gap_ms = int((now_monotonic - last_silence) * 1000)
         combined_text = prior.candidate_text + " " + candidate_text
 
         self._append(TURN_COALESCED, TurnCoalescedPayload(
@@ -1092,7 +1551,9 @@ class InterviewOrchestrator:
             prior_instruction_kind=prior.instruction_kind,
             prior_sub_context=prior.sub_context,
             gap_ms=gap_ms,
+            silence_gap_ms=silence_gap_ms,
             coalesce_window_ms=self._config.coalesce_window_ms,
+            reason=decision.reason,  # type: ignore[arg-type]
         ).model_dump())
 
         # Clear so a third fragment doesn't double-merge. The new turn's
@@ -1110,6 +1571,7 @@ class InterviewOrchestrator:
         sub_context: str,
         final_text: str,
         interrupted: bool,
+        body_started_wall_at: float | None,
     ) -> None:
         """Record the just-finished turn so the next turn can consult it for
         Continuation Coalescing.
@@ -1119,6 +1581,11 @@ class InterviewOrchestrator:
         actually heard a body, not just an opener. Cache-replay branches
         (``repeat``) pass the cached utterance as ``final_text`` with
         ``interrupted=False``, so they correctly count as delivered.
+
+        ``body_started_wall_at`` is the wall-clock timestamp when the body
+        audio was scheduled with LiveKit, or ``None`` when no body played
+        (interrupted/empty/error paths). Used by the pre-body coalescing
+        gate (see ``_should_coalesce``).
 
         See ``docs/superpowers/specs/2026-05-11-turn-continuation-coalescing-design.md``.
         """
@@ -1130,6 +1597,7 @@ class InterviewOrchestrator:
             instruction_kind=instruction_kind,
             sub_context=sub_context,
             speaker_emitted_content=delivered,
+            body_started_wall_at=body_started_wall_at,
         )
 
     def _append(self, kind: str, payload: dict) -> None:

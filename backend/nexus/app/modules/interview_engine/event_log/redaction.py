@@ -32,6 +32,8 @@ _ENGINE_PASSTHROUGH_KINDS: frozenset[str] = frozenset(
         "turn.started",
         "turn.completed",
         "turn.coalesced",
+        "turn.dropped",
+        "turn.drain_replayed",
         "judge.call",
         "judge.synthetic",
         "judge.fallback",

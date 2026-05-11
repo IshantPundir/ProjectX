@@ -28,9 +28,14 @@ class TurnCompletedPayload(BaseModel):
 
 class TurnCoalescedPayload(BaseModel):
     """Audit payload for a coalesced turn — the new turn's candidate text was
-    prepended with the prior turn's text before the Judge call because the
-    prior turn's Speaker did not deliver its body and the (instruction_kind,
-    sub_context) was eligible for coalescing.
+    prepended with the prior turn's text before the Judge call.
+
+    Two coalescing gates can fire (see ``_should_coalesce``):
+    * ``"coalesced"`` — the prior turn's Speaker did not deliver its body
+      (interrupted before / during body streaming, or empty Speaker output).
+    * ``"coalesced_pre_body"`` — the prior turn's Speaker DID deliver its
+      body, but the candidate's new utterance ended before that body became
+      audible, so it cannot be a reply to it.
 
     See ``docs/superpowers/specs/2026-05-11-turn-continuation-coalescing-design.md``.
     """
@@ -42,7 +47,43 @@ class TurnCoalescedPayload(BaseModel):
     prior_instruction_kind: str # InstructionKind.value as string
     prior_sub_context: str      # SubContext.value as string ("default" if none)
     gap_ms: int = Field(ge=0)   # ms between prior TURN_COMPLETED and this TURN_STARTED
+    # ms between the candidate's most recent silence onset and this TURN_STARTED.
+    # Non-None ONLY when the silence-aware window reference was load-bearing
+    # (i.e., more recent than prior TURN_COMPLETED). When None, gap_ms above
+    # tells the full window-check story.
+    silence_gap_ms: int | None = Field(default=None, ge=0)
     coalesce_window_ms: int = Field(ge=1, le=30000)  # config snapshot for audit clarity
+    reason: Literal["coalesced", "coalesced_pre_body"] = "coalesced"
+
+
+class TurnDroppedPayload(BaseModel):
+    """Audit payload for a stale-turn drop.
+
+    Fired when on_user_turn_completed receives a fragment whose
+    stopped_speaking_at is past the configured staleness threshold AND
+    a more-recent silence onset has been observed (evidence that a
+    fresher turn is queued behind this one). The text is buffered for
+    the next non-dropped turn; no Judge/Speaker call runs.
+    """
+    turn_id: str            # ID we would have used had we processed this
+    candidate_text: str     # the dropped fragment (redacted to length+hash in metadata mode)
+    stopped_speaking_at: float | None  # wall-clock when candidate stopped this fragment
+    staleness_ms: int = Field(ge=0)
+    buffer_size_after: int = Field(ge=1)
+
+
+class TurnDrainReplayedPayload(BaseModel):
+    """Audit payload for buffer drain into a non-dropped turn.
+
+    Fired on the next non-dropped turn when one or more buffered stale
+    texts are prepended to ``candidate_text`` BEFORE the coalesce gate
+    runs. Records the order and content of drained fragments so replay
+    tooling can reconstruct the merge sequence.
+    """
+    current_turn_id: str
+    dropped_count: int = Field(ge=1)
+    dropped_texts: list[str]  # in original drop order (oldest first)
+    combined_text: str        # final candidate_text the coalesce gate then sees
 
 
 # Judge

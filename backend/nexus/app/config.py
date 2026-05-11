@@ -318,6 +318,56 @@ class Settings(BaseSettings):
             )
         return v
 
+    # Stale-turn drop-and-drain (2026-05-11). When ``on_user_turn_completed``
+    # delivers a fragment whose stopped_speaking_at is older than this
+    # threshold AND a more-recent silence onset has been observed, the
+    # orchestrator buffers the text and returns early — no Judge/Speaker
+    # runs on the stale input. The buffer drains into the next non-dropped
+    # turn's candidate_text. Diagnosed in session 0931c162: framework
+    # queue lag of 8-25s caused the orchestrator to reply to ancient
+    # fragments while the candidate had already moved on.
+    engine_stale_turn_threshold_ms: int = 8000
+    # Defensive upper bound on buffer size. Each stale fragment is kept
+    # in memory until drained; the threshold above ensures this is rarely
+    # more than a few entries even under heavy lag, but cap it anyway.
+    engine_stale_buffer_max: int = 8
+    # Post-Judge resumption gate (2026-05-11, session 3eabb4d0). If the
+    # candidate produces a NEW listening→speaking transition during the
+    # Judge LLM call, the orchestrator drops the response (no Speaker, no
+    # State Engine mutations) and buffers the text for the next turn.
+    # The epsilon below tolerates clock skew between LiveKit's
+    # stopped_speaking_at and our observe_user_state timing — a
+    # resumption within `epsilon_ms` of the callback fire is treated as
+    # the tail of the just-finished utterance, not a genuine new turn.
+    engine_post_judge_resumption_epsilon_ms: int = 200
+
+    @field_validator("engine_stale_turn_threshold_ms")
+    @classmethod
+    def _stale_threshold_range(cls, v: int) -> int:
+        if not 1000 <= v <= 60000:
+            raise ValueError(
+                f"engine_stale_turn_threshold_ms must be in [1000, 60000]; got {v}"
+            )
+        return v
+
+    @field_validator("engine_stale_buffer_max")
+    @classmethod
+    def _stale_buffer_max_range(cls, v: int) -> int:
+        if not 1 <= v <= 64:
+            raise ValueError(
+                f"engine_stale_buffer_max must be in [1, 64]; got {v}"
+            )
+        return v
+
+    @field_validator("engine_post_judge_resumption_epsilon_ms")
+    @classmethod
+    def _post_judge_resumption_epsilon_range(cls, v: int) -> int:
+        if not 0 <= v <= 5000:
+            raise ValueError(
+                f"engine_post_judge_resumption_epsilon_ms must be in [0, 5000]; got {v}"
+            )
+        return v
+
     # Canned terminal message played to the candidate after the session
     # lifecycle has entered 'closing' or 'closed' (e.g. polite_close was
     # already delivered but the candidate keeps talking). The

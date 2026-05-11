@@ -1208,16 +1208,19 @@ async def test_empty_speaker_output_triggers_fallback(
     not_interrupted = MagicMock(interrupted=False)
     agent.session.say = AsyncMock(return_value=not_interrupted)
 
-    final_text = await orch._stream_speaker_and_say(
+    outcome = await orch._stream_speaker_and_say(
         agent=agent, turn_id="t1", speaker_input=speaker_input,
     )
 
     # Fallback content includes a restate of bank_text.
-    assert "Walk me through your Jira workflow." in final_text
+    assert "Walk me through your Jira workflow." in outcome.final_text
     # session.say was called with the fallback text.
     agent.session.say.assert_awaited()
     args, kwargs = agent.session.say.call_args
-    assert args[0] == final_text
+    assert args[0] == outcome.final_text
+    # Empty-output path did not reach body playback.
+    assert outcome.body_started_wall_at is None
+    assert outcome.interrupted is False
     # Audit event was emitted.
     audit_kinds = [e.kind for e in orch._collector.events]
     assert SPEAKER_OUTPUT_EMPTY in audit_kinds
@@ -1261,10 +1264,12 @@ async def test_empty_speaker_output_fallback_without_bank_text(
     # _handle_interrupted_speaker instead and return "".
     agent.session.say = AsyncMock(return_value=MagicMock(interrupted=False))
 
-    final_text = await orch._stream_speaker_and_say(
+    outcome = await orch._stream_speaker_and_say(
         agent=agent, turn_id="t2", speaker_input=speaker_input,
     )
-    assert final_text == "Could you take it from the top?"
+    assert outcome.final_text == "Could you take it from the top?"
+    assert outcome.body_started_wall_at is None  # empty-output path skips body
+    assert outcome.interrupted is False
 
 
 # ---------------------------------------------------------------------------
@@ -1313,12 +1318,17 @@ async def test_interrupted_speaker_does_not_play_fallback(
     interrupted_handle = MagicMock(interrupted=True)
     agent.session.say = AsyncMock(return_value=interrupted_handle)
 
-    final_text = await orch._stream_speaker_and_say(
+    outcome = await orch._stream_speaker_and_say(
         agent=agent, turn_id="t-int", speaker_input=speaker_input,
     )
 
     # Must NOT play the fallback (would talk over the candidate).
-    assert final_text == ""
+    assert outcome.final_text == ""
+    assert outcome.interrupted is True
+    # Interrupted path means the body was scheduled but cancelled — the
+    # coalesce snapshot stores None so the next turn's gate falls through
+    # to the existing speaker_emitted_content=False branch.
+    assert outcome.body_started_wall_at is None
     # session.say is called TWICE: once for the opener (redirect has
     # opener variants) and once for the content stream. No THIRD say
     # call for a fallback — the interrupted path suppresses it.
@@ -1568,12 +1578,18 @@ async def test_stream_speaker_plays_opener_then_content_and_caches_content_only(
     fake_agent = MagicMock()
     fake_agent.session.say = AsyncMock(return_value=MagicMock(interrupted=False))
 
-    final_text = await orch._stream_speaker_and_say(
+    outcome = await orch._stream_speaker_and_say(
         agent=fake_agent, turn_id="t-1", speaker_input=speaker_input,
     )
 
     # Speaker content was returned and stored in transcript.
-    assert final_text == "Walk me through one validation check you'd actually write."
+    assert outcome.final_text == "Walk me through one validation check you'd actually write."
+    # Body was scheduled (not interrupted, non-empty) — body_started_wall_at
+    # is populated. Exact value depends on time.time() at call time; assert
+    # only that the gate has a usable timestamp.
+    assert outcome.body_started_wall_at is not None
+    assert outcome.interrupted is False
+    final_text = outcome.final_text  # rebind for downstream legacy assertions
 
     # Cache for repeat replay holds ONLY the Speaker content.
     cached = state_engine._question_utterances.get("t-1")
@@ -1890,12 +1906,14 @@ async def test_orchestrator_uses_intro_variant_for_deliver_first_question(
     fake_agent = MagicMock()
     fake_agent.session.say = AsyncMock(return_value=MagicMock(interrupted=False))
 
-    final_text = await orch._stream_speaker_and_say(
+    outcome = await orch._stream_speaker_and_say(
         agent=fake_agent, turn_id="t-1", speaker_input=speaker_input,
     )
 
     # Speaker content (only the question) is what's returned and cached.
-    assert final_text == "Walk me through your tool."
+    assert outcome.final_text == "Walk me through your tool."
+    assert outcome.body_started_wall_at is not None
+    final_text = outcome.final_text  # rebind for downstream legacy assertions
     cache = state_engine._question_utterances.get("t-1")
     assert cache == "Walk me through your tool."
     assert "Hi, I'm Sam" not in cache  # intro is NOT in the cache

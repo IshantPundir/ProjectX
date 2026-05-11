@@ -64,6 +64,15 @@ LLM_TOOL_EXECUTED = "llm.tool.executed"
 TURN_STARTED = "turn.started"
 TURN_COMPLETED = "turn.completed"
 TURN_COALESCED = "turn.coalesced"
+# Stale-turn drop-and-drain (2026-05-11). Emitted when on_user_turn_completed
+# receives a fragment whose stopped_speaking_at is past the configured
+# staleness threshold AND a more-recent silence onset has been observed.
+# The text is buffered for the next non-dropped turn instead of running
+# Judge/Speaker on the stale input.
+TURN_DROPPED = "turn.dropped"
+# Emitted on the next non-dropped turn when one or more buffered stale
+# texts are drained into ``candidate_text`` before the coalesce gate.
+TURN_DRAIN_REPLAYED = "turn.drain_replayed"
 JUDGE_CALL = "judge.call"
 JUDGE_SYNTHETIC = "judge.synthetic"
 JUDGE_FALLBACK = "judge.fallback"
@@ -105,6 +114,8 @@ ALL_EVENT_KINDS: frozenset[str] = frozenset({
     TURN_STARTED,
     TURN_COMPLETED,
     TURN_COALESCED,
+    TURN_DROPPED,
+    TURN_DRAIN_REPLAYED,
     JUDGE_CALL,
     JUDGE_SYNTHETIC,
     JUDGE_FALLBACK,

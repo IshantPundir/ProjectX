@@ -86,3 +86,34 @@ def test_turn_coalesced_kept_verbatim_both_modes():
         "turn.coalesced must be explicitly registered in _ENGINE_PASSTHROUGH_KINDS "
         "so the audit contract is intentional, not accidental."
     )
+
+
+def test_turn_dropped_and_drain_replayed_passthrough_both_modes():
+    """Stale-turn drop-and-drain events (2026-05-11) carry candidate
+    utterance text just like turn.coalesced. Same passthrough semantics:
+    the candidate's words are the audit-grade artifact, not redactable.
+    """
+    dropped_payload = {
+        "turn_id": "dropped-1",
+        "candidate_text": "stale fragment text",
+        "stopped_speaking_at": 100.0,
+        "staleness_ms": 12000,
+        "buffer_size_after": 1,
+    }
+    drained_payload = {
+        "current_turn_id": "turn-x",
+        "dropped_count": 2,
+        "dropped_texts": ["fragment A.", "fragment B."],
+        "combined_text": "fragment A. fragment B. fresh text.",
+    }
+
+    for mode in ("metadata", "full"):
+        out_d = redact_payload(kind="turn.dropped", payload=dropped_payload, mode=mode)
+        out_r = redact_payload(kind="turn.drain_replayed", payload=drained_payload, mode=mode)
+        assert out_d["candidate_text"] == "stale fragment text"
+        assert out_r["dropped_texts"] == ["fragment A.", "fragment B."]
+        assert out_r["combined_text"] == "fragment A. fragment B. fresh text."
+
+    # Explicit registration check, same pattern as turn.coalesced.
+    assert "turn.dropped" in _ENGINE_PASSTHROUGH_KINDS
+    assert "turn.drain_replayed" in _ENGINE_PASSTHROUGH_KINDS
