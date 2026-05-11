@@ -196,6 +196,50 @@ _COALESCIBLE_KINDS: frozenset[tuple[str, str]] = frozenset({
 })
 
 
+@dataclass(frozen=True, slots=True)
+class _CoalesceDecision:
+    """Outcome of the coalescing decision plus a string reason for audit logging."""
+    should: bool
+    reason: str
+
+
+def _should_coalesce(
+    *,
+    prior: _PriorTurnSnapshot | None,
+    now_monotonic: float,
+    coalesce_enabled: bool,
+    coalesce_window_ms: int,
+) -> _CoalesceDecision:
+    """Pure decision function for Continuation Coalescing.
+
+    Returns ``_CoalesceDecision(should=True, reason="coalesced")`` when ALL of:
+
+    * Coalescing is enabled (``coalesce_enabled=True``).
+    * A prior turn exists.
+    * The prior turn's Speaker did not successfully deliver its body
+      (``prior.speaker_emitted_content is False``).
+    * The gap from the prior turn's TURN_COMPLETED to now is strictly
+      less than ``coalesce_window_ms``.
+    * The prior turn's ``(instruction_kind, sub_context)`` is in
+      ``_COALESCIBLE_KINDS``.
+
+    Otherwise returns ``should=False`` with a reason string identifying
+    which gate failed. The reason is consumed by audit logging and tests.
+    """
+    if not coalesce_enabled:
+        return _CoalesceDecision(False, "disabled")
+    if prior is None:
+        return _CoalesceDecision(False, "no_prior_turn")
+    if prior.speaker_emitted_content:
+        return _CoalesceDecision(False, "speaker_delivered")
+    gap_ms = (now_monotonic - prior.completed_monotonic) * 1000
+    if gap_ms >= coalesce_window_ms:
+        return _CoalesceDecision(False, "window_expired")
+    if (prior.instruction_kind, prior.sub_context) not in _COALESCIBLE_KINDS:
+        return _CoalesceDecision(False, "kind_not_coalescible")
+    return _CoalesceDecision(True, "coalesced")
+
+
 @dataclass(slots=True)
 class OrchestratorConfig:
     checkpoint_turns: int = 10
