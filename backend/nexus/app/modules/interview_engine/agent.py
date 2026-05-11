@@ -461,6 +461,8 @@ async def entrypoint(ctx: JobContext) -> None:
             checkpoint_turns=settings.engine_checkpoint_turns,
             checkpoint_seconds=settings.engine_checkpoint_seconds,
             session_ended_message=settings.engine_session_ended_message,
+            coalesce_enabled=settings.engine_coalesce_enabled,
+            coalesce_window_ms=settings.engine_coalesce_window_ms,
         ),
         tenant_id=str(tenant_uuid),
         opener_library=opener_library,

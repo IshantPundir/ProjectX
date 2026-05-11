@@ -156,6 +156,46 @@ def _map_livekit_close_reason(close_reason: str | None) -> str:
     return "error"
 
 
+@dataclass(frozen=True, slots=True)
+class _PriorTurnSnapshot:
+    """End-of-turn snapshot used by Continuation Coalescing.
+
+    Captured at end of each turn, read at the start of the next. See
+    ``docs/superpowers/specs/2026-05-11-turn-continuation-coalescing-design.md``.
+    """
+    turn_id: str
+    completed_monotonic: float
+    candidate_text: str
+    instruction_kind: str
+    sub_context: str
+    speaker_emitted_content: bool
+
+
+# (instruction_kind, sub_context) pairs whose prior turn is eligible to be
+# merged forward into the next turn's candidate utterance text. The check
+# is on the PRIOR turn's resolved action — see the spec's classification
+# table for the rationale of each entry.
+_COALESCIBLE_KINDS: frozenset[tuple[str, str]] = frozenset({
+    # deliver_question — fresh main question
+    ("deliver_question", "default"),
+    ("deliver_question", "post_cap_advance"),
+    # deliver_probe — follow-up probe
+    ("deliver_probe", "default"),
+    # push_back — the Judge wanted more specifics
+    ("push_back", "vague_answer"),
+    ("push_back", "deflection"),
+    ("push_back", "missing_specifics"),
+    ("push_back", "unanswered_subquestion"),
+    # clarify — Judge wanted to rephrase
+    ("clarify", "default"),
+    # acknowledge_no_experience — Judge confirmed no-experience routing
+    ("acknowledge_no_experience", "default"),
+    # redirect — only social_or_greeting; off_topic/abusive/injection are
+    # explicit behavioral judgments and not coalescible
+    ("redirect", "social_or_greeting"),
+})
+
+
 @dataclass(slots=True)
 class OrchestratorConfig:
     checkpoint_turns: int = 10
@@ -169,6 +209,11 @@ class OrchestratorConfig:
         "Thanks for your time. This session has ended; the recruitment "
         "team will be in contact with you."
     )
+    # Continuation coalescing — see _should_coalesce + _PriorTurnSnapshot
+    # above, and the spec at
+    # docs/superpowers/specs/2026-05-11-turn-continuation-coalescing-design.md
+    coalesce_enabled: bool = True
+    coalesce_window_ms: int = 5000
 
 
 class InterviewOrchestrator:
@@ -206,6 +251,9 @@ class InterviewOrchestrator:
         # the post-Judge knockout-policy-override path both call into
         # ``_schedule_shutdown``; this flag keeps it idempotent.
         self._shutdown_scheduled: bool = False
+        # Continuation coalescing — see _should_coalesce / _capture_prior_turn_snapshot.
+        # Populated at end of each turn; consulted at the start of the next turn.
+        self._last_turn: _PriorTurnSnapshot | None = None
         self._opener_library = opener_library
         self._intro_variant = intro_variant
         self._recent_openers: deque[str] = deque(maxlen=5)
