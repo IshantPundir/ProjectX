@@ -521,6 +521,12 @@ class InterviewOrchestrator:
         )
         self._append_validation_warnings(turn_id=turn_id, decision=decision)
 
+        # Variables populated in the repeat/stream branches below; used to
+        # capture the prior-turn snapshot immediately before TURN_COMPLETED.
+        _snap_final_text: str = ""
+        _snap_interrupted: bool = False
+        _snap_sub_ctx: str = "default"
+
         if decision.speaker_input.instruction_kind == InstructionKind.repeat:
             from app.modules.interview_engine.event_kinds import SPEAKER_CACHED
             from app.modules.interview_engine.audit_events import SpeakerCachedPayload
@@ -533,10 +539,17 @@ class InterviewOrchestrator:
                 source_turn_id=decision.cached_source_turn_id or "",
                 final_utterance=cached,
             ).model_dump())
+            # Repeat branch: the candidate heard the cached utterance so it
+            # counts as delivered; sub_context for repeat is always "default".
+            _snap_final_text = cached
+            _snap_interrupted = False
+            _snap_sub_ctx = "default"
         else:
-            await self._stream_speaker_and_say(
-                agent=agent, turn_id=turn_id,
-                speaker_input=decision.speaker_input,
+            _snap_final_text, _snap_interrupted, _snap_sub_ctx = (
+                await self._stream_speaker_and_say(
+                    agent=agent, turn_id=turn_id,
+                    speaker_input=decision.speaker_input,
+                )
             )
 
         # Tick lifecycle elapsed-time so the published
@@ -551,6 +564,20 @@ class InterviewOrchestrator:
             time_remaining_seconds=int(
                 self._state.lifecycle_snapshot().time_remaining_seconds()
             ),
+        )
+
+        # Capture the prior-turn snapshot so the next turn can consult it
+        # for Continuation Coalescing. Must be called before TURN_COMPLETED
+        # so that ``completed_monotonic`` matches the timestamp written
+        # to the audit envelope.
+        self._capture_prior_turn_snapshot(
+            turn_id=turn_id,
+            completed_monotonic=time.monotonic(),
+            candidate_text=candidate_text,
+            instruction_kind=decision.speaker_input.instruction_kind.value,
+            sub_context=_snap_sub_ctx,
+            final_text=_snap_final_text,
+            interrupted=_snap_interrupted,
         )
 
         self._append(TURN_COMPLETED, TurnCompletedPayload(
@@ -724,7 +751,16 @@ class InterviewOrchestrator:
 
     async def _stream_speaker_and_say(
         self, *, agent: Any, turn_id: str, speaker_input: Any,
-    ) -> str:
+    ) -> tuple[str, bool, str]:
+        """Run the Speaker LLM + TTS pipeline and return a 3-tuple:
+        ``(final_text, interrupted, sub_ctx_value)`` so callers can capture
+        the prior-turn snapshot without re-deriving the sub-context.
+
+        ``final_text`` is the utterance actually produced (empty string for
+        interrupted or error paths). ``interrupted`` is True only when the
+        candidate's voice cancelled the in-flight TTS stream. ``sub_ctx_value``
+        is the ``SubContext.value`` string derived from ``speaker_input``.
+        """
         # Phase 9.8 — opener prefetch architecture.
         # 1. Pick opener from library based on (kind, sub_context).
         # 2. Update SpeakerInput with pre_spoken_opener so Speaker LLM
@@ -835,14 +871,16 @@ class InterviewOrchestrator:
                 # the in-flight TTS pipeline mid-stream, which also
                 # cancels the upstream LLM stream we were consuming.
                 if _was_interrupted(speech_handle):
-                    return await self._handle_interrupted_speaker(
+                    _interrupted_text = await self._handle_interrupted_speaker(
                         turn_id=turn_id,
                         speaker_input=speaker_input, handle=handle,
                     )
-                return await self._handle_empty_speaker_output(
+                    return (_interrupted_text, True, sub_ctx.value)
+                _empty_text = await self._handle_empty_speaker_output(
                     agent=agent, turn_id=turn_id,
                     speaker_input=speaker_input, handle=handle,
                 )
+                return (_empty_text, False, sub_ctx.value)
 
             self._append(SPEAKER_CALL, SpeakerCallPayload(
                 turn_id=turn_id, model="speaker",
@@ -868,7 +906,7 @@ class InterviewOrchestrator:
                 turn_id=turn_id, text=final_text,
                 instruction_kind=speaker_input.instruction_kind,
             )
-            return final_text
+            return (final_text, False, sub_ctx.value)
 
         except Exception as exc:
             # Cancel the in-flight Speaker LLM call if the opener path errored
@@ -899,7 +937,7 @@ class InterviewOrchestrator:
                 turn_id=turn_id, text=self._RECOVERY_TEXT,
                 instruction_kind=speaker_input.instruction_kind,
             )
-            return self._RECOVERY_TEXT
+            return (self._RECOVERY_TEXT, False, sub_ctx.value)
 
     async def _handle_interrupted_speaker(
         self, *, turn_id: str, speaker_input: Any, handle: Any,
@@ -1002,6 +1040,38 @@ class InterviewOrchestrator:
             self._append(FRONTEND_ATTRIBUTE_PUBLISHED, FrontendAttributePayload(
                 turn_id=turn_id, attribute_name=k, value=v,
             ).model_dump())
+
+    def _capture_prior_turn_snapshot(
+        self,
+        *,
+        turn_id: str,
+        completed_monotonic: float,
+        candidate_text: str,
+        instruction_kind: str,
+        sub_context: str,
+        final_text: str,
+        interrupted: bool,
+    ) -> None:
+        """Record the just-finished turn so the next turn can consult it for
+        Continuation Coalescing.
+
+        ``speaker_emitted_content`` is True iff the Speaker produced
+        non-whitespace output AND was not interrupted — i.e., the candidate
+        actually heard a body, not just an opener. Cache-replay branches
+        (``repeat``) pass the cached utterance as ``final_text`` with
+        ``interrupted=False``, so they correctly count as delivered.
+
+        See ``docs/superpowers/specs/2026-05-11-turn-continuation-coalescing-design.md``.
+        """
+        delivered = (not interrupted) and bool(final_text.strip())
+        self._last_turn = _PriorTurnSnapshot(
+            turn_id=turn_id,
+            completed_monotonic=completed_monotonic,
+            candidate_text=candidate_text,
+            instruction_kind=instruction_kind,
+            sub_context=sub_context,
+            speaker_emitted_content=delivered,
+        )
 
     def _append(self, kind: str, payload: dict) -> None:
         wall_ms = int(time.time() * 1000)

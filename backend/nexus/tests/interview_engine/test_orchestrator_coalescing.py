@@ -126,3 +126,94 @@ class TestShouldCoalesce:
         )
         assert decision.should is True
         assert decision.reason == "coalesced"
+
+
+class TestCapturePriorTurnSnapshot:
+    """Verify _last_turn is populated correctly at every turn-completion path."""
+
+    def test_capture_records_speaker_delivered_when_text_present_and_not_interrupted(
+        self,
+    ):
+        from unittest.mock import MagicMock
+
+        # Construct a bare orchestrator instance (no need for full DI) — we
+        # only exercise _capture_prior_turn_snapshot which is a pure method
+        # on self._last_turn.
+        orch = MagicMock()
+        orch._last_turn = None
+
+        # Import the method as an unbound callable and bind to our mock.
+        from app.modules.interview_engine.orchestrator import (
+            InterviewOrchestrator,
+        )
+        InterviewOrchestrator._capture_prior_turn_snapshot(
+            orch,
+            turn_id="t-1",
+            completed_monotonic=42.0,
+            candidate_text="hello",
+            instruction_kind="push_back",
+            sub_context="missing_specifics",
+            final_text="What specifically did you set up first?",
+            interrupted=False,
+        )
+        snap = orch._last_turn
+        assert snap is not None
+        assert snap.turn_id == "t-1"
+        assert snap.candidate_text == "hello"
+        assert snap.instruction_kind == "push_back"
+        assert snap.sub_context == "missing_specifics"
+        assert snap.speaker_emitted_content is True
+
+    def test_capture_records_interrupted_as_not_delivered(self):
+        from unittest.mock import MagicMock
+        from app.modules.interview_engine.orchestrator import InterviewOrchestrator
+
+        orch = MagicMock()
+        orch._last_turn = None
+        InterviewOrchestrator._capture_prior_turn_snapshot(
+            orch,
+            turn_id="t-2",
+            completed_monotonic=43.0,
+            candidate_text="basic slips",
+            instruction_kind="push_back",
+            sub_context="vague_answer",
+            final_text="What specifically",  # partial text but interrupted
+            interrupted=True,
+        )
+        assert orch._last_turn.speaker_emitted_content is False
+
+    def test_capture_records_empty_speaker_output_as_not_delivered(self):
+        from unittest.mock import MagicMock
+        from app.modules.interview_engine.orchestrator import InterviewOrchestrator
+
+        orch = MagicMock()
+        orch._last_turn = None
+        InterviewOrchestrator._capture_prior_turn_snapshot(
+            orch,
+            turn_id="t-3",
+            completed_monotonic=44.0,
+            candidate_text="something",
+            instruction_kind="clarify",
+            sub_context="default",
+            final_text="",
+            interrupted=False,
+        )
+        assert orch._last_turn.speaker_emitted_content is False
+
+    def test_capture_records_whitespace_only_speaker_output_as_not_delivered(self):
+        from unittest.mock import MagicMock
+        from app.modules.interview_engine.orchestrator import InterviewOrchestrator
+
+        orch = MagicMock()
+        orch._last_turn = None
+        InterviewOrchestrator._capture_prior_turn_snapshot(
+            orch,
+            turn_id="t-4",
+            completed_monotonic=45.0,
+            candidate_text="x",
+            instruction_kind="clarify",
+            sub_context="default",
+            final_text="   \n  ",
+            interrupted=False,
+        )
+        assert orch._last_turn.speaker_emitted_content is False
