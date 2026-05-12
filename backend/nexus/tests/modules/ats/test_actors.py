@@ -159,3 +159,86 @@ async def test_rate_limited_advances_next_poll_returns_cleanly(db, actor_fixture
     row = r.one()
     # next_poll_at should be roughly now + 120s (allow ±5s for clock drift)
     assert 115 <= row.delta <= 125
+
+
+@pytest.mark.asyncio
+async def test_connection_deleted_before_actor_runs_exits_cleanly(db, actor_fixture):
+    """Connection deleted between scheduler tick and actor execution.
+
+    The actor's Phase A calls load_connection_state which raises
+    ATSConnectionNotFoundError when the row is gone. The top-level handler
+    in _run_poll must catch this and return cleanly so Dramatiq does NOT
+    retry (the cascade deletion guarantees there is nothing left to do).
+
+    Verifies the recruiter-mid-sync-delete scenario does not produce an
+    infinite retry storm.
+    """
+    from app.modules.ats import actors
+
+    tenant_id, connection_id = actor_fixture
+
+    # Simulate "recruiter deleted the connection" between scheduler tick
+    # (which enqueued the message) and actor execution.
+    await db.execute(text(
+        "DELETE FROM ats_connections WHERE id = :i"
+    ), {"i": connection_id})
+    await db.flush()
+
+    # Must NOT raise. The top-level handler converts ATSConnectionNotFoundError
+    # to a clean return so Dramatiq won't retry.
+    await actors._run_poll(connection_id, tenant_id)
+
+
+@pytest.mark.asyncio
+async def test_connection_deleted_mid_sync_during_phase_c_exits_cleanly(
+    db, actor_fixture,
+):
+    """Connection deleted AFTER Phase A's sync_log row is created.
+
+    Reproduces the production incident: Phase A inserts + commits sync_log,
+    Phase B + Phase C run, then the recruiter clicks "Remove connection"
+    in the middle of Phase C, the importer hits a rate limit (or any
+    other error path), and the actor's recovery handlers try to operate
+    on the now-cascade-deleted sync_log row.
+
+    finalize_sync_log_partial must gracefully no-op when the row is gone
+    (defensive None guard); persist_connection_state in Phase D raises
+    ATSConnectionNotFoundError which the top-level handler catches.
+    Either way, no exception escapes — no Dramatiq retry.
+    """
+    from app.modules.ats import actors
+    from app.modules.ats.errors import ATSRateLimitedError
+
+    tenant_id, connection_id = actor_fixture
+
+    fake_adapter = AsyncMock()
+    fake_adapter.vendor = "ceipal"
+    fake_adapter.ensure_authenticated = AsyncMock()
+
+    async def _sync_then_delete_and_raise(self_, adapter):
+        # Phase A has already committed the sync_log row by this point.
+        # Simulate the recruiter clicking "Remove connection" in the UI:
+        # the cascade wipes ats_sync_logs, ats_*_mappings, etc.
+        await db.execute(text(
+            "DELETE FROM ats_connections WHERE id = :i"
+        ), {"i": connection_id})
+        await db.flush()
+        raise ATSRateLimitedError(retry_after_seconds=60)
+
+    with patch("app.modules.ats.actors.get_ats_adapter") as mock_get:
+        def _bind(state):
+            fake_adapter.state = state
+            return fake_adapter
+        mock_get.side_effect = _bind
+        with patch.object(
+            actors.ATSImporter, "sync_tenant", _sync_then_delete_and_raise,
+        ):
+            # Must NOT raise — the rate-limit handler's finalize_sync_log_partial
+            # gracefully no-ops on the cascade-deleted row.
+            await actors._run_poll(connection_id, tenant_id)
+
+    # Connection is gone (cascade clean). No retry was scheduled.
+    r = await db.execute(text(
+        "SELECT COUNT(*) FROM ats_connections WHERE id = :i"
+    ), {"i": connection_id})
+    assert r.scalar_one() == 0

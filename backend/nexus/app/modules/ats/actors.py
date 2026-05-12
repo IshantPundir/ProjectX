@@ -34,6 +34,7 @@ from app.modules.ats.connection import (
     persist_connection_state,
 )
 from app.modules.ats.errors import (
+    ATSConnectionNotFoundError,
     ATSCredentialsInvalidError,
     ATSPermanentError,
     ATSRateLimitedError,
@@ -95,6 +96,21 @@ async def _run_poll(connection_id: str, tenant_id: str) -> None:
                 correlation_id,
                 safe_tenant,
             )
+    except ATSConnectionNotFoundError:
+        # The connection row was deleted between scheduler tick and actor
+        # execution (or mid-sync). DB cascade has already cleaned up
+        # ats_sync_logs / ats_client_mappings / ats_user_mappings /
+        # ats_job_recruiter_assignments. There is nothing meaningful to
+        # finalize and no point retrying — the connection is gone.
+        # Returning cleanly here is the contract: Dramatiq will not retry
+        # because no exception escapes.
+        logger.info(
+            "ats.poll.connection_gone",
+            connection_id=connection_id,
+            tenant_id=safe_tenant,
+            correlation_id=correlation_id,
+        )
+        return
     finally:
         structlog.contextvars.clear_contextvars()
 
