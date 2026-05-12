@@ -28,6 +28,22 @@ def synthesize_fallback(
     reason: FallbackReason,
     next_pending_mandatory_id: str | None,
 ) -> JudgeOutput:
+    # Phase 9.5 (2026-05-12): validation_error synthesizes clarify
+    # instead of advance. The original behavior force-walked the queue
+    # whenever the Judge model produced a malformed output (e.g. the
+    # push_back+concrete cross-field combo); this killed the interview
+    # early. Clarify is no-op on the queue and asks the candidate to
+    # elaborate — better fallback for "model produced something but it
+    # didn't validate" than skipping the question entirely.
+    if reason == FallbackReason.validation_error:
+        from app.modules.interview_engine.models.judge import ClarifyPayload
+        return JudgeOutput(
+            observations=[],
+            candidate_claims=[],
+            next_action=NextAction.clarify,
+            next_action_payload=ClarifyPayload(),
+            turn_metadata=TurnMetadata(),
+        )
     if next_pending_mandatory_id is None:
         return JudgeOutput(
             observations=[],

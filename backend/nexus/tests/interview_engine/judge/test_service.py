@@ -102,7 +102,9 @@ async def test_judge_falls_back_on_validation_error():
     )
     assert result.is_fallback is True
     assert result.fallback_reason == FallbackReason.validation_error
-    assert result.judge_output.next_action == NextAction.advance
+    # Phase 9.5 (2026-05-12): validation_error synthesizes clarify (no queue
+    # mutation) instead of advance — gives candidate another chance to elaborate.
+    assert result.judge_output.next_action == NextAction.clarify
 
 
 @pytest.mark.asyncio
