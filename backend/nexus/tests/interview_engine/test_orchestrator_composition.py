@@ -890,3 +890,77 @@ async def test_state_snapshot_emitted_before_judge_call(
         f"lifecycle.state must be a valid lifecycle state value; "
         f"got {snapshot['lifecycle']['state']!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 6 — speaker.input emitted before speaker.call
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_speaker_input_emitted_before_speaker_call(
+    make_session_config, make_question,
+) -> None:
+    """Drive one turn end-to-end; assert speaker.input event appears before
+    speaker.call in the collector sequence and contains the
+    instruction_kind / bank_text shape.
+
+    This is the regression guard for Task 6: before the fix, replay tools
+    had no record of what the Speaker LLM was about to receive on each
+    turn — the only post-hoc evidence was the speaker.call payload which
+    captures AFTER the stream completed.  speaker.input captures the exact
+    SpeakerInput model the orchestrator hands to SpeakerService.stream(),
+    letting anti-leak audits verify the payload is free of rubric /
+    anchors / coverage data without replaying the full session.
+    """
+    judge_outputs = [
+        # Turn 1: candidate gives a substantive answer → probe.
+        JudgeOutput(
+            observations=[],
+            candidate_claims=[],
+            next_action=NextAction.probe,
+            next_action_payload=ProbePayload(probe_id="0"),
+            turn_metadata=TurnMetadata(),
+        ),
+    ]
+
+    speaker_outputs = [
+        # on_enter: first question delivered.
+        "Tell me about a time you led a team.",
+        # Turn 1: probe follow-up.
+        "How did you handle disagreements within the team?",
+    ]
+
+    orch, agent = _build_orch(
+        make_session_config=make_session_config,
+        make_question=make_question,
+        scripted_judge_outputs=judge_outputs,
+        scripted_speaker_outputs=speaker_outputs,
+        knockout_signal="leadership",
+    )
+
+    await orch.on_enter(agent)
+    await orch.on_user_turn_completed(
+        agent, MagicMock(), _msg("I led a team of five engineers"),
+    )
+
+    events = orch._collector.events
+    speaker_input_idx = next(
+        (i for i, e in enumerate(events) if e.kind == "speaker.input"),
+        None,
+    )
+    assert speaker_input_idx is not None, "speaker.input was not emitted"
+    speaker_call_idx = next(
+        i for i, e in enumerate(events) if e.kind == "speaker.call"
+    )
+    assert speaker_input_idx < speaker_call_idx, (
+        f"speaker.input (idx={speaker_input_idx}) must appear BEFORE speaker.call "
+        f"(idx={speaker_call_idx}) in the audit event sequence."
+    )
+    payload = events[speaker_input_idx].payload
+    assert "speaker_input" in payload, (
+        "speaker.input payload must contain 'speaker_input' key."
+    )
+    assert "instruction_kind" in payload["speaker_input"], (
+        "speaker_input dict must contain 'instruction_kind' from SpeakerInput."
+    )

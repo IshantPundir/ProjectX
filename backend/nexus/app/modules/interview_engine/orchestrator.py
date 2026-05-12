@@ -668,6 +668,7 @@ class InterviewOrchestrator:
             ),
         )
 
+        self._append_speaker_input(turn_id=turn_id, speaker_input=decision.speaker_input)
         await self._stream_speaker_and_say(
             agent=agent, turn_id=turn_id,
             speaker_input=decision.speaker_input,
@@ -934,6 +935,7 @@ class InterviewOrchestrator:
                 body_started_wall_at=repeat_body_started_wall_at,
             )
         else:
+            self._append_speaker_input(turn_id=turn_id, speaker_input=decision.speaker_input)
             outcome = await self._stream_speaker_and_say(
                 agent=agent, turn_id=turn_id,
                 speaker_input=decision.speaker_input,
@@ -1542,6 +1544,23 @@ class InterviewOrchestrator:
             queue=self._state.queue_snapshot().model_dump(mode="json"),
             claims=self._state.claims_snapshot().model_dump(mode="json"),
             lifecycle=self._state.lifecycle_snapshot().model_dump(mode="json"),
+        ).model_dump())
+
+    def _append_speaker_input(
+        self, *, turn_id: str, speaker_input: Any,
+    ) -> None:
+        """Emit a speaker.input audit event capturing exactly what the
+        Speaker LLM is about to receive.
+
+        Lets us audit anti-leak after-the-fact (no rubric / anchors /
+        coverage / signal_metadata in the payload) and reproduce why the
+        Speaker said what it said.
+        """
+        from app.modules.interview_engine.event_kinds import SPEAKER_INPUT
+        from app.modules.interview_engine.audit_events import SpeakerInputPayload
+        self._append(SPEAKER_INPUT, SpeakerInputPayload(
+            turn_id=turn_id,
+            speaker_input=speaker_input.model_dump(mode="json"),
         ).model_dump())
 
     def _append_validation_warnings(self, *, turn_id: str, decision: Any) -> None:
