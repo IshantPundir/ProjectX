@@ -371,7 +371,7 @@ class ATSImporter:
         """
         from app.modules.ats.sources import ATSImportSource
         from app.modules.ats.models import ATSConnection
-        from app.modules.candidates.service import import_candidate
+        from app.modules.candidates import import_candidate
 
         result = PhaseResult()
         tenant_id = adapter.state.tenant_id

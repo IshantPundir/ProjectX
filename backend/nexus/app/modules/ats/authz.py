@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from fastapi import Depends, HTTPException
 
-from app.modules.auth.context import UserContext, get_current_user_roles
+from app.modules.auth import UserContext, get_current_user_roles
 
 
 async def require_ats_admin(

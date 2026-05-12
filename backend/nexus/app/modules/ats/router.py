@@ -24,7 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_tenant_db
-from app.modules.auth.context import UserContext, get_current_user_roles
+from app.modules.auth import UserContext, get_current_user_roles
 from app.modules.ats.authz import require_ats_admin
 from app.modules.ats.errors import (
     ATSAuthorizationError,
