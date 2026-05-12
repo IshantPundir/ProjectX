@@ -9,13 +9,17 @@ Adapter instances are short-lived (one per sync run) and NOT thread-safe.
 """
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from datetime import datetime
-from typing import AsyncIterator, ClassVar, Protocol
+from typing import ClassVar, Protocol
 
 from app.modules.ats.connection import ATSConnectionState
 from app.modules.ats.schemas import (
-    ATSApplicantPayload, ATSClientPayload, ATSJobPayload,
-    ATSSubmissionPayload, ATSUserPayload,
+    ATSApplicantPayload,
+    ATSClientPayload,
+    ATSJobPayload,
+    ATSSubmissionPayload,
+    ATSUserPayload,
 )
 
 

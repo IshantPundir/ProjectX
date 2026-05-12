@@ -50,7 +50,6 @@ from app.modules.ats.service import (
 )
 from app.modules.audit import log_event
 
-
 logger = structlog.get_logger()
 tracer = trace.get_tracer(__name__)
 

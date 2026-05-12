@@ -24,7 +24,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_tenant_db
-from app.modules.auth import UserContext, get_current_user_roles
 from app.modules.ats.authz import require_ats_admin
 from app.modules.ats.errors import (
     ATSAuthorizationError,
@@ -41,7 +40,7 @@ from app.modules.ats.service import (
     map_ats_user_to_internal,
     trigger_manual_sync,
 )
-
+from app.modules.auth import UserContext, get_current_user_roles
 
 router = APIRouter(prefix="/api/ats", tags=["ats"])
 
@@ -78,7 +77,7 @@ class ConnectionResponse(BaseModel):
     created_at: str
 
     @classmethod
-    def from_row(cls, row: ATSConnection) -> "ConnectionResponse":
+    def from_row(cls, row: ATSConnection) -> ConnectionResponse:
         return cls(
             id=row.id,
             vendor=row.vendor,

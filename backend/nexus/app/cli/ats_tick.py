@@ -42,7 +42,6 @@ from sqlalchemy import text
 from app.config import settings
 from app.database import async_session_factory
 
-
 _TICK_QUERY = """
 SELECT id::text, tenant_id::text FROM ats_connections
 WHERE active = true
@@ -94,7 +93,6 @@ def _init_otel() -> None:
 from app import brokers  # noqa: F401, E402
 from app.modules.ats.actors import poll_ats_connection  # noqa: E402
 
-
 logger = structlog.get_logger()
 tracer = trace.get_tracer(__name__)
 
@@ -112,23 +110,22 @@ async def run_tick() -> None:
       - Commit releases locks atomically.
     """
     with tracer.start_as_current_span("ats.tick") as span:
-        async with async_session_factory() as session:
-            async with session.begin():
-                await session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
-                rows = await session.execute(text(_TICK_QUERY))
-                due = list(rows)
-                for row in due:
-                    await session.execute(
-                        text(
-                            "UPDATE ats_connections "
-                            "SET poll_lock_acquired_at = now(), "
-                            "    last_poll_started_at = now() "
-                            "WHERE id = :i"
-                        ),
-                        {"i": row.id},
-                    )
-                    poll_ats_connection.send(row.id, row.tenant_id)
-                await session.commit()
+        async with async_session_factory() as session, session.begin():
+            await session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+            rows = await session.execute(text(_TICK_QUERY))
+            due = list(rows)
+            for row in due:
+                await session.execute(
+                    text(
+                        "UPDATE ats_connections "
+                        "SET poll_lock_acquired_at = now(), "
+                        "    last_poll_started_at = now() "
+                        "WHERE id = :i"
+                    ),
+                    {"i": row.id},
+                )
+                poll_ats_connection.send(row.id, row.tenant_id)
+            await session.commit()
         span.set_attribute("ats.tick.enqueued_count", len(due))
         logger.info("ats.tick.completed", enqueued_count=len(due))
 

@@ -10,8 +10,9 @@ has also expired, fall back to full re-auth from stored credentials.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
-from typing import AsyncIterator, ClassVar
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
+from typing import ClassVar
 
 import httpx
 import structlog
@@ -19,14 +20,19 @@ import structlog
 from app.config import settings
 from app.modules.ats.connection import ATSConnectionState
 from app.modules.ats.errors import (
-    ATSAuthorizationError, ATSCredentialsInvalidError,
-    ATSNetworkError, ATSRateLimitedError, ATSVendorContractError,
+    ATSAuthorizationError,
+    ATSCredentialsInvalidError,
+    ATSNetworkError,
+    ATSRateLimitedError,
+    ATSVendorContractError,
 )
 from app.modules.ats.schemas import (
-    ATSApplicantPayload, ATSClientPayload, ATSJobPayload,
-    ATSSubmissionPayload, ATSUserPayload,
+    ATSApplicantPayload,
+    ATSClientPayload,
+    ATSJobPayload,
+    ATSSubmissionPayload,
+    ATSUserPayload,
 )
-
 
 logger = structlog.get_logger()
 
@@ -59,7 +65,7 @@ class CeipalAdapter:
 
     async def ensure_authenticated(self) -> None:
         """Idempotent. Refresh tokens if expired or near-expiry."""
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
 
         # Case 1: tokens still valid → no-op
         if self.state.access_token and self.state.access_token_expires_at:
@@ -151,7 +157,7 @@ class CeipalAdapter:
         )
 
     def _apply_auth_payload(self, payload: dict) -> None:
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         access = payload.get("access_token")
         if not access:
             raise ATSVendorContractError("Auth response missing access_token")
@@ -254,13 +260,13 @@ class CeipalAdapter:
         if since is None:
             return {}
         # Strip tzinfo; Ceipal docs use space-separated naive timestamps
-        utc = since.astimezone(timezone.utc).replace(tzinfo=None)
+        utc = since.astimezone(UTC).replace(tzinfo=None)
         return {"modifiedAfter": utc.strftime("%Y-%m-%d %H:%M:%S")}
 
     async def list_clients(  # type: ignore[override]
         self, since: datetime | None = None,
     ) -> AsyncIterator[ATSClientPayload]:
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         params = {"limit": 50, **self._format_since(since)}
         async for raw in self._paginate("/getClientsList/", params):
             yield ATSClientPayload(
@@ -281,7 +287,7 @@ class CeipalAdapter:
     async def list_users(  # type: ignore[override]
         self, since: datetime | None = None,
     ) -> AsyncIterator[ATSUserPayload]:
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         # getUsersList does NOT document modifiedAfter; full sync per run.
         async for raw in self._paginate("/getUsersList/", {}):
             display = raw.get("display_name") or (
@@ -300,7 +306,7 @@ class CeipalAdapter:
     async def list_jobs(  # type: ignore[override]
         self, since: datetime | None = None,
     ) -> AsyncIterator[ATSJobPayload]:
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         params = {"limit": 50, **self._format_since(since)}
         async for raw in self._paginate("/getJobPostingsList/", params):
             skills_str = raw.get("skills") or ""
@@ -333,7 +339,7 @@ class CeipalAdapter:
     async def list_applicants(  # type: ignore[override]
         self, since: datetime | None = None,
     ) -> AsyncIterator[ATSApplicantPayload]:
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         params = {"limit": 50, **self._format_since(since)}
         async for raw in self._paginate("/getApplicantsList/", params):
             full_name = " ".join(filter(None, [
@@ -362,7 +368,7 @@ class CeipalAdapter:
     async def list_submissions(  # type: ignore[override]
         self, job_external_id: str, since: datetime | None = None,
     ) -> AsyncIterator[ATSSubmissionPayload]:
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         params = {"jobId": job_external_id, "limit": 50, **self._format_since(since)}
         async for raw in self._paginate("/getSubmissionsList/", params):
             yield ATSSubmissionPayload(
@@ -406,6 +412,6 @@ def _parse_ceipal_datetime(value) -> datetime | None:
     try:
         if "T" in value:
             return datetime.fromisoformat(value.replace("Z", "+00:00"))
-        return datetime.strptime(value, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        return datetime.strptime(value, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
     except (ValueError, TypeError):
         return None

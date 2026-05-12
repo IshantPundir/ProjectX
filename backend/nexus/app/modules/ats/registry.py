@@ -10,15 +10,12 @@ Vendor selection is per-CONNECTION (data — state.vendor), not per-deployment
 """
 from __future__ import annotations
 
-from typing import Type
-
 from app.modules.ats.adapter import ATSAdapter
 from app.modules.ats.adapters.ceipal import CeipalAdapter
 from app.modules.ats.connection import ATSConnectionState
 from app.modules.ats.errors import ATSUnknownVendorError
 
-
-_REGISTRY: dict[str, Type[ATSAdapter]] = {
+_REGISTRY: dict[str, type[ATSAdapter]] = {
     CeipalAdapter.vendor: CeipalAdapter,        # type: ignore[type-abstract]
     # GreenhouseAdapter.vendor: GreenhouseAdapter,    # future
     # WorkdayAdapter.vendor: WorkdayAdapter,          # future

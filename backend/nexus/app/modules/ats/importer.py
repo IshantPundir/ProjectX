@@ -14,7 +14,7 @@ Phase ordering is sequential by data dependency:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import structlog
 from opentelemetry import trace
@@ -23,7 +23,6 @@ from sqlalchemy import select, text
 from app.database import get_bypass_session
 from app.modules.ats.adapter import ATSAdapter
 from app.modules.audit import log_event
-
 
 logger = structlog.get_logger()
 tracer = trace.get_tracer(__name__)
@@ -35,7 +34,7 @@ class PhaseResult:
     updated: int = 0
     skipped: int = 0
     errors: list[str] = field(default_factory=list)
-    sync_started_at: datetime = field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    sync_started_at: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
 
     def as_counts(self) -> dict:
         """Compact JSON-able form for ats_sync_logs.entity_counts."""
@@ -130,7 +129,7 @@ class ATSImporter:
                 # Update mapping metadata; do NOT rename the org_unit.
                 existing.external_client_name = payload.name
                 existing.source_metadata = {"contacts": payload.contacts, "raw": payload.raw}
-                existing.last_synced_at = datetime.now(tz=timezone.utc)
+                existing.last_synced_at = datetime.now(tz=UTC)
                 result.updated += 1
                 continue
 
@@ -197,7 +196,7 @@ class ATSImporter:
                 existing.external_user_role = payload.role
                 existing.external_user_status = payload.status
                 existing.external_user_metadata = payload.raw
-                existing.last_synced_at = datetime.now(tz=timezone.utc)
+                existing.last_synced_at = datetime.now(tz=UTC)
                 result.updated += 1
                 continue
 
@@ -248,7 +247,9 @@ class ATSImporter:
         approach drops any recruiter Ceipal no longer lists.
         """
         from app.modules.ats.models import (
-            ATSClientMapping, ATSConnection, ATSJobRecruiterAssignment,
+            ATSClientMapping,
+            ATSConnection,
+            ATSJobRecruiterAssignment,
         )
         from app.modules.jd.models import JobPosting
         from app.modules.org_units.models import OrganizationalUnit
@@ -369,8 +370,8 @@ class ATSImporter:
         with manual-flow candidates (same email) link external_id without
         overwriting editable fields.
         """
-        from app.modules.ats.sources import ATSImportSource
         from app.modules.ats.models import ATSConnection
+        from app.modules.ats.sources import ATSImportSource
         from app.modules.candidates import import_candidate
 
         result = PhaseResult()

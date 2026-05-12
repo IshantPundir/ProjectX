@@ -22,7 +22,6 @@ from app.modules.ats.models import ATSConnection, ATSSyncLog
 from app.modules.ats.registry import get_ats_adapter
 from app.modules.audit import log_event
 
-
 logger = structlog.get_logger()
 
 
