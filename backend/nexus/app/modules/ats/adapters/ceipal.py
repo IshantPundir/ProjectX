@@ -10,7 +10,6 @@ has also expired, fall back to full re-auth from stored credentials.
 from __future__ import annotations
 
 import json
-import logging
 from datetime import datetime, timedelta, timezone
 from typing import AsyncIterator, ClassVar
 
@@ -247,34 +246,166 @@ class CeipalAdapter:
                 return
             page += 1
 
-    # ---------- List endpoints (implemented in Task 15) ----------
+    # ---------- List endpoints ----------
+
+    @staticmethod
+    def _format_since(since: datetime | None) -> dict:
+        """Ceipal accepts modifiedAfter as 'YYYY-MM-DD HH:MM:SS' (no timezone)."""
+        if since is None:
+            return {}
+        # Strip tzinfo; Ceipal docs use space-separated naive timestamps
+        utc = since.astimezone(timezone.utc).replace(tzinfo=None)
+        return {"modifiedAfter": utc.strftime("%Y-%m-%d %H:%M:%S")}
 
     async def list_clients(  # type: ignore[override]
         self, since: datetime | None = None,
     ) -> AsyncIterator[ATSClientPayload]:
-        raise NotImplementedError("Task 15")
-        yield  # pragma: no cover
+        now = datetime.now(tz=timezone.utc)
+        params = {"limit": 50, **self._format_since(since)}
+        async for raw in self._paginate("/getClientsList/", params):
+            yield ATSClientPayload(
+                external_id=raw["id"],
+                name=raw["name"],
+                website=raw.get("website") or None,
+                industry=raw.get("industry_exp") or None,
+                country=raw.get("country") or None,
+                state=raw.get("state") or None,
+                city=raw.get("city") or None,
+                address=raw.get("address") or None,
+                status=raw.get("status") or None,
+                contacts=raw.get("contacts", []),
+                raw=raw,
+                fetched_at=now,
+            )
 
     async def list_users(  # type: ignore[override]
         self, since: datetime | None = None,
     ) -> AsyncIterator[ATSUserPayload]:
-        raise NotImplementedError("Task 15")
-        yield  # pragma: no cover
+        now = datetime.now(tz=timezone.utc)
+        # getUsersList does NOT document modifiedAfter; full sync per run.
+        async for raw in self._paginate("/getUsersList/", {}):
+            display = raw.get("display_name") or (
+                f"{raw.get('first_name', '')} {raw.get('last_name', '')}".strip()
+            )
+            yield ATSUserPayload(
+                external_id=raw["id"],
+                email=raw.get("email_id") or raw.get("email", ""),
+                display_name=display or "(unnamed)",
+                role=raw.get("role") or None,
+                status=raw.get("status") or None,
+                raw=raw,
+                fetched_at=now,
+            )
 
     async def list_jobs(  # type: ignore[override]
         self, since: datetime | None = None,
     ) -> AsyncIterator[ATSJobPayload]:
-        raise NotImplementedError("Task 15")
-        yield  # pragma: no cover
+        now = datetime.now(tz=timezone.utc)
+        params = {"limit": 50, **self._format_since(since)}
+        async for raw in self._paginate("/getJobPostingsList/", params):
+            skills_str = raw.get("skills") or ""
+            skills = [s.strip() for s in skills_str.split(",") if s.strip()]
+            recruiter_str = raw.get("assigned_recruiter") or ""
+            recruiter_ids = [r.strip() for r in recruiter_str.split(",") if r.strip()]
+            pay_rates = raw.get("pay_rates") or []
+            first_pay = pay_rates[0] if pay_rates else {}
+
+            yield ATSJobPayload(
+                external_id=raw["id"],
+                external_client_id=raw.get("client") or "",
+                title=raw.get("position_title") or raw.get("public_job_title") or "",
+                description=raw.get("public_job_desc") or raw.get("requisition_description"),
+                status=raw.get("job_status") or None,
+                location=raw.get("primary_city") or raw.get("country") or None,
+                skills=skills,
+                employment_type=raw.get("employment_type") or None,
+                work_arrangement=(
+                    "remote" if raw.get("remote_opportunities") == "Yes" else None
+                ),
+                salary_range_min=_safe_int(first_pay.get("min_pay_rate")),
+                salary_range_max=_safe_int(first_pay.get("max_pay_rate")),
+                salary_currency=first_pay.get("pay_rate_currency") or None,
+                assigned_recruiter_external_ids=recruiter_ids,
+                raw=raw,
+                fetched_at=now,
+            )
 
     async def list_applicants(  # type: ignore[override]
         self, since: datetime | None = None,
     ) -> AsyncIterator[ATSApplicantPayload]:
-        raise NotImplementedError("Task 15")
-        yield  # pragma: no cover
+        now = datetime.now(tz=timezone.utc)
+        params = {"limit": 50, **self._format_since(since)}
+        async for raw in self._paginate("/getApplicantsList/", params):
+            full_name = " ".join(filter(None, [
+                raw.get("firstname"), raw.get("middlename"), raw.get("lastname"),
+            ])).strip() or "(unknown)"
+            location_parts = [p for p in [raw.get("city"), raw.get("state")] if p]
+            location = ", ".join(location_parts) or None
+            yield ATSApplicantPayload(
+                external_id=raw["id"],
+                name=full_name,
+                email=raw.get("email") or raw.get("email_address_1") or "",
+                phone=(
+                    raw.get("mobile_number")
+                    or raw.get("home_phone_number")
+                    or raw.get("work_phone_number")
+                    or None
+                ),
+                location=location,
+                current_title=raw.get("job_title") or None,
+                linkedin_url=None,           # not in standard payload
+                notes=None,
+                raw=raw,
+                fetched_at=now,
+            )
 
     async def list_submissions(  # type: ignore[override]
         self, job_external_id: str, since: datetime | None = None,
     ) -> AsyncIterator[ATSSubmissionPayload]:
-        raise NotImplementedError("Task 15")
-        yield  # pragma: no cover
+        now = datetime.now(tz=timezone.utc)
+        params = {"jobId": job_external_id, "limit": 50, **self._format_since(since)}
+        async for raw in self._paginate("/getSubmissionsList/", params):
+            yield ATSSubmissionPayload(
+                external_id=raw["id"],
+                applicant_external_id=str(
+                    raw.get("job_seeker_id")
+                    or raw.get("applicant_id")
+                    or ""
+                ),
+                job_external_id=raw.get("job_id") or job_external_id,
+                submission_status=raw.get("submission_status") or None,
+                pipeline_status=raw.get("pipeline_status") or None,
+                source=raw.get("source") or None,
+                submitted_on=_parse_ceipal_datetime(raw.get("submitted_on")),
+                submitted_by_external_id=raw.get("submitted_by") or None,
+                pay_rate=raw.get("pay_rate"),         # validator coerces
+                employment_type=raw.get("employment_type") or None,
+                raw=raw,
+                fetched_at=now,
+            )
+
+
+# ---------- Module-level helpers ----------
+
+def _safe_int(value) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_ceipal_datetime(value) -> datetime | None:
+    """Ceipal returns two date formats in the same payload:
+      - '2026-05-12T06:38:35Z' (ISO 8601 UTC)
+      - '2026-05-12 06:31:23'  (space-separated, no timezone — assume UTC)
+    """
+    if value is None or value == "":
+        return None
+    try:
+        if "T" in value:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return datetime.strptime(value, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        return None
