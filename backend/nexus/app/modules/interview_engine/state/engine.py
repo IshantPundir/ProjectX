@@ -525,49 +525,101 @@ class StateEngine:
             instruction = InstructionKind.redirect
 
         elif action == NextAction.push_back:
-            # Phase 9.2 push_back: candidate engaged but answer was thin /
-            # evasive / partial. No queue mutation, no probe consumption,
-            # no ledger gating. The State Engine increments the per-question
-            # push_back_count and enforces the cap=2 invariant.
-            #
-            # Cap behavior: a 3rd incoming push_back is downgraded to advance
-            # (or polite_close if no mandatory remains) and emits the
-            # ``push_back_cap_reached`` warning. This breaks loops on
-            # candidates who genuinely cannot give specifics.
-            current_count = self._queue.active_push_back_count()
-            if current_count >= 2 and self._queue.active_state() is not None:
+            # Phase 9.5 (2026-05-12) — inverse quality gate. Mirror of
+            # the existing quality_gated_advance check above. When the Judge
+            # emits push_back paired with at least one `concrete`/`strong`
+            # observation, the model is internally inconsistent: push_back
+            # asks for more depth, but a concrete observation says depth
+            # was already produced. Downgrade in-place rather than letting
+            # this fall through to the (now-softened) JudgeOutput validator
+            # which would otherwise route via the validation_error fallback
+            # and force-advance the queue.
+            has_concrete_obs = any(
+                o.quality in (CoverageQuality.concrete, CoverageQuality.strong)
+                for o in applied_observations
+            )
+            if has_concrete_obs and self._queue.active_state() is not None:
+                active_q_state = self._queue.active_state()
                 warnings.append(ValidationWarning(
-                    code="push_back_cap_reached",
+                    code="inverse_quality_gate",
                     level="warning",
                     details={
                         "active_question_id": self._queue.active_question_id(),
-                        "push_back_count": current_count,
-                        "downgraded_to": "advance",
+                        "original_action": "push_back",
+                        "downgraded_to": (
+                            "deliver_probe"
+                            if active_q_state.probes_remaining_ids
+                            else "advance"
+                        ),
+                        "concrete_observations": [
+                            {"signal": o.signal_value, "quality": o.quality.value}
+                            for o in applied_observations
+                            if o.quality in (
+                                CoverageQuality.concrete, CoverageQuality.strong,
+                            )
+                        ],
                         "reason": (
-                            "Push_back cap (2) already reached on this "
-                            "question; downgrading to advance to avoid "
-                            "loops. Some candidates genuinely cannot give "
-                            "concrete specifics — accept the partial "
-                            "coverage and move on."
+                            "push_back is incoherent when paired with concrete/"
+                            "strong observations (model produced depth but "
+                            "asked for more). Downgraded to probe (or advance "
+                            "if probes exhausted) to honor the evidence the "
+                            "model already extracted."
                         ),
                     },
                 ))
-                instruction = self._fallback_advance_to_next_pending(warnings)
-                # Q-2: tell the deliver_question Speaker scaffold this
-                # was a cap-forced topic shift so it adds a segue.
-                is_post_cap_advance = True
-            elif self._queue.active_state() is None:
-                # Defensive: push_back without an active question is
-                # incoherent. Treat as fallback advance to next pending.
-                warnings.append(ValidationWarning(
-                    code="push_back_without_active_question",
-                    level="error",
-                    details={"reason": "push_back requires an active question"},
-                ))
-                instruction = self._fallback_advance_to_next_pending(warnings)
+                if active_q_state.probes_remaining_ids:
+                    first_probe_id = active_q_state.probes_remaining_ids[0]
+                    self._queue.apply_probe(
+                        probe_id=first_probe_id, at_turn=self._turn_count,
+                    )
+                    instruction = InstructionKind.deliver_probe
+                else:
+                    instruction = self._fallback_advance_to_next_pending(warnings)
             else:
-                self._queue.increment_active_push_back_count()
-                instruction = InstructionKind.push_back
+                # Phase 9.2 push_back: candidate engaged but answer was thin
+                # / evasive / partial. No queue mutation, no probe
+                # consumption, no ledger gating. The State Engine increments
+                # the per-question push_back_count and enforces the cap=2
+                # invariant.
+                #
+                # Cap behavior: a 3rd incoming push_back is downgraded to
+                # advance (or polite_close if no mandatory remains) and emits
+                # the ``push_back_cap_reached`` warning. This breaks loops on
+                # candidates who genuinely cannot give specifics.
+                current_count = self._queue.active_push_back_count()
+                if current_count >= 2 and self._queue.active_state() is not None:
+                    warnings.append(ValidationWarning(
+                        code="push_back_cap_reached",
+                        level="warning",
+                        details={
+                            "active_question_id": self._queue.active_question_id(),
+                            "push_back_count": current_count,
+                            "downgraded_to": "advance",
+                            "reason": (
+                                "Push_back cap (2) already reached on this "
+                                "question; downgrading to advance to avoid "
+                                "loops. Some candidates genuinely cannot give "
+                                "concrete specifics — accept the partial "
+                                "coverage and move on."
+                            ),
+                        },
+                    ))
+                    instruction = self._fallback_advance_to_next_pending(warnings)
+                    # Q-2: tell the deliver_question Speaker scaffold this
+                    # was a cap-forced topic shift so it adds a segue.
+                    is_post_cap_advance = True
+                elif self._queue.active_state() is None:
+                    # Defensive: push_back without an active question is
+                    # incoherent. Treat as fallback advance to next pending.
+                    warnings.append(ValidationWarning(
+                        code="push_back_without_active_question",
+                        level="error",
+                        details={"reason": "push_back requires an active question"},
+                    ))
+                    instruction = self._fallback_advance_to_next_pending(warnings)
+                else:
+                    self._queue.increment_active_push_back_count()
+                    instruction = InstructionKind.push_back
 
         elif action == NextAction.polite_close:
             instruction = InstructionKind.polite_close
