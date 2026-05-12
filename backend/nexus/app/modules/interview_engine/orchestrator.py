@@ -117,31 +117,6 @@ class _SpeakerStreamOutcome:
     interrupted: bool
 
 
-# Judge actions whose response MUST be delivered to the candidate, even
-# if the candidate resumed speaking during the Judge LLM call. These are
-# explicit candidate-intent acknowledgements (or terminal states); silently
-# dropping them is catastrophic UX — the candidate is left hanging and
-# typically forced to re-issue the request.
-#
-# Diagnosed in session 11b3c321 (2026-05-11): the candidate said "I would
-# like to end this interview now.", Judge correctly returned end_session,
-# but the post-Judge resumption gate dropped the response because the
-# candidate had already started saying "End this interview now." (a
-# re-issue, because the agent hadn't yet acknowledged the first request).
-# The candidate had to say end twice.
-#
-# Source of truth for the action names: NextAction StrEnum in
-# ``app/modules/interview_engine/models/judge.py``. Values are checked
-# as strings (StrEnum compares equal to its string value), so the test
-# whitelist below stays in sync regardless of import-cycle concerns.
-_MUST_DELIVER_JUDGE_ACTIONS: frozenset[str] = frozenset({
-    "end_session",                # candidate asked to end
-    "polite_close",               # engine-initiated terminal close
-    "acknowledge_no_experience",  # candidate disclosed "I don't know"
-    "repeat",                     # candidate asked to hear the question again
-})
-
-
 @dataclass(slots=True)
 class OrchestratorConfig:
     checkpoint_turns: int = 10
@@ -155,13 +130,6 @@ class OrchestratorConfig:
         "Thanks for your time. This session has ended; the recruitment "
         "team will be in contact with you."
     )
-    # Post-Judge resumption gate — see _user_resumed_speaking_after.
-    # Tolerance for the speech-resumption check that runs AFTER Judge
-    # returns and BEFORE Speaker. A listening→speaking transition
-    # observed within this window of the on_user_turn_completed entry
-    # is treated as the tail of the just-finished utterance, not a
-    # genuine new turn.
-    post_judge_resumption_epsilon_ms: int = 200
 
 
 class InterviewOrchestrator:
@@ -197,13 +165,6 @@ class InterviewOrchestrator:
         # the post-Judge knockout-policy-override path both call into
         # ``_schedule_shutdown``; this flag keeps it idempotent.
         self._shutdown_scheduled: bool = False
-        # Wall-clock timestamp of the candidate's most recent
-        # listening→speaking transition (i.e., "user resumed talking").
-        # Populated by ``observe_user_state`` and consulted by the
-        # post-Judge resumption gate to detect "the user started a new
-        # utterance while I was running Judge." See
-        # ``_user_resumed_speaking_after``.
-        self._resumed_speaking_at: float | None = None
 
     # --- Public accessors ---
 
@@ -254,53 +215,6 @@ class InterviewOrchestrator:
         if lifecycle_outcome is not None:
             return lifecycle_outcome.value
         return _map_livekit_close_reason(close_reason)
-
-    def observe_user_state(
-        self,
-        *,
-        new_state: str,
-        now_wall: float | None = None,
-    ) -> None:
-        """Record a candidate speech-state transition.
-
-        * ``_resumed_speaking_at`` (on ``"speaking"``) — referenced by
-          the post-Judge resumption gate. When a listening→speaking
-          transition is observed while the orchestrator is mid-Judge,
-          this timestamp drives the gate's "user started a new
-          utterance" decision.
-
-        Called from agent.py's ``user_state_changed`` event handler.
-        ``now_wall`` defaults to ``time.time()`` so production callers
-        don't need to capture timestamps themselves; tests pass explicit
-        values for determinism.
-
-        Thread-safety: invoked on the same asyncio loop as
-        ``on_user_turn_completed``, so simple attribute writes are
-        race-free under Python's GIL semantics.
-        """
-        if new_state == "speaking":
-            self._resumed_speaking_at = (
-                now_wall if now_wall is not None else time.time()
-            )
-
-    def _user_resumed_speaking_after(self, t_wall: float) -> bool:
-        """Was a listening→speaking transition observed STRICTLY after
-        ``t_wall + epsilon``?
-
-        Used by the post-Judge resumption gate: ``t_wall`` is the
-        wall-clock at which ``on_user_turn_completed`` entered; the gate
-        fires if the candidate started a new utterance during Judge
-        processing. The epsilon comes from
-        ``config.post_judge_resumption_epsilon_ms`` and tolerates
-        clock skew between LiveKit's ``stopped_speaking_at`` and our
-        own ``observe_user_state`` timing — a "resumption" within
-        epsilon of the callback fire is the tail of the just-finished
-        utterance, not a fresh turn.
-        """
-        if self._resumed_speaking_at is None:
-            return False
-        epsilon_s = self._config.post_judge_resumption_epsilon_ms / 1000.0
-        return self._resumed_speaking_at > t_wall + epsilon_s
 
     # --- LiveKit lifecycle hooks ---
 
@@ -379,14 +293,6 @@ class InterviewOrchestrator:
                 agent=agent, candidate_text=candidate_text,
             )
             return
-
-        # Wall-clock timestamp at which on_user_turn_completed fired.
-        # Captured up-front so the post-Judge resumption gate can ask
-        # "did the candidate start a new utterance AFTER we got the
-        # callback?" using a stable reference point. ``time.monotonic()``
-        # is not used here because we compare against
-        # ``_resumed_speaking_at``, which is a wall-clock value.
-        original_callback_wall = time.time()
 
         turn_id = str(uuid.uuid4())
 
@@ -475,49 +381,6 @@ class InterviewOrchestrator:
             tenant_id=self._tenant_id,
         )
         self._append_judge_event(turn_id=turn_id, result=result, input_payload=judge_input)
-
-        # Post-Judge resumption gate. If the candidate produced a new
-        # listening→speaking transition WHILE Judge was running, the
-        # response we're about to commit is to the prior fragment — but
-        # the candidate has already moved on. Drop the response: no
-        # State Engine mutation, no Speaker call, no audio reply. The
-        # next on_user_turn_completed callback runs Judge on the new
-        # text directly.
-        #
-        # EXCEPTION: when Judge's action is in ``_MUST_DELIVER_JUDGE_ACTIONS``,
-        # the response is an explicit candidate-intent acknowledgement
-        # (end_session, polite_close, acknowledge_no_experience, repeat)
-        # — silently dropping it would leave the candidate hanging and
-        # typically force them to re-issue the request. Deliver the
-        # response immediately and let the resumed speech become the
-        # next turn (which the framework will deliver after the close
-        # speech finishes or, for non-terminal actions, after the agent
-        # finishes speaking).
-        #
-        # The Judge audit event above is kept intentionally: the Judge
-        # ran, the LLM result exists, and it's forensically useful for
-        # replay tooling to see what Judge classified the stale text as
-        # before the orchestrator decided to abandon it.
-        judge_action = result.judge_output.next_action
-        is_must_deliver = (
-            str(judge_action) in _MUST_DELIVER_JUDGE_ACTIONS
-        )
-        if (
-            not is_must_deliver
-            and self._user_resumed_speaking_after(original_callback_wall)
-        ):
-            from app.modules.interview_engine.audit_events import TurnDroppedPayload
-            from app.modules.interview_engine.event_kinds import TURN_DROPPED
-            now_wall = time.time()
-            staleness_ms = int((now_wall - original_callback_wall) * 1000)
-            self._append(TURN_DROPPED, TurnDroppedPayload(
-                turn_id=turn_id,
-                candidate_text=candidate_text,
-                stopped_speaking_at=None,
-                staleness_ms=staleness_ms,
-                buffer_size_after=0,
-            ).model_dump())
-            return
 
         decision = self._state.process_judge_output(
             turn_id=turn_id, judge_output=result.judge_output,

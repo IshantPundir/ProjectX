@@ -298,25 +298,6 @@ class Settings(BaseSettings):
     engine_judge_prompt_version: str = "v1"
     engine_speaker_prompt_version: str = "v1"
 
-    # Post-Judge resumption gate (2026-05-11, session 3eabb4d0). If the
-    # candidate produces a NEW listening→speaking transition during the
-    # Judge LLM call, the orchestrator drops the response (no Speaker, no
-    # State Engine mutations) and buffers the text for the next turn.
-    # The epsilon below tolerates clock skew between LiveKit's
-    # stopped_speaking_at and our observe_user_state timing — a
-    # resumption within `epsilon_ms` of the callback fire is treated as
-    # the tail of the just-finished utterance, not a genuine new turn.
-    engine_post_judge_resumption_epsilon_ms: int = 200
-
-    @field_validator("engine_post_judge_resumption_epsilon_ms")
-    @classmethod
-    def _post_judge_resumption_epsilon_range(cls, v: int) -> int:
-        if not 0 <= v <= 5000:
-            raise ValueError(
-                f"engine_post_judge_resumption_epsilon_ms must be in [0, 5000]; got {v}"
-            )
-        return v
-
     # Canned terminal message played to the candidate after the session
     # lifecycle has entered 'closing' or 'closed' (e.g. polite_close was
     # already delivered but the candidate keeps talking). The

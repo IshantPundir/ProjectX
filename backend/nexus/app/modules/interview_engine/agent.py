@@ -399,7 +399,6 @@ async def entrypoint(ctx: JobContext) -> None:
             checkpoint_turns=settings.engine_checkpoint_turns,
             checkpoint_seconds=settings.engine_checkpoint_seconds,
             session_ended_message=settings.engine_session_ended_message,
-            post_judge_resumption_epsilon_ms=settings.engine_post_judge_resumption_epsilon_ms,
         ),
         tenant_id=str(tenant_uuid),
     )
@@ -498,17 +497,15 @@ def _wire_session_observability(
 
     @session.on("user_state_changed")
     def _on_user_state(ev: UserStateChangedEvent) -> None:
+        # Audit-only: every user-state transition lands in the audit
+        # envelope. The orchestrator no longer mirrors any of these
+        # (the post-Judge resumption gate that used to consume
+        # listening→speaking transitions was deleted in Task 12).
         _emit(
             "audio.user.state",
             {"old_state": ev.old_state, "new_state": ev.new_state},
             ev.created_at,
         )
-        # Orchestrator tracks listening→speaking transitions for the
-        # post-Judge resumption gate. observe_user_state internally
-        # gates on new_state, but pre-filter here to avoid the extra
-        # call on transitions we don't care about (e.g., "away").
-        if ev.new_state == "speaking":
-            agent.orchestrator.observe_user_state(new_state=ev.new_state)
 
     @session.on("agent_state_changed")
     def _on_agent_state(ev: AgentStateChangedEvent) -> None:
