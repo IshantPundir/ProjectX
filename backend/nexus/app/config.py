@@ -238,14 +238,13 @@ class Settings(BaseSettings):
     #   real fix is consuming `on_user_turn_completed` (turn-detector
     #   EOU, not STT finals) — but a longer min_delay also gives the
     #   turn detector more signal before deciding.
-    # max_delay 6.0s (Phase 2 P2.2, 2026-05-08, was 2.5): session
-    #   09e8fc33 showed candidate thinking pauses up to 22s and EOU
-    #   delays p95 of 5.5s on non-trivial questions; the 2.5s cap was
-    #   firing turn-end mid-thought. 6.0s gives the turn detector room
-    #   to wait out a real pause; the snappiness loss on simple-answer
-    #   turns is acceptable vs cutting candidates off mid-sentence.
+    # max_delay 3.0s (Phase 5, 2026-05-12, was 6.0): matches LiveKit's
+    #   documented default. Earlier tuning (unlikely_threshold→0.5,
+    #   min_duration→1.0s) has stablized EOU detection; long-pause
+    #   tolerance built into the orchestrator coalescing logic
+    #   (docs/superpowers/specs/2026-05-11-turn-continuation-coalescing-design.md).
     engine_endpointing_min_delay: float = 1.0
-    engine_endpointing_max_delay: float = 6.0
+    engine_endpointing_max_delay: float = 3.0
     # Phase 3D — audio pipeline tuning (LK Cloud locked, 2026-05-06)
     # Architecture is locked to LK Cloud + ai-coustics exclusively.
     # "off" and "krisp_nc" are no longer valid values.

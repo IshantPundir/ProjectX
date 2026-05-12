@@ -49,18 +49,18 @@ def test_aiconfig_exposes_engine_models(monkeypatch):
 
 
 def test_engine_endpointing_max_delay_default_is_patient(monkeypatch):
-    """The default endpointing max delay was raised from 2.5 → 6.0 in
-    Phase 2 P2.2 (2026-05-08). Session 09e8fc33 showed candidate
-    thinking pauses up to 22s and EOU delays p95 of 5.5s; the previous
-    2.5s cap was firing turn-end mid-thought.
+    """The default endpointing max delay was lowered from 6.0 → 3.0 in
+    Phase 5 (2026-05-12) to match LiveKit's documented default. Earlier
+    tuning (unlikely_threshold→0.5, min_duration→1.0s) has stabilized
+    EOU detection; long-pause tolerance is now built into orchestrator
+    coalescing logic (specs/2026-05-11-turn-continuation-coalescing-design.md).
 
     The default lives in code, but the test asserts it explicitly so a
-    silent regression back to a snappier value (which would re-introduce
-    mid-sentence cutoffs) gets flagged.
+    silent regression gets flagged.
     """
     monkeypatch.delenv("ENGINE_ENDPOINTING_MAX_DELAY", raising=False)
     s = Settings()
-    assert s.engine_endpointing_max_delay == 6.0
+    assert s.engine_endpointing_max_delay == 3.0
 
 
 def test_interview_turn_detector_unlikely_threshold_default_is_conservative(monkeypatch):
