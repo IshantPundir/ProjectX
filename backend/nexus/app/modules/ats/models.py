@@ -62,6 +62,7 @@ class ATSConnection(Base):
     last_poll_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_poll_error: Mapped[str | None] = mapped_column(Text)
     rate_limit_qps: Mapped[float | None] = mapped_column(Numeric)
+    job_status_filter: Mapped[dict | None] = mapped_column(JSONB)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=sql_text("true"))
     disabled_reason: Mapped[str | None] = mapped_column(Text)
     disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -208,6 +209,9 @@ class ATSSyncLog(Base):
     )
     error_phase: Mapped[str | None] = mapped_column(Text)
     error_summary: Mapped[str | None] = mapped_column(Text)
+    progress: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=sql_text("'{}'::jsonb")
+    )
     correlation_id: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=sql_text("now()")
