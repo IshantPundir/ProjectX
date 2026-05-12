@@ -56,6 +56,12 @@ _TENANT_SCOPED_TABLES: tuple[str, ...] = (
     "candidate_session_tokens",
     # Phase 5 — tenant settings
     "tenant_settings",
+    # Phase ATS — ATS adapter integration tables
+    "ats_client_mappings",
+    "ats_connections",
+    "ats_job_recruiter_assignments",
+    "ats_sync_logs",
+    "ats_user_mappings",
 )
 
 
