@@ -855,7 +855,7 @@ class InterviewOrchestrator:
             correlation_id=self._correlation_id,
             tenant_id=self._tenant_id,
         )
-        self._append_judge_event(turn_id=turn_id, result=result)
+        self._append_judge_event(turn_id=turn_id, result=result, input_payload=judge_input)
 
         # Post-Judge resumption gate. If the candidate produced a new
         # listening→speaking transition WHILE Judge was running, the
@@ -1494,7 +1494,15 @@ class InterviewOrchestrator:
             return 0
         return int((time.monotonic() - self._session_started_monotonic) * 1000)
 
-    def _append_judge_event(self, *, turn_id: str, result: Any) -> None:
+    def _append_judge_event(
+        self, *, turn_id: str, result: Any, input_payload: Any,
+    ) -> None:
+        """Emit JUDGE_FALLBACK or JUDGE_CALL with the full input payload.
+
+        ``input_payload`` is the JudgeInputPayload that was sent to the
+        LLM — its ``model_dump(mode='json')`` populates ``input_summary``
+        so replay tools can reproduce why the Judge made a given decision.
+        """
         from app.modules.interview_engine.event_kinds import JUDGE_CALL, JUDGE_FALLBACK
         from app.modules.interview_engine.audit_events import (
             JudgeCallPayload, JudgeFallbackPayload,
@@ -1509,7 +1517,7 @@ class InterviewOrchestrator:
             self._append(JUDGE_CALL, JudgeCallPayload(
                 turn_id=turn_id, model=result.model_used,
                 prompt_hash="sha256:judge",
-                input_summary={},
+                input_summary=input_payload.model_dump(mode="json"),
                 output=result.judge_output.model_dump(mode="json"),
                 latency_ms=result.latency_ms,
                 usage=result.usage,

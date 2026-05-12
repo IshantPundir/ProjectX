@@ -748,3 +748,78 @@ async def test_repeat_after_empty_speaker_output_replays_prior_question_not_fall
     assert cached_events[0].payload["final_utterance"] == "Walk me through your tool of choice."
     # Importantly, NOT the fallback text.
     assert "Let me restate" not in cached_events[0].payload["final_utterance"]
+
+
+# ---------------------------------------------------------------------------
+# Task 4 — judge.call.input_summary plumbing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_judge_call_audit_carries_full_input_summary(
+    make_session_config, make_question,
+) -> None:
+    """Run one turn end-to-end and assert the judge.call audit event
+    contains a non-empty input_summary that reflects the JudgeInputPayload.
+
+    This is the regression guard for the #1 logging gap: before Task 4,
+    _append_judge_event hardcoded ``input_summary={}`` so replay tools
+    had no record of what the Judge LLM actually saw on each turn.
+
+    The test drives ``on_user_turn_completed`` with a real candidate
+    utterance through the real Orchestrator → real StateEngine → mocked
+    Judge LLM call chain (mock at the API boundary, not above it), and
+    asserts that the plumbing from ``build_judge_input(...)`` →
+    ``_append_judge_event(input_payload=judge_input)`` reaches the
+    collector.
+    """
+    judge_outputs = [
+        # Turn 1: candidate gives a substantive answer → probe.
+        JudgeOutput(
+            observations=[],
+            candidate_claims=[],
+            next_action=NextAction.probe,
+            next_action_payload=ProbePayload(probe_id="0"),
+            turn_metadata=TurnMetadata(),
+        ),
+    ]
+
+    speaker_outputs = [
+        # on_enter: first question delivered.
+        "Tell me about a time you led a team.",
+        # Turn 1: probe follow-up.
+        "How did you handle disagreements within the team?",
+    ]
+
+    orch, agent = _build_orch(
+        make_session_config=make_session_config,
+        make_question=make_question,
+        scripted_judge_outputs=judge_outputs,
+        scripted_speaker_outputs=speaker_outputs,
+        knockout_signal="leadership",
+    )
+
+    candidate_utterance = "I led a team of five engineers"
+
+    await orch.on_enter(agent)
+    await orch.on_user_turn_completed(
+        agent, MagicMock(), _msg(candidate_utterance),
+    )
+
+    judge_call_events = [
+        e for e in orch._collector.events if e.kind == "judge.call"
+    ]
+    assert len(judge_call_events) == 1, (
+        f"Expected exactly one judge.call event; got {len(judge_call_events)}."
+    )
+    payload = judge_call_events[0].payload
+    assert payload["input_summary"] != {}, (
+        "judge.call input_summary must be non-empty — Task 4 regression guard."
+    )
+    assert "candidate_utterance" in payload["input_summary"], (
+        "input_summary must contain 'candidate_utterance' key from JudgeInputPayload."
+    )
+    assert payload["input_summary"]["candidate_utterance"] == candidate_utterance, (
+        f"input_summary['candidate_utterance'] must match the actual candidate "
+        f"utterance; got {payload['input_summary']['candidate_utterance']!r}."
+    )
