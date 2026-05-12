@@ -110,3 +110,34 @@ def test_turn_coalesced_payload_rejects_negative_gap_ms():
             gap_ms=-1,
             coalesce_window_ms=5000,
         )
+
+
+def test_speaker_input_payload_round_trip() -> None:
+    from app.modules.interview_engine.audit_events import SpeakerInputPayload
+
+    payload = SpeakerInputPayload(
+        turn_id="t-1",
+        speaker_input={
+            "instruction_kind": "deliver_question",
+            "bank_text": "tell me about a time you scaled a service",
+            "persona_name": "Punar",
+        },
+    )
+    dumped = payload.model_dump()
+    assert dumped["turn_id"] == "t-1"
+    assert dumped["speaker_input"]["instruction_kind"] == "deliver_question"
+
+
+def test_state_snapshot_payload_round_trip() -> None:
+    from app.modules.interview_engine.audit_events import StateSnapshotPayload
+
+    payload = StateSnapshotPayload(
+        turn_id="t-1",
+        ledger={"snapshots": {}, "entries": [], "next_seq": 1},
+        queue={"questions": [], "active_index": None},
+        claims={"entries": []},
+        lifecycle={"state": "active", "knockout_failures": [],
+                   "time_budget_total_seconds": 1800.0,
+                   "time_elapsed_seconds": 0.0, "last_outcome": None},
+    )
+    assert payload.model_dump()["lifecycle"]["state"] == "active"

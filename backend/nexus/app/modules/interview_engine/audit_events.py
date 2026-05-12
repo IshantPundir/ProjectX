@@ -155,6 +155,35 @@ class SpeakerOutputPayload(BaseModel):
     final_utterance: str
 
 
+class SpeakerInputPayload(BaseModel):
+    """Audit payload capturing what the Speaker LLM saw on this turn.
+
+    Lets replay tools reproduce the exact prompt + payload Speaker received
+    and verify the anti-leak invariants (no rubric / anchors / coverage in
+    the payload). The ``speaker_input`` dict is the model_dump of
+    ``SpeakerInput`` — kept loose-typed so adding a SpeakerInput field
+    later doesn't require a schema migration here.
+    """
+    turn_id: str
+    speaker_input: dict[str, Any]
+
+
+class StateSnapshotPayload(BaseModel):
+    """Audit payload capturing State Engine snapshots BEFORE process_judge_output.
+
+    With this, replay tools can deterministically reconstruct any turn's
+    inputs to the State Engine. The four fields are the model_dump of
+    ``ledger_snapshot()``, ``queue_snapshot()``, ``claims_snapshot()``,
+    ``lifecycle_snapshot()`` — kept loose-typed for the same reason as
+    SpeakerInputPayload.
+    """
+    turn_id: str
+    ledger: dict[str, Any]
+    queue: dict[str, Any]
+    claims: dict[str, Any]
+    lifecycle: dict[str, Any]
+
+
 class SpeakerOutputEmptyPayload(BaseModel):
     """Fired when the Speaker LLM streamed no audible text and the
     orchestrator played a deterministic fallback. Distinguished from
