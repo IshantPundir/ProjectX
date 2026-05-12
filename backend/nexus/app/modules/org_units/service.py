@@ -1244,3 +1244,50 @@ async def find_compliance_flags_in_ancestry(
     return _serialize_inheritance(
         await _walk_metadata_in_db(db, org_unit_id, COMPLIANCE_KEYS)
     )
+
+
+async def _unblock_pending_jobs_for_org_unit(
+    db: AsyncSession,
+    org_unit_id: UUID | str,
+    tenant_id: UUID | str,
+) -> list[str]:
+    """Transition every JD in `blocked_pending_client_setup` state under this
+    org_unit to `draft`. Returns the list of unblocked job_posting IDs as
+    strings so the caller can enqueue extract_and_enhance_jd for each.
+
+    Called from the company-profile-update API handler when
+    `company_profile_completion_status` transitions pending → complete.
+    Writes one `jd.unblocked_by_profile_completion` audit row per JD.
+    """
+    # Local imports: deferred to avoid a circular when jd.service eventually
+    # imports org_units.service for ancestry walks, and to keep the audit
+    # module out of org_units' import-time graph.
+    from app.modules.jd.models import JobPosting
+    from app.modules.audit import log_event
+
+    tid = UUID(str(tenant_id))
+    ouid = UUID(str(org_unit_id))
+
+    result = await db.execute(
+        select(JobPosting).where(
+            JobPosting.tenant_id == tid,
+            JobPosting.org_unit_id == ouid,
+            JobPosting.status == "blocked_pending_client_setup",
+        )
+    )
+    unblocked: list[str] = []
+    for job in result.scalars().all():
+        job.status = "draft"
+        await log_event(
+            db,
+            tenant_id=tid,
+            actor_id=None,
+            actor_email="system",
+            action="jd.unblocked_by_profile_completion",
+            resource="job_posting",
+            resource_id=job.id,
+            payload={"org_unit_id": str(ouid)},
+        )
+        unblocked.append(str(job.id))
+    await db.flush()
+    return unblocked
