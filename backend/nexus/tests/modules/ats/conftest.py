@@ -67,6 +67,46 @@ def patched_bypass_session(db, monkeypatch):
 
 
 @pytest.fixture
+async def jobs_fixture(db, importer_fixture):
+    """Add two client_account org_units (pending + complete) + matching mappings.
+
+    Lives in conftest.py (not a test file) so multiple importer tests can
+    share it without test-file-level imports. Uses the test ``db`` session
+    directly so all rows roll back at teardown.
+    """
+    tenant_id, user_id, root_unit_id = importer_fixture
+    pending_unit_id = uuid.uuid4()
+    complete_unit_id = uuid.uuid4()
+
+    await db.execute(text(
+        "INSERT INTO organizational_units (id, client_id, name, unit_type, "
+        "is_root, parent_unit_id, company_profile, "
+        "company_profile_completion_status) VALUES "
+        "(:p, :t, 'Pending', 'client_account', false, :r, "
+        " '{\"name\":\"P\"}', 'pending'),"
+        "(:c, :t, 'Complete', 'client_account', false, :r, "
+        " '{\"name\":\"C\"}', 'complete')"
+    ), {
+        "p": pending_unit_id, "c": complete_unit_id,
+        "t": tenant_id, "r": root_unit_id,
+    })
+    await db.execute(text(
+        "INSERT INTO ats_client_mappings (tenant_id, ats_vendor, "
+        "external_client_id, external_client_name, org_unit_id) VALUES "
+        "(:t, 'ceipal', 'pending-client', 'P', :p),"
+        "(:t, 'ceipal', 'complete-client', 'C', :c)"
+    ), {
+        "t": tenant_id, "p": pending_unit_id, "c": complete_unit_id,
+    })
+    await db.flush()
+
+    yield (
+        tenant_id, user_id, root_unit_id,
+        str(pending_unit_id), str(complete_unit_id),
+    )
+
+
+@pytest.fixture
 async def importer_fixture(db, patched_bypass_session):
     """Seed a tenant + user + root company org_unit + ats_connection.
 

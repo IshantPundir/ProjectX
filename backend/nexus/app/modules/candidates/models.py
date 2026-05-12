@@ -98,6 +98,17 @@ class CandidateJobAssignment(Base):
     job_posting_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("job_postings.id", ondelete="CASCADE"), nullable=False
     )
+    # Mirrors migration 0031 (`candidate_job_assignments_external_idx` partial
+    # unique index). The columns identify ATS-origin assignments so the
+    # importer can upsert-by-external-id without colliding with manual rows.
+    # Declared on the ORM so Base.metadata.create_all (test DB) builds the
+    # columns — without these, importer tests fail with
+    # "column candidate_job_assignments.source does not exist".
+    source: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=sql_text("'manual'"),
+    )
+    external_id: Mapped[str | None] = mapped_column(Text)
+    source_metadata: Mapped[dict | None] = mapped_column(JSONB)
     current_stage_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("job_pipeline_stages.id"), nullable=False
     )

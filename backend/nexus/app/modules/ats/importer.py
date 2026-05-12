@@ -355,7 +355,172 @@ class ATSImporter:
         return result
 
     async def _sync_applicants(self, db, adapter) -> PhaseResult:
-        raise NotImplementedError("Task 21")
+        """Phase 4: applicants → candidates via import_candidate.
+
+        Reuses the candidates module's idempotent service function; collisions
+        with manual-flow candidates (same email) link external_id without
+        overwriting editable fields.
+        """
+        from app.modules.ats.sources import ATSImportSource
+        from app.modules.ats.models import ATSConnection
+        from app.modules.candidates.service import import_candidate
+
+        result = PhaseResult()
+        tenant_id = adapter.state.tenant_id
+
+        connection = await db.scalar(
+            select(ATSConnection).where(
+                ATSConnection.tenant_id == tenant_id,
+                ATSConnection.vendor == adapter.vendor,
+            )
+        )
+        created_by = connection.created_by
+
+        bridge = ATSImportSource(vendor=adapter.vendor)
+        since = self._cursor_or_none(adapter.state, "applicants")
+        async for payload in adapter.list_applicants(since=since):
+            try:
+                sourced = bridge.normalize(payload)
+                candidate = await import_candidate(db, sourced, tenant_id, created_by)
+                # import_candidate writes its own audit row. We just count.
+                # created_at == updated_at approximates the new-vs-updated
+                # split because import_candidate may both insert and update
+                # on different paths.
+                if candidate.created_at == candidate.updated_at:
+                    result.new += 1
+                else:
+                    result.updated += 1
+            except Exception as exc:
+                logger.warning(
+                    "ats.sync.applicants.row_failed",
+                    external_id=payload.external_id, error=str(exc),
+                )
+                result.errors.append(payload.external_id)
+        return result
 
     async def _sync_submissions(self, db, adapter) -> PhaseResult:
-        raise NotImplementedError("Task 22")
+        """Phase 5: for each known job_posting from this vendor, fetch
+        submissions and upsert candidate_job_assignments. The submission
+        external_id is the join key on candidate_job_assignments.
+
+        Submission → candidate resolution goes via candidates.external_id
+        (set by import_candidate in Phase 4). Submission → job resolution
+        goes via job_postings.external_id (set by _sync_jobs in Phase 3).
+        Both lookups are scoped to the same (tenant_id, vendor) pair.
+
+        Stage / assignee resolution:
+          - ``current_stage_id`` resolves to the job's pipeline-instance first
+            stage (lowest ``position``). If the job has no pipeline yet
+            (still ``draft`` / ``blocked_pending_client_setup``), the
+            submission is skipped — the recruiter can't accept candidates
+            into a stage that doesn't exist.
+          - ``assigned_by`` is the connection's ``created_by`` — the user
+            who installed the integration is the system actor for ATS-origin
+            assignments.
+        """
+        from app.modules.ats.models import ATSConnection
+        from app.modules.candidates.models import Candidate, CandidateJobAssignment
+        from app.modules.jd.models import JobPosting
+        from app.modules.pipelines.models import JobPipelineInstance, JobPipelineStage
+
+        result = PhaseResult()
+        tenant_id = adapter.state.tenant_id
+        vendor_source = f"ats_{adapter.vendor}"
+
+        connection = await db.scalar(
+            select(ATSConnection).where(
+                ATSConnection.tenant_id == tenant_id,
+                ATSConnection.vendor == adapter.vendor,
+            )
+        )
+        created_by = connection.created_by
+
+        # Iterate jobs we know about from this vendor
+        jobs = await db.execute(
+            select(JobPosting).where(
+                JobPosting.tenant_id == tenant_id,
+                JobPosting.source == vendor_source,
+            )
+        )
+        since = self._cursor_or_none(adapter.state, "submissions")
+        for job in jobs.scalars():
+            if not job.external_id:
+                continue
+            # Resolve first stage for this job (one-shot per job).
+            first_stage = await db.scalar(
+                select(JobPipelineStage)
+                .join(
+                    JobPipelineInstance,
+                    JobPipelineStage.instance_id == JobPipelineInstance.id,
+                )
+                .where(JobPipelineInstance.job_posting_id == job.id)
+                .order_by(JobPipelineStage.position.asc())
+                .limit(1)
+            )
+            async for sub in adapter.list_submissions(
+                job_external_id=job.external_id, since=since,
+            ):
+                # Resolve candidate by external_id
+                candidate = await db.scalar(
+                    select(Candidate).where(
+                        Candidate.tenant_id == tenant_id,
+                        Candidate.source == vendor_source,
+                        Candidate.external_id == sub.applicant_external_id,
+                        Candidate.pii_redacted_at.is_(None),
+                    )
+                )
+                if candidate is None:
+                    logger.warning(
+                        "ats.sync.submissions.skip_unknown_applicant",
+                        submission_external_id=sub.external_id,
+                        applicant_external_id=sub.applicant_external_id,
+                    )
+                    result.skipped += 1
+                    continue
+
+                existing = await db.scalar(
+                    select(CandidateJobAssignment).where(
+                        CandidateJobAssignment.tenant_id == tenant_id,
+                        CandidateJobAssignment.source == vendor_source,
+                        CandidateJobAssignment.external_id == sub.external_id,
+                    )
+                )
+                meta = {
+                    "submission_status": sub.submission_status,
+                    "pipeline_status": sub.pipeline_status,
+                    "source": sub.source,
+                    "submitted_on": sub.submitted_on.isoformat() if sub.submitted_on else None,
+                    "pay_rate": str(sub.pay_rate) if sub.pay_rate else None,
+                    "employment_type": sub.employment_type,
+                    "raw": sub.raw,
+                }
+                if existing is not None:
+                    # Replace-metadata semantics; do NOT touch candidate_id
+                    # or job_posting_id (those are the join keys and are
+                    # locked once set).
+                    existing.source_metadata = meta
+                    result.updated += 1
+                else:
+                    if first_stage is None:
+                        # Job has no pipeline yet — recruiter hasn't built
+                        # one (blocked_pending_client_setup or draft). Skip
+                        # this submission; next poll will retry.
+                        logger.warning(
+                            "ats.sync.submissions.skip_no_pipeline",
+                            submission_external_id=sub.external_id,
+                            job_external_id=job.external_id,
+                        )
+                        result.skipped += 1
+                        continue
+                    db.add(CandidateJobAssignment(
+                        tenant_id=tenant_id,
+                        candidate_id=candidate.id,
+                        job_posting_id=job.id,
+                        current_stage_id=first_stage.id,
+                        assigned_by=created_by,
+                        source=vendor_source,
+                        external_id=sub.external_id,
+                        source_metadata=meta,
+                    ))
+                    result.new += 1
+        return result
