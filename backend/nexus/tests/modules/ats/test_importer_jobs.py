@@ -38,7 +38,10 @@ def _jobs_adapter(tenant_id, jobs):
     adapter = AsyncMock()
     adapter.state = state
     adapter.vendor = "ceipal"
-    adapter.list_jobs = lambda since=None: _async_iter(jobs)
+    # list_jobs now takes job_status_ids kwarg — accept and ignore in tests.
+    adapter.list_jobs = lambda since=None, *, job_status_ids=None: _async_iter(jobs)
+    # count_jobs seeds the progress denominator — return len(jobs).
+    adapter.count_jobs = AsyncMock(return_value=len(jobs))
     return adapter
 
 
@@ -173,3 +176,183 @@ async def test_job_with_neither_id_nor_name_is_skipped(db, jobs_fixture):
     result = await importer._run_phase("jobs", importer._sync_jobs, adapter)
     assert result.skipped == 1
     assert result.new == 0
+
+
+@pytest.mark.asyncio
+async def test_jobs_phase_skipped_when_filter_is_null(db, jobs_fixture):
+    """When job_status_filter IS NULL on the connection, _sync_jobs returns
+    early with an explicit ``filter_not_configured`` sentinel and writes no
+    job rows."""
+    from app.modules.ats.importer import ATSImporter
+
+    tenant_id, *_ = jobs_fixture
+    # NULL the filter back out — the fixture seeds it non-NULL for the
+    # other tests in this file.
+    await db.execute(text(
+        "UPDATE ats_connections SET job_status_filter = NULL "
+        "WHERE tenant_id = :t AND vendor = 'ceipal'"
+    ), {"t": tenant_id})
+    await db.flush()
+
+    job = ATSJobPayload(
+        external_id="j-blocked", external_client_id="complete-client",
+        title="x", raw={}, fetched_at=datetime.now(tz=timezone.utc),
+    )
+    adapter = _jobs_adapter(tenant_id, [job])
+    importer = ATSImporter()
+    result = await importer._run_phase("jobs", importer._sync_jobs, adapter)
+
+    assert result.new == 0
+    assert result.updated == 0
+    assert "filter_not_configured" in result.errors
+    # No job_postings row was created
+    r = await db.execute(text(
+        "SELECT COUNT(*) FROM job_postings WHERE tenant_id = :t"
+    ), {"t": tenant_id})
+    assert r.scalar_one() == 0
+
+
+@pytest.mark.asyncio
+async def test_jobs_phase_passes_filter_ids_to_adapter(db, jobs_fixture):
+    """The connection's stored status IDs are forwarded to adapter.list_jobs
+    and adapter.count_jobs."""
+    from app.modules.ats.importer import ATSImporter
+
+    tenant_id, *_ = jobs_fixture
+    await db.execute(text(
+        "UPDATE ats_connections SET job_status_filter = :f "
+        "WHERE tenant_id = :t AND vendor = 'ceipal'"
+    ), {
+        "f": '{"ids": [1, 8], "names": ["Active", "Reactivated"]}',
+        "t": tenant_id,
+    })
+    await db.flush()
+
+    captured = {}
+    def capturing_list_jobs(since=None, *, job_status_ids=None):
+        captured["list_status_ids"] = job_status_ids
+        async def _aiter():
+            return
+            yield  # pragma: no cover
+        return _aiter()
+
+    adapter = _jobs_adapter(tenant_id, [])
+    adapter.list_jobs = capturing_list_jobs
+    adapter.count_jobs = AsyncMock(return_value=0)
+
+    importer = ATSImporter()
+    await importer._run_phase("jobs", importer._sync_jobs, adapter)
+    assert captured["list_status_ids"] == [1, 8]
+    adapter.count_jobs.assert_awaited_once()
+    assert adapter.count_jobs.call_args.kwargs["job_status_ids"] == [1, 8]
+
+
+@pytest.mark.asyncio
+async def test_jobs_phase_writes_progress_per_row(db, jobs_fixture, monkeypatch):
+    """Progress is written once at seed (0/N) and once after every yielded
+    row. Verified by counting calls to ``_write_jobs_progress``."""
+    from app.modules.ats import importer as importer_mod
+    from app.modules.ats.importer import ATSImporter
+
+    tenant_id, *_ = jobs_fixture
+    sync_log_id = uuid.uuid4()
+    # Insert a sync_log row so the UPDATE has a target.
+    await db.execute(text(
+        "INSERT INTO ats_sync_logs (id, tenant_id, connection_id, started_at, "
+        "status, correlation_id) "
+        "SELECT :s, :t, c.id, now(), 'running', 'test-corr' "
+        "FROM ats_connections c WHERE c.tenant_id = :t"
+    ), {"s": sync_log_id, "t": tenant_id})
+    await db.flush()
+
+    jobs = [
+        ATSJobPayload(
+            external_id=f"j-{i}",
+            external_client_id="complete-client",
+            title=f"Job {i}", raw={}, fetched_at=datetime.now(tz=timezone.utc),
+        )
+        for i in range(3)
+    ]
+    adapter = _jobs_adapter(tenant_id, jobs)
+    adapter.count_jobs = AsyncMock(return_value=3)
+
+    calls = []
+    original = ATSImporter._write_jobs_progress
+    async def spy(prog_db, log_id, processed, total, tenant_id):
+        calls.append((processed, total))
+        await original(prog_db, log_id, processed, total, tenant_id)
+    monkeypatch.setattr(ATSImporter, "_write_jobs_progress", staticmethod(spy))
+
+    importer = ATSImporter()
+    result = await importer._run_phase(
+        "jobs", importer._sync_jobs, adapter, sync_log_id,
+    )
+    assert result.new == 3
+    # 1 seed call (0, 3) + 3 per-row calls = 4 total
+    assert calls == [(0, 3), (1, 3), (2, 3), (3, 3)]
+
+    # Verify the row's progress JSONB reflects the final state
+    r = await db.execute(text(
+        "SELECT progress FROM ats_sync_logs WHERE id = :s"
+    ), {"s": sync_log_id})
+    progress = r.scalar_one()
+    assert progress == {"jobs": {"processed": 3, "total": 3}}
+
+
+@pytest.mark.asyncio
+async def test_write_jobs_progress_reissues_tenant_set_local():
+    """Production bug guard: each progress write must re-issue SET LOCAL
+    app.current_tenant. PostgreSQL clears the GUC on transaction commit
+    (SET LOCAL is transaction-scoped), and prog_db.commit() inside
+    _write_jobs_progress ends its transaction. Without re-binding before
+    each UPDATE, the second-and-onward writes would silently no-op under
+    tenant_isolation RLS.
+
+    We can't exercise the real transaction boundary in this test suite
+    (the conftest's patched_bypass_session shims commit -> flush), so we
+    verify the SQL stream directly.
+    """
+    from app.modules.ats.importer import ATSImporter
+
+    calls = []
+
+    class FakeSession:
+        async def execute(self, stmt, params=None):
+            calls.append((str(stmt), params))
+
+        async def commit(self):
+            calls.append(("COMMIT", None))
+
+    tenant_id = uuid.uuid4()
+    sync_log_id = uuid.uuid4()
+    await ATSImporter._write_jobs_progress(
+        FakeSession(), sync_log_id, processed=5, total=10, tenant_id=tenant_id,
+    )
+
+    # First call must be SET LOCAL with the tenant; second must be the UPDATE.
+    assert "SET LOCAL app.current_tenant" in calls[0][0]
+    assert str(tenant_id) in calls[0][0]
+    assert "UPDATE ats_sync_logs" in calls[1][0]
+    assert calls[2] == ("COMMIT", None)
+
+
+@pytest.mark.asyncio
+async def test_write_jobs_progress_no_op_when_sync_log_id_none():
+    """When sync_log_id is None, _write_jobs_progress should NOT issue any
+    SQL — not even the SET LOCAL — so it's safe to call from test paths
+    that don't care about progress."""
+    from app.modules.ats.importer import ATSImporter
+
+    calls = []
+
+    class FakeSession:
+        async def execute(self, stmt, params=None):
+            calls.append(stmt)
+
+        async def commit(self):
+            calls.append("COMMIT")
+
+    await ATSImporter._write_jobs_progress(
+        FakeSession(), None, processed=5, total=10, tenant_id=uuid.uuid4(),
+    )
+    assert calls == []

@@ -113,6 +113,16 @@ async def jobs_fixture(db, importer_fixture):
     ), {
         "t": tenant_id, "p": pending_unit_id, "c": complete_unit_id,
     })
+    # Seed a non-NULL job_status_filter on the connection so existing tests
+    # (which exercise the jobs phase) bypass the filter-not-configured skip.
+    # Tests that specifically exercise the skip path NULL this out.
+    await db.execute(text(
+        "UPDATE ats_connections SET job_status_filter = :f "
+        "WHERE tenant_id = :t AND vendor = 'ceipal'"
+    ), {
+        "f": '{"ids": [1], "names": ["Active"]}',
+        "t": tenant_id,
+    })
     await db.flush()
 
     yield (

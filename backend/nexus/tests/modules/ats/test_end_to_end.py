@@ -89,9 +89,14 @@ async def actor_fixture(db, importer_fixture):
         "email": "u@x.com", "password": "p", "api_key": "k",
     })
     await db.execute(text(
-        "UPDATE ats_connections SET credentials_ciphertext = :ct "
+        "UPDATE ats_connections SET credentials_ciphertext = :ct, "
+        "job_status_filter = :f "
         "WHERE tenant_id = :t"
-    ), {"ct": ct, "t": tenant_id})
+    ), {
+        "ct": ct,
+        "f": '{"ids": [1], "names": ["Active"]}',
+        "t": tenant_id,
+    })
     cid = (await db.execute(text(
         "SELECT id::text FROM ats_connections WHERE tenant_id = :t LIMIT 1"
     ), {"t": tenant_id})).scalar_one()
@@ -142,7 +147,10 @@ class _FakeCeipal:
             raw={}, fetched_at=self._now,
         )])
 
-    def list_jobs(self, since=None):
+    async def count_jobs(self, since=None, job_status_ids=None):
+        return 1
+
+    def list_jobs(self, since=None, *, job_status_ids=None):
         return _aiter([ATSJobPayload(
             external_id="ceipal-job-1", external_client_id="ceipal-client-1",
             title="Java Developer", description="JD body", status="Active",
