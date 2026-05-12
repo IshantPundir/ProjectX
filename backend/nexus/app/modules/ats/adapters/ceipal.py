@@ -303,12 +303,51 @@ class CeipalAdapter:
                 fetched_at=now,
             )
 
+    async def _fetch_job_details(self, job_id: str) -> dict:
+        """Fetch the per-job details endpoint.
+
+        Ceipal's ``getJobPostingsList`` response does NOT carry the
+        job→client linkage (the ``company`` integer on list items is the
+        agency tenant id, not a client id). The details endpoint, which
+        takes the job hash directly in the URL path (NOT as a query
+        param), returns ``client`` as the client name — which we match
+        against ``ats_client_mappings.external_client_name``.
+
+        This is per-job, so the jobs phase makes 1 + N HTTP calls instead
+        of N/50. Configured pacing keeps the call rate under Ceipal's
+        undocumented rate limit.
+        """
+        response = await self._request("GET", f"/getJobPostingDetails/{job_id}")
+        return response.json()
+
     async def list_jobs(  # type: ignore[override]
         self, since: datetime | None = None,
     ) -> AsyncIterator[ATSJobPayload]:
         now = datetime.now(tz=UTC)
         params = {"limit": 50, **self._format_since(since)}
-        async for raw in self._paginate("/getJobPostingsList/", params):
+        async for list_raw in self._paginate("/getJobPostingsList/", params):
+            # Fetch the per-job details endpoint to get the client name.
+            # The list-item carries only ``company`` (an integer == agency
+            # tenant id) which is not usable for client linkage. We MUST
+            # follow up with the details endpoint to learn which Ceipal
+            # client this job belongs to.
+            try:
+                detail = await self._fetch_job_details(list_raw["id"])
+            except (ATSNetworkError, ATSVendorContractError) as exc:
+                logger.warning(
+                    "ats.ceipal.job_details_fetch_failed",
+                    external_job_id=list_raw.get("id"),
+                    error=str(exc)[:200],
+                )
+                # Yield with empty client linkage; importer will skip with
+                # a warning. Failing the whole phase for one bad job is
+                # worse than skipping the row.
+                detail = {}
+
+            # Merge: details fields override list fields where present,
+            # so the consumer gets the most complete view in ``raw``.
+            raw = {**list_raw, **detail}
+
             skills_str = raw.get("skills") or ""
             skills = [s.strip() for s in skills_str.split(",") if s.strip()]
             recruiter_str = raw.get("assigned_recruiter") or ""
@@ -318,7 +357,13 @@ class CeipalAdapter:
 
             yield ATSJobPayload(
                 external_id=raw["id"],
-                external_client_id=raw.get("client") or "",
+                # Ceipal jobs do NOT carry a stable client id — the
+                # ``company`` integer on list items is the agency tenant
+                # id, not the client. The details endpoint returns the
+                # client by NAME ("Oracle"); we link by name in the
+                # importer.
+                external_client_id="",
+                external_client_name=(detail.get("client") or "").strip() or None,
                 title=raw.get("position_title") or raw.get("public_job_title") or "",
                 description=raw.get("public_job_desc") or raw.get("requisition_description"),
                 status=raw.get("job_status") or None,

@@ -94,39 +94,84 @@ async def test_list_users_passes_through():
 
 
 @pytest.mark.asyncio
-async def test_list_jobs_extracts_skills_and_recruiters():
+async def test_list_jobs_fetches_details_and_carries_client_name():
+    """``list_jobs`` enriches each list item with /getJobPostingDetails/{id}
+    to pick up the client NAME (Ceipal's list endpoint doesn't carry the
+    job→client linkage)."""
     def handler(request: httpx.Request) -> httpx.Response:
-        assert "getJobPostingsList" in str(request.url)
-        return httpx.Response(200, json={
-            "count": 1, "num_pages": 1, "page_number": 1, "limit": 20,
-            "next": "", "previous": "",
-            "results": [{
-                "id": "jid", "client": "cid-hash",
-                "position_title": "Java AWS Developer",
-                "public_job_desc": "<html>JD body</html>",
-                "job_status": "Active",
-                "primary_city": "Bangalore",
-                "employment_type": "Full Time",
-                "remote_opportunities": "Yes",
-                "skills": "Java, AWS, Python",
-                "assigned_recruiter": "rid-1,rid-2,rid-3",
-                "pay_rates": [{
-                    "pay_rate_currency": "INR",
-                    "min_pay_rate": "1000000",
-                    "max_pay_rate": "2000000",
+        url = str(request.url)
+        if "getJobPostingsList" in url:
+            return httpx.Response(200, json={
+                "count": 1, "num_pages": 1, "page_number": 1, "limit": 20,
+                "next": "", "previous": "",
+                "results": [{
+                    "id": "jid",
+                    "company": 43573,  # agency tenant id (NOT client id)
+                    "position_title": "Java AWS Developer",
+                    "public_job_desc": "<html>JD body</html>",
+                    "job_status": "Active",
+                    "primary_city": "Bangalore",
+                    "employment_type": "Full Time",
+                    "remote_opportunities": "Yes",
+                    "skills": "Java, AWS, Python",
+                    "assigned_recruiter": "rid-1,rid-2,rid-3",
+                    "pay_rates": [{
+                        "pay_rate_currency": "INR",
+                        "min_pay_rate": "1000000",
+                        "max_pay_rate": "2000000",
+                    }],
                 }],
-            }],
-        })
+            })
+        if "getJobPostingDetails/jid" in url:
+            return httpx.Response(200, json={
+                "id": "jid",
+                "client": "Oracle",  # ← the client NAME, our linkage key
+                "position_title": "Java AWS Developer",
+                "job_status": "Active",
+                "experience": "8-10 years",
+                "min_experience": "8",
+                "number_of_positions": 1,
+            })
+        return httpx.Response(404, text="unmocked")
 
     a = _adapter(handler)
     out = [j async for j in a.list_jobs()]
     j = out[0]
     assert j.external_id == "jid"
-    assert j.external_client_id == "cid-hash"
+    assert j.external_client_id == ""  # Ceipal: id-based linkage unavailable
+    assert j.external_client_name == "Oracle"  # ← linked by NAME via details
     assert j.title == "Java AWS Developer"
     assert j.status == "Active"
     assert set(j.skills) == {"Java", "AWS", "Python"}
     assert j.assigned_recruiter_external_ids == ["rid-1", "rid-2", "rid-3"]
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_skips_client_name_when_details_fails():
+    """If /getJobPostingDetails/{id} fails (network / contract error),
+    list_jobs should NOT fail the whole phase — yield the job with
+    external_client_name=None so the importer can skip just this one."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "getJobPostingsList" in str(request.url):
+            return httpx.Response(200, json={
+                "count": 1, "num_pages": 1, "page_number": 1, "limit": 20,
+                "next": "", "previous": "",
+                "results": [{
+                    "id": "jid",
+                    "company": 43573,
+                    "position_title": "Java AWS Developer",
+                    "job_status": "Active",
+                }],
+            })
+        if "getJobPostingDetails/jid" in str(request.url):
+            # Simulate "details endpoint returned bad data" — vendor contract error.
+            return httpx.Response(400, json={"message": "bad job id"})
+        return httpx.Response(404, text="unmocked")
+
+    a = _adapter(handler)
+    out = [j async for j in a.list_jobs()]
+    assert len(out) == 1  # job still yielded, not raised
+    assert out[0].external_client_name is None  # details fetch failed → no link
 
 
 @pytest.mark.asyncio
