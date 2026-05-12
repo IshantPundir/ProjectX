@@ -26,6 +26,13 @@ JobStatus = Literal[
     "pipeline_built",
     "active",
     "archived",
+    # ATS-imported jobs land in this state when their client_account
+    # org_unit's company profile is still pending. The unblock cascade
+    # (PUT /api/org-units/{id} → company_profile_completion_status flips
+    # pending → complete) transitions them to 'draft' and enqueues
+    # extract_and_enhance_jd. See migration 0031_ats_core for the DB
+    # CHECK broadening.
+    "blocked_pending_client_setup",
 ]
 
 EnrichmentStatus = Literal["idle", "streaming", "completed", "failed"]
@@ -219,6 +226,13 @@ class JobPostingSummary(BaseModel):
     # fetching per-row details.
     signal_count: int = 0
     needs_review_count: int = 0
+    # Provenance for ATS-imported jobs. 'native' (manual recruiter
+    # creation) is the default; 'ats_ceipal' is set by the ATS importer
+    # along with `external_id` / `external_status`. The frontend uses
+    # these to render the "From ceipal" chip on the list row.
+    source: str = "native"
+    external_id: str | None = None
+    external_status: str | None = None
 
 
 class JobPostingWithSnapshot(BaseModel):

@@ -22,12 +22,13 @@ import { getFreshSupabaseToken } from '@/lib/auth/tokens'
 
 /* ─── Status → design-system chip ─────────────────────────── */
 
-type StatusKind = 'reviewing' | 'draft' | 'live' | 'failed'
+type StatusKind = 'reviewing' | 'draft' | 'live' | 'failed' | 'blocked'
 
 function statusKind(s: JobStatus): StatusKind {
   if (s === 'signals_extracted' || s === 'signals_extracting') return 'reviewing'
   if (s === 'signals_extraction_failed') return 'failed'
   if (s === 'draft') return 'draft'
+  if (s === 'blocked_pending_client_setup') return 'blocked'
   return 'live'
 }
 
@@ -38,12 +39,34 @@ function StatusPill({ status }: { status: JobStatus }) {
     draft: { label: 'draft', cls: 'soft' },
     live: { label: 'live', cls: 'ok' },
     failed: { label: 'failed', cls: 'danger' },
+    blocked: { label: 'awaiting setup', cls: 'caution' },
   }
   const m = map[kind]
   return (
     <span className={`px-chip ${m.cls} h-5 text-[10.5px] font-medium tracking-wide`}>
       <span className="px-dot" />
       {m.label}
+    </span>
+  )
+}
+
+/** Compact provenance chip for ATS-imported jobs. */
+function SourceChip({ source }: { source: string }) {
+  if (!source.startsWith('ats_')) return null
+  const vendor = source.replace('ats_', '')
+  return (
+    <span
+      className="inline-flex items-center rounded-full border px-1.5 text-[9.5px] font-medium uppercase"
+      style={{
+        height: 16,
+        letterSpacing: '0.4px',
+        color: 'var(--px-fg-3)',
+        background: 'var(--px-surface-2)',
+        borderColor: 'var(--px-hairline)',
+      }}
+      title={`Imported from ${vendor}`}
+    >
+      From {vendor}
     </span>
   )
 }
@@ -65,9 +88,10 @@ function postedAgo(iso: string): string {
 /* ─── Grouping logic ──────────────────────────────────────── */
 
 const IDLE_DAYS = 7
-type Group = 'needs_you' | 'in_motion' | 'quiet'
+type Group = 'blocked' | 'needs_you' | 'in_motion' | 'quiet'
 
 function classifyJob(job: JobPostingSummary): Group {
+  if (job.status === 'blocked_pending_client_setup') return 'blocked'
   if (
     job.status === 'draft' ||
     job.status === 'signals_extracted' ||
@@ -82,12 +106,16 @@ function classifyJob(job: JobPostingSummary): Group {
 }
 
 const GROUP_META: Record<Group, { heading: string; hint: string }> = {
+  blocked: {
+    heading: 'Blocked on setup',
+    hint: 'imported from ATS, awaiting company profile',
+  },
   needs_you: { heading: 'Needs you', hint: 'awaiting your review or action' },
   in_motion: { heading: 'In motion', hint: 'candidates actively progressing' },
   quiet: { heading: 'Quiet', hint: `no activity in ${IDLE_DAYS}+ days` },
 }
 
-type FilterId = 'all' | 'needs_you' | 'in_motion' | 'quiet'
+type FilterId = 'all' | 'blocked' | 'needs_you' | 'in_motion' | 'quiet'
 type ViewId = 'table' | 'card' | 'kanban'
 
 /* ─── Small SVG icons (sparkle, plus, filter) ─────────────── */
@@ -235,6 +263,7 @@ export default function JobsListPage() {
 
   const { groups, counts } = useMemo(() => {
     const buckets: Record<Group, JobPostingSummary[]> = {
+      blocked: [],
       needs_you: [],
       in_motion: [],
       quiet: [],
@@ -247,6 +276,7 @@ export default function JobsListPage() {
       groups: buckets,
       counts: {
         all: data?.length ?? 0,
+        blocked: buckets.blocked.length,
         needs_you: buckets.needs_you.length,
         in_motion: buckets.in_motion.length,
         quiet: buckets.quiet.length,
@@ -254,8 +284,11 @@ export default function JobsListPage() {
     }
   }, [data])
 
+  // Blocked-on-setup jobs are surfaced first when present — they're a
+  // recruiter action item (complete the company profile) that's distinct
+  // from the "Needs you" review queue.
   const visibleGroups = useMemo<Group[]>(() => {
-    if (filter === 'all') return ['needs_you', 'in_motion', 'quiet']
+    if (filter === 'all') return ['blocked', 'needs_you', 'in_motion', 'quiet']
     return [filter]
   }, [filter])
 
@@ -344,11 +377,17 @@ export default function JobsListPage() {
         </Link>
       </div>
 
-      {/* Filter pills + view switcher */}
+      {/* Filter pills + view switcher.
+          `Blocked on setup` is omitted entirely when count === 0 — it's a
+          surface that only matters during ATS sync. When jobs are
+          blocked the pill renders first, accent-colored, with a count. */}
       <div className="mb-3.5 flex items-center gap-1.5">
         {(
           [
             { id: 'all', label: 'All', n: counts.all },
+            ...(counts.blocked > 0
+              ? [{ id: 'blocked' as const, label: 'Blocked on setup', n: counts.blocked }]
+              : []),
             { id: 'needs_you', label: 'Needs you', n: counts.needs_you },
             { id: 'in_motion', label: 'In motion', n: counts.in_motion },
             { id: 'quiet', label: 'Quiet', n: counts.quiet },
@@ -591,6 +630,7 @@ function JobsRow({
           >
             {job.title}
           </Link>
+          <SourceChip source={job.source} />
         </div>
         <div
           className="flex items-center gap-1.5 text-[11.5px]"
@@ -669,10 +709,11 @@ function JobCard({ job }: { job: JobPostingSummary }) {
       <div className="flex items-start gap-2.5">
         <div className="min-w-0 flex-1">
           <div
-            className="truncate text-[14.5px] font-semibold"
+            className="flex items-center gap-2 truncate text-[14.5px] font-semibold"
             style={{ color: 'var(--px-fg)', lineHeight: 1.3 }}
           >
-            {job.title}
+            <span className="truncate">{job.title}</span>
+            <SourceChip source={job.source} />
           </div>
           <div className="mt-0.5 truncate text-[11.5px]" style={{ color: 'var(--px-fg-4)' }}>
             {job.org_unit_name ?? '—'}

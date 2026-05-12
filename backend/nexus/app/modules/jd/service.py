@@ -61,6 +61,9 @@ def _job_to_summary(
         updated_at=job.updated_at,
         signal_count=signal_count,
         needs_review_count=needs_review_count,
+        source=job.source,
+        external_id=job.external_id,
+        external_status=job.external_status,
     )
 
 

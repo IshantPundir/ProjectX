@@ -58,6 +58,20 @@ export type JobStatus =
   | 'pipeline_built'
   | 'active'
   | 'archived'
+  /**
+   * ATS-imported jobs land here when the client_account org_unit's
+   * company profile is still pending. The unblock cascade (PUT
+   * /api/org-units/{id} → company_profile_completion_status pending →
+   * complete) transitions them to 'draft' and enqueues extraction.
+   */
+  | 'blocked_pending_client_setup'
+
+/**
+ * Provenance for imported jobs. 'native' is the recruiter-created default;
+ * 'manual' is reserved for explicit recruiter import (Phase 15+);
+ * 'ats_ceipal' is set by the Ceipal poll-sync.
+ */
+export type JobSource = 'native' | 'manual' | 'ats_ceipal' | string
 
 export type JobPostingSummary = {
   id: string
@@ -81,6 +95,13 @@ export type JobPostingSummary = {
    * "double-check" chip: source === 'ai_inferred' AND weight < 2).
    */
   needs_review_count: number
+  /**
+   * Provenance — 'native' for recruiter-created, 'ats_<vendor>' for
+   * importer-created. Frontend uses this to render the From-ATS chip.
+   */
+  source: JobSource
+  external_id: string | null
+  external_status: string | null
 }
 
 export type EnrichmentStatus = 'idle' | 'streaming' | 'completed' | 'failed'
