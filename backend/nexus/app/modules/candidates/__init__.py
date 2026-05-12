@@ -5,10 +5,14 @@ from app.modules.candidates.models import (
     CandidateJobAssignment,
     CandidateStageProgress,
 )
+from app.modules.candidates.service import import_candidate
+from app.modules.candidates.sources import SourcedCandidate
 
 __all__ = [
     "Candidate",
     "CandidateJobAssignment",
     "CandidateNotFoundError",
     "CandidateStageProgress",
+    "SourcedCandidate",
+    "import_candidate",
 ]

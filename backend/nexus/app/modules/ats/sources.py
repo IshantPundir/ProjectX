@@ -8,7 +8,7 @@ the SourcedCandidate produced here.
 from __future__ import annotations
 
 from app.modules.ats.schemas import ATSApplicantPayload
-from app.modules.candidates.sources import SourcedCandidate
+from app.modules.candidates import SourcedCandidate
 
 
 class ATSImportSource:
