@@ -81,10 +81,12 @@ STATE_MUTATION = "state.mutation"
 SPEAKER_CALL = "speaker.call"
 SPEAKER_CACHED = "speaker.cached"
 SPEAKER_OUTPUT = "speaker.output"
+SPEAKER_INPUT = "speaker.input"
 SPEAKER_OUTPUT_EMPTY = "speaker.output.empty"
 SPEAKER_INTERRUPTED = "speaker.interrupted"
 SPEAKER_ERROR = "speaker.error"
 LIFECYCLE_TRANSITION = "lifecycle.transition"
+STATE_SNAPSHOT = "state.snapshot"
 CHECKPOINT_WRITTEN = "checkpoint.written"
 FRONTEND_ATTRIBUTE_PUBLISHED = "frontend.attribute.published"
 SESSION_TERMINAL_DELIVERED = "session.terminal_delivered"
@@ -123,10 +125,12 @@ ALL_EVENT_KINDS: frozenset[str] = frozenset({
     SPEAKER_CALL,
     SPEAKER_CACHED,
     SPEAKER_OUTPUT,
+    SPEAKER_INPUT,
     SPEAKER_OUTPUT_EMPTY,
     SPEAKER_INTERRUPTED,
     SPEAKER_ERROR,
     LIFECYCLE_TRANSITION,
+    STATE_SNAPSHOT,
     CHECKPOINT_WRITTEN,
     FRONTEND_ATTRIBUTE_PUBLISHED,
     SESSION_TERMINAL_DELIVERED,
