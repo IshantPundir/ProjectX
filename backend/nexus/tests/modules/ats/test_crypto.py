@@ -69,3 +69,10 @@ def test_decrypt_with_only_unknown_key_raises(monkeypatch):
     _set_keys(monkeypatch, key_b)  # totally different keyring
     with pytest.raises(InvalidToken):
         decrypt_secret(ct)
+
+
+def test_get_fernet_raises_when_keys_empty(monkeypatch):
+    _set_keys(monkeypatch)  # no keys
+    from app.modules.ats import crypto
+    with pytest.raises(RuntimeError, match="ats_credentials_encryption_keys is empty"):
+        crypto._get_fernet()
