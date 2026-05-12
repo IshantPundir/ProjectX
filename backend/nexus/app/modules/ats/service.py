@@ -6,15 +6,21 @@ Connection-management endpoints (router.py) and the poll_ats_connection actor
 from __future__ import annotations
 
 import random
+import uuid
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 import structlog
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.ats.connection import ATSConnectionState
+from app.modules.ats.crypto import encrypt_credentials_blob, encrypt_secret
 from app.modules.ats.importer import SyncResult
 from app.modules.ats.models import ATSConnection, ATSSyncLog
+from app.modules.ats.registry import get_ats_adapter
+from app.modules.audit import log_event
 
 
 logger = structlog.get_logger()
@@ -116,3 +122,152 @@ async def disable_connection(
     row.disabled_reason = reason[:500]
     row.disabled_at = datetime.now(tz=UTC)
     await db.flush()
+
+
+async def create_connection(
+    db: AsyncSession,
+    *,
+    tenant_id: UUID,
+    vendor: str,
+    credentials: dict[str, Any],
+    created_by: UUID,
+) -> UUID:
+    """Test credentials via adapter, then persist an ats_connections row.
+
+    Flow:
+      1. Build a temporary in-memory state (no DB write).
+      2. Construct adapter; await ensure_authenticated().
+         - on success: state.access_token / refresh_token / expiries are set.
+         - on ATSCredentialsInvalidError / ATSAuthorizationError: propagate
+           without persisting.
+      3. Encrypt credentials + tokens; insert ats_connections row.
+      4. Audit log: ats.connection.created (vendor only; never credentials).
+    Returns the new connection id.
+    """
+    state = ATSConnectionState(
+        id=uuid.uuid4(), tenant_id=tenant_id, vendor=vendor,
+        credentials=credentials,
+    )
+    adapter = get_ats_adapter(state)
+    await adapter.ensure_authenticated()
+    # state was mutated by ensure_authenticated — access_token + expiries set
+
+    row = ATSConnection(
+        id=state.id,
+        tenant_id=tenant_id,
+        vendor=vendor,
+        credentials_ciphertext=encrypt_credentials_blob(credentials),
+        access_token_ciphertext=(
+            encrypt_secret(state.access_token) if state.access_token else None
+        ),
+        refresh_token_ciphertext=(
+            encrypt_secret(state.refresh_token) if state.refresh_token else None
+        ),
+        access_token_expires_at=state.access_token_expires_at,
+        refresh_token_expires_at=state.refresh_token_expires_at,
+        next_poll_at=datetime.now(tz=UTC),    # poll immediately
+        poll_interval_seconds=900,
+        active=True,
+        created_by=created_by,
+    )
+    db.add(row)
+    await db.flush()
+
+    await log_event(
+        db, tenant_id=tenant_id, actor_id=created_by,
+        actor_email="recruiter",
+        action="ats.connection.created",
+        resource="ats_connection", resource_id=row.id,
+        payload={"vendor": vendor},   # NEVER credentials
+    )
+    return row.id
+
+
+async def delete_connection(
+    db: AsyncSession,
+    connection_id: UUID,
+    tenant_id: UUID,
+    actor_id: UUID,
+) -> None:
+    """Hard-delete an ats_connections row. CASCADE drops dependent
+    sync_logs / mappings; explicit audit row is written BEFORE delete."""
+    row = await db.get(ATSConnection, connection_id)
+    if row is None or row.tenant_id != tenant_id:
+        return
+    await log_event(
+        db, tenant_id=tenant_id, actor_id=actor_id,
+        actor_email="recruiter",
+        action="ats.connection.deleted",
+        resource="ats_connection", resource_id=connection_id,
+        payload={"vendor": row.vendor},
+    )
+    await db.delete(row)
+    await db.flush()
+
+
+async def trigger_manual_sync(
+    db: AsyncSession,
+    connection_id: UUID,
+    tenant_id: UUID,
+    actor_id: UUID,
+) -> None:
+    """Enqueue a poll_ats_connection actor immediately, bypassing next_poll_at.
+
+    Caller is responsible for rate-limiting at the router layer (per root
+    CLAUDE.md: 30/min per-IP, 12/hour per-tenant).
+    """
+    # Local import to avoid a service<->actors module cycle.
+    from app.modules.ats.actors import poll_ats_connection
+
+    row = await db.get(ATSConnection, connection_id)
+    if row is None or row.tenant_id != tenant_id:
+        return
+    await log_event(
+        db, tenant_id=tenant_id, actor_id=actor_id,
+        actor_email="recruiter",
+        action="ats.sync.manually_triggered",
+        resource="ats_connection", resource_id=connection_id,
+        payload={"vendor": row.vendor},
+    )
+    poll_ats_connection.send(str(connection_id), str(tenant_id))
+
+
+async def map_ats_user_to_internal(
+    db: AsyncSession,
+    *,
+    connection_id: UUID,
+    external_user_id: str,
+    internal_user_id: UUID,
+    tenant_id: UUID,
+    actor_id: UUID,
+) -> None:
+    """Set ats_user_mappings.internal_user_id for a specific external user.
+
+    Audit: ats.user_mapping.created.
+    """
+    from app.modules.ats.models import ATSUserMapping
+
+    conn = await db.get(ATSConnection, connection_id)
+    if conn is None or conn.tenant_id != tenant_id:
+        return
+    mapping = await db.scalar(
+        select(ATSUserMapping).where(
+            ATSUserMapping.tenant_id == tenant_id,
+            ATSUserMapping.ats_vendor == conn.vendor,
+            ATSUserMapping.external_user_id == external_user_id,
+        )
+    )
+    if mapping is None:
+        return
+    mapping.internal_user_id = internal_user_id
+    mapping.mapped_at = datetime.now(tz=UTC)
+    mapping.mapped_by = actor_id
+    await db.flush()
+    await log_event(
+        db, tenant_id=tenant_id, actor_id=actor_id,
+        actor_email="recruiter",
+        action="ats.user_mapping.created",
+        resource="ats_user_mapping", resource_id=mapping.id,
+        payload={"external_user_id": external_user_id,
+                 "internal_user_id": str(internal_user_id)},
+    )
