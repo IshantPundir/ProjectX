@@ -225,8 +225,14 @@ async def trigger_manual_sync(
     connection_id: UUID,
     tenant_id: UUID,
     actor_id: UUID,
+    *,
+    phase_filter: list[str] | None = None,
 ) -> None:
     """Enqueue a poll_ats_connection actor immediately, bypassing next_poll_at.
+
+    ``phase_filter`` — optional explicit list of phase names. Forwarded
+    verbatim to the actor; the importer maps it to a set. ``None`` means
+    "run all five phases" (the cron default).
 
     Caller is responsible for rate-limiting at the router layer (per root
     CLAUDE.md: 30/min per-IP, 12/hour per-tenant).
@@ -242,9 +248,9 @@ async def trigger_manual_sync(
         actor_email="recruiter",
         action="ats.sync.manually_triggered",
         resource="ats_connection", resource_id=connection_id,
-        payload={"vendor": row.vendor},
+        payload={"vendor": row.vendor, "phase_filter": phase_filter},
     )
-    poll_ats_connection.send(str(connection_id), str(tenant_id))
+    poll_ats_connection.send(str(connection_id), str(tenant_id), phase_filter)
 
 
 async def map_ats_user_to_internal(
@@ -286,3 +292,55 @@ async def map_ats_user_to_internal(
         payload={"external_user_id": external_user_id,
                  "internal_user_id": str(internal_user_id)},
     )
+
+
+async def update_job_status_filter(
+    db: AsyncSession,
+    *,
+    connection_id: UUID,
+    tenant_id: UUID,
+    actor_id: UUID,
+    status_ids: list[int],
+    names: list[str],
+) -> None:
+    """Persist the job-status filter on a connection; drop jobs cursor if widened.
+
+    Widen-detection: any id in ``status_ids`` not present in the prior
+    ``job_status_filter.ids`` triggers a reset of
+    ``last_synced_cursors.jobs``. Narrowing (only removing ids) keeps the
+    cursor — re-pulling previously-included rows would be wasted work.
+
+    Always writes an ``ats.connection.job_status_filter_updated`` audit row.
+    """
+    if not status_ids:
+        raise ValueError("status_ids must be non-empty")
+    if len(status_ids) != len(names):
+        raise ValueError("status_ids and names length mismatch")
+
+    row = await db.get(ATSConnection, connection_id)
+    if row is None or row.tenant_id != tenant_id:
+        return
+
+    prior = row.job_status_filter or {}
+    prior_ids = set(prior.get("ids", []))
+    new_ids = set(status_ids)
+    widened = bool(new_ids - prior_ids)
+
+    row.job_status_filter = {"ids": list(status_ids), "names": list(names)}
+    if widened:
+        cursors = dict(row.last_synced_cursors or {})
+        cursors.pop("jobs", None)
+        row.last_synced_cursors = cursors
+
+    await log_event(
+        db, tenant_id=tenant_id, actor_id=actor_id,
+        actor_email="recruiter",
+        action="ats.connection.job_status_filter_updated",
+        resource="ats_connection", resource_id=connection_id,
+        payload={
+            "prior_ids": sorted(prior_ids),
+            "new_ids":   sorted(new_ids),
+            "widened":   widened,
+        },
+    )
+    await db.flush()

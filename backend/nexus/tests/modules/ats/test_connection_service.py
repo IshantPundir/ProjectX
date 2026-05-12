@@ -129,3 +129,181 @@ async def test_create_connection_invalid_credentials_raises(db, basic_tenant):
         {"t": tenant_id},
     )
     assert count.scalar_one() == 0
+
+
+# ---- update_job_status_filter ----
+
+@pytest.fixture
+async def connection_for_filter_test(db, basic_tenant):
+    """Insert a ats_connections row with NULL job_status_filter and a stale
+    jobs cursor so widen-vs-keep can be observed."""
+    import json as _json
+    tenant_id, user_id = basic_tenant
+    conn_id = uuid.uuid4()
+    await db.execute(text(
+        "INSERT INTO ats_connections (id, tenant_id, vendor, "
+        "credentials_ciphertext, created_by, last_synced_cursors) "
+        "VALUES (:c, :t, 'ceipal', :ct, :u, :lc)"
+    ), {
+        "c": conn_id, "t": tenant_id, "ct": b"x", "u": user_id,
+        "lc": _json.dumps({"jobs": "2026-05-10T00:00:00+00:00"}),
+    })
+    await db.flush()
+    return (str(tenant_id), str(user_id), str(conn_id))
+
+
+@pytest.mark.asyncio
+async def test_update_job_status_filter_widen_drops_jobs_cursor(
+    db, connection_for_filter_test,
+):
+    """Widening (any new id) clears last_synced_cursors.jobs so the next
+    sync re-pulls from scratch."""
+    from app.modules.ats.service import update_job_status_filter
+
+    tenant_id, user_id, conn_id = connection_for_filter_test
+    # First save: filter from NULL -> [1] (Active). NULL->non-empty counts as widen.
+    await update_job_status_filter(
+        db, connection_id=uuid.UUID(conn_id),
+        tenant_id=uuid.UUID(tenant_id), actor_id=uuid.UUID(user_id),
+        status_ids=[1], names=["Active"],
+    )
+    r = await db.execute(text(
+        "SELECT job_status_filter, last_synced_cursors FROM ats_connections "
+        "WHERE id = :c"
+    ), {"c": conn_id})
+    row = r.one()
+    assert row.job_status_filter == {"ids": [1], "names": ["Active"]}
+    assert "jobs" not in row.last_synced_cursors
+
+
+@pytest.mark.asyncio
+async def test_update_job_status_filter_narrow_keeps_jobs_cursor(
+    db, connection_for_filter_test,
+):
+    from app.modules.ats.service import update_job_status_filter
+
+    tenant_id, user_id, conn_id = connection_for_filter_test
+    # Seed an existing filter [1, 8].
+    await db.execute(text(
+        "UPDATE ats_connections SET job_status_filter = :f "
+        "WHERE id = :c"
+    ), {
+        "f": '{"ids": [1, 8], "names": ["Active", "Reactivated"]}',
+        "c": conn_id,
+    })
+    await db.flush()
+    # Narrow to [1] -- no new ids -> cursor stays.
+    await update_job_status_filter(
+        db, connection_id=uuid.UUID(conn_id),
+        tenant_id=uuid.UUID(tenant_id), actor_id=uuid.UUID(user_id),
+        status_ids=[1], names=["Active"],
+    )
+    r = await db.execute(text(
+        "SELECT last_synced_cursors FROM ats_connections WHERE id = :c"
+    ), {"c": conn_id})
+    cursors = r.scalar_one()
+    assert cursors.get("jobs") == "2026-05-10T00:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_update_job_status_filter_no_change_keeps_cursor(
+    db, connection_for_filter_test,
+):
+    from app.modules.ats.service import update_job_status_filter
+
+    tenant_id, user_id, conn_id = connection_for_filter_test
+    await db.execute(text(
+        "UPDATE ats_connections SET job_status_filter = :f WHERE id = :c"
+    ), {"f": '{"ids": [1], "names": ["Active"]}', "c": conn_id})
+    await db.flush()
+    await update_job_status_filter(
+        db, connection_id=uuid.UUID(conn_id),
+        tenant_id=uuid.UUID(tenant_id), actor_id=uuid.UUID(user_id),
+        status_ids=[1], names=["Active"],
+    )
+    r = await db.execute(text(
+        "SELECT last_synced_cursors FROM ats_connections WHERE id = :c"
+    ), {"c": conn_id})
+    cursors = r.scalar_one()
+    assert cursors.get("jobs") == "2026-05-10T00:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_update_job_status_filter_empty_ids_raises(
+    db, connection_for_filter_test,
+):
+    from app.modules.ats.service import update_job_status_filter
+
+    tenant_id, user_id, conn_id = connection_for_filter_test
+    with pytest.raises(ValueError, match="non-empty"):
+        await update_job_status_filter(
+            db, connection_id=uuid.UUID(conn_id),
+            tenant_id=uuid.UUID(tenant_id), actor_id=uuid.UUID(user_id),
+            status_ids=[], names=[],
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_job_status_filter_length_mismatch_raises(
+    db, connection_for_filter_test,
+):
+    from app.modules.ats.service import update_job_status_filter
+
+    tenant_id, user_id, conn_id = connection_for_filter_test
+    with pytest.raises(ValueError, match="length mismatch"):
+        await update_job_status_filter(
+            db, connection_id=uuid.UUID(conn_id),
+            tenant_id=uuid.UUID(tenant_id), actor_id=uuid.UUID(user_id),
+            status_ids=[1, 8], names=["Active"],
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_job_status_filter_writes_audit_row(
+    db, connection_for_filter_test,
+):
+    from app.modules.ats.service import update_job_status_filter
+
+    tenant_id, user_id, conn_id = connection_for_filter_test
+    await update_job_status_filter(
+        db, connection_id=uuid.UUID(conn_id),
+        tenant_id=uuid.UUID(tenant_id), actor_id=uuid.UUID(user_id),
+        status_ids=[1, 8], names=["Active", "Reactivated"],
+    )
+    r = await db.execute(text(
+        "SELECT action, payload FROM audit_log "
+        "WHERE tenant_id = :t AND action = 'ats.connection.job_status_filter_updated'"
+    ), {"t": tenant_id})
+    row = r.one()
+    assert row.action == "ats.connection.job_status_filter_updated"
+    assert row.payload["new_ids"] == [1, 8]
+    assert row.payload["widened"] is True
+
+
+# ---- trigger_manual_sync phase_filter ----
+
+@pytest.mark.asyncio
+async def test_trigger_manual_sync_passes_phase_filter_to_actor(
+    db, connection_for_filter_test, monkeypatch,
+):
+    from app.modules.ats import service as service_mod
+
+    tenant_id, user_id, conn_id = connection_for_filter_test
+    captured = {}
+
+    class _FakeActor:
+        def send(self, *args):
+            captured["args"] = args
+
+    monkeypatch.setattr(
+        "app.modules.ats.actors.poll_ats_connection", _FakeActor(),
+    )
+
+    await service_mod.trigger_manual_sync(
+        db,
+        uuid.UUID(conn_id),
+        uuid.UUID(tenant_id),
+        uuid.UUID(user_id),
+        phase_filter=["clients", "users"],
+    )
+    assert captured["args"][2] == ["clients", "users"]
