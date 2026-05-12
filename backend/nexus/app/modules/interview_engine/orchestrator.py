@@ -778,6 +778,7 @@ class InterviewOrchestrator:
             turn_id=turn_id, turn_index=self._turn_index,
             stt_text_raw=candidate_text, stt_text_used=candidate_text,
         ).model_dump())
+        self._append_state_snapshot(turn_id=turn_id)
 
         from app.modules.interview_engine.judge.input_builder import (
             ActiveSignalMeta, build_judge_input,
@@ -1522,6 +1523,26 @@ class InterviewOrchestrator:
                 latency_ms=result.latency_ms,
                 usage=result.usage,
             ).model_dump())
+
+    def _append_state_snapshot(self, *, turn_id: str) -> None:
+        """Emit a state.snapshot audit event capturing State Engine state
+        BEFORE process_judge_output mutates it.
+
+        Lets replay tools reconstruct any turn's input state to the State
+        Engine: the queue (active question, push_back/dont_know counts,
+        probes_remaining_ids), the ledger (per-signal coverage), the
+        claims pool, and the lifecycle (state, knockout_failures, time
+        remaining).
+        """
+        from app.modules.interview_engine.event_kinds import STATE_SNAPSHOT
+        from app.modules.interview_engine.audit_events import StateSnapshotPayload
+        self._append(STATE_SNAPSHOT, StateSnapshotPayload(
+            turn_id=turn_id,
+            ledger=self._state.ledger_snapshot().model_dump(mode="json"),
+            queue=self._state.queue_snapshot().model_dump(mode="json"),
+            claims=self._state.claims_snapshot().model_dump(mode="json"),
+            lifecycle=self._state.lifecycle_snapshot().model_dump(mode="json"),
+        ).model_dump())
 
     def _append_validation_warnings(self, *, turn_id: str, decision: Any) -> None:
         from app.modules.interview_engine.event_kinds import JUDGE_VALIDATION

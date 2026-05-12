@@ -823,3 +823,70 @@ async def test_judge_call_audit_carries_full_input_summary(
         f"input_summary['candidate_utterance'] must match the actual candidate "
         f"utterance; got {payload['input_summary']['candidate_utterance']!r}."
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 5 — state.snapshot emitted before judge.call
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_state_snapshot_emitted_before_judge_call(
+    make_session_config, make_question,
+) -> None:
+    """Drive one turn; assert state.snapshot event appears before
+    judge.call in the collector sequence and contains the four
+    expected sub-snapshots.
+
+    This is the regression guard for Task 5: before the fix,
+    replay tools had no record of the State Engine's pre-mutation
+    state at the time the Judge LLM was called.
+    """
+    judge_outputs = [
+        # Turn 1: candidate gives a substantive answer → probe.
+        JudgeOutput(
+            observations=[],
+            candidate_claims=[],
+            next_action=NextAction.probe,
+            next_action_payload=ProbePayload(probe_id="0"),
+            turn_metadata=TurnMetadata(),
+        ),
+    ]
+
+    speaker_outputs = [
+        # on_enter: first question delivered.
+        "Tell me about a time you led a team.",
+        # Turn 1: probe follow-up.
+        "How did you handle disagreements within the team?",
+    ]
+
+    orch, agent = _build_orch(
+        make_session_config=make_session_config,
+        make_question=make_question,
+        scripted_judge_outputs=judge_outputs,
+        scripted_speaker_outputs=speaker_outputs,
+        knockout_signal="leadership",
+    )
+
+    await orch.on_enter(agent)
+    await orch.on_user_turn_completed(
+        agent, MagicMock(), _msg("I led a team of five engineers"),
+    )
+
+    events = orch._collector.events
+    state_idx = next(i for i, e in enumerate(events) if e.kind == "state.snapshot")
+    judge_idx = next(i for i, e in enumerate(events) if e.kind == "judge.call")
+
+    assert state_idx < judge_idx, (
+        f"state.snapshot (idx={state_idx}) must appear BEFORE judge.call "
+        f"(idx={judge_idx}) in the audit event sequence."
+    )
+
+    snapshot = events[state_idx].payload
+    assert set(snapshot.keys()) >= {"turn_id", "ledger", "queue", "claims", "lifecycle"}, (
+        f"state.snapshot payload missing expected sub-snapshots; keys={set(snapshot.keys())!r}"
+    )
+    assert snapshot["lifecycle"]["state"] in ("pre_start", "active", "closing", "closed"), (
+        f"lifecycle.state must be a valid lifecycle state value; "
+        f"got {snapshot['lifecycle']['state']!r}"
+    )
