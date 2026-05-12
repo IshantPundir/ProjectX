@@ -50,6 +50,9 @@ async def finalize_sync_log_success(
     db: AsyncSession, log_id: UUID, sync_result: SyncResult,
 ) -> None:
     log = await db.get(ATSSyncLog, log_id)
+    if log is None:
+        logger.warning("ats.sync_log.finalize_skipped", log_id=str(log_id), status="success")
+        return
     log.status = "success"
     log.completed_at = datetime.now(tz=UTC)
     log.entity_counts = sync_result.entity_counts()
@@ -60,6 +63,12 @@ async def finalize_sync_log_partial(
     db: AsyncSession, log_id: UUID, sync_result: SyncResult, error_summary: str,
 ) -> None:
     log = await db.get(ATSSyncLog, log_id)
+    if log is None:
+        logger.warning(
+            "ats.sync_log.finalize_skipped",
+            log_id=str(log_id), status="partial", error_summary=error_summary[:200],
+        )
+        return
     log.status = "partial"
     log.completed_at = datetime.now(tz=UTC)
     log.entity_counts = sync_result.entity_counts()
@@ -71,6 +80,13 @@ async def finalize_sync_log_failure(
     db: AsyncSession, log_id: UUID, *, phase: str, error_summary: str,
 ) -> None:
     log = await db.get(ATSSyncLog, log_id)
+    if log is None:
+        logger.warning(
+            "ats.sync_log.finalize_skipped",
+            log_id=str(log_id), status="failed", phase=phase,
+            error_summary=error_summary[:200],
+        )
+        return
     log.status = "failed"
     log.completed_at = datetime.now(tz=UTC)
     log.error_phase = phase
