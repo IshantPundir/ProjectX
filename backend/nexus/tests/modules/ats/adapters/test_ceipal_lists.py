@@ -232,3 +232,84 @@ async def test_list_submissions_requires_job_id_and_extracts_link():
     assert s.submission_status == "Internal Interview Scheduled"
     assert s.source == "Naukri"
     assert s.raw["resume_token"] == "opaque-token-abc"   # preserved for future
+
+
+@pytest.mark.asyncio
+async def test_list_job_statuses_returns_parsed_list():
+    """GET /getJobStatusList/ returns a bare JSON array (not the paginated
+    envelope used by other list endpoints)."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert "getJobStatusList" in str(request.url)
+        return httpx.Response(200, json=[
+            {"id": 1, "name": "Active"},
+            {"id": 4, "name": "Jobs Filled"},
+            {"id": 8, "name": "Reactivated"},
+        ])
+
+    a = _adapter(handler)
+    out = await a.list_job_statuses()
+    assert out == [
+        {"id": 1, "name": "Active"},
+        {"id": 4, "name": "Jobs Filled"},
+        {"id": 8, "name": "Reactivated"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_list_job_statuses_raises_on_non_list_body():
+    """A non-list body is a vendor-contract violation (Ceipal docs say array)."""
+    from app.modules.ats.errors import ATSVendorContractError
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"unexpected": "shape"})
+
+    a = _adapter(handler)
+    with pytest.raises(ATSVendorContractError):
+        await a.list_job_statuses()
+
+
+@pytest.mark.asyncio
+async def test_count_jobs_reads_envelope_count():
+    """count_jobs hits /getJobPostingsList/?limit=1 and returns envelope.count."""
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["params"] = dict(request.url.params)
+        return httpx.Response(200, json={
+            "count": 662, "num_pages": 1, "page_number": 1, "limit": 1,
+            "next": "", "previous": "",
+            "results": [{"id": "first"}],
+        })
+
+    a = _adapter(handler)
+    total = await a.count_jobs(job_status_ids=[1, 8])
+    assert total == 662
+    assert captured["params"]["limit"] == "1"
+    assert captured["params"]["jobStatus"] == "1,8"
+
+
+@pytest.mark.asyncio
+async def test_count_jobs_returns_zero_on_404():
+    """List-endpoint 404 = no rows match the filter (per the adapter's
+    existing contract); count_jobs reflects that as 0."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"message": "no rows"})
+
+    a = _adapter(handler)
+    assert await a.count_jobs(job_status_ids=[1]) == 0
+
+
+@pytest.mark.asyncio
+async def test_count_jobs_omits_jobStatus_when_no_filter():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["params"] = dict(request.url.params)
+        return httpx.Response(200, json={
+            "count": 5, "num_pages": 1, "page_number": 1, "limit": 1,
+            "next": "", "previous": "", "results": [],
+        })
+
+    a = _adapter(handler)
+    await a.count_jobs()
+    assert "jobStatus" not in captured["params"]

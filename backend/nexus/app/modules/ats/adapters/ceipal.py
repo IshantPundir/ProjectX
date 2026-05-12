@@ -293,6 +293,40 @@ class CeipalAdapter:
         utc = since.astimezone(UTC).replace(tzinfo=None)
         return {"modifiedAfter": utc.strftime("%Y-%m-%d %H:%M:%S")}
 
+    async def list_job_statuses(self) -> list[dict]:
+        """GET /getJobStatusList/
+
+        Returns a bare JSON array, NOT the paginated envelope used by other
+        list endpoints. Returned verbatim — caller maps id+name.
+        """
+        response = await self._request("GET", "/getJobStatusList/")
+        body = response.json()
+        if not isinstance(body, list):
+            raise ATSVendorContractError(
+                f"/getJobStatusList/ returned {type(body).__name__}, expected list"
+            )
+        return body
+
+    async def count_jobs(
+        self,
+        *,
+        since: datetime | None = None,
+        job_status_ids: list[int] | None = None,
+    ) -> int:
+        """GET /getJobPostingsList/?limit=1&jobStatus=...
+
+        Reads ``envelope.count`` from the first-page response. One HTTP call,
+        consumes one pacing slot. 404 means "no rows match the filter" → 0.
+        """
+        params: dict = {"limit": 1, **self._format_since(since)}
+        if job_status_ids:
+            params["jobStatus"] = ",".join(str(i) for i in job_status_ids)
+        response = await self._request("GET", "/getJobPostingsList/", params=params)
+        if response.status_code == 404:
+            return 0
+        envelope = response.json()
+        return int(envelope.get("count", 0))
+
     async def list_clients(  # type: ignore[override]
         self, since: datetime | None = None,
     ) -> AsyncIterator[ATSClientPayload]:
@@ -351,10 +385,15 @@ class CeipalAdapter:
         return response.json()
 
     async def list_jobs(  # type: ignore[override]
-        self, since: datetime | None = None,
+        self,
+        since: datetime | None = None,
+        *,
+        job_status_ids: list[int] | None = None,
     ) -> AsyncIterator[ATSJobPayload]:
         now = datetime.now(tz=UTC)
-        params = {"limit": 50, **self._format_since(since)}
+        params: dict = {"limit": 50, **self._format_since(since)}
+        if job_status_ids:
+            params["jobStatus"] = ",".join(str(i) for i in job_status_ids)
         async for list_raw in self._paginate("/getJobPostingsList/", params):
             # Fetch the per-job details endpoint to get the client name.
             # The list-item carries only ``company`` (an integer == agency

@@ -46,6 +46,28 @@ class ATSAdapter(Protocol):
         """
         ...
 
+    async def list_job_statuses(self) -> list[dict]:
+        """Vendor-native available job-status list.
+
+        Shape: ``[{"id": int, "name": str}, ...]`` for Ceipal. Adapters that
+        do not have a status concept (Greenhouse uses stages; Workday differs
+        again) raise ``NotImplementedError``; the router translates that to
+        a 501.
+        """
+        ...
+
+    async def count_jobs(
+        self,
+        *,
+        since: datetime | None = None,
+        job_status_ids: list[int] | None = None,
+    ) -> int:
+        """Total count of jobs matching the filter, used to seed the
+        progress bar's denominator. Adapters with no count endpoint return
+        ``-1`` — the frontend renders an indeterminate state.
+        """
+        ...
+
     def list_clients(
         self, since: datetime | None = None,
     ) -> AsyncIterator[ATSClientPayload]:
@@ -59,9 +81,15 @@ class ATSAdapter(Protocol):
         ...
 
     def list_jobs(
-        self, since: datetime | None = None,
+        self,
+        since: datetime | None = None,
+        *,
+        job_status_ids: list[int] | None = None,
     ) -> AsyncIterator[ATSJobPayload]:
-        """Yield job postings."""
+        """Yield job postings. ``job_status_ids`` filters server-side where
+        the vendor supports it (Ceipal); adapters without server-side filter
+        MAY ignore the kwarg and filter client-side.
+        """
         ...
 
     def list_applicants(

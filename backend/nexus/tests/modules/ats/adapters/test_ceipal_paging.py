@@ -15,6 +15,10 @@ from app.modules.ats.errors import (
 )
 
 
+def _adapter(handler):
+    return _adapter_with_transport(handler)
+
+
 def _adapter_with_transport(handler):
     from app.modules.ats.adapters.ceipal import CeipalAdapter
     future = datetime.now(tz=timezone.utc) + timedelta(hours=1)
@@ -176,3 +180,45 @@ async def test_pacing_respects_per_connection_rate_limit_qps():
         lambda r: httpx.Response(200, json={})
     ))
     assert abs(adapter._min_request_gap_s - 0.25) < 0.001
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_passes_jobStatus_when_filter_set():
+    """When job_status_ids is provided, list_jobs forwards a comma-joined
+    ``jobStatus`` query param on every page request."""
+    captured = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if "getJobPostingsList" in url:
+            captured.append(dict(request.url.params))
+            return httpx.Response(200, json={
+                "count": 0, "num_pages": 1, "page_number": 1, "limit": 50,
+                "next": "", "previous": "", "results": [],
+            })
+        return httpx.Response(404, text="unmocked")
+
+    a = _adapter(handler)
+    async for _ in a.list_jobs(job_status_ids=[1, 8]):
+        pass
+    assert captured, "no list calls made"
+    assert captured[0]["jobStatus"] == "1,8"
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_omits_jobStatus_when_filter_none():
+    captured = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "getJobPostingsList" in str(request.url):
+            captured.append(dict(request.url.params))
+            return httpx.Response(200, json={
+                "count": 0, "num_pages": 1, "page_number": 1, "limit": 50,
+                "next": "", "previous": "", "results": [],
+            })
+        return httpx.Response(404, text="unmocked")
+
+    a = _adapter(handler)
+    async for _ in a.list_jobs():
+        pass
+    assert "jobStatus" not in captured[0]
