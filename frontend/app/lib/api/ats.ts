@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+import { apiFetch } from '@/lib/api/client'
+
 // --- Vendor tag ---
 
 export type ATSVendor = 'ceipal'
@@ -64,3 +66,88 @@ export const mapUserSchema = z.object({
 })
 
 export type MapUserPayload = z.infer<typeof mapUserSchema>
+
+// --- apiFetch wrappers for /api/ats/* endpoints ---
+// Mirrors the convention used by lib/api/candidates.ts. Token is passed
+// explicitly per call; new callers should retrieve it via
+// getFreshSupabaseToken() from lib/auth/tokens.ts.
+
+export async function listConnections(
+  token: string,
+): Promise<ATSConnection[]> {
+  return apiFetch<ATSConnection[]>('/api/ats/connections', { token })
+}
+
+export async function getConnection(
+  token: string,
+  id: string,
+): Promise<ATSConnection> {
+  return apiFetch<ATSConnection>(`/api/ats/connections/${id}`, { token })
+}
+
+export async function createConnection(
+  token: string,
+  body: ConnectionCreatePayload,
+): Promise<ATSConnection> {
+  return apiFetch<ATSConnection>('/api/ats/connections', {
+    token,
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function deleteConnection(
+  token: string,
+  id: string,
+): Promise<void> {
+  await apiFetch<void>(`/api/ats/connections/${id}`, {
+    token,
+    method: 'DELETE',
+  })
+}
+
+export async function triggerManualSync(
+  token: string,
+  id: string,
+): Promise<{ status: string }> {
+  return apiFetch<{ status: string }>(`/api/ats/connections/${id}/sync`, {
+    token,
+    method: 'POST',
+  })
+}
+
+export async function listSyncLogs(
+  token: string,
+  connectionId: string,
+): Promise<ATSSyncLog[]> {
+  return apiFetch<ATSSyncLog[]>(
+    `/api/ats/connections/${connectionId}/sync-logs`,
+    { token },
+  )
+}
+
+export async function listUnmappedUsers(
+  token: string,
+  connectionId: string,
+): Promise<ATSUnmappedUser[]> {
+  return apiFetch<ATSUnmappedUser[]>(
+    `/api/ats/connections/${connectionId}/unmapped-users`,
+    { token },
+  )
+}
+
+export async function mapATSUser(
+  token: string,
+  connectionId: string,
+  externalUserId: string,
+  body: MapUserPayload,
+): Promise<void> {
+  await apiFetch<void>(
+    `/api/ats/connections/${connectionId}/users/${externalUserId}/map`,
+    {
+      token,
+      method: 'POST',
+      body: JSON.stringify(body),
+    },
+  )
+}
