@@ -399,8 +399,6 @@ async def entrypoint(ctx: JobContext) -> None:
             checkpoint_turns=settings.engine_checkpoint_turns,
             checkpoint_seconds=settings.engine_checkpoint_seconds,
             session_ended_message=settings.engine_session_ended_message,
-            stale_turn_threshold_ms=settings.engine_stale_turn_threshold_ms,
-            stale_buffer_max=settings.engine_stale_buffer_max,
             post_judge_resumption_epsilon_ms=settings.engine_post_judge_resumption_epsilon_ms,
         ),
         tenant_id=str(tenant_uuid),
@@ -505,13 +503,11 @@ def _wire_session_observability(
             {"old_state": ev.old_state, "new_state": ev.new_state},
             ev.created_at,
         )
-        # Orchestrator tracks BOTH listening and speaking transitions:
-        # listening updates the silence-aware coalescing reference + the
-        # at-callback staleness check; speaking updates the post-Judge
-        # resumption gate. observe_user_state internally gates on
-        # new_state, but pre-filter here to avoid the extra call on
-        # transitions we don't care about (e.g., "away").
-        if ev.new_state in ("listening", "speaking"):
+        # Orchestrator tracks listening→speaking transitions for the
+        # post-Judge resumption gate. observe_user_state internally
+        # gates on new_state, but pre-filter here to avoid the extra
+        # call on transitions we don't care about (e.g., "away").
+        if ev.new_state == "speaking":
             agent.orchestrator.observe_user_state(new_state=ev.new_state)
 
     @session.on("agent_state_changed")

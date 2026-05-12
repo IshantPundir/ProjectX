@@ -155,13 +155,6 @@ class OrchestratorConfig:
         "Thanks for your time. This session has ended; the recruitment "
         "team will be in contact with you."
     )
-    # Stale-turn drop-and-drain — see _is_stale_turn and
-    # _buffer_dropped_text. When on_user_turn_completed fires with a
-    # fragment older than this threshold AND a more-recent silence
-    # onset has been observed, the text is buffered and the reply
-    # suppressed; the buffer drains into the next non-dropped turn.
-    stale_turn_threshold_ms: int = 8000
-    stale_buffer_max: int = 8
     # Post-Judge resumption gate — see _user_resumed_speaking_after.
     # Tolerance for the speech-resumption check that runs AFTER Judge
     # returns and BEFORE Speaker. A listening→speaking transition
@@ -204,22 +197,6 @@ class InterviewOrchestrator:
         # the post-Judge knockout-policy-override path both call into
         # ``_schedule_shutdown``; this flag keeps it idempotent.
         self._shutdown_scheduled: bool = False
-        # Wall-monotonic timestamp of the candidate's most recent
-        # speaking→listening transition (silence onset). Populated by
-        # ``observe_user_state``, which is wired from agent.py's
-        # session.user_state_changed listener.
-        self._last_user_speech_end_monotonic: float | None = None
-        # Wall-clock companion of the field above. Used by ``_is_stale_turn``
-        # to compare against ``new_message.metrics.stopped_speaking_at``
-        # (a wall-clock value) so we can detect "the candidate produced
-        # speech AFTER this fragment was sealed." Both clocks are updated
-        # together in ``observe_user_state`` so they stay consistent.
-        self._last_user_speech_end_wall: float | None = None
-        # Stale-turn drop buffer. Holds candidate texts that were dropped
-        # because they arrived past the staleness threshold; drained into
-        # the next non-dropped turn's candidate_text. List order is
-        # preservation-order (oldest first).
-        self._stale_buffer: list[str] = []
         # Wall-clock timestamp of the candidate's most recent
         # listening→speaking transition (i.e., "user resumed talking").
         # Populated by ``observe_user_state`` and consulted by the
@@ -282,20 +259,10 @@ class InterviewOrchestrator:
         self,
         *,
         new_state: str,
-        now_monotonic: float | None = None,
         now_wall: float | None = None,
     ) -> None:
         """Record a candidate speech-state transition.
 
-        Updates three pieces of state, all load-bearing:
-
-        * ``_last_user_speech_end_monotonic`` (on ``"listening"``) —
-          referenced by the silence-aware coalescing window (compared
-          against ``prior.completed_monotonic``).
-        * ``_last_user_speech_end_wall`` (on ``"listening"``) —
-          referenced by stale-turn drop detection (compared against
-          ``new_message.metrics.stopped_speaking_at``, a wall-clock
-          value).
         * ``_resumed_speaking_at`` (on ``"speaking"``) — referenced by
           the post-Judge resumption gate. When a listening→speaking
           transition is observed while the orchestrator is mid-Judge,
@@ -303,60 +270,18 @@ class InterviewOrchestrator:
           utterance" decision.
 
         Called from agent.py's ``user_state_changed`` event handler.
-        ``now_monotonic`` / ``now_wall`` default to ``time.monotonic()``
-        / ``time.time()`` so production callers don't need to capture
-        timestamps themselves; tests pass explicit values for
-        determinism.
+        ``now_wall`` defaults to ``time.time()`` so production callers
+        don't need to capture timestamps themselves; tests pass explicit
+        values for determinism.
 
         Thread-safety: invoked on the same asyncio loop as
         ``on_user_turn_completed``, so simple attribute writes are
         race-free under Python's GIL semantics.
         """
-        if new_state == "listening":
-            self._last_user_speech_end_monotonic = (
-                now_monotonic if now_monotonic is not None else time.monotonic()
-            )
-            self._last_user_speech_end_wall = (
-                now_wall if now_wall is not None else time.time()
-            )
-        elif new_state == "speaking":
+        if new_state == "speaking":
             self._resumed_speaking_at = (
                 now_wall if now_wall is not None else time.time()
             )
-
-    def _is_stale_turn(
-        self,
-        *,
-        stopped_speaking_at: float | None,
-        now_wall: float | None = None,
-    ) -> bool:
-        """Decide whether a delivered user-turn is stale enough to drop.
-
-        Two preconditions must BOTH hold:
-
-        1. ``staleness_ms = (now_wall - stopped_speaking_at) * 1000``
-           strictly exceeds ``config.stale_turn_threshold_ms``.
-        2. ``_last_user_speech_end_wall`` is strictly more recent than
-           ``stopped_speaking_at`` — evidence that the candidate
-           produced speech AFTER this fragment was sealed, i.e. a
-           fresher turn is queued behind it.
-
-        Returns False (don't drop) when either signal is missing —
-        we'd rather over-process a fragment than drop a legitimate
-        user turn whose timestamps we couldn't observe.
-        """
-        if stopped_speaking_at is None:
-            return False
-        if self._last_user_speech_end_wall is None:
-            return False
-        if now_wall is None:
-            now_wall = time.time()
-        staleness_ms = (now_wall - stopped_speaking_at) * 1000
-        if staleness_ms <= self._config.stale_turn_threshold_ms:
-            return False
-        # Both timestamps are wall-clock seconds; strict ">" so equal
-        # timestamps do not flip the decision at the boundary.
-        return self._last_user_speech_end_wall > stopped_speaking_at
 
     def _user_resumed_speaking_after(self, t_wall: float) -> bool:
         """Was a listening→speaking transition observed STRICTLY after
@@ -376,61 +301,6 @@ class InterviewOrchestrator:
             return False
         epsilon_s = self._config.post_judge_resumption_epsilon_ms / 1000.0
         return self._resumed_speaking_at > t_wall + epsilon_s
-
-    def _buffer_dropped_text(
-        self,
-        *,
-        candidate_text: str,
-        turn_id: str,
-        stopped_speaking_at: float | None,
-        staleness_ms: int,
-    ) -> None:
-        """Append a dropped turn's text to ``_stale_buffer`` and emit
-        the ``turn.dropped`` audit event. Enforces the configured
-        ``stale_buffer_max`` cap by evicting the oldest entry FIFO.
-        """
-        from app.modules.interview_engine.audit_events import TurnDroppedPayload
-        from app.modules.interview_engine.event_kinds import TURN_DROPPED
-
-        self._stale_buffer.append(candidate_text)
-        while len(self._stale_buffer) > self._config.stale_buffer_max:
-            self._stale_buffer.pop(0)
-
-        self._append(TURN_DROPPED, TurnDroppedPayload(
-            turn_id=turn_id,
-            candidate_text=candidate_text,
-            stopped_speaking_at=stopped_speaking_at,
-            staleness_ms=staleness_ms,
-            buffer_size_after=len(self._stale_buffer),
-        ).model_dump())
-
-    def _drain_stale_buffer(
-        self,
-        *,
-        candidate_text: str,
-        current_turn_id: str,
-    ) -> str:
-        """Drain buffered stale texts (if any) into the front of
-        ``candidate_text``. Emits ``turn.drain_replayed`` and clears
-        the buffer. Returns the candidate text the Judge should see.
-        """
-        if not self._stale_buffer:
-            return candidate_text
-
-        from app.modules.interview_engine.audit_events import TurnDrainReplayedPayload
-        from app.modules.interview_engine.event_kinds import TURN_DRAIN_REPLAYED
-
-        dropped_texts = list(self._stale_buffer)
-        combined = " ".join(dropped_texts + [candidate_text])
-        self._stale_buffer.clear()
-
-        self._append(TURN_DRAIN_REPLAYED, TurnDrainReplayedPayload(
-            current_turn_id=current_turn_id,
-            dropped_count=len(dropped_texts),
-            dropped_texts=dropped_texts,
-            combined_text=combined,
-        ).model_dump())
-        return combined
 
     # --- LiveKit lifecycle hooks ---
 
@@ -518,52 +388,7 @@ class InterviewOrchestrator:
         # ``_resumed_speaking_at``, which is a wall-clock value.
         original_callback_wall = time.time()
 
-        # Wall-clock timestamp at which the candidate stopped speaking on
-        # this turn. LiveKit's ChatMessage exposes a ``metrics`` object
-        # (``AgentMetrics``) with ``stopped_speaking_at: float | None``.
-        # Both attribute lookups are defensive: some test mocks pass a
-        # plain object without a ``metrics`` attribute, and the framework
-        # itself can produce STT-edge cases where ``stopped_speaking_at``
-        # is None. Either way, the pre-body coalescing gate and the
-        # stale-turn drop detector degrade to safe defaults.
-        current_user_stopped_speaking_at = getattr(
-            getattr(new_message, "metrics", None),
-            "stopped_speaking_at",
-            None,
-        )
-
-        # Stale-turn drop-and-drain: if this fragment is older than
-        # ``stale_turn_threshold_ms`` AND we've observed a more recent
-        # silence onset, the orchestrator's queue is behind the
-        # candidate's real-time speech. Buffer the text and return
-        # early; the framework's `llm_node` override is a no-op so no
-        # reply plays. The buffer drains into the next non-dropped
-        # turn (see _drain_stale_buffer below).
-        if self._is_stale_turn(stopped_speaking_at=current_user_stopped_speaking_at):
-            dropped_turn_id = str(uuid.uuid4())
-            now_wall = time.time()
-            staleness_ms = int(
-                (now_wall - (current_user_stopped_speaking_at or now_wall)) * 1000
-            )
-            self._buffer_dropped_text(
-                candidate_text=candidate_text,
-                turn_id=dropped_turn_id,
-                stopped_speaking_at=current_user_stopped_speaking_at,
-                staleness_ms=staleness_ms,
-            )
-            return
-
-        # Pre-generate turn_id so audit events emitted before TURN_STARTED
-        # (e.g. turn.drain_replayed) reference the same value.
         turn_id = str(uuid.uuid4())
-
-        # Drain any buffered stale fragments — prepends them to
-        # candidate_text in original-drop order so the Judge sees the
-        # merged text.
-        candidate_text = self._drain_stale_buffer(
-            candidate_text=candidate_text,
-            current_turn_id=turn_id,
-        )
 
         self._turn_index += 1
         elapsed_ms = self._elapsed_ms()
@@ -654,10 +479,10 @@ class InterviewOrchestrator:
         # Post-Judge resumption gate. If the candidate produced a new
         # listening→speaking transition WHILE Judge was running, the
         # response we're about to commit is to the prior fragment — but
-        # the candidate has already moved on. Buffer the text and abort:
-        # no State Engine mutation, no Speaker call, no audio reply. The
-        # next on_user_turn_completed callback drains the buffer + new
-        # text and runs Judge on the merged input.
+        # the candidate has already moved on. Drop the response: no
+        # State Engine mutation, no Speaker call, no audio reply. The
+        # next on_user_turn_completed callback runs Judge on the new
+        # text directly.
         #
         # EXCEPTION: when Judge's action is in ``_MUST_DELIVER_JUDGE_ACTIONS``,
         # the response is an explicit candidate-intent acknowledgement
@@ -681,16 +506,17 @@ class InterviewOrchestrator:
             not is_must_deliver
             and self._user_resumed_speaking_after(original_callback_wall)
         ):
+            from app.modules.interview_engine.audit_events import TurnDroppedPayload
+            from app.modules.interview_engine.event_kinds import TURN_DROPPED
             now_wall = time.time()
-            staleness_ms = int(
-                (now_wall - (current_user_stopped_speaking_at or now_wall)) * 1000
-            )
-            self._buffer_dropped_text(
-                candidate_text=candidate_text,
+            staleness_ms = int((now_wall - original_callback_wall) * 1000)
+            self._append(TURN_DROPPED, TurnDroppedPayload(
                 turn_id=turn_id,
-                stopped_speaking_at=current_user_stopped_speaking_at,
+                candidate_text=candidate_text,
+                stopped_speaking_at=None,
                 staleness_ms=staleness_ms,
-            )
+                buffer_size_after=0,
+            ).model_dump())
             return
 
         decision = self._state.process_judge_output(
