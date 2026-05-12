@@ -60,6 +60,9 @@ from app.modules.jd import actors as _jd_actors  # noqa: F401, E402
 # Phase 2C.2 — question bank generation actors
 from app.modules.question_bank import actors as _question_bank_actors  # noqa: F401, E402
 
+# Phase ATS — poll_ats_connection actor (one per due connection, per scheduler tick)
+from app.modules.ats import actors as _ats_actors  # noqa: F401, E402
+
 # Flush OTel batched spans on worker exit.
 atexit.register(_otel_provider.shutdown)
 
