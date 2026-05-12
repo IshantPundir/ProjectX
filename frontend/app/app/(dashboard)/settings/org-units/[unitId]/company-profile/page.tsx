@@ -32,10 +32,22 @@ export default function CompanyProfilePage() {
     },
   })
 
-  const mutation = useMutation({
+  /**
+   * PUT /api/org-units/{id} returns `unblocked_job_count > 0` when this
+   * save flipped company_profile_completion_status pending → complete
+   * AND there were JDs sitting in `blocked_pending_client_setup` for
+   * this org_unit. The backend already kicked off extraction for each
+   * unblocked JD; surface a secondary toast so the recruiter understands
+   * the chain reaction.
+   */
+  type ProfileSaveResponse = {
+    unblocked_job_count?: number
+  }
+
+  const mutation = useMutation<ProfileSaveResponse, Error, CompanyProfile>({
     mutationFn: async (profile: CompanyProfile) => {
       const token = await getFreshSupabaseToken()
-      return apiFetch(`/api/org-units/${unitId}`, {
+      return apiFetch<ProfileSaveResponse>(`/api/org-units/${unitId}`, {
         token,
         method: 'PUT',
         body: JSON.stringify({
@@ -44,9 +56,21 @@ export default function CompanyProfilePage() {
         }),
       })
     },
-    onSuccess: () => {
+    onSuccess: (response) => {
       toast.success('Company profile saved')
+      const n = response.unblocked_job_count ?? 0
+      if (n > 0) {
+        toast.info(
+          `${n} job${n === 1 ? '' : 's'} queued for processing.`,
+        )
+      }
       queryClient.invalidateQueries({ queryKey: ['org-unit', unitId] })
+      // The unblock cascade transitions JDs out of
+      // 'blocked_pending_client_setup' on the backend; refresh the jobs
+      // list so the recruiter sees the updated status next time they
+      // navigate to /jobs.
+      queryClient.invalidateQueries({ queryKey: ['jobs-list'] })
+      queryClient.invalidateQueries({ queryKey: ['jobs'] })
     },
     onError: (err: Error) => {
       toast.error(`Save failed: ${err.message}`)

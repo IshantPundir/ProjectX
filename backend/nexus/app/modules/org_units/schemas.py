@@ -57,6 +57,13 @@ class OrgUnitResponse(BaseModel):
     # this data without re-walking the tree client-side.
     inherited_locale: dict | None = None
     inherited_compliance: dict | None = None
+    # Populated only by PUT /api/org-units/{id} when the update transitions
+    # company_profile_completion_status pending → complete. Counts the JDs
+    # that were moved out of `blocked_pending_client_setup` as a side
+    # effect of completing the profile. Frontend uses this to surface a
+    # secondary toast ("N jobs queued for processing"). Absent / 0 on
+    # every other read or write path.
+    unblocked_job_count: int = 0
 
 
 class AssignRoleRequest(BaseModel):

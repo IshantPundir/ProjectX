@@ -576,6 +576,11 @@ async def update_org_unit(
         if validated_profile is not None:
             unit.company_profile_completed_at = datetime.now(UTC)
             unit.company_profile_completed_by = actor_id
+            # Saving a valid profile resolves the pending-from-ATS gate. The
+            # caller (router) inspects the row's previous status to decide
+            # whether to run the unblock cascade — we just flip the column
+            # so the row reflects the new truth.
+            unit.company_profile_completion_status = "complete"
 
     # Update metadata if explicitly requested. Opaque dict validated at the
     # application layer — the DB keeps it as JSONB so the shape can evolve
