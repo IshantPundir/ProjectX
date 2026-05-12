@@ -9,6 +9,16 @@ export type ATSVendor = 'ceipal'
 // --- Response shapes (match backend ConnectionResponse / SyncLogResponse /
 // UnmappedUserResponse in app/modules/ats/router.py) ---
 
+export interface CeipalJobStatus {
+  id: number
+  name: string
+}
+
+export interface JobStatusFilter {
+  ids: number[]
+  names: string[]
+}
+
 export interface ATSConnection {
   id: string
   vendor: string
@@ -18,6 +28,7 @@ export interface ATSConnection {
   last_poll_error: string | null
   disabled_reason: string | null
   created_at: string
+  job_status_filter: JobStatusFilter | null
 }
 
 export type ATSSyncStatus = 'running' | 'success' | 'partial' | 'failed'
@@ -28,6 +39,7 @@ export interface ATSSyncLog {
   completed_at: string | null
   status: ATSSyncStatus
   entity_counts: Record<string, Record<string, number>>
+  progress: { jobs?: { processed: number; total: number } }
   error_phase: string | null
   error_summary: string | null
 }
@@ -148,6 +160,41 @@ export async function mapATSUser(
       token,
       method: 'POST',
       body: JSON.stringify(body),
+    },
+  )
+}
+
+export async function listJobStatuses(
+  token: string,
+  connectionId: string,
+): Promise<CeipalJobStatus[]> {
+  return apiFetch<CeipalJobStatus[]>(
+    `/api/ats/connections/${connectionId}/job-statuses`,
+    { token },
+  )
+}
+
+/**
+ * `body.ids` is serialized as `status_ids` on the wire to match the backend
+ * Pydantic field (`JobStatusFilterRequest.status_ids` in
+ * `app/modules/ats/router.py`). The frontend type keeps the shorter `ids`
+ * for ergonomics. This is the only wire-rename in `lib/api/`; if the
+ * backend field name ever changes, update both ends in lockstep.
+ */
+export async function updateJobStatusFilter(
+  token: string,
+  connectionId: string,
+  body: JobStatusFilter,
+): Promise<void> {
+  await apiFetch<void>(
+    `/api/ats/connections/${connectionId}/job-status-filter`,
+    {
+      token,
+      method: 'PUT',
+      body: JSON.stringify({
+        status_ids: body.ids,
+        names: body.names,
+      }),
     },
   )
 }

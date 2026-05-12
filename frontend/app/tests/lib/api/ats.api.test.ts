@@ -46,3 +46,45 @@ describe('ats api wrappers', () => {
     )
   })
 })
+
+describe('listJobStatuses', () => {
+  it('GETs /api/ats/connections/{id}/job-statuses', async () => {
+    const mock = vi
+      .mocked(client.apiFetch)
+      .mockResolvedValue([
+        { id: 1, name: 'Active' },
+        { id: 4, name: 'Jobs Filled' },
+      ])
+    const { listJobStatuses } = await import('@/lib/api/ats')
+    const out = await listJobStatuses('tok', 'conn-123')
+    expect(mock).toHaveBeenCalledWith(
+      '/api/ats/connections/conn-123/job-statuses',
+      expect.objectContaining({ token: 'tok' }),
+    )
+    expect(out).toEqual([
+      { id: 1, name: 'Active' },
+      { id: 4, name: 'Jobs Filled' },
+    ])
+  })
+})
+
+describe('updateJobStatusFilter', () => {
+  it('PUTs to /api/ats/connections/{id}/job-status-filter with renamed body', async () => {
+    const mock = vi.mocked(client.apiFetch).mockResolvedValue(undefined)
+    const { updateJobStatusFilter } = await import('@/lib/api/ats')
+    await updateJobStatusFilter('tok', 'conn-123', {
+      ids: [1, 8],
+      names: ['Active', 'Reactivated'],
+    })
+    expect(mock).toHaveBeenCalledWith(
+      '/api/ats/connections/conn-123/job-status-filter',
+      expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify({
+          status_ids: [1, 8],
+          names: ['Active', 'Reactivated'],
+        }),
+      }),
+    )
+  })
+})
