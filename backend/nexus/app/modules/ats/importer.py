@@ -225,7 +225,134 @@ class ATSImporter:
             return None
 
     async def _sync_jobs(self, db, adapter) -> PhaseResult:
-        raise NotImplementedError("Task 20")
+        """Phase 3: upsert job_postings; resolve client mapping → org_unit;
+        gate status by org_unit.company_profile_completion_status.
+
+        Skip semantics: a payload whose external_client_id has no matching
+        ats_client_mappings row is logged + counted in ``result.skipped`` and
+        does NOT raise — clients are expected to land in phase 1; a missing
+        mapping is recoverable on the next poll.
+
+        Update path preserves ``existing.status`` — recruiter state (e.g.
+        signals_confirmed, pipeline_built) is never regressed by a re-import.
+        Recruiter assignments use replace-all semantics: Ceipal is the source
+        of truth for who is assigned to a JD, so the delete-then-insert
+        approach drops any recruiter Ceipal no longer lists.
+        """
+        from app.modules.ats.models import (
+            ATSClientMapping, ATSConnection, ATSJobRecruiterAssignment,
+        )
+        from app.modules.jd.models import JobPosting
+        from app.modules.org_units.models import OrganizationalUnit
+
+        result = PhaseResult()
+        tenant_id = adapter.state.tenant_id
+
+        connection = await db.scalar(
+            select(ATSConnection).where(
+                ATSConnection.tenant_id == tenant_id,
+                ATSConnection.vendor == adapter.vendor,
+            )
+        )
+        created_by = connection.created_by
+
+        since = self._cursor_or_none(adapter.state, "jobs")
+        async for payload in adapter.list_jobs(since=since):
+            # Resolve client mapping — missing → skip + log, NOT error.
+            mapping = await db.scalar(
+                select(ATSClientMapping).where(
+                    ATSClientMapping.tenant_id == tenant_id,
+                    ATSClientMapping.ats_vendor == adapter.vendor,
+                    ATSClientMapping.external_client_id == payload.external_client_id,
+                )
+            )
+            if mapping is None:
+                logger.warning(
+                    "ats.sync.jobs.skipped_missing_client_mapping",
+                    external_job_id=payload.external_id,
+                    external_client_id=payload.external_client_id,
+                )
+                result.skipped += 1
+                continue
+
+            org_unit = await db.get(OrganizationalUnit, mapping.org_unit_id)
+            target_status = (
+                "blocked_pending_client_setup"
+                if org_unit.company_profile_completion_status == "pending"
+                else "draft"
+            )
+
+            existing = await db.scalar(
+                select(JobPosting).where(
+                    JobPosting.tenant_id == tenant_id,
+                    JobPosting.source == f"ats_{adapter.vendor}",
+                    JobPosting.external_id == payload.external_id,
+                )
+            )
+            if existing is not None:
+                # NOTE: do NOT touch existing.status — preserves recruiter
+                # state (signals_confirmed, pipeline_built, etc.). The
+                # blocked → draft unblock is driven by
+                # _unblock_pending_jobs_for_org_unit (Task 17), not re-import.
+                existing.title = payload.title
+                if payload.description:
+                    existing.description_raw = payload.description
+                existing.external_status = payload.status
+                if payload.location:
+                    existing.location = payload.location
+                if payload.employment_type:
+                    existing.employment_type = payload.employment_type
+                if payload.work_arrangement:
+                    existing.work_arrangement = payload.work_arrangement
+                existing.salary_range_min = payload.salary_range_min
+                existing.salary_range_max = payload.salary_range_max
+                existing.salary_currency = payload.salary_currency
+                job_id = existing.id
+                result.updated += 1
+            else:
+                jp = JobPosting(
+                    tenant_id=tenant_id, org_unit_id=org_unit.id,
+                    title=payload.title,
+                    description_raw=payload.description or "",
+                    status=target_status,
+                    source=f"ats_{adapter.vendor}",
+                    external_id=payload.external_id,
+                    external_status=payload.status,
+                    location=payload.location,
+                    employment_type=payload.employment_type,
+                    work_arrangement=payload.work_arrangement,
+                    salary_range_min=payload.salary_range_min,
+                    salary_range_max=payload.salary_range_max,
+                    salary_currency=payload.salary_currency,
+                    created_by=created_by,
+                )
+                db.add(jp)
+                await db.flush()
+                job_id = jp.id
+                await log_event(
+                    db, tenant_id=tenant_id, actor_id=created_by,
+                    actor_email="ats-import",
+                    action="jd.imported_from_ats",
+                    resource="job_posting", resource_id=jp.id,
+                    payload={"vendor": adapter.vendor,
+                             "external_id": payload.external_id,
+                             "target_status": target_status},
+                )
+                result.new += 1
+
+            # Sync recruiter assignments — replace-all semantics.
+            await db.execute(
+                text("DELETE FROM ats_job_recruiter_assignments "
+                     "WHERE tenant_id = :t AND job_posting_id = :j "
+                     "AND ats_vendor = :v"),
+                {"t": tenant_id, "j": job_id, "v": adapter.vendor},
+            )
+            for rid in payload.assigned_recruiter_external_ids:
+                db.add(ATSJobRecruiterAssignment(
+                    tenant_id=tenant_id, job_posting_id=job_id,
+                    ats_vendor=adapter.vendor, external_user_id=rid,
+                ))
+        return result
 
     async def _sync_applicants(self, db, adapter) -> PhaseResult:
         raise NotImplementedError("Task 21")

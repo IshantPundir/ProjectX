@@ -31,6 +31,7 @@ class JobPosting(Base):
     enrichment_error: Mapped[str | None] = mapped_column(Text)
     source: Mapped[str] = mapped_column(String, nullable=False, server_default="'native'")
     external_id: Mapped[str | None] = mapped_column(Text)
+    external_status: Mapped[str | None] = mapped_column(Text)
     target_headcount: Mapped[int | None] = mapped_column(Integer)
     deadline: Mapped[date | None] = mapped_column(Date)
     employment_type: Mapped[str | None] = mapped_column(Text)
