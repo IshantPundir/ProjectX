@@ -34,6 +34,12 @@ class OrgUnitResponse(BaseModel):
     is_root: bool
     company_profile: dict | None
     company_profile_completed_at: str | None = None
+    # Two-state gate for ATS-imported client_account units. 'complete' by
+    # default (matches the column server_default); ATS sync writes
+    # 'pending' until the recruiter fills out the company profile and the
+    # PUT handler flips it back. Surfaced so the frontend can render the
+    # "Profile incomplete" caution badge on imported units.
+    company_profile_completion_status: str = "complete"
     metadata: dict | None = None
     created_at: str
     created_by: str | None

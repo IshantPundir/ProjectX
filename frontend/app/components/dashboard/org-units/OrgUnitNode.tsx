@@ -1,5 +1,5 @@
 import { memo, type CSSProperties, type KeyboardEvent } from 'react'
-import { Lock } from 'lucide-react'
+import { AlertCircle, Lock } from 'lucide-react'
 
 import type { GraphNodeData } from './OrgGraph'
 import { getUnitTypeStyle } from './unit-type-style'
@@ -193,6 +193,23 @@ function OrgUnitNodeImpl({
           <Lock size={12} strokeWidth={2} />
         </span>
       )}
+      {/* ATS-imported client_account units land with a pending company
+          profile; the recruiter must complete the 4-field profile before
+          any imported JDs can be processed. Surface a caution glyph so
+          the unit reads as "needs you" at a glance. */}
+      {!isLocked &&
+        unit.unit_type === 'client_account' &&
+        unit.company_profile_completion_status === 'pending' && (
+          <span
+            data-testid="profile-incomplete-badge"
+            aria-label="Imported from ATS — company profile incomplete"
+            className="ml-2 flex-none"
+            title="Imported from ATS. Complete the company profile to enable job creation."
+            style={{ color: 'var(--px-caution, #b45309)' }}
+          >
+            <AlertCircle size={12} strokeWidth={2} />
+          </span>
+        )}
       {pressure && (
         <span
           data-testid="open-roles-badge"

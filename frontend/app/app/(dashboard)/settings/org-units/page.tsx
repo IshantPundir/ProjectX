@@ -338,6 +338,22 @@ function SelectedDetail({
             {pressureCopy[unit.pressure]}
           </span>
         )}
+        {!isLocked &&
+          unit.unit_type === "client_account" &&
+          unit.company_profile_completion_status === "pending" && (
+            <span
+              title="Imported from ATS. Complete the company profile to enable job creation."
+              className="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase"
+              style={{
+                letterSpacing: "0.3px",
+                color: "var(--px-caution, #b45309)",
+                background: "var(--px-caution-bg, #fef3c7)",
+                borderColor: "var(--px-caution-line, #fde68a)",
+              }}
+            >
+              profile incomplete
+            </span>
+          )}
       </div>
       <div
         className="text-[13px]"

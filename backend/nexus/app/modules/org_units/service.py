@@ -346,6 +346,7 @@ async def get_org_unit(
             if unit.company_profile_completed_at
             else None
         ),
+        "company_profile_completion_status": unit.company_profile_completion_status,
         "metadata": unit.unit_metadata,
         "created_at": unit.created_at.isoformat(),
         "created_by": str(unit.created_by) if unit.created_by else None,
@@ -485,6 +486,7 @@ async def list_org_units(
                 if u.company_profile_completed_at
                 else None
             ),
+            "company_profile_completion_status": u.company_profile_completion_status,
             "metadata": u.unit_metadata,
             "created_at": u.created_at.isoformat(),
             "created_by": str(u.created_by) if u.created_by else None,

@@ -61,6 +61,7 @@ def _build_response(
             if unit.company_profile_completed_at
             else None
         ),
+        company_profile_completion_status=unit.company_profile_completion_status,
         metadata=unit.unit_metadata,
         created_at=unit.created_at.isoformat(),
         created_by=str(unit.created_by) if unit.created_by else None,

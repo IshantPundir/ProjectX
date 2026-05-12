@@ -97,6 +97,14 @@ export interface OrgUnit {
   is_root: boolean
   company_profile: CompanyProfile | null
   company_profile_completed_at: string | null
+  /**
+   * Two-state gate for ATS-imported client_account units. Defaults to
+   * 'complete' for natively-created units; ATS sync writes 'pending'
+   * until a recruiter fills out the 4-field company profile, at which
+   * point the org-unit PUT handler flips it to 'complete' and unblocks
+   * any JDs that were imported while the profile was pending.
+   */
+  company_profile_completion_status: 'pending' | 'complete'
   metadata: OrgUnitMetadata | null
   inherited_locale: InheritedLocale | null
   inherited_compliance: InheritedCompliance | null
