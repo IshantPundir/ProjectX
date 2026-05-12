@@ -18,10 +18,11 @@ from datetime import datetime, timezone
 
 import structlog
 from opentelemetry import trace
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from app.database import get_bypass_session
 from app.modules.ats.adapter import ATSAdapter
+from app.modules.audit import log_event
 
 
 logger = structlog.get_logger()
@@ -87,10 +88,141 @@ class ATSImporter:
 
     # Phase methods — implementations land in Tasks 19–22.
     async def _sync_clients(self, db, adapter) -> PhaseResult:
-        raise NotImplementedError("Task 19")
+        """Phase 1: upsert ats_client_mappings; auto-create client_account
+        org_units (with stub profile + completion_status='pending') for new clients."""
+        # Function-local model imports — keeps the module-level import graph
+        # minimal and avoids touching ORM modules before _create_tables runs
+        # in tests.
+        from app.modules.ats.models import ATSClientMapping, ATSConnection
+        from app.modules.org_units.models import OrganizationalUnit
+
+        result = PhaseResult()
+        tenant_id = adapter.state.tenant_id
+
+        # Look up root company unit (for parent_unit_id) and the connection's created_by
+        root = await db.scalar(
+            select(OrganizationalUnit).where(
+                OrganizationalUnit.client_id == tenant_id,
+                OrganizationalUnit.is_root.is_(True),
+            )
+        )
+        if root is None:
+            raise RuntimeError(f"tenant {tenant_id} has no root company org_unit")
+
+        connection = await db.scalar(
+            select(ATSConnection).where(
+                ATSConnection.tenant_id == tenant_id,
+                ATSConnection.vendor == adapter.vendor,
+            )
+        )
+        created_by = connection.created_by
+
+        since = self._cursor_or_none(adapter.state, "clients")
+        async for payload in adapter.list_clients(since=since):
+            existing = await db.scalar(
+                select(ATSClientMapping).where(
+                    ATSClientMapping.tenant_id == tenant_id,
+                    ATSClientMapping.ats_vendor == adapter.vendor,
+                    ATSClientMapping.external_client_id == payload.external_id,
+                )
+            )
+            if existing is not None:
+                # Update mapping metadata; do NOT rename the org_unit.
+                existing.external_client_name = payload.name
+                existing.source_metadata = {"contacts": payload.contacts, "raw": payload.raw}
+                existing.last_synced_at = datetime.now(tz=timezone.utc)
+                result.updated += 1
+                continue
+
+            # Create the org_unit with stub profile
+            stub = {
+                "name": payload.name,
+                "website": payload.website,
+                "industry": payload.industry,
+                "country": payload.country,
+                "state": payload.state,
+                "city": payload.city,
+                "address": payload.address,
+            }
+            stub = {k: v for k, v in stub.items() if v is not None}
+            new_unit = OrganizationalUnit(
+                client_id=tenant_id, parent_unit_id=root.id,
+                name=payload.name, unit_type="client_account",
+                is_root=False, company_profile=stub,
+                company_profile_completion_status="pending",
+                created_by=created_by,
+            )
+            db.add(new_unit)
+            await db.flush()
+
+            db.add(ATSClientMapping(
+                tenant_id=tenant_id, ats_vendor=adapter.vendor,
+                external_client_id=payload.external_id,
+                external_client_name=payload.name,
+                org_unit_id=new_unit.id,
+                source_metadata={"contacts": payload.contacts, "raw": payload.raw},
+            ))
+            await log_event(
+                db, tenant_id=tenant_id, actor_id=created_by,
+                actor_email="ats-import",
+                action="ats.client_mapping.created",
+                resource="ats_client_mapping",
+                resource_id=new_unit.id,
+                payload={"vendor": adapter.vendor,
+                         "external_client_id": payload.external_id,
+                         "org_unit_id": str(new_unit.id)},
+            )
+            result.new += 1
+        return result
 
     async def _sync_users(self, db, adapter) -> PhaseResult:
-        raise NotImplementedError("Task 19")
+        """Phase 2: upsert ats_user_mappings. internal_user_id stays NULL —
+        recruiter explicitly maps via UI later."""
+        from app.modules.ats.models import ATSUserMapping
+
+        result = PhaseResult()
+        tenant_id = adapter.state.tenant_id
+
+        async for payload in adapter.list_users(since=None):
+            existing = await db.scalar(
+                select(ATSUserMapping).where(
+                    ATSUserMapping.tenant_id == tenant_id,
+                    ATSUserMapping.ats_vendor == adapter.vendor,
+                    ATSUserMapping.external_user_id == payload.external_id,
+                )
+            )
+            if existing is not None:
+                existing.external_user_email = payload.email
+                existing.external_user_display_name = payload.display_name
+                existing.external_user_role = payload.role
+                existing.external_user_status = payload.status
+                existing.external_user_metadata = payload.raw
+                existing.last_synced_at = datetime.now(tz=timezone.utc)
+                result.updated += 1
+                continue
+
+            db.add(ATSUserMapping(
+                tenant_id=tenant_id, ats_vendor=adapter.vendor,
+                external_user_id=payload.external_id,
+                external_user_email=payload.email,
+                external_user_display_name=payload.display_name,
+                external_user_role=payload.role,
+                external_user_status=payload.status,
+                external_user_metadata=payload.raw,
+                internal_user_id=None,
+            ))
+            result.new += 1
+        return result
+
+    @staticmethod
+    def _cursor_or_none(state, phase_name: str) -> datetime | None:
+        raw = state.last_synced_cursors.get(phase_name)
+        if not raw:
+            return None
+        try:
+            return datetime.fromisoformat(raw)
+        except ValueError:
+            return None
 
     async def _sync_jobs(self, db, adapter) -> PhaseResult:
         raise NotImplementedError("Task 20")
