@@ -92,6 +92,17 @@ export interface AssignmentResponse {
   status: AssignmentStatus
   status_changed_at: string
   assigned_at: string
+  /**
+   * Provenance of this assignment. 'manual' / 'native' for
+   * recruiter-created; 'ats_<vendor>' for ATS-importer-created.
+   */
+  source: string
+  /**
+   * Free-form JSONB metadata populated by the ATS importer. For Ceipal,
+   * carries `submission_id` and `submission_status` so the candidate row
+   * can render a Ceipal pipeline-status badge inline.
+   */
+  source_metadata: Record<string, unknown> | null
 }
 
 export interface ResumeUploadUrl {
@@ -108,6 +119,16 @@ export interface KanbanCandidateCard {
   status: AssignmentStatus
   current_stage_id: string
   latest_session_state: string | null
+  /** Origin of the underlying candidate row. */
+  candidate_source: string
+  /** Origin of this particular candidate-job assignment. */
+  assignment_source: string
+  /**
+   * Free-form metadata from the importer. Ceipal populates this with
+   * `{ submission_id, submission_status, ... }` so the kanban card can
+   * render the Ceipal pipeline-status badge.
+   */
+  assignment_source_metadata: Record<string, unknown> | null
 }
 
 export interface KanbanColumn {

@@ -101,6 +101,13 @@ class AssignmentResponse(BaseModel):
     status_changed_at: datetime
     assigned_at: datetime
     entered_at_pipeline_version: int | None = None
+    # Provenance of this assignment — 'native' / 'manual' for recruiter-
+    # created, 'ats_<vendor>' for ATS-importer-created. source_metadata
+    # is a free-form JSONB blob populated by the importer (e.g. Ceipal
+    # carries `submission_id` and `submission_status` here so the
+    # candidate row can render a Ceipal-status badge inline).
+    source: str = "manual"
+    source_metadata: dict | None = None
 
 
 class StageTransitionRequest(BaseModel):
@@ -153,6 +160,12 @@ class KanbanCandidateCard(BaseModel):
     status: AssignmentStatus
     current_stage_id: UUID
     latest_session_state: str | None = None  # populated in Phase 3C
+    # Provenance — surfaced so the kanban card can render an "Imported
+    # from ceipal" chip alongside the candidate name. 'manual' by
+    # default; 'ats_<vendor>' for ATS-importer-created assignments.
+    candidate_source: str = "manual"
+    assignment_source: str = "manual"
+    assignment_source_metadata: dict | None = None
 
 
 class KanbanColumnResponse(BaseModel):

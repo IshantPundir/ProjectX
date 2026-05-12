@@ -237,13 +237,30 @@ export default function CandidateListView({
                   }}
                 >
                   <td className="px-4 py-3">
-                    <Link
-                      href={`/candidates/${c.id}`}
-                      className="text-[13px] font-medium hover:underline"
-                      style={{ color: 'var(--px-fg)' }}
-                    >
-                      {c.name ?? '—'}
-                    </Link>
+                    <div className="flex items-center gap-2">
+                      <Link
+                        href={`/candidates/${c.id}`}
+                        className="text-[13px] font-medium hover:underline"
+                        style={{ color: 'var(--px-fg)' }}
+                      >
+                        {c.name ?? '—'}
+                      </Link>
+                      {c.source.startsWith('ats_') && (
+                        <span
+                          className="inline-flex items-center rounded-full border px-1.5 text-[9px] font-medium uppercase"
+                          style={{
+                            height: 15,
+                            letterSpacing: '0.4px',
+                            color: 'var(--px-fg-3)',
+                            background: 'var(--px-surface-2)',
+                            borderColor: 'var(--px-hairline)',
+                          }}
+                          title={`Imported from ${c.source.replace('ats_', '')}`}
+                        >
+                          From {c.source.replace('ats_', '')}
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-[12.5px]" style={{ color: 'var(--px-fg-2)' }}>
                     {c.email ?? '—'}

@@ -126,6 +126,62 @@ export default function CandidateKanbanCard({
         </div>
       </div>
 
+      {/* Source + Ceipal badges. Prefer assignment_source (more specific
+          than candidate_source — a manually-entered candidate can still
+          have an ATS-imported submission to this particular job). */}
+      {(card.assignment_source.startsWith('ats_') ||
+        card.candidate_source.startsWith('ats_') ||
+        typeof (card.assignment_source_metadata as { submission_status?: unknown } | null)
+          ?.submission_status === 'string') && (
+        <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+          {(() => {
+            const atsSource = card.assignment_source.startsWith('ats_')
+              ? card.assignment_source
+              : card.candidate_source.startsWith('ats_')
+                ? card.candidate_source
+                : null
+            if (!atsSource) return null
+            return (
+              <span
+                className="inline-flex items-center rounded-full border px-1.5 text-[9px] font-medium uppercase"
+                style={{
+                  height: 15,
+                  letterSpacing: '0.4px',
+                  color: 'var(--px-fg-3)',
+                  background: 'var(--px-surface-2)',
+                  borderColor: 'var(--px-hairline)',
+                }}
+                title={`Imported from ${atsSource.replace('ats_', '')}`}
+              >
+                From {atsSource.replace('ats_', '')}
+              </span>
+            )
+          })()}
+          {(() => {
+            const status =
+              (card.assignment_source_metadata as
+                | { submission_status?: unknown }
+                | null
+              )?.submission_status
+            if (typeof status !== 'string' || !status) return null
+            return (
+              <span
+                className="inline-flex items-center rounded-full border px-1.5 text-[9px] font-medium"
+                style={{
+                  height: 15,
+                  color: 'var(--px-fg-3)',
+                  background: 'var(--px-surface)',
+                  borderColor: 'var(--px-hairline)',
+                }}
+                title="Ceipal's pipeline status for this submission."
+              >
+                Ceipal: {status}
+              </span>
+            )
+          })()}
+        </div>
+      )}
+
       {/* Status chips */}
       <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
         <StatusBadge status={card.status} />

@@ -587,6 +587,9 @@ async def get_kanban_board(
                 status=a.status,
                 current_stage_id=a.current_stage_id,
                 latest_session_state=latest_state_by_assignment.get(a.id),
+                candidate_source=c.source,
+                assignment_source=a.source,
+                assignment_source_metadata=a.source_metadata,
             )
         )
 
