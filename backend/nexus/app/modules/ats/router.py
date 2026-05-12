@@ -163,11 +163,15 @@ async def create_connection_endpoint(
                 "message": str(exc)[:200],
             },
         )
-    await db.commit()
-
-    # Fire-and-forget initial sync
+    # Fire-and-forget initial sync. We can't call db.commit() here — the
+    # get_tenant_db dependency wraps the session in `async with session.begin()`
+    # which owns the transaction lifecycle. Calling commit closes that
+    # transaction and any subsequent db.* op raises InvalidRequestError.
+    # Flush so the audit row + connection row are visible to db.get below,
+    # and let the dependency commit on context exit.
+    await db.flush()
     await trigger_manual_sync(db, conn_id, user.user.tenant_id, user.user.id)
-    await db.commit()
+    await db.flush()
 
     new_row = await db.get(ATSConnection, conn_id)
     return ConnectionResponse.from_row(new_row)
@@ -195,7 +199,6 @@ async def delete_connection_endpoint(
     user: UserContext = Depends(require_ats_admin),
 ) -> None:
     await delete_connection(db, connection_id, user.user.tenant_id, user.user.id)
-    await db.commit()
 
 
 @router.post(
@@ -208,7 +211,6 @@ async def manual_sync(
     user: UserContext = Depends(require_ats_admin),
 ) -> dict:
     await trigger_manual_sync(db, connection_id, user.user.tenant_id, user.user.id)
-    await db.commit()
     return {"status": "enqueued"}
 
 
@@ -293,4 +295,3 @@ async def map_user(
         tenant_id=user.user.tenant_id,
         actor_id=user.user.id,
     )
-    await db.commit()
