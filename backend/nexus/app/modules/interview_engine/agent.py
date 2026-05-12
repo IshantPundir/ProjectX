@@ -430,7 +430,6 @@ async def entrypoint(ctx: JobContext) -> None:
 
     _wire_session_observability(
         session,
-        agent=agent,
         collector=event_collector,
         log_verbose_content=settings.engine_log_user_transcripts,
         log_audio_events=settings.engine_log_audio_events,
@@ -462,7 +461,6 @@ async def entrypoint(ctx: JobContext) -> None:
 def _wire_session_observability(
     session: AgentSession,
     *,
-    agent: StructuredInterviewAgent,
     collector: EventCollector,
     log_verbose_content: bool,
     log_audio_events: bool,
