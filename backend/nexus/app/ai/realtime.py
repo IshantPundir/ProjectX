@@ -226,9 +226,9 @@ def build_turn_detector() -> "TurnDetectionMode":
     prematurely trigger end-of-turn.
 
     The threshold is sourced from `AIConfig.interview_turn_detector_unlikely_threshold`
-    (env: `INTERVIEW_TURN_DETECTOR_UNLIKELY_THRESHOLD`). Default is None,
-    which delegates to the plugin's own default — only set this when you
-    have real session data to tune against.
+    (env: `INTERVIEW_TURN_DETECTOR_UNLIKELY_THRESHOLD`). Phase 5 (2026-05-12)
+    sets the default to 0.5 for the Sarvam + MultilingualModel path. Override
+    only when you have real session data to tune against.
     """
     from livekit.plugins.turn_detector.multilingual import MultilingualModel
 

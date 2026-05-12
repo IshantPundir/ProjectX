@@ -63,17 +63,20 @@ def test_engine_endpointing_max_delay_default_is_patient(monkeypatch):
     assert s.engine_endpointing_max_delay == 6.0
 
 
-def test_interview_turn_detector_unlikely_threshold_default_is_none(monkeypatch):
-    """Phase 2 P2.2 (2026-05-08) dropped the explicit 0.15 override.
-    The plugin's per-language tuned defaults (~0.3-0.5) are both more
-    patient (higher threshold = require higher EOU confidence to commit
-    turn-end) and more accurate than a single hand-picked override.
+def test_interview_turn_detector_unlikely_threshold_default_is_conservative(monkeypatch):
+    """Phase 5 (2026-05-12) bumped from None -> 0.5 for the Sarvam +
+    MultilingualModel path. The product's first candidates are
+    Indian-English speakers who tend to pause mid-thought; a more
+    conservative EOU floor (only fire end-of-turn when the model is
+    confidently sure) reduces premature turn closures. The explicit
+    0.5 override (vs. the plugin's ~0.3-0.5 default range) ensures
+    deterministic behavior across sessions and tuning iterations.
     """
     from app.ai.config import AIConfig
 
     monkeypatch.delenv("INTERVIEW_TURN_DETECTOR_UNLIKELY_THRESHOLD", raising=False)
     cfg = AIConfig()
-    assert cfg.interview_turn_detector_unlikely_threshold is None
+    assert cfg.interview_turn_detector_unlikely_threshold == 0.5
 
 
 def test_settings_have_sarvam_fields():

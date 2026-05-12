@@ -394,7 +394,13 @@ class Settings(BaseSettings):
     # opposite of what we want for candidates who pause mid-thought.
     # Letting the plugin choose is both more patient AND more accurate.
     # Set explicitly only when you have a tuning reason. Range: 0.0 – 1.0.
-    interview_turn_detector_unlikely_threshold: float | None = None
+    # Phase 5 (2026-05-12): bumped from None -> 0.5 for the Sarvam +
+    # MultilingualModel path. The product's first candidates are
+    # Indian-English speakers who tend to pause mid-thought; a more
+    # conservative EOU floor (only fire end-of-turn when the model is
+    # confidently sure) reduces premature turn closures. Tune empirically
+    # from real session audio.tuning_summary data.
+    interview_turn_detector_unlikely_threshold: float | None = 0.5
 
     # Frontend base URL — used to build invite/confirmation links in emails.
     # Previously hardcoded with a `debug ? localhost : app.projectx.com`
