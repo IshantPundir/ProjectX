@@ -86,6 +86,12 @@ const NI = {
     "M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2",
     "M12 11a4 4 0 100-8 4 4 0 000 8z",
   ] as const,
+  plug: [
+    "M9 2v6",
+    "M15 2v6",
+    "M6 8h12v4a6 6 0 01-12 0z",
+    "M12 18v4",
+  ] as const,
   logOut: [
     "M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4",
     "M16 17l5-5-5-5",
@@ -136,6 +142,12 @@ const FOOTER_NAV: readonly NavItem[] = [
     icon: NI.users,
     visible: isAnyAdmin,
   },
+  {
+    href: "/settings/integrations",
+    label: "Integrations",
+    icon: NI.plug,
+    visible: isAnyAdmin,
+  },
   { href: "/profile", label: "Profile", icon: NI.user },
 ] as const;
 
@@ -152,6 +164,7 @@ const PATH_LABELS: Record<string, string> = {
   settings: "Settings",
   "org-units": "Org units",
   team: "Team & access",
+  integrations: "Integrations",
   profile: "Profile",
   review: "JD review",
   "company-profile": "Company profile",
