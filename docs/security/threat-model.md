@@ -109,3 +109,19 @@ engine LLM.
 - Egress (recording) wired in.
 - Deployment target switches from Cloud to self-hosted for a specific
   tenant (per-tenant audio path becomes heterogeneous).
+
+## Phase ATS — 2026-05-12
+
+A new tenant-scoped credential surface is introduced via the ATS adapter system
+(`app/modules/ats/`). Per-tenant Ceipal email, password, API key, and OAuth-style
+access/refresh tokens are stored encrypted at rest via Fernet (MultiFernet
+keyring; key in env at MVP → AWS Secrets Manager at enterprise).
+
+Rotation runbook: `docs/security/ats-credentials-rotation.md`.
+
+Trust boundaries touched:
+- Backend ↔ Ceipal API (HTTPS-only per Ceipal docs).
+- Recruiter ↔ /api/ats/* (super_admin-gated; rate-limited per the table in this doc).
+
+No PII enters logs (per the redactor table in the spec). Adapter `httpx` client
+strips `Authorization` and request/response bodies from logs.
