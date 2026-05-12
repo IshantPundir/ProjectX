@@ -21,7 +21,7 @@ class TestBuildInterruptionOptions:
         opts = build_interruption_options()
         assert opts == {
             "mode": "adaptive",
-            "min_duration": 0.5,
+            "min_duration": 1.0,
             "min_words": 2,
             "false_interruption_timeout": 2.0,
             "resume_false_interruption": True,

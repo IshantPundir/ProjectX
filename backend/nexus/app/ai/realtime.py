@@ -243,12 +243,14 @@ def build_interruption_options() -> dict[str, object]:
 
     Locked to adaptive mode (LK Cloud). The barge-in classifier handles
     backchannel detection. min_words=2 layers an STT-aligned word-count
-    gate on top per the LK turn-handling-options reference.
+    gate on top per the LK turn-handling-options reference. min_duration=1.0s
+    filters incidental noise; backchannel filtering is still handled by the
+    adaptive classifier and min_words=2.
     """
     logger.info("ai.realtime.interruption.built", mode="adaptive")
     return {
         "mode": "adaptive",
-        "min_duration": 0.5,
+        "min_duration": 1.0,
         "min_words": 2,
         "false_interruption_timeout": 2.0,
         "resume_false_interruption": True,
