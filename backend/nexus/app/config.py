@@ -1,7 +1,7 @@
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 NoiseCancellationMode = Literal[
@@ -101,6 +101,53 @@ class Settings(BaseSettings):
                 "`openssl rand -hex 32`). This signs candidate session JWTs "
                 "and must never be empty in dev/staging/prod. Set "
                 "ENVIRONMENT=test to skip this check in the test suite."
+            )
+        return v
+
+    # ATS integration — encrypts per-tenant credentials and OAuth tokens at rest.
+    # First key in the list encrypts; all keys are tried for decrypt (MultiFernet).
+    # Rotation = prepend a new key, backfill ciphertexts, drop the old key.
+    # Generate one with:
+    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    #
+    # `NoDecode` opts this field out of pydantic-settings' default JSON
+    # decoding of complex types from env vars. Without it an empty
+    # `ATS_CREDENTIALS_ENCRYPTION_KEYS=` in .env would crash with a
+    # JSONDecodeError before the required-field validator below ran, and
+    # the documented `key1,key2,key3` env-var syntax would need to be
+    # written as the JSON literal `["key1","key2","key3"]`. The
+    # mode="before" validator below splits the raw env string on commas.
+    ats_credentials_encryption_keys: Annotated[list[str], NoDecode] = []
+
+    # Default backoff (seconds) when an adapter raises ATSRateLimitedError
+    # without a Retry-After hint. Per-connection rate_limit_qps can override.
+    ats_default_retry_after_seconds: int = 60
+
+    @field_validator("ats_credentials_encryption_keys", mode="before")
+    @classmethod
+    def _split_ats_encryption_keys(cls, v):
+        # pydantic-settings JSON-decodes complex types from env vars by
+        # default; that means an empty `ATS_CREDENTIALS_ENCRYPTION_KEYS=` in
+        # .env crashes with a JSONDecodeError before the required-field
+        # validator below ever runs, and `key1,key2` would need to be
+        # quoted as `["key1","key2"]`. Coerce a comma-separated string into
+        # a list here so the env-var contract documented in .env.example
+        # (`ATS_CREDENTIALS_ENCRYPTION_KEYS=key1,key2,key3`) actually works
+        # and so the friendly "required" message wins over JSONDecodeError.
+        if isinstance(v, str):
+            return [s.strip() for s in v.split(",") if s.strip()]
+        return v
+
+    @field_validator("ats_credentials_encryption_keys")
+    @classmethod
+    def _ats_encryption_keys_required(cls, v: list[str], info) -> list[str]:
+        env = info.data.get("environment", "development")
+        if not v and env != "test":
+            raise ValueError(
+                "ATS_CREDENTIALS_ENCRYPTION_KEYS is required "
+                "(comma-separated; first key is active). Generate a new key with: "
+                "`python -c \"from cryptography.fernet import Fernet; "
+                "print(Fernet.generate_key().decode())\"`"
             )
         return v
 
