@@ -170,6 +170,83 @@ class CeipalAdapter:
             # refresh_token lifetime is 7d per docs
             self.state.refresh_token_expires_at = now + timedelta(days=7)
 
+    # ---------- Shared HTTP plumbing for list endpoints ----------
+
+    async def _request(self, method: str, path: str, params: dict | None = None) -> httpx.Response:
+        await self.ensure_authenticated()
+        try:
+            response = await self._client.request(
+                method, path, params=params or {},
+                headers={"Authorization": f"Bearer {self.state.access_token}"},
+            )
+        except httpx.HTTPError as exc:
+            raise ATSNetworkError(f"{path} network error: {exc}") from exc
+        self._raise_for_envelope(response, path)
+        return response
+
+    def _raise_for_envelope(self, response: httpx.Response, path: str) -> None:
+        """Translate Ceipal's HTTP-status + JSON error envelope into typed exceptions.
+
+        Ceipal envelope: {"message": "<human string>"}. 404 on a LIST endpoint
+        means 'no rows match the filter' (NOT an error) — callers handle that by
+        treating the empty results array as the empty list.
+        """
+        if response.status_code == 200:
+            return
+
+        body = {}
+        try:
+            body = response.json()
+        except (json.JSONDecodeError, ValueError):
+            body = {"message": response.text[:200]}
+        message = body.get("message", "")
+
+        if response.status_code == 401:
+            # ensure_authenticated should have prevented this — if we hit a 401
+            # mid-list, treat as credentials-invalid (likely revoked upstream).
+            raise ATSCredentialsInvalidError(f"{path} 401: {message}")
+        if response.status_code == 403:
+            raise ATSAuthorizationError(f"{path} 403: {message}")
+        if response.status_code == 429:
+            raise ATSRateLimitedError(
+                retry_after_seconds=settings.ats_default_retry_after_seconds,
+                message=f"{path} 429: {message}",
+            )
+        if response.status_code == 400:
+            raise ATSVendorContractError(f"{path} 400: {message}")
+        if response.status_code >= 500:
+            raise ATSNetworkError(f"{path} {response.status_code}: {message}")
+        if response.status_code == 404:
+            # For list endpoints we synthesize an empty page rather than raising.
+            # Caller's `if not next` loop exits naturally; per-method coercion is
+            # handled in _paginate via the result-array length.
+            return
+        raise ATSVendorContractError(
+            f"{path} unexpected {response.status_code}: {message}"
+        )
+
+    async def _paginate(
+        self, path: str, params: dict,
+    ):
+        """Yield items from every page of a Ceipal list endpoint.
+
+        Pagination envelope: {count, num_pages, page_number, limit, next, previous, results}
+        Walks until `next` is empty (or 404, which we treat as 'no more').
+        """
+        page = 1
+        params = dict(params)
+        while True:
+            params["page"] = page
+            response = await self._request("GET", path, params=params)
+            if response.status_code == 404:
+                return
+            envelope = response.json()
+            for item in envelope.get("results", []):
+                yield item
+            if not envelope.get("next"):
+                return
+            page += 1
+
     # ---------- List endpoints (implemented in Task 15) ----------
 
     async def list_clients(  # type: ignore[override]
