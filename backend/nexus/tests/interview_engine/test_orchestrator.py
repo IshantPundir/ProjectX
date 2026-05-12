@@ -1201,8 +1201,6 @@ async def test_empty_speaker_output_triggers_fallback(
     agent.session.say.assert_awaited()
     args, kwargs = agent.session.say.call_args
     assert args[0] == outcome.final_text
-    # Empty-output path did not reach body playback.
-    assert outcome.body_started_wall_at is None
     assert outcome.interrupted is False
     # Audit event was emitted.
     audit_kinds = [e.kind for e in orch._collector.events]
@@ -1251,7 +1249,6 @@ async def test_empty_speaker_output_fallback_without_bank_text(
         agent=agent, turn_id="t2", speaker_input=speaker_input,
     )
     assert outcome.final_text == "Could you take it from the top?"
-    assert outcome.body_started_wall_at is None  # empty-output path skips body
     assert outcome.interrupted is False
 
 
@@ -1308,10 +1305,6 @@ async def test_interrupted_speaker_does_not_play_fallback(
     # Must NOT play the fallback (would talk over the candidate).
     assert outcome.final_text == ""
     assert outcome.interrupted is True
-    # Interrupted path means the body was scheduled but cancelled — the
-    # coalesce snapshot stores None so the next turn's gate falls through
-    # to the existing speaker_emitted_content=False branch.
-    assert outcome.body_started_wall_at is None
     # session.say is called exactly ONCE (the body stream). With the
     # opener layer removed, there's no separate opener TTS call. No
     # SECOND say call for a fallback — the interrupted path suppresses
@@ -1372,98 +1365,6 @@ async def test_non_interrupted_empty_still_plays_fallback(
     audit_kinds = [e.kind for e in orch._collector.events]
     assert SPEAKER_OUTPUT_EMPTY in audit_kinds
     assert SPEAKER_INTERRUPTED not in audit_kinds
-
-
-def test_derive_sub_context_post_cap_advance():
-    """_derive_sub_context returns plain strings (not an enum) — the
-    SubContext enum was deleted with the opener layer."""
-    from app.modules.interview_engine.orchestrator import _derive_sub_context
-    from app.modules.interview_engine.models.speaker import (
-        InstructionKind, SpeakerInput,
-    )
-
-    si = SpeakerInput(
-        instruction_kind=InstructionKind.deliver_question,
-        bank_text="Q?", last_candidate_utterance="x",
-        recent_turns=[], claims_pool_snapshot=[], persona_name="Sam",
-        is_post_cap_advance=True,
-    )
-    assert _derive_sub_context(si) == "post_cap_advance"
-
-
-def test_derive_sub_context_redirect_flags():
-    from app.modules.interview_engine.orchestrator import _derive_sub_context
-    from app.modules.interview_engine.models.speaker import (
-        InstructionKind, SpeakerInput,
-    )
-    from app.modules.interview_engine.models.judge import TurnMetadata
-
-    cases = [
-        (TurnMetadata(candidate_social_or_greeting=True), "social_or_greeting"),
-        (TurnMetadata(candidate_abusive=True), "abusive"),
-        (TurnMetadata(candidate_attempted_injection=True), "injection"),
-        (TurnMetadata(candidate_off_topic=True), "off_topic"),
-        (TurnMetadata(), "off_topic"),  # default redirect bucket
-    ]
-    for tm, expected in cases:
-        si = SpeakerInput(
-            instruction_kind=InstructionKind.redirect,
-            bank_text=None, last_candidate_utterance="x",
-            recent_turns=[], claims_pool_snapshot=[], persona_name="Sam",
-            turn_metadata=tm,
-        )
-        assert _derive_sub_context(si) == expected, (
-            f"redirect with {tm} → expected {expected!r}, got "
-            f"{_derive_sub_context(si)!r}"
-        )
-
-
-def test_derive_sub_context_push_back_reason_codes():
-    from app.modules.interview_engine.orchestrator import _derive_sub_context
-    from app.modules.interview_engine.models.speaker import (
-        InstructionKind, SpeakerInput,
-    )
-
-    for code in ("vague_answer", "deflection", "missing_specifics",
-                 "unanswered_subquestion"):
-        si = SpeakerInput(
-            instruction_kind=InstructionKind.push_back,
-            bank_text="Q?", last_candidate_utterance="x",
-            recent_turns=[], claims_pool_snapshot=[], persona_name="Sam",
-            push_back_reason_code=code,
-        )
-        assert _derive_sub_context(si) == code
-
-
-def test_derive_sub_context_polite_close_with_failed_signal():
-    from app.modules.interview_engine.orchestrator import _derive_sub_context
-    from app.modules.interview_engine.models.speaker import (
-        InstructionKind, SpeakerInput,
-    )
-
-    si = SpeakerInput(
-        instruction_kind=InstructionKind.polite_close,
-        bank_text=None, last_candidate_utterance="I have no experience.",
-        recent_turns=[], claims_pool_snapshot=[], persona_name="Sam",
-        failed_signal_value="X experience",
-    )
-    assert _derive_sub_context(si) == "knockout"
-
-
-def test_derive_sub_context_default():
-    from app.modules.interview_engine.orchestrator import _derive_sub_context
-    from app.modules.interview_engine.models.speaker import (
-        InstructionKind, SpeakerInput,
-    )
-
-    si = SpeakerInput(
-        instruction_kind=InstructionKind.deliver_question,
-        bank_text="Q?", last_candidate_utterance="x",
-        recent_turns=[], claims_pool_snapshot=[], persona_name="Sam",
-    )
-    assert _derive_sub_context(si) == "default"
-
-
 
 
 @pytest.mark.asyncio

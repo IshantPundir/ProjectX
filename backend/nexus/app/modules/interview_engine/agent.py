@@ -399,8 +399,6 @@ async def entrypoint(ctx: JobContext) -> None:
             checkpoint_turns=settings.engine_checkpoint_turns,
             checkpoint_seconds=settings.engine_checkpoint_seconds,
             session_ended_message=settings.engine_session_ended_message,
-            coalesce_enabled=settings.engine_coalesce_enabled,
-            coalesce_window_ms=settings.engine_coalesce_window_ms,
             stale_turn_threshold_ms=settings.engine_stale_turn_threshold_ms,
             stale_buffer_max=settings.engine_stale_buffer_max,
             post_judge_resumption_epsilon_ms=settings.engine_post_judge_resumption_epsilon_ms,
