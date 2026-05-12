@@ -213,6 +213,12 @@ def test_canonical_rls_helper_emits_tenant_isolation_with_nullif(
         "'permission denied' instead of exercising the RLS policy."
     )
 
+    assert "ENABLE ROW LEVEL SECURITY" in body, (
+        "_apply_canonical_rls() must emit ALTER TABLE ... ENABLE ROW LEVEL SECURITY. "
+        "Without it, both policies are attached but inert — the table is not "
+        "subject to policy evaluation and every row is readable by nexus_app."
+    )
+
 
 def test_all_five_tables_registered_in_tenant_scoped_tables() -> None:
     """The 5 ATS tables must be in ``app/main._TENANT_SCOPED_TABLES``.
