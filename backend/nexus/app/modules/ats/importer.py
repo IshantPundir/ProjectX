@@ -59,12 +59,35 @@ class SyncResult:
 
 class ATSImporter:
     async def sync_tenant(self, adapter: ATSAdapter) -> SyncResult:
+        """Run all five phases. On phase failure, attach the partial
+        result accumulated so far to the raised exception via the
+        ``partial_result`` attribute so the actor's recovery handler
+        can write meaningful entity_counts into the sync log.
+
+        Without this, a rate-limit / permanent failure mid-sync would
+        propagate the exception with no record of what DID succeed —
+        ats_sync_logs.entity_counts would show all-nulls and the
+        recruiter UI would misreport "nothing imported" when in fact
+        many phases ran to completion.
+        """
         result = SyncResult()
-        result.clients     = await self._run_phase("clients",     self._sync_clients,     adapter)
-        result.users       = await self._run_phase("users",       self._sync_users,       adapter)
-        result.jobs        = await self._run_phase("jobs",        self._sync_jobs,        adapter)
-        result.applicants  = await self._run_phase("applicants",  self._sync_applicants,  adapter)
-        result.submissions = await self._run_phase("submissions", self._sync_submissions, adapter)
+        phases = (
+            ("clients",     self._sync_clients),
+            ("users",       self._sync_users),
+            ("jobs",        self._sync_jobs),
+            ("applicants",  self._sync_applicants),
+            ("submissions", self._sync_submissions),
+        )
+        for name, fn in phases:
+            try:
+                phase_result = await self._run_phase(name, fn, adapter)
+            except Exception as exc:
+                # Attach what we've accumulated so far so the actor's
+                # except handlers (in _do_poll) can read it back via
+                # exc.partial_result. Avoids the "all-nulls" sync log.
+                exc.partial_result = result  # type: ignore[attr-defined]
+                raise
+            setattr(result, name, phase_result)
         return result
 
     async def _run_phase(self, name, fn, adapter) -> PhaseResult:

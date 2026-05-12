@@ -181,6 +181,11 @@ async def _do_poll(
     try:
         sync_result = await ATSImporter().sync_tenant(adapter)
     except ATSRateLimitedError as exc:
+        # sync_tenant attaches the partial SyncResult to the exception
+        # so the sync log reflects what DID succeed before the rate
+        # limit fired. Falls back to an empty result if attribute is
+        # missing (defensive — shouldn't happen with current code).
+        partial = getattr(exc, "partial_result", None) or ATSImporter._empty_partial_result()
         async with get_bypass_session() as db:
             await db.execute(
                 text(f"SET LOCAL app.current_tenant = '{safe_tenant}'")
@@ -194,13 +199,14 @@ async def _do_poll(
             await finalize_sync_log_partial(
                 db,
                 sync_log_id,
-                ATSImporter._empty_partial_result(),
+                partial,
                 error_summary=str(exc),
             )
             await db.commit()
         logger.info(
             "ats.poll.rate_limited",
             retry_after_seconds=exc.retry_after_seconds,
+            entity_counts=partial.entity_counts(),
         )
         return  # NO retry — next tick handles it
     except ATSPermanentError as exc:

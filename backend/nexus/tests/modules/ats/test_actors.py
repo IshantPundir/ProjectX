@@ -162,6 +162,58 @@ async def test_rate_limited_advances_next_poll_returns_cleanly(db, actor_fixture
 
 
 @pytest.mark.asyncio
+async def test_rate_limited_records_partial_progress_in_sync_log(db, actor_fixture):
+    """When sync_tenant attaches a partial SyncResult to ATSRateLimitedError,
+    the actor's rate-limit handler must propagate that partial result into
+    ats_sync_logs.entity_counts so the UI doesn't misreport "nothing imported".
+
+    Pins the contract that fixes the production observability bug:
+    32 clients + 19 users were getting imported per run, but entity_counts
+    showed all-nulls because the actor was passing _empty_partial_result()
+    instead of the real partial.
+    """
+    from app.modules.ats import actors
+    from app.modules.ats.errors import ATSRateLimitedError
+    from app.modules.ats.importer import PhaseResult
+
+    tenant_id, connection_id = actor_fixture
+    fake_adapter = AsyncMock()
+    fake_adapter.vendor = "ceipal"
+    fake_adapter.ensure_authenticated = AsyncMock()
+
+    # Simulate "phases 1-3 succeeded, phase 4 hit rate limit"
+    rl_exc = ATSRateLimitedError(retry_after_seconds=60)
+    from app.modules.ats.importer import SyncResult
+    partial = SyncResult()
+    partial.clients = PhaseResult(new=32)
+    partial.users = PhaseResult(new=19)
+    partial.jobs = PhaseResult(new=5, updated=2)
+    # Phases 4 + 5 never ran → stay None.
+    rl_exc.partial_result = partial  # type: ignore[attr-defined]
+
+    with patch("app.modules.ats.actors.get_ats_adapter") as mock_get:
+        def _bind(state):
+            fake_adapter.state = state
+            return fake_adapter
+        mock_get.side_effect = _bind
+        with patch.object(actors.ATSImporter, "sync_tenant", side_effect=rl_exc):
+            await actors._run_poll(connection_id, tenant_id)
+
+    r = await db.execute(text(
+        "SELECT entity_counts FROM ats_sync_logs "
+        "WHERE connection_id = :c ORDER BY started_at DESC LIMIT 1"
+    ), {"c": connection_id})
+    counts = r.scalar_one()
+    # Phases that completed are recorded; phases that didn't run are null.
+    assert counts["clients"]["new"] == 32
+    assert counts["users"]["new"] == 19
+    assert counts["jobs"]["new"] == 5
+    assert counts["jobs"]["updated"] == 2
+    assert counts["applicants"] is None
+    assert counts["submissions"] is None
+
+
+@pytest.mark.asyncio
 async def test_connection_deleted_before_actor_runs_exits_cleanly(db, actor_fixture):
     """Connection deleted between scheduler tick and actor execution.
 
