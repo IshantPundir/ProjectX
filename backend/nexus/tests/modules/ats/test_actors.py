@@ -267,7 +267,7 @@ async def test_connection_deleted_mid_sync_during_phase_c_exits_cleanly(
     fake_adapter.vendor = "ceipal"
     fake_adapter.ensure_authenticated = AsyncMock()
 
-    async def _sync_then_delete_and_raise(self_, adapter):
+    async def _sync_then_delete_and_raise(self_, adapter, *, phase_filter=None, sync_log_id=None):
         # Phase A has already committed the sync_log row by this point.
         # Simulate the recruiter clicking "Remove connection" in the UI:
         # the cascade wipes ats_sync_logs, ats_*_mappings, etc.
@@ -294,3 +294,77 @@ async def test_connection_deleted_mid_sync_during_phase_c_exits_cleanly(
         "SELECT COUNT(*) FROM ats_connections WHERE id = :i"
     ), {"i": connection_id})
     assert r.scalar_one() == 0
+
+
+@pytest.mark.asyncio
+async def test_actor_passes_phase_filter_and_sync_log_id_to_importer(
+    db, actor_fixture,
+):
+    """phase_filter (list on the wire) is converted to a set and passed
+    to ATSImporter.sync_tenant, along with the sync_log_id created by
+    Phase A."""
+    from app.modules.ats import actors
+
+    tenant_id, connection_id = actor_fixture
+
+    fake_adapter = AsyncMock()
+    fake_adapter.vendor = "ceipal"
+    fake_adapter.ensure_authenticated = AsyncMock()
+    fake_adapter.list_clients = lambda since=None: _empty_aiter()
+    fake_adapter.list_users   = lambda since=None: _empty_aiter()
+    fake_adapter.list_jobs    = lambda since=None, *, job_status_ids=None: _empty_aiter()
+    fake_adapter.list_applicants = lambda since=None: _empty_aiter()
+    fake_adapter.list_submissions = lambda job_external_id, since=None: _empty_aiter()
+
+    captured = {}
+    async def fake_sync_tenant(self, adapter, *, phase_filter=None, sync_log_id=None):
+        from app.modules.ats.importer import SyncResult
+        captured["phase_filter"] = phase_filter
+        captured["sync_log_id"] = sync_log_id
+        return SyncResult()
+
+    with patch(
+        "app.modules.ats.actors.get_ats_adapter",
+        return_value=fake_adapter,
+    ), patch.object(
+        actors.ATSImporter, "sync_tenant", fake_sync_tenant,
+    ):
+        await actors._run_poll(
+            connection_id, tenant_id, phase_filter=["clients", "users"],
+        )
+
+    assert captured["phase_filter"] == {"clients", "users"}
+    assert captured["sync_log_id"] is not None  # Phase A created the row
+
+
+@pytest.mark.asyncio
+async def test_actor_default_phase_filter_is_none(db, actor_fixture):
+    """Calling _run_poll without phase_filter forwards None to the importer."""
+    from app.modules.ats import actors
+
+    tenant_id, connection_id = actor_fixture
+
+    fake_adapter = AsyncMock()
+    fake_adapter.vendor = "ceipal"
+    fake_adapter.ensure_authenticated = AsyncMock()
+    fake_adapter.list_clients = lambda since=None: _empty_aiter()
+    fake_adapter.list_users = lambda since=None: _empty_aiter()
+    fake_adapter.list_jobs = lambda since=None, *, job_status_ids=None: _empty_aiter()
+    fake_adapter.list_applicants = lambda since=None: _empty_aiter()
+    fake_adapter.list_submissions = lambda job_external_id, since=None: _empty_aiter()
+
+    captured = {}
+    async def fake_sync_tenant(self, adapter, *, phase_filter=None, sync_log_id=None):
+        from app.modules.ats.importer import SyncResult
+        captured["phase_filter"] = phase_filter
+        return SyncResult()
+
+    with patch(
+        "app.modules.ats.actors.get_ats_adapter",
+        return_value=fake_adapter,
+    ), patch.object(
+        actors.ATSImporter, "sync_tenant", fake_sync_tenant,
+    ):
+        await actors._run_poll(connection_id, tenant_id)
+
+    assert captured["phase_filter"] is None

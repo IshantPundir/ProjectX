@@ -61,17 +61,22 @@ tracer = trace.get_tracer(__name__)
     max_backoff=600_000,
     queue_name="ats_poll",
 )
-async def poll_ats_connection(connection_id: str, tenant_id: str) -> None:
-    """Dramatiq entry point. Thin wrapper — real work in `_run_poll` so it can
-    be tested without standing up the Dramatiq broker.
-
-    Dramatiq serializes every actor argument as JSON-compatible primitives,
-    so the signature takes ``str`` (not ``UUID``) on the wire.
+async def poll_ats_connection(
+    connection_id: str,
+    tenant_id: str,
+    phase_filter: list[str] | None = None,
+) -> None:
+    """Dramatiq entry point. phase_filter is a JSON list on the wire (or None),
+    converted to a set inside the importer.
     """
-    await _run_poll(connection_id, tenant_id)
+    await _run_poll(connection_id, tenant_id, phase_filter)
 
 
-async def _run_poll(connection_id: str, tenant_id: str) -> None:
+async def _run_poll(
+    connection_id: str,
+    tenant_id: str,
+    phase_filter: list[str] | None = None,
+) -> None:
     safe_tenant = str(uuid.UUID(tenant_id))
     correlation_id = f"ats-{uuid.uuid4()}"
 
@@ -88,6 +93,7 @@ async def _run_poll(connection_id: str, tenant_id: str) -> None:
             attributes={
                 "connection_id": connection_id,
                 "tenant_id": safe_tenant,
+                "phase_filter": ",".join(phase_filter) if phase_filter else "*",
             },
         ):
             await _do_poll(
@@ -95,6 +101,7 @@ async def _run_poll(connection_id: str, tenant_id: str) -> None:
                 uuid.UUID(tenant_id),
                 correlation_id,
                 safe_tenant,
+                phase_filter,
             )
     except ATSConnectionNotFoundError:
         # The connection row was deleted between scheduler tick and actor
@@ -120,6 +127,7 @@ async def _do_poll(
     tenant_id: uuid.UUID,
     correlation_id: str,
     safe_tenant: str,
+    phase_filter: list[str] | None = None,
 ) -> None:
     # ---- Phase A: load state + open sync_log ----
     async with get_bypass_session() as db:
@@ -179,7 +187,11 @@ async def _do_poll(
 
     # ---- Phase C: run sync ----
     try:
-        sync_result = await ATSImporter().sync_tenant(adapter)
+        sync_result = await ATSImporter().sync_tenant(
+            adapter,
+            phase_filter=set(phase_filter) if phase_filter else None,
+            sync_log_id=sync_log_id,
+        )
     except ATSRateLimitedError as exc:
         # sync_tenant attaches the partial SyncResult to the exception
         # so the sync log reflects what DID succeed before the rate
