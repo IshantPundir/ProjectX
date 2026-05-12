@@ -2,10 +2,11 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { Badge, Button, DangerConfirmDialog, Skeleton } from "@/components/px";
+import { JobStatusFilterDialog } from "@/components/settings/integrations/JobStatusFilterDialog";
 import { SyncLogTable } from "@/components/settings/integrations/SyncLogTable";
 import {
   deleteConnection,
@@ -23,6 +24,8 @@ export default function ConnectionDetailPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [filterDialogOpen, setFilterDialogOpen] = useState(false);
+  const [dialogAutoOpened, setDialogAutoOpened] = useState(false);
 
   const connection = useQuery<ATSConnection>({
     queryKey: ["ats", "connection", connectionId],
@@ -30,11 +33,23 @@ export default function ConnectionDetailPage() {
       getConnection(await getFreshSupabaseToken(), connectionId),
   });
 
+  useEffect(() => {
+    if (
+      !dialogAutoOpened &&
+      connection.data &&
+      connection.data.job_status_filter === null
+    ) {
+      setFilterDialogOpen(true);
+      setDialogAutoOpened(true);
+    }
+  }, [connection.data, dialogAutoOpened]);
+
   const syncLogs = useQuery<ATSSyncLog[]>({
     queryKey: ["ats", "connection", connectionId, "sync-logs"],
     queryFn: async () =>
       listSyncLogs(await getFreshSupabaseToken(), connectionId),
-    refetchInterval: 10_000, // poll for new sync logs every 10s
+    refetchInterval: (query) =>
+      query.state.data?.some((l) => l.status === "running") ? 2000 : 10000,
   });
 
   const syncNow = useMutation({
@@ -102,6 +117,26 @@ export default function ConnectionDetailPage() {
         </div>
       </div>
 
+      {c.job_status_filter === null && (
+        <div
+          className="rounded-[10px] border p-4 text-sm bg-amber-50 border-amber-300"
+          style={{ color: "var(--px-fg)" }}
+        >
+          <p className="font-medium">
+            Configure which Ceipal job statuses to import.
+          </p>
+          <p className="mt-1 text-zinc-600">
+            The jobs sync is paused until you pick at least one status.
+          </p>
+          <Button
+            className="mt-3"
+            onClick={() => setFilterDialogOpen(true)}
+          >
+            Configure jobs filter
+          </Button>
+        </div>
+      )}
+
       <div className="flex flex-wrap gap-2">
         <Button onClick={() => syncNow.mutate()} disabled={syncNow.isPending}>
           {syncNow.isPending ? "Queueing…" : "Sync now"}
@@ -113,6 +148,9 @@ export default function ConnectionDetailPage() {
           }
         >
           Manage user mappings
+        </Button>
+        <Button variant="outline" onClick={() => setFilterDialogOpen(true)}>
+          {c.job_status_filter ? "Edit jobs filter" : "Configure jobs filter"}
         </Button>
         <div className="ml-auto">
           <Button
@@ -146,6 +184,13 @@ export default function ConnectionDetailPage() {
           });
         }}
         onClose={() => setConfirmDelete(false)}
+      />
+
+      <JobStatusFilterDialog
+        open={filterDialogOpen}
+        onClose={() => setFilterDialogOpen(false)}
+        connectionId={connectionId}
+        priorFilter={c.job_status_filter}
       />
     </div>
   );

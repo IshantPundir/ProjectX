@@ -57,3 +57,5 @@ export {
 export type { TooltipContentProps } from "./Tooltip";
 
 export { Toaster } from "./Toaster";
+
+export { Checkbox } from "./Checkbox";

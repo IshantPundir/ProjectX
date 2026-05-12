@@ -2,6 +2,7 @@
 
 import { Badge, Skeleton } from "@/components/px";
 import type { ATSSyncLog, ATSSyncStatus } from "@/lib/api/ats";
+import { SyncProgressBar } from "./SyncProgressBar";
 
 const STATUS_VARIANT: Record<
   ATSSyncStatus,
@@ -67,7 +68,17 @@ export function SyncLogTable({
                 {new Date(log.started_at).toLocaleString()}
               </td>
               <td className="px-3 py-2">
-                <Badge variant={STATUS_VARIANT[log.status]}>{log.status}</Badge>
+                <div className="space-y-1">
+                  <Badge variant={STATUS_VARIANT[log.status]}>{log.status}</Badge>
+                  {log.status === "running" &&
+                    log.progress?.jobs &&
+                    log.progress.jobs.total !== 0 && (
+                      <SyncProgressBar
+                        processed={log.progress.jobs.processed}
+                        total={log.progress.jobs.total}
+                      />
+                    )}
+                </div>
               </td>
               <td className="px-3 py-2 font-mono text-xs text-zinc-600">
                 {formatCounts(log.entity_counts)}
