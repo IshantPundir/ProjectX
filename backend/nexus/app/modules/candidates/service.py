@@ -49,7 +49,7 @@ from app.modules.candidates.schemas import (
     KanbanColumnResponse,
     StageTransitionRequest,
 )
-from app.modules.candidates.sources import CandidateSource
+from app.modules.candidates.sources import CandidateSource, SourcedCandidate
 
 
 async def create_candidate(
@@ -679,3 +679,122 @@ async def assignment_response(
         assigned_at=assignment.assigned_at,
         entered_at_pipeline_version=assignment.entered_at_pipeline_version,
     )
+
+
+async def import_candidate(
+    db: AsyncSession,
+    sourced: SourcedCandidate,
+    tenant_id: UUID | str,
+    created_by: UUID | str,
+) -> Candidate:
+    """Upsert a candidate from a non-form source (ATS import, CSV bulk).
+
+    Idempotency contract:
+      - Primary key: (tenant_id, source, external_id) when external_id is set
+        — partial unique index ``candidates_tenant_source_external_idx``
+        (migration 0031, WHERE pii_redacted_at IS NULL AND external_id IS NOT NULL).
+      - On (tenant_id, email) collision with an existing non-redacted candidate:
+        link external_id + source_metadata onto the existing row, but do NOT
+        overwrite editable fields (name, phone, location, current_title,
+        linkedin_url, notes). The recruiter may have edited them.
+      - The collision-linked row keeps its original ``source`` (typically
+        ``manual``) — preserves the audit trail of who actually created it.
+
+    Audit: writes ``candidate.imported`` (new row) or
+    ``candidate.linked_to_external`` (existing row got a new external_id)
+    via the audit module.
+    """
+    tid = UUID(str(tenant_id))
+    actor_id = UUID(str(created_by))
+
+    # 1. Try lookup by (tenant_id, source, external_id) — idempotent re-import.
+    #    MUST filter on pii_redacted_at IS NULL to match the partial unique
+    #    index `candidates_tenant_source_external_idx`.
+    if sourced.external_id:
+        result = await db.execute(
+            select(Candidate).where(
+                Candidate.tenant_id == tid,
+                Candidate.source == sourced.source,
+                Candidate.external_id == sourced.external_id,
+                Candidate.pii_redacted_at.is_(None),
+            )
+        )
+        existing = result.scalar_one_or_none()
+        if existing is not None:
+            # Update mutable fields (idempotent re-import refresh)
+            existing.name = sourced.name
+            existing.phone = sourced.phone
+            existing.location = sourced.location
+            existing.current_title = sourced.current_title
+            existing.linkedin_url = sourced.linkedin_url
+            existing.notes = sourced.notes
+            existing.source_metadata = sourced.source_metadata
+            await db.flush()
+            return existing
+
+    # 2. Lookup by (tenant_id, email) — collision with manual / different-source
+    #    candidate. Link external_id + source_metadata WITHOUT overwriting
+    #    editable fields.
+    if sourced.email:
+        result = await db.execute(
+            select(Candidate).where(
+                Candidate.tenant_id == tid,
+                Candidate.email == sourced.email,
+                Candidate.pii_redacted_at.is_(None),
+            )
+        )
+        collision = result.scalar_one_or_none()
+        if collision is not None and sourced.external_id:
+            was_unlinked = collision.external_id is None
+            collision.external_id = sourced.external_id
+            collision.source_metadata = sourced.source_metadata
+            # Do NOT touch source (was 'manual', stays 'manual') — preserve
+            # the audit trail of who created this row originally.
+            await db.flush()
+            if was_unlinked:
+                await log_event(
+                    db,
+                    tenant_id=tid,
+                    actor_id=actor_id,
+                    actor_email="ats-import",
+                    action="candidate.linked_to_external",
+                    resource="candidate",
+                    resource_id=collision.id,
+                    payload={
+                        "source": sourced.source,
+                        "external_id": sourced.external_id,
+                    },
+                )
+            return collision
+
+    # 3. Insert a new row.
+    candidate = Candidate(
+        tenant_id=tid,
+        name=sourced.name,
+        email=sourced.email,
+        phone=sourced.phone,
+        location=sourced.location,
+        current_title=sourced.current_title,
+        linkedin_url=sourced.linkedin_url,
+        notes=sourced.notes,
+        source=sourced.source,
+        external_id=sourced.external_id,
+        source_metadata=sourced.source_metadata,
+        created_by=actor_id,
+    )
+    db.add(candidate)
+    await db.flush()
+    await log_event(
+        db,
+        tenant_id=tid,
+        actor_id=actor_id,
+        actor_email="ats-import",
+        action="candidate.imported",
+        resource="candidate",
+        resource_id=candidate.id,
+        payload={
+            "source": sourced.source,
+            "external_id": sourced.external_id,
+        },
+    )
+    return candidate
