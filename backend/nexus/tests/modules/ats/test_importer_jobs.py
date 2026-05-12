@@ -113,3 +113,63 @@ async def test_job_with_unknown_client_mapping_is_skipped(db, jobs_fixture):
     result = await importer._run_phase("jobs", importer._sync_jobs, adapter)
     assert result.skipped == 1
     assert result.new == 0
+
+
+@pytest.mark.asyncio
+async def test_job_links_by_client_name_when_id_is_empty(db, jobs_fixture):
+    """Ceipal pattern: list endpoint has no client id; details endpoint
+    returns client by NAME. Importer must fall back to name-based lookup
+    against ats_client_mappings.external_client_name."""
+    from app.modules.ats.importer import ATSImporter
+
+    tenant_id, _, _, _, complete_unit_id = jobs_fixture
+
+    # The complete-client mapping was seeded with external_client_name="C"
+    # (see conftest.jobs_fixture). The Ceipal adapter would yield a job
+    # with external_client_id="" + external_client_name="C" for jobs
+    # linked to that client.
+    job = ATSJobPayload(
+        external_id="j-by-name",
+        external_client_id="",  # Ceipal: id-based linkage unavailable
+        external_client_name="C",  # name match against the seeded mapping
+        title="Name-Linked Job",
+        status="Active",
+        raw={"client": "C"},
+        fetched_at=datetime.now(tz=timezone.utc),
+    )
+    adapter = _jobs_adapter(tenant_id, [job])
+    importer = ATSImporter()
+    result = await importer._run_phase("jobs", importer._sync_jobs, adapter)
+    assert result.new == 1
+    assert result.skipped == 0
+
+    row = await db.execute(text(
+        "SELECT status, org_unit_id::text, external_id, source "
+        "FROM job_postings WHERE tenant_id = :t AND external_id = 'j-by-name'"
+    ), {"t": tenant_id})
+    r = row.one()
+    assert r.status == "draft"  # complete_unit's profile is complete
+    assert r.org_unit_id == complete_unit_id  # linked correctly via name
+    assert r.source == "ats_ceipal"
+
+
+@pytest.mark.asyncio
+async def test_job_with_neither_id_nor_name_is_skipped(db, jobs_fixture):
+    """A job with empty external_client_id AND empty external_client_name
+    can't be linked to any client — skip with a warning, no row inserted."""
+    from app.modules.ats.importer import ATSImporter
+
+    tenant_id, *_ = jobs_fixture
+    job = ATSJobPayload(
+        external_id="j-orphan",
+        external_client_id="",
+        external_client_name=None,
+        title="Orphan",
+        raw={},
+        fetched_at=datetime.now(tz=timezone.utc),
+    )
+    adapter = _jobs_adapter(tenant_id, [job])
+    importer = ATSImporter()
+    result = await importer._run_phase("jobs", importer._sync_jobs, adapter)
+    assert result.skipped == 1
+    assert result.new == 0

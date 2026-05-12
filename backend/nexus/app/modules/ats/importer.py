@@ -267,19 +267,34 @@ class ATSImporter:
 
         since = self._cursor_or_none(adapter.state, "jobs")
         async for payload in adapter.list_jobs(since=since):
-            # Resolve client mapping — missing → skip + log, NOT error.
-            mapping = await db.scalar(
-                select(ATSClientMapping).where(
-                    ATSClientMapping.tenant_id == tenant_id,
-                    ATSClientMapping.ats_vendor == adapter.vendor,
-                    ATSClientMapping.external_client_id == payload.external_client_id,
+            # Resolve client mapping — id-based linkage first (Greenhouse/
+            # Workday pattern), then name-based fallback (Ceipal pattern;
+            # see the ATSJobPayload docstring + the Ceipal adapter's
+            # list_jobs for why both fields can be populated). Missing
+            # both → skip + log, NOT error.
+            mapping = None
+            if payload.external_client_id:
+                mapping = await db.scalar(
+                    select(ATSClientMapping).where(
+                        ATSClientMapping.tenant_id == tenant_id,
+                        ATSClientMapping.ats_vendor == adapter.vendor,
+                        ATSClientMapping.external_client_id == payload.external_client_id,
+                    )
                 )
-            )
+            if mapping is None and payload.external_client_name:
+                mapping = await db.scalar(
+                    select(ATSClientMapping).where(
+                        ATSClientMapping.tenant_id == tenant_id,
+                        ATSClientMapping.ats_vendor == adapter.vendor,
+                        ATSClientMapping.external_client_name == payload.external_client_name,
+                    )
+                )
             if mapping is None:
                 logger.warning(
                     "ats.sync.jobs.skipped_missing_client_mapping",
                     external_job_id=payload.external_id,
                     external_client_id=payload.external_client_id,
+                    external_client_name=payload.external_client_name,
                 )
                 result.skipped += 1
                 continue
