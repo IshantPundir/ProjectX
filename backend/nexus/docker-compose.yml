@@ -108,6 +108,33 @@ services:
       start_period: 30s
     command: python -m app.modules.interview_engine start
 
+  nexus-scheduler:
+    # Local-dev scheduler: runs ats_tick on a 60s sleep loop.
+    # Production uses platform cron (Railway: cron 5min; AWS: EventBridge).
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@host.docker.internal:54322/postgres
+      - REDIS_URL=redis://redis:6379/0
+      - SUPABASE_JWKS_URL=http://host.docker.internal:54321/auth/v1/.well-known/jwks.json
+      - SUPABASE_URL=http://host.docker.internal:54321
+      - SUPABASE_JWT_ISSUER=http://127.0.0.1:54321/auth/v1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    command:
+      - sh
+      - -c
+      - "while true; do python -m app.cli.ats_tick || true; sleep 60; done"
+
   redis:
     image: redis:7-alpine
     ports:
