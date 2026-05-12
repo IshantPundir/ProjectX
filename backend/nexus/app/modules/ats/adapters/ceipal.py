@@ -9,7 +9,9 @@ has also expired, fall back to full re-auth from stored credentials.
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import ClassVar
@@ -57,6 +59,14 @@ class CeipalAdapter:
             timeout=httpx.Timeout(30.0),
             transport=_transport,
         )
+        # Per-request pacing — see _wait_for_next_request. Per-connection
+        # state.rate_limit_qps overrides the global default; we resolve
+        # the minimum-gap-in-seconds once at init.
+        if state.rate_limit_qps and float(state.rate_limit_qps) > 0:
+            self._min_request_gap_s = 1.0 / float(state.rate_limit_qps)
+        else:
+            self._min_request_gap_s = float(settings.ats_default_request_pacing_seconds)
+        self._last_request_at: float = 0.0  # monotonic timestamp
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -177,8 +187,28 @@ class CeipalAdapter:
 
     # ---------- Shared HTTP plumbing for list endpoints ----------
 
+    async def _wait_for_next_request(self) -> None:
+        """Sleep just long enough to honor the configured request pacing.
+
+        The first call is free; every subsequent call waits until
+        ``last_request_at + min_gap`` before proceeding. Uses
+        ``time.monotonic`` so the gap is correct even if the system
+        clock jumps. This is the single load-bearing rate-limit
+        primitive — Ceipal's undocumented limit empirically triggers at
+        ~1 req/s sustained, so the default 2.0s gap (0.5 req/s) gives
+        margin without changing the per-tenant cadence.
+        """
+        if self._min_request_gap_s <= 0:
+            return
+        now = time.monotonic()
+        delay = (self._last_request_at + self._min_request_gap_s) - now
+        if delay > 0:
+            await asyncio.sleep(delay)
+        self._last_request_at = time.monotonic()
+
     async def _request(self, method: str, path: str, params: dict | None = None) -> httpx.Response:
         await self.ensure_authenticated()
+        await self._wait_for_next_request()
         try:
             response = await self._client.request(
                 method, path, params=params or {},

@@ -123,6 +123,15 @@ class Settings(BaseSettings):
     # without a Retry-After hint. Per-connection rate_limit_qps can override.
     ats_default_retry_after_seconds: int = 60
 
+    # Minimum seconds between consecutive HTTP requests to a single ATS
+    # vendor on a given connection. Prevents the request-storm pattern
+    # that triggers Ceipal's undocumented 429 rate limit (empirically
+    # observed at ~1 req/s sustained over 30 pages → 429 on page 31).
+    # Per-connection ``ats_connections.rate_limit_qps`` overrides this:
+    # when set, pacing = 1 / rate_limit_qps. Default 2.0s = 0.5 req/s,
+    # comfortably under any reasonable vendor rate limit.
+    ats_default_request_pacing_seconds: float = 2.0
+
     @field_validator("ats_credentials_encryption_keys", mode="before")
     @classmethod
     def _split_ats_encryption_keys(cls, v):

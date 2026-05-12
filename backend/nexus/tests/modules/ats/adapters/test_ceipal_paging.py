@@ -99,3 +99,80 @@ async def test_500_raises_network_error_transient():
     with pytest.raises(ATSNetworkError):
         async for _ in adapter._paginate("/getThings/", {}):
             pass
+
+
+@pytest.mark.asyncio
+async def test_paginate_enforces_request_pacing(monkeypatch):
+    """Consecutive HTTP requests must be spaced by at least the configured
+    pacing (1 / rate_limit_qps if set, else settings.ats_default_request_pacing_seconds).
+
+    Pins the contract that prevents Ceipal's undocumented 429 storm
+    (empirically observed at ~1 req/s sustained over 30 pages). Without
+    pacing, this test makes 3 back-to-back requests in <50ms; with pacing,
+    elapsed time is bounded by (N-1) * gap.
+    """
+    import time as _time
+    from app.modules.ats.connection import ATSConnectionState
+    from app.modules.ats.adapters.ceipal import CeipalAdapter
+
+    pages = {
+        1: {"count": 3, "num_pages": 3, "page_number": 1, "limit": 1,
+            "next": "https://api.ceipal.com/v2/getThings/?page=2",
+            "previous": "", "results": [{"id": "a"}]},
+        2: {"count": 3, "num_pages": 3, "page_number": 2, "limit": 1,
+            "next": "https://api.ceipal.com/v2/getThings/?page=3",
+            "previous": "", "results": [{"id": "b"}]},
+        3: {"count": 3, "num_pages": 3, "page_number": 3, "limit": 1,
+            "next": "", "previous": "", "results": [{"id": "c"}]},
+    }
+
+    def handler(request):
+        page = int(request.url.params.get("page", "1"))
+        return httpx.Response(200, json=pages[page])
+
+    future = datetime.now(tz=timezone.utc) + timedelta(hours=1)
+    state = ATSConnectionState(
+        id=uuid.uuid4(), tenant_id=uuid.uuid4(), vendor="ceipal",
+        credentials={"email": "u@x.com", "password": "p", "api_key": "k"},
+        access_token="valid", access_token_expires_at=future,
+    )
+    adapter = CeipalAdapter(state, _transport=httpx.MockTransport(handler))
+
+    # Pacing tight enough to keep the test fast (~100ms total) but
+    # bigger than the bare HTTP latency so the assertion is meaningful.
+    adapter._min_request_gap_s = 0.05
+
+    start = _time.monotonic()
+    ids = []
+    async for item in adapter._paginate("/getThings/", {}):
+        ids.append(item["id"])
+    elapsed = _time.monotonic() - start
+
+    assert ids == ["a", "b", "c"]
+    # 3 requests → 2 gaps → at minimum 2 * 0.05s = 0.10s elapsed.
+    # First request is free; subsequent waits add up.
+    assert elapsed >= 0.10, f"elapsed {elapsed:.3f}s — pacing did not fire"
+
+
+@pytest.mark.asyncio
+async def test_pacing_respects_per_connection_rate_limit_qps():
+    """When ATSConnectionState.rate_limit_qps is set, pacing = 1/qps
+    overrides the default. Verifies per-tenant tuning (e.g., enterprise
+    Ceipal accounts with higher rate limits)."""
+    from decimal import Decimal
+    from app.modules.ats.connection import ATSConnectionState
+    from app.modules.ats.adapters.ceipal import CeipalAdapter
+
+    state = ATSConnectionState(
+        id=uuid.uuid4(), tenant_id=uuid.uuid4(), vendor="ceipal",
+        credentials={"email": "u", "password": "p", "api_key": "k"},
+        access_token="t",
+        access_token_expires_at=datetime.now(tz=timezone.utc) + timedelta(hours=1),
+    )
+    # asyncpg returns Numeric as Decimal; the adapter must coerce to float.
+    state.rate_limit_qps = Decimal("4.0")  # 4 req/s → 0.25s gap
+
+    adapter = CeipalAdapter(state, _transport=httpx.MockTransport(
+        lambda r: httpx.Response(200, json={})
+    ))
+    assert abs(adapter._min_request_gap_s - 0.25) < 0.001

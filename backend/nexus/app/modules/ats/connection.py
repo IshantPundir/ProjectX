@@ -37,6 +37,11 @@ class ATSConnectionState:
     refresh_token_expires_at: datetime | None = None
     last_synced_cursors: dict[str, str] = field(default_factory=dict)
     poll_interval_seconds: int = 900
+    # Optional per-connection request-rate cap. asyncpg returns the DB
+    # NUMERIC column as Decimal; the adapter coerces to float when
+    # computing the inter-request gap (1 / qps). None → fall back to
+    # settings.ats_default_request_pacing_seconds.
+    rate_limit_qps: Any = None
 
 
 async def load_connection_state(
@@ -69,6 +74,7 @@ async def load_connection_state(
         refresh_token_expires_at=row.refresh_token_expires_at,
         last_synced_cursors=dict(row.last_synced_cursors or {}),
         poll_interval_seconds=row.poll_interval_seconds,
+        rate_limit_qps=row.rate_limit_qps,
     )
 
 
