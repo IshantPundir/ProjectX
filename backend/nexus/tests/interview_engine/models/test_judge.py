@@ -326,48 +326,56 @@ def test_push_back_action_with_thin_observations_passes():
     assert out.next_action_payload.reason_code == "vague_answer"
 
 
-def test_push_back_action_rejects_concrete_observation():
-    """push_back + concrete obs is contradictory: if the candidate gave
-    a concrete answer, the Judge should have advanced or probed instead.
-    The cross-field validator catches this so the State Engine never
-    sees the inconsistent shape."""
-    with pytest.raises(ValidationError) as exc_info:
-        JudgeOutput(
-            observations=[
-                Observation(
-                    signal_value="x",
-                    anchor_id=0,
-                    evidence_quote="I built a workflow validator using ScriptRunner",
-                    coverage_transition=CoverageTransition.partial_to_sufficient,
-                    quality=CoverageQuality.concrete,
-                )
-            ],
-            candidate_claims=[],
-            next_action=NextAction.push_back,
-            next_action_payload=PushBackPayload(reason_code="vague_answer"),
-            turn_metadata=TurnMetadata(),
-        )
-    assert "push_back requires quality='thin'" in str(exc_info.value)
+def test_push_back_action_with_concrete_observation_passes():
+    """Regression test for the 2026-05-12 force-advance bug.
+
+    The validator no longer raises when push_back is paired with a concrete
+    observation. The State Engine's inverse_quality_gate handles this case
+    by downgrading to probe. Previously this routed through
+    synthesize_fallback and force-advanced the queue.
+    """
+    out = JudgeOutput(
+        observations=[
+            Observation(
+                signal_value="x",
+                anchor_id=0,
+                evidence_quote="I built a workflow validator using ScriptRunner",
+                coverage_transition=CoverageTransition.partial_to_sufficient,
+                quality=CoverageQuality.concrete,
+            )
+        ],
+        candidate_claims=[],
+        next_action=NextAction.push_back,
+        next_action_payload=PushBackPayload(reason_code="vague_answer"),
+        turn_metadata=TurnMetadata(),
+    )
+    assert out.next_action == NextAction.push_back
+    assert out.observations[0].quality == CoverageQuality.concrete
 
 
-def test_push_back_action_rejects_strong_observation():
-    with pytest.raises(ValidationError) as exc_info:
-        JudgeOutput(
-            observations=[
-                Observation(
-                    signal_value="x",
-                    anchor_id=0,
-                    evidence_quote="evidence",
-                    coverage_transition=CoverageTransition.partial_to_partial,
-                    quality=CoverageQuality.strong,
-                )
-            ],
-            candidate_claims=[],
-            next_action=NextAction.push_back,
-            next_action_payload=PushBackPayload(reason_code="missing_specifics"),
-            turn_metadata=TurnMetadata(),
-        )
-    assert "push_back requires quality='thin'" in str(exc_info.value)
+def test_push_back_action_with_strong_observation_passes():
+    """Regression test for the 2026-05-12 force-advance bug (strong variant).
+
+    The validator no longer raises when push_back is paired with a strong
+    observation. The State Engine's inverse_quality_gate handles inversion.
+    """
+    out = JudgeOutput(
+        observations=[
+            Observation(
+                signal_value="x",
+                anchor_id=0,
+                evidence_quote="evidence",
+                coverage_transition=CoverageTransition.partial_to_partial,
+                quality=CoverageQuality.strong,
+            )
+        ],
+        candidate_claims=[],
+        next_action=NextAction.push_back,
+        next_action_payload=PushBackPayload(reason_code="missing_specifics"),
+        turn_metadata=TurnMetadata(),
+    )
+    assert out.next_action == NextAction.push_back
+    assert out.observations[0].quality == CoverageQuality.strong
 
 
 def test_push_back_action_rejects_no_experience_flag():

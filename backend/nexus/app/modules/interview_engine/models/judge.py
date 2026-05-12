@@ -224,27 +224,24 @@ class JudgeOutput(BaseModel):
 
     @model_validator(mode="after")
     def _check_push_back_alignment(self) -> "JudgeOutput":
-        """Enforce coupling between push_back and observation quality.
-
-        Background — push_back is the new (Phase 9.2) action for "candidate
-        engaged with the topic but the answer was thin/evasive/partial."
-        It exists to break the robotic-advance loop where the Judge probes
-        through bank questions instead of demanding specificity.
+        """Coupling between push_back action and observation quality.
 
         Two consistency rules tied to push_back:
 
         1. push_back is incompatible with no-experience disclosure.
-           Acknowledge or polite_close, never push_back.
+           Acknowledge or polite_close, never push_back. **STILL STRICT** —
+           this is structural and the State Engine cannot recover.
 
-        2. Observations emitted alongside push_back MUST be `quality=thin`.
-           If the Judge had a `concrete` or `strong` observation, it
-           should have advanced or probed instead — emitting push_back
-           with strong evidence is internally contradictory.
-
-        Misalignment trips the ValidationError path in JudgeService.call,
-        which falls back to a synthesized JudgeOutput (advance to next
-        pending mandatory, or polite_close if none) — louder than a
-        silent loop.
+        2. Observations emitted alongside push_back ideally carry
+           ``quality=thin``. Newer Judge models occasionally emit
+           ``concrete``/``strong`` paired with ``push_back`` when the
+           answer is on-topic but the model still wants more depth. The
+           Pydantic validator no longer raises on this case — the State
+           Engine's ``inverse_quality_gate`` handles it (see
+           state/engine.py: push_back path) by downgrading to ``probe`` (or
+           ``advance`` if probes exhausted) in-place. Raising here used to
+           trigger the validation_error fallback path and force-advance the
+           queue (root cause of the early-end bug observed 2026-05-12).
         """
         if self.next_action != NextAction.push_back:
             return self
@@ -254,12 +251,4 @@ class JudgeOutput(BaseModel):
                 "candidate_disclosed_no_experience=true; use "
                 "acknowledge_no_experience instead."
             )
-        for obs in self.observations:
-            if obs.quality != CoverageQuality.thin:
-                raise ValueError(
-                    f"push_back requires quality='thin' on emitted observations; "
-                    f"got {obs.quality.value!r} on signal "
-                    f"{obs.signal_value!r}. If the candidate gave a concrete "
-                    f"answer, emit probe or advance instead of push_back."
-                )
         return self
