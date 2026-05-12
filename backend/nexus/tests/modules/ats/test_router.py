@@ -247,3 +247,358 @@ async def test_post_connections_422_on_invalid_creds(authed_super_admin_client):
     assert body["detail"]["code"] == "ATS_CREDENTIALS_INVALID"
     # Error message must not echo input credentials back to the client.
     assert "wrong" not in resp.text
+
+
+@pytest.mark.asyncio
+async def test_post_connections_triggers_clients_users_only(authed_super_admin_client):
+    """POST /connections triggers initial sync limited to clients+users phases.
+
+    The Dramatiq actor's .send() is captured; we assert it was called with
+    phase_filter=["clients", "users"] rather than the full-sync None.
+    """
+    client, _ = authed_super_admin_client
+
+    with patch("app.modules.ats.service.get_ats_adapter") as mock_get:
+        fake = AsyncMock()
+        fake.ensure_authenticated = AsyncMock()
+
+        def _bind(state):
+            state.access_token = "tok"
+            state.access_token_expires_at = datetime.now(tz=timezone.utc) + timedelta(
+                hours=1
+            )
+            fake.state = state
+            return fake
+
+        mock_get.side_effect = _bind
+
+        with patch("app.modules.ats.actors.poll_ats_connection.send") as mock_send:
+            resp = await client.post(
+                "/api/ats/connections",
+                json={
+                    "vendor": "ceipal",
+                    "credentials": {
+                        "email": "u@x.com",
+                        "password": "p",
+                        "api_key": "k",
+                    },
+                },
+            )
+
+    assert resp.status_code == 201, resp.text
+    # Exactly one .send() call was made; third positional arg is phase_filter.
+    mock_send.assert_called_once()
+    _args, _kwargs = mock_send.call_args
+    phase_filter_arg = _args[2] if len(_args) >= 3 else None
+    assert phase_filter_arg == ["clients", "users"], (
+        f"Expected phase_filter=['clients','users'], got {phase_filter_arg!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_job_statuses_returns_adapter_list(authed_super_admin_client, db):
+    """GET /connections/{id}/job-statuses → 200 with the vendor list.
+
+    The adapter is patched at ``app.modules.ats.router.get_ats_adapter``.
+    ``load_connection_state`` is patched to skip credential decryption —
+    the test DB row uses b"x" which is not a real Fernet ciphertext.
+    """
+    from app.modules.ats.connection import ATSConnectionState
+
+    client, user = authed_super_admin_client
+    conn_id = uuid.uuid4()
+
+    # Seed the ats_connections row so the router's db.get() finds it.
+    await db.execute(
+        text(
+            "INSERT INTO ats_connections (id, tenant_id, vendor, "
+            "credentials_ciphertext, created_by) "
+            "VALUES (:c, :t, 'ceipal', :ct, :u)"
+        ),
+        {"c": conn_id, "t": user.tenant_id, "ct": b"x", "u": user.id},
+    )
+    await db.flush()
+
+    fake_adapter = AsyncMock()
+    fake_adapter.list_job_statuses = AsyncMock(
+        return_value=[
+            {"id": 1, "name": "Active"},
+            {"id": 4, "name": "Jobs Filled"},
+        ]
+    )
+    fake_adapter.aclose = AsyncMock()
+
+    fake_state = ATSConnectionState(
+        id=conn_id,
+        tenant_id=user.tenant_id,
+        vendor="ceipal",
+        credentials={"email": "u@x.com", "password": "p", "api_key": "k"},
+    )
+
+    with patch(
+        "app.modules.ats.router.load_connection_state",
+        new=AsyncMock(return_value=fake_state),
+    ):
+        with patch("app.modules.ats.router.get_ats_adapter", return_value=fake_adapter):
+            resp = await client.get(f"/api/ats/connections/{conn_id}/job-statuses")
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body == [
+        {"id": 1, "name": "Active"},
+        {"id": 4, "name": "Jobs Filled"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_job_statuses_422_on_credentials_invalid(
+    authed_super_admin_client, db
+):
+    """GET /job-statuses → 422 when adapter raises ATSCredentialsInvalidError."""
+    from app.modules.ats.connection import ATSConnectionState
+    from app.modules.ats.errors import ATSCredentialsInvalidError
+
+    client, user = authed_super_admin_client
+    conn_id = uuid.uuid4()
+
+    await db.execute(
+        text(
+            "INSERT INTO ats_connections (id, tenant_id, vendor, "
+            "credentials_ciphertext, created_by) "
+            "VALUES (:c, :t, 'ceipal', :ct, :u)"
+        ),
+        {"c": conn_id, "t": user.tenant_id, "ct": b"x", "u": user.id},
+    )
+    await db.flush()
+
+    fake_adapter = AsyncMock()
+    fake_adapter.list_job_statuses = AsyncMock(
+        side_effect=ATSCredentialsInvalidError("revoked")
+    )
+    fake_adapter.aclose = AsyncMock()
+
+    fake_state = ATSConnectionState(
+        id=conn_id,
+        tenant_id=user.tenant_id,
+        vendor="ceipal",
+        credentials={"email": "u@x.com", "password": "p", "api_key": "k"},
+    )
+
+    with patch(
+        "app.modules.ats.router.load_connection_state",
+        new=AsyncMock(return_value=fake_state),
+    ):
+        with patch("app.modules.ats.router.get_ats_adapter", return_value=fake_adapter):
+            resp = await client.get(f"/api/ats/connections/{conn_id}/job-statuses")
+
+    assert resp.status_code == 422, resp.text
+    body = resp.json()
+    assert body["detail"]["code"] == "ATS_CREDENTIALS_INVALID"
+
+
+@pytest.mark.asyncio
+async def test_put_job_status_filter_persists_and_triggers_sync(
+    authed_super_admin_client, db
+):
+    """PUT /job-status-filter → 204, row persisted, follow-up sync enqueued.
+
+    Verifies:
+      1. Response is 204.
+      2. The connection row's ``job_status_filter`` is updated.
+      3. ``poll_ats_connection.send`` was called with
+         phase_filter=['jobs', 'applicants', 'submissions'].
+    """
+    client, user = authed_super_admin_client
+    conn_id = uuid.uuid4()
+
+    await db.execute(
+        text(
+            "INSERT INTO ats_connections (id, tenant_id, vendor, "
+            "credentials_ciphertext, created_by) "
+            "VALUES (:c, :t, 'ceipal', :ct, :u)"
+        ),
+        {"c": conn_id, "t": user.tenant_id, "ct": b"x", "u": user.id},
+    )
+    await db.flush()
+
+    with patch("app.modules.ats.actors.poll_ats_connection.send") as mock_send:
+        resp = await client.put(
+            f"/api/ats/connections/{conn_id}/job-status-filter",
+            json={"status_ids": [1, 8], "names": ["Active", "Reactivated"]},
+        )
+
+    assert resp.status_code == 204, resp.text
+
+    # Reload the row on the same session to verify persistence.
+    from app.modules.ats.models import ATSConnection as ATSConn
+    await db.refresh(await db.get(ATSConn, conn_id))
+    row = await db.get(ATSConn, conn_id)
+    assert row is not None
+    assert row.job_status_filter == {"ids": [1, 8], "names": ["Active", "Reactivated"]}
+
+    # Verify the follow-up sync was enqueued with the right phase_filter.
+    mock_send.assert_called_once()
+    _args, _kwargs = mock_send.call_args
+    phase_filter_arg = _args[2] if len(_args) >= 3 else None
+    assert phase_filter_arg == ["jobs", "applicants", "submissions"], (
+        f"Expected phase_filter=['jobs','applicants','submissions'], "
+        f"got {phase_filter_arg!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_put_job_status_filter_422_on_empty_ids(authed_super_admin_client, db):
+    """PUT /job-status-filter with empty lists → 422 (Pydantic min_length=1)."""
+    client, user = authed_super_admin_client
+    conn_id = uuid.uuid4()
+
+    await db.execute(
+        text(
+            "INSERT INTO ats_connections (id, tenant_id, vendor, "
+            "credentials_ciphertext, created_by) "
+            "VALUES (:c, :t, 'ceipal', :ct, :u)"
+        ),
+        {"c": conn_id, "t": user.tenant_id, "ct": b"x", "u": user.id},
+    )
+    await db.flush()
+
+    resp = await client.put(
+        f"/api/ats/connections/{conn_id}/job-status-filter",
+        json={"status_ids": [], "names": []},
+    )
+    # Pydantic min_length=1 validation fires before the handler runs → 422.
+    assert resp.status_code == 422, resp.text
+
+
+@pytest.mark.asyncio
+async def test_sync_log_response_includes_progress(authed_super_admin_client, db):
+    """GET /sync-logs → response body includes the ``progress`` field."""
+    client, user = authed_super_admin_client
+    conn_id = uuid.uuid4()
+    log_id = uuid.uuid4()
+
+    await db.execute(
+        text(
+            "INSERT INTO ats_connections (id, tenant_id, vendor, "
+            "credentials_ciphertext, created_by) "
+            "VALUES (:c, :t, 'ceipal', :ct, :u)"
+        ),
+        {"c": conn_id, "t": user.tenant_id, "ct": b"x", "u": user.id},
+    )
+    await db.execute(
+        text(
+            "INSERT INTO ats_sync_logs "
+            "(id, tenant_id, connection_id, started_at, status, "
+            " entity_counts, progress, correlation_id) "
+            "VALUES (:l, :t, :c, now(), 'running', "
+            "        '{}'::jsonb, CAST(:p AS jsonb), 'corr-1')"
+        ),
+        {
+            "l": log_id,
+            "t": user.tenant_id,
+            "c": conn_id,
+            "p": '{"jobs": {"processed": 100, "total": 500}}',
+        },
+    )
+    await db.flush()
+
+    resp = await client.get(f"/api/ats/connections/{conn_id}/sync-logs")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert len(body) == 1
+    assert body[0]["progress"] == {"jobs": {"processed": 100, "total": 500}}
+
+
+@pytest.mark.asyncio
+async def test_get_job_statuses_501_when_vendor_unsupported(
+    authed_super_admin_client, db
+):
+    """GET /job-statuses → 501 when adapter raises NotImplementedError.
+
+    Some vendors (Greenhouse uses stages; Workday differs) don't expose a
+    job-status concept.  Their adapters raise NotImplementedError, which the
+    router translates to 501.  The finally block must still close the adapter.
+    """
+    from app.modules.ats.connection import ATSConnectionState
+
+    client, user = authed_super_admin_client
+    conn_id = uuid.uuid4()
+
+    await db.execute(
+        text(
+            "INSERT INTO ats_connections (id, tenant_id, vendor, "
+            "credentials_ciphertext, created_by) "
+            "VALUES (:c, :t, 'ceipal', :ct, :u)"
+        ),
+        {"c": conn_id, "t": user.tenant_id, "ct": b"x", "u": user.id},
+    )
+    await db.flush()
+
+    fake_adapter = AsyncMock()
+    fake_adapter.list_job_statuses = AsyncMock(
+        side_effect=NotImplementedError("no status endpoint"),
+    )
+    fake_adapter.aclose = AsyncMock()
+
+    fake_state = ATSConnectionState(
+        id=conn_id,
+        tenant_id=user.tenant_id,
+        vendor="ceipal",
+        credentials={"email": "u@x.com", "password": "p", "api_key": "k"},
+    )
+
+    with patch(
+        "app.modules.ats.router.load_connection_state",
+        new=AsyncMock(return_value=fake_state),
+    ):
+        with patch("app.modules.ats.router.get_ats_adapter", return_value=fake_adapter):
+            resp = await client.get(f"/api/ats/connections/{conn_id}/job-statuses")
+
+    assert resp.status_code == 501, resp.text
+    # The finally block must close the adapter even on NotImplementedError.
+    fake_adapter.aclose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_put_job_status_filter_404_on_missing_connection(
+    authed_super_admin_client,
+):
+    """PUT to a non-existent connection returns 404, not silent 204."""
+    client, _user = authed_super_admin_client
+    bogus_id = uuid.uuid4()
+    response = await client.put(
+        f"/api/ats/connections/{bogus_id}/job-status-filter",
+        json={"status_ids": [1], "names": ["Active"]},
+    )
+    assert response.status_code == 404, response.text
+    assert response.json()["detail"] == "ATS_CONNECTION_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_connection_response_exposes_job_status_filter(
+    authed_super_admin_client, db
+):
+    """GET /connections/{id} → response body includes ``job_status_filter``."""
+    client, user = authed_super_admin_client
+    conn_id = uuid.uuid4()
+
+    await db.execute(
+        text(
+            "INSERT INTO ats_connections (id, tenant_id, vendor, "
+            "credentials_ciphertext, created_by, job_status_filter) "
+            "VALUES (:c, :t, 'ceipal', :ct, :u, CAST(:f AS jsonb))"
+        ),
+        {
+            "c": conn_id,
+            "t": user.tenant_id,
+            "ct": b"x",
+            "u": user.id,
+            "f": '{"ids": [1], "names": ["Active"]}',
+        },
+    )
+    await db.flush()
+
+    resp = await client.get(f"/api/ats/connections/{conn_id}")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["job_status_filter"] == {"ids": [1], "names": ["Active"]}

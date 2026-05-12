@@ -9,6 +9,8 @@ Endpoints:
   GET    /api/ats/connections/{id}/sync-logs
   GET    /api/ats/connections/{id}/unmapped-users
   POST   /api/ats/connections/{id}/users/{external_user_id}/map
+  GET    /api/ats/connections/{id}/job-statuses
+  PUT    /api/ats/connections/{id}/job-status-filter
 
 Write endpoints require super_admin (via require_ats_admin). Credentials
 NEVER appear in any response — only metadata.
@@ -20,11 +22,12 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_tenant_db
+from app.database import get_bypass_session, get_tenant_db
 from app.modules.ats.authz import require_ats_admin
+from app.modules.ats.connection import load_connection_state
 from app.modules.ats.errors import (
     ATSAuthorizationError,
     ATSCredentialsInvalidError,
@@ -34,11 +37,13 @@ from app.modules.ats.models import (
     ATSSyncLog,
     ATSUserMapping,
 )
+from app.modules.ats.registry import get_ats_adapter
 from app.modules.ats.service import (
     create_connection,
     delete_connection,
     map_ats_user_to_internal,
     trigger_manual_sync,
+    update_job_status_filter,
 )
 from app.modules.auth import UserContext, get_current_user_roles
 
@@ -66,6 +71,21 @@ ConnectionCreateRequest = Annotated[
 ]
 
 
+class CeipalJobStatusResponse(BaseModel):
+    id: int
+    name: str
+
+
+class JobStatusFilterShape(BaseModel):
+    ids: list[int]
+    names: list[str]
+
+
+class JobStatusFilterRequest(BaseModel):
+    status_ids: list[int] = Field(..., min_length=1)
+    names: list[str] = Field(..., min_length=1)
+
+
 class ConnectionResponse(BaseModel):
     id: UUID
     vendor: str
@@ -75,6 +95,7 @@ class ConnectionResponse(BaseModel):
     last_poll_error: str | None = None
     disabled_reason: str | None = None
     created_at: str
+    job_status_filter: JobStatusFilterShape | None = None
 
     @classmethod
     def from_row(cls, row: ATSConnection) -> ConnectionResponse:
@@ -89,6 +110,10 @@ class ConnectionResponse(BaseModel):
             last_poll_error=row.last_poll_error,
             disabled_reason=row.disabled_reason,
             created_at=row.created_at.isoformat(),
+            job_status_filter=(
+                JobStatusFilterShape(**row.job_status_filter)
+                if row.job_status_filter else None
+            ),
         )
 
 
@@ -98,6 +123,7 @@ class SyncLogResponse(BaseModel):
     completed_at: str | None = None
     status: str
     entity_counts: dict
+    progress: dict = Field(default_factory=dict)
     error_phase: str | None = None
     error_summary: str | None = None
 
@@ -170,7 +196,10 @@ async def create_connection_endpoint(
     # Flush so the audit row + connection row are visible to db.get below,
     # and let the dependency commit on context exit.
     await db.flush()
-    await trigger_manual_sync(db, conn_id, user.user.tenant_id, user.user.id)
+    await trigger_manual_sync(
+        db, conn_id, user.user.tenant_id, user.user.id,
+        phase_filter=["clients", "users"],
+    )
     await db.flush()
 
     new_row = await db.get(ATSConnection, conn_id)
@@ -215,6 +244,82 @@ async def manual_sync(
 
 
 @router.get(
+    "/connections/{connection_id}/job-statuses",
+    response_model=list[CeipalJobStatusResponse],
+)
+async def list_connection_job_statuses(
+    connection_id: UUID,
+    db: AsyncSession = Depends(get_tenant_db),
+    user: UserContext = Depends(get_current_user_roles),
+) -> list[CeipalJobStatusResponse]:
+    """Live fetch from the vendor. Not cached server-side; the modal calls
+    this on every open. Read-only — no state change, so super_admin is not
+    required."""
+    row = await db.get(ATSConnection, connection_id)
+    if row is None or row.tenant_id != user.user.tenant_id:
+        raise HTTPException(status_code=404, detail="ATS_CONNECTION_NOT_FOUND")
+
+    async with get_bypass_session() as bypass_db:
+        await bypass_db.execute(
+            text(f"SET LOCAL app.current_tenant = '{user.user.tenant_id}'")
+        )
+        state = await load_connection_state(bypass_db, connection_id)
+
+    adapter = get_ats_adapter(state)
+    try:
+        raw = await adapter.list_job_statuses()
+    except ATSCredentialsInvalidError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "ATS_CREDENTIALS_INVALID", "message": str(exc)[:200]},
+        )
+    except NotImplementedError:
+        raise HTTPException(status_code=501, detail="vendor_no_status_endpoint")
+    finally:
+        await adapter.aclose()
+
+    return [
+        CeipalJobStatusResponse(id=int(s["id"]), name=str(s["name"]))
+        for s in raw
+    ]
+
+
+@router.put(
+    "/connections/{connection_id}/job-status-filter",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def set_job_status_filter(
+    connection_id: UUID,
+    body: JobStatusFilterRequest,
+    db: AsyncSession = Depends(get_tenant_db),
+    user: UserContext = Depends(require_ats_admin),
+) -> None:
+    row = await db.get(ATSConnection, connection_id)
+    if row is None or row.tenant_id != user.user.tenant_id:
+        raise HTTPException(status_code=404, detail="ATS_CONNECTION_NOT_FOUND")
+
+    try:
+        await update_job_status_filter(
+            db,
+            connection_id=connection_id,
+            tenant_id=user.user.tenant_id,
+            actor_id=user.user.id,
+            status_ids=body.status_ids,
+            names=body.names,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "JOB_STATUS_FILTER_INVALID", "message": str(exc)},
+        )
+    await db.flush()
+    await trigger_manual_sync(
+        db, connection_id, user.user.tenant_id, user.user.id,
+        phase_filter=["jobs", "applicants", "submissions"],
+    )
+
+
+@router.get(
     "/connections/{connection_id}/sync-logs",
     response_model=list[SyncLogResponse],
 )
@@ -239,6 +344,7 @@ async def list_sync_logs(
             completed_at=r.completed_at.isoformat() if r.completed_at else None,
             status=r.status,
             entity_counts=r.entity_counts,
+            progress=r.progress or {},
             error_phase=r.error_phase,
             error_summary=r.error_summary,
         )
