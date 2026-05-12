@@ -58,7 +58,20 @@ class ATSUserPayload(BaseModel):
 
 class ATSJobPayload(BaseModel):
     external_id: str
+    # External client linkage. Vendors differ in WHICH identifier carries
+    # the link from a job to its client:
+    #   - Greenhouse / Workday: stable client id (hash or UUID) on the
+    #     list-job payload itself → ``external_client_id`` populated.
+    #   - Ceipal: the list-job endpoint does NOT carry the client; the
+    #     details endpoint (``/getJobPostingDetails/{id}``) returns the
+    #     client by NAME → ``external_client_name`` populated, while
+    #     ``external_client_id`` stays empty.
+    #
+    # The importer resolves client mapping by id first, then falls back
+    # to name. At least one of the two should be set; both empty is a
+    # malformed payload (importer skips with a warning).
     external_client_id: str
+    external_client_name: str | None = None
     title: str
     description: str | None = None
     status: str | None = None

@@ -69,3 +69,36 @@ def test_user_payload_required_fields():
         raw={}, fetched_at=_now(),
     )
     assert p.role is None
+
+
+def test_job_payload_external_client_name_defaults_to_none():
+    """ATSJobPayload accepts external_client_name as optional; defaults to None."""
+    from datetime import datetime, timezone
+    from app.modules.ats.schemas import ATSJobPayload
+
+    p = ATSJobPayload(
+        external_id="jid",
+        external_client_id="cid",
+        title="x",
+        raw={},
+        fetched_at=datetime.now(tz=timezone.utc),
+    )
+    assert p.external_client_name is None
+
+
+def test_job_payload_external_client_name_carried_when_provided():
+    """ATSJobPayload stores the client NAME when the vendor's API only
+    exposes the linkage by name (Ceipal pattern)."""
+    from datetime import datetime, timezone
+    from app.modules.ats.schemas import ATSJobPayload
+
+    p = ATSJobPayload(
+        external_id="jid",
+        external_client_id="",  # Ceipal list endpoint has no client id
+        external_client_name="Oracle",
+        title="Java AWS Developer",
+        raw={"client": "Oracle"},
+        fetched_at=datetime.now(tz=timezone.utc),
+    )
+    assert p.external_client_name == "Oracle"
+    assert p.external_client_id == ""
