@@ -266,7 +266,7 @@ async def update_unit(
     # commit lands is self-correcting (it just retries).
     if unblocked_ids:
         import uuid as _uuid
-        from app.modules.jd.actors import extract_and_enhance_jd
+        from app.modules.jd import extract_and_enhance_jd
         for jid in unblocked_ids:
             extract_and_enhance_jd.send(
                 jid,
