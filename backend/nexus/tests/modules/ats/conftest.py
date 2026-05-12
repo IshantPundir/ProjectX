@@ -32,8 +32,12 @@ from app.modules.ats import models as _ats_models  # noqa: F401
 
 @pytest.fixture
 def patched_bypass_session(db, monkeypatch):
-    """Make ``importer.get_bypass_session()`` yield the rollback-isolated
-    ``db`` session instead of opening a new dev-DB session.
+    """Make ``get_bypass_session()`` yield the rollback-isolated ``db`` session
+    instead of opening a new dev-DB session.
+
+    Patches BOTH namespaces that re-import the symbol:
+      - ``app.modules.ats.importer`` — for the five-phase importer.
+      - ``app.modules.ats.actors``    — for the four-phase poll actor.
 
     The importer's ``_run_phase`` does::
 
@@ -42,11 +46,17 @@ def patched_bypass_session(db, monkeypatch):
             phase_result = await fn(db, adapter)
             await db.commit()
 
+    The actor's ``_do_poll`` opens multiple bypass sessions in sequence
+    (Phase A: load + open log → Phase B: persist tokens → Phase C: handle
+    sync result → Phase D: finalize). All four resolve to the same test
+    ``db`` session via this fixture, preserving rollback isolation.
+
     We can't actually commit on the test session (would break rollback
     isolation), so the wrapper substitutes ``commit`` with ``flush`` for the
-    duration of the test. Likewise ``SET LOCAL`` is a no-op in the test DB
-    (no RLS policies; ``DB_RUNTIME_ROLE`` is force-disabled per
-    ``tests/conftest.py`` lines 23-31) but we let it through harmlessly.
+    duration of every patched-session context. Likewise ``SET LOCAL`` is a
+    no-op in the test DB (no RLS policies; ``DB_RUNTIME_ROLE`` is
+    force-disabled per ``tests/conftest.py`` lines 23-31) but we let it
+    through harmlessly.
     """
     from app.modules.ats import importer as importer_mod
 
@@ -63,6 +73,11 @@ def patched_bypass_session(db, monkeypatch):
             db.commit = original_commit  # type: ignore[method-assign]
 
     monkeypatch.setattr(importer_mod, "get_bypass_session", _fake_bypass_session)
+    # The actors module imports get_bypass_session at module load time, so we
+    # must patch its namespace separately. Lazy import here so the fixture
+    # works even before the actors module is imported elsewhere.
+    from app.modules.ats import actors as actors_mod
+    monkeypatch.setattr(actors_mod, "get_bypass_session", _fake_bypass_session)
     return db
 
 

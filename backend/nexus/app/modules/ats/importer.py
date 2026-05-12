@@ -224,6 +224,14 @@ class ATSImporter:
         except ValueError:
             return None
 
+    @staticmethod
+    def _empty_partial_result() -> SyncResult:
+        """Empty result for the rate-limit case — closes the sync log row
+        cleanly. All five phases stay ``None`` (i.e. ``entity_counts`` returns
+        the all-None dict), so the partial sync_log payload is unambiguous.
+        """
+        return SyncResult()
+
     async def _sync_jobs(self, db, adapter) -> PhaseResult:
         """Phase 3: upsert job_postings; resolve client mapping → org_unit;
         gate status by org_unit.company_profile_completion_status.

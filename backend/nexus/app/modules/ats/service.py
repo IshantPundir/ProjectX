@@ -85,18 +85,21 @@ async def advance_next_poll_at(
     """
     j = random.randint(0, jitter_seconds)
     if interval_seconds is None:
-        # Use the stored interval
+        # Use the stored interval. ``make_interval`` takes the seconds count
+        # directly without text concat — sidesteps the asyncpg ``||``-typing
+        # issue (operands must be text) and the SQLAlchemy ``text()`` parser
+        # that treats ``::`` after a bound parameter as a stray colon.
         await db.execute(text(
             "UPDATE ats_connections "
-            "SET next_poll_at = now() + (poll_interval_seconds || ' seconds')::interval "
-            "+ (:j || ' seconds')::interval, "
+            "SET next_poll_at = now() "
+            "  + make_interval(secs => poll_interval_seconds + :j), "
             "poll_lock_acquired_at = NULL "
             "WHERE id = :i"
         ), {"i": connection_id, "j": j})
     else:
         await db.execute(text(
             "UPDATE ats_connections "
-            "SET next_poll_at = now() + (:s || ' seconds')::interval, "
+            "SET next_poll_at = now() + make_interval(secs => :s), "
             "poll_lock_acquired_at = NULL "
             "WHERE id = :i"
         ), {"i": connection_id, "s": interval_seconds + j})
