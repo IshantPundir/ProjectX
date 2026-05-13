@@ -904,7 +904,15 @@ async def test_jobs_then_clients_then_jobs_converges_to_one_org_unit(
     )
 
     # Step 3: jobs sync again — matches by name against the promoted mapping.
-    await importer._run_phase("jobs", importer._sync_jobs, _jobs_adapter(tenant_id, [job]))
+    # The job already exists locally (inserted in Step 1), so this should
+    # take the update path: result.updated == 1, result.new == 0. Without
+    # this assertion a silent-skip regression would slip past the
+    # convergence checks below.
+    result3 = await importer._run_phase(
+        "jobs", importer._sync_jobs, _jobs_adapter(tenant_id, [job])
+    )
+    assert result3.new == 0
+    assert result3.updated == 1
 
     # Convergence: exactly one Oracle org_unit, one Oracle mapping, real id.
     unit_count = await db.execute(text(
