@@ -722,8 +722,15 @@ async def test_write_jobs_progress_no_op_when_sync_log_id_none(monkeypatch):
 @pytest.mark.asyncio
 async def test_sync_jobs_stub_creation_is_idempotent(db, jobs_fixture):
     """Running _sync_jobs twice for the same unknown-client-name payload
-    creates exactly one org_unit + one stub mapping. The second run hits
-    the existing-stub short-circuit in _get_or_create_client_stub_by_name.
+    creates exactly one org_unit + one stub mapping.
+
+    On the second run, _upsert_job_payload's name-based mapping lookup
+    (the second of the two lookups in `_upsert_job_payload`) matches
+    the stub mapping that was created by the first run and
+    short-circuits — the stub-creation branch (and the helper) is not
+    re-entered. End-to-end idempotency is what's asserted here; direct
+    coverage of the helper's own synthetic-id short-circuit lives in
+    test_get_or_create_client_stub_by_name_is_idempotent.
     """
     from app.modules.ats.importer import ATSImporter
 
@@ -759,11 +766,68 @@ async def test_sync_jobs_stub_creation_is_idempotent(db, jobs_fixture):
 
 
 @pytest.mark.asyncio
+async def test_get_or_create_client_stub_by_name_is_idempotent(db, jobs_fixture):
+    """Calling _get_or_create_client_stub_by_name twice with the same
+    (tenant, vendor, name) returns the same (org_unit, mapping) pair on
+    the second call and creates no duplicates. Exercises the helper's
+    synthetic-id short-circuit (the first SELECT inside the helper)
+    directly — the broader end-to-end idempotency at the _sync_jobs
+    level is covered by test_sync_jobs_stub_creation_is_idempotent."""
+    from app.modules.ats.importer import ATSImporter
+
+    tenant_id, user_id, root_unit_id, *_ = jobs_fixture
+    importer = ATSImporter()
+
+    org_unit_first, mapping_first = await importer._get_or_create_client_stub_by_name(
+        db,
+        tenant_id=uuid.UUID(tenant_id),
+        vendor="ceipal",
+        external_client_name="Globex",
+        created_by=uuid.UUID(user_id),
+        root_org_unit_id=uuid.UUID(root_unit_id),
+    )
+
+    # Second call — must short-circuit on the synthetic-id lookup.
+    org_unit_second, mapping_second = await importer._get_or_create_client_stub_by_name(
+        db,
+        tenant_id=uuid.UUID(tenant_id),
+        vendor="ceipal",
+        external_client_name="Globex",
+        created_by=uuid.UUID(user_id),
+        root_org_unit_id=uuid.UUID(root_unit_id),
+    )
+
+    assert org_unit_second.id == org_unit_first.id
+    assert mapping_second.external_client_id == mapping_first.external_client_id
+
+    # Belt-and-suspenders: confirm exactly one row each.
+    unit_count = await db.execute(text(
+        "SELECT COUNT(*) FROM organizational_units "
+        "WHERE client_id = :t AND name = 'Globex'"
+    ), {"t": tenant_id})
+    assert unit_count.scalar_one() == 1
+
+    mapping_count = await db.execute(text(
+        "SELECT COUNT(*) FROM ats_client_mappings "
+        "WHERE tenant_id = :t AND external_client_id = 'name:Globex'"
+    ), {"t": tenant_id})
+    assert mapping_count.scalar_one() == 1
+
+
+@pytest.mark.asyncio
 async def test_sync_jobs_stub_handles_colon_in_client_name(db, jobs_fixture):
     """A client name that itself contains a colon (e.g. 'Acme: West Region')
-    produces synthetic id 'name:Acme: West Region'. The LIKE 'name:%' filter
-    in _sync_clients still matches and the exact-equality lookup on
-    external_client_name still works for re-sync."""
+    is stored verbatim in external_client_id as 'name:Acme: West Region'.
+
+    The colon-in-name case is structurally trivial today (the synthetic id
+    is built by f-string interpolation; nothing strips or normalizes), but
+    pinning it down with an explicit test prevents a future refactor — e.g.
+    swapping in URL encoding or hash-based synthetic ids — from silently
+    breaking the exact-equality re-sync lookup. _sync_clients's promotion
+    code (added in a later commit) also pattern-matches the synthetic id
+    via LIKE 'name:%'; the colon is fine there too because LIKE only
+    treats '%' and '_' as metacharacters.
+    """
     from app.modules.ats.importer import ATSImporter
 
     tenant_id, *_ = jobs_fixture
