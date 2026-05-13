@@ -354,3 +354,82 @@ async def test_sync_clients_promotes_stub_to_real_external_id(
     assert a.payload["from_external_client_id"] == "name:Oracle"
     assert a.payload["to_external_client_id"] == "ABC123"
     assert a.payload["vendor"] == "ceipal"
+
+
+@pytest.mark.asyncio
+async def test_sync_clients_does_not_promote_when_real_mapping_exists(
+    db, importer_fixture,
+):
+    """If BOTH a real mapping ('ABC123', 'Oracle') AND a stub mapping
+    ('name:Oracle', 'Oracle') already exist for the same tenant+vendor,
+    _sync_clients with payload(external_id='ABC123', name='Oracle')
+    short-circuits on the existing-by-id lookup at the top of the loop.
+    The promotion check is NOT reached; the stub mapping is left
+    untouched (recruiter-resolvable duplicate, out of scope to auto-merge).
+    """
+    from app.modules.ats.importer import ATSImporter
+
+    tenant_id, _user_id, root_unit_id = importer_fixture
+
+    # Pre-seed: a real mapping + linked org_unit.
+    real_unit_id = uuid.uuid4()
+    await db.execute(text(
+        "INSERT INTO organizational_units "
+        "(id, client_id, parent_unit_id, name, unit_type, is_root, "
+        " company_profile, company_profile_completion_status) "
+        "VALUES (:o, :t, :p, 'Oracle', 'client_account', false, "
+        " '{\"name\":\"Oracle\"}', 'complete')"
+    ), {"o": real_unit_id, "t": tenant_id, "p": root_unit_id})
+    await db.execute(text(
+        "INSERT INTO ats_client_mappings "
+        "(tenant_id, ats_vendor, external_client_id, external_client_name, "
+        " org_unit_id, source_metadata) "
+        "VALUES (:t, 'ceipal', 'ABC123', 'Oracle', :o, '{}')"
+    ), {"t": tenant_id, "o": real_unit_id})
+
+    # Pre-seed: a stub mapping + linked stub org_unit (orphan).
+    stub_unit_id = uuid.uuid4()
+    await db.execute(text(
+        "INSERT INTO organizational_units "
+        "(id, client_id, parent_unit_id, name, unit_type, is_root, "
+        " company_profile, company_profile_completion_status) "
+        "VALUES (:o, :t, :p, 'Oracle', 'client_account', false, "
+        " '{\"name\":\"Oracle\"}', 'pending')"
+    ), {"o": stub_unit_id, "t": tenant_id, "p": root_unit_id})
+    await db.execute(text(
+        "INSERT INTO ats_client_mappings "
+        "(tenant_id, ats_vendor, external_client_id, external_client_name, "
+        " org_unit_id, source_metadata) "
+        "VALUES (:t, 'ceipal', 'name:Oracle', 'Oracle', :o, :sm)"
+    ), {"t": tenant_id, "o": stub_unit_id, "sm": '{"stub": true, "origin": "jobs_phase"}'})
+    await db.flush()
+
+    payload = ATSClientPayload(
+        external_id="ABC123",
+        name="Oracle",
+        raw={"id": "ABC123"},
+        fetched_at=datetime.now(tz=timezone.utc),
+    )
+    adapter = _adapter_with_clients(uuid.UUID(tenant_id), [payload], [])
+
+    importer = ATSImporter()
+    result = await importer._run_phase("clients", importer._sync_clients, adapter)
+    # Existing-by-id branch fires (real mapping refreshed); promotion not invoked.
+    assert result.updated == 1
+    assert result.new == 0
+
+    # Stub mapping untouched.
+    stub_row = await db.execute(text(
+        "SELECT external_client_id, source_metadata FROM ats_client_mappings "
+        "WHERE tenant_id = :t AND external_client_id = 'name:Oracle'"
+    ), {"t": tenant_id})
+    s = stub_row.one()
+    assert s.external_client_id == "name:Oracle"
+    assert s.source_metadata == {"stub": True, "origin": "jobs_phase"}
+
+    # No promotion audit row.
+    audit_rows = await db.execute(text(
+        "SELECT COUNT(*) FROM audit_log "
+        "WHERE tenant_id = :t AND action = 'ats.client_mapping.promoted'"
+    ), {"t": tenant_id})
+    assert audit_rows.scalar_one() == 0

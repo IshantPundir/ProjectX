@@ -849,3 +849,74 @@ async def test_sync_jobs_stub_handles_colon_in_client_name(db, jobs_fixture):
     r = row.one()
     assert r.external_client_id == "name:Acme: West Region"
     assert r.external_client_name == "Acme: West Region"
+
+
+@pytest.mark.asyncio
+async def test_jobs_then_clients_then_jobs_converges_to_one_org_unit(
+    db, jobs_fixture,
+):
+    """Full interleave proof. Sequence:
+      1. _sync_jobs sees Oracle job (name only) → creates stub.
+      2. _sync_clients later returns Oracle with real id → promotes stub.
+      3. _sync_jobs runs again → matches by name against the now-promoted
+         mapping; no second stub, no second org_unit, no duplicates.
+    """
+    from app.modules.ats.importer import ATSImporter
+    from app.modules.ats.schemas import ATSClientPayload
+
+    def _clients_adapter(tenant_id, client_payloads):
+        state = ATSConnectionState(
+            id=uuid.uuid4(), tenant_id=uuid.UUID(tenant_id), vendor="ceipal",
+            credentials={},
+        )
+        adapter = AsyncMock()
+        adapter.state = state
+        adapter.vendor = "ceipal"
+        adapter.list_clients = lambda since=None: _async_iter(client_payloads)
+        adapter.list_users = lambda since=None: _async_iter([])
+        return adapter
+
+    tenant_id, *_ = jobs_fixture
+    job = ATSJobPayload(
+        external_id="j-interleave",
+        external_client_id="",
+        external_client_name="Oracle",
+        title="t",
+        status="Active",
+        raw={},
+        fetched_at=datetime.now(tz=timezone.utc),
+    )
+    importer = ATSImporter()
+
+    # Step 1: jobs sync creates the stub.
+    await importer._run_phase("jobs", importer._sync_jobs, _jobs_adapter(tenant_id, [job]))
+
+    # Step 2: clients sync promotes the stub.
+    client_payload = ATSClientPayload(
+        external_id="ABC123",
+        name="Oracle",
+        raw={"id": "ABC123"},
+        fetched_at=datetime.now(tz=timezone.utc),
+    )
+    await importer._run_phase(
+        "clients", importer._sync_clients,
+        _clients_adapter(tenant_id, [client_payload]),
+    )
+
+    # Step 3: jobs sync again — matches by name against the promoted mapping.
+    await importer._run_phase("jobs", importer._sync_jobs, _jobs_adapter(tenant_id, [job]))
+
+    # Convergence: exactly one Oracle org_unit, one Oracle mapping, real id.
+    unit_count = await db.execute(text(
+        "SELECT COUNT(*) FROM organizational_units "
+        "WHERE client_id = :t AND name = 'Oracle'"
+    ), {"t": tenant_id})
+    assert unit_count.scalar_one() == 1
+
+    mapping_row = await db.execute(text(
+        "SELECT external_client_id, external_client_name FROM ats_client_mappings "
+        "WHERE tenant_id = :t AND external_client_name = 'Oracle'"
+    ), {"t": tenant_id})
+    rows = mapping_row.all()
+    assert len(rows) == 1
+    assert rows[0].external_client_id == "ABC123"
