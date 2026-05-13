@@ -19,18 +19,17 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, ClassVar
 from uuid import UUID
 
-if TYPE_CHECKING:
-    from app.modules.ats.models import ATSClientMapping
-    from app.modules.org_units.models import OrganizationalUnit
-
 import structlog
 from opentelemetry import trace
 from sqlalchemy import func, select, text
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_bypass_session
 from app.modules.ats.adapter import ATSAdapter
 from app.modules.audit import log_event
+
+if TYPE_CHECKING:
+    from app.modules.ats.models import ATSClientMapping
+    from app.modules.org_units.models import OrganizationalUnit
 
 logger = structlog.get_logger()
 tracer = trace.get_tracer(__name__)
