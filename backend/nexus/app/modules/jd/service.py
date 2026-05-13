@@ -80,21 +80,25 @@ async def enrich_job_summaries(
     if not jobs:
         return []
 
-    # Collect unique lookup keys.
-    unit_ids = {j.org_unit_id for j in jobs}
+    # Collect unique lookup keys. org_unit_id is nullable for ATS-imported
+    # jobs without a client mapping — skip those when batching org unit names.
+    unit_ids = {j.org_unit_id for j in jobs if j.org_unit_id is not None}
     user_ids = {j.created_by for j in jobs}
     for j in jobs:
         if j.updated_by:
             user_ids.add(j.updated_by)
     job_ids = [j.id for j in jobs]
 
-    # Batch-load org unit names.
-    unit_result = await db.execute(
-        select(OrganizationalUnit.id, OrganizationalUnit.name).where(
-            OrganizationalUnit.id.in_(unit_ids)
+    # Batch-load org unit names. Skip the SELECT when every job in the list
+    # is unlinked — `WHERE id IN ()` is a SQL error.
+    unit_names: dict[UUID, str] = {}
+    if unit_ids:
+        unit_result = await db.execute(
+            select(OrganizationalUnit.id, OrganizationalUnit.name).where(
+                OrganizationalUnit.id.in_(unit_ids)
+            )
         )
-    )
-    unit_names: dict[UUID, str] = {row[0]: row[1] for row in unit_result.all()}
+        unit_names = {row[0]: row[1] for row in unit_result.all()}
 
     # Batch-load user emails.
     user_result = await db.execute(
@@ -141,11 +145,14 @@ async def enrich_job_summaries(
         )
         counts_by_job[snap.job_posting_id] = (len(signals), needs)
 
-    # Build enriched summaries.
+    # Build enriched summaries. org_unit_name remains None when the job is
+    # unlinked (ATS-imported without a client mapping).
     return [
         _job_to_summary(
             j,
-            org_unit_name=unit_names.get(j.org_unit_id),
+            org_unit_name=(
+                unit_names.get(j.org_unit_id) if j.org_unit_id is not None else None
+            ),
             created_by_email=user_emails.get(j.created_by),
             updated_by_email=user_emails.get(j.updated_by) if j.updated_by else None,
             signal_count=counts_by_job.get(j.id, (0, 0))[0],

@@ -93,12 +93,34 @@ class CeipalAdapter:
             try:
                 await self._refresh_via_token_header()
                 return
-            except ATSCredentialsInvalidError:
-                # Fall through to full reauth — refresh_token may be invalid
-                # despite our expiry tracker
+            except (
+                ATSCredentialsInvalidError,
+                ATSAuthorizationError,
+                ATSVendorContractError,
+            ) as exc:
+                # Fall through to full reauth. All three error shapes are
+                # valid "refresh slot is no longer usable" signals from
+                # Ceipal:
+                #   401 (ATSCredentialsInvalidError) — server rejects the
+                #         expired access token in the Token header.
+                #   403 (ATSAuthorizationError) — server rejects the
+                #         refresh attempt itself (rotated API key,
+                #         refresh token invalidated out-of-band, etc.).
+                #   200 with non-JSON body OR unexpected status code
+                #         (ATSVendorContractError) — empirically Ceipal
+                #         sometimes returns a 200 with an empty body when
+                #         the refresh slot has gone stale. Treating this
+                #         as "refresh isn't going to work; ask for a new
+                #         pair from scratch" matches the documented
+                #         fallback strategy.
+                # ATSNetworkError and ATSRateLimitedError are NOT caught
+                # here — those reflect connectivity / quota problems that
+                # full re-auth won't fix, and retrying would just waste a
+                # round-trip.
                 logger.warning(
                     "ats.ceipal.refresh_failed_falling_back_to_reauth",
                     connection_id=str(self.state.id),
+                    error_class=type(exc).__name__,
                 )
 
         # Case 3: full re-auth from stored credentials
@@ -394,12 +416,24 @@ class CeipalAdapter:
         since: datetime | None = None,
         *,
         job_status_ids: list[int] | None = None,
+        skip_external_ids: set[str] | None = None,
     ) -> AsyncIterator[ATSJobPayload]:
+        """Walk /getJobPostingsList/, fetching per-job details for each row.
+
+        ``skip_external_ids`` — when provided, list items whose ``id`` is
+        already in the set are dropped BEFORE the expensive per-job
+        details fetch. Used by the importer's missing-detection pass to
+        avoid re-fetching details for jobs we already have locally.
+        """
         now = datetime.now(tz=UTC)
         params: dict = {"limit": 50, **self._format_since(since)}
         if job_status_ids:
             params["jobStatus"] = ",".join(str(i) for i in job_status_ids)
         async for list_raw in self._paginate("/getJobPostingsList/", params):
+            if skip_external_ids and list_raw["id"] in skip_external_ids:
+                # Already present locally — don't pay the per-job details
+                # roundtrip just to confirm what we have.
+                continue
             # Fetch the per-job details endpoint to get the client name.
             # The list-item carries only ``company`` (an integer == agency
             # tenant id) which is not usable for client linkage. We MUST

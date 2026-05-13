@@ -7,10 +7,13 @@ Endpoints:
   DELETE /api/ats/connections/{id}
   POST   /api/ats/connections/{id}/sync
   GET    /api/ats/connections/{id}/sync-logs
-  GET    /api/ats/connections/{id}/unmapped-users
-  POST   /api/ats/connections/{id}/users/{external_user_id}/map
   GET    /api/ats/connections/{id}/job-statuses
   PUT    /api/ats/connections/{id}/job-status-filter
+
+User mapping note: ats_user_mappings.internal_user_id is now wired up
+automatically — on invite-accept (auth/router.py) and during the users
+phase of the importer (ats/importer.py), both matching on lower(email).
+The legacy GET /unmapped-users + POST /users/{ext}/map surface is gone.
 
 Write endpoints require super_admin (via require_ats_admin). Credentials
 NEVER appear in any response — only metadata.
@@ -35,13 +38,11 @@ from app.modules.ats.errors import (
 from app.modules.ats.models import (
     ATSConnection,
     ATSSyncLog,
-    ATSUserMapping,
 )
 from app.modules.ats.registry import get_ats_adapter
 from app.modules.ats.service import (
     create_connection,
     delete_connection,
-    map_ats_user_to_internal,
     trigger_manual_sync,
     update_job_status_filter,
 )
@@ -126,17 +127,6 @@ class SyncLogResponse(BaseModel):
     progress: dict = Field(default_factory=dict)
     error_phase: str | None = None
     error_summary: str | None = None
-
-
-class UnmappedUserResponse(BaseModel):
-    external_user_id: str
-    external_user_email: str
-    external_user_display_name: str
-    external_user_role: str | None = None
-
-
-class MapUserRequest(BaseModel):
-    internal_user_id: UUID
 
 
 # The five-phase enum is the closed set the importer knows about. Anything
@@ -284,7 +274,11 @@ async def list_connection_job_statuses(
     adapter = get_ats_adapter(state)
     try:
         raw = await adapter.list_job_statuses()
-    except ATSCredentialsInvalidError as exc:
+    except (ATSCredentialsInvalidError, ATSAuthorizationError) as exc:
+        # Both shapes mean "the saved credentials are no longer usable" —
+        # the adapter already tried refresh-token AND full re-auth before
+        # surfacing this. The recruiter needs to reconnect; 422 with a
+        # typed code lets the frontend render a clean reconnect prompt.
         raise HTTPException(
             status_code=422,
             detail={"code": "ATS_CREDENTIALS_INVALID", "message": str(exc)[:200]},
@@ -366,52 +360,3 @@ async def list_sync_logs(
     ]
 
 
-@router.get(
-    "/connections/{connection_id}/unmapped-users",
-    response_model=list[UnmappedUserResponse],
-)
-async def list_unmapped_users(
-    connection_id: UUID,
-    db: AsyncSession = Depends(get_tenant_db),
-    user: UserContext = Depends(get_current_user_roles),
-) -> list[UnmappedUserResponse]:
-    conn = await db.get(ATSConnection, connection_id)
-    if conn is None or conn.tenant_id != user.user.tenant_id:
-        raise HTTPException(status_code=404, detail="ATS_CONNECTION_NOT_FOUND")
-    rows = await db.execute(
-        select(ATSUserMapping).where(
-            ATSUserMapping.tenant_id == user.user.tenant_id,
-            ATSUserMapping.ats_vendor == conn.vendor,
-            ATSUserMapping.internal_user_id.is_(None),
-        )
-    )
-    return [
-        UnmappedUserResponse(
-            external_user_id=r.external_user_id,
-            external_user_email=r.external_user_email,
-            external_user_display_name=r.external_user_display_name,
-            external_user_role=r.external_user_role,
-        )
-        for r in rows.scalars()
-    ]
-
-
-@router.post(
-    "/connections/{connection_id}/users/{external_user_id}/map",
-    status_code=status.HTTP_204_NO_CONTENT,
-)
-async def map_user(
-    connection_id: UUID,
-    external_user_id: str,
-    body: MapUserRequest,
-    db: AsyncSession = Depends(get_tenant_db),
-    user: UserContext = Depends(require_ats_admin),
-) -> None:
-    await map_ats_user_to_internal(
-        db,
-        connection_id=connection_id,
-        external_user_id=external_user_id,
-        internal_user_id=body.internal_user_id,
-        tenant_id=user.user.tenant_id,
-        actor_id=user.user.id,
-    )

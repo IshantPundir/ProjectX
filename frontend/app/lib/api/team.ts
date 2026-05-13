@@ -7,9 +7,22 @@ export interface TeamMemberAssignment {
 }
 
 /**
- * A row returned by GET /api/settings/team/members. Covers both users
- * (with role assignments) and outstanding invites (awaiting claim).
- * Callers partition on `source`.
+ * A row returned by GET /api/settings/team/members. Covers active users,
+ * outstanding invites, and ATS-imported users not yet on the team. Callers
+ * branch on `source`:
+ *   - 'user'   → real User row, may have role assignments
+ *   - 'invite' → pending UserInvite awaiting claim
+ *   - 'ats'    → ATSUserMapping with internal_user_id IS NULL (not yet
+ *                a member or pending invite). The Send-invite action on
+ *                these rows hits the same /api/settings/team/invite as
+ *                a manual invite — on accept, the invite-accept handler
+ *                wires up internal_user_id automatically.
+ *
+ * Status values:
+ *   - 'active'        for source='user' (active accounts)
+ *   - 'inactive'      for source='user' (deactivated)
+ *   - 'pending'       for source='invite'
+ *   - 'ats_unlinked'  for source='ats'
  */
 export interface TeamMember {
   id: string
@@ -18,9 +31,12 @@ export interface TeamMember {
   is_active: boolean
   is_super_admin: boolean
   assignments: TeamMemberAssignment[]
-  source: 'user' | 'invite'
+  source: 'user' | 'invite' | 'ats'
   status: string
   created_at: string
+  external_user_id: string | null
+  ats_vendor: string | null
+  external_role: string | null
 }
 
 export interface InviteTeamMemberRequest {

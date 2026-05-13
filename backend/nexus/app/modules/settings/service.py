@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.audit import actions as audit_actions, log_event
+from app.modules.ats.models import ATSUserMapping
 from app.modules.auth import AuthProviderError, User, UserInvite, UserRoleAssignment, get_auth_provider
 from app.modules.org_units import Client, OrganizationalUnit, nullify_deletable_by_for_user
 from app.modules.roles import Role
@@ -119,7 +120,8 @@ async def list_team_members(
         .where(UserInvite.tenant_id == tenant_id, UserInvite.status == "pending")
         .order_by(UserInvite.created_at.desc())
     )
-    for invite in invite_result.scalars().all():
+    pending_invites = list(invite_result.scalars().all())
+    for invite in pending_invites:
         members.append(
             {
                 "id": str(invite.id),
@@ -131,6 +133,42 @@ async def list_team_members(
                 "status": "pending",
                 "assignments": [],
                 "created_at": invite.created_at.isoformat(),
+            }
+        )
+
+    # ATS-imported users that haven't been linked or invited yet.
+    # We exclude any row whose email already maps to an existing user (handled
+    # by invite-accept / importer auto-link) or to a pending invite (already
+    # surfaced above). Match is case-insensitive — emails are case-sensitive
+    # locally per RFC but every provider we care about normalizes.
+    taken_emails = {u.email.lower() for u in users} | {
+        i.email.lower() for i in pending_invites
+    }
+    ats_result = await db.execute(
+        select(ATSUserMapping)
+        .where(
+            ATSUserMapping.tenant_id == tenant_id,
+            ATSUserMapping.internal_user_id.is_(None),
+        )
+        .order_by(ATSUserMapping.last_synced_at.desc())
+    )
+    for ats_row in ats_result.scalars().all():
+        if ats_row.external_user_email.lower() in taken_emails:
+            continue
+        members.append(
+            {
+                "id": str(ats_row.id),
+                "email": ats_row.external_user_email,
+                "full_name": ats_row.external_user_display_name or None,
+                "is_active": False,
+                "is_super_admin": False,
+                "source": "ats",
+                "status": "ats_unlinked",
+                "assignments": [],
+                "created_at": ats_row.created_at.isoformat(),
+                "external_user_id": ats_row.external_user_id,
+                "ats_vendor": ats_row.ats_vendor,
+                "external_role": ats_row.external_user_role,
             }
         )
 

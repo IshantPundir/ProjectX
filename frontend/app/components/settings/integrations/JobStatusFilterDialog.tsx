@@ -17,6 +17,7 @@ import {
 } from "@/components/px";
 import {
   listJobStatuses,
+  triggerManualSync,
   updateJobStatusFilter,
   type CeipalJobStatus,
   type JobStatusFilter,
@@ -29,6 +30,21 @@ type Props = {
   onClose: () => void;
   connectionId: string;
   priorFilter: JobStatusFilter | null;
+  /**
+   * If true, the dialog triggers a jobs-phase sync after saving the filter.
+   * The /jobs page uses this; the connections detail page passes false (the
+   * detail page has its own per-phase sync buttons, so an auto-trigger here
+   * would either double-fire or surprise the user).
+   */
+  triggerSyncOnSave?: boolean;
+  /**
+   * Called after the trigger-sync mutation resolves successfully (only
+   * when triggerSyncOnSave=true). The /jobs page uses this to open its
+   * progress popup *optimistically* — the next sync-logs poll happens at
+   * the 10s idle interval, so without this hook the popup wouldn't appear
+   * until the user reloads.
+   */
+  onSyncTriggered?: () => void;
 };
 
 export function JobStatusFilterDialog({
@@ -36,6 +52,8 @@ export function JobStatusFilterDialog({
   onClose,
   connectionId,
   priorFilter,
+  triggerSyncOnSave = false,
+  onSyncTriggered,
 }: Props) {
   const qc = useQueryClient();
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -62,14 +80,28 @@ export function JobStatusFilterDialog({
   }, [statuses.data, priorFilter]);
 
   const mutation = useMutation({
-    mutationFn: async (body: JobStatusFilter) =>
-      updateJobStatusFilter(await getFreshSupabaseToken(), connectionId, body),
+    mutationFn: async (body: JobStatusFilter) => {
+      const token = await getFreshSupabaseToken();
+      await updateJobStatusFilter(token, connectionId, body);
+      // Second leg: kick off the jobs-phase sync. We do this inside the same
+      // mutation so the dialog's success/error state covers both the
+      // persist and the enqueue — a recruiter who picked statuses but
+      // saw no sync start would think the button was broken.
+      if (triggerSyncOnSave) {
+        await triggerManualSync(token, connectionId, ["jobs"]);
+      }
+    },
     onSuccess: () => {
-      toast.success("Filter saved. Jobs sync started.");
+      toast.success(
+        triggerSyncOnSave ? "Filter saved. Syncing jobs…" : "Filter saved.",
+      );
       qc.invalidateQueries({ queryKey: ["ats", "connection", connectionId] });
       qc.invalidateQueries({
         queryKey: ["ats", "connection", connectionId, "sync-logs"],
       });
+      if (triggerSyncOnSave) {
+        onSyncTriggered?.();
+      }
       onClose();
     },
     onError: (err) => {
@@ -163,7 +195,11 @@ export function JobStatusFilterDialog({
               mutation.isPending
             }
           >
-            {mutation.isPending ? "Saving…" : "Save & start sync"}
+            {mutation.isPending
+              ? "Saving…"
+              : triggerSyncOnSave
+                ? "Sync"
+                : "Save filter"}
           </Button>
         </DialogFooter>
       </DialogContent>

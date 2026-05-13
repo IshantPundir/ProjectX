@@ -3,7 +3,10 @@
   - If org_unit.completion_status='pending': status='blocked_pending_client_setup'.
   - If 'complete': status='draft' (caller enqueues extract_and_enhance_jd).
   - assigned_recruiter_external_ids → ats_job_recruiter_assignments rows.
-  - Missing client mapping → skip + count in result.skipped.
+  - Missing client mapping → insert with org_unit_id=NULL +
+    status='blocked_pending_client_setup' (counted as `new`). Frontend
+    surfaces these on /jobs with a 'Not set up' chip until a recruiter
+    links them to an org_unit.
 
 Test-environment choice: Option (ii) — the ``importer_fixture`` (in
 ``conftest.py``) monkeypatches ``get_bypass_session`` so the importer's
@@ -12,6 +15,7 @@ and verify queries go through the test ``db`` (NOT async_session_factory).
 """
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
@@ -38,9 +42,29 @@ def _jobs_adapter(tenant_id, jobs):
     adapter = AsyncMock()
     adapter.state = state
     adapter.vendor = "ceipal"
-    # list_jobs now takes job_status_ids kwarg — accept and ignore in tests.
-    adapter.list_jobs = lambda since=None, *, job_status_ids=None: _async_iter(jobs)
-    # count_jobs seeds the progress denominator — return len(jobs).
+
+    # The real CeipalAdapter filters by ``skip_external_ids`` before its
+    # per-job details fetch; the mock has to mirror that contract or the
+    # importer's Pass-2 missing-detect loop will see jobs it already
+    # upserted in Pass 1 and double-count them.
+    def list_jobs_fn(
+        since=None,
+        *,
+        job_status_ids=None,
+        skip_external_ids=None,
+    ):
+        async def _aiter():
+            for job in jobs:
+                if skip_external_ids and job.external_id in skip_external_ids:
+                    continue
+                yield job
+        return _aiter()
+
+    adapter.list_jobs = list_jobs_fn
+    # count_jobs seeds the progress denominator. The importer calls it
+    # twice now (once with cursor, once without) — same return value for
+    # both is fine for the existing tests, which all start from a clean
+    # local DB so the missing-detect arithmetic resolves correctly.
     adapter.count_jobs = AsyncMock(return_value=len(jobs))
     return adapter
 
@@ -103,7 +127,10 @@ async def test_job_for_pending_client_lands_in_blocked_state(db, jobs_fixture):
 
 
 @pytest.mark.asyncio
-async def test_job_with_unknown_client_mapping_is_skipped(db, jobs_fixture):
+async def test_job_with_unknown_client_mapping_is_imported_unlinked(db, jobs_fixture):
+    """No matching ats_client_mappings row → insert the job_posting with
+    org_unit_id=NULL and status='blocked_pending_client_setup'. The
+    recruiter links it to an org_unit later."""
     from app.modules.ats.importer import ATSImporter
 
     tenant_id, *_ = jobs_fixture
@@ -114,8 +141,17 @@ async def test_job_with_unknown_client_mapping_is_skipped(db, jobs_fixture):
     adapter = _jobs_adapter(tenant_id, [job])
     importer = ATSImporter()
     result = await importer._run_phase("jobs", importer._sync_jobs, adapter)
-    assert result.skipped == 1
-    assert result.new == 0
+    assert result.new == 1
+    assert result.skipped == 0
+
+    row = await db.execute(text(
+        "SELECT status, org_unit_id, source, external_id "
+        "FROM job_postings WHERE tenant_id = :t AND external_id = 'j3'"
+    ), {"t": tenant_id})
+    r = row.one()
+    assert r.status == "blocked_pending_client_setup"
+    assert r.org_unit_id is None
+    assert r.source == "ats_ceipal"
 
 
 @pytest.mark.asyncio
@@ -157,9 +193,12 @@ async def test_job_links_by_client_name_when_id_is_empty(db, jobs_fixture):
 
 
 @pytest.mark.asyncio
-async def test_job_with_neither_id_nor_name_is_skipped(db, jobs_fixture):
+async def test_job_with_neither_id_nor_name_is_imported_unlinked(db, jobs_fixture):
     """A job with empty external_client_id AND empty external_client_name
-    can't be linked to any client — skip with a warning, no row inserted."""
+    has nothing to link against — inserted with org_unit_id=NULL +
+    status='blocked_pending_client_setup'. Same handling as a job whose
+    external_client_id misses the mappings table; the UI doesn't care
+    why org_unit_id is NULL, only that it is."""
     from app.modules.ats.importer import ATSImporter
 
     tenant_id, *_ = jobs_fixture
@@ -174,8 +213,16 @@ async def test_job_with_neither_id_nor_name_is_skipped(db, jobs_fixture):
     adapter = _jobs_adapter(tenant_id, [job])
     importer = ATSImporter()
     result = await importer._run_phase("jobs", importer._sync_jobs, adapter)
-    assert result.skipped == 1
-    assert result.new == 0
+    assert result.new == 1
+    assert result.skipped == 0
+
+    row = await db.execute(text(
+        "SELECT status, org_unit_id FROM job_postings "
+        "WHERE tenant_id = :t AND external_id = 'j-orphan'"
+    ), {"t": tenant_id})
+    r = row.one()
+    assert r.status == "blocked_pending_client_setup"
+    assert r.org_unit_id is None
 
 
 @pytest.mark.asyncio
@@ -243,8 +290,204 @@ async def test_jobs_phase_passes_filter_ids_to_adapter(db, jobs_fixture):
     importer = ATSImporter()
     await importer._run_phase("jobs", importer._sync_jobs, adapter)
     assert captured["list_status_ids"] == [1, 8]
-    adapter.count_jobs.assert_awaited_once()
-    assert adapter.count_jobs.call_args.kwargs["job_status_ids"] == [1, 8]
+    # count_jobs is called twice: once to seed the Pass 1 progress
+    # denominator (with the cursor), once for the Pass 2 missing-detect
+    # comparison (without cursor). Both must pin the same status filter.
+    assert adapter.count_jobs.await_count == 2
+    for call in adapter.count_jobs.await_args_list:
+        assert call.kwargs["job_status_ids"] == [1, 8]
+
+
+@pytest.mark.asyncio
+async def test_missing_detect_inserts_locally_deleted_job(db, jobs_fixture):
+    """Pass 2: cursor-based sync misses jobs the recruiter deleted locally,
+    so the importer compares local count vs Ceipal total and walks the
+    full list (skipping known external_ids) to re-fetch the gap.
+
+    Setup: Ceipal has 2 jobs that match the filter. We seed 1 of them
+    locally (simulating that the recruiter previously synced both and
+    then deleted one). Cursor is in the future so the cursor-based pass
+    returns zero rows. Pass 2 must detect the drift (local=1 < ceipal=2)
+    and re-insert the missing job.
+    """
+    from app.modules.ats.importer import ATSImporter
+    from app.modules.ats.schemas import ATSJobPayload
+
+    tenant_id, _user_id, _root_unit_id, _pending_unit, complete_unit = jobs_fixture
+
+    # Pre-seed: one of the two jobs is already in the local DB. The
+    # other is the "deleted locally, still in Ceipal" case.
+    await db.execute(text(
+        "INSERT INTO job_postings (tenant_id, org_unit_id, title, "
+        "description_raw, status, source, external_id, created_by) "
+        "SELECT :t, :ou, 'Existing Job', 'desc', 'draft', "
+        "'ats_ceipal', 'jid-existing', users.id "
+        "FROM users WHERE tenant_id = :t LIMIT 1"
+    ), {"t": tenant_id, "ou": complete_unit})
+    await db.flush()
+
+    # The importer reads the cursor from the adapter's in-memory
+    # ATSConnectionState (not the DB row directly), so we set it on the
+    # adapter state below. The test asserts the importer's two-pass
+    # control flow — Pass 1 with this cursor, Pass 2 without.
+    future = datetime.now(tz=timezone.utc).isoformat()
+
+    # Ceipal "has" both jobs. Pass 1 with cursor=future returns []. Pass 2
+    # with cursor=None should yield 'jid-missing' (since 'jid-existing'
+    # is in the skip set built from the local DB).
+    missing_job = ATSJobPayload(
+        external_id="jid-missing", external_client_id="complete-client",
+        title="Missing Job", description="restored",
+        status="Active", raw={}, fetched_at=datetime.now(tz=timezone.utc),
+    )
+    existing_job = ATSJobPayload(
+        external_id="jid-existing", external_client_id="complete-client",
+        title="Existing Job", description="...",
+        status="Active", raw={}, fetched_at=datetime.now(tz=timezone.utc),
+    )
+
+    pass_calls: list[dict] = []
+
+    def list_jobs_fn(since=None, *, job_status_ids=None, skip_external_ids=None):
+        pass_calls.append({
+            "since": since,
+            "skip_external_ids": skip_external_ids,
+        })
+        async def _aiter():
+            if since is not None:
+                # Pass 1 (cursor-based): nothing modified since.
+                return
+                yield  # pragma: no cover
+            # Pass 2 (no cursor, skip known): the adapter normally drops
+            # known IDs before its details fetch; we model that here.
+            for job in (existing_job, missing_job):
+                if skip_external_ids and job.external_id in skip_external_ids:
+                    continue
+                yield job
+        return _aiter()
+
+    adapter = _jobs_adapter(tenant_id, [])
+    adapter.list_jobs = list_jobs_fn
+    # Seed the in-memory cursor so the importer's Pass 1 calls
+    # list_jobs(since=<future>) — see _cursor_or_none.
+    adapter.state.last_synced_cursors = {"jobs": future}
+    # count_jobs returns 0 with cursor (no-op pass), 2 without (Pass 2 trigger).
+    async def count_jobs_fn(*, since=None, job_status_ids=None):
+        return 0 if since is not None else 2
+    adapter.count_jobs = count_jobs_fn
+
+    importer = ATSImporter()
+    result = await importer._run_phase("jobs", importer._sync_jobs, adapter)
+
+    # Pass 2 ran: list_jobs called twice (once cursor, once no-cursor).
+    assert len(pass_calls) == 2
+    assert pass_calls[0]["since"] is not None  # Pass 1 cursor-based
+    assert pass_calls[0]["skip_external_ids"] is None
+    assert pass_calls[1]["since"] is None  # Pass 2 full list
+    assert pass_calls[1]["skip_external_ids"] == {"jid-existing"}
+
+    # The missing job was inserted as new; the existing one untouched.
+    assert result.new == 1
+    assert result.updated == 0
+
+    row = await db.execute(text(
+        "SELECT external_id, title FROM job_postings "
+        "WHERE tenant_id = :t ORDER BY external_id"
+    ), {"t": tenant_id})
+    rows = row.all()
+    assert [r.external_id for r in rows] == ["jid-existing", "jid-missing"]
+
+
+@pytest.mark.asyncio
+async def test_missing_detect_recovers_progress_when_pass1_count_failed(
+    db, jobs_fixture,
+):
+    """Production case: Pass 1's count_jobs raises (transient Ceipal flake
+    or bad envelope). The importer falls back to total=-1, which the
+    frontend renders as the indeterminate 'Counting jobs…' state. If
+    Pass 2 then finds missing rows, it must re-seed total to a concrete
+    number so the progress bar actually moves; otherwise the bar stays
+    indeterminate for the entire ~2-3 minute Pass 2 walk."""
+    from app.modules.ats.importer import ATSImporter
+    from app.modules.ats.schemas import ATSJobPayload
+
+    tenant_id, _user_id, _root_unit_id, _pending_unit, _complete_unit = jobs_fixture
+
+    missing_job = ATSJobPayload(
+        external_id="jid-missing",
+        external_client_id="complete-client",
+        title="Missing Job", description="restored",
+        status="Active", raw={}, fetched_at=datetime.now(tz=timezone.utc),
+    )
+
+    adapter = _jobs_adapter(tenant_id, [missing_job])
+    # Pass 1 cursor-based count raises; pass 2 count succeeds with 1.
+    call_count = 0
+    async def count_jobs_fn(*, since=None, job_status_ids=None):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RuntimeError("ceipal returned malformed envelope")
+        return 1
+    adapter.count_jobs = count_jobs_fn
+
+    sync_log_id = uuid.uuid4()
+    await db.execute(text(
+        "INSERT INTO ats_sync_logs (id, tenant_id, connection_id, started_at, "
+        "status, correlation_id) "
+        "SELECT :s, :t, c.id, now(), 'running', 'test-corr' "
+        "FROM ats_connections c WHERE c.tenant_id = :t"
+    ), {"s": sync_log_id, "t": tenant_id})
+    await db.flush()
+
+    importer = ATSImporter()
+    result = await importer._run_phase(
+        "jobs", importer._sync_jobs, adapter, sync_log_id,
+    )
+    assert result.new == 1
+
+    # Final progress: total MUST be a concrete positive number, not -1.
+    # If the bug regresses, total would stay at -1 and the frontend bar
+    # would never leave the indeterminate state.
+    r = await db.execute(text(
+        "SELECT progress FROM ats_sync_logs WHERE id = :s"
+    ), {"s": sync_log_id})
+    progress = r.scalar_one()
+    assert progress["jobs"]["total"] == 1
+    assert progress["jobs"]["processed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_missing_detect_skipped_when_local_matches_ceipal(db, jobs_fixture):
+    """Pass 2 must NOT call list_jobs a second time when local count
+    already equals Ceipal total — that's wasted bandwidth in the common
+    steady-state case."""
+    from app.modules.ats.importer import ATSImporter
+
+    tenant_id, *_ = jobs_fixture
+
+    list_call_count = 0
+    def list_jobs_fn(since=None, *, job_status_ids=None, skip_external_ids=None):
+        nonlocal list_call_count
+        list_call_count += 1
+        async def _aiter():
+            return
+            yield  # pragma: no cover
+        return _aiter()
+
+    adapter = _jobs_adapter(tenant_id, [])
+    adapter.list_jobs = list_jobs_fn
+    # Both passes (cursor / no-cursor) report zero. local_count == 0 == ceipal,
+    # so Pass 2 must short-circuit.
+    async def count_jobs_fn(*, since=None, job_status_ids=None):
+        return 0
+    adapter.count_jobs = count_jobs_fn
+
+    importer = ATSImporter()
+    await importer._run_phase("jobs", importer._sync_jobs, adapter)
+
+    # Pass 1 (cursor list_jobs) ran. Pass 2 list_jobs did NOT run.
+    assert list_call_count == 1
 
 
 @pytest.mark.asyncio

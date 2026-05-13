@@ -2,8 +2,12 @@
 (load → auth → sync → persist) execute and the sync_log closes correctly.
 
 Also verify: ATSCredentialsInvalidError disables the connection;
-ATSRateLimitedError advances next_poll_at and exits cleanly (no raise);
+ATSRateLimitedError finalizes a partial sync_log and exits cleanly (no raise);
 ATSTransientError re-raises so Dramatiq retries.
+
+Auto-sync was removed (no scheduler) — the actor no longer advances
+next_poll_at on either the success or rate-limit path. The recruiter
+re-triggers manually when ready.
 
 Test-environment choice: Option (ii) — uses the per-test rollback-isolated
 ``db`` fixture plus the ``patched_bypass_session`` fixture (in conftest.py),
@@ -128,8 +132,67 @@ async def test_credentials_invalid_disables_connection_and_raises(db, actor_fixt
 
 
 @pytest.mark.asyncio
-async def test_rate_limited_advances_next_poll_returns_cleanly(db, actor_fixture):
-    """ATSRateLimitedError → set next_poll_at = now() + retry_after, return cleanly."""
+async def test_auth_phase_non_credential_error_finalizes_sync_log(db, actor_fixture):
+    """Production case: Phase B raises something other than
+    ATSCredentialsInvalidError (e.g. ATSVendorContractError when Ceipal's
+    refreshToken returns 200 with a non-JSON body and the in-adapter
+    fallback hasn't been deployed yet, OR a transient network blip).
+
+    Pre-fix behavior: the exception escaped uncaught; Dramatiq retried
+    three times, each retry created a NEW sync_log, none of them got
+    finalized, and the UI was left polling a 'running' row forever
+    ('Counting jobs…' stuck).
+
+    Post-fix behavior: the actor finalizes the current sync_log as
+    'failed' BEFORE re-raising. The connection stays active (creds may
+    well be fine — this is a vendor/network issue, not a creds issue).
+    """
+    from app.modules.ats import actors
+    from app.modules.ats.errors import ATSVendorContractError
+
+    tenant_id, connection_id = actor_fixture
+
+    fake_adapter = AsyncMock()
+    fake_adapter.vendor = "ceipal"
+    fake_adapter.ensure_authenticated = AsyncMock(
+        side_effect=ATSVendorContractError(
+            "refreshToken returned 200 with non-JSON body",
+        ),
+    )
+
+    with patch("app.modules.ats.actors.get_ats_adapter") as mock_get:
+        def _bind(state):
+            fake_adapter.state = state
+            return fake_adapter
+        mock_get.side_effect = _bind
+        with pytest.raises(ATSVendorContractError):
+            await actors._run_poll(connection_id, tenant_id)
+
+    # The sync_log must have been finalized as 'failed', not left
+    # 'running' for the UI poll to fixate on.
+    log_status = (await db.execute(text(
+        "SELECT status, error_phase FROM ats_sync_logs "
+        "WHERE connection_id = :c ORDER BY started_at DESC LIMIT 1"
+    ), {"c": connection_id})).one()
+    assert log_status.status == "failed"
+    assert log_status.error_phase == "auth"
+
+    # Connection MUST stay active — creds may be fine; this is a
+    # vendor/network failure, not a creds-revoked situation.
+    conn_status = (await db.execute(text(
+        "SELECT active FROM ats_connections WHERE id = :i"
+    ), {"i": connection_id})).scalar_one()
+    assert conn_status is True
+
+
+@pytest.mark.asyncio
+async def test_rate_limited_finalizes_partial_returns_cleanly(db, actor_fixture):
+    """ATSRateLimitedError → finalize sync_log as partial, return cleanly.
+
+    next_poll_at is NOT shifted: auto-sync was removed, so there is no
+    scheduler to honor the retry-after window. The recruiter re-triggers
+    manually when ready.
+    """
     from app.modules.ats import actors
     from app.modules.ats.errors import ATSRateLimitedError
 
@@ -137,6 +200,11 @@ async def test_rate_limited_advances_next_poll_returns_cleanly(db, actor_fixture
     fake_adapter = AsyncMock()
     fake_adapter.vendor = "ceipal"
     fake_adapter.ensure_authenticated = AsyncMock()
+
+    # Snapshot next_poll_at before the run so we can prove it didn't move.
+    pre = (await db.execute(text(
+        "SELECT next_poll_at FROM ats_connections WHERE id = :i"
+    ), {"i": connection_id})).scalar_one()
 
     # Make the importer's sync_tenant raise rate-limited.
     with patch("app.modules.ats.actors.get_ats_adapter") as mock_get:
@@ -152,13 +220,18 @@ async def test_rate_limited_advances_next_poll_returns_cleanly(db, actor_fixture
             # Should NOT raise — handled internally
             await actors._run_poll(connection_id, tenant_id)
 
-    r = await db.execute(text(
-        "SELECT EXTRACT(EPOCH FROM (next_poll_at - now())) AS delta "
-        "FROM ats_connections WHERE id = :i"
-    ), {"i": connection_id})
-    row = r.one()
-    # next_poll_at should be roughly now + 120s (allow ±5s for clock drift)
-    assert 115 <= row.delta <= 125
+    # Sync log finalized as 'partial' (the actor's rate-limit branch path).
+    log_status = (await db.execute(text(
+        "SELECT status FROM ats_sync_logs WHERE connection_id = :c "
+        "ORDER BY started_at DESC LIMIT 1"
+    ), {"c": connection_id})).scalar_one()
+    assert log_status == "partial"
+
+    # next_poll_at unchanged — no scheduler to honor anyway.
+    post = (await db.execute(text(
+        "SELECT next_poll_at FROM ats_connections WHERE id = :i"
+    ), {"i": connection_id})).scalar_one()
+    assert post == pre
 
 
 @pytest.mark.asyncio

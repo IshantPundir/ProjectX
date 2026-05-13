@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 import {
@@ -13,6 +13,16 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/px'
+import { JobStatusFilterDialog } from '@/components/settings/integrations/JobStatusFilterDialog'
+import { SyncProgressBar } from '@/components/settings/integrations/SyncProgressBar'
+import {
+  getConnection,
+  listConnections,
+  listSyncLogs,
+  type ATSConnection,
+  type ATSSyncLog,
+} from '@/lib/api/ats'
+import { authApi, type MeResponse } from '@/lib/api/auth'
 import {
   jobsApi,
   type JobPostingSummary,
@@ -67,6 +77,32 @@ function SourceChip({ source }: { source: string }) {
       title={`Imported from ${vendor}`}
     >
       From {vendor}
+    </span>
+  )
+}
+
+/**
+ * Compact "Not set up" chip for ATS jobs that came in without a client
+ * mapping (org_unit_id IS NULL). Distinct from `blocked_pending_client_setup`
+ * with a mapping where the org_unit's company profile is still pending —
+ * that case renders the StatusPill's 'awaiting setup' label instead.
+ */
+function NotSetUpChip({ job }: { job: JobPostingSummary }) {
+  if (job.org_unit_id !== null) return null
+  if (!job.source.startsWith('ats_')) return null
+  return (
+    <span
+      className="inline-flex items-center rounded-full border px-1.5 text-[9.5px] font-medium uppercase"
+      style={{
+        height: 16,
+        letterSpacing: '0.4px',
+        color: 'var(--px-caution)',
+        background: 'var(--px-caution-bg)',
+        borderColor: 'var(--px-caution-line)',
+      }}
+      title="Imported from ATS but not linked to a company yet"
+    >
+      Not set up
     </span>
   )
 }
@@ -237,6 +273,7 @@ export default function JobsListPage() {
   const [filter, setFilter] = useState<FilterId>('all')
   const [view, setView] = useState<ViewId>('table')
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [syncDialogOpen, setSyncDialogOpen] = useState(false)
 
   const { data, isLoading, error } = useQuery<JobPostingSummary[]>({
     queryKey: ['jobs-list'],
@@ -245,6 +282,101 @@ export default function JobsListPage() {
       return jobsApi.list(token, undefined, { signal })
     },
   })
+
+  // Whether the current user is super admin — drives Sync-from-ATS gating.
+  const meQuery = useQuery<MeResponse>({
+    queryKey: ['me'],
+    queryFn: async () => authApi.me(await getFreshSupabaseToken()),
+    staleTime: 60_000,
+  })
+  const isSuperAdmin = meQuery.data?.is_super_admin ?? false
+
+  // ATS connections (drives "Sync jobs from ATS" visibility).
+  const connectionsQuery = useQuery<ATSConnection[]>({
+    queryKey: ['ats', 'connections'],
+    queryFn: async () => listConnections(await getFreshSupabaseToken()),
+    staleTime: 30_000,
+  })
+  const activeConnection = (connectionsQuery.data ?? []).find((c) => c.active)
+
+  // The dialog needs the full ATSConnection (for `priorFilter`). The list
+  // endpoint already returns it inline, so reading from connectionsQuery.data
+  // avoids a second fetch when the recruiter opens the dialog.
+  const connectionForDialog = useQuery<ATSConnection>({
+    queryKey: ['ats', 'connection', activeConnection?.id],
+    queryFn: async () =>
+      getConnection(await getFreshSupabaseToken(), activeConnection!.id),
+    enabled: !!activeConnection && syncDialogOpen,
+  })
+
+  // Poll sync-logs at 2s while a run is in progress, 10s otherwise.
+  // We look at the MOST RECENT log only (the list comes back sorted
+  // started_at desc). Older "running" rows can exist when an earlier
+  // actor invocation crashed without finalizing — `.some(l => running)`
+  // would lock the UI indefinitely on those orphans. The latest row
+  // alone tells us whether *the current* sync is in flight.
+  const syncLogsQuery = useQuery<ATSSyncLog[]>({
+    queryKey: ['ats', 'connection', activeConnection?.id, 'sync-logs'],
+    queryFn: async () =>
+      listSyncLogs(await getFreshSupabaseToken(), activeConnection!.id),
+    enabled: !!activeConnection,
+    refetchInterval: (query) => {
+      const latest = query.state.data?.[0]
+      return latest?.status === 'running' ? 2000 : 10000
+    },
+  })
+  const latestLog = syncLogsQuery.data?.[0]
+  const isSyncRunning = latestLog?.status === 'running'
+  const jobsProgress = latestLog?.progress?.jobs
+  const [progressDialogOpen, setProgressDialogOpen] = useState(false)
+  // Set true the moment the trigger-sync mutation resolves; cleared
+  // when the polling loop sees the new 'running' log (the worker has
+  // actually started). Lets the dialog show a "Starting…" state during
+  // the ~10s gap between trigger and the next idle-rate poll.
+  const [syncJustTriggered, setSyncJustTriggered] = useState(false)
+  const wasRunningRef = useRef(false)
+  useEffect(() => {
+    if (!wasRunningRef.current && isSyncRunning) {
+      // Edge: a sync just started (from this page or another tab) — pop
+      // the progress dialog so the recruiter can see counts roll in.
+      setProgressDialogOpen(true)
+      setSyncJustTriggered(false)
+    } else if (wasRunningRef.current && !isSyncRunning) {
+      // Edge: the run finished. We DON'T auto-close the dialog — when
+      // there are no new jobs (cursor-based delta is empty) the whole
+      // run finishes in ~3s, and silently closing the dialog gives the
+      // recruiter no signal that anything happened. The dialog stays
+      // open and rerenders into the "complete" branch (counts + a
+      // close button). They dismiss when they're done reading.
+      queryClient.invalidateQueries({ queryKey: ['jobs-list'] })
+      toast.success('ATS jobs sync finished.')
+    }
+    wasRunningRef.current = !!isSyncRunning
+  }, [isSyncRunning, queryClient])
+
+  // While we're optimistically showing the popup, poll sync-logs at 1.5s
+  // so the moment the worker commits Phase A (writes the 'running' row),
+  // we see it on the next poll and transition the dialog out of "Starting…".
+  // Safety timeout at 30s — if the worker never picks up the message
+  // (Redis down, worker crashed) we clear the flag so the dialog stops
+  // claiming "starting" indefinitely.
+  useEffect(() => {
+    if (!syncJustTriggered || !activeConnection) return
+    const interval = setInterval(() => {
+      queryClient.invalidateQueries({
+        queryKey: ['ats', 'connection', activeConnection.id, 'sync-logs'],
+      })
+    }, 1500)
+    const safetyTimeout = setTimeout(() => {
+      setSyncJustTriggered(false)
+    }, 30_000)
+    return () => {
+      clearInterval(interval)
+      clearTimeout(safetyTimeout)
+    }
+  }, [syncJustTriggered, activeConnection, queryClient])
+
+  const showSyncATSButton = isSuperAdmin && activeConnection !== undefined
 
   const deleteMutation = useMutation<void, Error, string[]>({
     mutationFn: async (ids) => {
@@ -368,6 +500,17 @@ export default function JobsListPage() {
           Filter
         </button>
 
+        {showSyncATSButton && (
+          <button
+            type="button"
+            onClick={() => setSyncDialogOpen(true)}
+            disabled={isSyncRunning}
+            className="px-btn outline sm"
+          >
+            {isSyncRunning ? 'Syncing…' : 'Sync jobs from ATS'}
+          </button>
+        )}
+
         <Link
           href="/jobs/new"
           className="px-btn primary sm"
@@ -453,6 +596,39 @@ export default function JobsListPage() {
       ) : (
         <KanbanStub />
       )}
+
+      {activeConnection && (
+        <JobStatusFilterDialog
+          open={syncDialogOpen}
+          onClose={() => setSyncDialogOpen(false)}
+          connectionId={activeConnection.id}
+          priorFilter={connectionForDialog.data?.job_status_filter ?? null}
+          triggerSyncOnSave
+          onSyncTriggered={() => {
+            // Open the progress popup immediately, before the polling
+            // loop has had a chance to see the new 'running' log row.
+            // The dialog body shows a "Starting…" state until the next
+            // poll catches up (typically within 2s of the worker
+            // committing Phase A of the actor).
+            setSyncJustTriggered(true)
+            setProgressDialogOpen(true)
+          }}
+        />
+      )}
+
+      {/* Progress dialog — auto-opens when the latest sync_log flips to
+          'running'. After the run finishes, the dialog stays open and
+          re-renders into the "complete" branch so the recruiter can see
+          counts (or "already up to date" when the cursor-based delta
+          turned up zero new jobs). Closing the dialog never cancels the
+          sync — the actor runs independently. */}
+      <SyncJobsProgressDialog
+        open={progressDialogOpen}
+        onOpenChange={setProgressDialogOpen}
+        log={latestLog}
+        isRunning={isSyncRunning}
+        isStarting={syncJustTriggered && !isSyncRunning}
+      />
 
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <DialogContent>
@@ -631,6 +807,7 @@ function JobsRow({
             {job.title}
           </Link>
           <SourceChip source={job.source} />
+          <NotSetUpChip job={job} />
         </div>
         <div
           className="flex items-center gap-1.5 text-[11.5px]"
@@ -714,6 +891,7 @@ function JobCard({ job }: { job: JobPostingSummary }) {
           >
             <span className="truncate">{job.title}</span>
             <SourceChip source={job.source} />
+            <NotSetUpChip job={job} />
           </div>
           <div className="mt-0.5 truncate text-[11.5px]" style={{ color: 'var(--px-fg-4)' }}>
             {job.org_unit_name ?? '—'}
@@ -784,6 +962,149 @@ function KanbanStub() {
       </div>
       <div>Roles grouped by stage activity — coming next phase.</div>
     </div>
+  )
+}
+
+/* ─── Sync progress dialog ───────────────────────────────── */
+
+function SyncJobsProgressDialog({
+  open,
+  onOpenChange,
+  log,
+  isRunning,
+  isStarting,
+}: {
+  open: boolean
+  onOpenChange: (v: boolean) => void
+  log: ATSSyncLog | undefined
+  isRunning: boolean
+  /** True between mutation success and the first 'running' log poll — the
+   * worker hasn't committed Phase A yet, so the dialog body should say
+   * "Starting…" instead of falling back to the latest (stale) completed
+   * log's counts. */
+  isStarting: boolean
+}) {
+  const jobsProgress = log?.progress?.jobs
+  // entity_counts is populated on completion. jobs phase may be null when
+  // the user kicked off only `users` from a different surface — guard.
+  const jobsCounts = (log?.entity_counts as Record<string, unknown> | undefined)
+    ?.jobs as
+    | { new: number; updated: number; skipped: number; errors: number }
+    | null
+    | undefined
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        {isStarting ? (
+          <>
+            <DialogTitle>Starting sync…</DialogTitle>
+            <DialogDescription>
+              The job is queued. Waiting for the worker to pick it up —
+              this usually takes a couple of seconds.
+            </DialogDescription>
+            <div className="py-2">
+              <SyncProgressBar processed={0} total={-1} />
+            </div>
+          </>
+        ) : isRunning ? (
+          <>
+            <DialogTitle>Syncing jobs from ATS…</DialogTitle>
+            <DialogDescription>
+              Ceipal returns ~50 jobs per page; we also fetch per-job
+              details for client linkage, so this can take a couple of
+              minutes.
+            </DialogDescription>
+            <div className="py-2">
+              {jobsProgress && jobsProgress.total > 0 ? (
+                <SyncProgressBar
+                  processed={jobsProgress.processed}
+                  total={jobsProgress.total}
+                />
+              ) : (
+                // total < 0 (importer still in count_jobs) OR total === 0
+                // (Pass 1's cursor-based count returned 0; Pass 2's
+                // missing-detect count hasn't run yet). Both are
+                // "we don't know the denominator yet" — render
+                // indeterminate. We DON'T claim "already up to date"
+                // here: Pass 2 may still find deleted jobs that need
+                // restoring, and showing a premature "all done"
+                // message confuses recruiters who just bulk-deleted
+                // locally and are expecting them back. The completed
+                // state below handles the truly-done case via
+                // entity_counts.
+                <SyncProgressBar processed={0} total={-1} />
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <DialogTitle>
+              {log?.status === 'failed'
+                ? 'Sync failed'
+                : log?.status === 'partial'
+                  ? 'Sync partial'
+                  : 'Sync complete'}
+            </DialogTitle>
+            <DialogDescription>
+              {log?.status === 'failed' ? (
+                <>The sync ran into an error and stopped. See details below.</>
+              ) : jobsCounts == null ? (
+                <>The jobs phase did not run on this sync.</>
+              ) : jobsCounts.new === 0 &&
+                jobsCounts.updated === 0 &&
+                jobsCounts.skipped === 0 ? (
+                <>
+                  Already up to date — no new or modified jobs in Ceipal since
+                  the last sync.
+                </>
+              ) : (
+                <>
+                  <span className="font-medium">{jobsCounts.new}</span> new,{' '}
+                  <span className="font-medium">{jobsCounts.updated}</span>{' '}
+                  updated
+                  {jobsCounts.skipped > 0 && (
+                    <>
+                      , <span className="font-medium">{jobsCounts.skipped}</span>{' '}
+                      skipped
+                    </>
+                  )}
+                  {jobsCounts.errors > 0 && (
+                    <>
+                      ,{' '}
+                      <span
+                        className="font-medium"
+                        style={{ color: 'var(--px-danger)' }}
+                      >
+                        {jobsCounts.errors} errors
+                      </span>
+                    </>
+                  )}
+                  .
+                </>
+              )}
+            </DialogDescription>
+            {log?.error_summary && (
+              <p
+                className="rounded-md border p-3 text-xs"
+                style={{
+                  color: 'var(--px-danger)',
+                  borderColor: 'var(--px-danger)',
+                  background: 'var(--px-surface-2)',
+                }}
+              >
+                {log.error_summary}
+              </p>
+            )}
+          </>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            {isRunning || isStarting ? 'Hide' : 'Close'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

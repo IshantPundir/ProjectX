@@ -749,7 +749,7 @@ export function JobPipelineFunnel({ job, pipeline, jobId }: Props) {
         jobId={jobId}
       />
 
-      {pickerOpen && (
+      {pickerOpen && job.org_unit_id !== null && (
         <TemplatePickerDialog
           orgUnitId={job.org_unit_id}
           open={pickerOpen}

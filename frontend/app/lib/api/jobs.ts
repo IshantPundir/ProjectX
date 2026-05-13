@@ -76,7 +76,10 @@ export type JobSource = 'native' | 'manual' | 'ats_ceipal' | string
 export type JobPostingSummary = {
   id: string
   title: string
-  org_unit_id: string
+  // Nullable for ATS-imported jobs with no matching client mapping; the
+  // list page renders a 'Not set up' chip in that case until a recruiter
+  // links the job to an org_unit.
+  org_unit_id: string | null
   org_unit_name: string | null
   created_by_email: string | null
   updated_by_email: string | null
@@ -106,6 +109,12 @@ export type JobPostingSummary = {
 
 export type EnrichmentStatus = 'idle' | 'streaming' | 'completed' | 'failed'
 
+/**
+ * Detail row for GET /api/jobs/{id}. `org_unit_id` is inherited from
+ * JobPostingSummary as `string | null`; the detail page's signal /
+ * pipeline / enrichment surfaces don't work for unlinked jobs and should
+ * guard accordingly.
+ */
 export type JobPostingWithSnapshot = JobPostingSummary & {
   description_raw: string
   project_scope_raw: string | null

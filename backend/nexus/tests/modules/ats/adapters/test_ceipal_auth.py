@@ -119,6 +119,89 @@ async def test_refresh_expired_falls_back_to_full_reauth():
 
 
 @pytest.mark.asyncio
+async def test_refresh_403_falls_back_to_full_reauth():
+    """Production case: our local refresh_token_expires_at says the token is
+    still valid (e.g. < 7 days old), but Ceipal returns 403 on the refresh
+    call anyway (rotated API key, server-side invalidation, etc.). The
+    adapter must catch the 403 and try full re-auth from stored credentials
+    instead of bubbling a 500 to the recruiter."""
+    from app.modules.ats.adapters.ceipal import CeipalAdapter
+
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        calls.append(url)
+        if "refreshToken" in url:
+            return httpx.Response(403, json={"message": "Forbidden"})
+        if "createAuthtoken" in url:
+            return httpx.Response(200, json={
+                "access_token": "reauth-access",
+                "refresh_token": "reauth-refresh",
+                "expires_in": 3600,
+            })
+        return httpx.Response(500)
+
+    # Local tracker says refresh_token is still valid (5d remaining).
+    expired = datetime.now(tz=timezone.utc) - timedelta(minutes=5)
+    state = _state(
+        access_token="old-expired-token",
+        access_token_expires_at=expired,
+        refresh_token="rfr-tok",
+        refresh_token_expires_at=datetime.now(tz=timezone.utc) + timedelta(days=5),
+    )
+    adapter = CeipalAdapter(state, _transport=_make_transport(handler))
+    await adapter.ensure_authenticated()
+
+    # Refresh hit first, then full re-auth (in that order).
+    assert any("refreshToken" in u for u in calls)
+    assert any("createAuthtoken" in u for u in calls)
+    assert adapter.state.access_token == "reauth-access"
+
+
+@pytest.mark.asyncio
+async def test_refresh_200_non_json_body_falls_back_to_full_reauth():
+    """Another production case: Ceipal's /refreshToken/ sometimes returns
+    HTTP 200 with an empty (non-JSON) body when the refresh slot has gone
+    stale. `response.json()` raises `JSONDecodeError`, which we wrap as
+    `ATSVendorContractError`. That used to escape `ensure_authenticated`
+    as a 500. Now it's treated the same as 401/403 — fall through to
+    full re-auth with the stored credentials."""
+    from app.modules.ats.adapters.ceipal import CeipalAdapter
+
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        calls.append(url)
+        if "refreshToken" in url:
+            # 200 OK, empty body — what Ceipal actually returned in the
+            # reported incident. response.json() will JSONDecodeError.
+            return httpx.Response(200, content=b"")
+        if "createAuthtoken" in url:
+            return httpx.Response(200, json={
+                "access_token": "reauth-access",
+                "refresh_token": "reauth-refresh",
+                "expires_in": 3600,
+            })
+        return httpx.Response(500)
+
+    expired = datetime.now(tz=timezone.utc) - timedelta(minutes=5)
+    state = _state(
+        access_token="old-expired-token",
+        access_token_expires_at=expired,
+        refresh_token="rfr-tok",
+        refresh_token_expires_at=datetime.now(tz=timezone.utc) + timedelta(days=5),
+    )
+    adapter = CeipalAdapter(state, _transport=_make_transport(handler))
+    await adapter.ensure_authenticated()
+
+    assert any("refreshToken" in u for u in calls)
+    assert any("createAuthtoken" in u for u in calls)
+    assert adapter.state.access_token == "reauth-access"
+
+
+@pytest.mark.asyncio
 async def test_invalid_credentials_raise_typed_error():
     from app.modules.ats.adapters.ceipal import CeipalAdapter
 

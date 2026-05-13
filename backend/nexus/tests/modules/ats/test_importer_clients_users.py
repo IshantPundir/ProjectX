@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from app.modules.ats.connection import ATSConnectionState
 from app.modules.ats.schemas import ATSClientPayload, ATSUserPayload
@@ -152,7 +152,11 @@ async def test_sync_clients_existing_mapping_updates_dont_rename_org_unit(
 
 
 @pytest.mark.asyncio
-async def test_sync_users_inserts_unmapped_rows(db, importer_fixture):
+async def test_sync_users_inserts_unlinked_when_no_email_match(db, importer_fixture):
+    """Sync inserts ats_user_mappings with internal_user_id=NULL when the
+    payload email doesn't match any existing User in the tenant. The
+    fixture's only user is 'u@x.com'; the payload below is a different
+    address, so auto-link does not fire."""
     from app.modules.ats.importer import ATSImporter
 
     tenant_id, _user_id, _root_unit_id = importer_fixture
@@ -174,4 +178,74 @@ async def test_sync_users_inserts_unmapped_rows(db, importer_fixture):
     r = row.one()
     assert r.external_user_id == "ceipal-uid-1"
     assert r.external_user_email == "recruiter@x.com"
-    assert r.internal_user_id is None  # NOT auto-mapped
+    assert r.internal_user_id is None
+
+
+@pytest.mark.asyncio
+async def test_sync_users_autolinks_to_existing_user_on_insert(db, importer_fixture):
+    """When the payload email matches an existing tenant user (case-insensitive),
+    the new mapping row is inserted with internal_user_id already set. Closes
+    the loop for the out-of-band-join case."""
+    from app.modules.ats.importer import ATSImporter
+
+    tenant_id, user_id, _root_unit_id = importer_fixture
+    payload = ATSUserPayload(
+        external_id="ceipal-uid-2",
+        # Existing user in the fixture is 'u@x.com'; verify case-insensitive match.
+        email="U@X.COM",
+        display_name="U", role="Recruiter", status="Active",
+        raw={}, fetched_at=datetime.now(tz=timezone.utc),
+    )
+    adapter = _adapter_with_clients(uuid.UUID(tenant_id), [], [payload])
+
+    importer = ATSImporter()
+    result = await importer._run_phase("users", importer._sync_users, adapter)
+    assert result.new == 1
+
+    row = await db.execute(text(
+        "SELECT internal_user_id, mapped_at, mapped_by "
+        "FROM ats_user_mappings WHERE tenant_id = :t "
+        "AND external_user_id = 'ceipal-uid-2'"
+    ), {"t": tenant_id})
+    r = row.one()
+    assert str(r.internal_user_id) == user_id
+    assert r.mapped_at is not None
+    assert str(r.mapped_by) == user_id
+
+
+@pytest.mark.asyncio
+async def test_sync_users_autolinks_on_email_update(db, importer_fixture):
+    """When an existing mapping has NULL internal_user_id and a later sync
+    re-emits the row with an email that now matches a real user, link it."""
+    from app.modules.ats.importer import ATSImporter
+    from app.modules.ats.models import ATSUserMapping
+
+    tenant_id, user_id, _root_unit_id = importer_fixture
+    # First sync: email doesn't match.
+    payload1 = ATSUserPayload(
+        external_id="ceipal-uid-3", email="old-address@example.com",
+        display_name="X", role=None, status="Active",
+        raw={}, fetched_at=datetime.now(tz=timezone.utc),
+    )
+    adapter = _adapter_with_clients(uuid.UUID(tenant_id), [], [payload1])
+    importer = ATSImporter()
+    await importer._run_phase("users", importer._sync_users, adapter)
+
+    # Second sync: same external id, email now matches the fixture user.
+    payload2 = ATSUserPayload(
+        external_id="ceipal-uid-3", email="u@x.com",
+        display_name="X", role=None, status="Active",
+        raw={}, fetched_at=datetime.now(tz=timezone.utc),
+    )
+    adapter = _adapter_with_clients(uuid.UUID(tenant_id), [], [payload2])
+    await importer._run_phase("users", importer._sync_users, adapter)
+
+    row = await db.scalar(
+        select(ATSUserMapping).where(
+            ATSUserMapping.tenant_id == uuid.UUID(tenant_id),
+            ATSUserMapping.external_user_id == "ceipal-uid-3",
+        )
+    )
+    assert row is not None
+    assert str(row.internal_user_id) == user_id
+    assert row.mapped_at is not None

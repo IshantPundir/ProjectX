@@ -110,11 +110,15 @@ export default function OrgUnitsPage() {
     }
   }
 
-  // Compute open-role count per unit (non-draft = active role)
+  // Compute open-role count per unit (non-draft = active role). Skip
+  // jobs with no org_unit_id — these are ATS-imported unlinked jobs that
+  // surface on /jobs with a 'Not set up' chip; they don't belong to any
+  // org unit yet.
   const openRolesByUnit = useMemo(() => {
     const m: Record<string, number> = {};
     for (const j of jobs) {
       if (j.status === "draft") continue;
+      if (j.org_unit_id === null) continue;
       m[j.org_unit_id] = (m[j.org_unit_id] ?? 0) + 1;
     }
     return m;

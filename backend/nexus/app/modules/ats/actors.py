@@ -1,20 +1,20 @@
 """Dramatiq actor: poll_ats_connection.
 
-One actor invocation = one tenant's sync run. The scheduler tick
-(app/cli/ats_tick.py — Task 24) enqueues one message per
-(connection_id, tenant_id) when ats_connections.next_poll_at <= now().
+One actor invocation = one tenant's sync run. The actor is enqueued ONLY
+by the manual-sync endpoint (POST /api/ats/connections/{id}/sync) — there
+is no scheduler. The legacy per-connection ``next_poll_at`` column is no
+longer advanced; the column stays in the schema as a vestigial field.
 
 Lifecycle (mirrors app/modules/jd/actors.py pattern):
-  Phase A: load + decrypt state, open sync_log row, audit started
+  Phase A: load + decrypt state, open sync_log row, audit started.
   Phase B: ensure_authenticated() — may mutate tokens; persist on success.
            On ATSCredentialsInvalidError: disable connection + finalize +
            audit + raise.
   Phase C: ATSImporter().sync_tenant(adapter) — five phases, partial-tolerant.
-           On ATSRateLimitedError: advance next_poll_at + close partial + return.
+           On ATSRateLimitedError: close partial sync_log + return.
            On ATSPermanentError: finalize_failure + raise (DLQ).
            ATSTransientError propagates → Dramatiq retries.
-  Phase D: persist final state, advance next_poll_at, close success log,
-           audit completed.
+  Phase D: persist final state, close success log, audit completed.
 
 Each phase opens its OWN bypass-RLS session so partial failures keep the
 sync_log row in a consistent state.
@@ -26,6 +26,7 @@ import uuid
 import dramatiq
 import structlog
 from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 from sqlalchemy import text
 
 from app.database import get_bypass_session
@@ -42,7 +43,6 @@ from app.modules.ats.errors import (
 from app.modules.ats.importer import ATSImporter
 from app.modules.ats.registry import get_ats_adapter
 from app.modules.ats.service import (
-    advance_next_poll_at,
     create_sync_log_row,
     disable_connection,
     finalize_sync_log_failure,
@@ -95,29 +95,32 @@ async def _run_poll(
                 "tenant_id": safe_tenant,
                 "phase_filter": ",".join(phase_filter) if phase_filter else "*",
             },
-        ):
-            await _do_poll(
-                uuid.UUID(connection_id),
-                uuid.UUID(tenant_id),
-                correlation_id,
-                safe_tenant,
-                phase_filter,
-            )
-    except ATSConnectionNotFoundError:
-        # The connection row was deleted between scheduler tick and actor
-        # execution (or mid-sync). DB cascade has already cleaned up
-        # ats_sync_logs / ats_client_mappings / ats_user_mappings /
-        # ats_job_recruiter_assignments. There is nothing meaningful to
-        # finalize and no point retrying — the connection is gone.
-        # Returning cleanly here is the contract: Dramatiq will not retry
-        # because no exception escapes.
-        logger.info(
-            "ats.poll.connection_gone",
-            connection_id=connection_id,
-            tenant_id=safe_tenant,
-            correlation_id=correlation_id,
-        )
-        return
+        ) as span:
+            try:
+                await _do_poll(
+                    uuid.UUID(connection_id),
+                    uuid.UUID(tenant_id),
+                    correlation_id,
+                    safe_tenant,
+                    phase_filter,
+                )
+            except ATSConnectionNotFoundError:
+                # The connection row was deleted between enqueue and actor
+                # execution (or mid-sync). DB cascade has already cleaned up
+                # ats_sync_logs / ats_client_mappings / ats_user_mappings /
+                # ats_job_recruiter_assignments. Nothing meaningful to
+                # finalize, no point retrying — the connection is gone.
+                # Caught INSIDE the span so the span ends OK with a
+                # description, not ERROR (this is expected behavior and
+                # shouldn't pollute the error trace stream).
+                span.set_status(Status(StatusCode.OK, "connection_gone"))
+                logger.info(
+                    "ats.poll.connection_gone",
+                    connection_id=connection_id,
+                    tenant_id=safe_tenant,
+                    correlation_id=correlation_id,
+                )
+                return
     finally:
         structlog.contextvars.clear_contextvars()
 
@@ -158,6 +161,9 @@ async def _do_poll(
         with tracer.start_as_current_span("ats.poll.auth"):
             await adapter.ensure_authenticated()
     except ATSCredentialsInvalidError as exc:
+        # Stored creds are genuinely bad → disable the connection so the
+        # recruiter has to reconnect; don't keep retrying a known-dead
+        # creds set.
         async with get_bypass_session() as db:
             await db.execute(
                 text(f"SET LOCAL app.current_tenant = '{safe_tenant}'")
@@ -175,6 +181,25 @@ async def _do_poll(
                 resource="ats_connection",
                 resource_id=connection_id,
                 payload={"reason": str(exc)[:200]},
+            )
+            await db.commit()
+        raise
+    except Exception as exc:
+        # Any other auth failure (vendor contract error, network blip,
+        # 5xx, unexpected exception) — finalize the sync_log as failed
+        # BEFORE re-raising, otherwise the 'running' row sits in the DB
+        # forever after Dramatiq exhausts its retries. The UI's polling
+        # would then see the orphan row and keep the progress dialog
+        # stuck on "Counting jobs…" indefinitely (the exact symptom we
+        # debugged). Don't disable the connection — the credentials
+        # themselves might still be fine.
+        async with get_bypass_session() as db:
+            await db.execute(
+                text(f"SET LOCAL app.current_tenant = '{safe_tenant}'")
+            )
+            await finalize_sync_log_failure(
+                db, sync_log_id, phase="auth",
+                error_summary=f"{type(exc).__name__}: {exc}",
             )
             await db.commit()
         raise
@@ -197,16 +222,12 @@ async def _do_poll(
         # so the sync log reflects what DID succeed before the rate
         # limit fired. Falls back to an empty result if attribute is
         # missing (defensive — shouldn't happen with current code).
+        # Auto-sync was removed, so we do NOT shift next_poll_at; the
+        # recruiter re-triggers manually when ready.
         partial = getattr(exc, "partial_result", None) or ATSImporter._empty_partial_result()
         async with get_bypass_session() as db:
             await db.execute(
                 text(f"SET LOCAL app.current_tenant = '{safe_tenant}'")
-            )
-            await advance_next_poll_at(
-                db,
-                connection_id,
-                interval_seconds=exc.retry_after_seconds,
-                jitter_seconds=0,
             )
             await finalize_sync_log_partial(
                 db,
@@ -220,7 +241,7 @@ async def _do_poll(
             retry_after_seconds=exc.retry_after_seconds,
             entity_counts=partial.entity_counts(),
         )
-        return  # NO retry — next tick handles it
+        return  # NO retry — recruiter re-triggers manually
     except ATSPermanentError as exc:
         async with get_bypass_session() as db:
             await db.execute(
@@ -234,11 +255,10 @@ async def _do_poll(
     # ATSTransientError (and any other Exception) propagates → Dramatiq retries
     # with exp backoff per the actor decorator's retry policy.
 
-    # ---- Phase D: persist state + advance + close log ----
+    # ---- Phase D: persist state + close log ----
     async with get_bypass_session() as db:
         await db.execute(text(f"SET LOCAL app.current_tenant = '{safe_tenant}'"))
         await persist_connection_state(db, state)
-        await advance_next_poll_at(db, connection_id)
         await finalize_sync_log_success(db, sync_log_id, sync_result)
         await log_event(
             db,

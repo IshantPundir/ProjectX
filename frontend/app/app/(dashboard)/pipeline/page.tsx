@@ -312,7 +312,7 @@ function PipelineForRole({ jobId }: { jobId: string }) {
             Pick a pipeline
           </Button>
         </div>
-        {pickerOpen && (
+        {pickerOpen && job.org_unit_id !== null && (
           <TemplatePickerDialog
             orgUnitId={job.org_unit_id}
             open={pickerOpen}

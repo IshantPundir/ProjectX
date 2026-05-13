@@ -200,6 +200,29 @@ async def accept_invite(
         db.add(user)
         await db.flush()
 
+        # Auto-link any ATS user mappings that match this email. Closes the
+        # loop on the team-page invite flow: an invite sent for an ATS-imported
+        # user now wires up internal_user_id without a separate mapping step,
+        # so assigned-recruiter resolution on imported jobs starts working
+        # immediately. Match is case-insensitive (vendors normalize).
+        await db.execute(
+            sqlalchemy.text("""
+                UPDATE public.ats_user_mappings
+                   SET internal_user_id = :user_id,
+                       mapped_at        = NOW(),
+                       mapped_by        = :user_id,
+                       updated_at       = NOW()
+                 WHERE tenant_id        = :tenant_id
+                   AND LOWER(external_user_email) = LOWER(:email)
+                   AND internal_user_id IS NULL
+            """),
+            {
+                "user_id": str(user.id),
+                "tenant_id": str(claimed_row.tenant_id),
+                "email": email,
+            },
+        )
+
         is_super_admin = claimed_row.projectx_admin_id is not None
         root_unit_id = ""
         if is_super_admin:

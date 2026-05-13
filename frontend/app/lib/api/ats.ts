@@ -44,13 +44,6 @@ export interface ATSSyncLog {
   error_summary: string | null
 }
 
-export interface ATSUnmappedUser {
-  external_user_id: string
-  external_user_email: string
-  external_user_display_name: string
-  external_user_role: string | null
-}
-
 // --- Zod schemas for request payloads ---
 
 export const ceipalCredentialsSchema = z.object({
@@ -72,12 +65,6 @@ export const connectionCreateSchema = z.discriminatedUnion('vendor', [
 ])
 
 export type ConnectionCreatePayload = z.infer<typeof connectionCreateSchema>
-
-export const mapUserSchema = z.object({
-  internal_user_id: z.string().uuid('Must be a valid user id'),
-})
-
-export type MapUserPayload = z.infer<typeof mapUserSchema>
 
 // --- apiFetch wrappers for /api/ats/* endpoints ---
 // Mirrors the convention used by lib/api/candidates.ts. Token is passed
@@ -157,32 +144,6 @@ export async function listSyncLogs(
   return apiFetch<ATSSyncLog[]>(
     `/api/ats/connections/${connectionId}/sync-logs`,
     { token },
-  )
-}
-
-export async function listUnmappedUsers(
-  token: string,
-  connectionId: string,
-): Promise<ATSUnmappedUser[]> {
-  return apiFetch<ATSUnmappedUser[]>(
-    `/api/ats/connections/${connectionId}/unmapped-users`,
-    { token },
-  )
-}
-
-export async function mapATSUser(
-  token: string,
-  connectionId: string,
-  externalUserId: string,
-  body: MapUserPayload,
-): Promise<void> {
-  await apiFetch<void>(
-    `/api/ats/connections/${connectionId}/users/${externalUserId}/map`,
-    {
-      token,
-      method: 'POST',
-      body: JSON.stringify(body),
-    },
   )
 }
 

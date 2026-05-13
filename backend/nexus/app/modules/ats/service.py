@@ -5,14 +5,13 @@ Connection-management endpoints (router.py) and the poll_ats_connection actor
 """
 from __future__ import annotations
 
-import random
 import uuid
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
 import structlog
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.ats.connection import ATSConnectionState
@@ -94,38 +93,6 @@ async def finalize_sync_log_failure(
     await db.flush()
 
 
-async def advance_next_poll_at(
-    db: AsyncSession,
-    connection_id: UUID,
-    interval_seconds: int | None = None,
-    jitter_seconds: int = 60,
-) -> None:
-    """next_poll_at = now() + interval + jitter(0, jitter_seconds).
-
-    interval_seconds: if None, uses the connection's stored poll_interval_seconds.
-    """
-    j = random.randint(0, jitter_seconds)
-    if interval_seconds is None:
-        # Use the stored interval. ``make_interval`` takes the seconds count
-        # directly without text concat — sidesteps the asyncpg ``||``-typing
-        # issue (operands must be text) and the SQLAlchemy ``text()`` parser
-        # that treats ``::`` after a bound parameter as a stray colon.
-        await db.execute(text(
-            "UPDATE ats_connections "
-            "SET next_poll_at = now() "
-            "  + make_interval(secs => poll_interval_seconds + :j), "
-            "poll_lock_acquired_at = NULL "
-            "WHERE id = :i"
-        ), {"i": connection_id, "j": j})
-    else:
-        await db.execute(text(
-            "UPDATE ats_connections "
-            "SET next_poll_at = now() + make_interval(secs => :s), "
-            "poll_lock_acquired_at = NULL "
-            "WHERE id = :i"
-        ), {"i": connection_id, "s": interval_seconds + j})
-
-
 async def disable_connection(
     db: AsyncSession, connection_id: UUID, reason: str,
 ) -> None:
@@ -180,7 +147,10 @@ async def create_connection(
         ),
         access_token_expires_at=state.access_token_expires_at,
         refresh_token_expires_at=state.refresh_token_expires_at,
-        next_poll_at=datetime.now(tz=UTC),    # poll immediately
+        # next_poll_at + poll_interval_seconds are vestigial — the scheduler
+        # was removed. Manual sync is the only path. Column is NOT NULL, so
+        # we satisfy it with the column defaults.
+        next_poll_at=datetime.now(tz=UTC),
         poll_interval_seconds=900,
         active=True,
         created_by=created_by,
@@ -251,47 +221,6 @@ async def trigger_manual_sync(
         payload={"vendor": row.vendor, "phase_filter": phase_filter},
     )
     poll_ats_connection.send(str(connection_id), str(tenant_id), phase_filter)
-
-
-async def map_ats_user_to_internal(
-    db: AsyncSession,
-    *,
-    connection_id: UUID,
-    external_user_id: str,
-    internal_user_id: UUID,
-    tenant_id: UUID,
-    actor_id: UUID,
-) -> None:
-    """Set ats_user_mappings.internal_user_id for a specific external user.
-
-    Audit: ats.user_mapping.created.
-    """
-    from app.modules.ats.models import ATSUserMapping
-
-    conn = await db.get(ATSConnection, connection_id)
-    if conn is None or conn.tenant_id != tenant_id:
-        return
-    mapping = await db.scalar(
-        select(ATSUserMapping).where(
-            ATSUserMapping.tenant_id == tenant_id,
-            ATSUserMapping.ats_vendor == conn.vendor,
-            ATSUserMapping.external_user_id == external_user_id,
-        )
-    )
-    if mapping is None:
-        return
-    mapping.internal_user_id = internal_user_id
-    mapping.mapped_at = datetime.now(tz=UTC)
-    mapping.mapped_by = actor_id
-    await db.flush()
-    await log_event(
-        db, tenant_id=tenant_id, actor_id=actor_id,
-        actor_email="recruiter",
-        action="ats.user_mapping.created",
-        resource="ats_user_mapping", resource_id=mapping.id,
-        payload={"external_user_id": external_user_id,
-                 "internal_user_id": str(internal_user_id)},
-    )
 
 
 async def update_job_status_filter(

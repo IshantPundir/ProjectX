@@ -199,14 +199,6 @@ export default function ConnectionDetailPage() {
       </section>
 
       <div className="flex flex-wrap gap-2">
-        <Button
-          variant="outline"
-          onClick={() =>
-            router.push(`/settings/integrations/${connectionId}/users`)
-          }
-        >
-          Manage user mappings
-        </Button>
         <Button variant="outline" onClick={() => setFilterDialogOpen(true)}>
           {c.job_status_filter ? "Edit jobs filter" : "Configure jobs filter"}
         </Button>

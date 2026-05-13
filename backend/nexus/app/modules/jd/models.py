@@ -19,7 +19,11 @@ class JobPosting(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
-    org_unit_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizational_units.id"), nullable=False)
+    # Nullable: ATS-imported jobs without a matching client mapping land
+    # with org_unit_id=NULL and status='blocked_pending_client_setup'. They
+    # show on /jobs with a 'Not set up' chip until a recruiter links them
+    # to an org_unit. See migration 0033.
+    org_unit_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("organizational_units.id"), nullable=True)
     title: Mapped[str] = mapped_column(Text, nullable=False)
     description_raw: Mapped[str] = mapped_column(Text, nullable=False)
     project_scope_raw: Mapped[str | None] = mapped_column(Text)

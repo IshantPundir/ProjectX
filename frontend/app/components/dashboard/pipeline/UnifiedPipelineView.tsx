@@ -520,7 +520,7 @@ export function UnifiedPipelineView({ job, pipeline, jobId }: Props) {
         />
       </div>
 
-      {pickerOpen && (
+      {pickerOpen && job.org_unit_id !== null && (
         <TemplatePickerDialog
           orgUnitId={job.org_unit_id}
           open={pickerOpen}

@@ -69,6 +69,9 @@ const subUnits = useMemo(() => {
     const titlesByUnit: Record<string, { id: string; title: string }[]> = {}
     for (const j of jobs) {
       if (j.status === 'draft') continue
+      // Skip ATS-imported unlinked jobs (org_unit_id is NULL until a
+      // recruiter wires them to a real org unit).
+      if (j.org_unit_id === null) continue
       raw[j.org_unit_id] = (raw[j.org_unit_id] ?? 0) + 1
       ;(titlesByUnit[j.org_unit_id] ||= []).push({ id: j.id, title: j.title })
     }

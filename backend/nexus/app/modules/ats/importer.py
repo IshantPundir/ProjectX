@@ -21,7 +21,7 @@ from uuid import UUID
 
 import structlog
 from opentelemetry import trace
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_bypass_session
@@ -209,12 +209,20 @@ class ATSImporter:
         return result
 
     async def _sync_users(self, db, adapter, sync_log_id=None) -> PhaseResult:
-        """Phase 2: upsert ats_user_mappings. internal_user_id stays NULL —
-        recruiter explicitly maps via UI later."""
+        """Phase 2: upsert ats_user_mappings.
+
+        Auto-link: if a ProjectX User exists in this tenant with a matching
+        (case-insensitive) email, set ``internal_user_id`` on the mapping
+        immediately. Covers the out-of-band case where a ProjectX user was
+        created before the ATS sync ever ran. The team-page invite-accept
+        handler covers the opposite direction.
+        """
         from app.modules.ats.models import ATSUserMapping
+        from app.modules.auth.models import User
 
         result = PhaseResult()
         tenant_id = adapter.state.tenant_id
+        now = datetime.now(tz=UTC)
 
         async for payload in adapter.list_users(since=None):
             existing = await db.scalar(
@@ -230,10 +238,33 @@ class ATSImporter:
                 existing.external_user_role = payload.role
                 existing.external_user_status = payload.status
                 existing.external_user_metadata = payload.raw
-                existing.last_synced_at = datetime.now(tz=UTC)
+                existing.last_synced_at = now
+                # If the email changed and now matches a real user, link it.
+                # We never overwrite an existing link — that would silently
+                # re-point a mapping if the same vendor user changed email.
+                if existing.internal_user_id is None:
+                    match = await db.scalar(
+                        select(User).where(
+                            User.tenant_id == tenant_id,
+                            func.lower(User.email) == payload.email.lower(),
+                            User.is_active.is_(True),
+                        )
+                    )
+                    if match is not None:
+                        existing.internal_user_id = match.id
+                        existing.mapped_at = now
+                        existing.mapped_by = match.id
                 result.updated += 1
                 continue
 
+            # New row — try to auto-link before insert.
+            match = await db.scalar(
+                select(User).where(
+                    User.tenant_id == tenant_id,
+                    func.lower(User.email) == payload.email.lower(),
+                    User.is_active.is_(True),
+                )
+            )
             db.add(ATSUserMapping(
                 tenant_id=tenant_id, ats_vendor=adapter.vendor,
                 external_user_id=payload.external_id,
@@ -242,7 +273,9 @@ class ATSImporter:
                 external_user_role=payload.role,
                 external_user_status=payload.status,
                 external_user_metadata=payload.raw,
-                internal_user_id=None,
+                internal_user_id=match.id if match else None,
+                mapped_at=now if match else None,
+                mapped_by=match.id if match else None,
             ))
             result.new += 1
         return result
@@ -312,15 +345,28 @@ class ATSImporter:
             return result
 
         status_ids: list[int] = list(filter_blob["ids"])
+        # Cursor-based incremental: only pull jobs modified since the last
+        # successful sync. Cheap when nothing's changed — Ceipal returns
+        # zero rows for `modifiedAfter=<last cursor>`. A second pass below
+        # detects locally-deleted jobs and re-fetches them, so this cursor
+        # never silently misses a job that needs to come back.
         since = self._cursor_or_none(adapter.state, "jobs")
 
-        # Seed the progress denominator. Failures here downgrade to -1, which
-        # the frontend renders as "indeterminate" (no division by zero).
+        # Pass 1's denominator is just the cursor-modified count. Pass 2's
+        # actual missing count isn't known until Pass 1 finishes (Pass 1
+        # might have inserted some of those "missing" rows). We re-seed
+        # the progress total between passes — over-estimating upfront
+        # would show, e.g. "3/6 done" in the test scenario when actually
+        # the work is complete.
         try:
-            total = await adapter.count_jobs(since=since, job_status_ids=status_ids)
+            pass1_total = await adapter.count_jobs(
+                since=since, job_status_ids=status_ids,
+            )
         except Exception as exc:
             logger.warning("ats.sync.jobs.count_failed", error=str(exc)[:200])
-            total = -1
+            pass1_total = -1
+
+        total = pass1_total
 
         # Each call to ``_write_jobs_progress`` opens its own bypass-RLS
         # session — see that method's docstring for why a long-lived shared
@@ -329,112 +375,225 @@ class ATSImporter:
 
         processed = 0
         async for payload in adapter.list_jobs(since=since, job_status_ids=status_ids):
-            mapping = None
-            if payload.external_client_id:
-                mapping = await db.scalar(
-                    select(ATSClientMapping).where(
-                        ATSClientMapping.tenant_id == tenant_id,
-                        ATSClientMapping.ats_vendor == adapter.vendor,
-                        ATSClientMapping.external_client_id == payload.external_client_id,
-                    )
-                )
-            if mapping is None and payload.external_client_name:
-                mapping = await db.scalar(
-                    select(ATSClientMapping).where(
-                        ATSClientMapping.tenant_id == tenant_id,
-                        ATSClientMapping.ats_vendor == adapter.vendor,
-                        ATSClientMapping.external_client_name == payload.external_client_name,
-                    )
-                )
-            if mapping is None:
-                logger.warning(
-                    "ats.sync.jobs.skipped_missing_client_mapping",
-                    external_job_id=payload.external_id,
-                    external_client_id=payload.external_client_id,
-                    external_client_name=payload.external_client_name,
-                )
-                result.skipped += 1
-                processed += 1
-                await self._write_jobs_progress(sync_log_id, processed, total, tenant_id)
-                continue
+            await self._upsert_job_payload(
+                db, adapter, payload, tenant_id, created_by, result,
+            )
+            processed += 1
+            await self._write_jobs_progress(sync_log_id, processed, total, tenant_id)
 
+        # ---- Pass 2: missing-job detection ----
+        # If a recruiter deleted a job locally (manually or via the bulk
+        # delete on /jobs during dev iteration), Pass 1 above will miss
+        # it — Ceipal hasn't modified the row, so it doesn't come back.
+        # Compute the actual gap NOW (after Pass 1 has run) using a fresh
+        # local count; this is more accurate than estimating before Pass 1.
+        try:
+            ceipal_total = await adapter.count_jobs(
+                since=None, job_status_ids=status_ids,
+            )
+        except Exception as exc:
+            logger.warning(
+                "ats.sync.jobs.full_count_failed",
+                error=str(exc)[:200],
+            )
+            return result
+
+        local_count = await db.scalar(
+            select(func.count()).select_from(JobPosting).where(
+                JobPosting.tenant_id == tenant_id,
+                JobPosting.source == f"ats_{adapter.vendor}",
+                JobPosting.external_id.is_not(None),
+            )
+        ) or 0
+
+        pass2_missing = max(0, ceipal_total - local_count)
+        if pass2_missing <= 0:
+            # No drift — either everything's in sync, or there are MORE
+            # local rows than Ceipal returns (status changed out of the
+            # filter, etc.). Either way, nothing for Pass 2 to do. If
+            # Pass 1's count failed (total=-1) but its loop ran to
+            # completion, surface that as a concrete total now — better
+            # to show "12/12 done" than leave the bar indeterminate
+            # forever.
+            if total < 0:
+                total = processed
+                await self._write_jobs_progress(
+                    sync_log_id, processed, total, tenant_id,
+                )
+            return result
+
+        # Re-seed the denominator. Pass 2 always re-seeds, even when Pass 1's
+        # count call failed — Pass 2 gives us a concrete `ceipal_total -
+        # local_count`, which we add to whatever work Pass 1 already did.
+        # Without this branch the progress bar would stay indeterminate
+        # ("Counting jobs…") for the entire run whenever Pass 1's count
+        # call raised — Pass 2's per-row writes would still increment
+        # `processed` but with a negative denominator the bar can't render.
+        total = (processed if total < 0 else total) + pass2_missing
+        await self._write_jobs_progress(sync_log_id, processed, total, tenant_id)
+
+        logger.info(
+            "ats.sync.jobs.missing_detect_triggered",
+            local_count=local_count,
+            ceipal_total=ceipal_total,
+            missing_estimate=pass2_missing,
+        )
+
+        local_ids_result = await db.execute(
+            select(JobPosting.external_id).where(
+                JobPosting.tenant_id == tenant_id,
+                JobPosting.source == f"ats_{adapter.vendor}",
+                JobPosting.external_id.is_not(None),
+            )
+        )
+        local_ids: set[str] = {row[0] for row in local_ids_result.all()}
+
+        async for payload in adapter.list_jobs(
+            since=None,
+            job_status_ids=status_ids,
+            skip_external_ids=local_ids,
+        ):
+            # The adapter filtered known IDs out, so every payload here
+            # is a missing-in-local row. _upsert_job_payload will INSERT
+            # (existing is None by construction) and bump result.new.
+            await self._upsert_job_payload(
+                db, adapter, payload, tenant_id, created_by, result,
+            )
+            processed += 1
+            await self._write_jobs_progress(sync_log_id, processed, total, tenant_id)
+
+        return result
+
+    async def _upsert_job_payload(
+        self,
+        db,
+        adapter,
+        payload,
+        tenant_id: UUID,
+        created_by: UUID,
+        result: PhaseResult,
+    ) -> None:
+        """Upsert one job_postings row from a single ATSJobPayload.
+
+        Shared by the cursor-based pass (Pass 1) and the missing-detect
+        pass (Pass 2) in ``_sync_jobs``. Updates ``result.new`` /
+        ``result.updated`` in place; replaces the row's
+        ats_job_recruiter_assignments to mirror Ceipal exactly.
+        """
+        from app.modules.ats.models import (
+            ATSClientMapping,
+            ATSJobRecruiterAssignment,
+        )
+        from app.modules.jd.models import JobPosting
+        from app.modules.org_units.models import OrganizationalUnit
+
+        mapping = None
+        if payload.external_client_id:
+            mapping = await db.scalar(
+                select(ATSClientMapping).where(
+                    ATSClientMapping.tenant_id == tenant_id,
+                    ATSClientMapping.ats_vendor == adapter.vendor,
+                    ATSClientMapping.external_client_id == payload.external_client_id,
+                )
+            )
+        if mapping is None and payload.external_client_name:
+            mapping = await db.scalar(
+                select(ATSClientMapping).where(
+                    ATSClientMapping.tenant_id == tenant_id,
+                    ATSClientMapping.ats_vendor == adapter.vendor,
+                    ATSClientMapping.external_client_name == payload.external_client_name,
+                )
+            )
+        # No client mapping → import the job unlinked. org_unit_id stays
+        # NULL; status is 'blocked_pending_client_setup' (same status used
+        # for mapped-but-profile-pending; the org_unit_id NULL/NOT NULL
+        # distinction is what the UI uses to render 'Not set up' vs
+        # 'Awaiting setup'). The recruiter wires the org_unit later via
+        # a separate flow.
+        if mapping is None:
+            logger.info(
+                "ats.sync.jobs.imported_unlinked",
+                external_job_id=payload.external_id,
+                external_client_id=payload.external_client_id,
+                external_client_name=payload.external_client_name,
+            )
+            org_unit_id_for_insert: UUID | None = None
+            target_status = "blocked_pending_client_setup"
+        else:
             org_unit = await db.get(OrganizationalUnit, mapping.org_unit_id)
             target_status = (
                 "blocked_pending_client_setup"
                 if org_unit.company_profile_completion_status == "pending"
                 else "draft"
             )
+            org_unit_id_for_insert = org_unit.id
 
-            existing = await db.scalar(
-                select(JobPosting).where(
-                    JobPosting.tenant_id == tenant_id,
-                    JobPosting.source == f"ats_{adapter.vendor}",
-                    JobPosting.external_id == payload.external_id,
-                )
+        existing = await db.scalar(
+            select(JobPosting).where(
+                JobPosting.tenant_id == tenant_id,
+                JobPosting.source == f"ats_{adapter.vendor}",
+                JobPosting.external_id == payload.external_id,
             )
-            if existing is not None:
-                existing.title = payload.title
-                if payload.description:
-                    existing.description_raw = payload.description
-                existing.external_status = payload.status
-                if payload.location:
-                    existing.location = payload.location
-                if payload.employment_type:
-                    existing.employment_type = payload.employment_type
-                if payload.work_arrangement:
-                    existing.work_arrangement = payload.work_arrangement
-                existing.salary_range_min = payload.salary_range_min
-                existing.salary_range_max = payload.salary_range_max
-                existing.salary_currency = payload.salary_currency
-                job_id = existing.id
-                result.updated += 1
-            else:
-                jp = JobPosting(
-                    tenant_id=tenant_id, org_unit_id=org_unit.id,
-                    title=payload.title,
-                    description_raw=payload.description or "",
-                    status=target_status,
-                    source=f"ats_{adapter.vendor}",
-                    external_id=payload.external_id,
-                    external_status=payload.status,
-                    location=payload.location,
-                    employment_type=payload.employment_type,
-                    work_arrangement=payload.work_arrangement,
-                    salary_range_min=payload.salary_range_min,
-                    salary_range_max=payload.salary_range_max,
-                    salary_currency=payload.salary_currency,
-                    created_by=created_by,
-                )
-                db.add(jp)
-                await db.flush()
-                job_id = jp.id
-                await log_event(
-                    db, tenant_id=tenant_id, actor_id=created_by,
-                    actor_email="ats-import",
-                    action="jd.imported_from_ats",
-                    resource="job_posting", resource_id=jp.id,
-                    payload={"vendor": adapter.vendor,
-                             "external_id": payload.external_id,
-                             "target_status": target_status},
-                )
-                result.new += 1
-
-            # Replace-all recruiter assignments
-            await db.execute(
-                text("DELETE FROM ats_job_recruiter_assignments "
-                     "WHERE tenant_id = :t AND job_posting_id = :j "
-                     "AND ats_vendor = :v"),
-                {"t": tenant_id, "j": job_id, "v": adapter.vendor},
+        )
+        if existing is not None:
+            existing.title = payload.title
+            if payload.description:
+                existing.description_raw = payload.description
+            existing.external_status = payload.status
+            if payload.location:
+                existing.location = payload.location
+            if payload.employment_type:
+                existing.employment_type = payload.employment_type
+            if payload.work_arrangement:
+                existing.work_arrangement = payload.work_arrangement
+            existing.salary_range_min = payload.salary_range_min
+            existing.salary_range_max = payload.salary_range_max
+            existing.salary_currency = payload.salary_currency
+            job_id = existing.id
+            result.updated += 1
+        else:
+            jp = JobPosting(
+                tenant_id=tenant_id, org_unit_id=org_unit_id_for_insert,
+                title=payload.title,
+                description_raw=payload.description or "",
+                status=target_status,
+                source=f"ats_{adapter.vendor}",
+                external_id=payload.external_id,
+                external_status=payload.status,
+                location=payload.location,
+                employment_type=payload.employment_type,
+                work_arrangement=payload.work_arrangement,
+                salary_range_min=payload.salary_range_min,
+                salary_range_max=payload.salary_range_max,
+                salary_currency=payload.salary_currency,
+                created_by=created_by,
             )
-            for rid in payload.assigned_recruiter_external_ids:
-                db.add(ATSJobRecruiterAssignment(
-                    tenant_id=tenant_id, job_posting_id=job_id,
-                    ats_vendor=adapter.vendor, external_user_id=rid,
-                ))
+            db.add(jp)
+            await db.flush()
+            job_id = jp.id
+            await log_event(
+                db, tenant_id=tenant_id, actor_id=created_by,
+                actor_email="ats-import",
+                action="jd.imported_from_ats",
+                resource="job_posting", resource_id=jp.id,
+                payload={"vendor": adapter.vendor,
+                         "external_id": payload.external_id,
+                         "target_status": target_status},
+            )
+            result.new += 1
 
-            processed += 1
-            await self._write_jobs_progress(sync_log_id, processed, total, tenant_id)
-        return result
+        # Replace-all recruiter assignments
+        await db.execute(
+            text("DELETE FROM ats_job_recruiter_assignments "
+                 "WHERE tenant_id = :t AND job_posting_id = :j "
+                 "AND ats_vendor = :v"),
+            {"t": tenant_id, "j": job_id, "v": adapter.vendor},
+        )
+        for rid in payload.assigned_recruiter_external_ids:
+            db.add(ATSJobRecruiterAssignment(
+                tenant_id=tenant_id, job_posting_id=job_id,
+                ats_vendor=adapter.vendor, external_user_id=rid,
+            ))
 
     @staticmethod
     async def _write_jobs_progress(

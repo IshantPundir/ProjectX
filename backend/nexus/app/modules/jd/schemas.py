@@ -209,7 +209,10 @@ class JobPostingSummary(BaseModel):
 
     id: UUID
     title: str
-    org_unit_id: UUID
+    # Nullable for ATS-imported jobs that arrived without a matching
+    # ats_client_mappings row. The frontend renders a 'Not set up' chip
+    # in that case (vs 'Awaiting setup' for mapped+profile-pending).
+    org_unit_id: UUID | None = None
     org_unit_name: str | None = None
     created_by_email: str | None = None
     updated_by_email: str | None = None
@@ -240,7 +243,9 @@ class JobPostingWithSnapshot(BaseModel):
 
     id: UUID
     title: str
-    org_unit_id: UUID
+    # Nullable for ATS-imported jobs without a client mapping. See
+    # JobPostingSummary.org_unit_id for the full rationale.
+    org_unit_id: UUID | None = None
     # Enrichment fields — shared with JobPostingSummary so list and detail
     # responses are field-complete and identical in shape for these columns.
     org_unit_name: str | None = None
