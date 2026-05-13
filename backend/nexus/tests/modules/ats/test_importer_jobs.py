@@ -128,9 +128,12 @@ async def test_job_for_pending_client_lands_in_blocked_state(db, jobs_fixture):
 
 @pytest.mark.asyncio
 async def test_job_with_unknown_client_mapping_is_imported_unlinked(db, jobs_fixture):
-    """No matching ats_client_mappings row → insert the job_posting with
-    org_unit_id=NULL and status='blocked_pending_client_setup'. The
-    recruiter links it to an org_unit later."""
+    """No matching mapping AND no external_client_name → insert the
+    job_posting with org_unit_id=NULL + status='blocked_pending_client_setup'.
+
+    The 'Not set up' chip on /jobs renders for this case. A job with a
+    name but no matching mapping takes the stub-creation path instead
+    (covered by test_sync_jobs_creates_stub_for_unknown_client_name)."""
     from app.modules.ats.importer import ATSImporter
 
     tenant_id, *_ = jobs_fixture
@@ -196,9 +199,10 @@ async def test_job_links_by_client_name_when_id_is_empty(db, jobs_fixture):
 async def test_job_with_neither_id_nor_name_is_imported_unlinked(db, jobs_fixture):
     """A job with empty external_client_id AND empty external_client_name
     has nothing to link against — inserted with org_unit_id=NULL +
-    status='blocked_pending_client_setup'. Same handling as a job whose
-    external_client_id misses the mappings table; the UI doesn't care
-    why org_unit_id is NULL, only that it is."""
+    status='blocked_pending_client_setup'. The stub-creation path requires
+    a non-empty external_client_name; without one we cannot fabricate a
+    sensible org_unit name, so the row stays unlinked and the recruiter
+    handles it via the /jobs 'Not set up' chip."""
     from app.modules.ats.importer import ATSImporter
 
     tenant_id, *_ = jobs_fixture
@@ -713,3 +717,71 @@ async def test_write_jobs_progress_no_op_when_sync_log_id_none(monkeypatch):
         None, processed=5, total=10, tenant_id=uuid.uuid4(),
     )
     assert opens == 0
+
+
+@pytest.mark.asyncio
+async def test_sync_jobs_stub_creation_is_idempotent(db, jobs_fixture):
+    """Running _sync_jobs twice for the same unknown-client-name payload
+    creates exactly one org_unit + one stub mapping. The second run hits
+    the existing-stub short-circuit in _get_or_create_client_stub_by_name.
+    """
+    from app.modules.ats.importer import ATSImporter
+
+    tenant_id, *_ = jobs_fixture
+    job = ATSJobPayload(
+        external_id="j-idem",
+        external_client_id="",
+        external_client_name="Acme Corp",
+        title="t",
+        status="Active",
+        raw={},
+        fetched_at=datetime.now(tz=timezone.utc),
+    )
+
+    importer = ATSImporter()
+    # First sync — creates stub.
+    await importer._run_phase("jobs", importer._sync_jobs, _jobs_adapter(tenant_id, [job]))
+    # Second sync — same payload (Pass 2 missing-detect won't fire because
+    # the job already exists locally, so this exercises Pass 1's update path).
+    await importer._run_phase("jobs", importer._sync_jobs, _jobs_adapter(tenant_id, [job]))
+
+    unit_count = await db.execute(text(
+        "SELECT COUNT(*) FROM organizational_units "
+        "WHERE client_id = :t AND name = 'Acme Corp'"
+    ), {"t": tenant_id})
+    assert unit_count.scalar_one() == 1
+
+    mapping_count = await db.execute(text(
+        "SELECT COUNT(*) FROM ats_client_mappings "
+        "WHERE tenant_id = :t AND external_client_id = 'name:Acme Corp'"
+    ), {"t": tenant_id})
+    assert mapping_count.scalar_one() == 1
+
+
+@pytest.mark.asyncio
+async def test_sync_jobs_stub_handles_colon_in_client_name(db, jobs_fixture):
+    """A client name that itself contains a colon (e.g. 'Acme: West Region')
+    produces synthetic id 'name:Acme: West Region'. The LIKE 'name:%' filter
+    in _sync_clients still matches and the exact-equality lookup on
+    external_client_name still works for re-sync."""
+    from app.modules.ats.importer import ATSImporter
+
+    tenant_id, *_ = jobs_fixture
+    job = ATSJobPayload(
+        external_id="j-colon",
+        external_client_id="",
+        external_client_name="Acme: West Region",
+        title="t",
+        raw={},
+        fetched_at=datetime.now(tz=timezone.utc),
+    )
+    importer = ATSImporter()
+    await importer._run_phase("jobs", importer._sync_jobs, _jobs_adapter(tenant_id, [job]))
+
+    row = await db.execute(text(
+        "SELECT external_client_id, external_client_name FROM ats_client_mappings "
+        "WHERE tenant_id = :t AND external_client_name = 'Acme: West Region'"
+    ), {"t": tenant_id})
+    r = row.one()
+    assert r.external_client_id == "name:Acme: West Region"
+    assert r.external_client_name == "Acme: West Region"
