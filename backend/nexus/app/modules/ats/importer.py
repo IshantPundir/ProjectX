@@ -16,8 +16,12 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 from uuid import UUID
+
+if TYPE_CHECKING:
+    from app.modules.ats.models import ATSClientMapping
+    from app.modules.org_units.models import OrganizationalUnit
 
 import structlog
 from opentelemetry import trace
@@ -345,6 +349,24 @@ class ATSImporter:
             return result
 
         status_ids: list[int] = list(filter_blob["ids"])
+
+        # Resolve the tenant's root org_unit ONCE here — mirroring
+        # _sync_clients (lines 136-143). _upsert_job_payload's stub-creation
+        # branch needs it for every unknown-client job; resolving it per-call
+        # would issue N redundant SELECTs when N jobs all hit that branch.
+        # Failing here (before any rows are written) is strictly better than
+        # failing mid-loop inside _upsert_job_payload.
+        root = await db.scalar(
+            select(OrganizationalUnit).where(
+                OrganizationalUnit.client_id == tenant_id,
+                OrganizationalUnit.is_root.is_(True),
+            )
+        )
+        if root is None:
+            raise RuntimeError(
+                f"tenant {tenant_id} has no root company org_unit"
+            )
+
         # Cursor-based incremental: only pull jobs modified since the last
         # successful sync. Cheap when nothing's changed — Ceipal returns
         # zero rows for `modifiedAfter=<last cursor>`. A second pass below
@@ -377,6 +399,7 @@ class ATSImporter:
         async for payload in adapter.list_jobs(since=since, job_status_ids=status_ids):
             await self._upsert_job_payload(
                 db, adapter, payload, tenant_id, created_by, result,
+                root_org_unit_id=root.id,
             )
             processed += 1
             await self._write_jobs_progress(sync_log_id, processed, total, tenant_id)
@@ -458,6 +481,7 @@ class ATSImporter:
             # (existing is None by construction) and bump result.new.
             await self._upsert_job_payload(
                 db, adapter, payload, tenant_id, created_by, result,
+                root_org_unit_id=root.id,
             )
             processed += 1
             await self._write_jobs_progress(sync_log_id, processed, total, tenant_id)
@@ -472,6 +496,8 @@ class ATSImporter:
         tenant_id: UUID,
         created_by: UUID,
         result: PhaseResult,
+        *,
+        root_org_unit_id: UUID,
     ) -> None:
         """Upsert one job_postings row from a single ATSJobPayload.
 
@@ -512,23 +538,13 @@ class ATSImporter:
         # stub; status stays 'blocked_pending_client_setup' until the
         # profile is completed.
         if mapping is None and payload.external_client_name:
-            root = await db.scalar(
-                select(OrganizationalUnit).where(
-                    OrganizationalUnit.client_id == tenant_id,
-                    OrganizationalUnit.is_root.is_(True),
-                )
-            )
-            if root is None:
-                raise RuntimeError(
-                    f"tenant {tenant_id} has no root company org_unit"
-                )
             org_unit, mapping = await self._get_or_create_client_stub_by_name(
                 db,
                 tenant_id=tenant_id,
                 vendor=adapter.vendor,
                 external_client_name=payload.external_client_name,
                 created_by=created_by,
-                root_org_unit_id=root.id,
+                root_org_unit_id=root_org_unit_id,
             )
 
         # No client info at all (empty/None name) → import unlinked.
@@ -629,7 +645,7 @@ class ATSImporter:
         external_client_name: str,
         created_by: UUID,
         root_org_unit_id: UUID,
-    ):
+    ) -> tuple[OrganizationalUnit, ATSClientMapping]:
         """Look up or create a stub client_account org_unit + mapping pair
         for a Ceipal job whose ``client`` field is a name with no matching
         ``ats_client_mappings`` row.
