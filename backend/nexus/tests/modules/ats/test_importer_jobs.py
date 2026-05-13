@@ -928,3 +928,119 @@ async def test_jobs_then_clients_then_jobs_converges_to_one_org_unit(
     rows = mapping_row.all()
     assert len(rows) == 1
     assert rows[0].external_client_id == "ABC123"
+
+
+@pytest.mark.asyncio
+async def test_sync_jobs_migrates_null_org_unit_to_newly_created_stub(
+    db, jobs_fixture,
+):
+    """Pre-existing regression: a job imported before the stub-creation
+    feature shipped landed with org_unit_id=NULL. The same job re-synced
+    now produces a stub for its client. The job's link must migrate
+    forward — without this, the job stays orphaned forever even though
+    a stub now exists. Conversely, a job already linked to an org_unit
+    must NOT have its link overwritten.
+    """
+    from app.modules.ats.importer import ATSImporter
+
+    tenant_id, user_id, *_ = jobs_fixture
+
+    # Pre-seed: an existing unlinked job (org_unit_id=NULL,
+    # status='blocked_pending_client_setup') from before the feature
+    # shipped. external_id matches the payload we'll re-sync.
+    pre_existing_id = uuid.uuid4()
+    await db.execute(text(
+        "INSERT INTO job_postings "
+        "(id, tenant_id, org_unit_id, title, description_raw, status, "
+        " source, external_id, external_status, created_by) "
+        "VALUES (:j, :t, NULL, 'old title', '', "
+        " 'blocked_pending_client_setup', "
+        " 'ats_ceipal', 'j-resync', 'Active', :u)"
+    ), {"j": pre_existing_id, "t": tenant_id, "u": user_id})
+    await db.flush()
+
+    job = ATSJobPayload(
+        external_id="j-resync",
+        external_client_id="",
+        external_client_name="Globex Inc",  # not in seeded mappings
+        title="new title",
+        status="Active",
+        raw={"client": "Globex Inc"},
+        fetched_at=datetime.now(tz=timezone.utc),
+    )
+    adapter = _jobs_adapter(tenant_id, [job])
+    importer = ATSImporter()
+    result = await importer._run_phase("jobs", importer._sync_jobs, adapter)
+    assert result.new == 0
+    assert result.updated == 1
+
+    # Stub was created for "Globex Inc".
+    stub_unit_row = await db.execute(text(
+        "SELECT id::text AS id, company_profile_completion_status "
+        "FROM organizational_units "
+        "WHERE client_id = :t AND name = 'Globex Inc'"
+    ), {"t": tenant_id})
+    stub = stub_unit_row.one()
+    assert stub.company_profile_completion_status == "pending"
+
+    # The job's org_unit_id migrated from NULL to the new stub.
+    job_row = await db.execute(text(
+        "SELECT org_unit_id::text AS org_unit_id, title, status "
+        "FROM job_postings WHERE id = :j"
+    ), {"j": pre_existing_id})
+    j = job_row.one()
+    assert j.org_unit_id == stub.id
+    assert j.title == "new title"  # other fields still refresh as before
+    # Status stays blocked because the new stub is also pending. The
+    # org_units profile-completion cascade is the authoritative path
+    # for status migration; we don't duplicate it here.
+    assert j.status == "blocked_pending_client_setup"
+
+
+@pytest.mark.asyncio
+async def test_sync_jobs_does_not_overwrite_existing_non_null_org_unit(
+    db, jobs_fixture,
+):
+    """Negative-control for the NULL-migration: an already-linked job
+    keeps its existing org_unit_id even when the sync's mapping
+    resolution would have pointed elsewhere. Protects recruiters who
+    may have manually moved jobs across org_units in future flows.
+    """
+    from app.modules.ats.importer import ATSImporter
+
+    tenant_id, user_id, _root_unit, _pending_unit, complete_unit = jobs_fixture
+
+    # Pre-seed: a job ALREADY linked to the seeded "Complete" org_unit.
+    pre_existing_id = uuid.uuid4()
+    await db.execute(text(
+        "INSERT INTO job_postings "
+        "(id, tenant_id, org_unit_id, title, description_raw, status, "
+        " source, external_id, external_status, created_by) "
+        "VALUES (:j, :t, :ou, 'orig title', '', 'draft', "
+        " 'ats_ceipal', 'j-keep-link', 'Active', :u)"
+    ), {
+        "j": pre_existing_id, "t": tenant_id,
+        "ou": complete_unit, "u": user_id,
+    })
+    await db.flush()
+
+    # Re-sync the same job with a DIFFERENT client name that would
+    # resolve to a fresh stub. The job's link must NOT migrate.
+    job = ATSJobPayload(
+        external_id="j-keep-link",
+        external_client_id="",
+        external_client_name="SomeOtherClient",  # would create a stub
+        title="new title",
+        status="Active",
+        raw={},
+        fetched_at=datetime.now(tz=timezone.utc),
+    )
+    adapter = _jobs_adapter(tenant_id, [job])
+    importer = ATSImporter()
+    await importer._run_phase("jobs", importer._sync_jobs, adapter)
+
+    job_row = await db.execute(text(
+        "SELECT org_unit_id::text AS org_unit_id FROM job_postings WHERE id = :j"
+    ), {"j": pre_existing_id})
+    j = job_row.one()
+    assert j.org_unit_id == complete_unit  # unchanged

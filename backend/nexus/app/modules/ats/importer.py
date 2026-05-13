@@ -639,6 +639,19 @@ class ATSImporter:
             existing.salary_range_min = payload.salary_range_min
             existing.salary_range_max = payload.salary_range_max
             existing.salary_currency = payload.salary_currency
+
+            # Migrate a NULL org_unit_id forward when the current sync now
+            # resolves a stub or real mapping for the job's client. This
+            # closes the regression where a job imported before the
+            # stub-creation feature shipped — and thus landed with
+            # org_unit_id=NULL — would stay orphaned even after a later
+            # sync produced a stub it could link to. We deliberately do
+            # NOT overwrite an existing non-NULL link: recruiters may have
+            # manually managed it, and the org_units profile-completion
+            # cascade is the authoritative path for status transitions.
+            if existing.org_unit_id is None and org_unit_id_for_insert is not None:
+                existing.org_unit_id = org_unit_id_for_insert
+
             job_id = existing.id
             result.updated += 1
         else:
