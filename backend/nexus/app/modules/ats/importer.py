@@ -177,6 +177,16 @@ class ATSImporter:
             # linked org_unit alone so the recruiter's in-flight profile
             # completion work survives the promotion. See spec
             # docs/superpowers/specs/2026-05-13-ats-job-sync-client-stub-design.md.
+            #
+            # Known limitation: if Ceipal has two distinct clients sharing
+            # the same name, _sync_jobs would have consolidated both onto
+            # a single "name:<n>" stub (forced by the mapping unique
+            # constraint), and this block promotes the stub to whichever
+            # real id arrives first. The other client's jobs would then
+            # be misattributed to the first client's org_unit via the
+            # name-based lookup in _upsert_job_payload. This is the
+            # spec's documented same-name out-of-scope case — recruiter
+            # resolves by splitting the org_unit manually.
             promotable = await db.scalar(
                 select(ATSClientMapping).where(
                     ATSClientMapping.tenant_id == tenant_id,
