@@ -118,14 +118,36 @@ export async function deleteConnection(
   })
 }
 
+/**
+ * The closed set of phase names the backend importer knows. Mirrors the
+ * Literal[...] type in `app/modules/ats/router.py::_PHASE_NAMES`. If you
+ * pass anything outside this set, FastAPI returns 422 before the handler
+ * runs.
+ */
+export type ATSSyncPhase =
+  | 'clients'
+  | 'users'
+  | 'jobs'
+  | 'applicants'
+  | 'submissions'
+
 export async function triggerManualSync(
   token: string,
   id: string,
-): Promise<{ status: string }> {
-  return apiFetch<{ status: string }>(`/api/ats/connections/${id}/sync`, {
-    token,
-    method: 'POST',
-  })
+  phases?: ATSSyncPhase[],
+): Promise<{ status: string; phases: ATSSyncPhase[] | null }> {
+  return apiFetch<{ status: string; phases: ATSSyncPhase[] | null }>(
+    `/api/ats/connections/${id}/sync`,
+    {
+      token,
+      method: 'POST',
+      // Only send a body when scoping to specific phases. Omitting the body
+      // (or sending no phases) runs all five phases — the "Sync all" path.
+      body: phases && phases.length > 0
+        ? JSON.stringify({ phases })
+        : undefined,
+    },
+  )
 }
 
 export async function listSyncLogs(

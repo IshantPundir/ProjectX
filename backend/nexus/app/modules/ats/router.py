@@ -139,6 +139,20 @@ class MapUserRequest(BaseModel):
     internal_user_id: UUID
 
 
+# The five-phase enum is the closed set the importer knows about. Anything
+# else is a 422 from Pydantic before the handler runs.
+_PHASE_NAMES = Literal[
+    "clients", "users", "jobs", "applicants", "submissions",
+]
+
+
+class ManualSyncRequest(BaseModel):
+    """Optional body for POST /sync. ``phases=None`` (no body, or null) runs
+    all five phases — equivalent to the "Sync all" button. Pass a subset
+    to scope a run to specific phases (dev-mode manual control)."""
+    phases: list[_PHASE_NAMES] | None = None
+
+
 # ---------- Endpoints ----------
 
 
@@ -189,17 +203,11 @@ async def create_connection_endpoint(
                 "message": str(exc)[:200],
             },
         )
-    # Fire-and-forget initial sync. We can't call db.commit() here — the
-    # get_tenant_db dependency wraps the session in `async with session.begin()`
-    # which owns the transaction lifecycle. Calling commit closes that
-    # transaction and any subsequent db.* op raises InvalidRequestError.
-    # Flush so the audit row + connection row are visible to db.get below,
-    # and let the dependency commit on context exit.
-    await db.flush()
-    await trigger_manual_sync(
-        db, conn_id, user.user.tenant_id, user.user.id,
-        phase_filter=["clients", "users"],
-    )
+    # NOTE: no automatic sync trigger here. Per the dev-mode manual-sync
+    # design, sync is recruiter-triggered per phase via POST /sync. The
+    # connection row gets created, credentials get verified by the adapter's
+    # ensure_authenticated() call inside create_connection, and that's the
+    # complete responsibility of this endpoint.
     await db.flush()
 
     new_row = await db.get(ATSConnection, conn_id)
@@ -236,11 +244,19 @@ async def delete_connection_endpoint(
 )
 async def manual_sync(
     connection_id: UUID,
+    body: ManualSyncRequest | None = None,
     db: AsyncSession = Depends(get_tenant_db),
     user: UserContext = Depends(require_ats_admin),
 ) -> dict:
-    await trigger_manual_sync(db, connection_id, user.user.tenant_id, user.user.id)
-    return {"status": "enqueued"}
+    """Enqueue a sync. ``body.phases=None`` (or omitted) runs all five
+    phases; otherwise restricts to the subset.
+    """
+    phase_filter = body.phases if (body and body.phases) else None
+    await trigger_manual_sync(
+        db, connection_id, user.user.tenant_id, user.user.id,
+        phase_filter=phase_filter,
+    )
+    return {"status": "enqueued", "phases": phase_filter}
 
 
 @router.get(
@@ -313,10 +329,8 @@ async def set_job_status_filter(
             detail={"code": "JOB_STATUS_FILTER_INVALID", "message": str(exc)},
         )
     await db.flush()
-    await trigger_manual_sync(
-        db, connection_id, user.user.tenant_id, user.user.id,
-        phase_filter=["jobs", "applicants", "submissions"],
-    )
+    # NOTE: no automatic sync trigger. Recruiter clicks the per-phase
+    # "Sync Jobs" / "Sync all" button on the detail page when ready.
 
 
 @router.get(

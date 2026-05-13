@@ -250,11 +250,12 @@ async def test_post_connections_422_on_invalid_creds(authed_super_admin_client):
 
 
 @pytest.mark.asyncio
-async def test_post_connections_triggers_clients_users_only(authed_super_admin_client):
-    """POST /connections triggers initial sync limited to clients+users phases.
+async def test_post_connections_does_not_trigger_any_sync(authed_super_admin_client):
+    """POST /connections creates the connection but does NOT enqueue a sync.
 
-    The Dramatiq actor's .send() is captured; we assert it was called with
-    phase_filter=["clients", "users"] rather than the full-sync None.
+    Dev-mode manual control: the recruiter clicks per-phase Sync buttons on
+    the detail page when ready. The Dramatiq actor's .send() is captured;
+    we assert it was never invoked during connection creation.
     """
     client, _ = authed_super_admin_client
 
@@ -286,13 +287,85 @@ async def test_post_connections_triggers_clients_users_only(authed_super_admin_c
             )
 
     assert resp.status_code == 201, resp.text
-    # Exactly one .send() call was made; third positional arg is phase_filter.
-    mock_send.assert_called_once()
-    _args, _kwargs = mock_send.call_args
-    phase_filter_arg = _args[2] if len(_args) >= 3 else None
-    assert phase_filter_arg == ["clients", "users"], (
-        f"Expected phase_filter=['clients','users'], got {phase_filter_arg!r}"
+    mock_send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_manual_sync_no_body_runs_all_phases(authed_super_admin_client, db):
+    """POST /sync with no body enqueues a full sync (phase_filter=None)."""
+    client, user = authed_super_admin_client
+    conn_id = uuid.uuid4()
+    await db.execute(
+        text(
+            "INSERT INTO ats_connections (id, tenant_id, vendor, "
+            "credentials_ciphertext, created_by) "
+            "VALUES (:c, :t, 'ceipal', :ct, :u)"
+        ),
+        {"c": conn_id, "t": user.tenant_id, "ct": b"x", "u": user.id},
     )
+    await db.flush()
+
+    with patch("app.modules.ats.actors.poll_ats_connection.send") as mock_send:
+        resp = await client.post(f"/api/ats/connections/{conn_id}/sync")
+
+    assert resp.status_code == 202, resp.text
+    assert resp.json() == {"status": "enqueued", "phases": None}
+    mock_send.assert_called_once()
+    _args, _ = mock_send.call_args
+    # Third positional arg is phase_filter.
+    assert _args[2] is None
+
+
+@pytest.mark.asyncio
+async def test_manual_sync_with_phases_scopes_the_run(authed_super_admin_client, db):
+    """POST /sync with {phases: ["clients"]} enqueues a run limited to that
+    one phase. Dev-mode per-phase manual control.
+    """
+    client, user = authed_super_admin_client
+    conn_id = uuid.uuid4()
+    await db.execute(
+        text(
+            "INSERT INTO ats_connections (id, tenant_id, vendor, "
+            "credentials_ciphertext, created_by) "
+            "VALUES (:c, :t, 'ceipal', :ct, :u)"
+        ),
+        {"c": conn_id, "t": user.tenant_id, "ct": b"x", "u": user.id},
+    )
+    await db.flush()
+
+    with patch("app.modules.ats.actors.poll_ats_connection.send") as mock_send:
+        resp = await client.post(
+            f"/api/ats/connections/{conn_id}/sync",
+            json={"phases": ["clients"]},
+        )
+
+    assert resp.status_code == 202, resp.text
+    assert resp.json() == {"status": "enqueued", "phases": ["clients"]}
+    _args, _ = mock_send.call_args
+    assert _args[2] == ["clients"]
+
+
+@pytest.mark.asyncio
+async def test_manual_sync_unknown_phase_422(authed_super_admin_client, db):
+    """POST /sync with a phase name outside the closed enum → 422 from
+    Pydantic before the handler runs."""
+    client, user = authed_super_admin_client
+    conn_id = uuid.uuid4()
+    await db.execute(
+        text(
+            "INSERT INTO ats_connections (id, tenant_id, vendor, "
+            "credentials_ciphertext, created_by) "
+            "VALUES (:c, :t, 'ceipal', :ct, :u)"
+        ),
+        {"c": conn_id, "t": user.tenant_id, "ct": b"x", "u": user.id},
+    )
+    await db.flush()
+
+    resp = await client.post(
+        f"/api/ats/connections/{conn_id}/sync",
+        json={"phases": ["not-a-phase"]},
+    )
+    assert resp.status_code == 422, resp.text
 
 
 @pytest.mark.asyncio
@@ -397,16 +470,17 @@ async def test_get_job_statuses_422_on_credentials_invalid(
 
 
 @pytest.mark.asyncio
-async def test_put_job_status_filter_persists_and_triggers_sync(
+async def test_put_job_status_filter_persists_without_triggering_sync(
     authed_super_admin_client, db
 ):
-    """PUT /job-status-filter → 204, row persisted, follow-up sync enqueued.
+    """PUT /job-status-filter → 204, row persisted, NO follow-up sync.
 
-    Verifies:
+    Dev-mode manual control: the filter is persisted so the next
+    user-triggered jobs sync picks it up, but the PUT itself does not
+    enqueue anything. Verifies:
       1. Response is 204.
       2. The connection row's ``job_status_filter`` is updated.
-      3. ``poll_ats_connection.send`` was called with
-         phase_filter=['jobs', 'applicants', 'submissions'].
+      3. ``poll_ats_connection.send`` was NOT called.
     """
     client, user = authed_super_admin_client
     conn_id = uuid.uuid4()
@@ -436,14 +510,8 @@ async def test_put_job_status_filter_persists_and_triggers_sync(
     assert row is not None
     assert row.job_status_filter == {"ids": [1, 8], "names": ["Active", "Reactivated"]}
 
-    # Verify the follow-up sync was enqueued with the right phase_filter.
-    mock_send.assert_called_once()
-    _args, _kwargs = mock_send.call_args
-    phase_filter_arg = _args[2] if len(_args) >= 3 else None
-    assert phase_filter_arg == ["jobs", "applicants", "submissions"], (
-        f"Expected phase_filter=['jobs','applicants','submissions'], "
-        f"got {phase_filter_arg!r}"
-    )
+    # No sync should be enqueued by the PUT.
+    mock_send.assert_not_called()
 
 
 @pytest.mark.asyncio

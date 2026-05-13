@@ -15,6 +15,7 @@ import {
   triggerManualSync,
   type ATSConnection,
   type ATSSyncLog,
+  type ATSSyncPhase,
 } from "@/lib/api/ats";
 import { getFreshSupabaseToken } from "@/lib/auth/tokens";
 
@@ -52,17 +53,49 @@ export default function ConnectionDetailPage() {
       query.state.data?.some((l) => l.status === "running") ? 2000 : 10000,
   });
 
-  const syncNow = useMutation({
-    mutationFn: async () =>
-      triggerManualSync(await getFreshSupabaseToken(), connectionId),
-    onSuccess: () => {
-      toast.success("Sync queued. Logs refresh in 10 seconds.");
+  // One mutation, parameterised by phase scope. Passing ``undefined`` runs
+  // all five phases (Sync all); passing a single-element array scopes to
+  // one phase (per-phase dev controls). The button row below renders one
+  // button per phase plus a "Sync all".
+  const syncMutation = useMutation({
+    mutationFn: async (phases: ATSSyncPhase[] | undefined) =>
+      triggerManualSync(
+        await getFreshSupabaseToken(),
+        connectionId,
+        phases,
+      ),
+    onSuccess: (data) => {
+      const label =
+        data.phases && data.phases.length > 0
+          ? data.phases.join(", ")
+          : "all phases";
+      toast.success(`Sync queued (${label}).`);
       queryClient.invalidateQueries({
         queryKey: ["ats", "connection", connectionId, "sync-logs"],
       });
     },
     onError: () => toast.error("Could not trigger sync."),
   });
+
+  // Track which phase button is currently spinning so we can disable just
+  // that one (or "all") while the request is in flight.
+  const [pendingPhase, setPendingPhase] = useState<
+    ATSSyncPhase | "all" | null
+  >(null);
+  const triggerPhaseSync = (phases: ATSSyncPhase[] | undefined) => {
+    setPendingPhase(phases && phases.length === 1 ? phases[0] : "all");
+    syncMutation.mutate(phases, {
+      onSettled: () => setPendingPhase(null),
+    });
+  };
+
+  const PHASE_BUTTONS: { phase: ATSSyncPhase; label: string }[] = [
+    { phase: "clients", label: "Sync clients" },
+    { phase: "users", label: "Sync users" },
+    { phase: "jobs", label: "Sync jobs" },
+    { phase: "applicants", label: "Sync candidates" },
+    { phase: "submissions", label: "Sync submissions" },
+  ];
 
   const remove = useMutation({
     mutationFn: async () =>
@@ -137,10 +170,35 @@ export default function ConnectionDetailPage() {
         </div>
       )}
 
+      <section className="space-y-3">
+        <div>
+          <h2 className="text-lg font-medium text-zinc-900">Manual sync</h2>
+          <p className="text-xs text-zinc-500">
+            Trigger one phase at a time, or run all five. Each phase enqueues
+            its own Dramatiq job — fine-grained control for development.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {PHASE_BUTTONS.map(({ phase, label }) => (
+            <Button
+              key={phase}
+              variant="outline"
+              onClick={() => triggerPhaseSync([phase])}
+              disabled={syncMutation.isPending}
+            >
+              {pendingPhase === phase ? "Queueing…" : label}
+            </Button>
+          ))}
+          <Button
+            onClick={() => triggerPhaseSync(undefined)}
+            disabled={syncMutation.isPending}
+          >
+            {pendingPhase === "all" ? "Queueing…" : "Sync all"}
+          </Button>
+        </div>
+      </section>
+
       <div className="flex flex-wrap gap-2">
-        <Button onClick={() => syncNow.mutate()} disabled={syncNow.isPending}>
-          {syncNow.isPending ? "Queueing…" : "Sync now"}
-        </Button>
         <Button
           variant="outline"
           onClick={() =>

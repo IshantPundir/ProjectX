@@ -34,15 +34,42 @@ describe('ats api wrappers', () => {
     )
   })
 
-  it('triggerManualSync POSTs to /sync', async () => {
+  it('triggerManualSync POSTs to /sync with no body when no phases passed', async () => {
     const mock = vi
       .mocked(client.apiFetch)
-      .mockResolvedValue({ status: 'enqueued' })
+      .mockResolvedValue({ status: 'enqueued', phases: null })
     const { triggerManualSync } = await import('@/lib/api/ats')
     await triggerManualSync('tok', 'conn-123')
     expect(mock).toHaveBeenCalledWith(
       '/api/ats/connections/conn-123/sync',
-      expect.objectContaining({ method: 'POST' }),
+      expect.objectContaining({ method: 'POST', body: undefined }),
+    )
+  })
+
+  it('triggerManualSync POSTs {phases: [...]} when phases passed', async () => {
+    const mock = vi
+      .mocked(client.apiFetch)
+      .mockResolvedValue({ status: 'enqueued', phases: ['clients'] })
+    const { triggerManualSync } = await import('@/lib/api/ats')
+    await triggerManualSync('tok', 'conn-123', ['clients'])
+    expect(mock).toHaveBeenCalledWith(
+      '/api/ats/connections/conn-123/sync',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ phases: ['clients'] }),
+      }),
+    )
+  })
+
+  it('triggerManualSync omits body when empty phases array passed', async () => {
+    const mock = vi
+      .mocked(client.apiFetch)
+      .mockResolvedValue({ status: 'enqueued', phases: null })
+    const { triggerManualSync } = await import('@/lib/api/ats')
+    await triggerManualSync('tok', 'conn-123', [])
+    expect(mock).toHaveBeenCalledWith(
+      '/api/ats/connections/conn-123/sync',
+      expect.objectContaining({ method: 'POST', body: undefined }),
     )
   })
 })
