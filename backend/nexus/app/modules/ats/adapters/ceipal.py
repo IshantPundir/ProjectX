@@ -313,12 +313,17 @@ class CeipalAdapter:
         since: datetime | None = None,
         job_status_ids: list[int] | None = None,
     ) -> int:
-        """GET /getJobPostingsList/?limit=1&jobStatus=...
+        """GET /getJobPostingsList/?limit=5&jobStatus=...
 
         Reads ``envelope.count`` from the first-page response. One HTTP call,
         consumes one pacing slot. 404 means "no rows match the filter" → 0.
+
+        ``limit=5`` is the documented minimum (Ceipal accepts 5-50); sending
+        ``limit=1`` returns a 400. We only read ``envelope.count`` which is
+        independent of the page size, so the smallest legal limit minimises
+        the bytes-on-wire while staying inside the contract.
         """
-        params: dict = {"limit": 1, **self._format_since(since)}
+        params: dict = {"limit": 5, **self._format_since(since)}
         if job_status_ids:
             params["jobStatus"] = ",".join(str(i) for i in job_status_ids)
         response = await self._request("GET", "/getJobPostingsList/", params=params)

@@ -270,22 +270,51 @@ async def test_list_job_statuses_raises_on_non_list_body():
 
 @pytest.mark.asyncio
 async def test_count_jobs_reads_envelope_count():
-    """count_jobs hits /getJobPostingsList/?limit=1 and returns envelope.count."""
+    """count_jobs hits /getJobPostingsList/?limit=5 and returns envelope.count.
+
+    ``limit=5`` is Ceipal's documented minimum (the API rejects anything
+    below 5 with a 400). ``envelope.count`` is the total-match count
+    regardless of page size, so reading the first page of 5 is the
+    smallest legal request that still gives us the denominator.
+    """
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured["params"] = dict(request.url.params)
         return httpx.Response(200, json={
-            "count": 662, "num_pages": 1, "page_number": 1, "limit": 1,
-            "next": "", "previous": "",
+            "count": 662, "num_pages": 133, "page_number": 1, "limit": 5,
+            "next": "https://api.ceipal.com/v2/getJobPostingsList/?page=2",
+            "previous": "",
             "results": [{"id": "first"}],
         })
 
     a = _adapter(handler)
     total = await a.count_jobs(job_status_ids=[1, 8])
     assert total == 662
-    assert captured["params"]["limit"] == "1"
+    assert captured["params"]["limit"] == "5"
     assert captured["params"]["jobStatus"] == "1,8"
+
+
+@pytest.mark.asyncio
+async def test_count_jobs_uses_documented_minimum_limit():
+    """Regression guard for the 2026-05-13 incident where ``count_jobs``
+    sent ``limit=1`` (below Ceipal's documented minimum of 5). The API
+    rejected it, ``count_jobs`` raised, the importer fell back to
+    ``total=-1``, and the UI showed an indeterminate progress bar.
+    """
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["limit"] = request.url.params.get("limit")
+        return httpx.Response(200, json={
+            "count": 10, "num_pages": 2, "page_number": 1, "limit": 5,
+            "next": "", "previous": "", "results": [],
+        })
+
+    a = _adapter(handler)
+    await a.count_jobs()
+    # Ceipal rejects below-5; we send exactly 5.
+    assert captured["limit"] == "5"
 
 
 @pytest.mark.asyncio

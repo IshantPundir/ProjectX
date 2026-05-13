@@ -278,9 +278,9 @@ async def test_jobs_phase_writes_progress_per_row(db, jobs_fixture, monkeypatch)
 
     calls = []
     original = ATSImporter._write_jobs_progress
-    async def spy(prog_db, log_id, processed, total, tenant_id):
+    async def spy(log_id, processed, total, tenant_id):
         calls.append((processed, total))
-        await original(prog_db, log_id, processed, total, tenant_id)
+        await original(log_id, processed, total, tenant_id)
     monkeypatch.setattr(ATSImporter, "_write_jobs_progress", staticmethod(spy))
 
     importer = ATSImporter()
@@ -300,21 +300,27 @@ async def test_jobs_phase_writes_progress_per_row(db, jobs_fixture, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_write_jobs_progress_reissues_tenant_set_local():
-    """Production bug guard: each progress write must re-issue SET LOCAL
-    app.current_tenant. PostgreSQL clears the GUC on transaction commit
-    (SET LOCAL is transaction-scoped), and prog_db.commit() inside
-    _write_jobs_progress ends its transaction. Without re-binding before
-    each UPDATE, the second-and-onward writes would silently no-op under
-    tenant_isolation RLS.
+async def test_write_jobs_progress_opens_fresh_session_per_call(monkeypatch):
+    """Production bug guard: each call must open its OWN ``get_bypass_session``
+    rather than reusing a long-lived one. A shared session would close its
+    ``begin()`` context after the first ``commit()``, causing the next
+    write to raise ``InvalidRequestError: Can't operate on closed
+    transaction inside context manager.`` (Reproduces the production crash
+    we saw on commit 27dc72f.)
 
-    We can't exercise the real transaction boundary in this test suite
-    (the conftest's patched_bypass_session shims commit -> flush), so we
-    verify the SQL stream directly.
+    The test asserts:
+      1. ``get_bypass_session`` is entered exactly once per call.
+      2. Within that session, SET LOCAL fires before the UPDATE.
+      3. The function does NOT call ``commit()`` explicitly — the outer
+         ``session.begin()`` inside ``get_bypass_session`` is responsible.
     """
+    from contextlib import asynccontextmanager
+
+    from app.modules.ats import importer as importer_mod
     from app.modules.ats.importer import ATSImporter
 
-    calls = []
+    sessions_opened = 0
+    calls: list = []
 
     class FakeSession:
         async def execute(self, stmt, params=None):
@@ -323,36 +329,67 @@ async def test_write_jobs_progress_reissues_tenant_set_local():
         async def commit(self):
             calls.append(("COMMIT", None))
 
-    tenant_id = uuid.uuid4()
-    sync_log_id = uuid.uuid4()
-    await ATSImporter._write_jobs_progress(
-        FakeSession(), sync_log_id, processed=5, total=10, tenant_id=tenant_id,
+    @asynccontextmanager
+    async def fake_get_bypass_session():
+        nonlocal sessions_opened
+        sessions_opened += 1
+        yield FakeSession()
+
+    monkeypatch.setattr(
+        importer_mod, "get_bypass_session", fake_get_bypass_session,
     )
 
-    # First call must be SET LOCAL with the tenant; second must be the UPDATE.
+    tenant_id = uuid.uuid4()
+    sync_log_id = uuid.uuid4()
+
+    # Two calls — proves the per-call session pattern under repeated use.
+    await ATSImporter._write_jobs_progress(
+        sync_log_id, processed=0, total=10, tenant_id=tenant_id,
+    )
+    await ATSImporter._write_jobs_progress(
+        sync_log_id, processed=1, total=10, tenant_id=tenant_id,
+    )
+
+    # Two sessions opened, one per call.
+    assert sessions_opened == 2
+
+    # No explicit COMMIT — the outer get_bypass_session()'s session.begin()
+    # commits at context exit. If we ever called commit() here, it would
+    # close the begin-context and the next execute() would raise.
+    assert not any(c[0] == "COMMIT" for c in calls)
+
+    # Per call: SET LOCAL app.current_tenant -> UPDATE ats_sync_logs, in
+    # that order, with the right tenant_id interpolated.
     assert "SET LOCAL app.current_tenant" in calls[0][0]
     assert str(tenant_id) in calls[0][0]
     assert "UPDATE ats_sync_logs" in calls[1][0]
-    assert calls[2] == ("COMMIT", None)
+    assert "SET LOCAL app.current_tenant" in calls[2][0]
+    assert "UPDATE ats_sync_logs" in calls[3][0]
 
 
 @pytest.mark.asyncio
-async def test_write_jobs_progress_no_op_when_sync_log_id_none():
-    """When sync_log_id is None, _write_jobs_progress should NOT issue any
-    SQL — not even the SET LOCAL — so it's safe to call from test paths
-    that don't care about progress."""
+async def test_write_jobs_progress_no_op_when_sync_log_id_none(monkeypatch):
+    """When sync_log_id is None, ``_write_jobs_progress`` returns immediately
+    without even opening a bypass-RLS session — important so test paths
+    that don't care about progress don't pay session-setup cost."""
+    from contextlib import asynccontextmanager
+
+    from app.modules.ats import importer as importer_mod
     from app.modules.ats.importer import ATSImporter
 
-    calls = []
+    opens = 0
 
-    class FakeSession:
-        async def execute(self, stmt, params=None):
-            calls.append(stmt)
+    @asynccontextmanager
+    async def fake_get_bypass_session():
+        nonlocal opens
+        opens += 1
+        yield None
 
-        async def commit(self):
-            calls.append("COMMIT")
+    monkeypatch.setattr(
+        importer_mod, "get_bypass_session", fake_get_bypass_session,
+    )
 
     await ATSImporter._write_jobs_progress(
-        FakeSession(), None, processed=5, total=10, tenant_id=uuid.uuid4(),
+        None, processed=5, total=10, tenant_id=uuid.uuid4(),
     )
-    assert calls == []
+    assert opens == 0

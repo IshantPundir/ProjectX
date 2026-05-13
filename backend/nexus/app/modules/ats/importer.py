@@ -322,125 +322,122 @@ class ATSImporter:
             logger.warning("ats.sync.jobs.count_failed", error=str(exc)[:200])
             total = -1
 
-        # Second bypass-RLS session strictly for progress writes. Main `db`
-        # keeps its long phase transaction so phase rollback is clean.
-        # NOTE: no outer SET LOCAL here — each _write_jobs_progress call
-        # re-issues it before its own UPDATE (see that method's docstring).
-        async with get_bypass_session() as prog_db:
-            await self._write_jobs_progress(prog_db, sync_log_id, 0, total, tenant_id)
+        # Each call to ``_write_jobs_progress`` opens its own bypass-RLS
+        # session — see that method's docstring for why a long-lived shared
+        # session doesn't work with per-row commits.
+        await self._write_jobs_progress(sync_log_id, 0, total, tenant_id)
 
-            processed = 0
-            async for payload in adapter.list_jobs(since=since, job_status_ids=status_ids):
-                mapping = None
-                if payload.external_client_id:
-                    mapping = await db.scalar(
-                        select(ATSClientMapping).where(
-                            ATSClientMapping.tenant_id == tenant_id,
-                            ATSClientMapping.ats_vendor == adapter.vendor,
-                            ATSClientMapping.external_client_id == payload.external_client_id,
-                        )
-                    )
-                if mapping is None and payload.external_client_name:
-                    mapping = await db.scalar(
-                        select(ATSClientMapping).where(
-                            ATSClientMapping.tenant_id == tenant_id,
-                            ATSClientMapping.ats_vendor == adapter.vendor,
-                            ATSClientMapping.external_client_name == payload.external_client_name,
-                        )
-                    )
-                if mapping is None:
-                    logger.warning(
-                        "ats.sync.jobs.skipped_missing_client_mapping",
-                        external_job_id=payload.external_id,
-                        external_client_id=payload.external_client_id,
-                        external_client_name=payload.external_client_name,
-                    )
-                    result.skipped += 1
-                    processed += 1
-                    await self._write_jobs_progress(prog_db, sync_log_id, processed, total, tenant_id)
-                    continue
-
-                org_unit = await db.get(OrganizationalUnit, mapping.org_unit_id)
-                target_status = (
-                    "blocked_pending_client_setup"
-                    if org_unit.company_profile_completion_status == "pending"
-                    else "draft"
-                )
-
-                existing = await db.scalar(
-                    select(JobPosting).where(
-                        JobPosting.tenant_id == tenant_id,
-                        JobPosting.source == f"ats_{adapter.vendor}",
-                        JobPosting.external_id == payload.external_id,
+        processed = 0
+        async for payload in adapter.list_jobs(since=since, job_status_ids=status_ids):
+            mapping = None
+            if payload.external_client_id:
+                mapping = await db.scalar(
+                    select(ATSClientMapping).where(
+                        ATSClientMapping.tenant_id == tenant_id,
+                        ATSClientMapping.ats_vendor == adapter.vendor,
+                        ATSClientMapping.external_client_id == payload.external_client_id,
                     )
                 )
-                if existing is not None:
-                    existing.title = payload.title
-                    if payload.description:
-                        existing.description_raw = payload.description
-                    existing.external_status = payload.status
-                    if payload.location:
-                        existing.location = payload.location
-                    if payload.employment_type:
-                        existing.employment_type = payload.employment_type
-                    if payload.work_arrangement:
-                        existing.work_arrangement = payload.work_arrangement
-                    existing.salary_range_min = payload.salary_range_min
-                    existing.salary_range_max = payload.salary_range_max
-                    existing.salary_currency = payload.salary_currency
-                    job_id = existing.id
-                    result.updated += 1
-                else:
-                    jp = JobPosting(
-                        tenant_id=tenant_id, org_unit_id=org_unit.id,
-                        title=payload.title,
-                        description_raw=payload.description or "",
-                        status=target_status,
-                        source=f"ats_{adapter.vendor}",
-                        external_id=payload.external_id,
-                        external_status=payload.status,
-                        location=payload.location,
-                        employment_type=payload.employment_type,
-                        work_arrangement=payload.work_arrangement,
-                        salary_range_min=payload.salary_range_min,
-                        salary_range_max=payload.salary_range_max,
-                        salary_currency=payload.salary_currency,
-                        created_by=created_by,
+            if mapping is None and payload.external_client_name:
+                mapping = await db.scalar(
+                    select(ATSClientMapping).where(
+                        ATSClientMapping.tenant_id == tenant_id,
+                        ATSClientMapping.ats_vendor == adapter.vendor,
+                        ATSClientMapping.external_client_name == payload.external_client_name,
                     )
-                    db.add(jp)
-                    await db.flush()
-                    job_id = jp.id
-                    await log_event(
-                        db, tenant_id=tenant_id, actor_id=created_by,
-                        actor_email="ats-import",
-                        action="jd.imported_from_ats",
-                        resource="job_posting", resource_id=jp.id,
-                        payload={"vendor": adapter.vendor,
-                                 "external_id": payload.external_id,
-                                 "target_status": target_status},
-                    )
-                    result.new += 1
-
-                # Replace-all recruiter assignments
-                await db.execute(
-                    text("DELETE FROM ats_job_recruiter_assignments "
-                         "WHERE tenant_id = :t AND job_posting_id = :j "
-                         "AND ats_vendor = :v"),
-                    {"t": tenant_id, "j": job_id, "v": adapter.vendor},
                 )
-                for rid in payload.assigned_recruiter_external_ids:
-                    db.add(ATSJobRecruiterAssignment(
-                        tenant_id=tenant_id, job_posting_id=job_id,
-                        ats_vendor=adapter.vendor, external_user_id=rid,
-                    ))
-
+            if mapping is None:
+                logger.warning(
+                    "ats.sync.jobs.skipped_missing_client_mapping",
+                    external_job_id=payload.external_id,
+                    external_client_id=payload.external_client_id,
+                    external_client_name=payload.external_client_name,
+                )
+                result.skipped += 1
                 processed += 1
-                await self._write_jobs_progress(prog_db, sync_log_id, processed, total, tenant_id)
+                await self._write_jobs_progress(sync_log_id, processed, total, tenant_id)
+                continue
+
+            org_unit = await db.get(OrganizationalUnit, mapping.org_unit_id)
+            target_status = (
+                "blocked_pending_client_setup"
+                if org_unit.company_profile_completion_status == "pending"
+                else "draft"
+            )
+
+            existing = await db.scalar(
+                select(JobPosting).where(
+                    JobPosting.tenant_id == tenant_id,
+                    JobPosting.source == f"ats_{adapter.vendor}",
+                    JobPosting.external_id == payload.external_id,
+                )
+            )
+            if existing is not None:
+                existing.title = payload.title
+                if payload.description:
+                    existing.description_raw = payload.description
+                existing.external_status = payload.status
+                if payload.location:
+                    existing.location = payload.location
+                if payload.employment_type:
+                    existing.employment_type = payload.employment_type
+                if payload.work_arrangement:
+                    existing.work_arrangement = payload.work_arrangement
+                existing.salary_range_min = payload.salary_range_min
+                existing.salary_range_max = payload.salary_range_max
+                existing.salary_currency = payload.salary_currency
+                job_id = existing.id
+                result.updated += 1
+            else:
+                jp = JobPosting(
+                    tenant_id=tenant_id, org_unit_id=org_unit.id,
+                    title=payload.title,
+                    description_raw=payload.description or "",
+                    status=target_status,
+                    source=f"ats_{adapter.vendor}",
+                    external_id=payload.external_id,
+                    external_status=payload.status,
+                    location=payload.location,
+                    employment_type=payload.employment_type,
+                    work_arrangement=payload.work_arrangement,
+                    salary_range_min=payload.salary_range_min,
+                    salary_range_max=payload.salary_range_max,
+                    salary_currency=payload.salary_currency,
+                    created_by=created_by,
+                )
+                db.add(jp)
+                await db.flush()
+                job_id = jp.id
+                await log_event(
+                    db, tenant_id=tenant_id, actor_id=created_by,
+                    actor_email="ats-import",
+                    action="jd.imported_from_ats",
+                    resource="job_posting", resource_id=jp.id,
+                    payload={"vendor": adapter.vendor,
+                             "external_id": payload.external_id,
+                             "target_status": target_status},
+                )
+                result.new += 1
+
+            # Replace-all recruiter assignments
+            await db.execute(
+                text("DELETE FROM ats_job_recruiter_assignments "
+                     "WHERE tenant_id = :t AND job_posting_id = :j "
+                     "AND ats_vendor = :v"),
+                {"t": tenant_id, "j": job_id, "v": adapter.vendor},
+            )
+            for rid in payload.assigned_recruiter_external_ids:
+                db.add(ATSJobRecruiterAssignment(
+                    tenant_id=tenant_id, job_posting_id=job_id,
+                    ats_vendor=adapter.vendor, external_user_id=rid,
+                ))
+
+            processed += 1
+            await self._write_jobs_progress(sync_log_id, processed, total, tenant_id)
         return result
 
     @staticmethod
     async def _write_jobs_progress(
-        prog_db: AsyncSession,
         sync_log_id: UUID | None,
         processed: int,
         total: int,
@@ -448,28 +445,42 @@ class ATSImporter:
     ) -> None:
         """Update ats_sync_logs.progress with the jobs-phase counter.
 
-        Re-issues ``SET LOCAL app.current_tenant`` before each write because
-        ``prog_db.commit()`` ends the transaction and PostgreSQL clears the GUC
-        at transaction boundary. Without re-binding, all writes after the first
-        commit would silently match zero rows under tenant_isolation RLS.
+        Each call opens its OWN ``get_bypass_session()`` context. We can't
+        share a long-lived session here: ``get_bypass_session`` enters
+        ``async with session.begin()`` internally, and calling
+        ``session.commit()`` on the inner session ends the begin-context the
+        first time. The next ``session.execute(...)`` would raise
+        ``InvalidRequestError: Can't operate on closed transaction inside
+        context manager.`` Per-call sessions sidestep that — each call is a
+        complete begin → SET LOCAL → UPDATE → commit cycle, and the context
+        manager commits at exit (no manual commit needed).
 
-        No-op when ``sync_log_id`` is None (test paths that don't care about progress).
+        ``SET LOCAL app.current_tenant`` is the only RLS gate needed: the
+        ``service_bypass`` policy on ``ats_sync_logs`` requires
+        ``app.bypass_rls = 'true'`` which ``get_bypass_session`` sets
+        itself; the ``tenant_isolation`` policy needs the tenant uuid to
+        match the row. Either policy alone admits the UPDATE.
+
+        No-op when ``sync_log_id`` is None (test paths that don't care
+        about progress).
         """
         if sync_log_id is None:
             return
-        await prog_db.execute(
-            text(f"SET LOCAL app.current_tenant = '{tenant_id}'")
-        )
         payload = json.dumps({"processed": processed, "total": total})
-        await prog_db.execute(
-            text(
-                "UPDATE ats_sync_logs "
-                "SET progress = jsonb_set(progress, '{jobs}', CAST(:p AS jsonb)) "
-                "WHERE id = :id"
-            ),
-            {"p": payload, "id": sync_log_id},
-        )
-        await prog_db.commit()
+        async with get_bypass_session() as prog_db:
+            await prog_db.execute(
+                text(f"SET LOCAL app.current_tenant = '{tenant_id}'")
+            )
+            await prog_db.execute(
+                text(
+                    "UPDATE ats_sync_logs "
+                    "SET progress = jsonb_set(progress, '{jobs}', CAST(:p AS jsonb)) "
+                    "WHERE id = :id"
+                ),
+                {"p": payload, "id": sync_log_id},
+            )
+            # The outer ``session.begin()`` inside get_bypass_session
+            # commits on context exit. Do NOT call prog_db.commit() here.
 
     async def _sync_applicants(self, db, adapter, sync_log_id=None) -> PhaseResult:
         """Phase 4: applicants → candidates via import_candidate.
