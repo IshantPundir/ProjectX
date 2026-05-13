@@ -249,3 +249,108 @@ async def test_sync_users_autolinks_on_email_update(db, importer_fixture):
     assert row is not None
     assert str(row.internal_user_id) == user_id
     assert row.mapped_at is not None
+
+
+@pytest.mark.asyncio
+async def test_sync_clients_promotes_stub_to_real_external_id(
+    db, importer_fixture,
+):
+    """When _sync_clients later returns a real Ceipal id for a client that
+    already exists as a stub (created by an earlier _sync_jobs run), the
+    stub mapping is PROMOTED in place: external_client_id is rewritten to
+    the real id, source_metadata is replaced with the Ceipal payload's
+    contacts+raw, last_synced_at advances. The org_unit is untouched —
+    same row, same id, same completion_status='pending', same
+    company_profile (the recruiter's in-flight profile work survives).
+
+    Audit row 'ats.client_mapping.promoted' is written with from/to ids.
+    """
+    from app.modules.ats.importer import ATSImporter
+
+    tenant_id, _user_id, root_unit_id = importer_fixture
+
+    # Pre-seed: a stub created by an earlier jobs-phase run for "Oracle".
+    stub_unit_id = uuid.uuid4()
+    original_synced_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    await db.execute(
+        text(
+            "INSERT INTO organizational_units "
+            "(id, client_id, parent_unit_id, name, unit_type, is_root, "
+            "company_profile, company_profile_completion_status) "
+            "VALUES (:o, :t, :p, 'Oracle', 'client_account', false, "
+            "'{\"name\": \"Oracle\"}', 'pending')"
+        ),
+        {"o": stub_unit_id, "t": tenant_id, "p": root_unit_id},
+    )
+    await db.execute(
+        text(
+            "INSERT INTO ats_client_mappings "
+            "(tenant_id, ats_vendor, external_client_id, external_client_name, "
+            " org_unit_id, source_metadata, last_synced_at) "
+            "VALUES (:t, 'ceipal', 'name:Oracle', 'Oracle', :o, "
+            " :sm, :s)"
+        ),
+        {
+            "t": tenant_id, "o": stub_unit_id, "s": original_synced_at,
+            "sm": '{"stub": true, "origin": "jobs_phase"}',
+        },
+    )
+    await db.flush()
+
+    # _sync_clients now returns Oracle with its real Ceipal id.
+    payload = ATSClientPayload(
+        external_id="ABC123",
+        name="Oracle",
+        website="www.oracle.com",
+        industry="Computer Software",
+        contacts=[{"email": "ops@oracle.com"}],
+        raw={"id": "ABC123", "name": "Oracle"},
+        fetched_at=datetime.now(tz=timezone.utc),
+    )
+    adapter = _adapter_with_clients(uuid.UUID(tenant_id), [payload], [])
+
+    importer = ATSImporter()
+    result = await importer._run_phase("clients", importer._sync_clients, adapter)
+    assert result.updated == 1
+    assert result.new == 0
+
+    # Mapping promoted: synthetic id replaced by real id; metadata refreshed.
+    mapping_row = await db.execute(text(
+        "SELECT external_client_id, external_client_name, source_metadata, "
+        "last_synced_at, org_unit_id::text AS org_unit_id "
+        "FROM ats_client_mappings "
+        "WHERE tenant_id = :t AND external_client_name = 'Oracle'"
+    ), {"t": tenant_id})
+    rows = mapping_row.all()
+    assert len(rows) == 1  # exactly one mapping (no duplicate created)
+    m = rows[0]
+    assert m.external_client_id == "ABC123"
+    assert m.source_metadata == {
+        "contacts": [{"email": "ops@oracle.com"}],
+        "raw": {"id": "ABC123", "name": "Oracle"},
+    }
+    assert m.last_synced_at > original_synced_at
+    assert m.org_unit_id == str(stub_unit_id)
+
+    # Org_unit untouched: same row, completion_status still pending.
+    unit_row = await db.execute(text(
+        "SELECT id::text AS id, name, company_profile_completion_status, "
+        "company_profile "
+        "FROM organizational_units WHERE id = :o"
+    ), {"o": stub_unit_id})
+    u = unit_row.one()
+    assert u.id == str(stub_unit_id)
+    assert u.name == "Oracle"
+    assert u.company_profile_completion_status == "pending"
+    assert u.company_profile == {"name": "Oracle"}
+
+    # Promotion audit row written.
+    audit_row = await db.execute(text(
+        "SELECT action, payload FROM audit_log "
+        "WHERE tenant_id = :t AND action = 'ats.client_mapping.promoted' "
+        "ORDER BY created_at DESC LIMIT 1"
+    ), {"t": tenant_id})
+    a = audit_row.one()
+    assert a.payload["from_external_client_id"] == "name:Oracle"
+    assert a.payload["to_external_client_id"] == "ABC123"
+    assert a.payload["vendor"] == "ceipal"

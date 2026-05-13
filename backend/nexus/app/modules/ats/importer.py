@@ -170,6 +170,46 @@ class ATSImporter:
                 result.updated += 1
                 continue
 
+            # Promotion: a stub mapping (synthetic id "name:<name>") created
+            # by an earlier _sync_jobs run is upgraded in place when Ceipal
+            # now returns the real client id. We rewrite external_client_id
+            # to the real id and refresh source_metadata, but leave the
+            # linked org_unit alone so the recruiter's in-flight profile
+            # completion work survives the promotion. See spec
+            # docs/superpowers/specs/2026-05-13-ats-job-sync-client-stub-design.md.
+            promotable = await db.scalar(
+                select(ATSClientMapping).where(
+                    ATSClientMapping.tenant_id == tenant_id,
+                    ATSClientMapping.ats_vendor == adapter.vendor,
+                    ATSClientMapping.external_client_name == payload.name,
+                    ATSClientMapping.external_client_id.like("name:%"),
+                )
+            )
+            if promotable is not None:
+                from_id = promotable.external_client_id
+                promotable.external_client_id = payload.external_id
+                promotable.source_metadata = {
+                    "contacts": payload.contacts,
+                    "raw": payload.raw,
+                }
+                promotable.last_synced_at = datetime.now(tz=UTC)
+                await log_event(
+                    db,
+                    tenant_id=tenant_id,
+                    actor_id=created_by,
+                    actor_email="ats-import",
+                    action="ats.client_mapping.promoted",
+                    resource="ats_client_mapping",
+                    resource_id=promotable.org_unit_id,
+                    payload={
+                        "vendor": adapter.vendor,
+                        "from_external_client_id": from_id,
+                        "to_external_client_id": payload.external_id,
+                    },
+                )
+                result.updated += 1
+                continue
+
             # Create the org_unit with stub profile
             stub = {
                 "name": payload.name,
