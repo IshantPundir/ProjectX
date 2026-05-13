@@ -504,12 +504,37 @@ class ATSImporter:
                     ATSClientMapping.external_client_name == payload.external_client_name,
                 )
             )
-        # No client mapping → import the job unlinked. org_unit_id stays
-        # NULL; status is 'blocked_pending_client_setup' (same status used
-        # for mapped-but-profile-pending; the org_unit_id NULL/NOT NULL
-        # distinction is what the UI uses to render 'Not set up' vs
-        # 'Awaiting setup'). The recruiter wires the org_unit later via
-        # a separate flow.
+
+        # Stub-creation step: a job with a client NAME but no matching
+        # mapping triggers auto-creation of a stub client_account org_unit
+        # so the recruiter has a row to act on (complete the company
+        # profile) under /settings/org-units. The job is linked to the
+        # stub; status stays 'blocked_pending_client_setup' until the
+        # profile is completed.
+        if mapping is None and payload.external_client_name:
+            root = await db.scalar(
+                select(OrganizationalUnit).where(
+                    OrganizationalUnit.client_id == tenant_id,
+                    OrganizationalUnit.is_root.is_(True),
+                )
+            )
+            if root is None:
+                raise RuntimeError(
+                    f"tenant {tenant_id} has no root company org_unit"
+                )
+            org_unit, mapping = await self._get_or_create_client_stub_by_name(
+                db,
+                tenant_id=tenant_id,
+                vendor=adapter.vendor,
+                external_client_name=payload.external_client_name,
+                created_by=created_by,
+                root_org_unit_id=root.id,
+            )
+
+        # No client info at all (empty/None name) → import unlinked.
+        # org_unit_id stays NULL; the /jobs page's 'Not set up' chip
+        # renders for this narrow case only. The recruiter wires the
+        # job to an org_unit later via a separate flow.
         if mapping is None:
             logger.info(
                 "ats.sync.jobs.imported_unlinked",
@@ -594,6 +619,90 @@ class ATSImporter:
                 tenant_id=tenant_id, job_posting_id=job_id,
                 ats_vendor=adapter.vendor, external_user_id=rid,
             ))
+
+    async def _get_or_create_client_stub_by_name(
+        self,
+        db,
+        *,
+        tenant_id: UUID,
+        vendor: str,
+        external_client_name: str,
+        created_by: UUID,
+        root_org_unit_id: UUID,
+    ):
+        """Look up or create a stub client_account org_unit + mapping pair
+        for a Ceipal job whose ``client`` field is a name with no matching
+        ``ats_client_mappings`` row.
+
+        Idempotent: returns the existing stub if one already exists under
+        the synthetic id ``"name:" + external_client_name``. Otherwise
+        inserts a new ``OrganizationalUnit`` (parented at the tenant's
+        root) and a paired ``ATSClientMapping`` and writes an audit row.
+
+        Returns ``(org_unit, mapping)``.
+
+        Called from ``_upsert_job_payload`` when both existing mapping
+        lookups miss and the payload carries a non-empty
+        ``external_client_name``. ``_sync_clients`` does not use this
+        helper — it already has its own create path and follows up with
+        a promotion check (see ``_sync_clients``).
+        """
+        from app.modules.ats.models import ATSClientMapping
+        from app.modules.org_units.models import OrganizationalUnit
+
+        synthetic_id = f"name:{external_client_name}"
+
+        existing = await db.scalar(
+            select(ATSClientMapping).where(
+                ATSClientMapping.tenant_id == tenant_id,
+                ATSClientMapping.ats_vendor == vendor,
+                ATSClientMapping.external_client_id == synthetic_id,
+            )
+        )
+        if existing is not None:
+            org_unit = await db.get(OrganizationalUnit, existing.org_unit_id)
+            return org_unit, existing
+
+        org_unit = OrganizationalUnit(
+            client_id=tenant_id,
+            parent_unit_id=root_org_unit_id,
+            name=external_client_name,
+            unit_type="client_account",
+            is_root=False,
+            company_profile={"name": external_client_name},
+            company_profile_completion_status="pending",
+            created_by=created_by,
+        )
+        db.add(org_unit)
+        await db.flush()
+
+        mapping = ATSClientMapping(
+            tenant_id=tenant_id,
+            ats_vendor=vendor,
+            external_client_id=synthetic_id,
+            external_client_name=external_client_name,
+            org_unit_id=org_unit.id,
+            source_metadata={"stub": True, "origin": "jobs_phase"},
+        )
+        db.add(mapping)
+
+        await log_event(
+            db,
+            tenant_id=tenant_id,
+            actor_id=created_by,
+            actor_email="ats-import",
+            action="ats.client_mapping.created",
+            resource="ats_client_mapping",
+            resource_id=org_unit.id,
+            payload={
+                "vendor": vendor,
+                "external_client_id": synthetic_id,
+                "org_unit_id": str(org_unit.id),
+                "stub": True,
+                "origin": "jobs_phase",
+            },
+        )
+        return org_unit, mapping
 
     @staticmethod
     async def _write_jobs_progress(

@@ -611,6 +611,83 @@ async def test_write_jobs_progress_opens_fresh_session_per_call(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_sync_jobs_creates_stub_for_unknown_client_name(db, jobs_fixture):
+    """A Ceipal job whose `client` name has no matching ats_client_mappings
+    row triggers auto-creation of a stub client_account org_unit + paired
+    stub mapping. The job is linked to the new stub with
+    status='blocked_pending_client_setup'.
+
+    Synthetic external_client_id format: 'name:' + external_client_name.
+    Stub mapping carries source_metadata={"stub": True, "origin": "jobs_phase"}.
+    Stub org_unit carries company_profile_completion_status='pending' and
+    company_profile={"name": <name>}.
+    """
+    from app.modules.ats.importer import ATSImporter
+
+    tenant_id, _user_id, root_unit_id, _pending_unit, _complete_unit = jobs_fixture
+    job = ATSJobPayload(
+        external_id="j-stub",
+        external_client_id="",  # Ceipal jobs never carry a stable client id
+        external_client_name="Oracle",  # not in seeded mappings (P, C)
+        title="Java Engineer",
+        status="Active",
+        raw={"client": "Oracle"},
+        fetched_at=datetime.now(tz=timezone.utc),
+    )
+    adapter = _jobs_adapter(tenant_id, [job])
+    importer = ATSImporter()
+    result = await importer._run_phase("jobs", importer._sync_jobs, adapter)
+    assert result.new == 1
+    assert result.skipped == 0
+
+    # Stub org_unit was created under the tenant's root.
+    unit_row = await db.execute(text(
+        "SELECT id::text AS id, name, unit_type, parent_unit_id::text AS parent_id, "
+        "company_profile, company_profile_completion_status "
+        "FROM organizational_units "
+        "WHERE client_id = :t AND name = 'Oracle'"
+    ), {"t": tenant_id})
+    u = unit_row.one()
+    assert u.unit_type == "client_account"
+    assert u.parent_id == root_unit_id
+    assert u.company_profile_completion_status == "pending"
+    assert u.company_profile == {"name": "Oracle"}
+
+    # Paired stub mapping with synthetic id and origin metadata.
+    mapping_row = await db.execute(text(
+        "SELECT external_client_id, external_client_name, source_metadata, "
+        "org_unit_id::text AS org_unit_id "
+        "FROM ats_client_mappings "
+        "WHERE tenant_id = :t AND ats_vendor = 'ceipal' "
+        "AND external_client_name = 'Oracle'"
+    ), {"t": tenant_id})
+    m = mapping_row.one()
+    assert m.external_client_id == "name:Oracle"
+    assert m.source_metadata == {"stub": True, "origin": "jobs_phase"}
+    assert m.org_unit_id == u.id
+
+    # Job linked to the stub with the blocked status.
+    job_row = await db.execute(text(
+        "SELECT status, org_unit_id::text AS org_unit_id "
+        "FROM job_postings WHERE tenant_id = :t AND external_id = 'j-stub'"
+    ), {"t": tenant_id})
+    j = job_row.one()
+    assert j.status == "blocked_pending_client_setup"
+    assert j.org_unit_id == u.id
+
+    # Audit log row written with stub origin marker.
+    audit_row = await db.execute(text(
+        "SELECT action, payload FROM audit_log "
+        "WHERE tenant_id = :t AND action = 'ats.client_mapping.created' "
+        "ORDER BY created_at DESC LIMIT 1"
+    ), {"t": tenant_id})
+    a = audit_row.one()
+    assert a.payload["stub"] is True
+    assert a.payload["origin"] == "jobs_phase"
+    assert a.payload["external_client_id"] == "name:Oracle"
+
+
+@pytest.mark.asyncio
 async def test_write_jobs_progress_no_op_when_sync_log_id_none(monkeypatch):
     """When sync_log_id is None, ``_write_jobs_progress`` returns immediately
     without even opening a bypass-RLS session — important so test paths
