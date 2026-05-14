@@ -86,7 +86,7 @@ export function RegionDetail({
       const updated = await updateMutation.mutateAsync({
         unitId: unit.id,
         body: {
-          name: values.name.trim() || unit.name,
+          name: values.name.trim(),
           country: values.country, set_country: true,
           state: values.state, set_state: true,
           city: values.city, set_city: true,
