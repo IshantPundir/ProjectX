@@ -5,7 +5,16 @@ class CreateOrgUnitRequest(BaseModel):
     name: str
     unit_type: str
     parent_unit_id: str | None = None
-    company_profile: dict | None = None
+    # Column-level fields. All optional on create — recruiter fills them
+    # later via the detail page edit mode. None means "leave NULL"; an
+    # explicit value is set.
+    about: str | None = None
+    industry: str | None = None
+    hiring_bar: str | None = None
+    website: str | None = None
+    country: str | None = None
+    state: str | None = None
+    city: str | None = None
     metadata: dict | None = None
 
 
@@ -13,13 +22,29 @@ class UpdateOrgUnitRequest(BaseModel):
     name: str | None = None
     unit_type: str | None = None
     deletable_by: str | None = None
+    set_deletable_by: bool = False
     admin_delete_disabled: bool | None = None
-    company_profile: dict | None = None
-    set_company_profile: bool = False
-    # `metadata` is absent (None) for "don't touch"; present dict (possibly
-    # empty {}) for "replace". A sentinel flag would work too but keeping
-    # parity with other optional fields is simpler. Backend treats {} as
-    # "clear all keys" — callers that want to merge should read then write.
+
+    # Column-level profile + address fields. Each is paired with a
+    # `set_<field>` sentinel: only fields where the sentinel is True are
+    # persisted (matches the existing `set_metadata` pattern). An empty
+    # string with `set_<field>=True` clears the column to NULL after
+    # .strip().
+    about: str | None = None
+    set_about: bool = False
+    industry: str | None = None
+    set_industry: bool = False
+    hiring_bar: str | None = None
+    set_hiring_bar: bool = False
+    website: str | None = None
+    set_website: bool = False
+    country: str | None = None
+    set_country: bool = False
+    state: str | None = None
+    set_state: bool = False
+    city: str | None = None
+    set_city: bool = False
+
     metadata: dict | None = None
     set_metadata: bool = False
 
@@ -32,13 +57,15 @@ class OrgUnitResponse(BaseModel):
     unit_type: str
     member_count: int
     is_root: bool
-    company_profile: dict | None
+    # Column-level company-profile + address fields.
+    about: str | None = None
+    industry: str | None = None
+    hiring_bar: str | None = None
+    website: str | None = None
+    country: str | None = None
+    state: str | None = None
+    city: str | None = None
     company_profile_completed_at: str | None = None
-    # Two-state gate for ATS-imported client_account units. 'complete' by
-    # default (matches the column server_default); ATS sync writes
-    # 'pending' until the recruiter fills out the company profile and the
-    # PUT handler flips it back. Surfaced so the frontend can render the
-    # "Profile incomplete" caution badge on imported units.
     company_profile_completion_status: str = "complete"
     metadata: dict | None = None
     created_at: str
@@ -49,20 +76,11 @@ class OrgUnitResponse(BaseModel):
     admin_delete_disabled: bool
     is_accessible: bool = True
     admin_emails: list[str] = []
-    # Resolved-from-ancestry blocks (Phase 2C — org unit redesign).
-    # Shape: {"values": {<key>: <value>|null, ...}, "source_unit_id": "uuid"|null}.
-    # `null` at the top level means no value is set anywhere in the chain;
-    # `null` per-key means that specific key is unset all the way up. The
-    # frontend renders inherited values + per-field override toggles using
-    # this data without re-walking the tree client-side.
-    inherited_locale: dict | None = None
-    inherited_compliance: dict | None = None
-    # Populated only by PUT /api/org-units/{id} when the update transitions
-    # company_profile_completion_status pending → complete. Counts the JDs
-    # that were moved out of `blocked_pending_client_setup` as a side
-    # effect of completing the profile. Frontend uses this to surface a
-    # secondary toast ("N jobs queued for processing"). Absent / 0 on
-    # every other read or write path.
+    # Replaces inherited_locale + inherited_compliance. Same shape as the
+    # old fields: {"values": {country, state, city}, "source_unit_id"}.
+    inherited_address: dict | None = None
+    # Populated only when the update flips status pending -> complete.
+    # Count of jobs advanced out of blocked_pending_client_setup.
     unblocked_job_count: int = 0
 
 

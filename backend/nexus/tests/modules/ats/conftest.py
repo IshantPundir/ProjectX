@@ -95,12 +95,10 @@ async def jobs_fixture(db, importer_fixture):
 
     await db.execute(text(
         "INSERT INTO organizational_units (id, client_id, name, unit_type, "
-        "is_root, parent_unit_id, company_profile, "
+        "is_root, parent_unit_id, "
         "company_profile_completion_status) VALUES "
-        "(:p, :t, 'Pending', 'client_account', false, :r, "
-        " '{\"name\":\"P\"}', 'pending'),"
-        "(:c, :t, 'Complete', 'client_account', false, :r, "
-        " '{\"name\":\"C\"}', 'complete')"
+        "(:p, :t, 'Pending', 'client_account', false, :r, 'pending'),"
+        "(:c, :t, 'Complete', 'client_account', false, :r, 'complete')"
     ), {
         "p": pending_unit_id, "c": complete_unit_id,
         "t": tenant_id, "r": root_unit_id,
@@ -157,10 +155,9 @@ async def importer_fixture(db, patched_bypass_session):
     await db.execute(
         text(
             "INSERT INTO organizational_units "
-            "(id, client_id, name, unit_type, is_root, company_profile, "
+            "(id, client_id, name, unit_type, is_root, "
             "company_profile_completion_status) "
-            "VALUES (:o, :t, 'Acme', 'company', true, "
-            "'{\"name\": \"Acme\"}', 'complete')"
+            "VALUES (:o, :t, 'Acme', 'company', true, 'complete')"
         ),
         {"o": root_unit_id, "t": tenant_id},
     )

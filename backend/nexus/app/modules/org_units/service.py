@@ -507,6 +507,35 @@ async def list_org_units(
     ]
 
 
+# ─── Completion-gate derivation ─────────────────────────────────────────
+# A unit's `company_profile_completion_status` flips between 'pending' and
+# 'complete' based on whether all three strict-profile columns are
+# non-empty (whitespace-trimmed). This is a derived state — every
+# update_org_unit call re-evaluates it. The frontend never sets the
+# status directly.
+_STRICT_PROFILE_COLUMNS = ("about", "industry", "hiring_bar")
+
+
+def derive_completion_status(unit: OrganizationalUnit) -> str:
+    """Return 'complete' iff all 3 strict-profile columns are non-empty
+    after .strip(); otherwise 'pending'."""
+    for col in _STRICT_PROFILE_COLUMNS:
+        value = getattr(unit, col, None)
+        if not value or not value.strip():
+            return "pending"
+    return "complete"
+
+
+def _normalize_text(value: str | None) -> str | None:
+    """`.strip()` and convert empty string -> None. Applied to every
+    text-column write so trailing-space inputs don't satisfy non-empty
+    checks accidentally."""
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
 async def update_org_unit(
     db: AsyncSession,
     unit: OrganizationalUnit,
@@ -518,8 +547,22 @@ async def update_org_unit(
     actor_id: uuid_mod.UUID | None = None,
     actor_email: str | None = None,
     ip_address: str | None = None,
-    company_profile: dict | None = None,
-    set_company_profile: bool = False,
+    # Column-level profile + address fields. Each pairs with a set_<field>
+    # sentinel; only fields with the sentinel True are persisted.
+    about: str | None = None,
+    set_about: bool = False,
+    industry: str | None = None,
+    set_industry: bool = False,
+    hiring_bar: str | None = None,
+    set_hiring_bar: bool = False,
+    website: str | None = None,
+    set_website: bool = False,
+    country: str | None = None,
+    set_country: bool = False,
+    state: str | None = None,
+    set_state: bool = False,
+    city: str | None = None,
+    set_city: bool = False,
     metadata: dict | None = None,
     set_metadata: bool = False,
 ) -> OrganizationalUnit:
@@ -528,14 +571,21 @@ async def update_org_unit(
         "unit_type": unit.unit_type,
         "deletable_by": str(unit.deletable_by) if unit.deletable_by else None,
         "admin_delete_disabled": unit.admin_delete_disabled,
-        "company_profile": str(unit.company_profile) if unit.company_profile else None,
+        "about": unit.about,
+        "industry": unit.industry,
+        "hiring_bar": unit.hiring_bar,
+        "website": unit.website,
+        "country": unit.country,
+        "state": unit.state,
+        "city": unit.city,
+        "completion_status": unit.company_profile_completion_status,
         "metadata": str(unit.unit_metadata) if unit.unit_metadata else None,
     }
 
     if unit_type is not None and unit_type not in VALID_UNIT_TYPES:
-        raise ValueError(f"Invalid unit_type. Must be one of: {sorted(VALID_UNIT_TYPES)}")
-
-    # Prevent changing unit_type of a root company unit
+        raise ValueError(
+            f"Invalid unit_type. Must be one of: {sorted(VALID_UNIT_TYPES)}"
+        )
     if unit_type is not None and unit.unit_type == "company" and unit_type != "company":
         raise ValueError("The unit type of the root company unit cannot be changed.")
 
@@ -567,25 +617,34 @@ async def update_org_unit(
         else:
             unit.deletable_by = None
 
-    # Update company_profile if explicitly requested
-    if set_company_profile:
-        if unit.unit_type in ("company", "client_account") and not company_profile:
-            raise ValueError(f"A company_profile is required for units of type '{unit.unit_type}'.")
-        validated_profile = _validate_and_normalize_company_profile(company_profile)
-        unit.company_profile = validated_profile
-        if validated_profile is not None:
+    # Per-field sentinel-gated writes. Each field is written exactly when
+    # its sentinel is True; values are .strip()ed; empty string -> NULL.
+    if set_about:
+        unit.about = _normalize_text(about)
+    if set_industry:
+        unit.industry = _normalize_text(industry)
+    if set_hiring_bar:
+        unit.hiring_bar = _normalize_text(hiring_bar)
+    if set_website:
+        unit.website = _normalize_text(website)
+    if set_country:
+        unit.country = _normalize_text(country)
+    if set_state:
+        unit.state = _normalize_text(state)
+    if set_city:
+        unit.city = _normalize_text(city)
+
+    # Re-derive completion status from the (possibly updated) strict
+    # fields. The transition is observed via before["completion_status"]
+    # vs the new value — the router uses that delta to fire the unblock
+    # cascade.
+    new_status = derive_completion_status(unit)
+    if new_status != unit.company_profile_completion_status:
+        unit.company_profile_completion_status = new_status
+        if new_status == "complete":
             unit.company_profile_completed_at = datetime.now(UTC)
             unit.company_profile_completed_by = actor_id
-            # Saving a valid profile resolves the pending-from-ATS gate. The
-            # caller (router) inspects the row's previous status to decide
-            # whether to run the unblock cascade — we just flip the column
-            # so the row reflects the new truth.
-            unit.company_profile_completion_status = "complete"
 
-    # Update metadata if explicitly requested. Opaque dict validated at the
-    # application layer — the DB keeps it as JSONB so the shape can evolve
-    # per unit_type without migrations. None clears the field; {} is a
-    # valid empty object.
     if set_metadata:
         unit.unit_metadata = metadata
 
@@ -594,7 +653,14 @@ async def update_org_unit(
         "unit_type": unit.unit_type,
         "deletable_by": str(unit.deletable_by) if unit.deletable_by else None,
         "admin_delete_disabled": unit.admin_delete_disabled,
-        "company_profile": str(unit.company_profile) if unit.company_profile else None,
+        "about": unit.about,
+        "industry": unit.industry,
+        "hiring_bar": unit.hiring_bar,
+        "website": unit.website,
+        "country": unit.country,
+        "state": unit.state,
+        "city": unit.city,
+        "completion_status": unit.company_profile_completion_status,
         "metadata": str(unit.unit_metadata) if unit.unit_metadata else None,
     }
     changed = {k: {"from": before[k], "to": after[k]} for k in before if before[k] != after[k]}

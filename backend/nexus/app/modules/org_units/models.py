@@ -42,13 +42,21 @@ class OrganizationalUnit(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     unit_type: Mapped[str] = mapped_column(String, nullable=False)
     is_root: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
-    company_profile: Mapped[dict | None] = mapped_column(JSONB)
+    # Profile columns. All free-text, all nullable. Promoted from the
+    # legacy company_profile JSONB in migration 0034.
+    about: Mapped[str | None] = mapped_column(Text)
+    industry: Mapped[str | None] = mapped_column(Text)
+    hiring_bar: Mapped[str | None] = mapped_column(Text)
+    website: Mapped[str | None] = mapped_column(Text)
+    country: Mapped[str | None] = mapped_column(Text)
+    state: Mapped[str | None] = mapped_column(Text)
+    city: Mapped[str | None] = mapped_column(Text)
     company_profile_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     company_profile_completed_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
-    # Pending → complete gate for auto-created org_units (e.g. ATS-imported
-    # client_account units). Schema source-of-truth is migration 0031_ats_core;
-    # declared here so Base.metadata.create_all builds the same shape in test
-    # DBs that skip alembic.
+    # Derived: 'complete' iff about + industry + hiring_bar are all
+    # non-empty after .strip(). Re-evaluated by update_org_unit on every
+    # save. The job unblock cascade keys off pending -> complete
+    # transitions of this column.
     company_profile_completion_status: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=text("'complete'"),
     )

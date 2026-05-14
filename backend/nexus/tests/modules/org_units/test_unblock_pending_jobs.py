@@ -34,26 +34,17 @@ async def test_unblock_pending_jobs_for_org_unit(db):
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
 
-    profile = {
-        "company_name": "Acme",
-        "industry": "Technology",
-        "headcount_band": "11-50",
-        "elevator_pitch": "We build interview platforms for high-volume hiring teams.",
-    }
-
     org_unit_a = await create_test_org_unit(
         db,
         tenant.id,
         name="Client A",
         unit_type="client_account",
-        company_profile=profile,
     )
     org_unit_b = await create_test_org_unit(
         db,
         tenant.id,
         name="Client B",
         unit_type="client_account",
-        company_profile=profile,
     )
 
     # Two blocked JDs under org_unit_a
