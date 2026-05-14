@@ -6,10 +6,6 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 
 import {
-  CompanyProfileForm,
-  type CompanyProfile,
-} from '@/components/dashboard/company-profile-form'
-import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -45,6 +41,22 @@ const nameSchema = z.object({
 })
 type NameValues = z.infer<typeof nameSchema>
 
+// Inline profile fields for client_account creation.
+// company_stage is dropped (refactor T4); industry is free-text.
+const profileSchema = z.object({
+  about: z
+    .string()
+    .min(30, 'Describe what you build in at least a sentence (30+ characters)')
+    .max(500, 'Keep it concise — 500 characters max'),
+  industry: z.string().max(120, 'Keep it brief').optional(),
+  hiring_bar: z
+    .string()
+    .min(20, 'Describe what a strong hire looks like (20+ characters)')
+    .max(280, 'Twitter-length — 280 characters max')
+    .optional(),
+})
+type ProfileValues = z.infer<typeof profileSchema>
+
 export interface CreateChildTarget {
   parentId: string
   parentName: string
@@ -63,8 +75,8 @@ interface Props {
  * Two-stage create flow used by the org-graph spider menu.
  *
  *   stage 'name'    — single text input ("Create new {type} under {parent}")
- *   stage 'profile' — only for `client_account`: opens a CompanyProfileForm
- *                     because the backend rejects null `company_profile`
+ *   stage 'profile' — only for `client_account`: inline about/industry/hiring_bar
+ *                     fields because the backend requires a non-null company profile
  *                     for client accounts.
  *
  * The parent unit is wired automatically via `target.parentId`. On
@@ -76,31 +88,39 @@ export function OrgUnitCreateDialog({ target, onClose, onCreated }: Props) {
   const [submitError, setSubmitError] = useState<string | null>(null)
   const createMutation = useCreateOrgUnit()
 
-  const form = useForm<NameValues>({
+  const nameForm = useForm<NameValues>({
     resolver: zodResolver(nameSchema),
     defaultValues: { name: '' },
   })
+
+  const profileForm = useForm<ProfileValues>({
+    resolver: zodResolver(profileSchema),
+    defaultValues: { about: '', industry: '', hiring_bar: '' },
+    mode: 'onChange',
+  })
+
+  const aboutValue = profileForm.watch('about') || ''
+  const hiringBarValue = profileForm.watch('hiring_bar') || ''
 
   // Reset when the target changes (a different parent / child type).
   useEffect(() => {
     if (open) {
       setStage('name')
       setSubmitError(null)
-      form.reset({ name: '' })
+      nameForm.reset({ name: '' })
+      profileForm.reset({ about: '', industry: '', hiring_bar: '' })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target?.parentId, target?.childType])
 
-  async function doCreate(profile: CompanyProfile | null) {
+  async function doCreate(profile: ProfileValues | null) {
     if (!target) return
-    const name = form.getValues('name').trim()
+    const name = nameForm.getValues('name').trim()
     try {
       const created = await createMutation.mutateAsync({
         name,
         unit_type: target.childType,
         parent_unit_id: target.parentId,
-        // Map old CompanyProfile shape to column-level fields.
-        // Task 10 will replace the profile dialog with inline editing.
         about: profile?.about ?? null,
         industry: profile?.industry ?? null,
         hiring_bar: profile?.hiring_bar ?? null,
@@ -110,14 +130,14 @@ export function OrgUnitCreateDialog({ target, onClose, onCreated }: Props) {
     } catch (err) {
       // Field-level errors (422) attach to the form; others surface
       // inline so the user can recover without closing the dialog.
-      if (applyApiErrorToForm(err, form)) return
+      if (applyApiErrorToForm(err, nameForm)) return
       setSubmitError(
         err instanceof Error ? err.message : 'Failed to create unit',
       )
     }
   }
 
-  const onNameSubmit = form.handleSubmit(async () => {
+  const onNameSubmit = nameForm.handleSubmit(async () => {
     setSubmitError(null)
     if (target?.childType === 'client_account') {
       // Cascade to the profile dialog — backend requires it.
@@ -125,6 +145,11 @@ export function OrgUnitCreateDialog({ target, onClose, onCreated }: Props) {
       return
     }
     await doCreate(null)
+  })
+
+  const onProfileSubmit = profileForm.handleSubmit(async (values) => {
+    setSubmitError(null)
+    await doCreate(values)
   })
 
   function handleOpenChange(next: boolean) {
@@ -169,11 +194,11 @@ export function OrgUnitCreateDialog({ target, onClose, onCreated }: Props) {
                 autoFocus
                 className="px-input"
                 placeholder={PLACEHOLDER[target.childType]}
-                {...form.register('name')}
+                {...nameForm.register('name')}
               />
-              {form.formState.errors.name && (
+              {nameForm.formState.errors.name && (
                 <p className="px-hint" style={{ color: 'var(--px-danger)' }}>
-                  {form.formState.errors.name.message}
+                  {nameForm.formState.errors.name.message}
                 </p>
               )}
             </div>
@@ -224,7 +249,7 @@ export function OrgUnitCreateDialog({ target, onClose, onCreated }: Props) {
                 className="font-medium"
                 style={{ color: 'var(--px-fg)' }}
               >
-                {form.getValues('name').trim()}
+                {nameForm.getValues('name').trim()}
               </span>
               . This describes the end client — the company your recruiters
               are hiring <em>for</em>. It feeds the AI when generating JD
@@ -241,13 +266,91 @@ export function OrgUnitCreateDialog({ target, onClose, onCreated }: Props) {
               {submitError}
             </p>
           )}
-          <CompanyProfileForm
-            onSubmit={async (profile) => {
-              setSubmitError(null)
-              await doCreate(profile)
-            }}
-            submitLabel="Create client account"
-          />
+          <form onSubmit={onProfileSubmit} className="space-y-6 max-w-2xl">
+            <div>
+              <div className="flex items-baseline justify-between">
+                <label htmlFor="ca-about" className="px-label text-sm font-semibold">
+                  What does this client actually build or do?
+                </label>
+                <span className="text-xs text-zinc-400">{aboutValue.length} / 500</span>
+              </div>
+              <p className="text-xs text-zinc-500 mt-1 mb-2">
+                Be specific — what problems, at what scale, for whom?{' '}
+                <em>Not their mission statement.</em>
+              </p>
+              <textarea
+                id="ca-about"
+                className="px-input"
+                rows={4}
+                {...profileForm.register('about')}
+              />
+              {profileForm.formState.errors.about && (
+                <p className="text-xs mt-1" style={{ color: 'var(--px-danger)' }}>
+                  {profileForm.formState.errors.about.message}
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label htmlFor="ca-industry" className="px-label text-sm font-semibold">
+                Industry <span className="font-normal text-zinc-400">(optional)</span>
+              </label>
+              <input
+                id="ca-industry"
+                type="text"
+                className="px-input"
+                placeholder="e.g., Fintech / Financial Services"
+                {...profileForm.register('industry')}
+              />
+              {profileForm.formState.errors.industry && (
+                <p className="text-xs mt-1" style={{ color: 'var(--px-danger)' }}>
+                  {profileForm.formState.errors.industry.message}
+                </p>
+              )}
+            </div>
+
+            <div>
+              <div className="flex items-baseline justify-between">
+                <label htmlFor="ca-hiring-bar" className="px-label text-sm font-semibold">
+                  What does a strong hire look like here?{' '}
+                  <span className="font-normal text-zinc-400">(optional)</span>
+                </label>
+                <span className="text-xs text-zinc-400">{hiringBarValue.length} / 280</span>
+              </div>
+              <p className="text-xs text-zinc-500 mt-1 mb-2">
+                What does this client value that a generic JD wouldn&apos;t capture?
+              </p>
+              <textarea
+                id="ca-hiring-bar"
+                className="px-input"
+                rows={3}
+                {...profileForm.register('hiring_bar')}
+              />
+              {profileForm.formState.errors.hiring_bar && (
+                <p className="text-xs mt-1" style={{ color: 'var(--px-danger)' }}>
+                  {profileForm.formState.errors.hiring_bar.message}
+                </p>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setStage('name')}
+                disabled={createMutation.isPending}
+                className="px-btn ghost sm"
+              >
+                Back
+              </button>
+              <button
+                type="submit"
+                disabled={!profileForm.formState.isValid || createMutation.isPending}
+                className="px-btn primary sm"
+              >
+                {createMutation.isPending ? 'Creating…' : 'Create client account'}
+              </button>
+            </div>
+          </form>
         </DialogContent>
       </Dialog>
     </>
