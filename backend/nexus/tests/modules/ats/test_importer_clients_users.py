@@ -587,3 +587,213 @@ async def test_sync_clients_promote_fills_only_null_columns(
     # (Ceipal has no equivalent fields).
     assert r.about is None
     assert r.hiring_bar is None
+
+
+@pytest.mark.asyncio
+async def test_sync_clients_existing_mapping_backfills_null_org_unit_columns(
+    db, importer_fixture,
+):
+    """A pre-existing mapping whose linked org_unit has NULL column fields
+    (the backfill case for client_accounts synced before the column-level
+    refactor) gets its columns filled from the fresh Ceipal payload on
+    the next sync. NULL-only — recruiter edits are preserved.
+
+    Mirrors the PROMOTE branch's behavior but applies to non-stub
+    (real-id) mappings that already existed. Audit row written with
+    org_unit_refreshed_fields listing the fields that were filled."""
+    from app.modules.ats.importer import ATSImporter
+
+    tenant_id, _user_id, root_unit_id = importer_fixture
+
+    # Pre-seed: an existing real-id mapping + linked org_unit with
+    # everything NULL except name (the state of a client_account synced
+    # before the column-level refactor).
+    existing_unit_id = uuid.uuid4()
+    await db.execute(text(
+        "INSERT INTO organizational_units "
+        "(id, client_id, parent_unit_id, name, unit_type, is_root, "
+        " company_profile_completion_status) "
+        "VALUES (:o, :t, :p, 'Acme Services', 'client_account', false, "
+        " 'pending')"
+    ), {"o": existing_unit_id, "t": tenant_id, "p": root_unit_id})
+    await db.execute(text(
+        "INSERT INTO ats_client_mappings "
+        "(tenant_id, ats_vendor, external_client_id, external_client_name, "
+        " org_unit_id, source_metadata) "
+        "VALUES (:t, 'ceipal', 'ABC123', 'Acme Services', :o, '{}')"
+    ), {"t": tenant_id, "o": existing_unit_id})
+    await db.flush()
+
+    # Ceipal returns the same client with full address + industry + website.
+    payload = ATSClientPayload(
+        external_id="ABC123",
+        name="Acme Services",
+        website="https://acme.com",
+        industry="Banking - Financial Services",
+        country="United States",
+        state="New York",
+        city="Rochester",
+        raw={"id": "ABC123"},
+        fetched_at=datetime.now(tz=timezone.utc),
+    )
+    adapter = _adapter_with_clients(uuid.UUID(tenant_id), [payload], [])
+
+    importer = ATSImporter()
+    await importer._run_phase("clients", importer._sync_clients, adapter)
+
+    # All 5 NULL columns now filled from Ceipal.
+    row = await db.execute(text(
+        "SELECT website, industry, country, state, city, about, hiring_bar "
+        "FROM organizational_units WHERE id = :u"
+    ), {"u": existing_unit_id})
+    r = row.one()
+    assert r.website == "https://acme.com"
+    assert r.industry == "Banking - Financial Services"
+    assert r.country == "United States"
+    assert r.state == "New York"
+    assert r.city == "Rochester"
+    # about and hiring_bar are NEVER auto-filled (Ceipal has no equivalent).
+    assert r.about is None
+    assert r.hiring_bar is None
+
+    # Audit row written with the refreshed fields.
+    audit_row = await db.execute(text(
+        "SELECT action, payload FROM audit_log "
+        "WHERE tenant_id = :t AND action = 'ats.client_mapping.org_unit_refreshed' "
+        "ORDER BY created_at DESC LIMIT 1"
+    ), {"t": tenant_id})
+    a = audit_row.one()
+    assert a.payload["vendor"] == "ceipal"
+    assert a.payload["external_client_id"] == "ABC123"
+    assert set(a.payload["org_unit_refreshed_fields"]) == {
+        "website", "industry", "country", "state", "city",
+    }
+
+
+@pytest.mark.asyncio
+async def test_sync_clients_existing_mapping_preserves_recruiter_edits(
+    db, importer_fixture,
+):
+    """When the linked org_unit has recruiter-edited columns + some NULL
+    columns, the next sync fills ONLY the NULL ones. Recruiter values
+    are preserved. Audit row records only the filled fields."""
+    from app.modules.ats.importer import ATSImporter
+
+    tenant_id, _user_id, root_unit_id = importer_fixture
+
+    # Pre-seed: existing mapping + unit with recruiter-set industry+website
+    # but NULL country/state/city.
+    existing_unit_id = uuid.uuid4()
+    await db.execute(text(
+        "INSERT INTO organizational_units "
+        "(id, client_id, parent_unit_id, name, unit_type, is_root, "
+        " industry, website, company_profile_completion_status) "
+        "VALUES (:o, :t, :p, 'Acme Services', 'client_account', false, "
+        " 'Custom Industry (recruiter)', 'https://recruiter-edit.com', "
+        " 'pending')"
+    ), {"o": existing_unit_id, "t": tenant_id, "p": root_unit_id})
+    await db.execute(text(
+        "INSERT INTO ats_client_mappings "
+        "(tenant_id, ats_vendor, external_client_id, external_client_name, "
+        " org_unit_id, source_metadata) "
+        "VALUES (:t, 'ceipal', 'ABC123', 'Acme Services', :o, '{}')"
+    ), {"t": tenant_id, "o": existing_unit_id})
+    await db.flush()
+
+    # Ceipal payload would overwrite if not gated — different industry,
+    # different website, fresh address.
+    payload = ATSClientPayload(
+        external_id="ABC123",
+        name="Acme Services",
+        website="https://ceipal-returns.com",
+        industry="Banking",
+        country="United States",
+        state="New York",
+        city="Rochester",
+        raw={"id": "ABC123"},
+        fetched_at=datetime.now(tz=timezone.utc),
+    )
+    adapter = _adapter_with_clients(uuid.UUID(tenant_id), [payload], [])
+
+    importer = ATSImporter()
+    await importer._run_phase("clients", importer._sync_clients, adapter)
+
+    row = await db.execute(text(
+        "SELECT website, industry, country, state, city "
+        "FROM organizational_units WHERE id = :u"
+    ), {"u": existing_unit_id})
+    r = row.one()
+    # Recruiter edits preserved.
+    assert r.industry == "Custom Industry (recruiter)"
+    assert r.website == "https://recruiter-edit.com"
+    # NULL columns filled from Ceipal.
+    assert r.country == "United States"
+    assert r.state == "New York"
+    assert r.city == "Rochester"
+
+    # Audit row should only list the fields that were actually filled.
+    audit_row = await db.execute(text(
+        "SELECT payload FROM audit_log "
+        "WHERE tenant_id = :t AND action = 'ats.client_mapping.org_unit_refreshed' "
+        "ORDER BY created_at DESC LIMIT 1"
+    ), {"t": tenant_id})
+    a = audit_row.one()
+    assert set(a.payload["org_unit_refreshed_fields"]) == {
+        "country", "state", "city",
+    }
+
+
+@pytest.mark.asyncio
+async def test_sync_clients_existing_mapping_no_audit_when_nothing_changed(
+    db, importer_fixture,
+):
+    """When the linked org_unit already has all columns filled (a normal
+    re-sync after a previous backfill), no audit row is written for the
+    org_unit refresh. The mapping-side refresh (last_synced_at) still
+    happens; only the org_unit-refresh audit is gated on the
+    refreshed-fields list being non-empty."""
+    from app.modules.ats.importer import ATSImporter
+
+    tenant_id, _user_id, root_unit_id = importer_fixture
+
+    existing_unit_id = uuid.uuid4()
+    # All columns pre-filled (matches the steady state after a prior
+    # backfill sync).
+    await db.execute(text(
+        "INSERT INTO organizational_units "
+        "(id, client_id, parent_unit_id, name, unit_type, is_root, "
+        " website, industry, country, state, city, "
+        " company_profile_completion_status) "
+        "VALUES (:o, :t, :p, 'Acme', 'client_account', false, "
+        " 'https://x.com', 'Y', 'C', 'S', 'CT', 'pending')"
+    ), {"o": existing_unit_id, "t": tenant_id, "p": root_unit_id})
+    await db.execute(text(
+        "INSERT INTO ats_client_mappings "
+        "(tenant_id, ats_vendor, external_client_id, external_client_name, "
+        " org_unit_id, source_metadata) "
+        "VALUES (:t, 'ceipal', 'ABC123', 'Acme', :o, '{}')"
+    ), {"t": tenant_id, "o": existing_unit_id})
+    await db.flush()
+
+    payload = ATSClientPayload(
+        external_id="ABC123",
+        name="Acme",
+        website="https://different.com",
+        industry="Different",
+        country="Different",
+        state="Different",
+        city="Different",
+        raw={},
+        fetched_at=datetime.now(tz=timezone.utc),
+    )
+    adapter = _adapter_with_clients(uuid.UUID(tenant_id), [payload], [])
+
+    importer = ATSImporter()
+    await importer._run_phase("clients", importer._sync_clients, adapter)
+
+    # No audit row for the org_unit refresh case.
+    audit_count = await db.execute(text(
+        "SELECT COUNT(*) FROM audit_log "
+        "WHERE tenant_id = :t AND action = 'ats.client_mapping.org_unit_refreshed'"
+    ), {"t": tenant_id})
+    assert audit_count.scalar_one() == 0

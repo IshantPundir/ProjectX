@@ -178,6 +178,44 @@ class ATSImporter:
                 existing.external_client_name = payload.name
                 existing.source_metadata = {"contacts": payload.contacts, "raw": payload.raw}
                 existing.last_synced_at = datetime.now(tz=UTC)
+
+                # Backfill the linked org_unit's column-level fields where
+                # currently NULL. Mirrors the promote-path pattern: NULL-only,
+                # recruiter edits preserved, about/hiring_bar never touched
+                # (Ceipal has no equivalent). This is the self-healing path
+                # for client_accounts synced before the column-level
+                # refactor — their country/state/city were never stored
+                # forward through migration 0034, so the next clients sync
+                # fills them in from the fresh Ceipal payload.
+                unit = await db.get(OrganizationalUnit, existing.org_unit_id)
+                refreshed_fields: list[str] = []
+                if unit is not None:
+                    for field_name in (
+                        "website", "industry", "country", "state", "city",
+                    ):
+                        if getattr(unit, field_name) is None:
+                            normalized = _normalize_payload_text(
+                                getattr(payload, field_name)
+                            )
+                            if normalized is not None:
+                                setattr(unit, field_name, normalized)
+                                refreshed_fields.append(field_name)
+                if refreshed_fields:
+                    await log_event(
+                        db,
+                        tenant_id=tenant_id,
+                        actor_id=created_by,
+                        actor_email="ats-import",
+                        action="ats.client_mapping.org_unit_refreshed",
+                        resource="ats_client_mapping",
+                        resource_id=existing.org_unit_id,
+                        payload={
+                            "vendor": adapter.vendor,
+                            "external_client_id": payload.external_id,
+                            "org_unit_refreshed_fields": refreshed_fields,
+                        },
+                    )
+
                 result.updated += 1
                 continue
 
