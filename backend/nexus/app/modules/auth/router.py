@@ -244,12 +244,11 @@ async def accept_invite(
             client_name = client_row.name  # type: ignore[union-attr]
             client_domain = client_row.domain  # type: ignore[union-attr]
 
-            # Seed the org unit's editable metadata from admin-provisioned
-            # fields so the user doesn't see empty inputs for values they've
-            # already supplied. `clients.domain` is the same shape as the
-            # form's "Website" field (`metadata.website`).
-            root_metadata = {"website": client_domain} if client_domain else None
-
+            # Seed the org unit's editable fields from admin-provisioned
+            # values so the user doesn't see empty inputs for values they've
+            # already supplied. `clients.domain` maps to the typed `website`
+            # column (unit.website) — NOT to metadata.website, which is
+            # stripped by migration 0034.
             from app.modules.org_units import create_org_unit as _create_root_unit
 
             root_unit = await _create_root_unit(
@@ -260,7 +259,7 @@ async def accept_invite(
                 parent_unit_id=None,
                 created_by=user.id,
                 actor_email=email,
-                metadata=root_metadata,
+                website=client_domain or None,
             )
             root_unit_id = str(root_unit.id)
 

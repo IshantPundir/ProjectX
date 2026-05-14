@@ -223,10 +223,12 @@ async def test_accept_invite_happy_path_creates_super_admin(db: AsyncSession):
         )
     ).scalar_one()
     assert root_unit.name == client_row.name
-    # Admin-provisioned `clients.domain` seeds the unit's metadata.website
-    # so the form doesn't show an empty Website field for a value that was
-    # already collected at provisioning time.
-    assert root_unit.unit_metadata == {"website": client_row.domain}
+    # Admin-provisioned `clients.domain` seeds the typed `website` column
+    # (unit.website) — not metadata.website, which was stripped by
+    # migration 0034 — so the onboarding form doesn't show an empty
+    # Website field for a value that was already collected at provisioning.
+    assert root_unit.website == client_row.domain
+    assert root_unit.unit_metadata is None
 
 
 @pytest.mark.asyncio
