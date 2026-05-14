@@ -88,11 +88,32 @@ export interface OrgUnit {
   company_profile_completion_status: 'pending' | 'complete'
   metadata: OrgUnitMetadata | null
   inherited_address: InheritedAddress | null
-  /** @deprecated Task 8: RegionDetail still reads these — remove when RegionDetail refactor lands. */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  inherited_locale?: any
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  inherited_compliance?: any
+  /**
+   * @deprecated Task 8: RegionDetail still reads this shape — remove when
+   * RegionDetail refactor lands. The backend no longer populates this field;
+   * it will always be undefined at runtime after Task 3.
+   */
+  inherited_locale?: {
+    values: {
+      default_locale: string | null
+      default_timezone: string | null
+      default_currency: string | null
+    }
+    source_unit_id: string | null
+  }
+  /**
+   * @deprecated Task 8: RegionDetail still reads this shape — remove when
+   * RegionDetail refactor lands. The backend no longer populates this field;
+   * it will always be undefined at runtime after Task 3.
+   */
+  inherited_compliance?: {
+    values: {
+      compliance_aivia_il: boolean | null
+      compliance_gdpr_eu: boolean | null
+      compliance_ccpa_ca: boolean | null
+    }
+    source_unit_id: string | null
+  }
 }
 
 export interface OrgUnitMember {

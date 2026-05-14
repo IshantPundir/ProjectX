@@ -120,7 +120,7 @@ export function CompanyDetail({
       const updated = await updateMutation.mutateAsync({
         unitId: unit.id,
         body: {
-          name: values.name.trim() || unit.name,
+          name: values.name.trim(),
           about: values.about, set_about: true,
           industry: values.industry, set_industry: true,
           hiring_bar: values.hiring_bar, set_hiring_bar: true,
