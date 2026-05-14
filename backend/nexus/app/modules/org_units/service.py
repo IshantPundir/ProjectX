@@ -146,13 +146,20 @@ async def create_org_unit(
         created_by=created_by,
         deletable_by=created_by,
         is_root=(unit_type == "company"),
-        company_profile=validated_profile,
+        # NOTE: company_profile JSONB column was dropped in migration 0034.
+        # Typed columns (about, industry, hiring_bar, etc.) are set post-flush
+        # below. Task 4 will refactor create_org_unit to accept column-level
+        # kwargs and remove the legacy company_profile parameter entirely.
         unit_metadata=metadata,
     )
     db.add(unit)
     await db.flush()
 
-    # Stamp completion tracking columns if a profile was saved
+    # Stamp completion tracking columns if a profile was provided.
+    # Post-Task-4 this will populate the typed columns directly. For now,
+    # the profile is accepted by the function signature but not persisted —
+    # the create path is used by auth/invite acceptance which does not supply
+    # a profile; the onboarding wizard uses the PATCH path.
     if validated_profile is not None:
         unit.company_profile_completed_at = datetime.now(UTC)
         unit.company_profile_completed_by = created_by
@@ -329,8 +336,7 @@ async def get_org_unit(
             )
             admin_emails = [row[0] for row in admin_assign_result.all()]
 
-    inherited_locale = await find_locale_defaults_in_ancestry(db, unit.id)
-    inherited_compliance = await find_compliance_flags_in_ancestry(db, unit.id)
+    inherited_address = await find_address_in_ancestry(db, unit.id)
 
     return {
         "id": str(unit.id),
@@ -340,7 +346,13 @@ async def get_org_unit(
         "unit_type": unit.unit_type,
         "member_count": member_count,
         "is_root": unit.is_root,
-        "company_profile": unit.company_profile,
+        "about": unit.about,
+        "industry": unit.industry,
+        "hiring_bar": unit.hiring_bar,
+        "website": unit.website,
+        "country": unit.country,
+        "state": unit.state,
+        "city": unit.city,
         "company_profile_completed_at": (
             unit.company_profile_completed_at.isoformat()
             if unit.company_profile_completed_at
@@ -356,8 +368,7 @@ async def get_org_unit(
         "admin_delete_disabled": unit.admin_delete_disabled,
         "is_accessible": is_accessible,
         "admin_emails": admin_emails,
-        "inherited_locale": inherited_locale,
-        "inherited_compliance": inherited_compliance,
+        "inherited_address": inherited_address,
     }
 
 
@@ -480,7 +491,13 @@ async def list_org_units(
             "unit_type": u.unit_type,
             "member_count": counts.get(u.id, 0),
             "is_root": u.is_root,
-            "company_profile": u.company_profile,
+            "about": u.about,
+            "industry": u.industry,
+            "hiring_bar": u.hiring_bar,
+            "website": u.website,
+            "country": u.country,
+            "state": u.state,
+            "city": u.city,
             "company_profile_completed_at": (
                 u.company_profile_completed_at.isoformat()
                 if u.company_profile_completed_at
@@ -496,12 +513,7 @@ async def list_org_units(
             "admin_delete_disabled": u.admin_delete_disabled,
             "is_accessible": u.id in accessible_ids,
             "admin_emails": admin_emails_by_unit.get(u.id, []),
-            "inherited_locale": _serialize_inheritance(
-                _walk_metadata_in_map(u, unit_map, LOCALE_KEYS)
-            ),
-            "inherited_compliance": _serialize_inheritance(
-                _walk_metadata_in_map(u, unit_map, COMPLIANCE_KEYS)
-            ),
+            "inherited_address": find_address_in_map(u, unit_map),
         }
         for u in units
     ]
@@ -1133,26 +1145,23 @@ async def get_org_unit_ancestry(
 async def find_company_profile_in_ancestry(
     db: AsyncSession, org_unit_id: UUID
 ) -> dict | None:
-    """Walk parent_unit_id chain from the given unit up to root.
-    Return the first company_profile dict encountered. None if no ancestor
-    has one.
+    """Walk parent_unit_id chain from the given unit up to root. Return
+    the {about, industry, hiring_bar} triple from the closest unit (self
+    or ancestor) where ALL THREE columns are non-empty after .strip().
+    None if no ancestor satisfies.
 
-    Used by create_job_posting() to validate that a JD can be created under
-    a given org unit, and by the Dramatiq actor's _build_user_message() to
-    pass company context into Call 1.
+    Used by JD enrichment + signal extraction prompts. The returned shape
+    is the JSON-style dict the prompts already consume — only the source
+    of the data has changed (typed columns instead of JSONB).
 
-    Tenant scoping: this helper does NOT filter by tenant_id. The caller
-    is responsible for ensuring ``org_unit_id`` belongs to the expected
-    tenant. Today's callers all derive ``org_unit_id`` from a row that was
-    already tenant-filtered (e.g. ``job.org_unit_id`` after the job row
-    was loaded with a tenant_id check), so the walk stays inside one
-    tenant's tree by transitivity. Bypass-session callers in particular
-    must verify this invariant — RLS is not a backstop here."""
+    Tenant scoping: the caller is responsible — see the original docstring
+    on this function for the contract.
+    """
     current_id: UUID | None = org_unit_id
     seen: set[UUID] = set()
     while current_id is not None:
         if current_id in seen:
-            return None  # defensive: corrupted data loop
+            return None  # defensive: corrupted parent-chain loop
         seen.add(current_id)
         result = await db.execute(
             select(OrganizationalUnit).where(OrganizationalUnit.id == current_id)
@@ -1160,67 +1169,92 @@ async def find_company_profile_in_ancestry(
         unit = result.scalar_one_or_none()
         if unit is None:
             return None
-        if unit.company_profile:
-            return unit.company_profile
+        about = (unit.about or "").strip()
+        industry = (unit.industry or "").strip()
+        hiring_bar = (unit.hiring_bar or "").strip()
+        if about and industry and hiring_bar:
+            return {
+                "about": about,
+                "industry": industry,
+                "hiring_bar": hiring_bar,
+            }
         current_id = unit.parent_unit_id
     return None
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Inheritance walks for unit_metadata keys (Phase 2C — org unit redesign)
-# ─────────────────────────────────────────────────────────────────────────────
-# Locale defaults (timezone/currency/locale) and compliance flags
-# (AIVIA/GDPR/CCPA) are sourced at the Company root and may be overridden
-# at any descendant. The frontend renders inherited values + per-field
-# override toggles. To keep that UX honest without a chatty client-side
-# parent walk, we surface the resolved-from-ancestry values on the GET
-# response itself. The lookup mirrors `find_company_profile_in_ancestry`:
-# walk the parent chain, first non-null value wins, per-key independently.
+# ─── Address ancestry walk ──────────────────────────────────────────────
+# country/state/city are walked per-field — closest ancestor wins each.
+# The closest ancestor that contributed at least one key is exposed as
+# `source_unit_id` so the frontend can render "Inherited from {ancestor}".
 
-LOCALE_KEYS: tuple[str, ...] = (
-    "default_timezone",
-    "default_currency",
-    "default_locale",
-)
-
-COMPLIANCE_KEYS: tuple[str, ...] = (
-    "compliance_aivia_il",
-    "compliance_gdpr_eu",
-    "compliance_ccpa_ca",
-)
+_ADDRESS_COLUMNS: tuple[str, ...] = ("country", "state", "city")
 
 
-def _walk_metadata_in_map(
+async def find_address_in_ancestry(
+    db: AsyncSession, org_unit_id: UUID
+) -> dict | None:
+    """Single-unit per-field ancestry walk for country/state/city.
+
+    Returns ``{"values": {...}, "source_unit_id": "..."}`` or None when no
+    address key is set anywhere in the chain. Values that are whitespace-
+    only are treated as unset (matches `_normalize_text` semantics).
+    """
+    found: dict[str, str | None] = {k: None for k in _ADDRESS_COLUMNS}
+    source_unit_id: UUID | None = None
+    current_id: UUID | None = org_unit_id
+    seen: set[UUID] = set()
+    while current_id is not None:
+        if current_id in seen:
+            break
+        seen.add(current_id)
+        result = await db.execute(
+            select(OrganizationalUnit).where(OrganizationalUnit.id == current_id)
+        )
+        unit = result.scalar_one_or_none()
+        if unit is None:
+            break
+        contributed_here = False
+        for col in _ADDRESS_COLUMNS:
+            if found[col] is None:
+                value = getattr(unit, col, None)
+                if value is not None and value.strip():
+                    found[col] = value
+                    contributed_here = True
+        if contributed_here and source_unit_id is None:
+            source_unit_id = unit.id
+        if all(v is not None for v in found.values()):
+            break
+        current_id = unit.parent_unit_id
+    if all(v is None for v in found.values()):
+        return None
+    return {
+        "values": found,
+        "source_unit_id": str(source_unit_id) if source_unit_id else None,
+    }
+
+
+def find_address_in_map(
     unit: OrganizationalUnit,
     unit_map: dict[UUID, OrganizationalUnit],
-    keys: tuple[str, ...],
-) -> tuple[dict[str, object | None], UUID | None] | None:
-    """Walk parent chain in-memory using a pre-loaded unit_map.
-
-    For each key in `keys`, return the first non-null value encountered while
-    walking from `unit` up through its parents. Also returns the closest
-    ancestor that contributed at least one key (used by the frontend to label
-    the inheritance source — "Inherited from {ancestor name}").
-
-    Returns None if no key is set anywhere in the chain.
-
-    `unit_map` should contain `unit` and every reachable parent. Used by
-    `list_org_units` where the full tenant tree is already in memory.
-    """
-    found: dict[str, object | None] = {k: None for k in keys}
+) -> dict | None:
+    """In-memory per-field address walk. Same semantics as
+    `find_address_in_ancestry` but reads from a pre-loaded map (avoids
+    one DB hit per ancestor when the whole tree is already in memory)."""
+    found: dict[str, str | None] = {k: None for k in _ADDRESS_COLUMNS}
     source_unit_id: UUID | None = None
     current: OrganizationalUnit | None = unit
     seen: set[UUID] = set()
     while current is not None:
         if current.id in seen:
-            break  # defensive: corrupted parent-chain loop
+            break
         seen.add(current.id)
-        meta = current.unit_metadata or {}
         contributed_here = False
-        for key in keys:
-            if found[key] is None and meta.get(key) is not None:
-                found[key] = meta[key]
-                contributed_here = True
+        for col in _ADDRESS_COLUMNS:
+            if found[col] is None:
+                value = getattr(current, col, None)
+                if value is not None and value.strip():
+                    found[col] = value
+                    contributed_here = True
         if contributed_here and source_unit_id is None:
             source_unit_id = current.id
         if all(v is not None for v in found.values()):
@@ -1230,93 +1264,10 @@ def _walk_metadata_in_map(
         current = unit_map.get(current.parent_unit_id)
     if all(v is None for v in found.values()):
         return None
-    return (found, source_unit_id)
-
-
-async def _walk_metadata_in_db(
-    db: AsyncSession,
-    org_unit_id: UUID,
-    keys: tuple[str, ...],
-) -> tuple[dict[str, object | None], UUID | None] | None:
-    """Walk parent chain via DB queries — used by single-unit GET path.
-
-    Same semantics as `_walk_metadata_in_map`, but issues one query per
-    ancestor. Acceptable because tree depth is bounded (<10 in practice)
-    and the GET endpoint is a single request, not a hot loop.
-    """
-    found: dict[str, object | None] = {k: None for k in keys}
-    source_unit_id: UUID | None = None
-    current_id: UUID | None = org_unit_id
-    seen: set[UUID] = set()
-    while current_id is not None:
-        if current_id in seen:
-            break  # defensive
-        seen.add(current_id)
-        result = await db.execute(
-            select(OrganizationalUnit).where(OrganizationalUnit.id == current_id)
-        )
-        unit = result.scalar_one_or_none()
-        if unit is None:
-            break
-        meta = unit.unit_metadata or {}
-        contributed_here = False
-        for key in keys:
-            if found[key] is None and meta.get(key) is not None:
-                found[key] = meta[key]
-                contributed_here = True
-        if contributed_here and source_unit_id is None:
-            source_unit_id = unit.id
-        if all(v is not None for v in found.values()):
-            break
-        current_id = unit.parent_unit_id
-    if all(v is None for v in found.values()):
-        return None
-    return (found, source_unit_id)
-
-
-def _serialize_inheritance(
-    result: tuple[dict[str, object | None], UUID | None] | None,
-) -> dict | None:
-    """Wrap a walk result into the JSON shape consumed by the frontend.
-
-    Shape: {"values": {...}, "source_unit_id": "uuid-or-null"}.
-    Returns None when nothing is set anywhere in the chain — the frontend
-    uses this as a signal that the unit (and all ancestors) have no value
-    for that group.
-    """
-    if result is None:
-        return None
-    values, source_unit_id = result
     return {
-        "values": values,
+        "values": found,
         "source_unit_id": str(source_unit_id) if source_unit_id else None,
     }
-
-
-async def find_locale_defaults_in_ancestry(
-    db: AsyncSession, org_unit_id: UUID
-) -> dict | None:
-    """Single-unit ancestry walk for locale defaults.
-
-    Returns the inherited-shape dict (`{"values": {...}, "source_unit_id":
-    "..."}`) or None if no locale key is set anywhere in the chain.
-    """
-    return _serialize_inheritance(
-        await _walk_metadata_in_db(db, org_unit_id, LOCALE_KEYS)
-    )
-
-
-async def find_compliance_flags_in_ancestry(
-    db: AsyncSession, org_unit_id: UUID
-) -> dict | None:
-    """Single-unit ancestry walk for compliance flags.
-
-    Treats `False` as a meaningful set value (not "missing") — only `None`
-    or absent keys are skipped during the walk.
-    """
-    return _serialize_inheritance(
-        await _walk_metadata_in_db(db, org_unit_id, COMPLIANCE_KEYS)
-    )
 
 
 async def _unblock_pending_jobs_for_org_unit(

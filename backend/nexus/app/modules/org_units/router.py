@@ -18,8 +18,7 @@ from app.modules.org_units.service import (
     assign_role,
     create_org_unit,
     delete_org_unit,
-    find_compliance_flags_in_ancestry,
-    find_locale_defaults_in_ancestry,
+    find_address_in_ancestry,
     get_org_unit,
     list_org_units,
     list_unit_members,
@@ -44,8 +43,7 @@ def _build_response(
     member_count: int,
     email_map: dict,
     *,
-    inherited_locale: dict | None = None,
-    inherited_compliance: dict | None = None,
+    inherited_address: dict | None = None,
     unblocked_job_count: int = 0,
 ) -> OrgUnitResponse:
     return OrgUnitResponse(
@@ -56,7 +54,13 @@ def _build_response(
         unit_type=unit.unit_type,
         member_count=member_count,
         is_root=unit.is_root,
-        company_profile=unit.company_profile,
+        about=unit.about,
+        industry=unit.industry,
+        hiring_bar=unit.hiring_bar,
+        website=unit.website,
+        country=unit.country,
+        state=unit.state,
+        city=unit.city,
         company_profile_completed_at=(
             unit.company_profile_completed_at.isoformat()
             if unit.company_profile_completed_at
@@ -70,8 +74,7 @@ def _build_response(
         deletable_by=str(unit.deletable_by) if unit.deletable_by else None,
         deletable_by_email=email_map.get(unit.deletable_by) if unit.deletable_by else None,
         admin_delete_disabled=unit.admin_delete_disabled,
-        inherited_locale=inherited_locale,
-        inherited_compliance=inherited_compliance,
+        inherited_address=inherited_address,
         unblocked_job_count=unblocked_job_count,
     )
 
@@ -125,14 +128,12 @@ async def create_unit(
         raise HTTPException(status_code=400, detail=str(e))
 
     email_map = await _load_email_map(db, unit.created_by, unit.deletable_by)
-    inherited_locale = await find_locale_defaults_in_ancestry(db, unit.id)
-    inherited_compliance = await find_compliance_flags_in_ancestry(db, unit.id)
+    inherited_address = await find_address_in_ancestry(db, unit.id)
     return _build_response(
         unit,
         0,
         email_map,
-        inherited_locale=inherited_locale,
-        inherited_compliance=inherited_compliance,
+        inherited_address=inherited_address,
     )
 
 
@@ -243,15 +244,13 @@ async def update_unit(
         )
 
     email_map = await _load_email_map(db, unit.created_by, unit.deletable_by)
-    inherited_locale = await find_locale_defaults_in_ancestry(db, unit.id)
-    inherited_compliance = await find_compliance_flags_in_ancestry(db, unit.id)
+    inherited_address = await find_address_in_ancestry(db, unit.id)
 
     response = _build_response(
         unit,
         0,
         email_map,
-        inherited_locale=inherited_locale,
-        inherited_compliance=inherited_compliance,
+        inherited_address=inherited_address,
         unblocked_job_count=len(unblocked_ids),
     )
 

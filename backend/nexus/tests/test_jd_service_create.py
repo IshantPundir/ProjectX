@@ -13,8 +13,7 @@ from tests.conftest import create_test_client, create_test_org_unit, create_test
 
 _VALID_PROFILE = {
     "about": "We build real-time risk scoring for mid-market lenders at scale.",
-    "industry": "fintech_financial_services",
-    "company_stage": "series_a_b",
+    "industry": "Fintech / Financial Services",
     "hiring_bar": "Engineers who own problems end-to-end with high autonomy.",
 }
 
@@ -27,7 +26,7 @@ async def test_create_job_posting_happy_path(db):
     await db.flush()
     user = await create_test_user(db, tenant.id)
     company = await create_test_org_unit(
-        db, tenant.id, unit_type="company", company_profile=_VALID_PROFILE,
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
     )
     team = await create_test_org_unit(
         db, tenant.id, unit_type="team", parent_unit_id=company.id,

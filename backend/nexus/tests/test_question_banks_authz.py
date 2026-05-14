@@ -42,8 +42,7 @@ from tests.conftest import (
 
 _VALID_PROFILE = {
     "about": "We build real-time risk scoring for mid-market lenders at scale.",
-    "industry": "fintech_financial_services",
-    "company_stage": "series_a_b",
+    "industry": "Fintech / Financial Services",
     "hiring_bar": "Engineers who own problems end-to-end with high autonomy.",
 }
 
@@ -87,7 +86,7 @@ async def _make_company_only(db):
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
     company = await create_test_org_unit(
-        db, tenant.id, unit_type="company", company_profile=_VALID_PROFILE,
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
     )
     await db.flush()
     await _set_tenant_ctx(db, tenant.id)
@@ -274,7 +273,7 @@ async def test_require_bank_access_walks_ancestry(db):
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
     company = await create_test_org_unit(
-        db, tenant.id, unit_type="company", company_profile=_VALID_PROFILE,
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
     )
     division = await create_test_org_unit(
         db, tenant.id, unit_type="division",
@@ -329,7 +328,7 @@ async def test_require_bank_access_cross_tenant_returns_404_not_403(db):
     tenant_b = await create_test_client(db)
     user_b = await create_test_user(db, tenant_b.id)
     company_b = await create_test_org_unit(
-        db, tenant_b.id, unit_type="company", company_profile=_VALID_PROFILE,
+        db, tenant_b.id, unit_type="company", **_VALID_PROFILE,
     )
     await db.flush()
 

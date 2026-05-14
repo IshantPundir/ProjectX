@@ -57,8 +57,7 @@ _TEST_BEARER = "test-pipeline-participants-token"
 
 _VALID_PROFILE = {
     "about": "We build enterprise HR software at scale.",
-    "industry": "fintech_financial_services",
-    "company_stage": "series_a_b",
+    "industry": "Fintech / Financial Services",
     "hiring_bar": "Engineers who own problems end-to-end.",
 }
 
@@ -78,7 +77,7 @@ async def _setup_tenant_user_unit(db: AsyncSession):
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
     company = await create_test_org_unit(
-        db, tenant.id, unit_type="company", company_profile=_VALID_PROFILE,
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
     )
     tenant.super_admin_id = user.id
     await db.flush()

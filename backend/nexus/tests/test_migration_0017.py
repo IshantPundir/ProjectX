@@ -44,8 +44,7 @@ pytestmark = pytest.mark.asyncio
 
 _VALID_PROFILE = {
     "about": "Minimal seed company for trigger test.",
-    "industry": "fintech_financial_services",
-    "company_stage": "series_a_b",
+    "industry": "Fintech / Financial Services",
     "hiring_bar": "High bar.",
 }
 
@@ -65,7 +64,7 @@ async def _build_fk_chain(db):
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
     org_unit = await create_test_org_unit(
-        db, tenant.id, unit_type="company", company_profile=_VALID_PROFILE
+        db, tenant.id, unit_type="company", **_VALID_PROFILE
     )
     await db.flush()
 

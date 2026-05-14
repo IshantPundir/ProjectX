@@ -42,8 +42,7 @@ _TEST_BEARER = "test-jd-events-token"
 
 _VALID_PROFILE = {
     "about": "We build real-time risk scoring for mid-market lenders at scale.",
-    "industry": "fintech_financial_services",
-    "company_stage": "series_a_b",
+    "industry": "Fintech / Financial Services",
     "hiring_bar": "Engineers who own problems end-to-end with high autonomy.",
 }
 
@@ -239,7 +238,7 @@ async def test_create_job_publishes_initial_status(
         db,
         tenant.id,
         unit_type="company",
-        company_profile=_VALID_PROFILE,
+        **_VALID_PROFILE,
     )
     tenant.super_admin_id = user.id
     await db.commit()
@@ -289,7 +288,7 @@ async def test_confirm_signals_publishes_status_changed(
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
     company = await create_test_org_unit(
-        db, tenant.id, unit_type="company", company_profile=_VALID_PROFILE,
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
     )
     tenant.super_admin_id = user.id
     await db.flush()
@@ -342,7 +341,7 @@ async def test_save_signals_publishes_status_changed(
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
     company = await create_test_org_unit(
-        db, tenant.id, unit_type="company", company_profile=_VALID_PROFILE,
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
     )
     tenant.super_admin_id = user.id
     await db.flush()
@@ -391,7 +390,7 @@ async def test_retry_extraction_publishes_status_changed(
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
     company = await create_test_org_unit(
-        db, tenant.id, unit_type="company", company_profile=_VALID_PROFILE,
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
     )
     tenant.super_admin_id = user.id
     await db.flush()
@@ -445,7 +444,7 @@ async def test_enrich_job_publishes_status_changed(
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
     company = await create_test_org_unit(
-        db, tenant.id, unit_type="company", company_profile=_VALID_PROFILE,
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
     )
     tenant.super_admin_id = user.id
     await db.flush()
@@ -502,7 +501,7 @@ async def test_extract_actor_publishes_on_success(
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
     company = await create_test_org_unit(
-        db, tenant.id, unit_type="company", company_profile=_VALID_PROFILE,
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
     )
     job = JobPosting(
         tenant_id=tenant.id,
@@ -609,7 +608,7 @@ async def test_reenrich_actor_publishes_on_success(
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
     company = await create_test_org_unit(
-        db, tenant.id, unit_type="company", company_profile=_VALID_PROFILE,
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
     )
 
     # Job must be in signals_extracted with enrichment_status='streaming'

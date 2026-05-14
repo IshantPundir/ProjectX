@@ -41,7 +41,6 @@ from tests.conftest import (
 _VALID_PROFILE = {
     "about": "B2B SaaS serving Fortune 500 retail clients in the UK and EU.",
     "industry": "Technology",
-    "company_stage": "Series C",
     "hiring_bar": "Senior engineers who own outcomes end to end.",
 }
 
@@ -194,7 +193,7 @@ async def test_build_session_config_populates_signal_metadata(db):
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
     company = await create_test_org_unit(
-        db, tenant.id, unit_type="company", company_profile=_VALID_PROFILE,
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
     )
     tenant.super_admin_id = user.id
     await db.flush()
@@ -367,7 +366,7 @@ async def test_build_session_config_raises_on_empty_signal_metadata(db):
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
     company = await create_test_org_unit(
-        db, tenant.id, unit_type="company", company_profile=_VALID_PROFILE,
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
     )
     tenant.super_admin_id = user.id
     await db.flush()
@@ -495,7 +494,7 @@ async def test_build_session_config_populates_job_and_candidate_ids(db):
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
     company = await create_test_org_unit(
-        db, tenant.id, unit_type="company", company_profile=_VALID_PROFILE,
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
     )
     tenant.super_admin_id = user.id
     await db.flush()

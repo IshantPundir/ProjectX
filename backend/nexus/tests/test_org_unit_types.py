@@ -10,13 +10,6 @@ from app.modules.org_units.models import OrganizationalUnit
 from app.modules.org_units.service import create_org_unit, delete_org_unit, update_org_unit
 from tests.conftest import create_test_client, create_test_user
 
-PLACEHOLDER_PROFILE = {
-    "about": "We build real-time risk scoring infrastructure for mid-market lenders.",
-    "industry": "fintech_financial_services",
-    "company_stage": "series_a_b",
-    "hiring_bar": "Engineers who own problems end-to-end with high autonomy.",
-}
-
 
 async def _create_root(db: AsyncSession, client_id: uuid.UUID, user_id: uuid.UUID | None = None):
     return await create_org_unit(
@@ -26,7 +19,6 @@ async def _create_root(db: AsyncSession, client_id: uuid.UUID, user_id: uuid.UUI
         unit_type="company",
         parent_unit_id=None,
         created_by=user_id,
-        company_profile=PLACEHOLDER_PROFILE,
     )
 
 
@@ -45,7 +37,6 @@ async def test_company_with_parent_raises(db: AsyncSession):
             name="Bad",
             unit_type="company",
             parent_unit_id=root.id,
-            company_profile=PLACEHOLDER_PROFILE,
         )
 
 
@@ -60,7 +51,7 @@ async def test_second_company_in_same_tenant_raises(db: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_company_without_profile_is_allowed(db: AsyncSession):
-    """Phase 2A: company unit can be created with NULL company_profile.
+    """Company unit can be created without any profile columns set.
     The invite completion flow creates the root unit before the onboarding
     wizard has collected the profile; the wizard PATCHes it afterward.
     JD creation enforces 'profile must exist in ancestry' via
@@ -72,10 +63,11 @@ async def test_company_without_profile_is_allowed(db: AsyncSession):
         name="Root",
         unit_type="company",
         parent_unit_id=None,
-        company_profile=None,
     )
     assert unit.unit_type == "company"
-    assert unit.company_profile is None
+    assert unit.about is None
+    assert unit.industry is None
+    assert unit.hiring_bar is None
     assert unit.company_profile_completed_at is None
 
 
@@ -109,9 +101,8 @@ async def test_change_type_of_root_company_raises(db: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_client_account_without_profile_is_allowed(db: AsyncSession):
-    """Phase 2A: client_account can be created with NULL company_profile.
-    Same rationale as test_company_without_profile_is_allowed — profile is
-    collected post-hoc and enforced at JD creation time via ancestry walk."""
+    """client_account can be created without profile columns.
+    Profile is collected post-hoc and enforced at JD creation time via ancestry walk."""
     client = await create_test_client(db)
     root = await _create_root(db, client.id)
     unit = await create_org_unit(
@@ -120,10 +111,9 @@ async def test_client_account_without_profile_is_allowed(db: AsyncSession):
         name="Acme",
         unit_type="client_account",
         parent_unit_id=root.id,
-        company_profile=None,
     )
     assert unit.unit_type == "client_account"
-    assert unit.company_profile is None
+    assert unit.about is None
 
 
 @pytest.mark.asyncio
@@ -137,7 +127,6 @@ async def test_client_account_under_client_account_raises(db: AsyncSession):
         name="CA1",
         unit_type="client_account",
         parent_unit_id=root.id,
-        company_profile=PLACEHOLDER_PROFILE,
     )
     with pytest.raises(ValueError, match="cannot be nested under another client account"):
         await create_org_unit(
@@ -146,7 +135,6 @@ async def test_client_account_under_client_account_raises(db: AsyncSession):
             name="CA2",
             unit_type="client_account",
             parent_unit_id=ca1.id,
-            company_profile=PLACEHOLDER_PROFILE,
         )
 
 
@@ -169,7 +157,6 @@ async def test_client_account_under_team_raises(db: AsyncSession):
             name="Acme",
             unit_type="client_account",
             parent_unit_id=team.id,
-            company_profile=PLACEHOLDER_PROFILE,
         )
 
 
@@ -184,7 +171,6 @@ async def test_client_account_under_company_success(db: AsyncSession):
         name="Acme",
         unit_type="client_account",
         parent_unit_id=root.id,
-        company_profile=PLACEHOLDER_PROFILE,
     )
     assert ca.unit_type == "client_account"
 
@@ -207,7 +193,6 @@ async def test_client_account_under_division_success(db: AsyncSession):
         name="Acme",
         unit_type="client_account",
         parent_unit_id=div.id,
-        company_profile=PLACEHOLDER_PROFILE,
     )
     assert ca.unit_type == "client_account"
 
@@ -230,7 +215,6 @@ async def test_client_account_under_region_success(db: AsyncSession):
         name="Acme",
         unit_type="client_account",
         parent_unit_id=region.id,
-        company_profile=PLACEHOLDER_PROFILE,
     )
     assert ca.unit_type == "client_account"
 
@@ -323,7 +307,6 @@ async def test_client_account_under_team_via_team_parent_path(db: AsyncSession):
             name="Acme",
             unit_type="client_account",
             parent_unit_id=team.id,
-            company_profile=PLACEHOLDER_PROFILE,
         )
 
 
@@ -354,7 +337,6 @@ async def test_division_under_client_account(db: AsyncSession):
         name="CA",
         unit_type="client_account",
         parent_unit_id=root.id,
-        company_profile=PLACEHOLDER_PROFILE,
     )
     u = await create_org_unit(
         db=db,
@@ -432,7 +414,6 @@ async def test_region_under_client_account(db: AsyncSession):
         name="CA",
         unit_type="client_account",
         parent_unit_id=root.id,
-        company_profile=PLACEHOLDER_PROFILE,
     )
     u = await create_org_unit(
         db=db,
@@ -531,7 +512,6 @@ async def test_team_under_client_account(db: AsyncSession):
         name="CA",
         unit_type="client_account",
         parent_unit_id=root.id,
-        company_profile=PLACEHOLDER_PROFILE,
     )
     t = await create_org_unit(
         db=db,

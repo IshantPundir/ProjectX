@@ -120,9 +120,8 @@ async def test_run_enrichment_emits_span_with_prompt_attributes(in_memory_export
 
     _VALID_PROFILE = {
         "about": "We build real-time risk scoring for mid-market lenders at scale.",
-        "industry": "fintech_financial_services",
-        "company_stage": "series_a_b",
-        "hiring_bar": "Engineers who own problems end-to-end with high autonomy.",
+        "industry": "Fintech / Financial Services",
+            "hiring_bar": "Engineers who own problems end-to-end with high autonomy.",
     }
 
     # Seed minimal data
@@ -130,7 +129,7 @@ async def test_run_enrichment_emits_span_with_prompt_attributes(in_memory_export
     await db.flush()
     user = await create_test_user(db, tenant.id)
     company = await create_test_org_unit(
-        db, tenant.id, unit_type="company", company_profile=_VALID_PROFILE,
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
     )
     job = JobPosting(
         tenant_id=tenant.id,

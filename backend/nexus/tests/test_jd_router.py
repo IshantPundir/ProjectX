@@ -52,8 +52,7 @@ from tests.conftest import (
 
 _VALID_PROFILE = {
     "about": "We build real-time risk scoring for mid-market lenders at scale.",
-    "industry": "fintech_financial_services",
-    "company_stage": "series_a_b",
+    "industry": "Fintech / Financial Services",
     "hiring_bar": "Engineers who own problems end-to-end with high autonomy.",
 }
 
@@ -157,7 +156,7 @@ async def test_create_job_happy_path(db: AsyncSession, monkeypatch):
         db,
         tenant.id,
         unit_type="company",
-        company_profile=_VALID_PROFILE,
+        **_VALID_PROFILE,
     )
     tenant.super_admin_id = user.id
     await db.commit()
@@ -253,7 +252,7 @@ async def test_create_job_missing_permission_returns_403(db: AsyncSession, monke
         db,
         tenant.id,
         unit_type="company",
-        company_profile=_VALID_PROFILE,
+        **_VALID_PROFILE,
     )
     # do NOT set tenant.super_admin_id and do NOT assign any roles
     await db.commit()
@@ -324,7 +323,7 @@ async def test_retry_on_non_failed_job_returns_409(db: AsyncSession, monkeypatch
         db,
         tenant.id,
         unit_type="company",
-        company_profile=_VALID_PROFILE,
+        **_VALID_PROFILE,
     )
     tenant.super_admin_id = user.id
     await db.flush()
@@ -375,7 +374,7 @@ async def test_list_jobs_super_admin_sees_all(db: AsyncSession, monkeypatch):
         db,
         tenant.id,
         unit_type="company",
-        company_profile=_VALID_PROFILE,
+        **_VALID_PROFILE,
     )
     tenant.super_admin_id = user.id
     await db.flush()
@@ -422,7 +421,7 @@ async def test_get_job_populates_enrichment_fields(db: AsyncSession):
         db,
         tenant.id,
         unit_type="company",
-        company_profile=_VALID_PROFILE,
+        **_VALID_PROFILE,
     )
     tenant.super_admin_id = user.id
     await db.flush()
@@ -501,7 +500,7 @@ async def test_retry_returns_enriched_summary(db: AsyncSession, monkeypatch):
         db,
         tenant.id,
         unit_type="company",
-        company_profile=_VALID_PROFILE,
+        **_VALID_PROFILE,
     )
     tenant.super_admin_id = user.id
     await db.flush()
@@ -565,7 +564,7 @@ async def test_create_job_with_skip_enrichment_forwards_to_actor(
         db,
         tenant.id,
         unit_type="company",
-        company_profile=_VALID_PROFILE,
+        **_VALID_PROFILE,
     )
     tenant.super_admin_id = user.id
     await db.commit()
@@ -625,7 +624,7 @@ async def test_retry_extraction_preserves_skip_enrichment_intent(
         db,
         tenant.id,
         unit_type="company",
-        company_profile=_VALID_PROFILE,
+        **_VALID_PROFILE,
     )
     tenant.super_admin_id = user.id
     await db.flush()
@@ -686,7 +685,7 @@ async def test_retry_extraction_reruns_enrichment_after_phase1_failure(
         db,
         tenant.id,
         unit_type="company",
-        company_profile=_VALID_PROFILE,
+        **_VALID_PROFILE,
     )
     tenant.super_admin_id = user.id
     await db.flush()

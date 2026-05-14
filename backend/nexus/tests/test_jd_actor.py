@@ -23,8 +23,7 @@ from tests.conftest import (
 
 _VALID_PROFILE = {
     "about": "We build real-time risk scoring for mid-market lenders at scale.",
-    "industry": "fintech_financial_services",
-    "company_stage": "series_a_b",
+    "industry": "Fintech / Financial Services",
     "hiring_bar": "Engineers who own problems end-to-end with high autonomy.",
 }
 
@@ -34,7 +33,7 @@ async def _make_extracting_job(db):
     await db.flush()
     user = await create_test_user(db, tenant.id)
     company = await create_test_org_unit(
-        db, tenant.id, unit_type="company", company_profile=_VALID_PROFILE,
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
     )
     job = JobPosting(
         tenant_id=tenant.id,
@@ -394,7 +393,7 @@ async def test_actor_marks_streaming_before_enrichment(monkeypatch):
         await setup_db.flush()
         user = await create_test_user(setup_db, tenant.id)
         company = await create_test_org_unit(
-            setup_db, tenant.id, unit_type="company", company_profile=_VALID_PROFILE,
+            setup_db, tenant.id, unit_type="company", **_VALID_PROFILE,
         )
         job = JobPosting(
             tenant_id=tenant.id,
@@ -474,7 +473,7 @@ async def test_actor_skip_enrichment_runs_only_phase_2(_create_tables, monkeypat
         await setup_db.flush()
         user = await create_test_user(setup_db, tenant.id)
         company = await create_test_org_unit(
-            setup_db, tenant.id, unit_type="company", company_profile=_VALID_PROFILE,
+            setup_db, tenant.id, unit_type="company", **_VALID_PROFILE,
         )
         job = JobPosting(
             tenant_id=tenant.id,
@@ -544,7 +543,7 @@ async def test_actor_retry_skips_completed_phase_1(_create_tables, monkeypatch):
         await setup_db.flush()
         user = await create_test_user(setup_db, tenant.id)
         company = await create_test_org_unit(
-            setup_db, tenant.id, unit_type="company", company_profile=_VALID_PROFILE,
+            setup_db, tenant.id, unit_type="company", **_VALID_PROFILE,
         )
         job = JobPosting(
             tenant_id=tenant.id,

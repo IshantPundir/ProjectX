@@ -88,15 +88,17 @@ class QuestionConfig(BaseModel):
 
 
 class CompanyContext(BaseModel):
-    """Mirrors org_units/company_profile.py CompanyProfile.
+    """Company profile context for the interview engine.
 
-    Uses plain ``str`` for industry/company_stage instead of Nexus enums
-    so the wire format stays decoupled from Nexus enum definitions.
+    Uses plain ``str`` for all fields so the wire format stays decoupled
+    from Nexus enum definitions. `company_stage` is retained for backward
+    compatibility but defaults to empty string — it was dropped from the
+    org_unit profile columns in migration 0034.
     """
 
     about: str = Field(min_length=30, max_length=500)
     industry: str
-    company_stage: str
+    company_stage: str = ""
     hiring_bar: str = Field(min_length=20, max_length=280)
 
 

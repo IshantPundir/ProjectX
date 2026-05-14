@@ -36,8 +36,7 @@ from tests.conftest import (
 
 _VALID_PROFILE = {
     "about": "We build real-time risk scoring for mid-market lenders at scale.",
-    "industry": "fintech_financial_services",
-    "company_stage": "series_a_b",
+    "industry": "Fintech / Financial Services",
     "hiring_bar": "Engineers who own problems end-to-end with high autonomy.",
 }
 
@@ -194,7 +193,7 @@ async def test_save_signals_creates_new_snapshot(db: AsyncSession, monkeypatch):
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
     company = await create_test_org_unit(
-        db, tenant.id, unit_type="company", company_profile=_VALID_PROFILE,
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
     )
     tenant.super_admin_id = user.id
     await db.flush()
@@ -244,7 +243,7 @@ async def test_save_signals_clears_confirmation(db: AsyncSession, monkeypatch):
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
     company = await create_test_org_unit(
-        db, tenant.id, unit_type="company", company_profile=_VALID_PROFILE,
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
     )
     tenant.super_admin_id = user.id
     await db.flush()
@@ -295,7 +294,7 @@ async def test_confirm_signals(db: AsyncSession, monkeypatch):
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
     company = await create_test_org_unit(
-        db, tenant.id, unit_type="company", company_profile=_VALID_PROFILE,
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
     )
     tenant.super_admin_id = user.id
     await db.flush()
@@ -338,7 +337,7 @@ async def test_confirm_requires_extracted_state(db: AsyncSession, monkeypatch):
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
     company = await create_test_org_unit(
-        db, tenant.id, unit_type="company", company_profile=_VALID_PROFILE,
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
     )
     tenant.super_admin_id = user.id
     await db.flush()
@@ -392,7 +391,7 @@ async def test_enrich_returns_202(db: AsyncSession, monkeypatch):
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
     company = await create_test_org_unit(
-        db, tenant.id, unit_type="company", company_profile=_VALID_PROFILE,
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
     )
     tenant.super_admin_id = user.id
     await db.flush()
@@ -439,7 +438,7 @@ async def test_enrich_rejects_while_streaming(db: AsyncSession, monkeypatch):
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
     company = await create_test_org_unit(
-        db, tenant.id, unit_type="company", company_profile=_VALID_PROFILE,
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
     )
     tenant.super_admin_id = user.id
     await db.flush()

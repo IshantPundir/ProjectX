@@ -131,7 +131,7 @@ def _build_user_message(
 
     if company_profile:
         parts.append("\n# COMPANY PROFILE\n")
-        for key in ("about", "industry", "company_stage", "hiring_bar"):
+        for key in ("about", "industry", "hiring_bar"):
             if key in company_profile:
                 parts.append(f"{key}: {company_profile[key]}\n")
 

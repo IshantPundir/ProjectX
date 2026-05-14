@@ -74,7 +74,6 @@ def _build_user_message(job: JobPosting, profile: dict) -> str:
         "## Company Profile\n"
         f"- About: {profile['about']}\n"
         f"- Industry: {profile['industry']}\n"
-        f"- Company stage: {profile['company_stage']}\n"
         f"- Hiring bar: {profile['hiring_bar']}\n",
         f"## Raw Job Description\n\n{job.description_raw}\n",
     ]
@@ -307,7 +306,6 @@ async def _run_signal_extraction(
         "## Company Profile\n"
         f"- About: {profile['about']}\n"
         f"- Industry: {profile['industry']}\n"
-        f"- Company stage: {profile['company_stage']}\n"
         f"- Hiring bar: {profile['hiring_bar']}\n",
         f"## Job Description\n\n{source_jd}\n",
     ]
@@ -571,7 +569,6 @@ def _build_reenrich_user_message(
         "## Company Profile\n"
         f"- About: {profile['about']}\n"
         f"- Industry: {profile['industry']}\n"
-        f"- Company stage: {profile['company_stage']}\n"
         f"- Hiring bar: {profile['hiring_bar']}\n",
         f"## Original Raw Job Description\n\n{job.description_raw}\n",
         f"## Current Enriched Job Description\n\n{job.description_enriched or '(none)'}\n",
