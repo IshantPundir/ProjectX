@@ -574,7 +574,7 @@ async def test_sync_clients_promote_fills_only_null_columns(
     await importer._run_phase("clients", importer._sync_clients, adapter)
 
     row = await db.execute(text(
-        "SELECT website, industry, country, state, city "
+        "SELECT website, industry, country, state, city, about, hiring_bar "
         "FROM organizational_units WHERE id = :u"
     ), {"u": stub_unit_id})
     r = row.one()
@@ -583,3 +583,7 @@ async def test_sync_clients_promote_fills_only_null_columns(
     assert r.country == "India"
     assert r.state == "Karnataka"
     assert r.city == "Bangalore"
+    # about + hiring_bar invariant: never auto-filled on promote
+    # (Ceipal has no equivalent fields).
+    assert r.about is None
+    assert r.hiring_bar is None

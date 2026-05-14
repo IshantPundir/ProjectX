@@ -221,27 +221,18 @@ class ATSImporter:
                 # about/hiring_bar are never auto-filled — Ceipal has no
                 # equivalent.
                 unit = await db.get(OrganizationalUnit, promotable.org_unit_id)
+                refreshed_fields: list[str] = []
                 if unit is not None:
-                    if unit.website is None:
-                        normalized = _normalize_payload_text(payload.website)
-                        if normalized is not None:
-                            unit.website = normalized
-                    if unit.industry is None:
-                        normalized = _normalize_payload_text(payload.industry)
-                        if normalized is not None:
-                            unit.industry = normalized
-                    if unit.country is None:
-                        normalized = _normalize_payload_text(payload.country)
-                        if normalized is not None:
-                            unit.country = normalized
-                    if unit.state is None:
-                        normalized = _normalize_payload_text(payload.state)
-                        if normalized is not None:
-                            unit.state = normalized
-                    if unit.city is None:
-                        normalized = _normalize_payload_text(payload.city)
-                        if normalized is not None:
-                            unit.city = normalized
+                    for field_name in (
+                        "website", "industry", "country", "state", "city",
+                    ):
+                        if getattr(unit, field_name) is None:
+                            normalized = _normalize_payload_text(
+                                getattr(payload, field_name)
+                            )
+                            if normalized is not None:
+                                setattr(unit, field_name, normalized)
+                                refreshed_fields.append(field_name)
 
                 await log_event(
                     db,
@@ -255,6 +246,7 @@ class ATSImporter:
                         "vendor": adapter.vendor,
                         "from_external_client_id": from_id,
                         "to_external_client_id": payload.external_id,
+                        "org_unit_refreshed_fields": refreshed_fields,
                     },
                 )
                 result.updated += 1
