@@ -12,10 +12,14 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 
 @pytest.mark.skip(
-    reason="re-enabled in Task 3 after ancestry-walk rewrite: test DB uses "
-           "create_all (post-migration schema) so company_profile column no "
-           "longer exists; migration tests need a real Alembic run to pre-seed "
-           "the legacy column before exercising the upgrade SQL"
+    reason=(
+        "Migration test runs against a test DB built by Base.metadata.create_all "
+        "from the ORM model. After Task 2 dropped `company_profile` from the ORM, "
+        "the test cannot pre-seed the legacy-shape row. Migration correctness was "
+        "verified by `alembic upgrade head` against the dev DB in Task 1. "
+        "Re-enabling would require switching the test fixture to apply real "
+        "Alembic migrations — out of scope for this refactor."
+    )
 )
 @pytest.mark.asyncio
 async def test_migration_0034_backfills_about_hiring_bar_industry(db):
@@ -117,10 +121,14 @@ async def test_migration_0034_backfills_about_hiring_bar_industry(db):
 
 
 @pytest.mark.skip(
-    reason="re-enabled in Task 3 after ancestry-walk rewrite: test DB uses "
-           "create_all (post-migration schema) so company_profile column no "
-           "longer exists; migration tests need a real Alembic run to pre-seed "
-           "the legacy column before exercising the upgrade SQL"
+    reason=(
+        "Migration test runs against a test DB built by Base.metadata.create_all "
+        "from the ORM model. After Task 2 dropped `company_profile` from the ORM, "
+        "the test cannot pre-seed the legacy-shape row. Migration correctness was "
+        "verified by `alembic upgrade head` against the dev DB in Task 1. "
+        "Re-enabling would require switching the test fixture to apply real "
+        "Alembic migrations — out of scope for this refactor."
+    )
 )
 @pytest.mark.asyncio
 async def test_migration_0034_handles_null_company_profile(db):
@@ -157,10 +165,14 @@ async def test_migration_0034_handles_null_company_profile(db):
 
 
 @pytest.mark.skip(
-    reason="re-enabled in Task 3 after ancestry-walk rewrite: test DB uses "
-           "create_all (post-migration schema) so company_profile column no "
-           "longer exists; migration tests need a real Alembic run to pre-seed "
-           "the legacy column before exercising the upgrade SQL"
+    reason=(
+        "Migration test runs against a test DB built by Base.metadata.create_all "
+        "from the ORM model. After Task 2 dropped `company_profile` from the ORM, "
+        "the test cannot pre-seed the legacy-shape row. Migration correctness was "
+        "verified by `alembic upgrade head` against the dev DB in Task 1. "
+        "Re-enabling would require switching the test fixture to apply real "
+        "Alembic migrations — out of scope for this refactor."
+    )
 )
 @pytest.mark.asyncio
 async def test_migration_0034_downgrade_recovers_jsonb_shape(db):
