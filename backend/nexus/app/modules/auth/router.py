@@ -254,13 +254,12 @@ async def accept_invite(
 
             root_unit = await _create_root_unit(
                 db=db,
-                client_id=uuid_mod.UUID(str(claimed_row.tenant_id)),
+                tenant_id=uuid_mod.UUID(str(claimed_row.tenant_id)),
                 name=client_name,
                 unit_type="company",
                 parent_unit_id=None,
                 created_by=user.id,
                 actor_email=email,
-                company_profile=None,
                 metadata=root_metadata,
             )
             root_unit_id = str(root_unit.id)

@@ -141,3 +141,69 @@ async def test_update_completion_flips_complete_to_pending_when_cleared(db):
     r = row.one()
     assert r.about is None  # empty string normalized to NULL after .strip()
     assert r.company_profile_completion_status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_get_org_unit_response_shape_after_refactor(db):
+    """GET /api/org-units/{id} response (via the service function that
+    builds the dict) exposes column-level fields and inherited_address.
+    Drops company_profile, inherited_locale, inherited_compliance keys.
+
+    This is a service-level test rather than HTTP-level: it asserts the
+    contract between get_org_unit and the router's _build_response. The
+    HTTP layer is covered indirectly by the existing router test suite
+    once those re-enable in subsequent work.
+    """
+    from app.modules.org_units.service import get_org_unit
+
+    tenant_id = uuid.uuid4()
+    root_id = uuid.uuid4()
+    child_id = uuid.uuid4()
+
+    await db.execute(text("INSERT INTO clients (id, name) VALUES (:t, 'X')"),
+                     {"t": tenant_id})
+    # Parent with all three address columns set
+    await db.execute(text(
+        "INSERT INTO organizational_units (id, client_id, name, unit_type, "
+        "is_root, country, state, city, "
+        "company_profile_completion_status) VALUES "
+        "(:r, :t, 'Root', 'company', true, 'US', 'NY', 'NYC', 'complete')"),
+        {"r": root_id, "t": tenant_id})
+    # Child inherits address from parent
+    await db.execute(text(
+        "INSERT INTO organizational_units (id, client_id, parent_unit_id, "
+        "name, unit_type, is_root, "
+        "company_profile_completion_status) VALUES "
+        "(:c, :t, :r, 'Child', 'division', false, 'pending')"),
+        {"c": child_id, "t": tenant_id, "r": root_id})
+    await db.flush()
+
+    result = await get_org_unit(
+        db, child_id,
+        client_id=tenant_id,
+        user_id=uuid.uuid4(),  # irrelevant when is_super_admin=True
+        is_super_admin=True,
+    )
+    assert result is not None
+
+    # 7 column-level fields are present (even if None on the child itself).
+    assert "about" in result
+    assert "industry" in result
+    assert "hiring_bar" in result
+    assert "website" in result
+    assert "country" in result
+    assert "state" in result
+    assert "city" in result
+
+    # inherited_address surfaces the parent's values via the ancestry walk.
+    assert "inherited_address" in result
+    assert result["inherited_address"] is not None
+    assert result["inherited_address"]["values"]["country"] == "US"
+    assert result["inherited_address"]["values"]["state"] == "NY"
+    assert result["inherited_address"]["values"]["city"] == "NYC"
+    assert result["inherited_address"]["source_unit_id"] == str(root_id)
+
+    # Legacy keys are GONE.
+    assert "company_profile" not in result
+    assert "inherited_locale" not in result
+    assert "inherited_compliance" not in result

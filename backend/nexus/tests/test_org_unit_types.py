@@ -14,7 +14,7 @@ from tests.conftest import create_test_client, create_test_user
 async def _create_root(db: AsyncSession, client_id: uuid.UUID, user_id: uuid.UUID | None = None):
     return await create_org_unit(
         db=db,
-        client_id=client_id,
+        tenant_id=client_id,
         name="Root",
         unit_type="company",
         parent_unit_id=None,
@@ -33,7 +33,7 @@ async def test_company_with_parent_raises(db: AsyncSession):
     with pytest.raises(ValueError, match="cannot have a parent"):
         await create_org_unit(
             db=db,
-            client_id=client.id,
+            tenant_id=client.id,
             name="Bad",
             unit_type="company",
             parent_unit_id=root.id,
@@ -59,7 +59,7 @@ async def test_company_without_profile_is_allowed(db: AsyncSession):
     client = await create_test_client(db)
     unit = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="Root",
         unit_type="company",
         parent_unit_id=None,
@@ -107,7 +107,7 @@ async def test_client_account_without_profile_is_allowed(db: AsyncSession):
     root = await _create_root(db, client.id)
     unit = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="Acme",
         unit_type="client_account",
         parent_unit_id=root.id,
@@ -123,7 +123,7 @@ async def test_client_account_under_client_account_raises(db: AsyncSession):
     root = await _create_root(db, client.id)
     ca1 = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="CA1",
         unit_type="client_account",
         parent_unit_id=root.id,
@@ -131,7 +131,7 @@ async def test_client_account_under_client_account_raises(db: AsyncSession):
     with pytest.raises(ValueError, match="cannot be nested under another client account"):
         await create_org_unit(
             db=db,
-            client_id=client.id,
+            tenant_id=client.id,
             name="CA2",
             unit_type="client_account",
             parent_unit_id=ca1.id,
@@ -145,7 +145,7 @@ async def test_client_account_under_team_raises(db: AsyncSession):
     root = await _create_root(db, client.id)
     team = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="Team",
         unit_type="team",
         parent_unit_id=root.id,
@@ -153,7 +153,7 @@ async def test_client_account_under_team_raises(db: AsyncSession):
     with pytest.raises(ValueError, match="leaf nodes"):
         await create_org_unit(
             db=db,
-            client_id=client.id,
+            tenant_id=client.id,
             name="Acme",
             unit_type="client_account",
             parent_unit_id=team.id,
@@ -167,7 +167,7 @@ async def test_client_account_under_company_success(db: AsyncSession):
     root = await _create_root(db, client.id)
     ca = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="Acme",
         unit_type="client_account",
         parent_unit_id=root.id,
@@ -182,14 +182,14 @@ async def test_client_account_under_division_success(db: AsyncSession):
     root = await _create_root(db, client.id)
     div = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="Div",
         unit_type="division",
         parent_unit_id=root.id,
     )
     ca = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="Acme",
         unit_type="client_account",
         parent_unit_id=div.id,
@@ -204,14 +204,14 @@ async def test_client_account_under_region_success(db: AsyncSession):
     root = await _create_root(db, client.id)
     region = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="APAC",
         unit_type="region",
         parent_unit_id=root.id,
     )
     ca = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="Acme",
         unit_type="client_account",
         parent_unit_id=region.id,
@@ -229,7 +229,7 @@ async def test_division_under_team_raises(db: AsyncSession):
     root = await _create_root(db, client.id)
     team = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="Team",
         unit_type="team",
         parent_unit_id=root.id,
@@ -237,7 +237,7 @@ async def test_division_under_team_raises(db: AsyncSession):
     with pytest.raises(ValueError, match="leaf nodes"):
         await create_org_unit(
             db=db,
-            client_id=client.id,
+            tenant_id=client.id,
             name="Div",
             unit_type="division",
             parent_unit_id=team.id,
@@ -251,7 +251,7 @@ async def test_region_under_team_raises(db: AsyncSession):
     root = await _create_root(db, client.id)
     team = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="Team",
         unit_type="team",
         parent_unit_id=root.id,
@@ -259,7 +259,7 @@ async def test_region_under_team_raises(db: AsyncSession):
     with pytest.raises(ValueError, match="leaf nodes"):
         await create_org_unit(
             db=db,
-            client_id=client.id,
+            tenant_id=client.id,
             name="R",
             unit_type="region",
             parent_unit_id=team.id,
@@ -273,7 +273,7 @@ async def test_team_under_team_raises(db: AsyncSession):
     root = await _create_root(db, client.id)
     team = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="T1",
         unit_type="team",
         parent_unit_id=root.id,
@@ -281,7 +281,7 @@ async def test_team_under_team_raises(db: AsyncSession):
     with pytest.raises(ValueError, match="leaf nodes"):
         await create_org_unit(
             db=db,
-            client_id=client.id,
+            tenant_id=client.id,
             name="T2",
             unit_type="team",
             parent_unit_id=team.id,
@@ -295,7 +295,7 @@ async def test_client_account_under_team_via_team_parent_path(db: AsyncSession):
     root = await _create_root(db, client.id)
     team = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="Team",
         unit_type="team",
         parent_unit_id=root.id,
@@ -303,7 +303,7 @@ async def test_client_account_under_team_via_team_parent_path(db: AsyncSession):
     with pytest.raises(ValueError, match="leaf nodes"):
         await create_org_unit(
             db=db,
-            client_id=client.id,
+            tenant_id=client.id,
             name="Acme",
             unit_type="client_account",
             parent_unit_id=team.id,
@@ -319,7 +319,7 @@ async def test_division_under_company(db: AsyncSession):
     root = await _create_root(db, client.id)
     u = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="D",
         unit_type="division",
         parent_unit_id=root.id,
@@ -333,14 +333,14 @@ async def test_division_under_client_account(db: AsyncSession):
     root = await _create_root(db, client.id)
     ca = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="CA",
         unit_type="client_account",
         parent_unit_id=root.id,
     )
     u = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="D",
         unit_type="division",
         parent_unit_id=ca.id,
@@ -354,14 +354,14 @@ async def test_division_under_division(db: AsyncSession):
     root = await _create_root(db, client.id)
     d1 = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="D1",
         unit_type="division",
         parent_unit_id=root.id,
     )
     d2 = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="D2",
         unit_type="division",
         parent_unit_id=d1.id,
@@ -375,14 +375,14 @@ async def test_division_under_region(db: AsyncSession):
     root = await _create_root(db, client.id)
     r = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="R",
         unit_type="region",
         parent_unit_id=root.id,
     )
     d = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="D",
         unit_type="division",
         parent_unit_id=r.id,
@@ -396,7 +396,7 @@ async def test_region_under_company(db: AsyncSession):
     root = await _create_root(db, client.id)
     u = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="R",
         unit_type="region",
         parent_unit_id=root.id,
@@ -410,14 +410,14 @@ async def test_region_under_client_account(db: AsyncSession):
     root = await _create_root(db, client.id)
     ca = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="CA",
         unit_type="client_account",
         parent_unit_id=root.id,
     )
     u = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="R",
         unit_type="region",
         parent_unit_id=ca.id,
@@ -431,14 +431,14 @@ async def test_region_under_division(db: AsyncSession):
     root = await _create_root(db, client.id)
     d = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="D",
         unit_type="division",
         parent_unit_id=root.id,
     )
     r = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="R",
         unit_type="region",
         parent_unit_id=d.id,
@@ -452,14 +452,14 @@ async def test_region_under_region(db: AsyncSession):
     root = await _create_root(db, client.id)
     r1 = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="R1",
         unit_type="region",
         parent_unit_id=root.id,
     )
     r2 = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="R2",
         unit_type="region",
         parent_unit_id=r1.id,
@@ -473,7 +473,7 @@ async def test_team_under_company(db: AsyncSession):
     root = await _create_root(db, client.id)
     u = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="T",
         unit_type="team",
         parent_unit_id=root.id,
@@ -487,14 +487,14 @@ async def test_team_under_division(db: AsyncSession):
     root = await _create_root(db, client.id)
     d = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="D",
         unit_type="division",
         parent_unit_id=root.id,
     )
     t = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="T",
         unit_type="team",
         parent_unit_id=d.id,
@@ -508,14 +508,14 @@ async def test_team_under_client_account(db: AsyncSession):
     root = await _create_root(db, client.id)
     ca = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="CA",
         unit_type="client_account",
         parent_unit_id=root.id,
     )
     t = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="T",
         unit_type="team",
         parent_unit_id=ca.id,
@@ -529,14 +529,14 @@ async def test_team_under_region(db: AsyncSession):
     root = await _create_root(db, client.id)
     r = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="R",
         unit_type="region",
         parent_unit_id=root.id,
     )
     t = await create_org_unit(
         db=db,
-        client_id=client.id,
+        tenant_id=client.id,
         name="T",
         unit_type="team",
         parent_unit_id=r.id,
