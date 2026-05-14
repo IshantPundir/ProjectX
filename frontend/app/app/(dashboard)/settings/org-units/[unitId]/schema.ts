@@ -41,17 +41,14 @@ export type DivisionFormValues = z.infer<typeof divisionFormSchema>;
 
 /* ─── Region ─────────────────────────────────────────────────────────── */
 //
-// Task 8: Region will adopt the country/state/city block (replacing the
-// locale + compliance shape below). Schema rewrite deferred until
-// RegionDetail is refactored so it doesn't need dozens of @ts-expect-error.
+// Adopts the same country/state/city column-level fields as CompanyDetail.
+// Locale + compliance metadata fields are gone — Task 10 removes the dead
+// helpers (LocaleChip, ComplianceRow, etc.) from shared.tsx.
 export const regionFormSchema = z.object({
   name: unitNameSchema,
-  default_timezone: z.string().optional(),
-  default_currency: z.string().optional(),
-  default_locale: z.string().optional(),
-  compliance_aivia_il: z.boolean().optional(),
-  compliance_gdpr_eu: z.boolean().optional(),
-  compliance_ccpa_ca: z.boolean().optional(),
+  country: z.string(),
+  state: z.string(),
+  city: z.string(),
 });
 export type RegionFormValues = z.infer<typeof regionFormSchema>;
 

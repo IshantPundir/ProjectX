@@ -6,33 +6,23 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 
 import { applyApiErrorToForm } from "@/lib/api/errors";
-import { type OrgUnit, type RegionMetadata } from "@/lib/api/org-units";
+import { type OrgUnit } from "@/lib/api/org-units";
 import { canManageUnit, useMe } from "@/lib/hooks/use-me";
 import { useUpdateOrgUnit } from "@/lib/hooks/use-update-org-unit";
 
 import { Sidebar } from "./Sidebar";
 import { SidebarMembersCard } from "./SidebarMembersCard";
 import {
-  COMPLIANCE_FLAGS,
-  ComplianceRow,
+  AddressChip,
   CrumbBack,
-  CURRENCY_COMMON_VALUES,
-  CURRENCY_OPTIONS,
   HeaderActions,
-  LOCALE_OPTIONS,
-  LocaleChip,
   StatItem,
   StatSep,
   SubUnitCard,
-  TIMEZONE_OPTIONS,
   UnitCrumb,
   UnitPill,
-  getLocaleCommonValues,
-  getTimezoneCommonValues,
-  localeDefaults,
 } from "./shared";
 import {
-  mergeMetadata,
   regionFormSchema,
   type RegionFormValues,
 } from "./schema";
@@ -58,28 +48,16 @@ export function RegionDetail({
   onBack,
   onSaved,
 }: RegionDetailProps) {
-  const metadata = (unit.metadata ?? {}) as RegionMetadata;
   const [mode, setMode] = React.useState<"view" | "edit">("view");
 
   const defaults = React.useMemo<RegionFormValues>(
     () => ({
       name: unit.name,
-      default_timezone: metadata.default_timezone,
-      default_currency: metadata.default_currency,
-      default_locale: metadata.default_locale,
-      compliance_aivia_il: metadata.compliance_aivia_il,
-      compliance_gdpr_eu: metadata.compliance_gdpr_eu,
-      compliance_ccpa_ca: metadata.compliance_ccpa_ca,
+      country: unit.country ?? "",
+      state: unit.state ?? "",
+      city: unit.city ?? "",
     }),
-    [
-      unit.name,
-      metadata.default_timezone,
-      metadata.default_currency,
-      metadata.default_locale,
-      metadata.compliance_aivia_il,
-      metadata.compliance_gdpr_eu,
-      metadata.compliance_ccpa_ca,
-    ],
+    [unit.name, unit.country, unit.state, unit.city],
   );
 
   const form = useForm<RegionFormValues>({
@@ -98,49 +76,30 @@ export function RegionDetail({
   const isEdit = mode === "edit";
 
   const inheritedFromName = React.useMemo(() => {
-    const sourceId =
-      unit.inherited_locale?.source_unit_id ??
-      unit.inherited_compliance?.source_unit_id ??
-      null;
+    const sourceId = unit.inherited_address?.source_unit_id ?? null;
     if (!sourceId || sourceId === unit.id) return null;
     return parentChain.find((u) => u.id === sourceId)?.name ?? null;
-  }, [
-    unit.id,
-    unit.inherited_locale?.source_unit_id,
-    unit.inherited_compliance?.source_unit_id,
-    parentChain,
-  ]);
+  }, [unit.id, unit.inherited_address?.source_unit_id, parentChain]);
 
   async function onSubmit(values: RegionFormValues) {
     try {
-      const merged = mergeMetadata(unit.metadata, {
-        default_timezone: values.default_timezone,
-        default_currency: values.default_currency,
-        default_locale: values.default_locale,
-        compliance_aivia_il: values.compliance_aivia_il,
-        compliance_gdpr_eu: values.compliance_gdpr_eu,
-        compliance_ccpa_ca: values.compliance_ccpa_ca,
-      });
       const updated = await updateMutation.mutateAsync({
         unitId: unit.id,
         body: {
           name: values.name.trim() || unit.name,
-          metadata: merged,
-          set_metadata: true,
+          country: values.country, set_country: true,
+          state: values.state, set_state: true,
+          city: values.city, set_city: true,
         },
       });
       onSaved(updated);
       toast.success("Region saved");
       setMode("view");
-      const meta = (updated.metadata ?? {}) as RegionMetadata;
       form.reset({
         name: updated.name,
-        default_timezone: meta.default_timezone,
-        default_currency: meta.default_currency,
-        default_locale: meta.default_locale,
-        compliance_aivia_il: meta.compliance_aivia_il,
-        compliance_gdpr_eu: meta.compliance_gdpr_eu,
-        compliance_ccpa_ca: meta.compliance_ccpa_ca,
+        country: updated.country ?? "",
+        state: updated.state ?? "",
+        city: updated.city ?? "",
       });
     } catch (err) {
       if (applyApiErrorToForm(err, form)) return;
@@ -186,62 +145,35 @@ export function RegionDetail({
             >
               {unit.name}
             </h1>
-            <div className="locale-strip" aria-label="Locale & defaults">
-              <LocaleChip
-                label="Locale"
-                variant="inherit"
+            <div className="address-block" aria-label="Address">
+              <AddressChip
+                label="Country"
                 isEdit={isEdit}
-                value={watched.default_locale}
-                inheritedValue={
-                  unit.inherited_locale?.values.default_locale ?? null
-                }
+                value={watched.country}
+                inheritedValue={unit.inherited_address?.values.country ?? null}
                 inheritedFromName={inheritedFromName}
-                options={LOCALE_OPTIONS}
-                commonValues={getLocaleCommonValues()}
-                onChange={(v) => {
-                  form.setValue("default_locale", v, { shouldDirty: true });
-                  if (!v) return;
-                  const d = localeDefaults(v);
-                  if (d.timezone) {
-                    form.setValue("default_timezone", d.timezone, {
-                      shouldDirty: true,
-                    });
-                  }
-                  if (d.currency) {
-                    form.setValue("default_currency", d.currency, {
-                      shouldDirty: true,
-                    });
-                  }
-                }}
-              />
-              <LocaleChip
-                label="Timezone"
-                variant="inherit"
-                isEdit={isEdit}
-                value={watched.default_timezone}
-                inheritedValue={
-                  unit.inherited_locale?.values.default_timezone ?? null
-                }
-                inheritedFromName={inheritedFromName}
-                options={TIMEZONE_OPTIONS}
-                commonValues={getTimezoneCommonValues()}
                 onChange={(v) =>
-                  form.setValue("default_timezone", v, { shouldDirty: true })
+                  form.setValue("country", v ?? "", { shouldDirty: true })
                 }
               />
-              <LocaleChip
-                label="Currency"
-                variant="inherit"
+              <AddressChip
+                label="State"
                 isEdit={isEdit}
-                value={watched.default_currency}
-                inheritedValue={
-                  unit.inherited_locale?.values.default_currency ?? null
-                }
+                value={watched.state}
+                inheritedValue={unit.inherited_address?.values.state ?? null}
                 inheritedFromName={inheritedFromName}
-                options={CURRENCY_OPTIONS}
-                commonValues={CURRENCY_COMMON_VALUES}
                 onChange={(v) =>
-                  form.setValue("default_currency", v, { shouldDirty: true })
+                  form.setValue("state", v ?? "", { shouldDirty: true })
+                }
+              />
+              <AddressChip
+                label="City"
+                isEdit={isEdit}
+                value={watched.city}
+                inheritedValue={unit.inherited_address?.values.city ?? null}
+                inheritedFromName={inheritedFromName}
+                onChange={(v) =>
+                  form.setValue("city", v ?? "", { shouldDirty: true })
                 }
               />
             </div>
@@ -302,39 +234,6 @@ export function RegionDetail({
                 ))}
               </div>
             )}
-          </section>
-
-          <div className="section-divider">
-            Tenant defaults — inherited from {inheritedFromName ?? "tenant"}
-          </div>
-
-          <section className="section">
-            <div className="section-head">
-              <div className="section-head-main">
-                <div className="section-title">Compliance flags</div>
-                <div className="section-sub">
-                  Inherited from parent. Toggle to override per-region.
-                </div>
-              </div>
-            </div>
-            <div className="card">
-              {COMPLIANCE_FLAGS.map((flag) => (
-                <ComplianceRow
-                  key={flag.key}
-                  flag={flag}
-                  variant="inherit"
-                  isEdit={isEdit}
-                  value={watched[flag.key]}
-                  inheritedValue={
-                    unit.inherited_compliance?.values[flag.key] ?? null
-                  }
-                  inheritedFromName={inheritedFromName}
-                  onChange={(v) =>
-                    form.setValue(flag.key, v, { shouldDirty: true })
-                  }
-                />
-              ))}
-            </div>
           </section>
         </div>
 
