@@ -12,11 +12,14 @@ import {
 import { apiFetch } from '@/lib/api/client'
 import { getFreshSupabaseToken } from '@/lib/auth/tokens'
 
+// Task 10: This deep-editor route is deprecated. company_profile is removed
+// from the backend response; the local type retains it as unknown so this
+// file compiles until Task 10 cleanup removes the route entirely.
 type OrgUnit = {
   id: string
   name: string
   unit_type: string
-  company_profile: CompanyProfile | null
+  company_profile?: CompanyProfile | null
 }
 
 export default function CompanyProfilePage() {

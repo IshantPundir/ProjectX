@@ -99,7 +99,11 @@ export function OrgUnitCreateDialog({ target, onClose, onCreated }: Props) {
         name,
         unit_type: target.childType,
         parent_unit_id: target.parentId,
-        company_profile: profile,
+        // Map old CompanyProfile shape to column-level fields.
+        // Task 10 will replace the profile dialog with inline editing.
+        about: profile?.about ?? null,
+        industry: profile?.industry ?? null,
+        hiring_bar: profile?.hiring_bar ?? null,
         metadata: null,
       })
       onCreated(created.id)

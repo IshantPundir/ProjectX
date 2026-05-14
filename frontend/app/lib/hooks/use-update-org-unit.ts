@@ -4,14 +4,25 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 
 import { orgUnitsApi, type OrgUnit, type OrgUnitMetadata } from '@/lib/api/org-units'
 import { getFreshSupabaseToken } from '@/lib/auth/tokens'
-import type { CompanyProfile } from '@/components/dashboard/company-profile-form'
 
 export interface UpdateOrgUnitInput {
   unitId: string
   body: {
     name?: string
-    company_profile?: CompanyProfile | null
-    set_company_profile?: boolean
+    about?: string
+    set_about?: boolean
+    industry?: string
+    set_industry?: boolean
+    hiring_bar?: string
+    set_hiring_bar?: boolean
+    website?: string
+    set_website?: boolean
+    country?: string
+    set_country?: boolean
+    state?: string
+    set_state?: boolean
+    city?: string
+    set_city?: boolean
     metadata?: OrgUnitMetadata | null
     set_metadata?: boolean
   }

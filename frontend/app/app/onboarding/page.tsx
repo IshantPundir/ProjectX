@@ -62,9 +62,12 @@ export default function OnboardingPage() {
     if (!token) return;
 
     if (rootUnitId) {
+      // Task 9 will replace this with column-level inline editing.
+      // For now, map CompanyProfile fields to the new column-level sentinels.
       await orgUnitsApi.update(token, rootUnitId, {
-        set_company_profile: true,
-        company_profile: value,
+        about: value.about, set_about: true,
+        industry: value.industry, set_industry: true,
+        hiring_bar: value.hiring_bar, set_hiring_bar: true,
       });
     }
 

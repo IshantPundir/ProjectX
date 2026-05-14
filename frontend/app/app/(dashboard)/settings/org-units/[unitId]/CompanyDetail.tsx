@@ -6,48 +6,29 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 
 import { applyApiErrorToForm } from "@/lib/api/errors";
-import {
-  type CompanyMetadata,
-  type OrgUnit,
-} from "@/lib/api/org-units";
+import { type OrgUnit } from "@/lib/api/org-units";
 import { canManageUnit, useMe } from "@/lib/hooks/use-me";
 import { useUpdateOrgUnit } from "@/lib/hooks/use-update-org-unit";
 import { usePipelineTemplates } from "@/lib/hooks/use-pipeline-templates";
-import { type CompanyProfile } from "@/components/dashboard/company-profile-form";
 
 import { Sidebar } from "./Sidebar";
 import { SidebarMembersCard } from "./SidebarMembersCard";
 import {
-  COMPLIANCE_FLAGS,
-  ComplianceRow,
+  AddressChip,
   CrumbBack,
-  CURRENCY_COMMON_VALUES,
-  CURRENCY_OPTIONS,
   HeaderActions,
-  LOCALE_OPTIONS,
-  LocaleChip,
   StatItem,
   StatSep,
   SubUnitCard,
-  TIMEZONE_OPTIONS,
   UnitCrumb,
   UnitPill,
-  getLocaleCommonValues,
-  getTimezoneCommonValues,
-  localeDefaults,
 } from "./shared";
 import {
   companyFormSchema,
-  mergeMetadata,
   type CompanyFormValues,
 } from "./schema";
 
 import "./detail.css";
-
-const ABOUT_MIN = 30;
-const ABOUT_MAX = 1500;
-const HIRING_BAR_MIN = 20;
-const HIRING_BAR_MAX = 1500;
 
 export interface CompanyDetailProps {
   unit: OrgUnit;
@@ -66,8 +47,7 @@ export interface CompanyDetailProps {
  * an `isClientAccount` flag controlling:
  *   - type pill ("Company · Root" vs "Client account")
  *   - presence of breadcrumb
- *   - LocaleStrip variant ("source" vs "inherit")
- *   - Compliance flags variant ("source" vs "inherit")
+ *   - Address block inheritance source label
  *   - Sidebar bottom card ("Tenant info" vs "Governance")
  *   - Delete button (suppressed on root)
  */
@@ -81,37 +61,29 @@ export function CompanyDetail({
   onBack,
   onSaved,
 }: CompanyDetailProps) {
-  const metadata = (unit.metadata ?? {}) as CompanyMetadata;
-  const profile = unit.company_profile;
   const [mode, setMode] = React.useState<"view" | "edit">("view");
   const isEdit = mode === "edit";
 
   const defaults = React.useMemo<CompanyFormValues>(
     () => ({
       name: unit.name,
-      short_name: metadata.short_name ?? "",
-      website: metadata.website ?? "",
-      about: profile?.about ?? "",
-      hiring_bar: profile?.hiring_bar ?? "",
-      default_timezone: metadata.default_timezone,
-      default_currency: metadata.default_currency,
-      default_locale: metadata.default_locale,
-      compliance_aivia_il: metadata.compliance_aivia_il,
-      compliance_gdpr_eu: metadata.compliance_gdpr_eu,
-      compliance_ccpa_ca: metadata.compliance_ccpa_ca,
+      about: unit.about ?? "",
+      industry: unit.industry ?? "",
+      hiring_bar: unit.hiring_bar ?? "",
+      website: unit.website ?? "",
+      country: unit.country ?? "",
+      state: unit.state ?? "",
+      city: unit.city ?? "",
     }),
     [
       unit.name,
-      metadata.short_name,
-      metadata.website,
-      metadata.default_timezone,
-      metadata.default_currency,
-      metadata.default_locale,
-      metadata.compliance_aivia_il,
-      metadata.compliance_gdpr_eu,
-      metadata.compliance_ccpa_ca,
-      profile?.about,
-      profile?.hiring_bar,
+      unit.about,
+      unit.industry,
+      unit.hiring_bar,
+      unit.website,
+      unit.country,
+      unit.state,
+      unit.city,
     ],
   );
 
@@ -131,103 +103,45 @@ export function CompanyDetail({
   const templates = templatesQuery.data ?? [];
   const watched = form.watch();
 
-  const localeVariant = isClientAccount ? "inherit" : "source";
-  const complianceVariant = isClientAccount ? "inherit" : "source";
-
   const inheritedFromName = React.useMemo(() => {
     if (!isClientAccount) return null;
-    const sourceId =
-      unit.inherited_locale?.source_unit_id ??
-      unit.inherited_compliance?.source_unit_id ??
-      null;
+    const sourceId = unit.inherited_address?.source_unit_id ?? null;
     if (!sourceId || sourceId === unit.id) return null;
     return parentChain.find((u) => u.id === sourceId)?.name ?? null;
   }, [
     isClientAccount,
     unit.id,
-    unit.inherited_locale?.source_unit_id,
-    unit.inherited_compliance?.source_unit_id,
+    unit.inherited_address?.source_unit_id,
     parentChain,
   ]);
 
-  function buildProfilePayload(values: CompanyFormValues): {
-    profile: CompanyProfile | null;
-    canPersist: boolean;
-  } {
-    const about = values.about?.trim() ?? "";
-    const hiringBar = values.hiring_bar?.trim() ?? "";
-    const industry = profile?.industry;
-    const companyStage = profile?.company_stage;
-    const canPersist =
-      about.length >= ABOUT_MIN &&
-      about.length <= ABOUT_MAX &&
-      hiringBar.length >= HIRING_BAR_MIN &&
-      hiringBar.length <= HIRING_BAR_MAX &&
-      !!industry &&
-      !!companyStage;
-    if (!canPersist) {
-      return { profile: profile ?? null, canPersist: false };
-    }
-    return {
-      profile: {
-        about,
-        industry: industry as CompanyProfile["industry"],
-        company_stage: companyStage as CompanyProfile["company_stage"],
-        hiring_bar: hiringBar,
-      },
-      canPersist: true,
-    };
-  }
-
   async function onSubmit(values: CompanyFormValues) {
     try {
-      const merged = mergeMetadata(unit.metadata, {
-        short_name: values.short_name?.trim() || undefined,
-        website: values.website?.trim() || undefined,
-        default_timezone: values.default_timezone,
-        default_currency: values.default_currency,
-        default_locale: values.default_locale,
-        compliance_aivia_il: values.compliance_aivia_il,
-        compliance_gdpr_eu: values.compliance_gdpr_eu,
-        compliance_ccpa_ca: values.compliance_ccpa_ca,
-      });
-      const profilePayload = buildProfilePayload(values);
       const updated = await updateMutation.mutateAsync({
         unitId: unit.id,
         body: {
           name: values.name.trim() || unit.name,
-          metadata: merged,
-          set_metadata: true,
-          ...(profilePayload.canPersist
-            ? {
-                company_profile: profilePayload.profile,
-                set_company_profile: true,
-              }
-            : {}),
+          about: values.about, set_about: true,
+          industry: values.industry, set_industry: true,
+          hiring_bar: values.hiring_bar, set_hiring_bar: true,
+          website: values.website, set_website: true,
+          country: values.country, set_country: true,
+          state: values.state, set_state: true,
+          city: values.city, set_city: true,
         },
       });
       onSaved(updated);
-      toast.success(
-        profilePayload.canPersist
-          ? isClientAccount
-            ? "Client account saved"
-            : "Company saved"
-          : "Saved settings — open the deep editor to set Industry & Stage.",
-      );
+      toast.success(isClientAccount ? "Client account saved" : "Company saved");
       setMode("view");
-      const meta = (updated.metadata ?? {}) as CompanyMetadata;
       form.reset({
         name: updated.name,
-        short_name: meta.short_name ?? "",
-        website: meta.website ?? "",
-        about: updated.company_profile?.about ?? "",
-        hiring_bar: updated.company_profile?.hiring_bar ?? "",
-        default_timezone: meta.default_timezone,
-        default_currency: meta.default_currency,
-        default_locale: meta.default_locale,
-        compliance_aivia_il: meta.compliance_aivia_il,
-        compliance_gdpr_eu: meta.compliance_gdpr_eu,
-        compliance_ccpa_ca: meta.compliance_ccpa_ca,
+        about: updated.about ?? "",
+        industry: updated.industry ?? "",
+        hiring_bar: updated.hiring_bar ?? "",
+        website: updated.website ?? "",
+        country: updated.country ?? "",
+        state: updated.state ?? "",
+        city: updated.city ?? "",
       });
     } catch (err) {
       if (applyApiErrorToForm(err, form)) return;
@@ -246,9 +160,6 @@ export function CompanyDetail({
         href: `/settings/org-units/${u.id}`,
       }))
     : [];
-
-  const aboutCount = watched.about?.length ?? 0;
-  const hiringBarCount = watched.hiring_bar?.length ?? 0;
 
   // Stats roll-up: prefer subUnit type counts that match the design
   // ("3 regions · 12 divisions · 4 direct members · 42 open jobs").
@@ -296,79 +207,60 @@ export function CompanyDetail({
                 {...form.register("website")}
               />
             </div>
+            <div className="unit-industry" data-testid="unit-industry-row">
+              <span className="unit-industry-label">Industry</span>
+              <input
+                className="input unit-industry-input"
+                aria-label="Industry"
+                placeholder="e.g. Banking / Financial Services"
+                {...form.register("industry")}
+              />
+            </div>
             <div className="unit-about">
-              <div className="unit-about-head">
-                <span className="unit-about-label">About</span>
-                {isEdit && (
-                  <span className="unit-about-count">
-                    {aboutCount} / {ABOUT_MAX} chars
-                  </span>
-                )}
-              </div>
+              <span className="unit-about-label">About</span>
               <textarea
                 className="textarea unit-about-body"
                 rows={4}
                 aria-label="About"
-                placeholder="Describe what your company builds in 1-2 sentences."
+                placeholder="Describe what this client builds in 1-2 sentences."
                 {...form.register("about")}
               />
             </div>
-            <div className="locale-strip" aria-label="Locale & defaults">
-              <LocaleChip
-                label="Locale"
-                variant={localeVariant}
+            <div className="address-block" aria-label="Address">
+              <AddressChip
+                label="Country"
                 isEdit={isEdit}
-                value={watched.default_locale}
+                value={watched.country}
                 inheritedValue={
-                  unit.inherited_locale?.values.default_locale ?? null
+                  unit.inherited_address?.values.country ?? null
                 }
                 inheritedFromName={inheritedFromName}
-                options={LOCALE_OPTIONS}
-                commonValues={getLocaleCommonValues()}
-                onChange={(v) => {
-                  form.setValue("default_locale", v, { shouldDirty: true });
-                  if (!v) return;
-                  const d = localeDefaults(v);
-                  if (d.timezone) {
-                    form.setValue("default_timezone", d.timezone, {
-                      shouldDirty: true,
-                    });
-                  }
-                  if (d.currency) {
-                    form.setValue("default_currency", d.currency, {
-                      shouldDirty: true,
-                    });
-                  }
-                }}
-              />
-              <LocaleChip
-                label="Timezone"
-                variant={localeVariant}
-                isEdit={isEdit}
-                value={watched.default_timezone}
-                inheritedValue={
-                  unit.inherited_locale?.values.default_timezone ?? null
-                }
-                inheritedFromName={inheritedFromName}
-                options={TIMEZONE_OPTIONS}
-                commonValues={getTimezoneCommonValues()}
                 onChange={(v) =>
-                  form.setValue("default_timezone", v, { shouldDirty: true })
+                  form.setValue("country", v ?? "", { shouldDirty: true })
                 }
               />
-              <LocaleChip
-                label="Currency"
-                variant={localeVariant}
+              <AddressChip
+                label="State"
                 isEdit={isEdit}
-                value={watched.default_currency}
+                value={watched.state}
                 inheritedValue={
-                  unit.inherited_locale?.values.default_currency ?? null
+                  unit.inherited_address?.values.state ?? null
                 }
                 inheritedFromName={inheritedFromName}
-                options={CURRENCY_OPTIONS}
-                commonValues={CURRENCY_COMMON_VALUES}
                 onChange={(v) =>
-                  form.setValue("default_currency", v, { shouldDirty: true })
+                  form.setValue("state", v ?? "", { shouldDirty: true })
+                }
+              />
+              <AddressChip
+                label="City"
+                isEdit={isEdit}
+                value={watched.city}
+                inheritedValue={
+                  unit.inherited_address?.values.city ?? null
+                }
+                inheritedFromName={inheritedFromName}
+                onChange={(v) =>
+                  form.setValue("city", v ?? "", { shouldDirty: true })
                 }
               />
             </div>
@@ -423,16 +315,9 @@ export function CompanyDetail({
             </div>
             <div className="card">
               <div className="profile-narrative">
-                <div className="profile-narrative-head">
-                  <span className="profile-narrative-label">
-                    Hiring bar narrative
-                  </span>
-                  {isEdit && (
-                    <span className="profile-narrative-count">
-                      {hiringBarCount} / {HIRING_BAR_MAX} chars
-                    </span>
-                  )}
-                </div>
+                <span className="profile-narrative-label">
+                  Hiring bar narrative
+                </span>
                 <textarea
                   className="textarea profile-narrative-body"
                   rows={5}
@@ -449,21 +334,6 @@ export function CompanyDetail({
                 </span>
               </div>
             </div>
-            {(!profile?.industry || !profile?.company_stage) && (
-              <div
-                className="empty-state"
-                style={{ padding: "12px 4px", textAlign: "left" }}
-              >
-                Industry &amp; Stage are required to publish.{" "}
-                <a
-                  className="btn link"
-                  href={`/settings/org-units/${unit.id}/company-profile`}
-                >
-                  Open the deep editor
-                </a>{" "}
-                to set them.
-              </div>
-            )}
           </section>
 
           {/* Sub-units */}
@@ -572,43 +442,6 @@ export function CompanyDetail({
                   })}
               </div>
             )}
-          </section>
-
-          <div className="section-divider">
-            {isClientAccount
-              ? `Tenant defaults — inherited from ${inheritedFromName ?? "agency root"}`
-              : "Tenant-wide defaults"}
-          </div>
-
-          <section className="section">
-            <div className="section-head">
-              <div className="section-head-main">
-                <div className="section-title">Compliance flags</div>
-                <div className="section-sub">
-                  {isClientAccount
-                    ? "Inherited from agency root. Override per flag for jobs anchored under this client."
-                    : "Source of truth for the tenant. Regions and Client accounts may override per flag."}
-                </div>
-              </div>
-            </div>
-            <div className="card">
-              {COMPLIANCE_FLAGS.map((flag) => (
-                <ComplianceRow
-                  key={flag.key}
-                  flag={flag}
-                  variant={complianceVariant}
-                  isEdit={isEdit}
-                  value={watched[flag.key]}
-                  inheritedValue={
-                    unit.inherited_compliance?.values[flag.key] ?? null
-                  }
-                  inheritedFromName={inheritedFromName}
-                  onChange={(v) =>
-                    form.setValue(flag.key, v, { shouldDirty: true })
-                  }
-                />
-              ))}
-            </div>
           </section>
         </div>
 

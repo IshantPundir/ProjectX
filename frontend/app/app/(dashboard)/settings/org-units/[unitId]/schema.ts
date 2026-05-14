@@ -40,7 +40,10 @@ export const divisionFormSchema = z.object({
 export type DivisionFormValues = z.infer<typeof divisionFormSchema>;
 
 /* ─── Region ─────────────────────────────────────────────────────────── */
-
+//
+// Task 8: Region will adopt the country/state/city block (replacing the
+// locale + compliance shape below). Schema rewrite deferred until
+// RegionDetail is refactored so it doesn't need dozens of @ts-expect-error.
 export const regionFormSchema = z.object({
   name: unitNameSchema,
   default_timezone: z.string().optional(),
@@ -53,28 +56,19 @@ export const regionFormSchema = z.object({
 export type RegionFormValues = z.infer<typeof regionFormSchema>;
 
 /* ─── Company / Client account ───────────────────────────────────────── */
-
-/**
- * The company_profile shape required by the backend has 4 strict keys
- * (about, industry, company_stage, hiring_bar). We only persist the
- * profile when ALL 4 are present and valid — otherwise we save just the
- * metadata side and leave the profile untouched. The detail page surfaces
- * this to the user via a small "Profile incomplete" affordance and an
- * "Edit profile →" link to the deep editor at
- * `[unitId]/company-profile/`.
- */
+//
+// Free-text everywhere. No length caps (backend trims; empty string clears).
+// Saving sends explicit `set_<field>: true` sentinels so each field
+// persists independently.
 export const companyFormSchema = z.object({
   name: unitNameSchema,
-  short_name: z.string().max(50),
-  website: z.string().max(200),
-  about: z.string().max(1500),
-  hiring_bar: z.string().max(1500),
-  default_timezone: z.string().optional(),
-  default_currency: z.string().optional(),
-  default_locale: z.string().optional(),
-  compliance_aivia_il: z.boolean().optional(),
-  compliance_gdpr_eu: z.boolean().optional(),
-  compliance_ccpa_ca: z.boolean().optional(),
+  about: z.string(),
+  industry: z.string(),
+  hiring_bar: z.string(),
+  website: z.string(),
+  country: z.string(),
+  state: z.string(),
+  city: z.string(),
 });
 export type CompanyFormValues = z.infer<typeof companyFormSchema>;
 

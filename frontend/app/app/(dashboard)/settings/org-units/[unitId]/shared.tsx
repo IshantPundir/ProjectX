@@ -207,7 +207,53 @@ export function SubUnitCard({
   );
 }
 
+/* ─── Address chip (3 in a row inside `.address-block`) ─── */
+
+export function AddressChip({
+  label,
+  isEdit,
+  value,
+  inheritedValue,
+  inheritedFromName,
+  onChange,
+}: {
+  label: string;
+  isEdit: boolean;
+  value: string | null | undefined;
+  inheritedValue: string | null;
+  inheritedFromName: string | null;
+  onChange: (next: string | null) => void;
+}) {
+  const display = value || inheritedValue || "";
+  const isInherited = !value && !!inheritedValue;
+  if (isEdit) {
+    return (
+      <label className="address-chip address-chip--edit">
+        <span className="address-chip-label">{label}</span>
+        <input
+          className="input address-chip-input"
+          value={value ?? ""}
+          placeholder={inheritedValue ?? `e.g. ${label}`}
+          onChange={(e) => onChange(e.target.value || null)}
+        />
+      </label>
+    );
+  }
+  return (
+    <div className="address-chip">
+      <span className="address-chip-label">{label}</span>
+      <span className="address-chip-value">{display || "—"}</span>
+      {isInherited && inheritedFromName && (
+        <span className="address-chip-source">
+          Inherited from {inheritedFromName}
+        </span>
+      )}
+    </div>
+  );
+}
+
 /* ─── Compliance flag row ─── */
+// Task 8: RegionDetail still imports — remove when RegionDetail refactor lands.
 
 export interface ComplianceFlagDef {
   name: string;
@@ -304,6 +350,9 @@ export function ComplianceRow({
 }
 
 /* ─── Locale chip (3 in a row inside `.locale-strip`) ─── */
+// Task 8: RegionDetail still imports LocaleChip, LocaleChipOption, LOCALE_OPTIONS,
+// TIMEZONE_OPTIONS, CURRENCY_OPTIONS, CURRENCY_COMMON_VALUES, getLocaleCommonValues,
+// getTimezoneCommonValues, localeDefaults — remove all when RegionDetail refactor lands.
 
 export interface LocaleChipOption {
   group?: string;
@@ -1075,6 +1124,7 @@ export function localeDefaults(localeCode: string): LocaleDefaults {
   };
 }
 
+// Task 8: RegionDetail still imports COMPLIANCE_FLAGS — remove when RegionDetail refactor lands.
 export const COMPLIANCE_FLAGS: ReadonlyArray<
   ComplianceFlagDef & { key: "compliance_aivia_il" | "compliance_gdpr_eu" | "compliance_ccpa_ca" }
 > = [
