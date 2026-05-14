@@ -35,6 +35,17 @@ logger = structlog.get_logger()
 tracer = trace.get_tracer(__name__)
 
 
+def _normalize_payload_text(value: str | None) -> str | None:
+    """Mirror the org_units service `_normalize_text` semantics for ATS
+    payload string fields: `.strip()`, then empty -> None. Importing
+    `_normalize_text` from org_units would cross a private module
+    boundary; this two-line duplicate keeps the importer self-contained."""
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
 @dataclass
 class PhaseResult:
     new: int = 0
@@ -229,11 +240,11 @@ class ATSImporter:
                 name=payload.name,
                 unit_type="client_account",
                 is_root=False,
-                website=(payload.website or None),
-                industry=(payload.industry or None),
-                country=(payload.country or None),
-                state=(payload.state or None),
-                city=(payload.city or None),
+                website=_normalize_payload_text(payload.website),
+                industry=_normalize_payload_text(payload.industry),
+                country=_normalize_payload_text(payload.country),
+                state=_normalize_payload_text(payload.state),
+                city=_normalize_payload_text(payload.city),
                 company_profile_completion_status="pending",
                 created_by=created_by,
             )
