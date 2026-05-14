@@ -186,7 +186,15 @@ async def create_org_unit(
                     UserRoleAssignment.role_id == admin_role.id,
                 )
             )
+            # Dedup guard: parent_admins may contain duplicate (user_id, role)
+            # pairs from malformed historical data. Without this, we'd issue
+            # two INSERTs for the same (user_id, new_unit.id, admin_role.id)
+            # triple and the unique constraint would surface as a 500.
+            seen_user_ids: set[uuid_mod.UUID] = set()
             for ura in parent_admins.scalars().all():
+                if ura.user_id in seen_user_ids:
+                    continue
+                seen_user_ids.add(ura.user_id)
                 db.add(
                     UserRoleAssignment(
                         user_id=ura.user_id,
