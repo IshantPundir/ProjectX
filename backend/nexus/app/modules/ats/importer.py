@@ -214,6 +214,35 @@ class ATSImporter:
                     "raw": payload.raw,
                 }
                 promotable.last_synced_at = datetime.now(tz=UTC)
+
+                # Refresh the linked org_unit's column-level fields ONLY
+                # where they're currently NULL. Recruiter edits between
+                # stub creation and promotion survive the upgrade.
+                # about/hiring_bar are never auto-filled — Ceipal has no
+                # equivalent.
+                unit = await db.get(OrganizationalUnit, promotable.org_unit_id)
+                if unit is not None:
+                    if unit.website is None:
+                        normalized = _normalize_payload_text(payload.website)
+                        if normalized is not None:
+                            unit.website = normalized
+                    if unit.industry is None:
+                        normalized = _normalize_payload_text(payload.industry)
+                        if normalized is not None:
+                            unit.industry = normalized
+                    if unit.country is None:
+                        normalized = _normalize_payload_text(payload.country)
+                        if normalized is not None:
+                            unit.country = normalized
+                    if unit.state is None:
+                        normalized = _normalize_payload_text(payload.state)
+                        if normalized is not None:
+                            unit.state = normalized
+                    if unit.city is None:
+                        normalized = _normalize_payload_text(payload.city)
+                        if normalized is not None:
+                            unit.city = normalized
+
                 await log_event(
                     db,
                     tenant_id=tenant_id,

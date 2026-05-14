@@ -472,3 +472,114 @@ async def test_sync_clients_create_populates_address_and_industry_columns(
     assert r.about is None
     assert r.hiring_bar is None
     assert r.company_profile_completion_status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_sync_clients_promote_preserves_recruiter_edits(
+    db, importer_fixture,
+):
+    """Promotion never overwrites a recruiter-edited column. Only NULL
+    columns receive the Ceipal value."""
+    from app.modules.ats.importer import ATSImporter
+
+    tenant_id, _user_id, root_unit_id = importer_fixture
+
+    # Pre-seed: a stub with recruiter-edited industry+website, NULL address.
+    stub_unit_id = uuid.uuid4()
+    await db.execute(text(
+        "INSERT INTO organizational_units "
+        "(id, client_id, parent_unit_id, name, unit_type, is_root, "
+        " industry, website, "
+        " company_profile_completion_status) "
+        "VALUES (:o, :t, :p, 'Oracle', 'client_account', false, "
+        " 'Custom Industry (recruiter)', 'https://recruiter-edit.com', "
+        " 'pending')"
+    ), {"o": stub_unit_id, "t": tenant_id, "p": root_unit_id})
+    await db.execute(text(
+        "INSERT INTO ats_client_mappings "
+        "(tenant_id, ats_vendor, external_client_id, external_client_name, "
+        " org_unit_id, source_metadata) "
+        "VALUES (:t, 'ceipal', 'name:Oracle', 'Oracle', :o, :sm)"
+    ), {"t": tenant_id, "o": stub_unit_id, "sm": '{"stub":true,"origin":"jobs_phase"}'})
+    await db.flush()
+
+    payload = ATSClientPayload(
+        external_id="ABC123",
+        name="Oracle",
+        website="https://ceipal-returns.com",  # would overwrite if not gated
+        industry="Banking",                    # would overwrite if not gated
+        country="United States",
+        state="New York",
+        city="Rochester",
+        raw={"id": "ABC123"},
+        fetched_at=datetime.now(tz=timezone.utc),
+    )
+    adapter = _adapter_with_clients(uuid.UUID(tenant_id), [payload], [])
+
+    importer = ATSImporter()
+    await importer._run_phase("clients", importer._sync_clients, adapter)
+
+    row = await db.execute(text(
+        "SELECT website, industry, country, state, city "
+        "FROM organizational_units WHERE id = :u"
+    ), {"u": stub_unit_id})
+    r = row.one()
+    # Recruiter edits preserved.
+    assert r.industry == "Custom Industry (recruiter)"
+    assert r.website == "https://recruiter-edit.com"
+    # NULL columns now filled from Ceipal.
+    assert r.country == "United States"
+    assert r.state == "New York"
+    assert r.city == "Rochester"
+
+
+@pytest.mark.asyncio
+async def test_sync_clients_promote_fills_only_null_columns(
+    db, importer_fixture,
+):
+    """All-NULL stub gets every Ceipal field on promote."""
+    from app.modules.ats.importer import ATSImporter
+
+    tenant_id, _user_id, root_unit_id = importer_fixture
+
+    stub_unit_id = uuid.uuid4()
+    await db.execute(text(
+        "INSERT INTO organizational_units "
+        "(id, client_id, parent_unit_id, name, unit_type, is_root, "
+        " company_profile_completion_status) "
+        "VALUES (:o, :t, :p, 'Globex', 'client_account', false, 'pending')"
+    ), {"o": stub_unit_id, "t": tenant_id, "p": root_unit_id})
+    await db.execute(text(
+        "INSERT INTO ats_client_mappings "
+        "(tenant_id, ats_vendor, external_client_id, external_client_name, "
+        " org_unit_id, source_metadata) "
+        "VALUES (:t, 'ceipal', 'name:Globex', 'Globex', :o, :sm)"
+    ), {"t": tenant_id, "o": stub_unit_id, "sm": '{"stub":true,"origin":"jobs_phase"}'})
+    await db.flush()
+
+    payload = ATSClientPayload(
+        external_id="DEF456",
+        name="Globex",
+        website="https://globex.com",
+        industry="Manufacturing",
+        country="India",
+        state="Karnataka",
+        city="Bangalore",
+        raw={},
+        fetched_at=datetime.now(tz=timezone.utc),
+    )
+    adapter = _adapter_with_clients(uuid.UUID(tenant_id), [payload], [])
+
+    importer = ATSImporter()
+    await importer._run_phase("clients", importer._sync_clients, adapter)
+
+    row = await db.execute(text(
+        "SELECT website, industry, country, state, city "
+        "FROM organizational_units WHERE id = :u"
+    ), {"u": stub_unit_id})
+    r = row.one()
+    assert r.website == "https://globex.com"
+    assert r.industry == "Manufacturing"
+    assert r.country == "India"
+    assert r.state == "Karnataka"
+    assert r.city == "Bangalore"
