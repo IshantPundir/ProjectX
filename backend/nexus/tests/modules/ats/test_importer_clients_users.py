@@ -43,7 +43,6 @@ def _adapter_with_clients(tenant_id, client_payloads, user_payloads):
     return adapter
 
 
-@pytest.mark.skip(reason="re-enabled in Task 5 after ATS create rewrite: importer still writes company_profile JSONB to OrganizationalUnit")
 @pytest.mark.asyncio
 async def test_sync_clients_creates_pending_org_unit_for_new_mapping(
     db, importer_fixture,
@@ -63,11 +62,11 @@ async def test_sync_clients_creates_pending_org_unit_for_new_mapping(
     assert result.new == 1
     assert result.updated == 0
 
-    # Verify the org unit was created with pending status and stub profile.
+    # Verify the org unit was created with pending status and column-level fields.
     # Querying via the same test session — the monkeypatched bypass session
     # converted .commit() → .flush(), so all rows are visible here.
     row = await db.execute(text(
-        "SELECT o.name, o.unit_type, o.company_profile, "
+        "SELECT o.name, o.unit_type, o.website, o.industry, o.country, o.state, "
         "o.company_profile_completion_status, m.external_client_id "
         "FROM organizational_units o "
         "JOIN ats_client_mappings m ON m.org_unit_id = o.id "
@@ -77,13 +76,13 @@ async def test_sync_clients_creates_pending_org_unit_for_new_mapping(
     assert r.name == "Oracle"
     assert r.unit_type == "client_account"
     assert r.company_profile_completion_status == "pending"
-    assert r.company_profile["name"] == "Oracle"
-    assert r.company_profile["website"] == "www.oracle.com"
-    assert r.company_profile["industry"] == "Computer Software"
+    assert r.website == "www.oracle.com"
+    assert r.industry == "Computer Software"
+    assert r.country == "India"
+    assert r.state == "Karnataka"
     assert r.external_client_id == "cid-1"
 
 
-@pytest.mark.skip(reason="re-enabled in Task 5 after ATS create rewrite: test body inserts company_profile JSONB column which no longer exists")
 @pytest.mark.asyncio
 async def test_sync_clients_existing_mapping_updates_dont_rename_org_unit(
     db, importer_fixture,
@@ -110,9 +109,9 @@ async def test_sync_clients_existing_mapping_updates_dont_rename_org_unit(
         text(
             "INSERT INTO organizational_units "
             "(id, client_id, parent_unit_id, name, unit_type, is_root, "
-            "company_profile, company_profile_completion_status) "
+            "company_profile_completion_status) "
             "VALUES (:o, :t, :p, 'Renamed by Recruiter', 'client_account', "
-            "false, '{\"name\": \"Renamed by Recruiter\"}', 'complete')"
+            "false, 'complete')"
         ),
         {"o": existing_unit_id, "t": tenant_id, "p": root_unit_id},
     )
@@ -253,7 +252,6 @@ async def test_sync_users_autolinks_on_email_update(db, importer_fixture):
     assert row.mapped_at is not None
 
 
-@pytest.mark.skip(reason="re-enabled in Task 5 after ATS create rewrite: test body inserts company_profile JSONB column which no longer exists")
 @pytest.mark.asyncio
 async def test_sync_clients_promotes_stub_to_real_external_id(
     db, importer_fixture,
@@ -263,8 +261,8 @@ async def test_sync_clients_promotes_stub_to_real_external_id(
     stub mapping is PROMOTED in place: external_client_id is rewritten to
     the real id, source_metadata is replaced with the Ceipal payload's
     contacts+raw, last_synced_at advances. The org_unit is untouched —
-    same row, same id, same completion_status='pending', same
-    company_profile (the recruiter's in-flight profile work survives).
+    same row, same id, same completion_status='pending' (the recruiter's
+    in-flight profile work survives).
 
     Audit row 'ats.client_mapping.promoted' is written with from/to ids.
     """
@@ -279,9 +277,8 @@ async def test_sync_clients_promotes_stub_to_real_external_id(
         text(
             "INSERT INTO organizational_units "
             "(id, client_id, parent_unit_id, name, unit_type, is_root, "
-            "company_profile, company_profile_completion_status) "
-            "VALUES (:o, :t, :p, 'Oracle', 'client_account', false, "
-            "'{\"name\": \"Oracle\"}', 'pending')"
+            "company_profile_completion_status) "
+            "VALUES (:o, :t, :p, 'Oracle', 'client_account', false, 'pending')"
         ),
         {"o": stub_unit_id, "t": tenant_id, "p": root_unit_id},
     )
@@ -337,15 +334,13 @@ async def test_sync_clients_promotes_stub_to_real_external_id(
 
     # Org_unit untouched: same row, completion_status still pending.
     unit_row = await db.execute(text(
-        "SELECT id::text AS id, name, company_profile_completion_status, "
-        "company_profile "
+        "SELECT id::text AS id, name, company_profile_completion_status "
         "FROM organizational_units WHERE id = :o"
     ), {"o": stub_unit_id})
     u = unit_row.one()
     assert u.id == str(stub_unit_id)
     assert u.name == "Oracle"
     assert u.company_profile_completion_status == "pending"
-    assert u.company_profile == {"name": "Oracle"}
 
     # Promotion audit row written.
     audit_row = await db.execute(text(
@@ -359,7 +354,6 @@ async def test_sync_clients_promotes_stub_to_real_external_id(
     assert a.payload["vendor"] == "ceipal"
 
 
-@pytest.mark.skip(reason="re-enabled in Task 5 after ATS create rewrite: test body inserts company_profile JSONB column which no longer exists")
 @pytest.mark.asyncio
 async def test_sync_clients_does_not_promote_when_real_mapping_exists(
     db, importer_fixture,
@@ -380,9 +374,8 @@ async def test_sync_clients_does_not_promote_when_real_mapping_exists(
     await db.execute(text(
         "INSERT INTO organizational_units "
         "(id, client_id, parent_unit_id, name, unit_type, is_root, "
-        " company_profile, company_profile_completion_status) "
-        "VALUES (:o, :t, :p, 'Oracle', 'client_account', false, "
-        " '{\"name\":\"Oracle\"}', 'complete')"
+        " company_profile_completion_status) "
+        "VALUES (:o, :t, :p, 'Oracle', 'client_account', false, 'complete')"
     ), {"o": real_unit_id, "t": tenant_id, "p": root_unit_id})
     await db.execute(text(
         "INSERT INTO ats_client_mappings "
@@ -396,9 +389,8 @@ async def test_sync_clients_does_not_promote_when_real_mapping_exists(
     await db.execute(text(
         "INSERT INTO organizational_units "
         "(id, client_id, parent_unit_id, name, unit_type, is_root, "
-        " company_profile, company_profile_completion_status) "
-        "VALUES (:o, :t, :p, 'Oracle', 'client_account', false, "
-        " '{\"name\":\"Oracle\"}', 'pending')"
+        " company_profile_completion_status) "
+        "VALUES (:o, :t, :p, 'Oracle', 'client_account', false, 'pending')"
     ), {"o": stub_unit_id, "t": tenant_id, "p": root_unit_id})
     await db.execute(text(
         "INSERT INTO ats_client_mappings "
@@ -437,3 +429,46 @@ async def test_sync_clients_does_not_promote_when_real_mapping_exists(
         "WHERE tenant_id = :t AND action = 'ats.client_mapping.promoted'"
     ), {"t": tenant_id})
     assert audit_rows.scalar_one() == 0
+
+
+@pytest.mark.asyncio
+async def test_sync_clients_create_populates_address_and_industry_columns(
+    db, importer_fixture,
+):
+    """A Ceipal client payload with website/industry/country/state/city
+    lands on the new column-level fields of the stub org_unit.
+    about/hiring_bar stay NULL; completion_status='pending'."""
+    from app.modules.ats.importer import ATSImporter
+
+    tenant_id, _user_id, _root_unit_id = importer_fixture
+    payload = ATSClientPayload(
+        external_id="cid-new",
+        name="Acme Services",
+        website="https://acme.com",
+        industry="Banking - Financial Services",
+        country="United States",
+        state="New York",
+        city="Rochester",
+        raw={},
+        fetched_at=datetime.now(tz=timezone.utc),
+    )
+    adapter = _adapter_with_clients(uuid.UUID(tenant_id), [payload], [])
+
+    importer = ATSImporter()
+    result = await importer._run_phase("clients", importer._sync_clients, adapter)
+    assert result.new == 1
+
+    row = await db.execute(text(
+        "SELECT website, industry, country, state, city, about, hiring_bar, "
+        "company_profile_completion_status FROM organizational_units "
+        "WHERE client_id = :t AND name = 'Acme Services'"
+    ), {"t": tenant_id})
+    r = row.one()
+    assert r.website == "https://acme.com"
+    assert r.industry == "Banking - Financial Services"
+    assert r.country == "United States"
+    assert r.state == "New York"
+    assert r.city == "Rochester"
+    assert r.about is None
+    assert r.hiring_bar is None
+    assert r.company_profile_completion_status == "pending"

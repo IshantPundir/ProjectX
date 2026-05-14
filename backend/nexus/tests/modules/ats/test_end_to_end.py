@@ -177,7 +177,6 @@ class _FakeCeipal:
         )])
 
 
-@pytest.mark.skip(reason="re-enabled in Task 5 after ATS create rewrite: importer still writes company_profile JSONB to OrganizationalUnit")
 @pytest.mark.asyncio
 async def test_end_to_end_sync_creates_full_picture(db, actor_fixture):
     """One sync run materializes the full first-poll picture: org_unit

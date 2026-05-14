@@ -220,21 +220,20 @@ class ATSImporter:
                 result.updated += 1
                 continue
 
-            # Create the org_unit with stub profile
-            stub = {
-                "name": payload.name,
-                "website": payload.website,
-                "industry": payload.industry,
-                "country": payload.country,
-                "state": payload.state,
-                "city": payload.city,
-                "address": payload.address,
-            }
-            stub = {k: v for k, v in stub.items() if v is not None}
+            # Create the org_unit with column-level fields populated from
+            # the Ceipal payload. about + hiring_bar stay NULL — recruiter
+            # authors those via the inline editor on /settings/org-units/[unitId].
             new_unit = OrganizationalUnit(
-                client_id=tenant_id, parent_unit_id=root.id,
-                name=payload.name, unit_type="client_account",
-                is_root=False, company_profile=stub,
+                client_id=tenant_id,
+                parent_unit_id=root.id,
+                name=payload.name,
+                unit_type="client_account",
+                is_root=False,
+                website=(payload.website or None),
+                industry=(payload.industry or None),
+                country=(payload.country or None),
+                state=(payload.state or None),
+                city=(payload.city or None),
                 company_profile_completion_status="pending",
                 created_by=created_by,
             )
@@ -747,7 +746,6 @@ class ATSImporter:
             name=external_client_name,
             unit_type="client_account",
             is_root=False,
-            company_profile={"name": external_client_name},
             company_profile_completion_status="pending",
             created_by=created_by,
         )
