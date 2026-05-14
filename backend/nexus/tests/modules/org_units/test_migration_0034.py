@@ -4,7 +4,6 @@ manually against a connection that has been pre-seeded with legacy-shape
 rows."""
 from __future__ import annotations
 
-import json
 import uuid
 
 import pytest
@@ -143,3 +142,110 @@ async def test_migration_0034_handles_null_company_profile(db):
     assert r.about is None
     assert r.industry is None
     assert r.hiring_bar is None
+
+
+@pytest.mark.asyncio
+async def test_migration_0034_downgrade_recovers_jsonb_shape(db):
+    """Round-trip: upgrade then downgrade should leave the row in a
+    JSONB-shape that approximates the pre-0034 state for about / industry
+    / hiring_bar. The mapping of industry labels back to enum strings
+    works for known labels; free-text values fall through ELSE and are
+    preserved verbatim (lossy for the IndustryEnum validator — that's
+    the documented out-of-scope policy). company_stage stays absent on
+    downgrade (no source column carried it forward). Stripped metadata
+    keys (locale + compliance + short_name) are NOT restored — they're
+    permanently lost on the upgrade and the downgrade cannot re-create
+    them.
+    """
+    tenant_id = uuid.uuid4()
+    unit_id = uuid.uuid4()
+    await db.execute(
+        text("INSERT INTO clients (id, name) VALUES (:t, 'X')"),
+        {"t": tenant_id},
+    )
+
+    # Pre-seed with a recruiter-edited unit that has all three column
+    # fields filled. Use a free-text industry value that does NOT map
+    # back to an enum string — confirms the ELSE branch preserves it.
+    # Add a metadata key that should survive the round-trip (focus).
+    initial_meta_val = {"focus": "banking-engineering"}
+    await db.execute(
+        text("INSERT INTO organizational_units (id, client_id, name, "
+             "unit_type, is_root, company_profile, "
+             "company_profile_completion_status, metadata) "
+             "VALUES (:u, :t, 'Acme', 'company', true, "
+             "'{\"about\":\"about text\","
+             "\"industry\":\"saas_enterprise_software\","
+             "\"hiring_bar\":\"bar text\"}', 'complete', "
+             ":m)").bindparams(bindparam("m", type_=JSONB)),
+        {"u": unit_id, "t": tenant_id, "m": initial_meta_val},
+    )
+    await db.flush()
+
+    from migrations.versions import _0034_company_profile_columns as migration
+
+    # Upgrade.
+    for stmt in migration._UPGRADE_SQL:
+        await db.execute(text(stmt))
+    await db.flush()
+
+    # Sanity: post-upgrade state.
+    row = await db.execute(
+        text("SELECT about, industry, hiring_bar, metadata FROM "
+             "organizational_units WHERE id = :u"),
+        {"u": unit_id},
+    )
+    r = row.one()
+    assert r.about == "about text"
+    assert r.industry == "SaaS / Enterprise Software"
+    assert r.hiring_bar == "bar text"
+    assert r.metadata == {"focus": "banking-engineering"}
+
+    # Simulate a recruiter overwriting industry with a free-text value
+    # that has no enum equivalent. This is the realistic post-upgrade
+    # state and exercises the downgrade ELSE branch.
+    await db.execute(
+        text("UPDATE organizational_units SET industry = "
+             "'Custom Recruiter Value' WHERE id = :u"),
+        {"u": unit_id},
+    )
+    await db.flush()
+
+    # Downgrade.
+    for stmt in migration._DOWNGRADE_SQL:
+        await db.execute(text(stmt))
+    await db.flush()
+
+    # Post-downgrade: company_profile JSONB exists again with about /
+    # industry / hiring_bar. Industry preserved verbatim via ELSE branch.
+    # No company_stage key. New columns gone.
+    row = await db.execute(
+        text("SELECT company_profile, metadata FROM organizational_units "
+             "WHERE id = :u"),
+        {"u": unit_id},
+    )
+    r = row.one()
+    assert r.company_profile is not None
+    assert r.company_profile["about"] == "about text"
+    assert r.company_profile["industry"] == "Custom Recruiter Value"
+    assert r.company_profile["hiring_bar"] == "bar text"
+    # company_stage was not recoverable.
+    assert "company_stage" not in r.company_profile
+
+    # Stripped metadata keys (locale + compliance + short_name) were NOT
+    # restored — the downgrade only re-adds the website key from the
+    # column. focus survives because it was never stripped on upgrade.
+    assert r.metadata == {"focus": "banking-engineering"}
+    assert "default_timezone" not in (r.metadata or {})
+    assert "compliance_aivia_il" not in (r.metadata or {})
+
+    # New columns are gone after downgrade.
+    columns = await db.execute(
+        text("SELECT column_name FROM information_schema.columns "
+             "WHERE table_name = 'organizational_units'")
+    )
+    column_names = {c.column_name for c in columns.all()}
+    assert "company_profile" in column_names
+    for col in ("about", "industry", "hiring_bar", "website",
+                "country", "state", "city"):
+        assert col not in column_names

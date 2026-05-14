@@ -57,8 +57,12 @@ def _build_industry_case_expr(reverse: bool = False) -> str:
     else:
         mapping = _INDUSTRY_ENUM_TO_LABEL
         source = "company_profile->>'industry'"
+    def _sq(s: str) -> str:
+        """Escape single quotes for SQL string literals (' → '')."""
+        return s.replace("'", "''")
+
     cases = "\n".join(
-        f"            WHEN '{k}' THEN '{v}'"
+        f"            WHEN '{_sq(k)}' THEN '{_sq(v)}'"
         for k, v in mapping.items()
     )
     return (
