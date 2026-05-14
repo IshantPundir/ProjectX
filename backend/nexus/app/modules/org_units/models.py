@@ -58,7 +58,7 @@ class OrganizationalUnit(Base):
     # save. The job unblock cascade keys off pending -> complete
     # transitions of this column.
     company_profile_completion_status: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default=text("'complete'"),
+        Text, nullable=False, server_default=text("'pending'"),
     )
     # Per-unit-type metadata (region offices, division description, team focus,
     # etc). Mapped to DB column "metadata" but exposed on the ORM as
