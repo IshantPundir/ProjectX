@@ -1,6 +1,34 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
+// Tight UUID v4-shaped pattern. The looser /^[0-9a-f-]{36}$/i would have
+// accepted nonsense like 36 dashes; this matches only properly-grouped
+// UUIDs, which is the only thing the app ever puts in the legacy `jd` URL.
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * Translate the legacy `/candidates?jd=<uuid>&view=kanban` URL to the new
+ * `/tracker/<uuid>` surface. Returns the target URL when a redirect should
+ * fire, or null otherwise.
+ *
+ * The UUID regex guards against open-redirect via crafted `jd` values.
+ * Mirrors the redirect-allowlist pattern used by `app/(auth)/invite/page.tsx`.
+ *
+ * Exported so the rule is unit-testable without spinning up a NextRequest.
+ */
+export function checkLegacyRedirect(url: URL): URL | null {
+  if (
+    url.pathname === '/candidates' &&
+    url.searchParams.get('view') === 'kanban'
+  ) {
+    const jd = url.searchParams.get('jd') ?? ''
+    const target = UUID_RE.test(jd) ? `/tracker/${jd}` : '/tracker'
+    return new URL(target, url)
+  }
+  return null
+}
+
 const PUBLIC_PATHS = new Set(["/login"]);
 
 export async function proxy(request: NextRequest) {
@@ -28,6 +56,11 @@ export async function proxy(request: NextRequest) {
   );
 
   const path = request.nextUrl.pathname;
+
+  const legacy = checkLegacyRedirect(request.nextUrl)
+  if (legacy) {
+    return NextResponse.redirect(legacy, 308)
+  }
 
   // Invite pages are always public (no auth needed)
   if (path.startsWith("/invite")) {
