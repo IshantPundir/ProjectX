@@ -143,7 +143,7 @@ export default function CandidateKanbanView({ jobId }: Props) {
       onDragCancel={() => setActiveId(null)}
     >
       <div
-        className="flex gap-2.5 overflow-x-auto pb-4"
+        className="flex h-full gap-2.5 overflow-x-auto pb-4"
         role="list"
         aria-label="Candidate kanban board"
       >

@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import CandidateKanbanView from '@/components/dashboard/tracker/CandidateKanbanView'
 import { useJob } from '@/lib/hooks/use-job'
@@ -9,6 +9,10 @@ import { useKanbanBoard } from '@/lib/hooks/use-kanban-board'
 import { postedAgo } from '@/lib/utils'
 
 const TIP_KEY = 'tracker-board-tip-dismissed'
+// Distance from the kanban container's bottom edge to the viewport bottom
+// we want to leave free (page bottom padding). pb-10 = 40px.
+const BOARD_BOTTOM_GUTTER = 40
+const BOARD_MIN_HEIGHT = 320
 
 interface Props {
   jobId: string
@@ -32,6 +36,31 @@ export function TrackerKanbanPage({ jobId }: Props) {
   const total = board.data
     ? board.data.stages.reduce((sum, s) => sum + s.candidates.length, 0)
     : null
+
+  // Anchor the kanban container to the viewport bottom so columns fill the
+  // visible area instead of shrinking to content. Measured (not a fixed
+  // calc) so the offset adapts to whether the tip banner is shown, the
+  // header wraps, etc. AppShell deliberately uses body-scroll, so flex
+  // fill from the parent isn't an option — we have to compute the height.
+  const boardRef = useRef<HTMLDivElement>(null)
+  const [boardHeight, setBoardHeight] = useState<number | null>(null)
+  useEffect(() => {
+    function recalc() {
+      const node = boardRef.current
+      if (!node) return
+      const top = node.getBoundingClientRect().top
+      const next = Math.max(
+        BOARD_MIN_HEIGHT,
+        window.innerHeight - top - BOARD_BOTTOM_GUTTER,
+      )
+      setBoardHeight(next)
+    }
+    recalc()
+    window.addEventListener('resize', recalc)
+    return () => window.removeEventListener('resize', recalc)
+    // tipDismissed changes the layout above; job/board data arrival can
+    // also reflow (title length, subtitle population). Re-measure on each.
+  }, [tipDismissed, job.data?.title, total])
 
   if (job.error) {
     return (
@@ -114,7 +143,15 @@ export function TrackerKanbanPage({ jobId }: Props) {
         </div>
       )}
 
-      <CandidateKanbanView jobId={jobId} />
+      <div
+        ref={boardRef}
+        style={{
+          height: boardHeight ?? undefined,
+          minHeight: BOARD_MIN_HEIGHT,
+        }}
+      >
+        <CandidateKanbanView jobId={jobId} />
+      </div>
     </div>
   )
 }

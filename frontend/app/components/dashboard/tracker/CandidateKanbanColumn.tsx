@@ -27,7 +27,7 @@ export default function CandidateKanbanColumn({
   return (
     <div
       ref={setNodeRef}
-      className="flex w-80 flex-shrink-0 flex-col rounded-lg border transition-colors"
+      className="flex h-full w-80 flex-shrink-0 flex-col rounded-lg border transition-colors"
       style={{
         background: 'var(--px-bg-2)',
         borderColor: isOver ? 'var(--px-accent)' : 'var(--px-hairline)',
