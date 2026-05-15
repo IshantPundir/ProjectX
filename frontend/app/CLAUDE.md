@@ -143,7 +143,8 @@ frontend/app/
 │       ├── jd-panels/                    ← JDReviewShell, JDExtractingView, RawJdCanvas, EnrichedJdCanvas, SectionsRail, SignalsCanvas, SignalInspector, ErrorBanner, helpers/, components/
 │       ├── pipeline/                     ← Pipeline editor: PipelineFlowColumn, StageInspectorPanel, StageConfigDrawer, TemplatePickerDialog, StarterPackBrowser, ActivationGate, StageParticipantsEditor, etc.
 │       ├── question-bank/                ← AddQuestionDialog, AddCustomQuestionDialog, BankStatusBadge, QuestionCard, QuestionRefinePanel, …
-│       ├── candidates/                   ← AddCandidateDialog, CandidateKanbanView/Card/Column, CandidateListView, ClientCandidatesPage, ResumeUploadField, SendInviteDialog, JdPicker, StageTransitionDropdown, SessionStatusBadge, StatusBadge
+│       ├── candidates/                   ← AddCandidateDialog, CandidateListView, ClientCandidatesPage, ResumeUploadField, SendInviteDialog, JdPicker, StageTransitionDropdown, SessionStatusBadge, StatusBadge
+│       ├── tracker/                       ← Kanban primitives (CandidateKanbanView/Card/Column) — used by /tracker pages
 │       └── org-units/                    ← OrgGraph + OrgGraphCanvas + custom SVG edge/node + dagre layout hook + pan-zoom + direction-toggle
 ├── stores/
 │   └── job-edit.ts                       ← Zustand: editable signal state with isDirty tracking

@@ -7,7 +7,7 @@ import { JdPicker } from '@/components/dashboard/candidates/JdPicker'
 import { Button } from '@/components/px'
 
 import AddCandidateDialog from './AddCandidateDialog'
-import CandidateKanbanView from './CandidateKanbanView'
+import CandidateKanbanView from '@/components/dashboard/tracker/CandidateKanbanView'
 import CandidateListView from './CandidateListView'
 
 type CandidatesView = 'list' | 'kanban'

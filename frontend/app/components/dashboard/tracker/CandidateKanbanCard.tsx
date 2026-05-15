@@ -13,7 +13,7 @@ import type {
   KanbanColumn,
 } from '@/lib/api/candidates'
 
-import { SendInviteDialog } from './SendInviteDialog'
+import { SendInviteDialog } from '@/app/(dashboard)/candidates/SendInviteDialog'
 
 interface Props {
   card: KanbanCandidateCard
