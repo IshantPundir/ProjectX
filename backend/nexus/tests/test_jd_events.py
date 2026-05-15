@@ -222,11 +222,13 @@ def _save_signals_body() -> dict:
 # J2: create_job publishes initial status
 # ---------------------------------------------------------------------------
 
-async def test_create_job_publishes_initial_status(
+async def test_create_job_does_not_publish_status(
     db: AsyncSession, monkeypatch, capture_publishes
 ):
-    """POST /api/jobs publishes jd.status_changed with status='signals_extracting'."""
-    # Stub actor dispatch so nothing is enqueued to Redis/Dramatiq
+    """POST /api/jobs no longer publishes anything — there's no state
+    transition or actor dispatch at create time (see docs/superpowers/specs/
+    2026-05-14-unified-job-creation-flow-design.md). The first status event
+    fires when the recruiter explicitly clicks /enrich or /extract-signals."""
     monkeypatch.setattr(
         "app.modules.jd.actors.extract_and_enhance_jd.send",
         lambda *a, **k: None,
@@ -235,10 +237,7 @@ async def test_create_job_publishes_initial_status(
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
     company = await create_test_org_unit(
-        db,
-        tenant.id,
-        unit_type="company",
-        **_VALID_PROFILE,
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
     )
     tenant.super_admin_id = user.id
     await db.commit()
@@ -261,15 +260,8 @@ async def test_create_job_publishes_initial_status(
         restore()
 
     assert resp.status_code in (200, 201), resp.text
-    job_id = resp.json()["id"]
-
-    assert len(capture_publishes) == 1
-    pub = capture_publishes[0]
-    assert pub.channel == f"job:{job_id}"
-    assert pub.event == pubsub.Events.JD_STATUS_CHANGED
-    assert pub.payload["job_id"] == job_id
-    assert pub.payload["status"] == "signals_extracting"
-    assert pub.correlation_id
+    assert resp.json()["status"] == "draft"
+    assert len(capture_publishes) == 0
 
 
 # ---------------------------------------------------------------------------

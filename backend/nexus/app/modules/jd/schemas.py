@@ -26,13 +26,6 @@ JobStatus = Literal[
     "pipeline_built",
     "active",
     "archived",
-    # ATS-imported jobs land in this state when their client_account
-    # org_unit's company profile is still pending. The unblock cascade
-    # (PUT /api/org-units/{id} → company_profile_completion_status flips
-    # pending → complete) transitions them to 'draft' and enqueues
-    # extract_and_enhance_jd. See migration 0031_ats_core for the DB
-    # CHECK broadening.
-    "blocked_pending_client_setup",
 ]
 
 EnrichmentStatus = Literal["idle", "streaming", "completed", "failed"]
@@ -169,13 +162,20 @@ class SignalSnapshotResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 class JobPostingCreate(BaseModel):
-    """POST /api/jobs request body."""
+    """POST /api/jobs request body.
+
+    Per the unified job-creation flow (see docs/superpowers/specs/
+    2026-05-14-unified-job-creation-flow-design.md), the body collects
+    basics only. The raw JD and project scope are added afterwards via
+    PATCH /api/jobs/{id} on /jobs/{id}. Enrichment and signal extraction
+    are explicit recruiter actions, not implicit side-effects of create.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     org_unit_id: UUID
     title: str = Field(min_length=1, max_length=300)
-    description_raw: str = Field(min_length=50, max_length=50_000)
+    description_raw: str = Field(default="", max_length=50_000)
     project_scope_raw: str | None = Field(default=None, max_length=20_000)
     target_headcount: int | None = Field(default=None, ge=1, le=10_000)
     deadline: date | None = None
@@ -187,13 +187,33 @@ class JobPostingCreate(BaseModel):
     salary_currency: SalaryCurrency | None = None
     travel_required: TravelRequired | None = None
     start_date_pref: StartDatePref | None = None
-    skip_enrichment: bool = Field(
-        default=False,
-        description=(
-            "If true, signal extraction runs against the raw JD; "
-            "JD enrichment phase is skipped entirely."
-        ),
-    )
+
+
+class JobPostingUpdate(BaseModel):
+    """PATCH /api/jobs/{id} request body. All fields optional — only
+    the fields present in the request are written. Gated on status='draft'
+    server-side (JobNotEditableError if not).
+
+    Excluded by design: org_unit_id (would invalidate ancestry context for
+    enrichment/extraction), source/external_id (provenance), status (state
+    machine only), description_enriched (only the enrich actor writes it).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, min_length=1, max_length=300)
+    description_raw: str | None = Field(default=None, max_length=50_000)
+    project_scope_raw: str | None = Field(default=None, max_length=20_000)
+    target_headcount: int | None = Field(default=None, ge=1, le=10_000)
+    deadline: date | None = None
+    employment_type: EmploymentType | None = None
+    work_arrangement: WorkArrangement | None = None
+    location: str | None = Field(default=None, max_length=500)
+    salary_range_min: int | None = Field(default=None, ge=0)
+    salary_range_max: int | None = Field(default=None, ge=0)
+    salary_currency: SalaryCurrency | None = None
+    travel_required: TravelRequired | None = None
+    start_date_pref: StartDatePref | None = None
 
 
 class SaveSignalsRequest(BaseModel):
@@ -205,7 +225,14 @@ class SaveSignalsRequest(BaseModel):
 
 
 class JobPostingSummary(BaseModel):
-    """Row shape for GET /api/jobs (list view)."""
+    """Row shape for GET /api/jobs (list view).
+
+    `profile_ready` is True when an ancestor of org_unit_id has a complete
+    company profile (about + industry + hiring_bar). Mirrors the same field
+    on JobPostingWithSnapshot — surfaced on the summary so the list page
+    can render a "Blocked: profile setup needed" affordance without an
+    extra round-trip per row.
+    """
 
     id: UUID
     title: str
@@ -236,6 +263,7 @@ class JobPostingSummary(BaseModel):
     source: str = "native"
     external_id: str | None = None
     external_status: str | None = None
+    profile_ready: bool = False
 
 
 class JobPostingWithSnapshot(BaseModel):
@@ -275,6 +303,12 @@ class JobPostingWithSnapshot(BaseModel):
     enrichment_error: str | None = None
     is_confirmed: bool = False
     can_manage: bool = False
+    # True when an ancestor of org_unit_id has a complete company profile
+    # (about + industry + hiring_bar). Used by the frontend to gate the
+    # /enrich and /extract-signals buttons on the draft view — the same
+    # check the endpoints enforce server-side, surfaced proactively so the
+    # recruiter sees the requirement before clicking.
+    profile_ready: bool = False
 
 
 class JobStatusEvent(BaseModel):

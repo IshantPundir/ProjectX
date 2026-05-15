@@ -1134,17 +1134,41 @@ async def get_org_unit_ancestry(
     return chain
 
 
+# Owner unit types: a `company` is the tenant's root identity, a
+# `client_account` is a customer the tenant hires for. Both have their
+# own profile (about / industry / hiring_bar). `division`, `region`, and
+# `team` are pass-through containers — they don't own a hiring identity
+# and inherit from the closest owner above them.
+_PROFILE_OWNER_TYPES: frozenset[str] = frozenset({"client_account", "company"})
+
+
 async def find_company_profile_in_ancestry(
     db: AsyncSession, org_unit_id: UUID
 ) -> dict | None:
-    """Walk parent_unit_id chain from the given unit up to root. Return
-    the {about, industry, hiring_bar} triple from the closest unit (self
-    or ancestor) where ALL THREE columns are non-empty after .strip().
-    None if no ancestor satisfies.
+    """Return the company profile that owns hiring identity for the given
+    org unit, or None when the owning unit's profile is incomplete.
 
-    Used by JD enrichment + signal extraction prompts. The returned shape
-    is the JSON-style dict the prompts already consume — only the source
-    of the data has changed (typed columns instead of JSONB).
+    Walk the parent_unit_id chain from the given unit, stop at the FIRST
+    ``client_account`` or ``company``, and return its {about, industry,
+    hiring_bar} triple iff all three are non-empty after ``.strip()``.
+
+    The walk does **not** fall through to a higher owner. If a job sits
+    under an Infogain ``client_account`` whose profile is pending, the
+    BinQle ``company`` root above it does NOT rescue the gate — Infogain
+    owns the role's hiring identity, and Copilot would otherwise produce
+    JD copy that doesn't match the actual hiring bar. The recruiter must
+    complete Infogain's profile first.
+
+    Container units (``division``, ``region``, ``team``) are skipped;
+    they're organizational groupings, not identities. A team under a
+    ``client_account`` with a complete profile is fine — the ``team``
+    has nothing of its own; the ``client_account`` above provides the
+    identity.
+
+    Used by JD enrichment + signal extraction prompts, the live interview
+    agent, the scheduler's candidate notifications, and the question
+    bank's per-stage prompts. The returned shape is the JSON-style dict
+    every consumer already expects.
 
     Tenant scoping: the caller is responsible — see the original docstring
     on this function for the contract.
@@ -1161,15 +1185,18 @@ async def find_company_profile_in_ancestry(
         unit = result.scalar_one_or_none()
         if unit is None:
             return None
-        about = (unit.about or "").strip()
-        industry = (unit.industry or "").strip()
-        hiring_bar = (unit.hiring_bar or "").strip()
-        if about and industry and hiring_bar:
-            return {
-                "about": about,
-                "industry": industry,
-                "hiring_bar": hiring_bar,
-            }
+        if unit.unit_type in _PROFILE_OWNER_TYPES:
+            about = (unit.about or "").strip()
+            industry = (unit.industry or "").strip()
+            hiring_bar = (unit.hiring_bar or "").strip()
+            if about and industry and hiring_bar:
+                return {
+                    "about": about,
+                    "industry": industry,
+                    "hiring_bar": hiring_bar,
+                }
+            # Owner found, profile incomplete — do NOT fall through.
+            return None
         current_id = unit.parent_unit_id
     return None
 
@@ -1260,50 +1287,3 @@ def find_address_in_map(
         "values": found,
         "source_unit_id": str(source_unit_id) if source_unit_id else None,
     }
-
-
-async def _unblock_pending_jobs_for_org_unit(
-    db: AsyncSession,
-    org_unit_id: UUID | str,
-    tenant_id: UUID | str,
-) -> list[str]:
-    """Transition every JD in `blocked_pending_client_setup` state under this
-    org_unit to `draft`. Returns the list of unblocked job_posting IDs as
-    strings so the caller can enqueue extract_and_enhance_jd for each.
-
-    Called from the company-profile-update API handler when
-    `company_profile_completion_status` transitions pending → complete.
-    Writes one `jd.unblocked_by_profile_completion` audit row per JD.
-    """
-    # Local imports: deferred to avoid a circular when jd.service eventually
-    # imports org_units.service for ancestry walks, and to keep the audit
-    # module out of org_units' import-time graph.
-    from app.modules.jd.models import JobPosting
-    from app.modules.audit import log_event
-
-    tid = UUID(str(tenant_id))
-    ouid = UUID(str(org_unit_id))
-
-    result = await db.execute(
-        select(JobPosting).where(
-            JobPosting.tenant_id == tid,
-            JobPosting.org_unit_id == ouid,
-            JobPosting.status == "blocked_pending_client_setup",
-        )
-    )
-    unblocked: list[str] = []
-    for job in result.scalars().all():
-        job.status = "draft"
-        await log_event(
-            db,
-            tenant_id=tid,
-            actor_id=None,
-            actor_email="system",
-            action="jd.unblocked_by_profile_completion",
-            resource="job_posting",
-            resource_id=job.id,
-            payload={"org_unit_id": str(ouid)},
-        )
-        unblocked.append(str(job.id))
-    await db.flush()
-    return unblocked

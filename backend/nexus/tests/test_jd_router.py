@@ -7,7 +7,7 @@ no JWT issuance helper in Phase 1. The auth middleware uses JWKS (ES256)
 against a local Supabase endpoint, which is not accessible inside the
 test container without a live Supabase session.
 
-Strategy used here (documented in task spec escalation path):
+Strategy used here:
   1. Patch `app.middleware.auth.verify_access_token` to accept a synthetic
      test token and return a TokenPayload. This lets the middleware pass
      and set request.state correctly.
@@ -19,13 +19,16 @@ Strategy used here (documented in task spec escalation path):
 The router, service, state machine, exception handlers, and DB are all
 exercised against real Postgres — only the JWT cryptography is stubbed.
 
-Covers:
-- create happy path (201, signals_extracting, snapshot=None)
-- create blocked by missing company profile (422)
-- create missing jobs.create permission (403)
-- get non-existent job (404)
-- retry on a non-failed job (409)
-- list visible to super admin
+Covers — per the unified job-creation flow (docs/superpowers/specs/
+2026-05-14-unified-job-creation-flow-design.md):
+- POST /api/jobs lands a job in `draft`, no actor dispatch, no profile gate
+- POST /api/jobs/{id}/extract-signals transitions draft → signals_extracting
+- POST /api/jobs/{id}/enrich dispatches enrich_jd on draft jobs
+- 422 EmptyRawJDError when description_raw is empty
+- 422 CompanyProfileIncompleteError when no ancestor has a complete profile
+- PATCH /api/jobs/{id} updates draft fields, 409 when not draft
+- POST /api/jobs/{id}/retry on a non-failed job → 409
+- GET non-existent → 404
 """
 
 import uuid
@@ -136,28 +139,51 @@ def _setup_test_context(
     return headers, restore
 
 
+def _stub_all_dispatches(monkeypatch) -> dict[str, dict]:
+    """Stub every actor's .send() so tests don't enqueue real work.
+
+    Returns a dict mapping actor name → captured kwargs of the last call
+    (empty if not dispatched). Tests can assert which actor was triggered."""
+    captured: dict[str, dict] = {
+        "extract_and_enhance_jd": {},
+        "enrich_jd": {},
+        "reenrich_jd": {},
+    }
+
+    def _make(actor_name: str):
+        def _send(*args, **kwargs):
+            captured[actor_name] = {"args": args, "kwargs": kwargs}
+        return _send
+
+    monkeypatch.setattr(
+        "app.modules.jd.actors.extract_and_enhance_jd.send",
+        _make("extract_and_enhance_jd"),
+    )
+    monkeypatch.setattr(
+        "app.modules.jd.actors.enrich_jd.send",
+        _make("enrich_jd"),
+    )
+    monkeypatch.setattr(
+        "app.modules.jd.actors.reenrich_jd.send",
+        _make("reenrich_jd"),
+    )
+    return captured
+
+
 # ---------------------------------------------------------------------------
-# Happy path — create a job
+# POST /api/jobs — happy path
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_create_job_happy_path(db: AsyncSession, monkeypatch):
-    """Super admin creates a job; response is 201, status=signals_extracting,
-    latest_snapshot=None (actor was stubbed out)."""
-    # Stub actor dispatch so nothing is enqueued
-    monkeypatch.setattr(
-        "app.modules.jd.actors.extract_and_enhance_jd.send",
-        lambda *a, **k: None,
-    )
+async def test_create_job_lands_in_draft_no_actor(db: AsyncSession, monkeypatch):
+    """Super admin creates a job; response is 201 with status='draft' and no
+    actor dispatched. Profile completion is not checked at create time."""
+    captured = _stub_all_dispatches(monkeypatch)
 
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
-    company = await create_test_org_unit(
-        db,
-        tenant.id,
-        unit_type="company",
-        **_VALID_PROFILE,
-    )
+    # NOTE: deliberately NO _VALID_PROFILE — proves profile check is gone.
+    company = await create_test_org_unit(db, tenant.id, unit_type="company")
     tenant.super_admin_id = user.id
     await db.commit()
 
@@ -171,10 +197,6 @@ async def test_create_job_happy_path(db: AsyncSession, monkeypatch):
                 json={
                     "org_unit_id": str(company.id),
                     "title": "Sr. Python Engineer",
-                    "description_raw": "A" * 200,
-                    "project_scope_raw": None,
-                    "target_headcount": 1,
-                    "deadline": None,
                 },
                 headers=headers,
             )
@@ -183,81 +205,30 @@ async def test_create_job_happy_path(db: AsyncSession, monkeypatch):
 
     assert response.status_code == 201, response.text
     data = response.json()
-    assert data["status"] == "signals_extracting"
+    assert data["status"] == "draft"
     assert data["latest_snapshot"] is None
     assert data["title"] == "Sr. Python Engineer"
-    assert data["org_unit_id"] == str(company.id)
+    assert data["description_raw"] == ""
+    # No actor should have been dispatched.
+    assert captured["extract_and_enhance_jd"] == {}
+    assert captured["enrich_jd"] == {}
+    assert captured["reenrich_jd"] == {}
 
 
 # ---------------------------------------------------------------------------
-# 422 — no company profile in ancestry
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_create_job_blocked_without_profile_returns_422(db: AsyncSession, monkeypatch):
-    """Creating a JD under an org unit with no profile in ancestry returns 422."""
-    monkeypatch.setattr(
-        "app.modules.jd.actors.extract_and_enhance_jd.send",
-        lambda *a, **k: None,
-    )
-
-    tenant = await create_test_client(db)
-    user = await create_test_user(db, tenant.id)
-    # division has no company_profile
-    division = await create_test_org_unit(db, tenant.id, unit_type="division")
-    tenant.super_admin_id = user.id
-    await db.commit()
-
-    headers, restore = _setup_test_context(db, user, tenant.id, is_super_admin=True)
-    try:
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as ac:
-            response = await ac.post(
-                "/api/jobs",
-                json={
-                    "org_unit_id": str(division.id),
-                    "title": "Engineer",
-                    "description_raw": "A" * 200,
-                    "project_scope_raw": None,
-                    "target_headcount": None,
-                    "deadline": None,
-                },
-                headers=headers,
-            )
-    finally:
-        restore()
-
-    assert response.status_code == 422, response.text
-    data = response.json()
-    assert "company profile" in data["detail"].lower()
-    assert data["org_unit_id"] == str(division.id)
-
-
-# ---------------------------------------------------------------------------
-# 403 — missing jobs.create permission
+# POST /api/jobs — 403 missing permission
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_create_job_missing_permission_returns_403(db: AsyncSession, monkeypatch):
     """Non-super-admin with no jobs.create assignment → 403."""
-    monkeypatch.setattr(
-        "app.modules.jd.actors.extract_and_enhance_jd.send",
-        lambda *a, **k: None,
-    )
+    _stub_all_dispatches(monkeypatch)
 
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
-    company = await create_test_org_unit(
-        db,
-        tenant.id,
-        unit_type="company",
-        **_VALID_PROFILE,
-    )
-    # do NOT set tenant.super_admin_id and do NOT assign any roles
+    company = await create_test_org_unit(db, tenant.id, unit_type="company")
     await db.commit()
 
-    # is_super_admin=False, no assignments → permission check fails
     headers, restore = _setup_test_context(db, user, tenant.id, is_super_admin=False)
     try:
         async with AsyncClient(
@@ -265,14 +236,7 @@ async def test_create_job_missing_permission_returns_403(db: AsyncSession, monke
         ) as ac:
             response = await ac.post(
                 "/api/jobs",
-                json={
-                    "org_unit_id": str(company.id),
-                    "title": "Engineer",
-                    "description_raw": "A" * 200,
-                    "project_scope_raw": None,
-                    "target_headcount": None,
-                    "deadline": None,
-                },
+                json={"org_unit_id": str(company.id), "title": "Engineer"},
                 headers=headers,
             )
     finally:
@@ -282,12 +246,443 @@ async def test_create_job_missing_permission_returns_403(db: AsyncSession, monke
 
 
 # ---------------------------------------------------------------------------
-# 404 — non-existent job
+# PATCH /api/jobs/{id}
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_patch_job_updates_draft_fields(db: AsyncSession, monkeypatch):
+    """PATCH on a draft job (with a complete-profile ancestor) writes the
+    supplied fields."""
+    _stub_all_dispatches(monkeypatch)
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    company = await create_test_org_unit(
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
+    )
+    tenant.super_admin_id = user.id
+    await db.flush()
+
+    job = JobPosting(
+        tenant_id=tenant.id,
+        org_unit_id=company.id,
+        title="Initial",
+        description_raw="",
+        status="draft",
+        source="native",
+        created_by=user.id,
+    )
+    db.add(job)
+    await db.commit()
+
+    headers, restore = _setup_test_context(db, user, tenant.id, is_super_admin=True)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.patch(
+                f"/api/jobs/{job.id}",
+                json={
+                    "description_raw": "Full JD text here, plenty of content for the LLM to chew on.",
+                    "location": "Bengaluru",
+                },
+                headers=headers,
+            )
+    finally:
+        restore()
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["status"] == "draft"
+    assert data["description_raw"].startswith("Full JD text")
+    assert data["location"] == "Bengaluru"
+
+
+@pytest.mark.asyncio
+async def test_patch_job_rejects_non_draft(db: AsyncSession, monkeypatch):
+    """PATCH on a job past draft returns 409 job_not_editable."""
+    _stub_all_dispatches(monkeypatch)
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    company = await create_test_org_unit(
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
+    )
+    tenant.super_admin_id = user.id
+    await db.flush()
+
+    job = JobPosting(
+        tenant_id=tenant.id,
+        org_unit_id=company.id,
+        title="Past draft",
+        description_raw="A" * 200,
+        status="signals_extracted",
+        source="native",
+        created_by=user.id,
+    )
+    db.add(job)
+    await db.commit()
+
+    headers, restore = _setup_test_context(db, user, tenant.id, is_super_admin=True)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.patch(
+                f"/api/jobs/{job.id}",
+                json={"description_raw": "Tweak"},
+                headers=headers,
+            )
+    finally:
+        restore()
+
+    assert response.status_code == 409, response.text
+    assert response.json()["code"] == "job_not_editable"
+
+
+@pytest.mark.asyncio
+async def test_patch_job_rejects_missing_profile(db: AsyncSession, monkeypatch):
+    """PATCH on a draft job whose ancestry has no complete profile returns
+    422 company_profile_incomplete. The recruiter can't even edit basics /
+    raw JD until the profile is set up."""
+    _stub_all_dispatches(monkeypatch)
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    # NO _VALID_PROFILE — ancestry has no completed profile.
+    division = await create_test_org_unit(db, tenant.id, unit_type="division")
+    tenant.super_admin_id = user.id
+    await db.flush()
+
+    job = JobPosting(
+        tenant_id=tenant.id,
+        org_unit_id=division.id,
+        title="Blocked Test",
+        description_raw="",
+        status="draft",
+        source="native",
+        created_by=user.id,
+    )
+    db.add(job)
+    await db.commit()
+
+    headers, restore = _setup_test_context(db, user, tenant.id, is_super_admin=True)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.patch(
+                f"/api/jobs/{job.id}",
+                json={"description_raw": "Would not stick"},
+                headers=headers,
+            )
+    finally:
+        restore()
+
+    assert response.status_code == 422, response.text
+    body = response.json()
+    assert body["code"] == "company_profile_incomplete"
+    assert body["org_unit_id"] == str(division.id)
+
+
+# ---------------------------------------------------------------------------
+# POST /api/jobs/{id}/enrich
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_enrich_draft_dispatches_enrich_jd(db: AsyncSession, monkeypatch):
+    """Enrich on a draft job dispatches the enrich_jd actor (first-time path).
+    Lifecycle status stays at draft."""
+    captured = _stub_all_dispatches(monkeypatch)
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    company = await create_test_org_unit(
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
+    )
+    tenant.super_admin_id = user.id
+    await db.flush()
+
+    job = JobPosting(
+        tenant_id=tenant.id,
+        org_unit_id=company.id,
+        title="Test",
+        description_raw="A" * 200,
+        status="draft",
+        source="native",
+        created_by=user.id,
+    )
+    db.add(job)
+    await db.commit()
+
+    headers, restore = _setup_test_context(db, user, tenant.id, is_super_admin=True)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.post(f"/api/jobs/{job.id}/enrich", headers=headers)
+    finally:
+        restore()
+
+    assert response.status_code == 202, response.text
+    # enrich_jd (first-time path) was dispatched, not reenrich_jd
+    assert captured["enrich_jd"] != {}
+    assert captured["reenrich_jd"] == {}
+
+
+@pytest.mark.asyncio
+async def test_enrich_signals_extracted_dispatches_reenrich(db: AsyncSession, monkeypatch):
+    """Enrich on a signals_extracted job dispatches reenrich_jd (snapshot-aware)."""
+    captured = _stub_all_dispatches(monkeypatch)
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    company = await create_test_org_unit(
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
+    )
+    tenant.super_admin_id = user.id
+    await db.flush()
+
+    job = JobPosting(
+        tenant_id=tenant.id,
+        org_unit_id=company.id,
+        title="Test",
+        description_raw="A" * 200,
+        status="signals_extracted",
+        source="native",
+        created_by=user.id,
+    )
+    db.add(job)
+    await db.commit()
+
+    headers, restore = _setup_test_context(db, user, tenant.id, is_super_admin=True)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.post(f"/api/jobs/{job.id}/enrich", headers=headers)
+    finally:
+        restore()
+
+    assert response.status_code == 202, response.text
+    assert captured["reenrich_jd"] != {}
+    assert captured["enrich_jd"] == {}
+
+
+@pytest.mark.asyncio
+async def test_enrich_rejects_empty_raw_jd(db: AsyncSession, monkeypatch):
+    """422 EmptyRawJDError when description_raw is empty/whitespace."""
+    _stub_all_dispatches(monkeypatch)
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    company = await create_test_org_unit(
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
+    )
+    tenant.super_admin_id = user.id
+    await db.flush()
+
+    job = JobPosting(
+        tenant_id=tenant.id,
+        org_unit_id=company.id,
+        title="Test",
+        description_raw="   ",  # whitespace-only
+        status="draft",
+        source="native",
+        created_by=user.id,
+    )
+    db.add(job)
+    await db.commit()
+
+    headers, restore = _setup_test_context(db, user, tenant.id, is_super_admin=True)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.post(f"/api/jobs/{job.id}/enrich", headers=headers)
+    finally:
+        restore()
+
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "empty_raw_jd"
+
+
+@pytest.mark.asyncio
+async def test_enrich_rejects_missing_profile(db: AsyncSession, monkeypatch):
+    """422 CompanyProfileIncompleteError when no ancestor has the profile."""
+    _stub_all_dispatches(monkeypatch)
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    # No _VALID_PROFILE — ancestry has no completed profile.
+    division = await create_test_org_unit(db, tenant.id, unit_type="division")
+    tenant.super_admin_id = user.id
+    await db.flush()
+
+    job = JobPosting(
+        tenant_id=tenant.id,
+        org_unit_id=division.id,
+        title="Test",
+        description_raw="A" * 200,
+        status="draft",
+        source="native",
+        created_by=user.id,
+    )
+    db.add(job)
+    await db.commit()
+
+    headers, restore = _setup_test_context(db, user, tenant.id, is_super_admin=True)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.post(f"/api/jobs/{job.id}/enrich", headers=headers)
+    finally:
+        restore()
+
+    assert response.status_code == 422, response.text
+    body = response.json()
+    assert body["code"] == "company_profile_incomplete"
+    assert body["org_unit_id"] == str(division.id)
+
+
+# ---------------------------------------------------------------------------
+# POST /api/jobs/{id}/extract-signals
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_extract_signals_transitions_and_dispatches(db: AsyncSession, monkeypatch):
+    """Extract-signals transitions draft → signals_extracting and dispatches
+    extract_and_enhance_jd with skip_enrichment=True."""
+    captured = _stub_all_dispatches(monkeypatch)
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    company = await create_test_org_unit(
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
+    )
+    tenant.super_admin_id = user.id
+    await db.flush()
+
+    job = JobPosting(
+        tenant_id=tenant.id,
+        org_unit_id=company.id,
+        title="Test",
+        description_raw="A" * 200,
+        status="draft",
+        source="native",
+        created_by=user.id,
+    )
+    db.add(job)
+    await db.commit()
+
+    headers, restore = _setup_test_context(db, user, tenant.id, is_super_admin=True)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.post(
+                f"/api/jobs/{job.id}/extract-signals", headers=headers,
+            )
+    finally:
+        restore()
+
+    assert response.status_code == 202, response.text
+    # extract_and_enhance_jd dispatched with skip_enrichment=True
+    extract_call = captured["extract_and_enhance_jd"]
+    assert extract_call != {}
+    assert extract_call["kwargs"].get("skip_enrichment") is True
+
+    # Status now signals_extracting
+    await db.refresh(job)
+    assert job.status == "signals_extracting"
+
+
+@pytest.mark.asyncio
+async def test_extract_signals_rejects_non_draft(db: AsyncSession, monkeypatch):
+    """409 job_not_in_draft_state when the job is past draft."""
+    _stub_all_dispatches(monkeypatch)
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    company = await create_test_org_unit(
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
+    )
+    tenant.super_admin_id = user.id
+    await db.flush()
+
+    job = JobPosting(
+        tenant_id=tenant.id,
+        org_unit_id=company.id,
+        title="Test",
+        description_raw="A" * 200,
+        status="signals_extracted",
+        source="native",
+        created_by=user.id,
+    )
+    db.add(job)
+    await db.commit()
+
+    headers, restore = _setup_test_context(db, user, tenant.id, is_super_admin=True)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.post(
+                f"/api/jobs/{job.id}/extract-signals", headers=headers,
+            )
+    finally:
+        restore()
+
+    assert response.status_code == 409, response.text
+
+
+@pytest.mark.asyncio
+async def test_extract_signals_rejects_empty_raw_jd(db: AsyncSession, monkeypatch):
+    """422 EmptyRawJDError on /extract-signals when description_raw is empty."""
+    _stub_all_dispatches(monkeypatch)
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    company = await create_test_org_unit(
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
+    )
+    tenant.super_admin_id = user.id
+    await db.flush()
+
+    job = JobPosting(
+        tenant_id=tenant.id,
+        org_unit_id=company.id,
+        title="Test",
+        description_raw="",
+        status="draft",
+        source="native",
+        created_by=user.id,
+    )
+    db.add(job)
+    await db.commit()
+
+    headers, restore = _setup_test_context(db, user, tenant.id, is_super_admin=True)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.post(
+                f"/api/jobs/{job.id}/extract-signals", headers=headers,
+            )
+    finally:
+        restore()
+
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "empty_raw_jd"
+
+
+# ---------------------------------------------------------------------------
+# 404 / 409 / list / retry — existing coverage
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_get_nonexistent_job_returns_404(db: AsyncSession):
-    """GET /api/jobs/{random_uuid} → 404."""
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
     tenant.super_admin_id = user.id
@@ -305,30 +700,19 @@ async def test_get_nonexistent_job_returns_404(db: AsyncSession):
     assert response.status_code == 404, response.text
 
 
-# ---------------------------------------------------------------------------
-# 409 — retry on a non-failed job
-# ---------------------------------------------------------------------------
-
 @pytest.mark.asyncio
 async def test_retry_on_non_failed_job_returns_409(db: AsyncSession, monkeypatch):
     """POST /api/jobs/{id}/retry on a signals_extracting job → 409 Conflict."""
-    monkeypatch.setattr(
-        "app.modules.jd.actors.extract_and_enhance_jd.send",
-        lambda *a, **k: None,
-    )
+    _stub_all_dispatches(monkeypatch)
 
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
     company = await create_test_org_unit(
-        db,
-        tenant.id,
-        unit_type="company",
-        **_VALID_PROFILE,
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
     )
     tenant.super_admin_id = user.id
     await db.flush()
 
-    # Insert a job directly in signals_extracting state (skipping actor dispatch)
     job = JobPosting(
         tenant_id=tenant.id,
         org_unit_id=company.id,
@@ -350,43 +734,71 @@ async def test_retry_on_non_failed_job_returns_409(db: AsyncSession, monkeypatch
     finally:
         restore()
 
-    # signals_extracting → signals_extracting is an illegal transition → 409
     assert response.status_code == 409, response.text
-    data = response.json()
-    assert "already being processed" in data["detail"].lower()
 
-
-# ---------------------------------------------------------------------------
-# List — super admin sees all jobs in tenant
-# ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_list_jobs_super_admin_sees_all(db: AsyncSession, monkeypatch):
-    """Super admin listing jobs gets back all jobs in the tenant (no visibility filter)."""
-    monkeypatch.setattr(
-        "app.modules.jd.actors.extract_and_enhance_jd.send",
-        lambda *a, **k: None,
-    )
+async def test_retry_always_skips_enrichment(db: AsyncSession, monkeypatch):
+    """/retry only re-runs Phase 2 — Phase 1 enrichment is a separate recruiter
+    decision via /enrich. The actor is dispatched with skip_enrichment=True
+    regardless of prior enrichment state."""
+    captured = _stub_all_dispatches(monkeypatch)
 
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
     company = await create_test_org_unit(
-        db,
-        tenant.id,
-        unit_type="company",
-        **_VALID_PROFILE,
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
     )
     tenant.super_admin_id = user.id
     await db.flush()
 
-    # Insert two jobs directly
+    job = JobPosting(
+        tenant_id=tenant.id,
+        org_unit_id=company.id,
+        title="Test",
+        description_raw="A" * 200,
+        status="signals_extraction_failed",
+        source="native",
+        created_by=user.id,
+        # enrichment_status='failed' would previously have triggered a re-run
+        # of Phase 1; under the new model it does not.
+        enrichment_status="failed",
+    )
+    db.add(job)
+    await db.commit()
+
+    headers, restore = _setup_test_context(db, user, tenant.id, is_super_admin=True)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.post(f"/api/jobs/{job.id}/retry", headers=headers)
+    finally:
+        restore()
+
+    assert response.status_code == 202, response.text
+    assert captured["extract_and_enhance_jd"]["kwargs"].get("skip_enrichment") is True
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_super_admin_sees_all(db: AsyncSession, monkeypatch):
+    _stub_all_dispatches(monkeypatch)
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    company = await create_test_org_unit(
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
+    )
+    tenant.super_admin_id = user.id
+    await db.flush()
+
     for i in range(2):
         job = JobPosting(
             tenant_id=tenant.id,
             org_unit_id=company.id,
             title=f"Job {i}",
             description_raw="A" * 200,
-            status="signals_extracting",
+            status="draft",
             source="native",
             created_by=user.id,
         )
@@ -407,26 +819,18 @@ async def test_list_jobs_super_admin_sees_all(db: AsyncSession, monkeypatch):
     assert len(data) >= 2
 
 
-# ---------------------------------------------------------------------------
-# T7 — get_job populates enrichment fields
-# ---------------------------------------------------------------------------
-
 @pytest.mark.asyncio
 async def test_get_job_populates_enrichment_fields(db: AsyncSession):
-    """GET /api/jobs/{id} includes org_unit_name, emails, signal_count,
-    needs_review_count — not null/0 when data exists."""
+    """GET /api/jobs/{id} surfaces org_unit_name, emails, signal_count when
+    a snapshot exists."""
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
     company = await create_test_org_unit(
-        db,
-        tenant.id,
-        unit_type="company",
-        **_VALID_PROFILE,
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
     )
     tenant.super_admin_id = user.id
     await db.flush()
 
-    # Insert a job in signals_extracted state
     job = JobPosting(
         tenant_id=tenant.id,
         org_unit_id=company.id,
@@ -439,7 +843,6 @@ async def test_get_job_populates_enrichment_fields(db: AsyncSession):
     db.add(job)
     await db.flush()
 
-    # Attach a snapshot with one signal so signal_count > 0
     snap = JobPostingSignalSnapshot(
         tenant_id=tenant.id,
         job_posting_id=job.id,
@@ -473,248 +876,7 @@ async def test_get_job_populates_enrichment_fields(db: AsyncSession):
 
     assert response.status_code == 200, response.text
     data = response.json()
-
     assert data["org_unit_name"] == company.name
     assert data["created_by_email"] == user.email
     assert data["signal_count"] == 1
-    assert isinstance(data["needs_review_count"], int)
-    # Sanity: snapshot-specific field still present.
     assert "latest_snapshot" in data
-
-
-# ---------------------------------------------------------------------------
-# T8 — retry response populates enrichment fields
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_retry_returns_enriched_summary(db: AsyncSession, monkeypatch):
-    """POST /api/jobs/{id}/retry response includes enrichment fields."""
-    monkeypatch.setattr(
-        "app.modules.jd.actors.extract_and_enhance_jd.send",
-        lambda *a, **k: None,
-    )
-
-    tenant = await create_test_client(db)
-    user = await create_test_user(db, tenant.id)
-    company = await create_test_org_unit(
-        db,
-        tenant.id,
-        unit_type="company",
-        **_VALID_PROFILE,
-    )
-    tenant.super_admin_id = user.id
-    await db.flush()
-
-    # Insert a job in signals_extraction_failed state (the only retry-eligible state)
-    job = JobPosting(
-        tenant_id=tenant.id,
-        org_unit_id=company.id,
-        title="Retry Test Job",
-        description_raw="A" * 200,
-        status="signals_extraction_failed",
-        source="native",
-        created_by=user.id,
-        status_error="Some extraction error",
-    )
-    db.add(job)
-    await db.commit()
-
-    headers, restore = _setup_test_context(db, user, tenant.id, is_super_admin=True)
-    try:
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as ac:
-            response = await ac.post(f"/api/jobs/{job.id}/retry", headers=headers)
-    finally:
-        restore()
-
-    assert response.status_code == 202, response.text
-    data = response.json()
-
-    assert data["org_unit_name"] == company.name
-    assert data["created_by_email"] == user.email
-    assert isinstance(data["signal_count"], int)
-    assert isinstance(data["needs_review_count"], int)
-
-
-# ---------------------------------------------------------------------------
-# T9 — skip_enrichment is forwarded to the actor's .send() kwargs
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_create_job_with_skip_enrichment_forwards_to_actor(
-    db: AsyncSession, monkeypatch
-):
-    """When skip_enrichment=true is in the request body, the actor must
-    receive that flag in its kwargs."""
-    captured: dict = {}
-
-    def fake_send(*args, **kwargs):
-        captured["args"] = args
-        captured["kwargs"] = kwargs
-
-    monkeypatch.setattr(
-        "app.modules.jd.actors.extract_and_enhance_jd.send",
-        fake_send,
-    )
-
-    tenant = await create_test_client(db)
-    user = await create_test_user(db, tenant.id)
-    company = await create_test_org_unit(
-        db,
-        tenant.id,
-        unit_type="company",
-        **_VALID_PROFILE,
-    )
-    tenant.super_admin_id = user.id
-    await db.commit()
-
-    headers, restore = _setup_test_context(db, user, tenant.id, is_super_admin=True)
-    try:
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as ac:
-            response = await ac.post(
-                "/api/jobs",
-                json={
-                    "org_unit_id": str(company.id),
-                    "title": "Test",
-                    "description_raw": "x" * 60,
-                    "skip_enrichment": True,
-                },
-                headers=headers,
-            )
-    finally:
-        restore()
-
-    assert response.status_code == 201, response.text
-    assert captured["kwargs"].get("skip_enrichment") is True
-
-
-# ---------------------------------------------------------------------------
-# T10 — retry preserves original skip_enrichment intent (C2 / M3)
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_retry_extraction_preserves_skip_enrichment_intent(
-    db: AsyncSession, monkeypatch
-):
-    """Retry on a job created with skip_enrichment=True must forward
-    skip_enrichment=True to the actor.
-
-    Signal: enrichment_status='idle' AND description_enriched IS NULL
-    uniquely identifies a job that was created with skip_enrichment=True
-    (phase 1 always transitions enrichment_status to at least 'streaming'
-    if it ever ran).
-    """
-    captured: dict = {}
-
-    def fake_send(*args, **kwargs):
-        captured["args"] = args
-        captured["kwargs"] = kwargs
-
-    monkeypatch.setattr(
-        "app.modules.jd.actors.extract_and_enhance_jd.send",
-        fake_send,
-    )
-
-    tenant = await create_test_client(db)
-    user = await create_test_user(db, tenant.id)
-    company = await create_test_org_unit(
-        db,
-        tenant.id,
-        unit_type="company",
-        **_VALID_PROFILE,
-    )
-    tenant.super_admin_id = user.id
-    await db.flush()
-
-    # Job in failed state with enrichment_status='idle' and no enriched
-    # description — simulates a skip-enrichment job that hit a phase-2 failure.
-    job = JobPosting(
-        tenant_id=tenant.id,
-        org_unit_id=company.id,
-        title="Skip Enrichment Retry Test",
-        description_raw="A" * 200,
-        status="signals_extraction_failed",
-        source="native",
-        created_by=user.id,
-        status_error="Phase-2 failure on skip-enrichment job",
-        # enrichment_status defaults to 'idle'; description_enriched is NULL
-    )
-    db.add(job)
-    await db.commit()
-
-    headers, restore = _setup_test_context(db, user, tenant.id, is_super_admin=True)
-    try:
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as ac:
-            response = await ac.post(f"/api/jobs/{job.id}/retry", headers=headers)
-    finally:
-        restore()
-
-    assert response.status_code == 202, response.text
-    # The actor must have been dispatched with skip_enrichment=True
-    assert captured.get("kwargs", {}).get("skip_enrichment") is True
-
-
-@pytest.mark.asyncio
-async def test_retry_extraction_reruns_enrichment_after_phase1_failure(
-    db: AsyncSession, monkeypatch
-):
-    """Retry on a job whose phase 1 already FAILED must pass skip_enrichment=False
-    so the actor re-attempts enrichment.
-
-    Signal: enrichment_status='failed' — phase 1 was attempted but failed.
-    """
-    captured: dict = {}
-
-    def fake_send(*args, **kwargs):
-        captured["args"] = args
-        captured["kwargs"] = kwargs
-
-    monkeypatch.setattr(
-        "app.modules.jd.actors.extract_and_enhance_jd.send",
-        fake_send,
-    )
-
-    tenant = await create_test_client(db)
-    user = await create_test_user(db, tenant.id)
-    company = await create_test_org_unit(
-        db,
-        tenant.id,
-        unit_type="company",
-        **_VALID_PROFILE,
-    )
-    tenant.super_admin_id = user.id
-    await db.flush()
-
-    # Job in failed state with enrichment_status='failed' — phase 1 ran but
-    # errored out; retry should re-run phase 1, so skip_enrichment=False.
-    job = JobPosting(
-        tenant_id=tenant.id,
-        org_unit_id=company.id,
-        title="Phase-1 Failure Retry Test",
-        description_raw="A" * 200,
-        status="signals_extraction_failed",
-        source="native",
-        created_by=user.id,
-        status_error="Phase-1 LLM call timed out",
-        enrichment_status="failed",
-    )
-    db.add(job)
-    await db.commit()
-
-    headers, restore = _setup_test_context(db, user, tenant.id, is_super_admin=True)
-    try:
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as ac:
-            response = await ac.post(f"/api/jobs/{job.id}/retry", headers=headers)
-    finally:
-        restore()
-
-    assert response.status_code == 202, response.text
-    # enrichment_status='failed' → phase 1 was attempted; retry must re-run it
-    assert captured.get("kwargs", {}).get("skip_enrichment") is False

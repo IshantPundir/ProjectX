@@ -17,19 +17,25 @@ from app import pubsub
 from app.database import get_tenant_db, get_tenant_session
 from app.modules.audit import log_event
 from app.modules.auth import UserContext, get_current_user_roles
-from app.modules.jd.actors import extract_and_enhance_jd, reenrich_jd
+from app.modules.jd.actors import enrich_jd, extract_and_enhance_jd, reenrich_jd
 from app.modules.jd.authz import require_job_access
 from app.modules.jd.models import JobPosting, JobPostingSignalSnapshot
 from app.modules.jd.schemas import (
     JobPostingCreate,
     JobPostingSummary,
+    JobPostingUpdate,
     JobPostingWithSnapshot,
     SaveSignalsRequest,
     SignalItemResponse,
     SignalSnapshotResponse,
     default_evaluation_method,
 )
-from app.modules.jd.errors import ActivationPredicatesFailed, IllegalTransitionError
+from app.modules.jd.errors import (
+    ActivationPredicatesFailed,
+    CompanyProfileIncompleteError,
+    EmptyRawJDError,
+    IllegalTransitionError,
+)
 from app.modules.jd.service import (
     _job_to_summary,
     activate_job,
@@ -43,7 +49,9 @@ from app.modules.jd.service import (
     retry_failed_extraction,
     save_signals,
     trigger_reenrichment,
+    update_job_posting_draft,
 )
+from app.modules.org_units import find_company_profile_in_ancestry
 from app.modules.jd.state_machine import transition
 from app.modules.jd.sse import job_status_event_generator
 from app.modules.org_units import OrganizationalUnit, get_org_unit_ancestry
@@ -115,6 +123,7 @@ def _job_with_snapshot_to_response(
     *,
     can_manage: bool = False,
     enriched: "JobPostingSummary | None" = None,
+    profile_ready: bool = False,
 ) -> JobPostingWithSnapshot:
     return JobPostingWithSnapshot(
         id=job.id,
@@ -147,7 +156,18 @@ def _job_with_snapshot_to_response(
         enrichment_error=job.enrichment_error,
         is_confirmed=snap.confirmed_at is not None if snap else False,
         can_manage=can_manage,
+        profile_ready=profile_ready,
     )
+
+
+async def _compute_profile_ready(db: AsyncSession, job) -> bool:
+    """True iff the job's org_unit ancestry contains a unit with a complete
+    company profile (about + industry + hiring_bar). Mirrors the gate that
+    the /enrich and /extract-signals endpoints enforce server-side."""
+    if job.org_unit_id is None:
+        return False
+    profile = await find_company_profile_in_ancestry(db, job.org_unit_id)
+    return profile is not None
 
 
 async def _safe_dispatch_extraction(
@@ -237,6 +257,51 @@ async def _safe_dispatch_reenrichment(
                 )
 
 
+async def _safe_dispatch_enrich(
+    job_posting_id: str,
+    tenant_id: str,
+    correlation_id: str,
+) -> None:
+    """Enqueue the enrich_jd Dramatiq actor (first-time enrichment for a
+    draft job). On Redis outage, mark enrichment_status='failed' so the
+    recruiter sees the failure and can retry. Mirror of
+    _safe_dispatch_reenrichment, but for the draft-state path."""
+    try:
+        enrich_jd.send(
+            job_posting_id=job_posting_id,
+            tenant_id=tenant_id,
+            correlation_id=correlation_id,
+        )
+    except Exception as exc:
+        _log.error(
+            "jd.enrich_dispatch_failed",
+            job_posting_id=job_posting_id,
+            exc_info=exc,
+        )
+        async with get_tenant_session(tenant_id) as db:
+            result = await db.execute(
+                sa_select(JobPosting).where(JobPosting.id == UUID(job_posting_id))
+            )
+            job = result.scalar_one_or_none()
+            if job:
+                job.enrichment_status = "failed"
+                job.enrichment_error = (
+                    "Failed to dispatch enrichment job — please retry. "
+                    "If this persists, contact support."
+                )
+                await log_event(
+                    db,
+                    tenant_id=job.tenant_id,
+                    actor_id=None,
+                    actor_email=None,
+                    action="job_posting.enrich_dispatch_failed",
+                    resource="job_posting",
+                    resource_id=job.id,
+                    payload={"error": str(exc)},
+                    ip_address=None,
+                )
+
+
 def _visible_unit_ids(user: UserContext, permission: str) -> list[UUID] | None:
     """Return org unit IDs where the user can see jobs — the directly
     assigned units PLUS all their descendants.
@@ -285,7 +350,6 @@ async def _expand_with_descendants(
 async def create_job(
     body: JobPostingCreate,
     request: Request,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_tenant_db),
     user: UserContext = Depends(get_current_user_roles),
 ) -> JobPostingWithSnapshot:
@@ -319,42 +383,12 @@ async def create_job(
         correlation_id=correlation_id,
     )
 
-    # Enqueue the Dramatiq actor AFTER the response is sent. FastAPI's
-    # BackgroundTasks run after the dependency's `async with session.begin()`
-    # context manager exits (which auto-commits the transaction), so the
-    # worker is guaranteed to see the committed job row when it dequeues.
-    # _safe_dispatch_extraction wraps the send() call so a Redis outage
-    # transitions the job to failed instead of leaving it stuck forever.
-    background_tasks.add_task(
-        _safe_dispatch_extraction,
-        job_posting_id=str(job.id),
-        tenant_id=str(user.user.tenant_id),
-        correlation_id=correlation_id,
-        skip_enrichment=body.skip_enrichment,
-    )
-
-    # Publish the initial state so SSE subscribers connecting immediately
-    # after creation see the status without waiting for the 5s backstop poll.
-    # get_job_status is called here (inside the handler, while the session is
-    # still alive) so its return value is captured into the closure at
-    # add_task time — safe to use after the session closes.
-    status_event = await get_job_status(db, job.id)
-    if status_event is not None:
-        background_tasks.add_task(
-            pubsub.publish,
-            pubsub.job_channel(job.id),
-            pubsub.Events.JD_STATUS_CHANGED,
-            status_event.model_dump(mode="json"),
-            correlation_id=correlation_id,
-        )
-
-    # Build response directly from the in-memory job. latest_snapshot is
-    # always None at creation time (the actor hasn't run yet). expire_on_commit
-    # is False on async_session_factory, so attribute access after the
-    # dependency's auto-commit remains safe — but we don't rely on that:
-    # we build the response BEFORE returning, while the session is still
-    # alive inside the context manager.
-    return _job_with_snapshot_to_response(job, None)
+    # Jobs land in 'draft' with no side-effects. The recruiter triggers
+    # enrichment (POST /api/jobs/{id}/enrich) and signal extraction
+    # (POST /api/jobs/{id}/extract-signals) explicitly from /jobs/{id}.
+    # latest_snapshot is always None at this point.
+    profile_ready = await _compute_profile_ready(db, job)
+    return _job_with_snapshot_to_response(job, None, profile_ready=profile_ready)
 
 
 @router.get("", response_model=list[JobPostingSummary])
@@ -400,7 +434,61 @@ async def get_job(
 
     summaries = await enrich_job_summaries([job], db)
     enriched = summaries[0]
-    return _job_with_snapshot_to_response(job, snap, can_manage=can_manage, enriched=enriched)
+    profile_ready = await _compute_profile_ready(db, job)
+    return _job_with_snapshot_to_response(
+        job, snap, can_manage=can_manage, enriched=enriched, profile_ready=profile_ready,
+    )
+
+
+@router.patch("/{job_id}", response_model=JobPostingWithSnapshot)
+async def update_job(
+    job_id: UUID,
+    body: JobPostingUpdate,
+    request: Request,
+    db: AsyncSession = Depends(get_tenant_db),
+    user: UserContext = Depends(get_current_user_roles),
+) -> JobPostingWithSnapshot:
+    """Update editable fields on a draft job.
+
+    Gated on ``status='draft'`` (raises 409 ``job_not_editable`` once the
+    job has moved past draft) AND on company-profile readiness (raises 422
+    ``company_profile_incomplete`` when no ancestor of the org_unit has a
+    complete profile). The recruiter must finish setting up the company
+    before any JD configuration is possible — same gate the /enrich and
+    /extract-signals endpoints enforce.
+
+    Only the keys present in the body are written (Pydantic
+    ``model_dump(exclude_unset=True)``).
+    """
+    job = await require_job_access(db, job_id, user, "manage")
+    correlation_id = _get_correlation_id(request)
+
+    if job.org_unit_id is None:
+        raise CompanyProfileIncompleteError(job.org_unit_id or UUID(int=0))
+    profile = await find_company_profile_in_ancestry(db, job.org_unit_id)
+    if profile is None:
+        raise CompanyProfileIncompleteError(job.org_unit_id)
+
+    updates = body.model_dump(exclude_unset=True)
+    job = await update_job_posting_draft(
+        db,
+        job=job,
+        updates=updates,
+        actor_id=user.user.id,
+        actor_email=user.user.email,
+        ip_address=request.client.host if request.client else None,
+        correlation_id=correlation_id,
+    )
+
+    # Re-load with latest snapshot for response symmetry with GET; snapshot
+    # is None on a draft, but the response shape carries it as a field.
+    _, snap = await get_job_posting_with_latest_snapshot(db, job_id)
+    summaries = await enrich_job_summaries([job], db)
+    enriched = summaries[0]
+    profile_ready = await _compute_profile_ready(db, job)
+    return _job_with_snapshot_to_response(
+        job, snap, can_manage=True, enriched=enriched, profile_ready=profile_ready,
+    )
 
 
 @router.get("/{job_id}/status/stream")
@@ -438,23 +526,15 @@ async def retry_extraction(
         correlation_id=correlation_id,
     )
 
-    # Infer skip_enrichment intent from persisted state:
-    # A job created with skip_enrichment=True never enters the enrichment
-    # phase, so enrichment_status stays 'idle' and description_enriched
-    # remains NULL. Phase 1 always transitions enrichment_status to at
-    # least 'streaming' on first attempt, so idle+null uniquely identifies
-    # a skip-enrichment job that failed before phase 1 ever began.
-    inferred_skip_enrichment = (
-        job.enrichment_status == "idle" and job.description_enriched is None
-    )
-
-    # Same post-commit enqueue pattern as create_job.
+    # /retry re-runs Phase 2 (signal extraction) only. Phase 1 enrichment
+    # is the recruiter's explicit decision via POST /api/jobs/{id}/enrich
+    # and is never coupled to the signal-extraction retry.
     background_tasks.add_task(
         _safe_dispatch_extraction,
         job_posting_id=str(job.id),
         tenant_id=str(job.tenant_id),
         correlation_id=correlation_id,
-        skip_enrichment=inferred_skip_enrichment,
+        skip_enrichment=True,
     )
 
     status_event = await get_job_status(db, job_id)
@@ -557,20 +637,118 @@ async def enrich_job(
     db: AsyncSession = Depends(get_tenant_db),
     user: UserContext = Depends(get_current_user_roles),
 ) -> dict[str, str]:
+    """Trigger JD enrichment.
+
+    Two semantically distinct paths share this endpoint:
+      - ``status == 'draft'`` → first-time enrichment via ``enrich_jd``
+        actor. Uses the ``jd_enrichment`` prompt. Lifecycle status stays
+        at draft.
+      - ``status in ('signals_extracted', 'signals_confirmed')`` →
+        re-enrichment via ``reenrich_jd`` actor (snapshot-aware,
+        ``jd_reenrichment`` prompt). Lifecycle status unchanged.
+
+    422 if the JD's ``description_raw`` is empty (``empty_raw_jd``) or no
+    ancestor has a complete company profile (``company_profile_incomplete``).
+    """
     job = await require_job_access(db, job_id, user, "manage")
-    if job.status not in ("signals_extracted", "signals_confirmed"):
+    if job.status not in ("draft", "signals_extracted", "signals_confirmed"):
         raise HTTPException(
             status_code=409,
-            detail=f"Cannot trigger re-enrichment in status '{job.status}'",
+            detail=f"Cannot trigger enrichment in status '{job.status}'",
         )
+    if not (job.description_raw or "").strip():
+        raise EmptyRawJDError(job_id)
+    profile = await find_company_profile_in_ancestry(db, job.org_unit_id)
+    if profile is None:
+        raise CompanyProfileIncompleteError(job.org_unit_id)
+
     correlation_id = _get_correlation_id(request)
-    await trigger_reenrichment(db, job=job, actor_id=user.user.id)
+
+    if job.status == "draft":
+        # Draft path: enrich_jd actor's pre-mark block flips enrichment_status
+        # to 'streaming' on its own — don't double-set here.
+        dispatch_fn = _safe_dispatch_enrich
+    else:
+        # Re-enrichment path keeps the legacy ordering: set streaming
+        # in-request so the response carries the new state, then dispatch.
+        await trigger_reenrichment(db, job=job, actor_id=user.user.id)
+        dispatch_fn = _safe_dispatch_reenrichment
 
     background_tasks.add_task(
-        _safe_dispatch_reenrichment,
+        dispatch_fn,
         job_posting_id=str(job.id),
         tenant_id=str(job.tenant_id),
         correlation_id=correlation_id,
+    )
+
+    status_event = await get_job_status(db, job_id)
+    if status_event is not None:
+        background_tasks.add_task(
+            pubsub.publish,
+            pubsub.job_channel(job_id),
+            pubsub.Events.JD_STATUS_CHANGED,
+            status_event.model_dump(mode="json"),
+            correlation_id=correlation_id,
+        )
+
+    return {"status": "accepted"}
+
+
+@router.post("/{job_id}/extract-signals", status_code=202)
+async def extract_signals(
+    job_id: UUID,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_tenant_db),
+    user: UserContext = Depends(get_current_user_roles),
+) -> dict[str, str]:
+    """Trigger signal extraction on a draft job.
+
+    Transitions ``status: draft → signals_extracting`` and dispatches the
+    ``extract_and_enhance_jd`` actor with ``skip_enrichment=True`` — Phase 1
+    (enrichment) is a separate recruiter decision (see ``/enrich``). The
+    actor reads ``description_enriched`` if present, otherwise falls back
+    to ``description_raw``.
+
+    Same 422 guards as ``/enrich``: empty raw JD, missing profile.
+    """
+    job = await require_job_access(db, job_id, user, "manage")
+    if job.status != "draft":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "job_not_in_draft_state",
+                "message": (
+                    f"Cannot extract signals from a job in status '{job.status}'. "
+                    "Signal extraction is only available on draft jobs."
+                ),
+            },
+        )
+    if not (job.description_raw or "").strip():
+        raise EmptyRawJDError(job_id)
+    profile = await find_company_profile_in_ancestry(db, job.org_unit_id)
+    if profile is None:
+        raise CompanyProfileIncompleteError(job.org_unit_id)
+
+    correlation_id = _get_correlation_id(request)
+
+    await transition(
+        db, job,
+        to_state="signals_extracting",
+        actor_id=user.user.id,
+        correlation_id=correlation_id,
+    )
+    await db.flush()
+
+    # Dispatch with skip_enrichment=True — the recruiter's enrichment
+    # decision is independent. If they want enriched copy, they'll have
+    # already clicked /enrich; the actor will pick up description_enriched.
+    background_tasks.add_task(
+        _safe_dispatch_extraction,
+        job_posting_id=str(job.id),
+        tenant_id=str(job.tenant_id),
+        correlation_id=correlation_id,
+        skip_enrichment=True,
     )
 
     status_event = await get_job_status(db, job_id)

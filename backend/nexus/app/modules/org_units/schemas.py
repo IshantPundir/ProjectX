@@ -79,9 +79,6 @@ class OrgUnitResponse(BaseModel):
     # Replaces inherited_locale + inherited_compliance. Same shape as the
     # old fields: {"values": {country, state, city}, "source_unit_id"}.
     inherited_address: dict | None = None
-    # Populated only when the update flips status pending -> complete.
-    # Count of jobs advanced out of blocked_pending_client_setup.
-    unblocked_job_count: int = 0
 
 
 class AssignRoleRequest(BaseModel):

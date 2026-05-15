@@ -44,7 +44,6 @@ def _build_response(
     email_map: dict,
     *,
     inherited_address: dict | None = None,
-    unblocked_job_count: int = 0,
 ) -> OrgUnitResponse:
     return OrgUnitResponse(
         id=str(unit.id),
@@ -75,7 +74,6 @@ def _build_response(
         deletable_by_email=email_map.get(unit.deletable_by) if unit.deletable_by else None,
         admin_delete_disabled=unit.admin_delete_disabled,
         inherited_address=inherited_address,
-        unblocked_job_count=unblocked_job_count,
     )
 
 
@@ -204,13 +202,6 @@ async def update_unit(
     if not unit:
         raise HTTPException(status_code=404, detail="Org unit not found")
 
-    # Snapshot the completion status BEFORE update_org_unit flips it, so
-    # we can decide whether to run the unblock cascade. Reading this off
-    # the ORM row is safe because update_org_unit mutates the same
-    # instance in-place — by the time we read `unit.company_profile_*`
-    # below, the row's been updated.
-    prev_completion_status = unit.company_profile_completion_status
-
     set_deletable_by = "deletable_by" in raw_body
 
     try:
@@ -238,53 +229,15 @@ async def update_unit(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Unblock cascade: if this update flipped the completion status pending
-    # → complete (set_company_profile=true on a row that was pending),
-    # transition every JD under this org_unit out of
-    # `blocked_pending_client_setup` and enqueue extract_and_enhance_jd
-    # for each. The audit row is written by _unblock_pending_jobs_for_org_unit
-    # itself (jd.unblocked_by_profile_completion).
-    unblocked_ids: list[str] = []
-    if (
-        prev_completion_status == "pending"
-        and unit.company_profile_completion_status == "complete"
-    ):
-        from app.modules.org_units.service import _unblock_pending_jobs_for_org_unit
-        unblocked_ids = await _unblock_pending_jobs_for_org_unit(
-            db, org_unit_id=unit.id, tenant_id=ctx.user.tenant_id,
-        )
-
     email_map = await _load_email_map(db, unit.created_by, unit.deletable_by)
     inherited_address = await find_address_in_ancestry(db, unit.id)
 
-    response = _build_response(
+    return _build_response(
         unit,
         0,
         email_map,
         inherited_address=inherited_address,
-        unblocked_job_count=len(unblocked_ids),
     )
-
-    # Enqueue extraction AFTER returning so the queued actors don't race
-    # the DB commit (the get_tenant_db dep commits on successful exit).
-    # FastAPI's BackgroundTasks would normally be the right tool here,
-    # but Dramatiq's .send() is a one-shot Redis call — running it
-    # inline after the response is rendered is acceptable because the
-    # broker connection is process-local and won't block the worker
-    # thread. The actor itself reloads the JD under bypass-RLS and is
-    # idempotent on retry, so any race where it dequeues before the
-    # commit lands is self-correcting (it just retries).
-    if unblocked_ids:
-        import uuid as _uuid
-        from app.modules.jd import extract_and_enhance_jd
-        for jid in unblocked_ids:
-            extract_and_enhance_jd.send(
-                jid,
-                str(ctx.user.tenant_id),
-                f"unblock-{_uuid.uuid4()}",
-            )
-
-    return response
 
 
 @router.delete("/{unit_id}")

@@ -58,13 +58,6 @@ export type JobStatus =
   | 'pipeline_built'
   | 'active'
   | 'archived'
-  /**
-   * ATS-imported jobs land here when the client_account org_unit's
-   * company profile is still pending. The unblock cascade (PUT
-   * /api/org-units/{id} → company_profile_completion_status pending →
-   * complete) transitions them to 'draft' and enqueues extraction.
-   */
-  | 'blocked_pending_client_setup'
 
 /**
  * Provenance for imported jobs. 'native' is the recruiter-created default;
@@ -105,6 +98,13 @@ export type JobPostingSummary = {
   source: JobSource
   external_id: string | null
   external_status: string | null
+  /**
+   * True when an ancestor of org_unit_id has a complete company profile
+   * (about + industry + hiring_bar). Same field on JobPostingWithSnapshot;
+   * surfaced on the summary so the /jobs list page can group jobs whose
+   * configuration is blocked on completing the parent company's profile.
+   */
+  profile_ready: boolean
 }
 
 export type EnrichmentStatus = 'idle' | 'streaming' | 'completed' | 'failed'
@@ -145,22 +145,47 @@ export type JobStatusEvent = {
   is_confirmed: boolean
 }
 
+/**
+ * POST /api/jobs body — basics only.
+ *
+ * The recruiter adds description_raw + project_scope_raw on /jobs/{id} via
+ * PATCH after create; enrichment and signal extraction are explicit
+ * recruiter actions there. See docs/superpowers/specs/2026-05-14-unified-
+ * job-creation-flow-design.md for the full flow.
+ */
 export type CreateJobBody = {
   org_unit_id: string
   title: string
-  description_raw: string
-  project_scope_raw: string | null
-  target_headcount: number | null
-  deadline: string | null
-  employment_type: EmploymentType | null
-  work_arrangement: WorkArrangement | null
-  location: string | null
-  salary_range_min: number | null
-  salary_range_max: number | null
-  salary_currency: SalaryCurrency | null
-  travel_required: TravelRequired | null
-  start_date_pref: StartDatePref | null
-  skip_enrichment?: boolean
+  target_headcount?: number | null
+  deadline?: string | null
+  employment_type?: EmploymentType | null
+  work_arrangement?: WorkArrangement | null
+  location?: string | null
+  salary_range_min?: number | null
+  salary_range_max?: number | null
+  salary_currency?: SalaryCurrency | null
+  travel_required?: TravelRequired | null
+  start_date_pref?: StartDatePref | null
+}
+
+/**
+ * PATCH /api/jobs/{id} body — every field optional, only changed keys sent.
+ * Server gates on status='draft'; 409 once the job moves past draft.
+ */
+export type UpdateJobBody = {
+  title?: string
+  description_raw?: string
+  project_scope_raw?: string | null
+  target_headcount?: number | null
+  deadline?: string | null
+  employment_type?: EmploymentType | null
+  work_arrangement?: WorkArrangement | null
+  location?: string | null
+  salary_range_min?: number | null
+  salary_range_max?: number | null
+  salary_currency?: SalaryCurrency | null
+  travel_required?: TravelRequired | null
+  start_date_pref?: StartDatePref | null
 }
 
 export type SaveSignalsBody = {
@@ -203,6 +228,14 @@ export const jobsApi = {
       body: JSON.stringify(body),
     }),
 
+  /** PATCH /api/jobs/{id} — update draft-editable fields. */
+  update: (token: string, id: string, body: UpdateJobBody): Promise<JobPostingWithSnapshot> =>
+    apiFetch<JobPostingWithSnapshot>(`/api/jobs/${id}`, {
+      token,
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
   retry: (token: string, id: string): Promise<JobPostingSummary> =>
     apiFetch<JobPostingSummary>(`/api/jobs/${id}/retry`, {
       token,
@@ -222,8 +255,25 @@ export const jobsApi = {
       method: 'POST',
     }),
 
+  /**
+   * POST /api/jobs/{id}/enrich — first-time enrichment on a draft job, or
+   * re-enrichment on signals_extracted/confirmed. Backend picks the right
+   * actor (enrich_jd vs reenrich_jd) based on state. Status stays at the
+   * current lifecycle phase; only enrichment_status + description_enriched
+   * change.
+   */
   triggerEnrich: (token: string, id: string): Promise<{ status: string }> =>
     apiFetch<{ status: string }>(`/api/jobs/${id}/enrich`, {
+      token,
+      method: 'POST',
+    }),
+
+  /**
+   * POST /api/jobs/{id}/extract-signals — transitions draft →
+   * signals_extracting and dispatches Phase 2 (signal extraction).
+   */
+  extractSignals: (token: string, id: string): Promise<{ status: string }> =>
+    apiFetch<{ status: string }>(`/api/jobs/${id}/extract-signals`, {
       token,
       method: 'POST',
     }),

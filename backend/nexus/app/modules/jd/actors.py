@@ -122,6 +122,9 @@ async def _persist_signal_snapshot(
     db.add(snapshot)
 
 
+_ENRICHMENT_ALLOWED_STATES: frozenset[str] = frozenset({"draft", "signals_extracting"})
+
+
 async def _run_enrichment(
     db: AsyncSession,
     *,
@@ -137,8 +140,16 @@ async def _run_enrichment(
     on success. Idempotent: skipped if enrichment_status is already
     'completed'.
 
-    On permanent error or final retry: sets enrichment_status='failed'
-    and transitions main status to signals_extraction_failed.
+    Allowed starting states: ``draft`` (initial-enrichment path from the
+    /enrich endpoint) and ``signals_extracting`` (Phase 1 of the original
+    extract_and_enhance_jd pipeline). Other states bail.
+
+    On permanent error or final retry: sets enrichment_status='failed'. If
+    the job was in ``signals_extracting`` (the extract_and_enhance_jd path),
+    transitions to ``signals_extraction_failed`` so the lifecycle reflects
+    the failure. If the job was in ``draft``, the enrichment_status='failed'
+    is the only signal — lifecycle stays at draft so the recruiter can fix
+    inputs and retry.
     """
     log = logger.bind(
         job_posting_id=job_posting_id,
@@ -153,7 +164,7 @@ async def _run_enrichment(
         log.warn("jd.actor.job_not_found")
         return
 
-    if job.status != "signals_extracting":
+    if job.status not in _ENRICHMENT_ALLOWED_STATES:
         log.warn("jd.actor.skip_unexpected_state", state=job.status)
         return
 
@@ -162,14 +173,28 @@ async def _run_enrichment(
         log.info("jd.enrichment.skip_already_complete")
         return
 
+    if not (job.description_raw or "").strip():
+        # The endpoint guard should have caught this, but the actor is a
+        # defensive backstop — running the LLM on empty input would either
+        # error or hallucinate.
+        log.warn("jd.enrichment.empty_raw_jd")
+        job.enrichment_status = "failed"
+        job.enrichment_error = "Raw JD is empty — add it before enriching."
+        return
+
     profile = await find_company_profile_in_ancestry(db, job.org_unit_id)
     if profile is None:
-        job.status_error = "Company profile missing — create_job_posting should have blocked this"
         job.enrichment_status = "failed"
-        await transition(
-            db, job, to_state="signals_extraction_failed",
-            actor_id=None, correlation_id=correlation_id,
-        )
+        job.enrichment_error = "Company profile missing — complete it before enriching."
+        # Only the signals_extracting path also pushes the lifecycle to a
+        # failed state; the draft path leaves lifecycle alone so the
+        # recruiter can fix inputs and retry without a state-machine dance.
+        if job.status == "signals_extracting":
+            job.status_error = "Company profile missing"
+            await transition(
+                db, job, to_state="signals_extraction_failed",
+                actor_id=None, correlation_id=correlation_id,
+            )
         return
 
     client = get_openai_client()
@@ -542,6 +567,97 @@ async def extract_and_enhance_jd(
             _exc_to_reraise = exc
 
     if phase_2_committed:
+        await _publish_status(job_posting_id, tenant_id, correlation_id)
+
+    if _exc_to_reraise is not None:
+        raise _exc_to_reraise
+
+
+# --- First-time enrichment for draft jobs ------------------------------------
+# Dispatched by POST /api/jobs/{id}/enrich when the job is in `draft`. The
+# lifecycle status stays `draft` throughout — only `enrichment_status` and
+# `description_enriched` change. Re-enrichment after signal edits has its
+# own actor (`reenrich_jd`) because the prompt is snapshot-aware.
+
+
+@dramatiq.actor(
+    max_retries=2,
+    min_backoff=2_000,
+    max_backoff=60_000,
+    queue_name="jd_enrichment",
+)
+async def enrich_jd(
+    job_posting_id: str,
+    tenant_id: str,
+    correlation_id: str,
+) -> None:
+    """Run first-time JD enrichment on a draft job.
+
+    Lifecycle: status stays `draft`. enrichment_status goes idle → streaming
+    → completed (or failed). Idempotent on retry: skipped when
+    enrichment_status is already 'completed'.
+
+    Endpoint guards (empty raw JD, missing profile) fire before dispatch;
+    the actor still defends against both as a backstop.
+    """
+    current = CurrentMessage.get_current_message()
+    retries_so_far = current.options.get("retries", 0) if current else 0
+
+    safe_tenant_id = str(UUID(tenant_id))
+
+    # Pre-mark: flip enrichment_status to 'streaming' so SSE consumers see
+    # the in-flight state. Gated to avoid stomping a 'completed' from a
+    # prior attempt on retry.
+    pre_mark_committed = False
+    async with get_bypass_session() as db:
+        await db.execute(text(f"SET LOCAL app.current_tenant = '{safe_tenant_id}'"))
+        try:
+            result = await db.execute(
+                select(JobPosting).where(JobPosting.id == UUID(job_posting_id))
+            )
+            job = result.scalar_one_or_none()
+            if (
+                job is not None
+                and job.status == "draft"
+                and job.enrichment_status not in ("streaming", "completed")
+            ):
+                job.enrichment_status = "streaming"
+                job.enrichment_error = None
+                await db.commit()
+                pre_mark_committed = True
+        except Exception as exc:
+            await db.rollback()
+            logger.warning(
+                "actors.enrich_jd.pre_mark_failed",
+                job_posting_id=job_posting_id, error=str(exc),
+            )
+
+    if pre_mark_committed:
+        await _publish_status(job_posting_id, tenant_id, correlation_id)
+
+    # Phase 1 LLM call — _run_enrichment writes description_enriched and
+    # flips enrichment_status to completed/failed in-session.
+    phase_1_committed = False
+    _exc_to_reraise: BaseException | None = None
+    async with get_bypass_session() as db:
+        await db.execute(text(f"SET LOCAL app.current_tenant = '{safe_tenant_id}'"))
+        try:
+            await _run_enrichment(
+                db, job_posting_id=job_posting_id,
+                tenant_id=tenant_id, correlation_id=correlation_id,
+                retries_so_far=retries_so_far,
+            )
+            await db.commit()
+            phase_1_committed = True
+        except Exception as exc:
+            if retries_so_far >= 2:
+                await db.commit()
+                phase_1_committed = True
+            else:
+                await db.rollback()
+            _exc_to_reraise = exc
+
+    if phase_1_committed:
         await _publish_status(job_posting_id, tenant_id, correlation_id)
 
     if _exc_to_reraise is not None:

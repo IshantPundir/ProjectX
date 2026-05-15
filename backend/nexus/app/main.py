@@ -56,12 +56,15 @@ _TENANT_SCOPED_TABLES: tuple[str, ...] = (
     "candidate_session_tokens",
     # Phase 5 — tenant settings
     "tenant_settings",
-    # Phase ATS — ATS adapter integration tables
-    "ats_client_mappings",
+    # Phase ATS — ATS adapter integration tables.
+    # ats_user_mappings + ats_client_mappings dropped in 0036 — provenance
+    # moved onto users.external_id + organizational_units.external_id.
+    # ats_job_recruiter_assignments renamed → ats_job_assignments in 0036.
+    "ats_advisory_actions",
     "ats_connections",
-    "ats_job_recruiter_assignments",
+    "ats_job_assignments",
+    "ats_stage_mappings",
     "ats_sync_logs",
-    "ats_user_mappings",
 )
 
 
@@ -354,7 +357,9 @@ def create_app() -> FastAPI:
     from app.modules.auth import AccountSuspendedError, suspended_response
     from app.modules.jd.errors import (
         CompanyProfileIncompleteError,
+        EmptyRawJDError,
         IllegalTransitionError,
+        JobNotEditableError,
     )
 
     @application.exception_handler(AccountSuspendedError)
@@ -409,11 +414,43 @@ def create_app() -> FastAPI:
         return JSONResponse(
             status_code=422,
             content={
+                "code": "company_profile_incomplete",
                 "detail": (
-                    "Company profile must be completed before creating a job description. "
-                    "Visit Settings → Org Units → [your company] → Company Profile to finish setup."
+                    "Company profile must be completed before enriching the JD "
+                    "or extracting signals. Visit Settings → Org Units → [your "
+                    "company] → Company Profile to finish setup."
                 ),
                 "org_unit_id": str(exc.org_unit_id),
+            },
+        )
+
+    @application.exception_handler(EmptyRawJDError)
+    async def empty_raw_jd_handler(
+        request: Request, exc: EmptyRawJDError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "code": "empty_raw_jd",
+                "detail": (
+                    "Add the job description before enriching or extracting signals."
+                ),
+                "job_id": str(exc.job_id),
+            },
+        )
+
+    @application.exception_handler(JobNotEditableError)
+    async def job_not_editable_handler(
+        request: Request, exc: JobNotEditableError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "code": "job_not_editable",
+                "detail": (
+                    f"Job is in status '{exc.status}'; only draft jobs can be edited."
+                ),
+                "status": exc.status,
             },
         )
 

@@ -45,14 +45,41 @@ class IllegalTransitionError(Exception):
 
 
 class CompanyProfileIncompleteError(Exception):
-    """Raised by create_job_posting() when no ancestor of the target org unit
-    has a completed company_profile. Mapped to HTTP 422 Unprocessable Entity
-    at the router layer, with org_unit_id in the body."""
+    """Raised by /enrich and /extract-signals when no ancestor of the target
+    org unit has a completed company_profile. The profile is required by the
+    enrichment + signal-extraction prompts (they read it via ancestry walk)
+    so we surface a 422 before the LLM call, with org_unit_id in the body
+    so the frontend can deep-link to the Company Profile tab."""
 
     def __init__(self, org_unit_id: UUID) -> None:
         self.org_unit_id = org_unit_id
         super().__init__(
             f"Org unit {org_unit_id} has no ancestor with a completed company profile"
+        )
+
+
+class EmptyRawJDError(Exception):
+    """Raised by /enrich and /extract-signals when the job's description_raw
+    is empty or whitespace-only. Mapped to HTTP 422 at the router layer.
+    The recruiter is expected to add the JD via PATCH /api/jobs/{id} before
+    triggering enrichment or extraction."""
+
+    def __init__(self, job_id: UUID) -> None:
+        self.job_id = job_id
+        super().__init__(
+            f"Job {job_id} has no description_raw — add the JD before enriching or extracting"
+        )
+
+
+class JobNotEditableError(Exception):
+    """Raised by PATCH /api/jobs/{id} when the job is not in 'draft' status.
+    Editing basics or the raw JD after signal extraction would invalidate
+    the snapshot. Mapped to HTTP 409 Conflict at the router layer."""
+
+    def __init__(self, status: str) -> None:
+        self.status = status
+        super().__init__(
+            f"Job is in status '{status}'; only draft jobs can be edited"
         )
 
 

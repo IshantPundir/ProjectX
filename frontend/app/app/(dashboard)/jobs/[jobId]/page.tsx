@@ -6,6 +6,7 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { ErrorBanner } from '@/components/dashboard/jd-panels/ErrorBanner'
 import { JDReviewShell } from '@/components/dashboard/jd-panels'
 import { JDExtractingView } from '@/components/dashboard/jd-panels/JDExtractingView'
+import { JobDraftEditor } from '@/components/dashboard/jd-panels/JobDraftEditor'
 import { useJob } from '@/lib/hooks/use-job'
 import { useJobPipeline } from '@/lib/hooks/use-job-pipeline'
 import { useJobStatusStream } from '@/lib/hooks/use-job-status-stream'
@@ -48,19 +49,26 @@ export default function JobReviewPage() {
     )
   }
 
-  if (job.status === 'draft' || job.status === 'signals_extracting') {
-    // skip_enrichment isn't persisted on the job — infer it from enrichment_status:
-    // 'idle' while we're past phase 1 means it was skipped.
-    // (Once a refresh lands during phase 2 of a non-skipped job, the column
-    //  will be 'completed' — so 'idle' uniquely identifies skipped runs.)
-    const skipEnrichment =
-      job.enrichment_status === 'idle' && job.status === 'signals_extracting'
+  // Draft state: recruiter is preparing the JD. Inline editor with
+  // explicit Enrich / Extract triggers — see docs/superpowers/specs/
+  // 2026-05-14-unified-job-creation-flow-design.md.
+  if (job.status === 'draft') {
+    return <JobDraftEditor job={job} />
+  }
+
+  // Phase 2 in flight: extraction actor is running, show busy state.
+  // skip_enrichment was deprecated when enrichment moved to an explicit
+  // recruiter action; the /extract-signals endpoint always dispatches
+  // with skip_enrichment=True, so enrichment_status during signal
+  // extraction is whatever the recruiter chose earlier (idle if they
+  // never enriched, completed if they did).
+  if (job.status === 'signals_extracting') {
     return (
       <JDExtractingView
         descriptionRaw={job.description_raw}
         descriptionEnriched={job.description_enriched ?? null}
         enrichmentStatus={job.enrichment_status}
-        skipEnrichment={skipEnrichment}
+        skipEnrichment={job.enrichment_status === 'idle'}
         sseError={sseError}
       />
     )

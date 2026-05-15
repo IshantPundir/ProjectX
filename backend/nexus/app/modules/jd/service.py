@@ -29,6 +29,7 @@ from app.modules.jd.errors import (
     ActivationPredicatesFailed,
     CompanyProfileIncompleteError,
     IllegalTransitionError,
+    JobNotEditableError,
 )
 from app.modules.jd.schemas import (
     JobPostingSummary,
@@ -47,6 +48,7 @@ def _job_to_summary(
     updated_by_email: str | None = None,
     signal_count: int = 0,
     needs_review_count: int = 0,
+    profile_ready: bool = False,
 ) -> JobPostingSummary:
     return JobPostingSummary(
         id=job.id,
@@ -64,6 +66,7 @@ def _job_to_summary(
         source=job.source,
         external_id=job.external_id,
         external_status=job.external_status,
+        profile_ready=profile_ready,
     )
 
 
@@ -89,16 +92,56 @@ async def enrich_job_summaries(
             user_ids.add(j.updated_by)
     job_ids = [j.id for j in jobs]
 
-    # Batch-load org unit names. Skip the SELECT when every job in the list
-    # is unlinked — `WHERE id IN ()` is a SQL error.
-    unit_names: dict[UUID, str] = {}
+    tenant_id = jobs[0].tenant_id
+
+    # Batch-load every org unit in the tenant so we can (a) resolve the
+    # job's direct org_unit_name AND (b) walk ancestry in memory for the
+    # profile-ready check. Two birds, one query. The tenant tree is bounded
+    # (CLAUDE.md: <10 deep, dozens of units in practice).
+    unit_map: dict[UUID, OrganizationalUnit] = {}
     if unit_ids:
         unit_result = await db.execute(
-            select(OrganizationalUnit.id, OrganizationalUnit.name).where(
-                OrganizationalUnit.id.in_(unit_ids)
+            select(OrganizationalUnit).where(
+                OrganizationalUnit.client_id == tenant_id,
             )
         )
-        unit_names = {row[0]: row[1] for row in unit_result.all()}
+        unit_map = {u.id: u for u in unit_result.scalars().all()}
+    unit_names: dict[UUID, str] = {uid: u.name for uid, u in unit_map.items()}
+
+    # Per-org_unit_id: does the ancestry walk find the owning unit
+    # (client_account or company) AND is that owner's profile complete?
+    # Mirrors find_company_profile_in_ancestry's owner-walk semantics
+    # (org_units/service.py); pass-through containers (division/region/
+    # team) are skipped, and the walk does NOT fall through to a higher
+    # owner if the closest one's profile is incomplete. Cached for the
+    # duration of this list call.
+    profile_ready_cache: dict[UUID, bool] = {}
+    _OWNER_TYPES = {"client_account", "company"}
+
+    def _is_profile_ready(org_unit_id: UUID | None) -> bool:
+        if org_unit_id is None:
+            return False
+        if org_unit_id in profile_ready_cache:
+            return profile_ready_cache[org_unit_id]
+        current_id: UUID | None = org_unit_id
+        seen: set[UUID] = set()
+        ready = False
+        while current_id is not None:
+            if current_id in seen:
+                break  # defensive: corrupted parent chain
+            seen.add(current_id)
+            unit = unit_map.get(current_id)
+            if unit is None:
+                break
+            if unit.unit_type in _OWNER_TYPES:
+                about = (unit.about or "").strip()
+                industry = (unit.industry or "").strip()
+                hiring_bar = (unit.hiring_bar or "").strip()
+                ready = bool(about and industry and hiring_bar)
+                break  # owner found, do NOT fall through
+            current_id = unit.parent_unit_id
+        profile_ready_cache[org_unit_id] = ready
+        return ready
 
     # Batch-load user emails.
     user_result = await db.execute(
@@ -157,6 +200,7 @@ async def enrich_job_summaries(
             updated_by_email=user_emails.get(j.updated_by) if j.updated_by else None,
             signal_count=counts_by_job.get(j.id, (0, 0))[0],
             needs_review_count=counts_by_job.get(j.id, (0, 0))[1],
+            profile_ready=_is_profile_ready(j.org_unit_id),
         )
         for j in jobs
     ]
@@ -169,10 +213,10 @@ async def create_job_posting(
     created_by: UUID,
     org_unit_id: UUID,
     title: str,
-    description_raw: str,
-    project_scope_raw: str | None,
-    target_headcount: int | None,
-    deadline: date | None,
+    description_raw: str = "",
+    project_scope_raw: str | None = None,
+    target_headcount: int | None = None,
+    deadline: date | None = None,
     employment_type: str | None = None,
     work_arrangement: str | None = None,
     location: str | None = None,
@@ -183,24 +227,20 @@ async def create_job_posting(
     start_date_pref: str | None = None,
     correlation_id: str,
 ) -> JobPosting:
-    """Validate profile ancestry, INSERT job_postings in 'draft', transition
-    to 'signals_extracting'. DOES NOT commit and DOES NOT enqueue the actor.
+    """INSERT job_postings in 'draft'. DOES NOT commit, does NOT transition,
+    does NOT enqueue any actor.
+
+    The profile-completion gate moved to /enrich and /extract-signals — a
+    draft job can exist on an incomplete profile; only the explicit recruiter
+    actions that depend on the profile (enrichment, signal extraction) check.
+
+    `description_raw` defaults to empty — the recruiter is expected to paste
+    it on /jobs/{id} after create. ATS-imported jobs populate it on import.
 
     Commit is handled by the dependency's context manager (get_tenant_db
     wraps the session in `async with session.begin()` — auto-commits on
-    successful exit). Enqueue is handled by the router via FastAPI
-    BackgroundTasks so the .send() call happens AFTER the transaction
-    commits — this narrows (but does not eliminate) the dual-write race
-    where a fast worker could dequeue before the DB commit lands. See
-    Deferred Hardening #9 in the spec.
-
-    Raises:
-        CompanyProfileIncompleteError: no ancestor has a completed profile.
+    successful exit).
     """
-    profile = await find_company_profile_in_ancestry(db, org_unit_id)
-    if profile is None:
-        raise CompanyProfileIncompleteError(org_unit_id)
-
     job = JobPosting(
         tenant_id=tenant_id,
         org_unit_id=org_unit_id,
@@ -224,19 +264,95 @@ async def create_job_posting(
     db.add(job)
     await db.flush()
 
-    await transition(
-        db,
-        job,
-        to_state="signals_extracting",
-        actor_id=created_by,
-        correlation_id=correlation_id,
-    )
-    await db.flush()
-
     logger.info(
         "jd.service.created",
         job_posting_id=str(job.id),
         org_unit_id=str(org_unit_id),
+        correlation_id=correlation_id,
+    )
+    return job
+
+
+# Fields a recruiter can edit on a draft job via PATCH /api/jobs/{id}.
+# Excludes org_unit_id (would invalidate ancestry context), source/external_id
+# (provenance), status (state machine only), description_enriched (only the
+# enrich actor writes it).
+_DRAFT_EDITABLE_FIELDS: tuple[str, ...] = (
+    "title",
+    "description_raw",
+    "project_scope_raw",
+    "target_headcount",
+    "deadline",
+    "employment_type",
+    "work_arrangement",
+    "location",
+    "salary_range_min",
+    "salary_range_max",
+    "salary_currency",
+    "travel_required",
+    "start_date_pref",
+)
+
+
+async def update_job_posting_draft(
+    db: AsyncSession,
+    *,
+    job: JobPosting,
+    updates: dict,
+    actor_id: UUID,
+    actor_email: str | None,
+    ip_address: str | None,
+    correlation_id: str,
+) -> JobPosting:
+    """Update editable fields on a draft job.
+
+    Only fields listed in ``_DRAFT_EDITABLE_FIELDS`` are written; unknown keys
+    in ``updates`` are ignored (the Pydantic body schema already validated them).
+
+    Raises:
+        JobNotEditableError: when ``job.status != 'draft'``. Editing after
+            signal extraction would invalidate the snapshot.
+    """
+    if job.status != "draft":
+        raise JobNotEditableError(job.status)
+
+    changed: dict[str, dict] = {}
+    for field in _DRAFT_EDITABLE_FIELDS:
+        if field not in updates:
+            continue
+        new_value = updates[field]
+        old_value = getattr(job, field)
+        if old_value == new_value:
+            continue
+        setattr(job, field, new_value)
+        changed[field] = {
+            "from": old_value.isoformat() if hasattr(old_value, "isoformat") else old_value,
+            "to": new_value.isoformat() if hasattr(new_value, "isoformat") else new_value,
+        }
+
+    if not changed:
+        return job
+
+    job.updated_by = actor_id
+    job.updated_at = datetime.now(UTC)
+    await db.flush()
+
+    await log_event(
+        db,
+        tenant_id=job.tenant_id,
+        actor_id=actor_id,
+        actor_email=actor_email,
+        action=audit_actions.JOB_POSTING_UPDATED,
+        resource="job_posting",
+        resource_id=job.id,
+        payload={"changed": changed, "correlation_id": correlation_id},
+        ip_address=ip_address,
+    )
+
+    logger.info(
+        "jd.service.draft_updated",
+        job_posting_id=str(job.id),
+        fields=list(changed.keys()),
         correlation_id=correlation_id,
     )
     return job

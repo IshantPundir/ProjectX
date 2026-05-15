@@ -34,16 +34,25 @@ import { getFreshSupabaseToken } from '@/lib/auth/tokens'
 
 type StatusKind = 'reviewing' | 'draft' | 'live' | 'failed' | 'blocked'
 
-function statusKind(s: JobStatus): StatusKind {
+/**
+ * `profile_ready=false` overrides the persisted status with a "blocked"
+ * presentation: until the recruiter completes the parent company's
+ * profile, the JD can't be configured (PATCH/enrich/extract all 422 on
+ * the server). The DB row stays in 'draft' — the block is derived,
+ * not a separate state — so flipping the profile to complete is a
+ * single org-unit edit, no cascade.
+ */
+function statusKind(job: JobPostingSummary): StatusKind {
+  if (!job.profile_ready) return 'blocked'
+  const s: JobStatus = job.status
   if (s === 'signals_extracted' || s === 'signals_extracting') return 'reviewing'
   if (s === 'signals_extraction_failed') return 'failed'
   if (s === 'draft') return 'draft'
-  if (s === 'blocked_pending_client_setup') return 'blocked'
   return 'live'
 }
 
-function StatusPill({ status }: { status: JobStatus }) {
-  const kind = statusKind(status)
+function StatusPill({ job }: { job: JobPostingSummary }) {
+  const kind = statusKind(job)
   const map: Record<StatusKind, { label: string; cls: string }> = {
     reviewing: { label: 'reviewing', cls: 'caution' },
     draft: { label: 'draft', cls: 'soft' },
@@ -53,7 +62,14 @@ function StatusPill({ status }: { status: JobStatus }) {
   }
   const m = map[kind]
   return (
-    <span className={`px-chip ${m.cls} h-5 text-[10.5px] font-medium tracking-wide`}>
+    <span
+      className={`px-chip ${m.cls} h-5 text-[10.5px] font-medium tracking-wide`}
+      title={
+        kind === 'blocked'
+          ? 'Complete the parent company\'s profile to unlock JD configuration.'
+          : undefined
+      }
+    >
       <span className="px-dot" />
       {m.label}
     </span>
@@ -83,9 +99,11 @@ function SourceChip({ source }: { source: string }) {
 
 /**
  * Compact "Not set up" chip for ATS jobs that came in without a client
- * mapping (org_unit_id IS NULL). Distinct from `blocked_pending_client_setup`
- * with a mapping where the org_unit's company profile is still pending —
- * that case renders the StatusPill's 'awaiting setup' label instead.
+ * mapping (org_unit_id IS NULL). Under the unified job-creation flow,
+ * an ATS job WITH a mapping just lands in `draft` — the recruiter opens
+ * /jobs/{id} and proceeds as if they had created it manually. Profile
+ * completion is checked when they click Enrich / Extract, not at sync
+ * time.
  */
 function NotSetUpChip({ job }: { job: JobPostingSummary }) {
   if (job.org_unit_id !== null) return null
@@ -127,7 +145,10 @@ const IDLE_DAYS = 7
 type Group = 'blocked' | 'needs_you' | 'in_motion' | 'quiet'
 
 function classifyJob(job: JobPostingSummary): Group {
-  if (job.status === 'blocked_pending_client_setup') return 'blocked'
+  // Profile-readiness check trumps status: if the parent company's profile
+  // is incomplete, the recruiter can't configure the JD at all. Surface
+  // these as a distinct action item, separate from the "Needs you" queue.
+  if (!job.profile_ready) return 'blocked'
   if (
     job.status === 'draft' ||
     job.status === 'signals_extracted' ||
@@ -144,7 +165,7 @@ function classifyJob(job: JobPostingSummary): Group {
 const GROUP_META: Record<Group, { heading: string; hint: string }> = {
   blocked: {
     heading: 'Blocked on setup',
-    hint: 'imported from ATS, awaiting company profile',
+    hint: 'parent company profile incomplete',
   },
   needs_you: { heading: 'Needs you', hint: 'awaiting your review or action' },
   in_motion: { heading: 'In motion', hint: 'candidates actively progressing' },
@@ -327,7 +348,17 @@ export default function JobsListPage() {
   })
   const latestLog = syncLogsQuery.data?.[0]
   const isSyncRunning = latestLog?.status === 'running'
-  const jobsProgress = latestLog?.progress?.jobs
+  // The new orchestrator (spec 2026-05-14) writes a flat counter map into
+  // `entity_counts` only at completion, and leaves `progress` empty
+  // during a run — there's no mid-sync denominator anymore. We keep this
+  // accessor as a typed peek for any legacy log rows still in the DB; the
+  // dialog falls back to the indeterminate "no denominator" branch when
+  // progress.jobs is missing, which is the steady state under the new
+  // model.
+  const jobsProgress: { processed: number; total: number } | undefined =
+    (latestLog?.progress as Record<string, unknown> | undefined)?.[
+      'jobs'
+    ] as { processed: number; total: number } | undefined
   const [progressDialogOpen, setProgressDialogOpen] = useState(false)
   // Set true the moment the trigger-sync mutation resolves; cleared
   // when the polling loop sees the new 'running' log (the worker has
@@ -416,9 +447,8 @@ export default function JobsListPage() {
     }
   }, [data])
 
-  // Blocked-on-setup jobs are surfaced first when present — they're a
-  // recruiter action item (complete the company profile) that's distinct
-  // from the "Needs you" review queue.
+  // Blocked jobs surface first so the recruiter sees them before anything
+  // else — they're the only group with a non-trivial setup gate.
   const visibleGroups = useMemo<Group[]>(() => {
     if (filter === 'all') return ['blocked', 'needs_you', 'in_motion', 'quiet']
     return [filter]
@@ -520,10 +550,6 @@ export default function JobsListPage() {
         </Link>
       </div>
 
-      {/* Filter pills + view switcher.
-          `Blocked on setup` is omitted entirely when count === 0 — it's a
-          surface that only matters during ATS sync. When jobs are
-          blocked the pill renders first, accent-colored, with a count. */}
       <div className="mb-3.5 flex items-center gap-1.5">
         {(
           [
@@ -830,7 +856,7 @@ function JobsRow({
         </div>
       </div>
       <div>
-        <StatusPill status={job.status} />
+        <StatusPill job={job} />
       </div>
       <div
         className="px-mono text-right text-[12.5px]"
@@ -897,7 +923,7 @@ function JobCard({ job }: { job: JobPostingSummary }) {
             {job.org_unit_name ?? '—'}
           </div>
         </div>
-        <StatusPill status={job.status} />
+        <StatusPill job={job} />
       </div>
 
       {job.needs_review_count > 0 ? (
@@ -984,14 +1010,34 @@ function SyncJobsProgressDialog({
    * log's counts. */
   isStarting: boolean
 }) {
-  const jobsProgress = log?.progress?.jobs
-  // entity_counts is populated on completion. jobs phase may be null when
-  // the user kicked off only `users` from a different surface — guard.
-  const jobsCounts = (log?.entity_counts as Record<string, unknown> | undefined)
-    ?.jobs as
-    | { new: number; updated: number; skipped: number; errors: number }
-    | null
+  // Same accessor shape as the page-level peek above: typed-cast through
+  // unknown since the new orchestrator's `progress` shape is opaque
+  // (Record<string, unknown>) and not populated during the run.
+  const jobsProgress: { processed: number; total: number } | undefined =
+    (log?.progress as Record<string, unknown> | undefined)?.['jobs'] as
+      | { processed: number; total: number }
+      | undefined
+  // Flat counter map on the new orchestrator. Older logs (pre-cutover) may
+  // still carry the nested {jobs: {new, updated, …}} shape — try both.
+  const counts = log?.entity_counts as Record<string, unknown> | undefined
+  const nestedJobs = counts?.['jobs'] as
+    | { new?: number; updated?: number; skipped?: number; errors?: number }
     | undefined
+  const jobsCounts = nestedJobs
+    ? {
+        new: nestedJobs.new ?? 0,
+        updated: nestedJobs.updated ?? 0,
+        skipped: nestedJobs.skipped ?? 0,
+        errors: nestedJobs.errors ?? 0,
+      }
+    : counts
+      ? {
+          new: (counts['jobs_imported'] as number | undefined) ?? 0,
+          updated: (counts['jobs_updated'] as number | undefined) ?? 0,
+          skipped: (counts['jobs_unchanged'] as number | undefined) ?? 0,
+          errors: (counts['jobs_errored'] as number | undefined) ?? 0,
+        }
+      : undefined
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1022,18 +1068,15 @@ function SyncJobsProgressDialog({
                   total={jobsProgress.total}
                 />
               ) : (
-                // total < 0 (importer still in count_jobs) OR total === 0
-                // (Pass 1's cursor-based count returned 0; Pass 2's
-                // missing-detect count hasn't run yet). Both are
-                // "we don't know the denominator yet" — render
-                // indeterminate. We DON'T claim "already up to date"
-                // here: Pass 2 may still find deleted jobs that need
-                // restoring, and showing a premature "all done"
-                // message confuses recruiters who just bulk-deleted
-                // locally and are expecting them back. The completed
-                // state below handles the truly-done case via
-                // entity_counts.
-                <SyncProgressBar processed={0} total={-1} />
+                // The new orchestrator writes total = -1 (it doesn't know
+                // the denominator upfront — Ceipal's iterator is a stream)
+                // but DOES tick `processed` after every job. Pass it
+                // through so the SyncProgressBar shows the live counter
+                // instead of a frozen "Starting…" label.
+                <SyncProgressBar
+                  processed={jobsProgress?.processed ?? 0}
+                  total={-1}
+                />
               )}
             </div>
           </>
