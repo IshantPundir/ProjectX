@@ -5,9 +5,8 @@ import { useMemo, useState } from 'react'
 
 import { TrackerJobCard } from '@/components/dashboard/tracker/TrackerJobCard'
 import { useTrackerJobs } from '@/lib/hooks/use-tracker-jobs'
-import type { JobStatus } from '@/lib/api/jobs'
 
-type FilterId = 'all' | 'active' | 'pipeline_built'
+type FilterId = 'all' | 'active' | 'in_setup'
 
 const GRID_COLS = 'repeat(auto-fill, minmax(320px, 1fr))' as const
 
@@ -20,14 +19,22 @@ export default function ClientTrackerLandingPage() {
     return {
       all: all.length,
       active: all.filter((j) => j.status === 'active').length,
-      pipeline_built: all.filter((j) => j.status === 'pipeline_built').length,
+      // "In setup" groups jobs whose pipeline isn't yet running candidates.
+      in_setup: all.filter(
+        (j) =>
+          j.status === 'signals_confirmed' || j.status === 'pipeline_built',
+      ).length,
     }
   }, [data])
 
   const visible = useMemo(() => {
     const all = data ?? []
     if (filter === 'all') return all
-    return all.filter((j) => j.status === (filter as JobStatus))
+    if (filter === 'active') return all.filter((j) => j.status === 'active')
+    return all.filter(
+      (j) =>
+        j.status === 'signals_confirmed' || j.status === 'pipeline_built',
+    )
   }, [data, filter])
 
   return (
@@ -61,9 +68,9 @@ export default function ClientTrackerLandingPage() {
             { id: 'all' as const, label: 'All', n: counts.all },
             { id: 'active' as const, label: 'Active', n: counts.active },
             {
-              id: 'pipeline_built' as const,
-              label: 'Pipeline ready',
-              n: counts.pipeline_built,
+              id: 'in_setup' as const,
+              label: 'In setup',
+              n: counts.in_setup,
             },
           ]
         ).map((p) => {

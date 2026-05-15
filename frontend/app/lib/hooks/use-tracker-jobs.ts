@@ -6,10 +6,20 @@ import { jobsApi, type JobPostingSummary } from '@/lib/api/jobs'
 import { getFreshSupabaseToken } from '@/lib/auth/tokens'
 
 /**
- * Live jobs for the Tracker landing page — `pipeline_built` or `active`,
- * sorted by `updated_at` desc. Reuses the `['jobs-list']` cache so visiting
- * /jobs and /tracker doesn't double-fetch.
+ * Live jobs for the Tracker landing page — anything tagged "live" by the
+ * /jobs page (`signals_confirmed`, `pipeline_built`, or `active`), sorted
+ * by `updated_at` desc. Reuses the `['jobs-list']` cache so visiting /jobs
+ * and /tracker doesn't double-fetch. The kanban view itself handles the
+ * empty-pipeline case ("This role has no pipeline stages…") so jobs in
+ * `signals_confirmed` still surface — they're just an obvious nudge to
+ * build the pipeline.
  */
+const LIVE_STATUSES: ReadonlySet<JobPostingSummary['status']> = new Set([
+  'signals_confirmed',
+  'pipeline_built',
+  'active',
+])
+
 export function useTrackerJobs() {
   return useQuery<JobPostingSummary[]>({
     queryKey: ['jobs-list'],
@@ -19,7 +29,7 @@ export function useTrackerJobs() {
     },
     select: (jobs) =>
       jobs
-        .filter((j) => j.status === 'pipeline_built' || j.status === 'active')
+        .filter((j) => LIVE_STATUSES.has(j.status))
         .sort(
           (a, b) =>
             new Date(b.updated_at).getTime() -

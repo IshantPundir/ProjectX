@@ -55,7 +55,7 @@ describe('useTrackerJobs', () => {
     vi.clearAllMocks()
   })
 
-  it('returns only pipeline_built + active jobs, sorted by updated_at desc', async () => {
+  it('returns signals_confirmed + pipeline_built + active jobs, sorted by updated_at desc', async () => {
     vi.mocked(jobsApi.list).mockResolvedValue([
       makeJob({ id: 'a', status: 'draft', updated_at: '2026-05-15T10:00:00Z' }),
       makeJob({ id: 'b', status: 'active', updated_at: '2026-05-10T10:00:00Z' }),
@@ -67,7 +67,9 @@ describe('useTrackerJobs', () => {
     const { result } = renderHook(() => useTrackerJobs(), { wrapper })
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
-    expect(result.current.data?.map((j) => j.id)).toEqual(['c', 'b'])
+    // Order by updated_at desc: e (May 15 09) > c (May 14 10) > b (May 10 10).
+    // a (draft) and d (archived) are filtered out.
+    expect(result.current.data?.map((j) => j.id)).toEqual(['e', 'c', 'b'])
   })
 
   it('returns an empty array when the API returns no jobs', async () => {
@@ -83,7 +85,7 @@ describe('useTrackerJobs', () => {
     vi.mocked(jobsApi.list).mockResolvedValue([
       makeJob({ id: 'x', status: 'draft' }),
       makeJob({ id: 'y', status: 'archived' }),
-      makeJob({ id: 'z', status: 'signals_confirmed' }),
+      makeJob({ id: 'z', status: 'signals_extracted' }),
     ])
 
     const { result } = renderHook(() => useTrackerJobs(), { wrapper })
