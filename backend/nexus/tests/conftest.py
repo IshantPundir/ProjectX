@@ -169,6 +169,41 @@ async def create_test_user(db: AsyncSession, client_id: uuid.UUID, **kwargs) -> 
     return user
 
 
+async def create_test_ats_user(
+    db: AsyncSession, client_id: uuid.UUID, **kwargs,
+) -> User:
+    """Create an ATS-imported User row (auth_user_id=None, is_active=False).
+
+    Mirrors the orchestrator's `_insert_ats_user` shape but lets tests
+    pre-seed rows that the email-collision matrix should resolve against.
+
+    Defaults:
+      - source='ats_ceipal'
+      - external_id is required (`source LIKE 'ats_%'` CHECK constraint);
+        a random UUID-hex is used if not provided.
+      - auth_user_id=None; is_active=False
+    """
+    n = _next_id()
+    now = datetime.now(UTC)
+    defaults = {
+        "auth_user_id": None,
+        "tenant_id": client_id,
+        "email": f"ats-user{n}@test.com",
+        "full_name": f"ATS User {n}",
+        "is_active": False,
+        "source": "ats_ceipal",
+        "external_id": uuid.uuid4().hex,
+        "external_source_metadata": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+    defaults.update(kwargs)
+    user = User(**defaults)
+    db.add(user)
+    await db.flush()
+    return user
+
+
 async def create_test_org_unit(
     db: AsyncSession, client_id: uuid.UUID, **kwargs
 ) -> OrganizationalUnit:

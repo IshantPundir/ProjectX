@@ -44,9 +44,9 @@ describe('ceipalCredentialsSchema', () => {
 })
 
 describe('connectionCreateSchema', () => {
-  it('accepts a ceipal connection payload', () => {
+  it('accepts a ceipal connection payload (ats_ceipal vendor literal)', () => {
     const result = connectionCreateSchema.safeParse({
-      vendor: 'ceipal',
+      vendor: 'ats_ceipal',
       credentials: {
         email: 'recruiter@example.com',
         password: 'hunter2',
@@ -56,9 +56,21 @@ describe('connectionCreateSchema', () => {
     expect(result.success).toBe(true)
   })
 
+  it('rejects the legacy "ceipal" vendor literal (renamed to ats_ceipal)', () => {
+    const result = connectionCreateSchema.safeParse({
+      vendor: 'ceipal',
+      credentials: {
+        email: 'recruiter@example.com',
+        password: 'hunter2',
+        api_key: 'sk_live_abc123',
+      },
+    })
+    expect(result.success).toBe(false)
+  })
+
   it('rejects an unknown vendor', () => {
     const result = connectionCreateSchema.safeParse({
-      vendor: 'greenhouse',
+      vendor: 'ats_greenhouse',
       credentials: {
         email: 'recruiter@example.com',
         password: 'hunter2',

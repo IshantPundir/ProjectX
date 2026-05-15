@@ -396,7 +396,7 @@ function TeamMembersSection({
   const members = membersQuery.data ?? [];
   const roles = rolesQuery.data ?? [];
   const tenantUsers = (tenantUsersQuery.data ?? []).filter(
-    (u) => u.source === "user" && u.is_active,
+    (u) => u.has_auth_account && u.is_active,
   );
   const existingIds = new Set(members.map((m) => m.user_id));
   const candidateUsers = tenantUsers.filter((u) => !existingIds.has(u.id));

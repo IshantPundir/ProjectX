@@ -7,7 +7,7 @@ container (company → division → region → team etc).
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -35,6 +35,24 @@ class Client(Base):
 
 class OrganizationalUnit(Base):
     __tablename__ = "organizational_units"
+    __table_args__ = (
+        # ATS-sourced org_units MUST carry an external_id; native rows may
+        # have one too (a native unit later linked to an ATS client_id).
+        CheckConstraint(
+            "(source = 'native') OR (source LIKE 'ats_%' AND external_id IS NOT NULL)",
+            name="org_units_source_external_id_check",
+        ),
+        # Identity uniqueness for ATS-imported rows. NOTE: this table uses
+        # client_id as its tenant column (historic naming).
+        Index(
+            "org_units_external_identity_uniq",
+            "client_id",
+            "source",
+            "external_id",
+            unique=True,
+            postgresql_where=text("external_id IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
     client_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
@@ -42,6 +60,12 @@ class OrganizationalUnit(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     unit_type: Mapped[str] = mapped_column(String, nullable=False)
     is_root: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    # Provenance: 'native' for manually-created units; 'ats_<vendor>' for
+    # units materialized as a side-effect of an ATS job sync (e.g. a Ceipal
+    # client becomes a client_account org_unit).
+    source: Mapped[str] = mapped_column(Text, nullable=False, server_default="native")
+    external_id: Mapped[str | None] = mapped_column(Text)
+    external_source_metadata: Mapped[dict | None] = mapped_column(JSONB)
     # Profile columns. All free-text, all nullable. Promoted from the
     # legacy company_profile JSONB in migration 0034.
     about: Mapped[str | None] = mapped_column(Text)

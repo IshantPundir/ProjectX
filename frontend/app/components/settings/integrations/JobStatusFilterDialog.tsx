@@ -31,10 +31,10 @@ type Props = {
   connectionId: string;
   priorFilter: JobStatusFilter | null;
   /**
-   * If true, the dialog triggers a jobs-phase sync after saving the filter.
-   * The /jobs page uses this; the connections detail page passes false (the
-   * detail page has its own per-phase sync buttons, so an auto-trigger here
-   * would either double-fire or surprise the user).
+   * If true, the dialog triggers the single-trigger sync after saving the
+   * filter. The /jobs page uses this for the first-time configuration
+   * flow; the connections detail page passes false and the recruiter
+   * triggers the sync via its own "Resync" button.
    */
   triggerSyncOnSave?: boolean;
   /**
@@ -67,8 +67,8 @@ export function JobStatusFilterDialog({
     staleTime: 0,
   });
 
-  // Initialize selection when statuses load. Restore prior filter if present;
-  // otherwise auto-pick "Active" (matched by name).
+  // Initialize selection when statuses load. Restore prior filter if
+  // present; otherwise auto-pick "Active" (matched by name).
   useEffect(() => {
     if (!statuses.data) return;
     if (priorFilter) {
@@ -83,17 +83,16 @@ export function JobStatusFilterDialog({
     mutationFn: async (body: JobStatusFilter) => {
       const token = await getFreshSupabaseToken();
       await updateJobStatusFilter(token, connectionId, body);
-      // Second leg: kick off the jobs-phase sync. We do this inside the same
-      // mutation so the dialog's success/error state covers both the
-      // persist and the enqueue — a recruiter who picked statuses but
-      // saw no sync start would think the button was broken.
+      // Optionally kick off a sync once the filter is in place. The new
+      // sync is single-trigger — no `phases` argument. Subsequent runs
+      // are recruiter-driven via the Resync button.
       if (triggerSyncOnSave) {
-        await triggerManualSync(token, connectionId, ["jobs"]);
+        await triggerManualSync(token, connectionId);
       }
     },
     onSuccess: () => {
       toast.success(
-        triggerSyncOnSave ? "Filter saved. Syncing jobs…" : "Filter saved.",
+        triggerSyncOnSave ? "Filter saved. Syncing…" : "Filter saved.",
       );
       qc.invalidateQueries({ queryKey: ["ats", "connection", connectionId] });
       qc.invalidateQueries({
@@ -145,6 +144,8 @@ export function JobStatusFilterDialog({
     mutation.mutate(orderedSelection);
   };
 
+  const noSelection = orderedSelection.ids.length === 0;
+
   return (
     <Dialog open={open} onOpenChange={(v) => (!v ? onClose() : undefined)}>
       <DialogContent>
@@ -177,6 +178,23 @@ export function JobStatusFilterDialog({
           </div>
         )}
 
+        {/* Spec § "JobStatusFilterDialog": block Save with an inline banner
+            when no statuses are selected. Matches the backend 422 the new
+            sync trigger raises (`JOB_STATUS_FILTER_EMPTY`). */}
+        {!statuses.isLoading && noSelection && (
+          <p
+            className="px-hint mt-2 rounded-[8px] border px-3 py-2"
+            style={{
+              borderColor: "var(--px-warning-border, #fde68a)",
+              background: "var(--px-warning-bg, #fffbeb)",
+              color: "var(--px-fg)",
+            }}
+          >
+            At least one status must be selected; the sync cannot run without
+            an active filter.
+          </p>
+        )}
+
         {serverError && (
           <p className="px-hint" style={{ color: "var(--px-danger)" }}>
             {serverError}
@@ -190,9 +208,7 @@ export function JobStatusFilterDialog({
           <Button
             onClick={onSubmit}
             disabled={
-              statuses.isLoading ||
-              orderedSelection.ids.length === 0 ||
-              mutation.isPending
+              statuses.isLoading || noSelection || mutation.isPending
             }
           >
             {mutation.isPending

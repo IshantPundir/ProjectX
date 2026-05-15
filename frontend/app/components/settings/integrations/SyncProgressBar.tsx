@@ -41,7 +41,13 @@ export function SyncProgressBar({ processed, total }: Props) {
       </div>
       <div className="text-xs text-zinc-500">
         {indeterminate ? (
-          <span>Counting jobs…</span>
+          // The new job-driven sync (spec 2026-05-14) streams jobs from
+          // Ceipal's paginated endpoint and doesn't know the denominator
+          // up-front. Display the running count instead of an opaque
+          // spinner — recruiter sees forward motion.
+          <span>
+            {processed > 0 ? `${processed} jobs processed…` : "Starting…"}
+          </span>
         ) : (
           <span>
             {processed} / {total} ({pct}%)

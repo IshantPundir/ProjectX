@@ -2,7 +2,6 @@
 
 import { Badge, Skeleton } from "@/components/px";
 import type { ATSSyncLog, ATSSyncStatus } from "@/lib/api/ats";
-import { SyncProgressBar } from "./SyncProgressBar";
 
 const STATUS_VARIANT: Record<
   ATSSyncStatus,
@@ -14,15 +13,30 @@ const STATUS_VARIANT: Record<
   failed: "danger",
 };
 
+/** Flat counter map from the new orchestrator: jobs_imported, jobs_updated,
+ * jobs_unchanged, jobs_errored, jobs_quarantined_skipped, submissions_*,
+ * org_units_imported, users_imported, users_linked, users_collision_skipped.
+ * Render the high-signal counts; collapse the long tail to a single
+ * "+N others" chip when present. */
 function formatCounts(counts: ATSSyncLog["entity_counts"]): string {
-  const parts: string[] = [];
-  for (const [phase, c] of Object.entries(counts)) {
-    if (!c) continue;
-    if (c.new || c.updated) {
-      parts.push(`${phase}: +${c.new ?? 0}/~${c.updated ?? 0}`);
-    }
+  if (!counts || Object.keys(counts).length === 0) return "—";
+  const highlights: string[] = [];
+  const jobsImported = counts["jobs_imported"] ?? 0;
+  const jobsUpdated = counts["jobs_updated"] ?? 0;
+  const jobsUnchanged = counts["jobs_unchanged"] ?? 0;
+  const jobsErrored = counts["jobs_errored"] ?? 0;
+  const subsImported = counts["submissions_imported"] ?? 0;
+  const subsUpdated = counts["submissions_updated"] ?? 0;
+  if (jobsImported || jobsUpdated || jobsUnchanged) {
+    highlights.push(`jobs: +${jobsImported}/~${jobsUpdated}/=${jobsUnchanged}`);
   }
-  return parts.join(" · ") || "—";
+  if (subsImported || subsUpdated) {
+    highlights.push(`submissions: +${subsImported}/~${subsUpdated}`);
+  }
+  if (jobsErrored) {
+    highlights.push(`errored: ${jobsErrored}`);
+  }
+  return highlights.join(" · ") || "—";
 }
 
 export function SyncLogTable({
@@ -68,17 +82,7 @@ export function SyncLogTable({
                 {new Date(log.started_at).toLocaleString()}
               </td>
               <td className="px-3 py-2">
-                <div className="space-y-1">
-                  <Badge variant={STATUS_VARIANT[log.status]}>{log.status}</Badge>
-                  {log.status === "running" &&
-                    log.progress?.jobs &&
-                    log.progress.jobs.total !== 0 && (
-                      <SyncProgressBar
-                        processed={log.progress.jobs.processed}
-                        total={log.progress.jobs.total}
-                      />
-                    )}
-                </div>
+                <Badge variant={STATUS_VARIANT[log.status]}>{log.status}</Badge>
               </td>
               <td className="px-3 py-2 font-mono text-xs text-zinc-600">
                 {formatCounts(log.entity_counts)}

@@ -1045,6 +1045,70 @@ async def update_source_template_from_job(
 
 
 # ---------------------------------------------------------------------------
+# Minimal default-pipeline helper — Intake → Debrief
+# ---------------------------------------------------------------------------
+
+
+async def ensure_minimal_pipeline_for_job(
+    db: AsyncSession,
+    *,
+    job: JobPosting,
+) -> JobPipelineInstance | None:
+    """Idempotently create a 2-stage Intake → Debrief pipeline for a job.
+
+    Used by callers that need EVERY job to have a pipeline instance
+    regardless of the JD state machine:
+      - The ATS orchestrator (jobs imported from a vendor don't pass
+        through signal-confirmation auto-apply).
+      - Manual job creation that wants pipeline-at-creation rather than
+        pipeline-at-confirmation.
+
+    Returns the new instance, or None if one already existed for the job.
+    Does NOT check ``job.status`` — ATS-imported jobs are
+    ``blocked_pending_client_setup`` or ``active`` and never reach
+    ``signals_confirmed``.
+
+    Idempotency is enforced by the ``uq_job_pipeline_instance_job``
+    unique constraint on ``job_posting_id`` plus an explicit existence
+    check before insert.
+    """
+    existing = await db.execute(
+        select(JobPipelineInstance).where(
+            JobPipelineInstance.job_posting_id == job.id
+        )
+    )
+    if existing.scalar_one_or_none() is not None:
+        return None
+
+    instance = JobPipelineInstance(
+        tenant_id=job.tenant_id,
+        job_posting_id=job.id,
+        source_template_id=None,
+    )
+    db.add(instance)
+    await db.flush()
+
+    # `_seed_bookends` returns [Intake, Debrief] when called with an
+    # empty stages list. We use the same helper as every other
+    # pipeline-creation path so the bookend invariants stay identical.
+    bookend_stages = _seed_bookends(
+        [],
+        tenant_id=job.tenant_id,
+        instance_id=instance.id,
+    )
+    for stage in bookend_stages:
+        db.add(stage)
+    await db.flush()
+
+    logger.info(
+        "pipelines.minimal_pipeline_created",
+        job_posting_id=str(job.id),
+        instance_id=str(instance.id),
+    )
+    return instance
+
+
+# ---------------------------------------------------------------------------
 # Auto-apply hook — called from jd.confirm_signals
 # ---------------------------------------------------------------------------
 

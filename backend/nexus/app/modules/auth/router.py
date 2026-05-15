@@ -192,36 +192,47 @@ async def accept_invite(
                 detail="Invite has already been accepted",
             )
 
-        user = User(
-            auth_user_id=auth_user_id,
-            tenant_id=uuid_mod.UUID(str(claimed_row.tenant_id)),
-            email=email,
-        )
-        db.add(user)
-        await db.flush()
+        # Under the unified-storage model (spec 2026-05-14), an ATS-imported
+        # user with the same (tenant_id, lower(email)) may already exist
+        # with auth_user_id=NULL + is_active=false. The invite accept is
+        # the moment we bind that pre-existing row to a Supabase identity:
+        # we promote the row (auth_user_id + is_active) instead of
+        # inserting a fresh User. Falls through to INSERT when no such
+        # row exists. The legacy ats_user_mappings UPDATE that lived here
+        # is gone — provenance is on `users.source` + `users.external_id`.
+        promoted = (
+            await db.execute(
+                sqlalchemy.text("""
+                    UPDATE public.users
+                       SET auth_user_id = :auth_user_id,
+                           is_active    = TRUE,
+                           updated_at   = NOW()
+                     WHERE tenant_id        = :tenant_id
+                       AND LOWER(email)     = LOWER(:email)
+                       AND auth_user_id IS NULL
+                       AND deleted_at IS NULL
+                    RETURNING id
+                """),
+                {
+                    "auth_user_id": str(auth_user_id),
+                    "tenant_id": str(claimed_row.tenant_id),
+                    "email": email,
+                },
+            )
+        ).first()
 
-        # Auto-link any ATS user mappings that match this email. Closes the
-        # loop on the team-page invite flow: an invite sent for an ATS-imported
-        # user now wires up internal_user_id without a separate mapping step,
-        # so assigned-recruiter resolution on imported jobs starts working
-        # immediately. Match is case-insensitive (vendors normalize).
-        await db.execute(
-            sqlalchemy.text("""
-                UPDATE public.ats_user_mappings
-                   SET internal_user_id = :user_id,
-                       mapped_at        = NOW(),
-                       mapped_by        = :user_id,
-                       updated_at       = NOW()
-                 WHERE tenant_id        = :tenant_id
-                   AND LOWER(external_user_email) = LOWER(:email)
-                   AND internal_user_id IS NULL
-            """),
-            {
-                "user_id": str(user.id),
-                "tenant_id": str(claimed_row.tenant_id),
-                "email": email,
-            },
-        )
+        if promoted is not None:
+            user_id = uuid_mod.UUID(str(promoted.id))
+            # Hydrate a User instance for downstream code paths.
+            user = await db.get(User, user_id)
+        else:
+            user = User(
+                auth_user_id=auth_user_id,
+                tenant_id=uuid_mod.UUID(str(claimed_row.tenant_id)),
+                email=email,
+            )
+            db.add(user)
+            await db.flush()
 
         is_super_admin = claimed_row.projectx_admin_id is not None
         root_unit_id = ""

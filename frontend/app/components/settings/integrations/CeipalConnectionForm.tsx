@@ -32,12 +32,12 @@ export function CeipalConnectionForm() {
     mutationFn: async (values: CeipalCredentials) => {
       const token = await getFreshSupabaseToken();
       return createConnection(token, {
-        vendor: "ceipal",
+        vendor: "ats_ceipal",
         credentials: values,
       });
     },
     onSuccess: (connection) => {
-      toast.success("Ceipal connected. Initial sync started.");
+      toast.success("Ceipal connected. Configure the job status filter to start syncing.");
       queryClient.invalidateQueries({ queryKey: ["ats", "connections"] });
       router.push(`/settings/integrations/${connection.id}`);
     },
@@ -127,8 +127,8 @@ export function CeipalConnectionForm() {
         }}
       >
         These credentials are encrypted at rest with AES-128 (Fernet) and never
-        appear in logs. ProjectX uses them only to fetch jobs, applicants, and
-        submissions on a 15-minute interval.
+        appear in logs. ProjectX only fetches data when you click Resync — there
+        is no scheduled poller in MVP.
       </div>
 
       <Button type="submit" disabled={mutation.isPending} className="w-full">

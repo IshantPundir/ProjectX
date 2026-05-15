@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.audit import actions as audit_actions, log_event
-from app.modules.ats.models import ATSUserMapping
+from app.modules.ats import is_ats_source
 from app.modules.auth import AuthProviderError, User, UserInvite, UserRoleAssignment, get_auth_provider
 from app.modules.org_units import Client, OrganizationalUnit, nullify_deletable_by_for_user
 from app.modules.roles import Role
@@ -68,26 +68,51 @@ async def list_team_members(
     tenant_id: uuid_mod.UUID,
     super_admin_id: uuid_mod.UUID | None,
 ) -> list[dict]:
-    """List active users + pending invites with role assignments."""
+    """List all team members (native + ATS-imported) + pending invites.
+
+    Under the unified-storage model (spec 2026-05-14), ATS-imported users
+    live in the `users` table tagged with `source LIKE 'ats_%'` and
+    `auth_user_id IS NULL`. The legacy `ats_user_mappings` table is gone.
+
+    Response shape per row matches the spec's TeamMember interface:
+      - source: 'native' | 'ats_<vendor>'  (provenance from users.source)
+      - external_id: ATS opaque id, NULL for pure-native rows
+      - external_source_metadata: vendor blob (role, business_unit_id, …)
+      - is_active: directly from users.is_active
+      - has_auth_account: users.auth_user_id IS NOT NULL
+      - invite_state: 'none' | 'pending' | 'accepted' | 'revoked'
+                      derived from a LOWER(email) match against the
+                      tenant's user_invites rows
+
+    Rows are ordered: rows with auth accounts first (created_at asc), then
+    ATS-imported-only rows (created_at desc — most recent imports surface
+    so the recruiter sees what just arrived).
+    """
     members: list[dict] = []
 
-    # Active users
+    # 1. Load every User row for the tenant (active + inactive).
     result = await db.execute(
         select(User)
-        .where(User.tenant_id == tenant_id, User.is_active == True)
+        .where(User.tenant_id == tenant_id, User.deleted_at.is_(None))
         .order_by(User.created_at.asc())
     )
-    users = result.scalars().all()
-
-    # Batch-load all assignments for these users
+    users = list(result.scalars().all())
     user_ids = [u.id for u in users]
-    assignments_by_user: dict[uuid_mod.UUID, list[dict]] = {uid: [] for uid in user_ids}
 
+    # 2. Batch-load role assignments for users with auth accounts (rows
+    #    without an auth account can't have assignments — they need to
+    #    accept an invite first).
+    assignments_by_user: dict[uuid_mod.UUID, list[dict]] = {
+        uid: [] for uid in user_ids
+    }
     if user_ids:
         assignment_result = await db.execute(
             select(UserRoleAssignment, Role, OrganizationalUnit)
             .join(Role, UserRoleAssignment.role_id == Role.id)
-            .join(OrganizationalUnit, UserRoleAssignment.org_unit_id == OrganizationalUnit.id)
+            .join(
+                OrganizationalUnit,
+                UserRoleAssignment.org_unit_id == OrganizationalUnit.id,
+            )
             .where(UserRoleAssignment.user_id.in_(user_ids))
         )
         for ura, role, ou in assignment_result.all():
@@ -99,80 +124,101 @@ async def list_team_members(
                 }
             )
 
+    # 3. Load every invite for the tenant — we use this both for the
+    #    per-user invite_state JOIN and to surface invites that have no
+    #    matching User row yet (pre-accept).
+    invite_result = await db.execute(
+        select(UserInvite)
+        .where(UserInvite.tenant_id == tenant_id)
+        .order_by(UserInvite.created_at.desc())
+    )
+    invites = list(invite_result.scalars().all())
+
+    # Latest invite per lower(email). Used both to compute invite_state on
+    # each User row and to discover invites without a matching User row.
+    latest_invite_by_email: dict[str, UserInvite] = {}
+    for inv in invites:
+        key = inv.email.lower()
+        if key not in latest_invite_by_email:
+            latest_invite_by_email[key] = inv
+
+    def _invite_state_for(email: str) -> str:
+        inv = latest_invite_by_email.get(email.lower())
+        if inv is None:
+            return "none"
+        # Status enum: 'pending' | 'accepted' | 'revoked' | 'superseded'
+        # 'superseded' rolls up to whatever the successor row says.
+        return inv.status if inv.status in ("pending", "accepted", "revoked") else "none"
+
+    # 4. Project User rows to TeamMember dicts.
     for user in users:
         members.append(
             {
                 "id": str(user.id),
                 "email": user.email,
                 "full_name": user.full_name,
+                "source": user.source,
+                "external_id": user.external_id,
+                "external_source_metadata": user.external_source_metadata,
                 "is_active": user.is_active,
-                "is_super_admin": super_admin_id is not None and user.id == super_admin_id,
-                "source": "user",
-                "status": "active",
+                "has_auth_account": user.auth_user_id is not None,
+                "invite_state": _invite_state_for(user.email),
+                "is_super_admin": (
+                    super_admin_id is not None and user.id == super_admin_id
+                ),
                 "assignments": assignments_by_user.get(user.id, []),
                 "created_at": user.created_at.isoformat(),
+                # Backwards-compat label for callers that haven't migrated.
+                # Phase D removes this when the frontend stops reading it.
+                "status": _legacy_status(user),
             }
         )
 
-    # Pending invites
-    invite_result = await db.execute(
-        select(UserInvite)
-        .where(UserInvite.tenant_id == tenant_id, UserInvite.status == "pending")
-        .order_by(UserInvite.created_at.desc())
-    )
-    pending_invites = list(invite_result.scalars().all())
-    for invite in pending_invites:
-        members.append(
-            {
-                "id": str(invite.id),
-                "email": invite.email,
-                "full_name": None,
-                "is_active": False,
-                "is_super_admin": False,
-                "source": "invite",
-                "status": "pending",
-                "assignments": [],
-                "created_at": invite.created_at.isoformat(),
-            }
-        )
-
-    # ATS-imported users that haven't been linked or invited yet.
-    # We exclude any row whose email already maps to an existing user (handled
-    # by invite-accept / importer auto-link) or to a pending invite (already
-    # surfaced above). Match is case-insensitive — emails are case-sensitive
-    # locally per RFC but every provider we care about normalizes.
-    taken_emails = {u.email.lower() for u in users} | {
-        i.email.lower() for i in pending_invites
-    }
-    ats_result = await db.execute(
-        select(ATSUserMapping)
-        .where(
-            ATSUserMapping.tenant_id == tenant_id,
-            ATSUserMapping.internal_user_id.is_(None),
-        )
-        .order_by(ATSUserMapping.last_synced_at.desc())
-    )
-    for ats_row in ats_result.scalars().all():
-        if ats_row.external_user_email.lower() in taken_emails:
+    # 5. Add invites that don't yet have a matching User row (pre-accept
+    #    pending invites — under the new model, the User row is created
+    #    or promoted on invite_accept, so a pending invite without a
+    #    matching email means the recruiter sent the invite to someone
+    #    we don't know yet).
+    known_emails = {u.email.lower() for u in users}
+    for inv in invites:
+        if inv.status != "pending":
+            continue
+        if inv.email.lower() in known_emails:
             continue
         members.append(
             {
-                "id": str(ats_row.id),
-                "email": ats_row.external_user_email,
-                "full_name": ats_row.external_user_display_name or None,
+                "id": str(inv.id),
+                "email": inv.email,
+                "full_name": None,
+                "source": "native",
+                "external_id": None,
+                "external_source_metadata": None,
                 "is_active": False,
+                "has_auth_account": False,
+                "invite_state": "pending",
                 "is_super_admin": False,
-                "source": "ats",
-                "status": "ats_unlinked",
                 "assignments": [],
-                "created_at": ats_row.created_at.isoformat(),
-                "external_user_id": ats_row.external_user_id,
-                "ats_vendor": ats_row.ats_vendor,
-                "external_role": ats_row.external_user_role,
+                "created_at": inv.created_at.isoformat(),
+                "status": "pending",
             }
         )
 
     return members
+
+
+def _legacy_status(user: User) -> str:
+    """Map a User row to the legacy `status` enum that older callers used.
+
+    'active'        — has auth account and is_active
+    'inactive'      — has auth account but deactivated
+    'ats_unlinked'  — ATS-imported, no auth account yet
+    'pending'       — fallback (shouldn't normally hit)
+    """
+    if user.auth_user_id is not None:
+        return "active" if user.is_active else "inactive"
+    if is_ats_source(user.source):
+        return "ats_unlinked"
+    return "pending"
 
 
 async def resend_team_invite(

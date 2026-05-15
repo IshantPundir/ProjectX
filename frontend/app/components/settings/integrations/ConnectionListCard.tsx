@@ -3,9 +3,21 @@
 import Link from "next/link";
 
 import { Badge, Button } from "@/components/px";
-import type { ATSConnection } from "@/lib/api/ats";
+import type { ATSConnection, ATSStatusSyncMode } from "@/lib/api/ats";
 
-const VENDOR_LABEL: Record<string, string> = { ceipal: "Ceipal" };
+const VENDOR_LABEL: Record<string, string> = {
+  ats_ceipal: "Ceipal",
+  // Legacy rows from the pre-cutover schema. After 0036 the canonical
+  // value is `ats_ceipal`; this fallback keeps the UI rendering during
+  // dev-mode cutover testing.
+  ceipal: "Ceipal",
+};
+
+const SYNC_MODE_LABEL: Record<ATSStatusSyncMode, string> = {
+  advisory: "Advisory",
+  mirror: "Mirror",
+  one_way: "Read-only",
+};
 
 export function ConnectionListCard({
   connection,
@@ -23,9 +35,6 @@ export function ConnectionListCard({
   const lastSynced = connection.last_synced_at
     ? new Date(connection.last_synced_at).toLocaleString()
     : "Never";
-  const nextPoll = connection.next_poll_at
-    ? new Date(connection.next_poll_at).toLocaleString()
-    : "—";
 
   return (
     <div
@@ -41,10 +50,11 @@ export function ConnectionListCard({
             {VENDOR_LABEL[connection.vendor] ?? connection.vendor}
           </h3>
           {statusBadge}
+          <Badge variant="secondary">
+            {SYNC_MODE_LABEL[connection.status_sync_mode] ?? connection.status_sync_mode}
+          </Badge>
         </div>
-        <p className="text-sm text-zinc-500">
-          Last synced: {lastSynced} · Next: {nextPoll}
-        </p>
+        <p className="text-sm text-zinc-500">Last synced: {lastSynced}</p>
         {connection.disabled_reason && (
           <p className="text-sm" style={{ color: "var(--px-danger)" }}>
             {connection.disabled_reason}

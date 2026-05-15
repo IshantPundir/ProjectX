@@ -2,12 +2,21 @@ import { z } from 'zod'
 
 import { apiFetch } from '@/lib/api/client'
 
-// --- Vendor tag ---
+// ────────────────────────────── Vendor tag ──────────────────────────────
 
-export type ATSVendor = 'ceipal'
+/** ATS vendor identifier. Always prefixed with `ats_` (matches the backend
+ * `users.source` / `organizational_units.source` / `job_postings.source`
+ * convention from migration 0036). Adding Greenhouse later → append
+ * `'ats_greenhouse'`. */
+export type ATSVendor = 'ats_ceipal'
 
-// --- Response shapes (match backend ConnectionResponse / SyncLogResponse /
-// UnmappedUserResponse in app/modules/ats/router.py) ---
+// ────────────────────────────── Sync mode ───────────────────────────────
+
+/** Three values map 1:1 to the backend's `ats_connections.status_sync_mode`
+ * CHECK constraint. Each connection sits in exactly one mode at a time. */
+export type ATSStatusSyncMode = 'advisory' | 'mirror' | 'one_way'
+
+// ─────────────────────────────── Shapes ─────────────────────────────────
 
 export interface CeipalJobStatus {
   id: number
@@ -21,10 +30,11 @@ export interface JobStatusFilter {
 
 export interface ATSConnection {
   id: string
-  vendor: string
+  vendor: ATSVendor
   active: boolean
+  status_sync_mode: ATSStatusSyncMode
+  tenant_timezone: string | null
   last_synced_at: string | null
-  next_poll_at: string | null
   last_poll_error: string | null
   disabled_reason: string | null
   created_at: string
@@ -38,13 +48,48 @@ export interface ATSSyncLog {
   started_at: string
   completed_at: string | null
   status: ATSSyncStatus
-  entity_counts: Record<string, Record<string, number>>
-  progress: { jobs?: { processed: number; total: number } }
+  /** Shape is a flat ``Record<string, number>`` (jobs_imported /
+   * jobs_updated / jobs_unchanged / submissions_imported / …). Treat as
+   * opaque counter map at the API boundary; UI projects what it cares
+   * about. */
+  entity_counts: Record<string, number>
+  progress: Record<string, unknown>
   error_phase: string | null
   error_summary: string | null
 }
 
-// --- Zod schemas for request payloads ---
+/** One audit-log row matching `ats.*` actions. Used to render the per-sync
+ * activity timeline (when `correlation_id` is provided) and the
+ * per-resource activity feed (when `resource_id` is provided). */
+export interface ATSSyncLogEvent {
+  id: string
+  event_type: string
+  resource_type: 'job' | 'user' | 'org_unit' | 'submission' | 'candidate'
+  resource_id: string | null
+  payload: Record<string, unknown>
+  correlation_id: string
+  created_at: string
+}
+
+export interface ATSStageMapping {
+  id: string
+  external_status_label: string
+  projectx_stage_id: string
+  action_on_match: 'move_to_stage' | 'reject' | 'archive' | 'no_op'
+}
+
+export interface ATSAdvisoryAction {
+  id: string
+  assignment_id: string
+  external_status_before: string | null
+  external_status_after: string
+  suggested_target_stage_id: string | null
+  suggested_action: 'move_to_stage' | 'reject' | 'archive'
+  resolution: 'pending' | 'applied' | 'dismissed' | 'superseded'
+  created_at: string
+}
+
+// ────────────────────────────── Zod schemas ─────────────────────────────
 
 export const ceipalCredentialsSchema = z.object({
   email: z.string().email('Must be a valid email address'),
@@ -54,26 +99,21 @@ export const ceipalCredentialsSchema = z.object({
 
 export type CeipalCredentials = z.infer<typeof ceipalCredentialsSchema>
 
-// Discriminated union — adding Greenhouse later means appending one more
-// union member; nothing else changes. Mirrors the backend Pydantic
-// discriminator in app/modules/ats/router.py.
+/** Discriminated union — adding Greenhouse later means appending one more
+ * union member; nothing else changes. Mirrors the backend Pydantic
+ * discriminator in app/modules/ats/router.py. */
 export const connectionCreateSchema = z.discriminatedUnion('vendor', [
   z.object({
-    vendor: z.literal('ceipal'),
+    vendor: z.literal('ats_ceipal'),
     credentials: ceipalCredentialsSchema,
   }),
 ])
 
 export type ConnectionCreatePayload = z.infer<typeof connectionCreateSchema>
 
-// --- apiFetch wrappers for /api/ats/* endpoints ---
-// Mirrors the convention used by lib/api/candidates.ts. Token is passed
-// explicitly per call; new callers should retrieve it via
-// getFreshSupabaseToken() from lib/auth/tokens.ts.
+// ───────────────────────────── Connections ──────────────────────────────
 
-export async function listConnections(
-  token: string,
-): Promise<ATSConnection[]> {
+export async function listConnections(token: string): Promise<ATSConnection[]> {
   return apiFetch<ATSConnection[]>('/api/ats/connections', { token })
 }
 
@@ -95,47 +135,70 @@ export async function createConnection(
   })
 }
 
-export async function deleteConnection(
-  token: string,
-  id: string,
-): Promise<void> {
+export async function deleteConnection(token: string, id: string): Promise<void> {
   await apiFetch<void>(`/api/ats/connections/${id}`, {
     token,
     method: 'DELETE',
   })
 }
 
-/**
- * The closed set of phase names the backend importer knows. Mirrors the
- * Literal[...] type in `app/modules/ats/router.py::_PHASE_NAMES`. If you
- * pass anything outside this set, FastAPI returns 422 before the handler
- * runs.
- */
-export type ATSSyncPhase =
-  | 'clients'
-  | 'users'
-  | 'jobs'
-  | 'applicants'
-  | 'submissions'
+// ───────────────────────────── Manual sync ──────────────────────────────
+
+/** Empty payload — the new single-trigger sync has no parameters. First
+ * sync (cursor IS NULL) implicitly walks the full filter; to force a
+ * subsequent full re-scan call `resetCursor` then re-trigger. */
+export interface ATSManualSyncRequest {
+  _empty?: never
+}
 
 export async function triggerManualSync(
   token: string,
   id: string,
-  phases?: ATSSyncPhase[],
-): Promise<{ status: string; phases: ATSSyncPhase[] | null }> {
-  return apiFetch<{ status: string; phases: ATSSyncPhase[] | null }>(
+): Promise<{ status: string }> {
+  return apiFetch<{ status: string }>(
     `/api/ats/connections/${id}/sync`,
     {
       token,
       method: 'POST',
-      // Only send a body when scoping to specific phases. Omitting the body
-      // (or sending no phases) runs all five phases — the "Sync all" path.
-      body: phases && phases.length > 0
-        ? JSON.stringify({ phases })
-        : undefined,
     },
   )
 }
+
+// ─────────────────────────── Reset cursor ───────────────────────────────
+
+export async function resetCursor(
+  token: string,
+  connectionId: string,
+  reason: string,
+): Promise<void> {
+  await apiFetch<void>(
+    `/api/ats/connections/${connectionId}/reset-cursor`,
+    {
+      token,
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    },
+  )
+}
+
+// ─────────────────────── Status sync mode ───────────────────────────────
+
+export async function updateStatusSyncMode(
+  token: string,
+  connectionId: string,
+  mode: ATSStatusSyncMode,
+): Promise<void> {
+  await apiFetch<void>(
+    `/api/ats/connections/${connectionId}/status-sync-mode`,
+    {
+      token,
+      method: 'PUT',
+      body: JSON.stringify({ mode }),
+    },
+  )
+}
+
+// ────────────────────────────── Sync logs ───────────────────────────────
 
 export async function listSyncLogs(
   token: string,
@@ -147,6 +210,8 @@ export async function listSyncLogs(
   )
 }
 
+// ─────────────────────────── Job statuses ───────────────────────────────
+
 export async function listJobStatuses(
   token: string,
   connectionId: string,
@@ -157,13 +222,8 @@ export async function listJobStatuses(
   )
 }
 
-/**
- * `body.ids` is serialized as `status_ids` on the wire to match the backend
- * Pydantic field (`JobStatusFilterRequest.status_ids` in
- * `app/modules/ats/router.py`). The frontend type keeps the shorter `ids`
- * for ergonomics. This is the only wire-rename in `lib/api/`; if the
- * backend field name ever changes, update both ends in lockstep.
- */
+/** `body.ids` is serialized as `status_ids` on the wire to match the
+ * backend Pydantic field. */
 export async function updateJobStatusFilter(
   token: string,
   connectionId: string,
@@ -180,4 +240,71 @@ export async function updateJobStatusFilter(
       }),
     },
   )
+}
+
+// ───────────────────────── Stage mappings ───────────────────────────────
+
+export async function listStageMappings(
+  token: string,
+  connectionId: string,
+): Promise<ATSStageMapping[]> {
+  return apiFetch<ATSStageMapping[]>(
+    `/api/ats/connections/${connectionId}/stage-mappings`,
+    { token },
+  )
+}
+
+export interface StageMappingCreatePayload {
+  external_status_label: string
+  projectx_stage_id: string
+  action_on_match: 'move_to_stage' | 'reject' | 'archive' | 'no_op'
+}
+
+export async function createStageMapping(
+  token: string,
+  connectionId: string,
+  body: StageMappingCreatePayload,
+): Promise<ATSStageMapping> {
+  return apiFetch<ATSStageMapping>(
+    `/api/ats/connections/${connectionId}/stage-mappings`,
+    {
+      token,
+      method: 'POST',
+      body: JSON.stringify(body),
+    },
+  )
+}
+
+export async function deleteStageMapping(
+  token: string,
+  mappingId: string,
+): Promise<void> {
+  await apiFetch<void>(`/api/ats/stage-mappings/${mappingId}`, {
+    token,
+    method: 'DELETE',
+  })
+}
+
+// ───────────────────────── Advisory actions ─────────────────────────────
+
+export async function listAdvisoryActions(
+  token: string,
+  assignmentId: string,
+): Promise<ATSAdvisoryAction[]> {
+  return apiFetch<ATSAdvisoryAction[]>(
+    `/api/ats/advisory-actions?assignment_id=${encodeURIComponent(assignmentId)}`,
+    { token },
+  )
+}
+
+// ───────────────────────── Retry-import (quarantine) ────────────────────
+
+export async function retryJobImport(
+  token: string,
+  jobId: string,
+): Promise<void> {
+  await apiFetch<void>(`/api/ats/jobs/${jobId}/retry-import`, {
+    token,
+    method: 'POST',
+  })
 }

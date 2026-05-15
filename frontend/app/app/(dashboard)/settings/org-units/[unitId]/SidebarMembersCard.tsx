@@ -63,7 +63,7 @@ export function SidebarMembersCard({
   const members = membersQuery.data ?? [];
   const roles = rolesQuery.data ?? [];
   const tenantUsers = (tenantUsersQuery.data ?? []).filter(
-    (u) => u.source === "user" && u.is_active,
+    (u) => u.has_auth_account && u.is_active,
   );
   // Don't filter existing members out — we want to be able to add an
   // additional role to someone who already holds one on this unit.

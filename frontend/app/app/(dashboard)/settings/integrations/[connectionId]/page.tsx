@@ -5,19 +5,55 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
-import { Badge, Button, DangerConfirmDialog, Skeleton } from "@/components/px";
+import {
+  Badge,
+  Button,
+  DangerConfirmDialog,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Skeleton,
+} from "@/components/px";
 import { JobStatusFilterDialog } from "@/components/settings/integrations/JobStatusFilterDialog";
 import { SyncLogTable } from "@/components/settings/integrations/SyncLogTable";
 import {
   deleteConnection,
   getConnection,
   listSyncLogs,
+  resetCursor,
   triggerManualSync,
+  updateStatusSyncMode,
   type ATSConnection,
+  type ATSStatusSyncMode,
   type ATSSyncLog,
-  type ATSSyncPhase,
 } from "@/lib/api/ats";
+import { ApiError } from "@/lib/api/client";
 import { getFreshSupabaseToken } from "@/lib/auth/tokens";
+
+const VENDOR_LABEL: Record<string, string> = {
+  ats_ceipal: "Ceipal",
+  ceipal: "Ceipal",
+};
+
+const SYNC_MODE_OPTIONS: { value: ATSStatusSyncMode; label: string; hint: string }[] = [
+  {
+    value: "advisory",
+    label: "Advisory (default)",
+    hint: "Log status changes + surface as recruiter tasks. No auto-apply.",
+  },
+  {
+    value: "mirror",
+    label: "Mirror",
+    hint: "Auto-apply mapped status changes via stage-mappings. Borderline candidates always require human review.",
+  },
+  {
+    value: "one_way",
+    label: "Read-only",
+    hint: "Log only. No notifications, no advisory actions.",
+  },
+];
 
 export default function ConnectionDetailPage() {
   const params = useParams<{ connectionId: string }>();
@@ -25,6 +61,7 @@ export default function ConnectionDetailPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
   const [filterDialogOpen, setFilterDialogOpen] = useState(false);
   const [dialogAutoOpened, setDialogAutoOpened] = useState(false);
 
@@ -53,49 +90,60 @@ export default function ConnectionDetailPage() {
       query.state.data?.some((l) => l.status === "running") ? 2000 : 10000,
   });
 
-  // One mutation, parameterised by phase scope. Passing ``undefined`` runs
-  // all five phases (Sync all); passing a single-element array scopes to
-  // one phase (per-phase dev controls). The button row below renders one
-  // button per phase plus a "Sync all".
   const syncMutation = useMutation({
-    mutationFn: async (phases: ATSSyncPhase[] | undefined) =>
-      triggerManualSync(
-        await getFreshSupabaseToken(),
-        connectionId,
-        phases,
-      ),
-    onSuccess: (data) => {
-      const label =
-        data.phases && data.phases.length > 0
-          ? data.phases.join(", ")
-          : "all phases";
-      toast.success(`Sync queued (${label}).`);
+    mutationFn: async () =>
+      triggerManualSync(await getFreshSupabaseToken(), connectionId),
+    onSuccess: () => {
+      toast.success("Sync queued.");
       queryClient.invalidateQueries({
         queryKey: ["ats", "connection", connectionId, "sync-logs"],
       });
     },
-    onError: () => toast.error("Could not trigger sync."),
+    onError: (err) => {
+      if (err instanceof ApiError && err.status === 422) {
+        toast.error("Configure the job status filter first.");
+        return;
+      }
+      if (err instanceof ApiError && err.status === 409) {
+        toast.error("A sync is already running.");
+        return;
+      }
+      toast.error("Could not trigger sync.");
+    },
   });
 
-  // Track which phase button is currently spinning so we can disable just
-  // that one (or "all") while the request is in flight.
-  const [pendingPhase, setPendingPhase] = useState<
-    ATSSyncPhase | "all" | null
-  >(null);
-  const triggerPhaseSync = (phases: ATSSyncPhase[] | undefined) => {
-    setPendingPhase(phases && phases.length === 1 ? phases[0] : "all");
-    syncMutation.mutate(phases, {
-      onSettled: () => setPendingPhase(null),
-    });
-  };
+  const resetMutation = useMutation({
+    mutationFn: async () =>
+      resetCursor(
+        await getFreshSupabaseToken(),
+        connectionId,
+        "force_full_rescan",
+      ),
+    onSuccess: () => {
+      toast.success("Cursor cleared. The next sync will walk the full filter.");
+      queryClient.invalidateQueries({
+        queryKey: ["ats", "connection", connectionId],
+      });
+      setConfirmReset(false);
+    },
+    onError: () => toast.error("Could not reset cursor."),
+  });
 
-  const PHASE_BUTTONS: { phase: ATSSyncPhase; label: string }[] = [
-    { phase: "clients", label: "Sync clients" },
-    { phase: "users", label: "Sync users" },
-    { phase: "jobs", label: "Sync jobs" },
-    { phase: "applicants", label: "Sync candidates" },
-    { phase: "submissions", label: "Sync submissions" },
-  ];
+  const modeMutation = useMutation({
+    mutationFn: async (mode: ATSStatusSyncMode) =>
+      updateStatusSyncMode(
+        await getFreshSupabaseToken(),
+        connectionId,
+        mode,
+      ),
+    onSuccess: () => {
+      toast.success("Sync mode updated.");
+      queryClient.invalidateQueries({
+        queryKey: ["ats", "connection", connectionId],
+      });
+    },
+    onError: () => toast.error("Could not update sync mode."),
+  });
 
   const remove = useMutation({
     mutationFn: async () =>
@@ -131,16 +179,22 @@ export default function ConnectionDetailPage() {
           className="px-serif m-0 text-[30px] font-normal"
           style={{ letterSpacing: "-0.6px", color: "var(--px-fg)" }}
         >
-          {c.vendor === "ceipal" ? "Ceipal" : c.vendor}
+          {VENDOR_LABEL[c.vendor] ?? c.vendor}
         </h1>
         <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-zinc-500">
           <Badge variant={c.active ? "ok" : "danger"}>
             {c.active ? "Active" : "Disabled"}
           </Badge>
-          {c.last_synced_at && (
+          <Badge variant="secondary">
+            {SYNC_MODE_OPTIONS.find((o) => o.value === c.status_sync_mode)?.label ??
+              c.status_sync_mode}
+          </Badge>
+          {c.last_synced_at ? (
             <span>
               Last synced {new Date(c.last_synced_at).toLocaleString()}
             </span>
+          ) : (
+            <span>Never synced</span>
           )}
           {c.disabled_reason && (
             <span style={{ color: "var(--px-danger)" }}>
@@ -159,7 +213,7 @@ export default function ConnectionDetailPage() {
             Configure which Ceipal job statuses to import.
           </p>
           <p className="mt-1 text-zinc-600">
-            The jobs sync is paused until you pick at least one status.
+            The sync is paused until you pick at least one status.
           </p>
           <Button
             className="mt-3"
@@ -174,27 +228,57 @@ export default function ConnectionDetailPage() {
         <div>
           <h2 className="text-lg font-medium text-zinc-900">Manual sync</h2>
           <p className="text-xs text-zinc-500">
-            Trigger one phase at a time, or run all five. Each phase enqueues
-            its own Dramatiq job — fine-grained control for development.
+            Cursor-based incremental. First sync walks the full filter; later
+            syncs pick up records modified since the last successful run.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {PHASE_BUTTONS.map(({ phase, label }) => (
-            <Button
-              key={phase}
-              variant="outline"
-              onClick={() => triggerPhaseSync([phase])}
-              disabled={syncMutation.isPending}
-            >
-              {pendingPhase === phase ? "Queueing…" : label}
-            </Button>
-          ))}
           <Button
-            onClick={() => triggerPhaseSync(undefined)}
-            disabled={syncMutation.isPending}
+            onClick={() => syncMutation.mutate()}
+            disabled={syncMutation.isPending || !c.active}
           >
-            {pendingPhase === "all" ? "Queueing…" : "Sync all"}
+            {syncMutation.isPending ? "Queueing…" : "Resync from ATS"}
           </Button>
+          <Button
+            variant="outline"
+            onClick={() => setConfirmReset(true)}
+            disabled={resetMutation.isPending}
+          >
+            Force full re-scan
+          </Button>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <div>
+          <h2 className="text-lg font-medium text-zinc-900">Sync mode</h2>
+          <p className="text-xs text-zinc-500">
+            How ProjectX reacts when a candidate&apos;s submission status changes
+            in Ceipal. Advisory is the safe default.
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <Select
+            value={c.status_sync_mode}
+            onValueChange={(value) =>
+              modeMutation.mutate(value as ATSStatusSyncMode)
+            }
+            disabled={modeMutation.isPending}
+          >
+            <SelectTrigger className="w-[260px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {SYNC_MODE_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-zinc-500">
+            {SYNC_MODE_OPTIONS.find((o) => o.value === c.status_sync_mode)?.hint}
+          </p>
         </div>
       </section>
 
@@ -224,7 +308,7 @@ export default function ConnectionDetailPage() {
       <DangerConfirmDialog
         open={confirmDelete}
         title="Remove ATS connection?"
-        description="This stops scheduled syncs. Imported clients, jobs, and candidates stay in ProjectX."
+        description="Imported clients, jobs, and candidates stay in ProjectX. You can re-connect later, but cursor history is lost."
         confirmLabel="Remove"
         pendingLabel="Removing…"
         pending={remove.isPending}
@@ -234,6 +318,17 @@ export default function ConnectionDetailPage() {
           });
         }}
         onClose={() => setConfirmDelete(false)}
+      />
+
+      <DangerConfirmDialog
+        open={confirmReset}
+        title="Force a full re-scan?"
+        description="Clears the sync cursor. The next sync will pull every job matching the active filter, not just changes since last sync. Existing rows are diffed in place — nothing is deleted."
+        confirmLabel="Reset cursor"
+        pendingLabel="Resetting…"
+        pending={resetMutation.isPending}
+        onConfirm={() => resetMutation.mutate()}
+        onClose={() => setConfirmReset(false)}
       />
 
       <JobStatusFilterDialog

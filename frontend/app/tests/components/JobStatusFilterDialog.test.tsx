@@ -10,6 +10,7 @@ vi.mock("@/lib/auth/tokens", () => ({
 
 const listJobStatusesMock = vi.fn();
 const updateJobStatusFilterMock = vi.fn();
+const triggerManualSyncMock = vi.fn();
 vi.mock("@/lib/api/ats", async () => {
   const actual: typeof import("@/lib/api/ats") = await vi.importActual(
     "@/lib/api/ats",
@@ -20,6 +21,8 @@ vi.mock("@/lib/api/ats", async () => {
       listJobStatusesMock(token, id),
     updateJobStatusFilter: (token: string, id: string, body: unknown) =>
       updateJobStatusFilterMock(token, id, body),
+    triggerManualSync: (token: string, id: string) =>
+      triggerManualSyncMock(token, id),
   };
 });
 
@@ -34,6 +37,7 @@ describe("JobStatusFilterDialog", () => {
   beforeEach(() => {
     listJobStatusesMock.mockReset();
     updateJobStatusFilterMock.mockReset();
+    triggerManualSyncMock.mockReset();
   });
 
   it("fetches statuses on open and preselects 'Active' when no prior filter", async () => {
@@ -123,6 +127,35 @@ describe("JobStatusFilterDialog", () => {
         ids: [1, 8],
         names: ["Active", "Reactivated"],
       });
+    });
+  });
+
+  it("triggers a single-trigger sync (no phase scoping) when triggerSyncOnSave is true", async () => {
+    // Under the new job-driven sync model (spec 2026-05-14), every entity —
+    // org_units, recruiter users, candidates, submissions — is materialized
+    // as a side-effect of importing a job that references it. There are no
+    // phases. The dialog calls triggerManualSync(token, connectionId) with
+    // no third argument; the backend then runs the single-trigger
+    // orchestrator scoped by the connection's job_status_filter.
+    listJobStatusesMock.mockResolvedValue([{ id: 1, name: "Active" }]);
+    updateJobStatusFilterMock.mockResolvedValue(undefined);
+    triggerManualSyncMock.mockResolvedValue({ status: "enqueued" });
+
+    renderWithProviders(
+      <JobStatusFilterDialog
+        open
+        onClose={() => {}}
+        connectionId="conn-1"
+        priorFilter={null}
+        triggerSyncOnSave
+      />,
+    );
+
+    await waitFor(() => screen.getByLabelText("Active"));
+    fireEvent.click(screen.getByRole("button", { name: /^sync$/i }));
+
+    await waitFor(() => {
+      expect(triggerManualSyncMock).toHaveBeenCalledWith("tok", "conn-1");
     });
   });
 });

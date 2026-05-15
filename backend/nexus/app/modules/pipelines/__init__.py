@@ -18,7 +18,10 @@ from app.modules.pipelines.models import (
     PipelineTemplate,
     PipelineTemplateStage,
 )
-from app.modules.pipelines.service import auto_apply_pipeline_on_confirmation
+from app.modules.pipelines.service import (
+    auto_apply_pipeline_on_confirmation,
+    ensure_minimal_pipeline_for_job,
+)
 
 __all__ = [
     "JobPipelineInstance",
@@ -28,6 +31,7 @@ __all__ = [
     "PipelineTemplateStage",
     "auto_apply_pipeline_on_confirmation",
     "bank_eligible_stage_types",
+    "ensure_minimal_pipeline_for_job",
     "human_led_stage_types",
     "is_paused",
     "middle_stage_types_for_activation",

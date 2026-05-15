@@ -7,36 +7,51 @@ export interface TeamMemberAssignment {
 }
 
 /**
- * A row returned by GET /api/settings/team/members. Covers active users,
- * outstanding invites, and ATS-imported users not yet on the team. Callers
- * branch on `source`:
- *   - 'user'   → real User row, may have role assignments
- *   - 'invite' → pending UserInvite awaiting claim
- *   - 'ats'    → ATSUserMapping with internal_user_id IS NULL (not yet
- *                a member or pending invite). The Send-invite action on
- *                these rows hits the same /api/settings/team/invite as
- *                a manual invite — on accept, the invite-accept handler
- *                wires up internal_user_id automatically.
+ * Provenance string on a team-member row. 'native' for natively-invited
+ * users; 'ats_<vendor>' for users imported from an ATS sync. Mirrors the
+ * backend `users.source` column tagged at row insert time.
+ */
+export type TeamMemberSource = 'native' | `ats_${string}`
+
+/**
+ * A row returned by GET /api/settings/team/members. Under the unified
+ * storage model (spec 2026-05-14), every member — native AND ATS-imported
+ * — lives in the same `users` table. Pending invites that don't yet have
+ * a matching User row surface as separate rows with `has_auth_account=false`
+ * and `invite_state='pending'`.
  *
- * Status values:
- *   - 'active'        for source='user' (active accounts)
- *   - 'inactive'      for source='user' (deactivated)
- *   - 'pending'       for source='invite'
- *   - 'ats_unlinked'  for source='ats'
+ * Display states are derived from the booleans, not a single enum:
+ *   - has_auth_account=true,  is_active=true   → Active
+ *   - has_auth_account=true,  is_active=false  → Inactive (deactivated)
+ *   - has_auth_account=false, invite_state='pending' → Invited
+ *   - has_auth_account=false, source LIKE 'ats_%'     → ATS-only (not invited)
+ *
+ * `status` is preserved as a legacy convenience field that still maps
+ * 'active' / 'inactive' / 'pending' / 'ats_unlinked'. Phase D consumers
+ * should derive state from `has_auth_account` + `is_active` + `invite_state`
+ * directly when displaying chips.
  */
 export interface TeamMember {
   id: string
   email: string
   full_name: string | null
+  source: TeamMemberSource
+  external_id: string | null
+  external_source_metadata: {
+    role?: string
+    timezone?: string
+    business_unit_id?: number
+    external_status?: string
+  } | null
   is_active: boolean
+  has_auth_account: boolean
+  invite_state: 'none' | 'pending' | 'accepted' | 'revoked'
   is_super_admin: boolean
   assignments: TeamMemberAssignment[]
-  source: 'user' | 'invite' | 'ats'
-  status: string
   created_at: string
-  external_user_id: string | null
-  ats_vendor: string | null
-  external_role: string | null
+  /** Legacy enum kept for backwards-compat with older renderers. Derived
+   * from the booleans above; new code should ignore it. */
+  status: string
 }
 
 export interface InviteTeamMemberRequest {

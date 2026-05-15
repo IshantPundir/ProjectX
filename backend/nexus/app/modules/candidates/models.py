@@ -109,6 +109,13 @@ class CandidateJobAssignment(Base):
     )
     external_id: Mapped[str | None] = mapped_column(Text)
     source_metadata: Mapped[dict | None] = mapped_column(JSONB)
+    # External lifecycle tracking — populated only when source LIKE 'ats_%'.
+    # See migration 0036. Drives the kanban indicator + advisory-action flow.
+    external_status: Mapped[str | None] = mapped_column(Text)
+    external_pipeline_status: Mapped[str | None] = mapped_column(Text)
+    external_last_modified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+    )
     current_stage_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("job_pipeline_stages.id"), nullable=False
     )

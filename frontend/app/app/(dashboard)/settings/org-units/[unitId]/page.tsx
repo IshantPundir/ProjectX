@@ -68,7 +68,14 @@ const subUnits = useMemo(() => {
     const raw: Record<string, number> = {}
     const titlesByUnit: Record<string, { id: string; title: string }[]> = {}
     for (const j of jobs) {
-      if (j.status === 'draft') continue
+      // "Open" means the role is still on the books — anything except
+      // archived. Drafts, blocked_pending_client_setup, the
+      // signals_*/pipeline_built/active in-flight states all count.
+      // Excluding 'draft' (the prior behavior) hid ATS-imported jobs
+      // that were unblocked into 'draft' after the recruiter completed
+      // the client_account profile — they appeared as orphans on the
+      // unit detail page despite clearly being linked.
+      if (j.status === 'archived') continue
       // Skip ATS-imported unlinked jobs (org_unit_id is NULL until a
       // recruiter wires them to a real org unit).
       if (j.org_unit_id === null) continue

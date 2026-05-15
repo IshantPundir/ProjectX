@@ -4,12 +4,20 @@ Distinct from the ORM model `ATSConnection` (app/modules/ats/models.py):
   - ORM row: persisted; credentials + tokens encrypted.
   - State:   in-memory; decrypted; mutable; adapter writes through it.
 
-Lifecycle: load -> decrypt -> state -> adapter mutates -> encrypt -> persist.
+Lifecycle: load → decrypt → state → adapter mutates → encrypt → persist.
 The adapter never touches the ORM directly.
+
+Mutable fields the adapter may write during a sync:
+  - access_token / refresh_token / their expiry timestamps (on refresh)
+  - tenant_timezone (captured from a vendor user record on first observation)
+
+`last_synced_at` is mutated by the ORCHESTRATOR (not the adapter) at the end
+of a successful sync; we keep it on the state object so the adapter has
+read-access to it for cursor decisions.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -35,11 +43,19 @@ class ATSConnectionState:
     refresh_token: str | None = None
     access_token_expires_at: datetime | None = None
     refresh_token_expires_at: datetime | None = None
-    last_synced_cursors: dict[str, str] = field(default_factory=dict)
-    poll_interval_seconds: int = 900
+    # Sync cursor. NULL → next sync omits modified_after (first-sync semantics).
+    last_synced_at: datetime | None = None
+    # IANA timezone string (e.g. "Asia/Kolkata"). Adapters use this to
+    # normalize timezone-naive vendor timestamps. NULL → fall back to UTC.
+    tenant_timezone: str | None = None
+    # advisory | mirror | one_way. Drives lifecycle-event behavior.
+    status_sync_mode: str = "advisory"
+    # Recruiter-configured filter (e.g. {'ids': ['1', '2']}). NULL → sync
+    # trigger returns 422.
+    job_status_filter: dict[str, Any] | None = None
     # Optional per-connection request-rate cap. asyncpg returns the DB
-    # NUMERIC column as Decimal; the adapter coerces to float when
-    # computing the inter-request gap (1 / qps). None → fall back to
+    # NUMERIC column as Decimal; the adapter coerces to float when computing
+    # the inter-request gap (1 / qps). None → fall back to
     # settings.ats_default_request_pacing_seconds.
     rate_limit_qps: Any = None
 
@@ -49,9 +65,9 @@ async def load_connection_state(
 ) -> ATSConnectionState:
     """Hydrate the in-memory state from a persisted ATSConnection row.
 
-    Caller is responsible for tenant-scope binding (this typically runs inside
-    a bypass-RLS session with SET LOCAL app.current_tenant already issued, or
-    after an explicit tenant_id filter at the application layer).
+    Caller is responsible for tenant-scope binding (this typically runs
+    inside a bypass-RLS session with SET LOCAL app.current_tenant already
+    issued, or after an explicit tenant_id filter at the application layer).
     """
     row = await db.get(ATSConnection, connection_id)
     if row is None:
@@ -72,8 +88,10 @@ async def load_connection_state(
         ),
         access_token_expires_at=row.access_token_expires_at,
         refresh_token_expires_at=row.refresh_token_expires_at,
-        last_synced_cursors=dict(row.last_synced_cursors or {}),
-        poll_interval_seconds=row.poll_interval_seconds,
+        last_synced_at=row.last_synced_at,
+        tenant_timezone=row.tenant_timezone,
+        status_sync_mode=row.status_sync_mode,
+        job_status_filter=row.job_status_filter,
         rate_limit_qps=row.rate_limit_qps,
     )
 
@@ -81,9 +99,17 @@ async def load_connection_state(
 async def persist_connection_state(
     db: AsyncSession, state: ATSConnectionState,
 ) -> None:
-    """Write back the mutated token + cursor fields. credentials_ciphertext
-    is NOT rewritten here (credentials don't change during a sync; the
-    /connections POST handler is the only place that writes credentials).
+    """Write back the mutated token + cursor fields.
+
+    `credentials_ciphertext` is NOT rewritten here (credentials don't change
+    during a sync; the /connections POST handler is the only place that
+    writes credentials).
+
+    `last_synced_at` IS written here — the orchestrator updates it on the
+    state object after a successful run and calls this helper.
+
+    `tenant_timezone` is written here as well — the adapter may capture it
+    on its first observation of a vendor user record (NULL → UTC fallback).
     """
     row = await db.get(ATSConnection, state.id)
     if row is None:
@@ -97,4 +123,5 @@ async def persist_connection_state(
     )
     row.access_token_expires_at = state.access_token_expires_at
     row.refresh_token_expires_at = state.refresh_token_expires_at
-    row.last_synced_cursors = state.last_synced_cursors
+    row.last_synced_at = state.last_synced_at
+    row.tenant_timezone = state.tenant_timezone

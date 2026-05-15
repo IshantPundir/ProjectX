@@ -85,12 +85,24 @@ interface ConfirmAction {
   onConfirm: () => Promise<void>;
 }
 
+/* ─── Display categorization ─── */
+
+/** Three UI buckets derived from the new TeamMember boolean fields. The
+ * underlying `source` is now provenance ('native' | 'ats_<vendor>'), not a
+ * category — but the team page renders categories, so we derive. */
+type TeamMemberCategory = 'user' | 'invite' | 'ats'
+
+function memberCategory(m: TeamMember): TeamMemberCategory {
+  if (m.has_auth_account) return 'user'
+  if (m.invite_state === 'pending') return 'invite'
+  return 'ats'
+}
+
 /* ─── Status badge ─── */
 
 function StatusBadge({ member }: { member: TeamMember }) {
-  // Three visual states correspond to the three TeamMember.source variants.
-  // Background tokens stay consistent with the rest of the dashboard.
-  if (member.source === 'user') {
+  const category = memberCategory(member)
+  if (category === 'user') {
     const className = member.is_active
       ? 'bg-green-50 text-green-700'
       : 'bg-zinc-100 text-zinc-500'
@@ -100,14 +112,13 @@ function StatusBadge({ member }: { member: TeamMember }) {
       </span>
     )
   }
-  if (member.source === 'invite') {
+  if (category === 'invite') {
     return (
       <span className="px-2 py-0.5 rounded-full text-xs bg-amber-50 text-amber-700">
         Invite pending
       </span>
     )
   }
-  // source === 'ats'
   return (
     <span className="px-2 py-0.5 rounded-full text-xs bg-blue-50 text-blue-700">
       Imported from ATS
@@ -197,15 +208,17 @@ export default function TeamPage() {
     },
   })
 
-  // "Sync users from ATS" — scoped to the users phase. The actor enqueues
-  // asynchronously; we don't immediately refresh members (that would race
-  // the worker). Instead, sync-logs polling detects when the run finishes
-  // and the running→idle transition effect above invalidates members.
+  // "Resync from ATS" — single-trigger sync; users get materialized as a
+  // side-effect of jobs that reference them under the new job-driven
+  // model. The actor enqueues asynchronously; we don't immediately
+  // refresh members (that would race the worker). Instead, sync-logs
+  // polling detects when the run finishes and the running→idle
+  // transition effect above invalidates members.
   const syncATSUsersMutation = useMutation({
     mutationFn: async (connectionId: string) =>
-      triggerManualSync(await getFreshSupabaseToken(), connectionId, ['users']),
+      triggerManualSync(await getFreshSupabaseToken(), connectionId),
     onSuccess: () => {
-      toast.success('Syncing users from ATS…')
+      toast.success('Syncing from ATS…')
       // Kick the sync-logs query immediately so polling picks up the
       // new 'running' row this tick rather than waiting up to 10s.
       queryClient.invalidateQueries({
@@ -374,14 +387,17 @@ export default function TeamPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {members.map((m) => (
+                  {members.map((m) => {
+                    const category = memberCategory(m)
+                    const externalRole = m.external_source_metadata?.role
+                    return (
                     <tr
-                      key={`${m.source}-${m.id}`}
+                      key={`${category}-${m.id}`}
                       className="border-b border-zinc-100 last:border-0"
                     >
                       <td className="px-4 py-2.5 text-zinc-900">{m.email}</td>
                       <td className="px-4 py-2.5 text-zinc-600">
-                        {m.full_name || (m.source === 'ats' ? <span className="text-zinc-400 italic">—</span> : '—')}
+                        {m.full_name || (category === 'ats' ? <span className="text-zinc-400 italic">—</span> : '—')}
                       </td>
                       <td className="px-4 py-2.5 text-zinc-600">
                         {m.is_super_admin ? (
@@ -400,12 +416,12 @@ export default function TeamPage() {
                               </span>
                             ))}
                           </div>
-                        ) : m.source === 'ats' && m.external_role ? (
+                        ) : category === 'ats' && externalRole ? (
                           <span
                             className="bg-zinc-50 text-zinc-500 px-1.5 py-0.5 rounded text-xs"
                             title="Role from ATS"
                           >
-                            {m.external_role}
+                            {externalRole}
                           </span>
                         ) : (
                           <span className="text-zinc-400 italic">Unassigned</span>
@@ -417,7 +433,7 @@ export default function TeamPage() {
                       {isSuperAdmin && (
                         <td className="px-4 py-2.5">
                           {/* User actions */}
-                          {m.source === 'user' && !m.is_super_admin && m.is_active && (
+                          {category === 'user' && !m.is_super_admin && m.is_active && (
                             <button
                               onClick={() =>
                                 setConfirmAction({
@@ -439,7 +455,7 @@ export default function TeamPage() {
                           )}
 
                           {/* Invite actions */}
-                          {m.source === 'invite' && (
+                          {category === 'invite' && (
                             <div className="flex items-center gap-2">
                               <button
                                 onClick={async () => {
@@ -476,7 +492,7 @@ export default function TeamPage() {
                           )}
 
                           {/* ATS rows — single Send-invite action */}
-                          {m.source === 'ats' && (
+                          {category === 'ats' && (
                             <button
                               disabled={pendingInviteId === m.id}
                               onClick={async () => {
@@ -500,7 +516,8 @@ export default function TeamPage() {
                         </td>
                       )}
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

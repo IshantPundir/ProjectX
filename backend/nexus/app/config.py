@@ -124,13 +124,15 @@ class Settings(BaseSettings):
     ats_default_retry_after_seconds: int = 60
 
     # Minimum seconds between consecutive HTTP requests to a single ATS
-    # vendor on a given connection. Prevents the request-storm pattern
-    # that triggers Ceipal's undocumented 429 rate limit (empirically
-    # observed at ~1 req/s sustained over 30 pages → 429 on page 31).
-    # Per-connection ``ats_connections.rate_limit_qps`` overrides this:
-    # when set, pacing = 1 / rate_limit_qps. Default 2.0s = 0.5 req/s,
-    # comfortably under any reasonable vendor rate limit.
-    ats_default_request_pacing_seconds: float = 2.0
+    # vendor on a given connection. Per-connection
+    # ``ats_connections.rate_limit_qps`` overrides this: when set,
+    # pacing = 1 / rate_limit_qps.
+    #
+    # Ceipal team confirmed (2026-05-14) a hard ceiling of 60 calls/min
+    # = 1.0 req/s. We pace at 1.1s (≈54 req/min) to leave a 10% safety
+    # margin for clock skew, burst retries, and any side-channel calls
+    # (token refresh, count probes) that share the request budget.
+    ats_default_request_pacing_seconds: float = 1.1
 
     @field_validator("ats_credentials_encryption_keys", mode="before")
     @classmethod
