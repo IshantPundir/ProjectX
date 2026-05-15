@@ -20,7 +20,12 @@ export function TrackerKanbanPage({ jobId }: Props) {
 
   const [tipDismissed, setTipDismissed] = useState(true)
   useEffect(() => {
-    // Read after mount to avoid SSR/CSR mismatch.
+    // One-shot localStorage read after mount. Initial state stays `true`
+    // so SSR/first paint never shows the tip (avoids hydration mismatch);
+    // the effect flips it to `false` only when the dismissed flag is
+    // absent. The setState-in-effect lint rule warns about this shape, but
+    // it is the SSR-correct pattern for hydrating browser-only state.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTipDismissed(localStorage.getItem(TIP_KEY) === '1')
   }, [])
 
