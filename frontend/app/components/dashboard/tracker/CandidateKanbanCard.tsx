@@ -5,21 +5,11 @@ import { useState } from 'react'
 import { useDraggable } from '@dnd-kit/core'
 
 import { SessionStatusBadge } from '@/components/dashboard/candidates/SessionStatusBadge'
-import { StageTransitionDropdown } from '@/components/dashboard/candidates/StageTransitionDropdown'
 import { StatusBadge } from '@/components/dashboard/candidates/StatusBadge'
-import type {
-  KanbanCandidateCard,
-  KanbanColumn,
-} from '@/lib/api/candidates'
-
-import { SendInviteDialog } from '@/app/(dashboard)/candidates/SendInviteDialog'
+import type { KanbanCandidateCard } from '@/lib/api/candidates'
 
 interface Props {
   card: KanbanCandidateCard
-  jobPostingId: string
-  stages: KanbanColumn[]
-  jobTitle: string
-  stageName: string
 }
 
 // Stable avatar color derived from the candidate's display name.
@@ -54,18 +44,12 @@ function initials(name: string | null | undefined): string {
  *   2. Inside `<DragOverlay>` (`CandidateKanbanCardOverlay`) so the
  *      moving copy renders above ALL ancestor scroll containers.
  *
- * Renders the action footer (Send invite + StageTransitionDropdown) too,
- * but those interactions can't fire during a drag since pointer events
- * are captured.
+ * No action footer. Stage transitions happen via DnD; invites are
+ * auto-sent when a candidate enters the AI Screening stage (handled
+ * in `CandidateKanbanView`). Per-card manual controls were stripped to
+ * keep the board single-purpose.
  */
-function CardBody({
-  card,
-  jobPostingId,
-  stages,
-  jobTitle,
-  stageName,
-}: Props) {
-  const [inviteOpen, setInviteOpen] = useState(false)
+function CardBody({ card }: Props) {
   const bg = avatarColor(card.name)
 
   return (
@@ -155,48 +139,10 @@ function CardBody({
       )}
 
       {/* Status chips */}
-      <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+      <div className="flex flex-wrap items-center gap-1.5">
         <StatusBadge status={card.status} />
         <SessionStatusBadge state={card.latest_session_state} />
       </div>
-
-      {/* Footer: invite + transition */}
-      <div
-        className="mt-2 flex items-center justify-between gap-2 border-t pt-2"
-        style={{ borderColor: 'var(--px-hairline)' }}
-      >
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation()
-            setInviteOpen(true)
-          }}
-          onPointerDown={(e) => e.stopPropagation()}
-          className="px-btn outline xs"
-        >
-          Send invite
-        </button>
-        <StageTransitionDropdown
-          candidateId={card.candidate_id}
-          assignmentId={card.assignment_id}
-          currentStageId={card.current_stage_id}
-          stages={stages}
-          status={card.status}
-          jobPostingId={jobPostingId}
-        />
-      </div>
-
-      {inviteOpen && (
-        <SendInviteDialog
-          open={inviteOpen}
-          onOpenChange={setInviteOpen}
-          candidateId={card.candidate_id}
-          assignmentId={card.assignment_id}
-          candidateName={card.name}
-          jobTitle={jobTitle}
-          stageName={stageName}
-        />
-      )}
     </>
   )
 }

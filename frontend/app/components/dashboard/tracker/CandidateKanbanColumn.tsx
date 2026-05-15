@@ -8,17 +8,9 @@ import CandidateKanbanCard from './CandidateKanbanCard'
 
 interface Props {
   stage: KanbanColumn
-  stages: KanbanColumn[]
-  jobPostingId: string
-  jobTitle: string
 }
 
-export default function CandidateKanbanColumn({
-  stage,
-  stages,
-  jobPostingId,
-  jobTitle,
-}: Props) {
+export default function CandidateKanbanColumn({ stage }: Props) {
   const { setNodeRef, isOver } = useDroppable({
     id: stage.stage_id,
     data: { stageId: stage.stage_id },
@@ -70,14 +62,7 @@ export default function CandidateKanbanColumn({
           </p>
         ) : (
           stage.candidates.map((card) => (
-            <CandidateKanbanCard
-              key={card.assignment_id}
-              card={card}
-              jobPostingId={jobPostingId}
-              stages={stages}
-              jobTitle={jobTitle}
-              stageName={stage.stage_name}
-            />
+            <CandidateKanbanCard key={card.assignment_id} card={card} />
           ))
         )}
       </div>

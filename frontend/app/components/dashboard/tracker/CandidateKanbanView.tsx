@@ -14,10 +14,13 @@ import {
   type DragStartEvent,
 } from '@dnd-kit/core'
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 
-import { useJob } from '@/lib/hooks/use-job'
+import { useJobPipeline } from '@/lib/hooks/use-job-pipeline'
 import { useKanbanBoard } from '@/lib/hooks/use-kanban-board'
 import { useTransitionCandidate } from '@/lib/hooks/use-transition-candidate'
+import { schedulerApi, type InviteResponse } from '@/lib/api/scheduler'
+import { getFreshSupabaseToken } from '@/lib/auth/tokens'
 
 import { CandidateKanbanCardOverlay } from './CandidateKanbanCard'
 import CandidateKanbanColumn from './CandidateKanbanColumn'
@@ -36,13 +39,38 @@ interface DroppableColumnData {
 }
 
 export default function CandidateKanbanView({ jobId }: Props) {
+  const qc = useQueryClient()
   const { data, isLoading, error } = useKanbanBoard(jobId)
-  // The kanban board response doesn't carry the job title — fetch it so we
-  // can surface it in the Send Invite dialog. `useJob` is already shared
-  // with the review page so this usually returns a cached hit.
-  const jobQuery = useJob(jobId)
-  const jobTitle = jobQuery.data?.title ?? ''
+  // Pipeline carries `stage_type` per stage, which the kanban response
+  // doesn't. Needed to identify the AI Screening drop target so we can
+  // auto-fire the candidate invite.
+  const pipeline = useJobPipeline(jobId)
   const transition = useTransitionCandidate(jobId)
+
+  // Generic invite mutation (the per-candidate `useSendInvite` hook binds
+  // candidateId at hook time, which doesn't fit our DnD-driven flow where
+  // the candidate varies per drop). Same backend endpoint, same cache
+  // invalidations.
+  const autoInvite = useMutation<
+    InviteResponse,
+    Error,
+    { candidateId: string; assignmentId: string }
+  >({
+    mutationFn: async ({ assignmentId }) => {
+      const token = await getFreshSupabaseToken()
+      return schedulerApi.sendInvite(token, {
+        assignment_id: assignmentId,
+        otp_required: true,
+      })
+    },
+    onSuccess: (_, { candidateId }) => {
+      void qc.invalidateQueries({
+        queryKey: ['candidates', candidateId, 'assignments'],
+      })
+      void qc.invalidateQueries({ queryKey: ['candidates-kanban'] })
+      void qc.invalidateQueries({ queryKey: ['assignment-sessions'] })
+    },
+  })
 
   // Surface fetch errors via toast (once per error instance).
   const lastErrorRef = useRef<Error | null>(null)
@@ -87,6 +115,15 @@ export default function CandidateKanbanView({ jobId }: Props) {
     if (!activeData || !overData) return
     if (overData.stageId === activeData.currentStageId) return
 
+    // Capture stage type + the dragged card BEFORE invalidation —
+    // post-success the kanban refetches and these references would go stale.
+    const targetStageType = pipeline.data?.stages.find(
+      (s) => s.id === overData.stageId,
+    )?.stage_type
+    const draggedCard = data?.stages
+      .flatMap((s) => s.candidates)
+      .find((c) => c.assignment_id === String(active.id))
+
     transition.mutate(
       {
         candidateId: activeData.candidateId,
@@ -96,6 +133,37 @@ export default function CandidateKanbanView({ jobId }: Props) {
       {
         onError: (err) => {
           toast.error(err.message || 'Failed to move candidate')
+        },
+        onSuccess: () => {
+          // Auto-send the OTP-gated invite when a candidate enters the AI
+          // Screening stage. Guard on `latest_session_state == null` so we
+          // don't supersede an already-issued invite or interrupt a session
+          // in flight if the recruiter happens to drop them back into the
+          // stage. (This is a frontend-only guard for now — a backend hook
+          // on stage transitions would be the durable place for this rule
+          // since it'd cover ATS-driven moves too. Tracked as follow-up.)
+          if (
+            targetStageType === 'ai_screening' &&
+            draggedCard &&
+            draggedCard.latest_session_state == null
+          ) {
+            autoInvite.mutate(
+              {
+                candidateId: draggedCard.candidate_id,
+                assignmentId: String(active.id),
+              },
+              {
+                onSuccess: () => {
+                  toast.success('Invite sent (OTP enabled)')
+                },
+                onError: (err) => {
+                  toast.error(
+                    err.message || 'Moved candidate but failed to send invite',
+                  )
+                },
+              },
+            )
+          }
         },
       },
     )
@@ -148,13 +216,7 @@ export default function CandidateKanbanView({ jobId }: Props) {
         aria-label="Candidate kanban board"
       >
         {data.stages.map((stage) => (
-          <CandidateKanbanColumn
-            key={stage.stage_id}
-            stage={stage}
-            stages={data.stages}
-            jobPostingId={jobId}
-            jobTitle={jobTitle}
-          />
+          <CandidateKanbanColumn key={stage.stage_id} stage={stage} />
         ))}
       </div>
       {/* Portaled by @dnd-kit to document.body — escapes every ancestor
@@ -162,13 +224,7 @@ export default function CandidateKanbanView({ jobId }: Props) {
           the entire board, not just within the source column. */}
       <DragOverlay dropAnimation={null}>
         {activeCardCtx ? (
-          <CandidateKanbanCardOverlay
-            card={activeCardCtx.card}
-            jobPostingId={jobId}
-            stages={data.stages}
-            jobTitle={jobTitle}
-            stageName={activeCardCtx.stageName}
-          />
+          <CandidateKanbanCardOverlay card={activeCardCtx.card} />
         ) : null}
       </DragOverlay>
     </DndContext>
