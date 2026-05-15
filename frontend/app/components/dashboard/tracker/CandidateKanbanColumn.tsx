@@ -1,16 +1,31 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { useDroppable } from '@dnd-kit/core'
 
 import type { KanbanColumn } from '@/lib/api/candidates'
+import type { StageType } from '@/lib/api/pipelines'
 
 import CandidateKanbanCard from './CandidateKanbanCard'
+import {
+  readAutoInviteEnabled,
+  writeAutoInviteEnabled,
+} from './auto-invite-storage'
 
 interface Props {
   stage: KanbanColumn
+  jobId: string
+  /** From the pipeline lookup in the parent. Undefined while the
+   *  pipeline is still loading or if the stage doesn't have a matching
+   *  pipeline-stage row (shouldn't happen in practice). */
+  stageType: StageType | undefined
 }
 
-export default function CandidateKanbanColumn({ stage }: Props) {
+export default function CandidateKanbanColumn({
+  stage,
+  jobId,
+  stageType,
+}: Props) {
   const { setNodeRef, isOver } = useDroppable({
     id: stage.stage_id,
     data: { stageId: stage.stage_id },
@@ -47,6 +62,9 @@ export default function CandidateKanbanColumn({ stage }: Props) {
         >
           {stage.candidates.length}
         </span>
+        {stageType === 'ai_screening' && (
+          <AutoInviteToggle jobId={jobId} stageId={stage.stage_id} />
+        )}
       </header>
 
       <div
@@ -67,5 +85,50 @@ export default function CandidateKanbanColumn({ stage }: Props) {
         )}
       </div>
     </div>
+  )
+}
+
+/**
+ * Inline column-header checkbox that toggles the auto-invite preference
+ * for this (job, stage) pair. SSR-safe: initial state is the default
+ * (enabled), then `useEffect` reads localStorage post-mount so server
+ * markup and client first paint match.
+ */
+function AutoInviteToggle({
+  jobId,
+  stageId,
+}: {
+  jobId: string
+  stageId: string
+}) {
+  const [enabled, setEnabled] = useState(true)
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setEnabled(readAutoInviteEnabled(jobId, stageId))
+  }, [jobId, stageId])
+
+  function handleChange(next: boolean) {
+    setEnabled(next)
+    writeAutoInviteEnabled(jobId, stageId, next)
+  }
+
+  return (
+    <label
+      className="ml-auto inline-flex cursor-pointer items-center gap-1.5"
+      style={{ color: 'var(--px-fg-3)' }}
+      title="When enabled, candidates dropped into this stage are auto-emailed an OTP-gated invite link."
+    >
+      <input
+        type="checkbox"
+        checked={enabled}
+        onChange={(e) => handleChange(e.target.checked)}
+        aria-label="Auto-send invite on stage entry"
+        className="cursor-pointer"
+        style={{ width: 12, height: 12, accentColor: 'var(--px-accent)' }}
+      />
+      <span className="text-[10px] font-medium uppercase" style={{ letterSpacing: '0.4px' }}>
+        Auto-invite
+      </span>
+    </label>
   )
 }

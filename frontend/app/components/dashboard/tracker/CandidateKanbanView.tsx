@@ -24,6 +24,7 @@ import { getFreshSupabaseToken } from '@/lib/auth/tokens'
 
 import { CandidateKanbanCardOverlay } from './CandidateKanbanCard'
 import CandidateKanbanColumn from './CandidateKanbanColumn'
+import { readAutoInviteEnabled } from './auto-invite-storage'
 
 interface Props {
   jobId: string
@@ -145,7 +146,8 @@ export default function CandidateKanbanView({ jobId }: Props) {
           if (
             targetStageType === 'ai_screening' &&
             draggedCard &&
-            draggedCard.latest_session_state == null
+            draggedCard.latest_session_state == null &&
+            readAutoInviteEnabled(jobId, overData.stageId)
           ) {
             autoInvite.mutate(
               {
@@ -216,7 +218,15 @@ export default function CandidateKanbanView({ jobId }: Props) {
         aria-label="Candidate kanban board"
       >
         {data.stages.map((stage) => (
-          <CandidateKanbanColumn key={stage.stage_id} stage={stage} />
+          <CandidateKanbanColumn
+            key={stage.stage_id}
+            stage={stage}
+            jobId={jobId}
+            stageType={
+              pipeline.data?.stages.find((s) => s.id === stage.stage_id)
+                ?.stage_type
+            }
+          />
         ))}
       </div>
       {/* Portaled by @dnd-kit to document.body — escapes every ancestor
