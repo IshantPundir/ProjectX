@@ -59,6 +59,11 @@ const NI = {
     "M16 3.13a4 4 0 010 7.75",
   ] as const,
   kanban: ["M3 3h7v18H3zM14 3h7v12h-7z"] as const,
+  layers: [
+    "M12 2L2 7l10 5 10-5-10-5z",
+    "M2 17l10 5 10-5",
+    "M2 12l10 5 10-5",
+  ] as const,
   chart: ["M3 3v18h18", "M7 14l4-4 4 4 5-5"] as const,
   settings: [
     "M12 15a3 3 0 100-6 3 3 0 000 6z",
@@ -124,7 +129,8 @@ const PRIMARY_NAV: readonly NavItem[] = [
   { href: "/", label: "Home", icon: NI.home, kbd: "H" },
   { href: "/jobs", label: "Roles", icon: NI.briefcase, kbd: "R" },
   { href: "/candidates", label: "Candidates", icon: NI.users, kbd: "C" },
-  { href: "/pipeline", label: "Pipeline", icon: NI.kanban, kbd: "P" },
+  { href: "/tracker", label: "Tracker", icon: NI.kanban, kbd: "T" },
+  { href: "/pipeline", label: "Pipeline", icon: NI.layers, kbd: "P" },
   { href: "/questions", label: "Question bank", icon: NI.book, kbd: "Q" },
   { href: "/reports", label: "Reports", icon: NI.chart },
 ] as const;
@@ -158,6 +164,7 @@ const PATH_LABELS: Record<string, string> = {
   jobs: "Roles",
   new: "New",
   candidates: "Candidates",
+  tracker: "Tracker",
   pipeline: "Pipeline",
   questions: "Question bank",
   reports: "Reports",
