@@ -231,8 +231,20 @@ export default function CandidateKanbanView({ jobId }: Props) {
       </div>
       {/* Portaled by @dnd-kit to document.body — escapes every ancestor
           overflow:auto/hidden so the dragging card stays visible across
-          the entire board, not just within the source column. */}
-      <DragOverlay dropAnimation={null}>
+          the entire board, not just within the source column.
+          The drop animation lerps the overlay from cursor-release point
+          to where the new draggable now sits (the destination column —
+          useTransitionCandidate's onMutate has already moved the card
+          there in the TanStack cache, so the target element exists in
+          the DOM by the time the animation starts). The default 250ms
+          easing has a slight overshoot that reads as cartoonish here;
+          a clean ease-out + matching duration sits better. */}
+      <DragOverlay
+        dropAnimation={{
+          duration: 220,
+          easing: 'cubic-bezier(0.2, 0, 0, 1)',
+        }}
+      >
         {activeCardCtx ? (
           <CandidateKanbanCardOverlay card={activeCardCtx.card} />
         ) : null}
