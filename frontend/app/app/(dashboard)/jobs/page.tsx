@@ -29,6 +29,7 @@ import {
   type JobStatus,
 } from '@/lib/api/jobs'
 import { getFreshSupabaseToken } from '@/lib/auth/tokens'
+import { postedAgo } from '@/lib/utils'
 
 /* ─── Status → design-system chip ─────────────────────────── */
 
@@ -123,20 +124,6 @@ function NotSetUpChip({ job }: { job: JobPostingSummary }) {
       Not set up
     </span>
   )
-}
-
-/* ─── Posted-ago helper ───────────────────────────────────── */
-
-function postedAgo(iso: string): string {
-  const now = Date.now()
-  const then = new Date(iso).getTime()
-  const days = Math.floor((now - then) / (1000 * 60 * 60 * 24))
-  if (days === 0) return 'today'
-  if (days === 1) return '1d ago'
-  if (days < 30) return `${days}d ago`
-  const months = Math.floor(days / 30)
-  if (months === 1) return '1mo ago'
-  return `${months}mo ago`
 }
 
 /* ─── Grouping logic ──────────────────────────────────────── */
