@@ -270,7 +270,7 @@ function AssignmentRow({
     <tr className="hover:bg-zinc-50">
       <td className="px-4 py-2 text-sm text-zinc-900">
         <Link
-          href={`/candidates?jd=${assignment.job_posting_id}&view=kanban`}
+          href={`/tracker/${assignment.job_posting_id}`}
           className="text-zinc-900 hover:text-zinc-700 hover:underline"
         >
           {assignment.job_title || 'Untitled job'}

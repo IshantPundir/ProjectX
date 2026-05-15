@@ -7,21 +7,13 @@ import { JdPicker } from '@/components/dashboard/candidates/JdPicker'
 import { Button } from '@/components/px'
 
 import AddCandidateDialog from './AddCandidateDialog'
-import CandidateKanbanView from '@/components/dashboard/tracker/CandidateKanbanView'
 import CandidateListView from './CandidateListView'
-
-type CandidatesView = 'list' | 'kanban'
-
-function normalizeView(raw: string | null): CandidatesView {
-  return raw === 'kanban' ? 'kanban' : 'list'
-}
 
 export default function ClientCandidatesPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
 
   const jd = searchParams.get('jd')
-  const view = normalizeView(searchParams.get('view'))
   const q = searchParams.get('q') ?? ''
   const status = searchParams.get('status') ?? ''
   const stageId = searchParams.get('stage_id') ?? ''
@@ -41,9 +33,6 @@ export default function ClientCandidatesPage() {
     [router, searchParams],
   )
 
-  // Stable filters object for <CandidateListView />. Memoizing avoids
-  // churning the `['candidates-list', filters]` query key when unrelated
-  // state changes on this page.
   const listFilters = useMemo(
     () => ({
       q,
@@ -54,8 +43,6 @@ export default function ClientCandidatesPage() {
     }),
     [q, status, jd, stageId, offset],
   )
-
-  const kanbanDisabled = !jd
 
   const [showAddDialog, setShowAddDialog] = useState(false)
 
@@ -73,7 +60,8 @@ export default function ClientCandidatesPage() {
             className="mt-1 text-[12.5px]"
             style={{ color: 'var(--px-fg-3)' }}
           >
-            Track applicants through the pipeline. Signal-match kanban per role.
+            Search and triage candidates across roles. Open Tracker to see the
+            board view per role.
           </p>
         </div>
         <Button size="sm" onClick={() => setShowAddDialog(true)}>
@@ -98,66 +86,16 @@ export default function ClientCandidatesPage() {
           <JdPicker
             value={jd}
             onChange={(next) => {
-              updateParams({ jd: next, view: null })
+              updateParams({ jd: next })
             }}
           />
         </div>
-
-        <div
-          className="inline-flex items-center rounded-md border p-0.5"
-          role="group"
-          aria-label="View toggle"
-          style={{
-            background: 'var(--px-surface-2)',
-            borderColor: 'var(--px-hairline)',
-            height: 30,
-          }}
-        >
-          <button
-            type="button"
-            onClick={() => updateParams({ view: null })}
-            className="rounded-sm px-3 text-[12px] font-medium transition-colors"
-            style={{
-              height: 24,
-              background:
-                view === 'list' ? 'var(--px-surface)' : 'transparent',
-              color: view === 'list' ? 'var(--px-fg)' : 'var(--px-fg-3)',
-              boxShadow:
-                view === 'list' ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
-            }}
-            aria-pressed={view === 'list'}
-          >
-            List
-          </button>
-          <button
-            type="button"
-            onClick={() => updateParams({ view: 'kanban' })}
-            disabled={kanbanDisabled}
-            title={kanbanDisabled ? 'Select a role to enable Kanban' : undefined}
-            className="rounded-sm px-3 text-[12px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-            style={{
-              height: 24,
-              background:
-                view === 'kanban' ? 'var(--px-surface)' : 'transparent',
-              color: view === 'kanban' ? 'var(--px-fg)' : 'var(--px-fg-3)',
-              boxShadow:
-                view === 'kanban' ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
-            }}
-            aria-pressed={view === 'kanban'}
-          >
-            Kanban
-          </button>
-        </div>
       </div>
 
-      {view === 'kanban' && jd ? (
-        <CandidateKanbanView jobId={jd} />
-      ) : (
-        <CandidateListView
-          filters={listFilters}
-          onFiltersChange={updateParams}
-        />
-      )}
+      <CandidateListView
+        filters={listFilters}
+        onFiltersChange={updateParams}
+      />
     </div>
   )
 }
