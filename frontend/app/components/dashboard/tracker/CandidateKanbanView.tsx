@@ -1,15 +1,17 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import {
   DndContext,
+  DragOverlay,
   KeyboardSensor,
   PointerSensor,
   closestCenter,
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragStartEvent,
 } from '@dnd-kit/core'
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable'
 
@@ -17,6 +19,7 @@ import { useJob } from '@/lib/hooks/use-job'
 import { useKanbanBoard } from '@/lib/hooks/use-kanban-board'
 import { useTransitionCandidate } from '@/lib/hooks/use-transition-candidate'
 
+import { CandidateKanbanCardOverlay } from './CandidateKanbanCard'
 import CandidateKanbanColumn from './CandidateKanbanColumn'
 
 interface Props {
@@ -56,7 +59,25 @@ export default function CandidateKanbanView({ jobId }: Props) {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   )
 
+  // Track which card is currently being dragged so <DragOverlay> can render
+  // a portaled copy outside the board's overflow context (otherwise the
+  // card visibly clips at column / board edges as the cursor moves).
+  const [activeId, setActiveId] = useState<string | null>(null)
+  const activeCardCtx = useMemo(() => {
+    if (!activeId || !data) return null
+    for (const stage of data.stages) {
+      const card = stage.candidates.find((c) => c.assignment_id === activeId)
+      if (card) return { card, stageName: stage.stage_name }
+    }
+    return null
+  }, [activeId, data])
+
+  function handleDragStart(event: DragStartEvent) {
+    setActiveId(String(event.active.id))
+  }
+
   function handleDragEnd(event: DragEndEvent) {
+    setActiveId(null)
     const { active, over } = event
     if (!over) return
 
@@ -117,7 +138,9 @@ export default function CandidateKanbanView({ jobId }: Props) {
     <DndContext
       sensors={sensors}
       collisionDetection={closestCenter}
+      onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
+      onDragCancel={() => setActiveId(null)}
     >
       <div
         className="flex gap-2.5 overflow-x-auto pb-4"
@@ -134,6 +157,20 @@ export default function CandidateKanbanView({ jobId }: Props) {
           />
         ))}
       </div>
+      {/* Portaled by @dnd-kit to document.body — escapes every ancestor
+          overflow:auto/hidden so the dragging card stays visible across
+          the entire board, not just within the source column. */}
+      <DragOverlay dropAnimation={null}>
+        {activeCardCtx ? (
+          <CandidateKanbanCardOverlay
+            card={activeCardCtx.card}
+            jobPostingId={jobId}
+            stages={data.stages}
+            jobTitle={jobTitle}
+            stageName={activeCardCtx.stageName}
+          />
+        ) : null}
+      </DragOverlay>
     </DndContext>
   )
 }

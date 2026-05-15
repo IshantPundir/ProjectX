@@ -3,7 +3,6 @@
 import Link from 'next/link'
 import { useState } from 'react'
 import { useDraggable } from '@dnd-kit/core'
-import { CSS } from '@dnd-kit/utilities'
 
 import { SessionStatusBadge } from '@/components/dashboard/candidates/SessionStatusBadge'
 import { StageTransitionDropdown } from '@/components/dashboard/candidates/StageTransitionDropdown'
@@ -49,7 +48,17 @@ function initials(name: string | null | undefined): string {
     .toUpperCase()
 }
 
-export default function CandidateKanbanCard({
+/**
+ * Pure card visual — no draggable wiring. Used in two places:
+ *   1. Inside the draggable wrapper (`CandidateKanbanCard`).
+ *   2. Inside `<DragOverlay>` (`CandidateKanbanCardOverlay`) so the
+ *      moving copy renders above ALL ancestor scroll containers.
+ *
+ * Renders the action footer (Send invite + StageTransitionDropdown) too,
+ * but those interactions can't fire during a drag since pointer events
+ * are captured.
+ */
+function CardBody({
   card,
   jobPostingId,
   stages,
@@ -57,47 +66,10 @@ export default function CandidateKanbanCard({
   stageName,
 }: Props) {
   const [inviteOpen, setInviteOpen] = useState(false)
-  const [hover, setHover] = useState(false)
-  const { setNodeRef, attributes, listeners, transform, isDragging } =
-    useDraggable({
-      id: card.assignment_id,
-      data: {
-        currentStageId: card.current_stage_id,
-        candidateId: card.candidate_id,
-      },
-    })
-
-  const style: React.CSSProperties = {
-    transform: CSS.Translate.toString(transform),
-    zIndex: isDragging ? 50 : undefined,
-    opacity: isDragging ? 0.85 : undefined,
-    padding: 10,
-    background: 'var(--px-surface)',
-    border: `1px solid ${
-      isDragging ? 'var(--px-accent-line)' : 'var(--px-hairline)'
-    }`,
-    borderRadius: 7,
-    cursor: isDragging ? 'grabbing' : 'grab',
-    boxShadow: isDragging
-      ? 'var(--px-shadow-md)'
-      : hover
-        ? '0 2px 6px rgba(0,0,0,0.05)'
-        : 'none',
-    transition: 'box-shadow 120ms, border-color 120ms',
-    position: 'relative',
-  }
-
   const bg = avatarColor(card.name)
 
   return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      {...attributes}
-      {...listeners}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-    >
+    <>
       {/* Header: avatar + name + email */}
       <div className="mb-1.5 flex items-center gap-2">
         <div
@@ -225,6 +197,72 @@ export default function CandidateKanbanCard({
           stageName={stageName}
         />
       )}
+    </>
+  )
+}
+
+const CARD_WRAPPER_STYLE: React.CSSProperties = {
+  padding: 10,
+  background: 'var(--px-surface)',
+  borderRadius: 7,
+  position: 'relative',
+}
+
+export default function CandidateKanbanCard(props: Props) {
+  const [hover, setHover] = useState(false)
+  const { setNodeRef, attributes, listeners, isDragging } = useDraggable({
+    id: props.card.assignment_id,
+    data: {
+      currentStageId: props.card.current_stage_id,
+      candidateId: props.card.candidate_id,
+    },
+  })
+
+  // While dragging, the original stays in place as a faded placeholder.
+  // The visible moving copy is rendered by <DragOverlay> in the parent —
+  // that escapes the column's overflow:auto and the board's overflow-x:auto
+  // so the card isn't clipped when dragged across stages.
+  const style: React.CSSProperties = {
+    ...CARD_WRAPPER_STYLE,
+    border: `1px solid var(--px-hairline)`,
+    cursor: isDragging ? 'grabbing' : 'grab',
+    opacity: isDragging ? 0.35 : undefined,
+    boxShadow: hover && !isDragging ? '0 2px 6px rgba(0,0,0,0.05)' : 'none',
+    transition: 'box-shadow 120ms, opacity 120ms',
+  }
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+    >
+      <CardBody {...props} />
+    </div>
+  )
+}
+
+/**
+ * Static visual rendered inside `<DragOverlay>` — no draggable wiring,
+ * no cursor styling that depends on drag state. Slight elevation +
+ * accent border to read as "lifted" vs. the placeholder it leaves
+ * behind in the source column.
+ */
+export function CandidateKanbanCardOverlay(props: Props) {
+  const style: React.CSSProperties = {
+    ...CARD_WRAPPER_STYLE,
+    width: 304, // matches the column width (w-80 = 320 - 16 padding)
+    border: `1px solid var(--px-accent-line)`,
+    cursor: 'grabbing',
+    boxShadow: 'var(--px-shadow-md)',
+    transform: 'rotate(1.5deg)',
+  }
+  return (
+    <div style={style}>
+      <CardBody {...props} />
     </div>
   )
 }
