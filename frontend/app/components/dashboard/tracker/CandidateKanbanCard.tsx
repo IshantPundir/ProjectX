@@ -256,13 +256,22 @@ export default function CandidateKanbanCard(props: Props) {
   // The visible moving copy is rendered by <DragOverlay> in the parent —
   // that escapes the column's overflow:auto and the board's overflow-x:auto
   // so the card isn't clipped when dragged across stages.
+  //
+  // Hover: subtle 1-px lift + a soft 2-layer shadow (close inner + diffuse
+  // outer) so the card feels like it's gaining a tiny bit of altitude.
+  // Border edges in slightly to acknowledge the cursor without screaming.
+  const lifted = hover && !isDragging
   const style: React.CSSProperties = {
     ...CARD_WRAPPER_STYLE,
-    border: `1px solid var(--px-hairline)`,
+    border: `1px solid ${lifted ? 'var(--px-hairline-strong, var(--px-fg-5, #d1d5db))' : 'var(--px-hairline)'}`,
     cursor: isDragging ? 'grabbing' : 'grab',
     opacity: isDragging ? 0.35 : undefined,
-    boxShadow: hover && !isDragging ? '0 2px 6px rgba(0,0,0,0.05)' : 'none',
-    transition: 'box-shadow 120ms, opacity 120ms',
+    boxShadow: lifted
+      ? '0 6px 14px -4px rgba(15, 23, 42, 0.10), 0 2px 4px -1px rgba(15, 23, 42, 0.05)'
+      : '0 1px 2px rgba(15, 23, 42, 0.025)',
+    transform: lifted ? 'translateY(-1px)' : undefined,
+    transition:
+      'box-shadow 160ms ease-out, transform 160ms ease-out, border-color 160ms ease-out, opacity 120ms',
   }
 
   return (
@@ -287,13 +296,24 @@ export default function CandidateKanbanCard(props: Props) {
  * column.
  */
 export function CandidateKanbanCardOverlay(props: Props) {
+  // Multi-layer shadow + scale + slight rotation gives a tactile
+  // "ripped off the surface" feel. Three shadow layers stack to
+  // simulate ambient + directional lighting (top-left light source):
+  //   - close, sharp shadow for crisp edge separation
+  //   - mid spread for softness
+  //   - long diffuse shadow for ambient depth
   const style: React.CSSProperties = {
     ...CARD_WRAPPER_STYLE,
     width: 304, // matches the column width (w-80 = 320 - 16 padding)
     border: `1px solid var(--px-accent-line)`,
     cursor: 'grabbing',
-    boxShadow: 'var(--px-shadow-md)',
-    transform: 'rotate(1.5deg)',
+    boxShadow: [
+      '0 1px 0 rgba(255, 255, 255, 0.4) inset', // tiny top-edge highlight
+      '0 4px 6px -1px rgba(15, 23, 42, 0.10)',
+      '0 12px 24px -6px rgba(15, 23, 42, 0.18)',
+      '0 28px 48px -12px rgba(15, 23, 42, 0.20)',
+    ].join(', '),
+    transform: 'rotate(2deg) scale(1.03)',
   }
   return (
     <div style={style}>
