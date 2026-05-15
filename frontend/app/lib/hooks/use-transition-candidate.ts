@@ -45,10 +45,16 @@ export function useTransitionCandidate(jobId: string) {
         override,
       })
     },
-    onMutate: async (vars) => {
-      await queryClient.cancelQueries({
-        queryKey: ['candidates-kanban', jobId],
-      })
+    onMutate: (vars) => {
+      // Apply the optimistic move SYNCHRONOUSLY before any await. This is
+      // load-bearing for the kanban drop animation: @dnd-kit's DragOverlay
+      // measures the active draggable's DOM position right after
+      // handleDragEnd returns, and uses that as the animation target. If
+      // the cache update is delayed by a microtask (e.g. via `await
+      // cancelQueries`), @dnd-kit captures the OLD source-column position
+      // and lerps the overlay backwards. The fire-and-forget cancellation
+      // below still protects against an in-flight refetch overwriting our
+      // optimistic data — it just doesn't gate the DOM move.
       const snapshot = queryClient.getQueryData<KanbanBoardResponse>([
         'candidates-kanban',
         jobId,
@@ -63,6 +69,9 @@ export function useTransitionCandidate(jobId: string) {
           ),
         )
       }
+      void queryClient.cancelQueries({
+        queryKey: ['candidates-kanban', jobId],
+      })
       return { snapshot }
     },
     onError: (_err, _vars, ctx) => {

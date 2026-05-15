@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { toast } from 'sonner'
 import {
   DndContext,
@@ -125,50 +126,57 @@ export default function CandidateKanbanView({ jobId }: Props) {
       .flatMap((s) => s.candidates)
       .find((c) => c.assignment_id === String(active.id))
 
-    transition.mutate(
-      {
-        candidateId: activeData.candidateId,
-        assignmentId: String(active.id),
-        targetStageId: overData.stageId,
-      },
-      {
-        onError: (err) => {
-          toast.error(err.message || 'Failed to move candidate')
+    // flushSync forces React to commit the synchronous cache update fired
+    // inside transition.mutate's onMutate (the optimistic move) BEFORE
+    // this handler returns. @dnd-kit's DragOverlay then measures the
+    // active draggable at its NEW (destination) DOM position and lerps
+    // the overlay there — the animation lands forward, not backward.
+    flushSync(() => {
+      transition.mutate(
+        {
+          candidateId: activeData.candidateId,
+          assignmentId: String(active.id),
+          targetStageId: overData.stageId,
         },
-        onSuccess: () => {
-          // Auto-send the OTP-gated invite when a candidate enters the AI
-          // Screening stage. Guard on `latest_session_state == null` so we
-          // don't supersede an already-issued invite or interrupt a session
-          // in flight if the recruiter happens to drop them back into the
-          // stage. (This is a frontend-only guard for now — a backend hook
-          // on stage transitions would be the durable place for this rule
-          // since it'd cover ATS-driven moves too. Tracked as follow-up.)
-          if (
-            targetStageType === 'ai_screening' &&
-            draggedCard &&
-            draggedCard.latest_session_state == null &&
-            readAutoInviteEnabled(jobId, overData.stageId)
-          ) {
-            autoInvite.mutate(
-              {
-                candidateId: draggedCard.candidate_id,
-                assignmentId: String(active.id),
-              },
-              {
-                onSuccess: () => {
-                  toast.success('Invite sent (OTP enabled)')
+        {
+          onError: (err) => {
+            toast.error(err.message || 'Failed to move candidate')
+          },
+          onSuccess: () => {
+            // Auto-send the OTP-gated invite when a candidate enters the AI
+            // Screening stage. Guard on `latest_session_state == null` so we
+            // don't supersede an already-issued invite or interrupt a session
+            // in flight if the recruiter happens to drop them back into the
+            // stage. (This is a frontend-only guard for now — a backend hook
+            // on stage transitions would be the durable place for this rule
+            // since it'd cover ATS-driven moves too. Tracked as follow-up.)
+            if (
+              targetStageType === 'ai_screening' &&
+              draggedCard &&
+              draggedCard.latest_session_state == null &&
+              readAutoInviteEnabled(jobId, overData.stageId)
+            ) {
+              autoInvite.mutate(
+                {
+                  candidateId: draggedCard.candidate_id,
+                  assignmentId: String(active.id),
                 },
-                onError: (err) => {
-                  toast.error(
-                    err.message || 'Moved candidate but failed to send invite',
-                  )
+                {
+                  onSuccess: () => {
+                    toast.success('Invite sent (OTP enabled)')
+                  },
+                  onError: (err) => {
+                    toast.error(
+                      err.message || 'Moved candidate but failed to send invite',
+                    )
+                  },
                 },
-              },
-            )
-          }
+              )
+            }
+          },
         },
-      },
-    )
+      )
+    })
   }
 
   if (isLoading) {
