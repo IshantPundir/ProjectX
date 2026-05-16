@@ -263,16 +263,11 @@ class SteeringObservation(BaseModel):
 # Output models (interview engine -> record_session_result, in-process)
 # ---------------------------------------------------------------------------
 
-class TranscriptEntry(BaseModel):
-    """A single utterance in the interview transcript."""
-
-    role: Literal["agent", "candidate"]
-    text: str
-    timestamp_ms: int = Field(
-        ge=0,
-        description="Milliseconds since session start.",
-    )
-    question_id: str | None = None
+# TranscriptEntry was moved to a leaf module in 2026-05-16 to break the
+# circular import with engine.models.speaker. Re-exported here so existing
+# callers (`from app.modules.interview_runtime.schemas import TranscriptEntry`)
+# keep working.
+from app.modules.interview_runtime.transcript_entry import TranscriptEntry  # noqa: F401
 
 
 # ---------------------------------------------------------------------------

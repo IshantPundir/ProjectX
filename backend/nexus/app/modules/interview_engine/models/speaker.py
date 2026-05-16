@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from app.modules.interview_engine.models.claims import ClaimEntry
 from app.modules.interview_engine.models.judge import TurnMetadata
-from app.modules.interview_runtime import TranscriptEntry
+from app.modules.interview_runtime.transcript_entry import TranscriptEntry
 
 
 class InstructionKind(StrEnum):

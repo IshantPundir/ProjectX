@@ -2,14 +2,6 @@
 
 from __future__ import annotations
 
-# Pre-import the engine.models leaves before interview_runtime.schemas so
-# `SessionResult.model_rebuild()` (at the bottom of schemas.py) doesn't
-# trigger the `engine.models.__init__ -> speaker -> TranscriptEntry`
-# partial-init cycle. Same workaround used by test_session_result_extended.py.
-from app.modules.interview_engine.models.claims import ClaimsPoolSnapshot  # noqa: F401
-from app.modules.interview_engine.models.ledger import SignalLedgerSnapshot  # noqa: F401
-from app.modules.interview_engine.models.queue import QuestionQueueSnapshot  # noqa: F401
-
 import pytest
 
 from app.modules.interview_runtime.schemas import (
