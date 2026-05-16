@@ -1,6 +1,8 @@
 """Tests for transition_to_error — atomic state→error transition."""
 from __future__ import annotations
 
+import uuid
+
 import pytest
 from sqlalchemy import select
 
@@ -116,6 +118,84 @@ async def test_error_state_is_idempotent_noop(db):
     await db.flush()
 
     assert won is False
+
+    audit_rows = (await db.execute(
+        select(AuditLog).where(
+            AuditLog.resource_id == session.id,
+            AuditLog.action == "session.errored",
+        )
+    )).scalars().all()
+    assert audit_rows == []
+
+
+@pytest.mark.asyncio
+async def test_cancelled_state_is_not_clobbered(db):
+    """Terminal 'cancelled' state must NOT be transitioned to error.
+
+    Same contract as completed/error — anything past the active window is
+    terminal. Explicit test so the WHERE-gate exclusion is locked down by
+    behavior, not just by absence.
+    """
+    session, tenant_id = await seed_minimal_session(db, state="cancelled")
+
+    won = await transition_to_error(
+        db,
+        session_id=session.id,
+        tenant_id=tenant_id,
+        error_code="engine_internal_error",
+        correlation_id="corr-cancelled",
+        reason="reaper",
+    )
+    await db.flush()
+
+    assert won is False
+
+    refreshed = (await db.execute(
+        select(SessionRow).where(SessionRow.id == session.id)
+    )).scalar_one()
+    assert refreshed.state == "cancelled"
+    assert refreshed.error_code is None
+
+    audit_rows = (await db.execute(
+        select(AuditLog).where(
+            AuditLog.resource_id == session.id,
+            AuditLog.action == "session.errored",
+        )
+    )).scalars().all()
+    assert audit_rows == []
+
+
+@pytest.mark.asyncio
+async def test_cross_tenant_tenant_id_returns_false(db):
+    """Mismatched tenant_id must NOT transition the row.
+
+    The WHERE clause filters by tenant_id in addition to session_id —
+    a caller passing a different tenant's id can't accidentally (or
+    maliciously) clobber another tenant's session. Per CLAUDE.md:
+    'Any new tenant-scoped table — cross-tenant access must return 0 rows'
+    — the spirit extends to writes.
+    """
+    session, real_tenant_id = await seed_minimal_session(db, state="active")
+    wrong_tenant_id = uuid.uuid4()
+    assert wrong_tenant_id != real_tenant_id
+
+    won = await transition_to_error(
+        db,
+        session_id=session.id,
+        tenant_id=wrong_tenant_id,
+        error_code="engine_internal_error",
+        correlation_id="corr-cross",
+        reason="engine_entrypoint",
+    )
+    await db.flush()
+
+    assert won is False
+
+    refreshed = (await db.execute(
+        select(SessionRow).where(SessionRow.id == session.id)
+    )).scalar_one()
+    assert refreshed.state == "active"
+    assert refreshed.error_code is None
 
     audit_rows = (await db.execute(
         select(AuditLog).where(

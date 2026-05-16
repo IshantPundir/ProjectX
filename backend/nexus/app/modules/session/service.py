@@ -700,10 +700,14 @@ async def transition_to_error(
 ) -> bool:
     """Atomic state -> 'error' transition. Returns True if this call won.
 
-    Gated on state IN ('consented', 'active') so we never clobber a
-    completed / cancelled / already-error row. The boolean return lets
-    the reaper distinguish 'I just claimed this stuck row' from
-    'someone else transitioned it first.'
+    Gated on state IN ('consented', 'active') — the only states where the
+    engine could be running. Sessions in 'created' or 'pre_check' were
+    never dispatched to LiveKit so there is no engine to error-out; they
+    should be cancelled through the normal scheduler path instead.
+    Sessions already in 'completed', 'cancelled', or 'error' are terminal
+    and must not be clobbered. The boolean return lets the reaper
+    distinguish 'I just claimed this stuck row' from 'someone else
+    transitioned it first.'
 
     Caller MUST be on a bypass-RLS session. Audit row is written through
     log_event in the same transaction; the caller flushes/commits.
