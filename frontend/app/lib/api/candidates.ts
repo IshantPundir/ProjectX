@@ -119,6 +119,8 @@ export interface KanbanCandidateCard {
   status: AssignmentStatus
   current_stage_id: string
   latest_session_state: string | null
+  /** Populated when latest_session_state === 'error'. See error_codes.py. */
+  latest_session_error_code: string | null
   /** Origin of the underlying candidate row. */
   candidate_source: string
   /** Origin of this particular candidate-job assignment. */

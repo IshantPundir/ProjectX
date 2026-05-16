@@ -184,7 +184,7 @@ function SessionRow({ session }: SessionRowProps) {
         {session.stage_name || '—'}
       </td>
       <td className="px-4 py-2 text-sm text-zinc-700">
-        <SessionStatusBadge state={session.state} />
+        <SessionStatusBadge state={session.state} errorCode={null} />
       </td>
       <td className="px-4 py-2 text-sm text-zinc-700">
         {new Date(session.created_at).toLocaleString()}

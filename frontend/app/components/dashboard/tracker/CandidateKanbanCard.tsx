@@ -145,7 +145,7 @@ function CardBody({ card, interactive }: Props & { interactive: boolean }) {
       {/* Status chips */}
       <div className="flex flex-wrap items-center gap-1.5">
         <StatusBadge status={card.status} />
-        <SessionStatusBadge state={card.latest_session_state} />
+        <SessionStatusBadge state={card.latest_session_state} errorCode={card.latest_session_error_code} />
       </div>
     </>
   )
