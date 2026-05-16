@@ -1,5 +1,9 @@
 """sessions.error_code CHECK constraint.
 
+Revision ID: 0039
+Revises: 0038
+Create Date: 2026-05-16
+
 Pins error_code to the enumerated taxonomy defined in
 app/modules/session/error_codes.py. The Literal there and the CHECK
 here must move together — adding a value to one without the other
