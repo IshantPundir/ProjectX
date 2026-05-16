@@ -17,6 +17,7 @@ from __future__ import annotations
 import contextlib
 import uuid
 from datetime import datetime, timedelta, UTC
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import select, update
@@ -58,6 +59,7 @@ from app.modules.session.schemas import (
     SessionState,
     StartSessionResponse,
 )
+from app.modules.session.error_codes import ErrorCode
 from app.modules.session.state_machine import advance_on_pre_check_load, transition
 
 
@@ -685,3 +687,56 @@ async def list_sessions(
         for r in rows
     ]
     return SessionListPage(items=items, total=total, offset=offset, limit=limit)
+
+
+async def transition_to_error(
+    db: AsyncSession,
+    *,
+    session_id: uuid.UUID,
+    tenant_id: uuid.UUID,
+    error_code: ErrorCode,
+    correlation_id: str,
+    reason: Literal["engine_entrypoint", "reaper"],
+) -> bool:
+    """Atomic state -> 'error' transition. Returns True if this call won.
+
+    Gated on state IN ('consented', 'active') so we never clobber a
+    completed / cancelled / already-error row. The boolean return lets
+    the reaper distinguish 'I just claimed this stuck row' from
+    'someone else transitioned it first.'
+
+    Caller MUST be on a bypass-RLS session. Audit row is written through
+    log_event in the same transaction; the caller flushes/commits.
+    """
+    now = datetime.now(UTC)
+    res = await db.execute(
+        update(Session)
+        .where(
+            Session.id == session_id,
+            Session.tenant_id == tenant_id,
+            Session.state.in_(["consented", "active"]),
+        )
+        .values(
+            state="error",
+            error_code=error_code,
+            state_changed_at=now,
+        )
+    )
+    if res.rowcount == 0:
+        return False
+
+    await log_event(
+        db,
+        tenant_id=tenant_id,
+        actor_id=None,
+        actor_email=None,
+        action="session.errored",
+        resource="session",
+        resource_id=session_id,
+        payload={
+            "error_code": error_code,
+            "reason": reason,
+            "correlation_id": correlation_id,
+        },
+    )
+    return True

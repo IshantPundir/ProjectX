@@ -56,6 +56,7 @@ from app.modules.pipelines.models import (
     JobPipelineInstance,
     JobPipelineStage,
 )
+from app.modules.session.models import Session as SessionRow
 
 # Default targets host.docker.internal so that `docker compose run --rm nexus pytest`
 # Just Works without an env var override. The host alias is provided by the
@@ -341,3 +342,36 @@ async def make_assignment_with_stage(
     await db.flush()
 
     return assignment, stage
+
+
+# ---------------------------------------------------------------------------
+# Minimal session seed — used by tests/session/test_transition_to_error.py
+# ---------------------------------------------------------------------------
+
+
+async def seed_minimal_session(
+    db: AsyncSession,
+    *,
+    state: str = "active",
+) -> tuple[SessionRow, uuid.UUID]:
+    """Insert a sessions row (+ minimal FK chain) and return (session, tenant_id).
+
+    Composes the existing helpers to avoid duplicating the graph-builder logic.
+    The session state is set directly on the ORM row so tests can start from
+    any state without running the real state-machine service functions.
+    """
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    assignment, stage = await make_assignment_with_stage(db, tenant, user)
+
+    session = SessionRow(
+        tenant_id=tenant.id,
+        assignment_id=assignment.id,
+        stage_id=stage.id,
+        state=state,
+        created_by=user.id,
+    )
+    db.add(session)
+    await db.flush()
+
+    return session, tenant.id
