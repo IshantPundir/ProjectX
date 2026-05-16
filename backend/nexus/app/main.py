@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 import sqlalchemy
 import structlog
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -15,6 +16,7 @@ from app import brokers  # noqa: F401
 from app import pubsub
 
 from app.config import settings
+from app.modules.session.reaper import run_stuck_session_reaper
 
 logger = structlog.get_logger()
 
@@ -194,6 +196,10 @@ async def _assert_rls_completeness() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+    # Capture the FastAPI instance before lazy `import app.*` statements
+    # below shadow the `app` name with the Python package of the same name.
+    _fastapi_app = app
+
     # Startup
     structlog.configure(
         processors=[
@@ -253,17 +259,46 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # Runs after RLS assertion so a broken DB schema fails first.
     await pubsub.startup()
 
-    yield
+    # Stuck-session reaper. AsyncIO-scheduled, single-flight via pg
+    # advisory lock (see app/modules/session/reaper.py).
+    # max_instances=1 + coalesce=True protects against the rare
+    # "tick fired while previous tick still running" case (e.g. very
+    # slow DB).
+    scheduler: AsyncIOScheduler | None = None
+    if settings.reaper_enabled:
+        scheduler = AsyncIOScheduler(timezone="UTC")
+        scheduler.add_job(
+            run_stuck_session_reaper,
+            trigger="interval",
+            seconds=settings.reaper_interval_seconds,
+            id="stuck_session_reaper",
+            max_instances=1,
+            coalesce=True,
+        )
+        scheduler.start()
+        _fastapi_app.state.reaper_scheduler = scheduler
+        logger.info(
+            "reaper.scheduler.started",
+            interval_seconds=settings.reaper_interval_seconds,
+            stuck_threshold_seconds=settings.reaper_stuck_threshold_seconds,
+        )
 
-    # Shutdown — reverse order of startup.
-    await pubsub.shutdown()
+    try:
+        yield
+    finally:
+        if scheduler is not None and scheduler.running:
+            scheduler.shutdown(wait=False)
+            logger.info("reaper.scheduler.stopped")
 
-    from app.database import engine
+        # Shutdown — reverse order of startup.
+        await pubsub.shutdown()
 
-    # OTel shutdown: flush + close any in-flight span batches before exit.
-    _otel_provider.shutdown()
-    await engine.dispose()
-    logger.info("nexus.shutdown")
+        from app.database import engine
+
+        # OTel shutdown: flush + close any in-flight span batches before exit.
+        _otel_provider.shutdown()
+        await engine.dispose()
+        logger.info("nexus.shutdown")
 
 
 def create_app() -> FastAPI:
