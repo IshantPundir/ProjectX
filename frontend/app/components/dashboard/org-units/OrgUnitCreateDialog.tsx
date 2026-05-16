@@ -43,17 +43,20 @@ type NameValues = z.infer<typeof nameSchema>
 
 // Inline profile fields for client_account creation.
 // company_stage is dropped (refactor T4); industry is free-text.
+//
+// All free-text, no length caps — matches the detail-page schema in
+// `app/(dashboard)/settings/org-units/[unitId]/schema.ts` and the
+// backend's `CompanyContext` wire contract. The `/ 500` and `/ 280`
+// indicators below the textareas are soft target hints, not enforced
+// limits: longer values flow through to the LLM prompt verbatim.
+// Non-emptiness on `about` is the only hard requirement here because
+// downstream activation gates (find_company_profile_in_ancestry) refuse
+// the unit as a profile owner if any of about/industry/hiring_bar is
+// empty after strip.
 const profileSchema = z.object({
-  about: z
-    .string()
-    .min(30, 'Describe what you build in at least a sentence (30+ characters)')
-    .max(500, 'Keep it concise — 500 characters max'),
-  industry: z.string().max(120, 'Keep it brief').optional(),
-  hiring_bar: z
-    .string()
-    .min(20, 'Describe what a strong hire looks like (20+ characters)')
-    .max(280, 'Twitter-length — 280 characters max')
-    .optional(),
+  about: z.string().min(1, 'Describe what you build'),
+  industry: z.string().optional(),
+  hiring_bar: z.string().optional(),
 })
 type ProfileValues = z.infer<typeof profileSchema>
 

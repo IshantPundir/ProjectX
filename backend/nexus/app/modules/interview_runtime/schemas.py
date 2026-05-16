@@ -90,16 +90,25 @@ class QuestionConfig(BaseModel):
 class CompanyContext(BaseModel):
     """Company profile context for the interview engine.
 
-    Uses plain ``str`` for all fields so the wire format stays decoupled
-    from Nexus enum definitions. `company_stage` is retained for backward
-    compatibility but defaults to empty string — it was dropped from the
-    org_unit profile columns in migration 0034.
+    Free-text prompt context — no length caps. The fields are dumped
+    verbatim into the agent's system prompt and into the JD / question-bank
+    prompts via the same ``find_company_profile_in_ancestry`` helper; the
+    DB columns are ``TEXT`` and the recruiter-facing edit form imposes no
+    length limit, so the engine boundary must accept whatever was stored.
+    Non-emptiness is enforced upstream by the activation gate
+    (``find_company_profile_in_ancestry`` returns ``None`` if any of
+    about/industry/hiring_bar is empty after strip), which is what blocks
+    a session from being dispatched against an incomplete profile.
+
+    ``company_stage`` is retained for backward compatibility but defaults
+    to empty string — it was dropped from the org_unit profile columns in
+    migration 0034.
     """
 
-    about: str = Field(min_length=30, max_length=500)
+    about: str
     industry: str
     company_stage: str = ""
-    hiring_bar: str = Field(min_length=20, max_length=280)
+    hiring_bar: str
 
 
 class CandidateContext(BaseModel):
