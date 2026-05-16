@@ -153,5 +153,19 @@ async def test_pre_connect_failure_still_writes_db_row(db, monkeypatch):
     )).scalar_one()
     assert refreshed.state == "error"
     assert refreshed.error_code == "engine_internal_error"
+
+    # The audit row must be written regardless of which downstream step
+    # fails — DB transition + audit are one atomic unit inside
+    # transition_to_error.
+    audit = (await db.execute(
+        select(AuditLog).where(
+            AuditLog.resource_id == session.id,
+            AuditLog.action == "session.errored",
+        )
+    )).scalar_one()
+    assert audit.payload["error_code"] == "engine_internal_error"
+    assert audit.payload["reason"] == "engine_entrypoint"
+    assert audit.payload["correlation_id"] == "corr-conn"
+
     # set_attributes was never reached because connect() raised first.
     ctx.room.local_participant.set_attributes.assert_not_awaited()
