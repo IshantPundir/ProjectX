@@ -105,6 +105,8 @@ from app.modules.interview_runtime import (
     build_session_config,
     record_session_result,
 )
+from app.modules.session.error_codes import classify_engine_exception
+from app.modules.session.service import transition_to_error
 from app.modules.tenant_settings import get_tenant_settings
 
 log = structlog.get_logger("interview-engine")
@@ -251,7 +253,17 @@ async def entrypoint(ctx: JobContext) -> None:
     )
     log.info("engine.dispatch.received", agent_name=settings.engine_agent_name)
 
-    await _run_entrypoint(ctx, session_uuid, tenant_uuid, correlation_id)
+    try:
+        await _run_entrypoint(ctx, session_uuid, tenant_uuid, correlation_id)
+    except Exception as exc:
+        await _handle_entrypoint_failure(
+            exc=exc,
+            ctx=ctx,
+            session_id=session_uuid,
+            tenant_uuid=tenant_uuid,
+            correlation_id=correlation_id,
+        )
+        raise  # preserves LiveKit's existing "job crashed" log
 
 
 async def _run_entrypoint(
@@ -1069,6 +1081,69 @@ async def _finalize_event_log(
         log.error(
             "interview_engine.event_log.sink_write_failed",
             reason=reason,
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
+
+
+async def _handle_entrypoint_failure(
+    *,
+    exc: Exception,
+    ctx: JobContext,
+    session_id: uuid.UUID,
+    tenant_uuid: uuid.UUID,
+    correlation_id: str,
+) -> None:
+    """Single failure handler for every pre-session.start crash path.
+
+    Order:
+      1. Classify exception -> ErrorCode.
+      2. Transition session row to state='error' (durable truth).
+      3. Best-effort publish session_outcome='error' to the LK room.
+
+    DB transition is first so the candidate's HTTP fallback poll wins
+    even if the room/attribute publish fails. The caller re-raises so
+    LiveKit's existing crash signal is preserved.
+    """
+    error_code = classify_engine_exception(exc)
+    log.error(
+        "engine.entrypoint.failed",
+        error_code=error_code,
+        error_type=type(exc).__name__,
+        error=str(exc),
+    )
+
+    async with get_bypass_session() as db:
+        await transition_to_error(
+            db,
+            session_id=session_id,
+            tenant_id=tenant_uuid,
+            error_code=error_code,
+            correlation_id=correlation_id,
+            reason="engine_entrypoint",
+        )
+        await db.commit()
+
+    await _best_effort_publish_outcome_attribute(ctx)
+
+
+async def _best_effort_publish_outcome_attribute(ctx: JobContext) -> None:
+    """Publish session_outcome='error' to the LK room if at all possible.
+
+    Tries connecting first — the failure may have happened before
+    ctx.connect() ran. Swallows every exception (logged at warning):
+    if we can't publish the attribute, the candidate's HTTP-poll
+    fallback path will surface the failure.
+    """
+    try:
+        if not ctx.room.isconnected():
+            await ctx.connect()
+        await ctx.room.local_participant.set_attributes(
+            {"session_outcome": "error"},
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "engine.entrypoint.outcome_publish_failed",
             error=str(exc),
             error_type=type(exc).__name__,
         )
