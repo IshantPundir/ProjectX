@@ -23,11 +23,14 @@ const BAR_COLORS = [
 ] as const
 
 function statusPillStyle(status: JobStatus): { label: string; bg: string; fg: string } {
+  // Tracker filters to `active`-only upstream (`useTrackerJobs`), so in
+  // practice this card only ever receives "live" jobs. The default
+  // branch is a defensive fallback in case the filter is ever loosened
+  // — it renders the raw status rather than mislabelling.
   if (status === 'active') {
-    return { label: 'active', bg: 'rgba(16,185,129,0.12)', fg: '#10b981' }
+    return { label: 'live', bg: 'rgba(16,185,129,0.12)', fg: '#10b981' }
   }
-  // pipeline_built — only other status this card receives (filtered upstream).
-  return { label: 'pipeline ready', bg: 'rgba(59,130,246,0.12)', fg: '#3b82f6' }
+  return { label: status, bg: 'rgba(113,113,122,0.12)', fg: '#71717a' }
 }
 
 
