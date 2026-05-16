@@ -285,7 +285,10 @@ async def test_save_signals_clears_confirmation(db: AsyncSession, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_confirm_signals(db: AsyncSession, monkeypatch):
-    """POST /api/jobs/{id}/signals/confirm transitions job to signals_confirmed."""
+    """POST /api/jobs/{id}/signals/confirm transitions all the way to
+    pipeline_built (auto-creates the bookend Intake → Debrief pipeline
+    in the same transaction). signals_confirmed is therefore transient
+    and never surfaces in the response payload."""
     monkeypatch.setattr(
         "app.modules.jd.actors.extract_and_enhance_jd.send",
         lambda *a, **k: None,
@@ -318,7 +321,7 @@ async def test_confirm_signals(db: AsyncSession, monkeypatch):
 
     assert response.status_code == 200, response.text
     data = response.json()
-    assert data["status"] == "signals_confirmed"
+    assert data["status"] == "pipeline_built"
 
 
 # ---------------------------------------------------------------------------

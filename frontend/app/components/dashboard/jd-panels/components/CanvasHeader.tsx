@@ -2,76 +2,19 @@
 
 import type { JobPostingWithSnapshot } from '@/lib/api/jobs'
 
-// Local copy of the page-level icon helper. The original `I` lives in
-// page.tsx and will move with its primary consumer in a later task; until
-// then, this header gets its own minimal copy + just the icon path it needs.
-function I({
-  d,
-  size = 14,
-  stroke = 1.6,
-}: {
-  d: string | readonly string[]
-  size?: number
-  stroke?: number
-}) {
-  const paths = Array.isArray(d) ? d : [d as string]
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={stroke}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      style={{ flexShrink: 0 }}
-      aria-hidden="true"
-    >
-      {paths.map((p, i) => (
-        <path key={i} d={p} />
-      ))}
-    </svg>
-  )
-}
-
-const WARN_ICON =
-  'M10.3 3.9L2.7 17a2 2 0 001.7 3h15.2a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0zM12 9v4M12 17h.01'
-
+/**
+ * Canvas-level header for the signals panel. The status chip that used
+ * to live here was removed — the page layout (`JobLayout::JobStatusChips`)
+ * already renders the canonical status chip above this canvas. Rendering
+ * a second chip here previously caused "Almost ready" (layout) and "live
+ * · accepting candidates" (canvas) to appear together on the same page,
+ * contradicting each other.
+ */
 export function CanvasHeader({
   job,
-  needsReviewCount,
-  isConfirmed,
 }: {
   job: JobPostingWithSnapshot
-  needsReviewCount: number
-  isConfirmed: boolean
 }) {
-  const chips = isConfirmed ? (
-    <>
-      <span className="px-chip ok" style={{ height: 22 }}>
-        <span className="px-dot" />
-        live · accepting candidates
-      </span>
-    </>
-  ) : needsReviewCount > 0 ? (
-    <>
-      <span className="px-chip ok" style={{ height: 22 }}>
-        <span className="px-dot" />
-        Ready to review
-      </span>
-      <span className="px-chip caution" style={{ height: 22 }}>
-        <I d={WARN_ICON} size={10} />
-        {needsReviewCount} to double-check
-      </span>
-    </>
-  ) : (
-    <span className="px-chip ok" style={{ height: 22 }}>
-      <span className="px-dot" />
-      Ready to publish
-    </span>
-  )
-
   const metaParts: string[] = []
   if (job.org_unit_name) metaParts.push(job.org_unit_name)
   if (job.location) metaParts.push(job.location)
@@ -99,7 +42,6 @@ export function CanvasHeader({
         >
           What we found
         </h1>
-        {chips}
       </div>
       {metaParts.length > 0 && (
         <div

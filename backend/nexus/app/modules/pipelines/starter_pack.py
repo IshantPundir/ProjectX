@@ -2,9 +2,7 @@
 
 These are NOT stored in the database. When a recruiter clicks "Use this starter"
 they get a COPY in their org unit's template library (which IS persisted).
-
-The system fallback is used by auto_apply_pipeline_on_confirmation when neither
-last-used nor org-unit-default exist."""
+"""
 
 from typing import Any, Final
 
@@ -202,5 +200,3 @@ STARTER_TEMPLATES: Final[dict[str, dict[str, Any]]] = {
         ],
     },
 }
-
-SYSTEM_FALLBACK_STARTER: Final[str] = "standard_technical"

@@ -106,7 +106,7 @@ backend/nexus/
 │       │   └── sse.py           ← SSE status stream — routes every poll through get_tenant_session (Batch F)
 │       ├── pipelines/            ← Phase 2C.1 — template library, per-job instance, stage CRUD, drag-to-reorder
 │       │   ├── router.py         ← /api/pipelines/* templates + /api/jobs/{id}/pipeline instance
-│       │   ├── service.py        ← auto_apply_pipeline_on_confirmation, PipelineAlreadyExistsError
+│       │   ├── service.py        ← ensure_minimal_pipeline_for_job, PipelineAlreadyExistsError
 │       │   ├── authz.py          ← require_template_access — ancestry-walking template authz
 │       │   └── errors.py
 │       ├── question_bank/        ← Phase 2C.2 — AI generation, adaptive coverage, mandatory demotion, bundling
@@ -365,7 +365,7 @@ from openai import AsyncOpenAI
 
 | Module | What It Owns |
 |---|---|
-| `pipelines` | Pipeline template library scoped by org unit, per-job pipeline instance, stage CRUD (name/type/duration/difficulty/signal filter/pass criteria/advance behavior), drag-to-reorder, template swap, reset-to-source. Auto-apply on signal confirmation via `auto_apply_pipeline_on_confirmation`. Ancestry-walking authz via `require_template_access`. **Stage type v5 (migration 0016):** types collapsed from 9 → 6 (`intake`, `phone_screen`, `ai_screening`, `human_interview`, `debrief`, `take_home`); `recruiter`, `panel_interview`, `offer`, `ai_interview` hard-removed with no aliases. Instance stages carry participants (interviewers / observers / reviewers) via `pipeline_stage_participants`, gated by system-role lookup at the job's org unit ancestry; `pipeline_stage_participants` is in `_TENANT_SCOPED_TABLES` and covered by the startup RLS check. Templates remain staffing-agnostic (no participants). |
+| `pipelines` | Pipeline template library scoped by org unit, per-job pipeline instance, stage CRUD (name/type/duration/difficulty/signal filter/pass criteria/advance behavior), drag-to-reorder, template swap, reset-to-source. `jd.confirm_signals` calls `ensure_minimal_pipeline_for_job` to auto-create the bookend Intake → Debrief pipeline on signal confirmation; the recruiter adds the middle stage(s) before the activation gate opens. Ancestry-walking authz via `require_template_access`. **Stage type v5 (migration 0016):** types collapsed from 9 → 6 (`intake`, `phone_screen`, `ai_screening`, `human_interview`, `debrief`, `take_home`); `recruiter`, `panel_interview`, `offer`, `ai_interview` hard-removed with no aliases. Instance stages carry participants (interviewers / observers / reviewers) via `pipeline_stage_participants`, gated by system-role lookup at the job's org unit ancestry; `pipeline_stage_participants` is in `_TENANT_SCOPED_TABLES` and covered by the startup RLS check. Templates remain staffing-agnostic (no participants). |
 
 ### Phase 2C.2 — Implemented
 

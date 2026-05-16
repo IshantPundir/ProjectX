@@ -56,13 +56,21 @@ export function computeActivationFailures(
     }
     if (BANK_ELIGIBLE_TYPES.has(s.stage_type)) {
       const bank = banksByStage[s.id]
-      // 'reviewing' is the post-generation state (recruiter hasn't confirmed
-      // yet); 'confirmed' is post-recruiter-approval. Both pass the gate per
-      // spec §7.1 #5 ("any non-empty generated bank passes activation").
-      if (!bank || (bank.status !== 'reviewing' && bank.status !== 'confirmed')) {
+      // 'reviewing' is the post-generation pre-approval state — the recruiter
+      // hasn't clicked "Confirm bank" yet, so the bank is not ready. Only
+      // 'confirmed' opens the activation gate. Same failure code in both
+      // shapes so the banner's in-flight-generation suppression check still
+      // works; the message differs so the recruiter knows what to do next.
+      if (!bank) {
         failures.push({
           code: 'missing_bank',
           message: `Generate a question bank for '${s.name}'.`,
+          stage_id: s.id,
+        })
+      } else if (bank.status !== 'confirmed') {
+        failures.push({
+          code: 'missing_bank',
+          message: `Confirm the question bank for '${s.name}'.`,
           stage_id: s.id,
         })
       }

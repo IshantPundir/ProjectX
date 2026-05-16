@@ -162,9 +162,11 @@ function PipelineReviewBanner({
     if (!f.stage_id) return
     router.push(`/jobs/${jobId}/pipeline?stage=${encodeURIComponent(f.stage_id)}`)
   }
-  // The Activate button is enabled ONLY when there are no failures AND no
-  // generation is in flight. Server-side activation rejects pipelines whose
-  // banks aren't in reviewing/confirmed; a bank in 'generating' would 422.
+  // The Activate button is rendered ONLY when the gate is actually open
+  // (no failures AND no generation in flight). When the gate is closed
+  // we render an informational pill in its slot instead — the earlier
+  // disabled-button affordance (40% opacity) was too subtle and users
+  // clicked it expecting something to happen.
   const activateEnabled = ready && !isGenerating
 
   // Tone: emerald only when fully ready; sky-blue while generating
@@ -205,14 +207,27 @@ function PipelineReviewBanner({
           </ul>
         )}
       </div>
-      <button
-        type="button"
-        disabled={!activateEnabled || activating}
-        onClick={onActivate}
-        className="rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40"
-      >
-        {activating ? 'Activating…' : 'Activate'}
-      </button>
+      {isGenerating ? (
+        <span className="self-start rounded bg-sky-100 px-4 py-2 text-sm font-medium text-sky-900 whitespace-nowrap">
+          Generating…
+        </span>
+      ) : activateEnabled ? (
+        <button
+          type="button"
+          disabled={activating}
+          onClick={onActivate}
+          className="self-start rounded bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {activating ? 'Activating…' : 'Activate'}
+        </button>
+      ) : (
+        <span
+          className="self-start rounded bg-amber-100 px-4 py-2 text-sm font-medium text-amber-900 whitespace-nowrap"
+          title="Fix the items listed to unlock the Activate button."
+        >
+          {visibleFailures.length} to fix
+        </span>
+      )}
     </BannerShell>
   )
 }

@@ -20,6 +20,7 @@ from app.modules.pipelines import (
     JobPipelineStage,
     PipelineStageParticipant,
     bank_eligible_stage_types,
+    ensure_minimal_pipeline_for_job,
     human_led_stage_types,
     middle_stage_types_for_activation,
 )
@@ -554,8 +555,16 @@ async def confirm_signals(
     actor_id: UUID,
     correlation_id: str,
 ) -> JobPosting:
-    """Confirm the latest snapshot — sets confirmed_by/at and transitions
-    job to signals_confirmed.
+    """Confirm the latest snapshot, auto-create the bookend Intake → Debrief
+    pipeline, and transition the job to pipeline_built — all in one
+    transaction.
+
+    signals_confirmed is therefore transient: observable inside this
+    transaction but never as steady state. The recruiter lands directly
+    on pipeline_built ("In review") and must add at least one middle
+    stage and confirm each stage's question bank before the activation
+    gate opens. ensure_minimal_pipeline_for_job is idempotent — safe
+    under any race the state machine might allow.
 
     Raises:
         ValueError: if no snapshot exists for this job.
@@ -583,8 +592,19 @@ async def confirm_signals(
     )
     await db.flush()
 
+    await ensure_minimal_pipeline_for_job(db, job=job)
+
+    await transition(
+        db,
+        job,
+        to_state="pipeline_built",
+        actor_id=actor_id,
+        correlation_id=correlation_id,
+    )
+    await db.flush()
+
     logger.info(
-        "jd.service.signals_confirmed",
+        "jd.service.signals_confirmed_and_pipeline_built",
         job_posting_id=str(job.id),
         snapshot_version=snapshot.version,
         correlation_id=correlation_id,
@@ -721,17 +741,24 @@ async def evaluate_activation_predicates(
                     stage_id=s.id,
                 ))
 
-        # Predicate 5: bank-eligible stage has a reviewing/confirmed bank.
-        # 'reviewing' is the post-generation state (recruiter hasn't
-        # confirmed yet); 'confirmed' is post-recruiter-approval. Both pass
-        # the gate per spec §7.1 #5 ("any non-empty generated bank passes
-        # activation").
+        # Predicate 5: bank-eligible stage has a confirmed bank. 'reviewing'
+        # is post-generation pre-approval — the recruiter hasn't clicked
+        # "Confirm bank" yet, so the bank is not ready. 'confirmed' is the
+        # only state that opens the gate. Same failure code in both shapes
+        # so the frontend's in-flight-generation suppression check still
+        # works; only the message differs.
         if s.stage_type in bank_types:
             bank = banks_by_stage.get(s.id)
-            if bank is None or bank.status not in ("reviewing", "confirmed"):
+            if bank is None:
                 failures.append(ActivationPredicateFailure(
                     code="missing_bank",
                     message=f"Generate a question bank for '{s.name}'.",
+                    stage_id=s.id,
+                ))
+            elif bank.status != "confirmed":
+                failures.append(ActivationPredicateFailure(
+                    code="missing_bank",
+                    message=f"Confirm the question bank for '{s.name}'.",
                     stage_id=s.id,
                 ))
 

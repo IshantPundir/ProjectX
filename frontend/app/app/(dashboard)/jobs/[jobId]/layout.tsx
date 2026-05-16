@@ -21,6 +21,21 @@ type TabDef = {
 
 /* ─── Status chip — mirrors the design's "Ready to publish" / "live" chips ─── */
 
+/**
+ * Canonical job-status chip. Single source of truth for status vocabulary
+ * across the recruiter dashboard — jobs list, tracker landing, tracker
+ * cards all consume the same label table. Color story: gray = work in
+ * flight, amber = needs your attention, green = running, red = error.
+ *
+ * Lifecycle vocabulary (spec
+ * docs/superpowers/specs/2026-05-15-job-activation-gate-design.md):
+ *   draft → Reading JD → Review signals → In review → Live
+ *
+ * "In review" covers both signals_confirmed and pipeline_built —
+ * signals_confirmed is transient now that confirm_signals auto-creates
+ * the bookend pipeline and advances to pipeline_built in the same
+ * transaction.
+ */
 function JobStatusChips({ status, signalCount }: { status: JobStatus; signalCount: number }) {
   if (status === 'draft') {
     return (
@@ -34,7 +49,7 @@ function JobStatusChips({ status, signalCount }: { status: JobStatus; signalCoun
     return (
       <span className="px-chip ai" style={{ height: 22 }}>
         <span className="px-dot px-pulse" />
-        Copilot is reading
+        Reading JD
       </span>
     )
   }
@@ -49,9 +64,9 @@ function JobStatusChips({ status, signalCount }: { status: JobStatus; signalCoun
   if (status === 'signals_extracted') {
     return (
       <>
-        <span className="px-chip ok" style={{ height: 22 }}>
+        <span className="px-chip caution" style={{ height: 22 }}>
           <span className="px-dot" />
-          Ready to review
+          Review signals
         </span>
         {signalCount > 0 && (
           <span
@@ -65,15 +80,11 @@ function JobStatusChips({ status, signalCount }: { status: JobStatus; signalCoun
       </>
     )
   }
-  // signals_confirmed and pipeline_built collapse into one "Almost ready"
-  // chip per the agreed UX. signals_confirmed is a transient state that
-  // auto-transitions to pipeline_built when the pipeline is applied;
-  // collapsing avoids surfacing a chip the recruiter rarely sees on its own.
   if (status === 'signals_confirmed' || status === 'pipeline_built') {
     return (
       <span className="px-chip soft" style={{ height: 22 }}>
         <span className="px-dot" />
-        Almost ready
+        In review
       </span>
     )
   }
@@ -81,7 +92,7 @@ function JobStatusChips({ status, signalCount }: { status: JobStatus; signalCoun
     return (
       <span className="px-chip ok" style={{ height: 22 }}>
         <span className="px-dot" />
-        live · accepting candidates
+        Live · accepting candidates
       </span>
     )
   }
@@ -93,9 +104,8 @@ function JobStatusChips({ status, signalCount }: { status: JobStatus; signalCoun
       </span>
     )
   }
-  // Defensive fallback for any future status we forgot to wire here —
-  // render a neutral chip with the raw status rather than misleadingly
-  // claiming the job is "live" (the previous fallthrough behaviour).
+  // Defensive fallback for any future status — render the raw value
+  // rather than mis-labelling the job.
   return (
     <span className="px-chip soft" style={{ height: 22 }}>
       <span className="px-dot" />

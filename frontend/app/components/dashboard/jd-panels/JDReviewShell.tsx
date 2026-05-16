@@ -194,7 +194,6 @@ export function JDReviewShell({
             isDirty={isDirty}
             saving={saveMutation.isPending}
             confirming={confirmMutation.isPending}
-            needsReviewCount={needsReviewCount}
             totalCount={totalCount}
             focusIdx={focusIdx}
             onFocus={setFocus}

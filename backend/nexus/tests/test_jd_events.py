@@ -308,7 +308,11 @@ async def test_confirm_signals_publishes_status_changed(
     pub = capture_publishes[0]
     assert pub.channel == f"job:{job.id}"
     assert pub.event == pubsub.Events.JD_STATUS_CHANGED
-    assert pub.payload["status"] == "signals_confirmed"
+    # confirm_signals now auto-creates the bookend pipeline and advances
+    # to pipeline_built in the same transaction — the SSE event is
+    # emitted from the router AFTER both transitions, so subscribers
+    # see the final state directly.
+    assert pub.payload["status"] == "pipeline_built"
     assert pub.payload["is_confirmed"] is True
 
 

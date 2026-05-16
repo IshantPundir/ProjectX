@@ -33,32 +33,52 @@ import { postedAgo } from '@/lib/utils'
 
 /* ─── Status → design-system chip ─────────────────────────── */
 
-type StatusKind = 'reviewing' | 'draft' | 'live' | 'failed' | 'blocked'
+type StatusKind =
+  | 'draft'
+  | 'reading'
+  | 'review_signals'
+  | 'in_review'
+  | 'live'
+  | 'failed'
+  | 'archived'
+  | 'blocked'
 
 /**
+ * Canonical jobs-list status pill. Vocabulary mirrors the layout chip in
+ * `app/(dashboard)/jobs/[jobId]/layout.tsx::JobStatusChips` — the spec
+ * (`docs/superpowers/specs/2026-05-15-job-activation-gate-design.md`)
+ * defines one label per JobStatus, applied everywhere.
+ *
  * `profile_ready=false` overrides the persisted status with a "blocked"
  * presentation: until the recruiter completes the parent company's
  * profile, the JD can't be configured (PATCH/enrich/extract all 422 on
  * the server). The DB row stays in 'draft' — the block is derived,
- * not a separate state — so flipping the profile to complete is a
- * single org-unit edit, no cascade.
+ * not a separate state.
  */
 function statusKind(job: JobPostingSummary): StatusKind {
   if (!job.profile_ready) return 'blocked'
   const s: JobStatus = job.status
-  if (s === 'signals_extracted' || s === 'signals_extracting') return 'reviewing'
-  if (s === 'signals_extraction_failed') return 'failed'
   if (s === 'draft') return 'draft'
-  return 'live'
+  if (s === 'signals_extracting') return 'reading'
+  if (s === 'signals_extracted') return 'review_signals'
+  if (s === 'signals_extraction_failed') return 'failed'
+  if (s === 'signals_confirmed' || s === 'pipeline_built') return 'in_review'
+  if (s === 'active') return 'live'
+  if (s === 'archived') return 'archived'
+  // Defensive fallback for any future status — render the raw value.
+  return 'draft'
 }
 
 function StatusPill({ job }: { job: JobPostingSummary }) {
   const kind = statusKind(job)
   const map: Record<StatusKind, { label: string; cls: string }> = {
-    reviewing: { label: 'reviewing', cls: 'caution' },
     draft: { label: 'draft', cls: 'soft' },
+    reading: { label: 'reading JD', cls: 'ai' },
+    review_signals: { label: 'review signals', cls: 'caution' },
+    in_review: { label: 'in review', cls: 'soft' },
     live: { label: 'live', cls: 'ok' },
     failed: { label: 'failed', cls: 'danger' },
+    archived: { label: 'archived', cls: 'soft' },
     blocked: { label: 'awaiting setup', cls: 'caution' },
   }
   const m = map[kind]
@@ -129,7 +149,7 @@ function NotSetUpChip({ job }: { job: JobPostingSummary }) {
 /* ─── Grouping logic ──────────────────────────────────────── */
 
 const IDLE_DAYS = 7
-type Group = 'blocked' | 'needs_you' | 'in_motion' | 'quiet'
+type Group = 'blocked' | 'needs_you' | 'in_review' | 'in_motion' | 'quiet'
 
 function classifyJob(job: JobPostingSummary): Group {
   // Profile-readiness check trumps status: if the parent company's profile
@@ -143,6 +163,14 @@ function classifyJob(job: JobPostingSummary): Group {
   ) {
     return 'needs_you'
   }
+  // signals_confirmed + pipeline_built collapse into "In review": the
+  // pipeline exists but the recruiter still needs to add a middle stage,
+  // confirm question banks, and click Activate before candidates can flow.
+  // Distinct from "Needs you" (pre-pipeline action) and "In motion"
+  // (actually accepting candidates) — matches the layout chip vocabulary.
+  if (job.status === 'signals_confirmed' || job.status === 'pipeline_built') {
+    return 'in_review'
+  }
   const updated = new Date(job.updated_at).getTime()
   const ageDays = (Date.now() - updated) / (1000 * 60 * 60 * 24)
   if (ageDays > IDLE_DAYS) return 'quiet'
@@ -155,11 +183,15 @@ const GROUP_META: Record<Group, { heading: string; hint: string }> = {
     hint: 'parent company profile incomplete',
   },
   needs_you: { heading: 'Needs you', hint: 'awaiting your review or action' },
+  in_review: {
+    heading: 'In review',
+    hint: 'pipeline set up — add a stage, confirm banks, then activate',
+  },
   in_motion: { heading: 'In motion', hint: 'candidates actively progressing' },
   quiet: { heading: 'Quiet', hint: `no activity in ${IDLE_DAYS}+ days` },
 }
 
-type FilterId = 'all' | 'blocked' | 'needs_you' | 'in_motion' | 'quiet'
+type FilterId = 'all' | 'blocked' | 'needs_you' | 'in_review' | 'in_motion' | 'quiet'
 type ViewId = 'table' | 'card' | 'kanban'
 
 /* ─── Small SVG icons (sparkle, plus, filter) ─────────────── */
@@ -415,6 +447,7 @@ export default function JobsListPage() {
     const buckets: Record<Group, JobPostingSummary[]> = {
       blocked: [],
       needs_you: [],
+      in_review: [],
       in_motion: [],
       quiet: [],
     }
@@ -428,6 +461,7 @@ export default function JobsListPage() {
         all: data?.length ?? 0,
         blocked: buckets.blocked.length,
         needs_you: buckets.needs_you.length,
+        in_review: buckets.in_review.length,
         in_motion: buckets.in_motion.length,
         quiet: buckets.quiet.length,
       },
@@ -435,9 +469,10 @@ export default function JobsListPage() {
   }, [data])
 
   // Blocked jobs surface first so the recruiter sees them before anything
-  // else — they're the only group with a non-trivial setup gate.
+  // else. Then "Needs you" (pre-pipeline action), then "In review"
+  // (pipeline exists, waiting for activation), then steady-state.
   const visibleGroups = useMemo<Group[]>(() => {
-    if (filter === 'all') return ['blocked', 'needs_you', 'in_motion', 'quiet']
+    if (filter === 'all') return ['blocked', 'needs_you', 'in_review', 'in_motion', 'quiet']
     return [filter]
   }, [filter])
 
@@ -494,6 +529,8 @@ export default function JobsListPage() {
                 <span className="mx-1.5" style={{ color: 'var(--px-fg-4)' }}>·</span>
                 <span>{counts.needs_you} needs you</span>
                 <span className="mx-1.5" style={{ color: 'var(--px-fg-4)' }}>·</span>
+                <span>{counts.in_review} in review</span>
+                <span className="mx-1.5" style={{ color: 'var(--px-fg-4)' }}>·</span>
                 <span>{counts.quiet} quiet</span>
               </>
             )}
@@ -545,6 +582,7 @@ export default function JobsListPage() {
               ? [{ id: 'blocked' as const, label: 'Blocked on setup', n: counts.blocked }]
               : []),
             { id: 'needs_you', label: 'Needs you', n: counts.needs_you },
+            { id: 'in_review', label: 'In review', n: counts.in_review },
             { id: 'in_motion', label: 'In motion', n: counts.in_motion },
             { id: 'quiet', label: 'Quiet', n: counts.quiet },
           ] as const

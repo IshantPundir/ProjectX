@@ -55,7 +55,6 @@ export function SignalsCanvas({
   isDirty,
   saving,
   confirming,
-  needsReviewCount,
   totalCount,
   focusIdx,
   onFocus,
@@ -72,7 +71,6 @@ export function SignalsCanvas({
   isDirty: boolean
   saving: boolean
   confirming: boolean
-  needsReviewCount: number
   totalCount: number
   focusIdx: number | null
   onFocus: (idx: number | null) => void
@@ -88,11 +86,7 @@ export function SignalsCanvas({
         borderColor: 'var(--px-hairline)',
       }}
     >
-      <CanvasHeader
-        job={job}
-        needsReviewCount={needsReviewCount}
-        isConfirmed={isConfirmed}
-      />
+      <CanvasHeader job={job} />
       <TabStrip
         totalCount={totalCount}
         isConfirmed={isConfirmed}

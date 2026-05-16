@@ -1,7 +1,9 @@
 """Pipeline Builder service layer.
 
 Template CRUD (per org unit), instance creation/mutation (per job),
-and the auto_apply_pipeline_on_confirmation hook called from jd.confirm_signals.
+and the ensure_minimal_pipeline_for_job helper that jd.confirm_signals
+calls to auto-create the bookend Intake → Debrief pipeline on signal
+confirmation.
 
 All functions take an AsyncSession — transaction management is the caller's
 responsibility (FastAPI dependency handles commit/rollback)."""
@@ -45,10 +47,7 @@ from app.modules.pipelines.participants import (
     replace_stage_participants,
     validate_participants_eligible,
 )
-from app.modules.pipelines.starter_pack import (
-    STARTER_TEMPLATES,
-    SYSTEM_FALLBACK_STARTER,
-)
+from app.modules.pipelines.starter_pack import STARTER_TEMPLATES
 
 logger = structlog.get_logger()
 
@@ -1106,98 +1105,6 @@ async def ensure_minimal_pipeline_for_job(
         instance_id=str(instance.id),
     )
     return instance
-
-
-# ---------------------------------------------------------------------------
-# Auto-apply hook — called from jd.confirm_signals
-# ---------------------------------------------------------------------------
-
-
-async def auto_apply_pipeline_on_confirmation(
-    db: AsyncSession,
-    *,
-    job: JobPosting,
-    actor_id: UUID,
-) -> JobPipelineInstance | None:
-    """Create a pipeline instance for a freshly-confirmed job.
-
-    Resolution order:
-      1. Last-used template in this org unit (from job_pipeline_instances history)
-      2. Org unit's default template (is_default = true)
-      3. System fallback (SYSTEM_FALLBACK_STARTER directly from starter pack)
-
-    Caller must wrap this in try/except — failures are logged but should not
-    block signal confirmation."""
-    # Guard: do nothing if an instance already exists
-    existing = await db.execute(
-        select(JobPipelineInstance).where(
-            JobPipelineInstance.job_posting_id == job.id
-        )
-    )
-    if existing.scalar_one_or_none() is not None:
-        logger.info(
-            "pipelines.auto_apply_skipped_existing",
-            job_posting_id=str(job.id),
-        )
-        return None
-
-    # Resolution 1: last-used template in this org unit
-    last_used = await db.execute(
-        select(JobPipelineInstance.source_template_id)
-        .join(JobPosting, JobPipelineInstance.job_posting_id == JobPosting.id)
-        .where(
-            and_(
-                JobPosting.org_unit_id == job.org_unit_id,
-                JobPipelineInstance.source_template_id.isnot(None),
-            )
-        )
-        .order_by(desc(JobPipelineInstance.created_at))
-        .limit(1)
-    )
-    last_template_id = last_used.scalar_one_or_none()
-    if last_template_id is not None:
-        tpl_check = await db.execute(
-            select(PipelineTemplate).where(PipelineTemplate.id == last_template_id)
-        )
-        if tpl_check.scalar_one_or_none() is not None:
-            logger.info(
-                "pipelines.auto_apply_using_last_used",
-                job_posting_id=str(job.id),
-                template_id=str(last_template_id),
-            )
-            return await create_job_pipeline_from_template(
-                db, job=job, template_id=last_template_id
-            )
-
-    # Resolution 2: org unit default
-    default_result = await db.execute(
-        select(PipelineTemplate).where(
-            and_(
-                PipelineTemplate.org_unit_id == job.org_unit_id,
-                PipelineTemplate.is_default == True,
-            )
-        )
-    )
-    default_tpl = default_result.scalar_one_or_none()
-    if default_tpl is not None:
-        logger.info(
-            "pipelines.auto_apply_using_org_default",
-            job_posting_id=str(job.id),
-            template_id=str(default_tpl.id),
-        )
-        return await create_job_pipeline_from_template(
-            db, job=job, template_id=default_tpl.id
-        )
-
-    # Resolution 3: system fallback starter
-    logger.info(
-        "pipelines.auto_apply_using_system_fallback",
-        job_posting_id=str(job.id),
-        starter_key=SYSTEM_FALLBACK_STARTER,
-    )
-    return await create_job_pipeline_from_starter(
-        db, job=job, starter_key=SYSTEM_FALLBACK_STARTER
-    )
 
 
 # ---------------------------------------------------------------------------

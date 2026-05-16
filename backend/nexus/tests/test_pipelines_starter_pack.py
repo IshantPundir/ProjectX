@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.modules.pipelines.starter_pack import STARTER_TEMPLATES, SYSTEM_FALLBACK_STARTER
+from app.modules.pipelines.starter_pack import STARTER_TEMPLATES
 
 
 EXPECTED_KEYS = {
@@ -17,10 +17,6 @@ EXPECTED_KEYS = {
 
 def test_starter_pack_has_six_templates():
     assert set(STARTER_TEMPLATES.keys()) == EXPECTED_KEYS
-
-
-def test_system_fallback_is_in_pack():
-    assert SYSTEM_FALLBACK_STARTER in STARTER_TEMPLATES
 
 
 def test_every_template_has_required_fields():
