@@ -1102,8 +1102,11 @@ async def _handle_entrypoint_failure(
       3. Best-effort publish session_outcome='error' to the LK room.
 
     DB transition is first so the candidate's HTTP fallback poll wins
-    even if the room/attribute publish fails. The caller re-raises so
-    LiveKit's existing crash signal is preserved.
+    even if the room/attribute publish fails. Each step is independently
+    guarded — a DB failure does NOT short-circuit the attribute publish,
+    and neither one re-raises (the caller already preserves the original
+    exception via bare `raise` after this returns). Mirrors the
+    `_handle_close` resilience pattern.
     """
     error_code = classify_engine_exception(exc)
     log.error(
@@ -1113,16 +1116,23 @@ async def _handle_entrypoint_failure(
         error=str(exc),
     )
 
-    async with get_bypass_session() as db:
-        await transition_to_error(
-            db,
-            session_id=session_id,
-            tenant_id=tenant_uuid,
-            error_code=error_code,
-            correlation_id=correlation_id,
-            reason="engine_entrypoint",
+    try:
+        async with get_bypass_session() as db:
+            await transition_to_error(
+                db,
+                session_id=session_id,
+                tenant_id=tenant_uuid,
+                error_code=error_code,
+                correlation_id=correlation_id,
+                reason="engine_entrypoint",
+            )
+            await db.commit()
+    except Exception as inner:  # noqa: BLE001
+        log.error(
+            "engine.entrypoint.db_transition_failed",
+            error=str(inner),
+            error_type=type(inner).__name__,
         )
-        await db.commit()
 
     await _best_effort_publish_outcome_attribute(ctx)
 
