@@ -29,6 +29,7 @@ from app.modules.notifications import render_template, send_email
 from app.modules.session.models import Session as SessionRow
 from app.modules.session import service as session_service
 from app.modules.session.schemas import (
+    CandidateSessionStateResponse,
     ConsentRequest,
     PreCheckResponse,
     SessionDetailResponse,
@@ -209,6 +210,38 @@ async def post_rejoin_endpoint(
     return await session_service.rejoin_session(
         db, session_id=_candidate_session_id(request),
     )
+
+
+@candidate_session_router.get(
+    "/state",
+    response_model=CandidateSessionStateResponse,
+)
+async def get_candidate_session_state_endpoint(
+    request: Request,
+    token: str,  # consumed by middleware — declared so FastAPI routes correctly
+    db: AsyncSession = Depends(get_tenant_db),
+) -> CandidateSessionStateResponse:
+    """Minimal state read for the candidate's fallback poll.
+
+    Auth: candidate JWT in path (verified by middleware). Tenant-scoped
+    via the verified token's claims. Returns state + error_code only —
+    no transcript, no questions, no PII.
+    """
+    session_id = _candidate_session_id(request)
+    tenant_id = request.state.candidate_token_payload.tenant_id
+    row = (
+        await db.execute(
+            select(SessionRow).where(
+                SessionRow.id == session_id,
+                SessionRow.tenant_id == tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        # Same opacity as build_session_config — cross-tenant token
+        # sees the same 404 as a never-existed session.
+        raise HTTPException(status_code=404, detail="session_not_found")
+    return CandidateSessionStateResponse.model_validate(row)
 
 
 # --- Recruiter-side read endpoints ------------------------------------------

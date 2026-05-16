@@ -113,3 +113,18 @@ class SessionListPage(BaseModel):
     total: int
     offset: int
     limit: int
+
+
+class CandidateSessionStateResponse(BaseModel):
+    """Minimal state snapshot for the candidate's fallback poll.
+
+    Returned by GET /api/candidate-session/{token}/state. No PII —
+    only the state machine value, the error_code (when state='error'),
+    and the timestamp of the last state change. Used by frontend/session's
+    useSessionStateFallback hook to surface engine failures when the
+    LK room attribute path can't (pre-room-connect crashes).
+    """
+    model_config = ConfigDict(from_attributes=True)
+    state: SessionState
+    error_code: str | None
+    state_changed_at: datetime
