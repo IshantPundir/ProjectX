@@ -20,6 +20,10 @@ dependencies = [
     # Task queue
     "dramatiq[redis]>=1.18,<2",
 
+    # Scheduler (stuck-session reaper). Pin to 3.x — 4.x is a major rewrite
+    # still in beta and has breaking API changes.
+    "apscheduler>=3.10,<4",
+
     # Redis (session state, cache)
     "redis>=5.3,<6",
 

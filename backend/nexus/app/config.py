@@ -316,6 +316,14 @@ class Settings(BaseSettings):
     engine_log_audio_events: bool = True
     engine_log_user_transcripts: bool = False
 
+    # Stuck-session reaper. Sweeps state='active' sessions whose
+    # state_changed_at is older than reaper_stuck_threshold_seconds and
+    # transitions them to state='error' with error_code='engine_unresponsive'.
+    # Disabled by setting reaper_enabled=false (tests do this).
+    reaper_enabled: bool = True
+    reaper_interval_seconds: int = 300   # how often the scheduler ticks
+    reaper_stuck_threshold_seconds: int = 900  # 15 min — typical AI screen is 30 min
+
     # Phase 2 (engine redesign — controller cutover) — idle-nudge timing.
     # 30/30/30 chosen to balance against thinking pauses on hard technical
     # questions while still detecting a candidate who walked away within
