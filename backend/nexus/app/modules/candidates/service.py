@@ -546,11 +546,15 @@ async def get_kanban_board(
         )).scalars().all()
         candidates_by_id = {c.id: c for c in rows}
 
-    # Phase 3C: resolve latest_session_state per assignment in one extra query.
-    # Subquery gets MAX(created_at) per assignment_id; outer join retrieves the
-    # matching state column. Keeps the kanban constant-query-count budget intact.
+    # Resolve the latest session state + error_code per assignment in one
+    # extra query. Subquery gets MAX(created_at) per assignment_id; outer
+    # join retrieves the matching state + error_code columns.
+    #
+    # 'Latest' is the latest session for the assignment overall — even
+    # if the candidate has moved past the failed stage, the historical
+    # error is still useful context for the recruiter's kanban card.
     assignment_ids = {a.id for a in assignments}
-    latest_state_by_assignment: dict[UUID, str] = {}
+    latest_session_by_assignment: dict[UUID, tuple[str, str | None]] = {}
     if assignment_ids:
         max_created = (
             select(
@@ -562,7 +566,7 @@ async def get_kanban_board(
             .subquery()
         )
         rows = (await db.execute(
-            select(Session.assignment_id, Session.state)
+            select(Session.assignment_id, Session.state, Session.error_code)
             .join(
                 max_created,
                 and_(
@@ -571,7 +575,9 @@ async def get_kanban_board(
                 ),
             )
         )).all()
-        latest_state_by_assignment = {aid: state for aid, state in rows}
+        latest_session_by_assignment = {
+            aid: (state, error_code) for aid, state, error_code in rows
+        }
 
     cards_by_stage: dict[UUID, list[KanbanCandidateCard]] = {}
     for a in assignments:
@@ -586,7 +592,12 @@ async def get_kanban_board(
                 email=c.email,
                 status=a.status,
                 current_stage_id=a.current_stage_id,
-                latest_session_state=latest_state_by_assignment.get(a.id),
+                latest_session_state=(
+                    latest_session_by_assignment.get(a.id, (None, None))[0]
+                ),
+                latest_session_error_code=(
+                    latest_session_by_assignment.get(a.id, (None, None))[1]
+                ),
                 candidate_source=c.source,
                 assignment_source=a.source,
                 assignment_source_metadata=a.source_metadata,

@@ -160,6 +160,7 @@ class KanbanCandidateCard(BaseModel):
     status: AssignmentStatus
     current_stage_id: UUID
     latest_session_state: str | None = None  # populated in Phase 3C
+    latest_session_error_code: str | None = None  # populated when latest_session_state == 'error'
     # Provenance — surfaced so the kanban card can render an "Imported
     # from ceipal" chip alongside the candidate name. 'manual' by
     # default; 'ats_<vendor>' for ATS-importer-created assignments.
