@@ -263,18 +263,26 @@ async def _run_entrypoint(
     """The body of the per-session entrypoint.
 
     Extracted from `entrypoint()` so Phase 2.2 can wrap the call site
-    with a try/except. Pure code motion — no behavior change inside.
+    with a try/except. The decorator-level @server.rtc_session is kept
+    thin so the failure handler's blanket-except sits in its own clearly-
+    named function rather than inline under the LiveKit decorator.
+    Pure code motion — no behavior change inside.
+
+    Caller (entrypoint) must have already called
+    structlog.contextvars.bind_contextvars() — this helper relies on
+    the bound context for every log line below.
     """
     # Re-establish the string forms that the existing inline code uses
     # (session_id, tenant_id_str). This avoids having to rename every
-    # internal reference.
+    # internal reference. session_uuid / tenant_uuid (typed) remain in
+    # scope and are preferred for any call that accepts uuid.UUID.
     session_id = str(session_uuid)
     tenant_id_str = str(tenant_uuid)
 
     async with get_bypass_session() as db:
         session_config = await build_session_config(
             db,
-            session_id=uuid.UUID(session_id),
+            session_id=session_uuid,
             tenant_id=tenant_uuid,
         )
         tenant_settings = await get_tenant_settings(db, tenant_uuid)
