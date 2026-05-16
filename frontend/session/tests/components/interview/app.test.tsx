@@ -7,6 +7,14 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
+// useSessionStateFallback now fires unconditionally inside
+// OutcomePrecedenceController (added in Task 5.5). Mock it to return null so
+// the real polling hook doesn't fire setTimeout side-effects during these
+// smoke tests.
+vi.mock('@/components/interview/app/hooks/use-session-state-fallback', () => ({
+  useSessionStateFallback: vi.fn().mockReturnValue(null),
+}))
+
 vi.mock('@livekit/components-react', () => ({
   useSession: () => ({
     start: vi.fn(),
