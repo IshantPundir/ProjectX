@@ -32,7 +32,7 @@ os.environ["DB_RUNTIME_ROLE"] = ""
 
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -43,6 +43,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from app.database import Base
 from app.main import app
 from app.modules.auth.models import User
+from app.modules.auth.service import create_candidate_token
 from app.modules.candidates.models import (
     Candidate,
     CandidateJobAssignment,
@@ -56,7 +57,7 @@ from app.modules.pipelines.models import (
     JobPipelineInstance,
     JobPipelineStage,
 )
-from app.modules.session.models import Session as SessionRow
+from app.modules.session.models import CandidateSessionToken, Session as SessionRow
 
 # Default targets host.docker.internal so that `docker compose run --rm nexus pytest`
 # Just Works without an env var override. The host alias is provided by the
@@ -375,3 +376,41 @@ async def seed_minimal_session(
     await db.flush()
 
     return session, tenant.id
+
+
+async def mint_candidate_session_token(
+    db: AsyncSession,
+    *,
+    session_id: uuid.UUID,
+    tenant_id: uuid.UUID,
+    superseded: bool = False,
+) -> str:
+    """Insert a CandidateSessionToken row and return the signed JWT string.
+
+    Shared by any test that needs a valid candidate JWT for an HTTP endpoint
+    protected by the candidate-token middleware. The row is flushed (not
+    committed) so it participates in the test's rollback-isolated transaction.
+
+    The `superseded` flag lets callers simulate a revoked/resent token — the
+    middleware will reject it with 401 TOKEN_SUPERSEDED.
+    """
+    jti = uuid.uuid4()
+    expires = datetime.now(UTC) + timedelta(days=7)
+    token_row = CandidateSessionToken(
+        jti=jti,
+        tenant_id=tenant_id,
+        session_id=session_id,
+        expires_at=expires,
+        superseded_at=datetime.now(UTC) if superseded else None,
+    )
+    db.add(token_row)
+    await db.flush()
+
+    # candidate_id is not enforced as FK on this table — any UUID works.
+    token_str, _exp = create_candidate_token(
+        jti=jti,
+        candidate_id=uuid.uuid4(),
+        session_id=session_id,
+        tenant_id=tenant_id,
+    )
+    return token_str
