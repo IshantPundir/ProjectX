@@ -55,6 +55,12 @@ export interface StartSessionResponse {
   audio_processing_hints: AudioProcessingHints
 }
 
+export interface CandidateSessionState {
+  state: SessionState
+  error_code: string | null
+  state_changed_at: string // ISO-8601
+}
+
 export interface CandidateSessionError extends Error {
   status: number
   code?: string
@@ -123,5 +129,16 @@ export const candidateSessionApi = {
     _call<StartSessionResponse>(
       'POST',
       `/api/candidate-session/${token}/rejoin`,
+    ),
+  /**
+   * Minimal state snapshot for the post-/start fallback poll. Used by
+   * useSessionStateFallback to surface engine failures that crashed
+   * before publishing the session_outcome LK room attribute (pre-room-
+   * connect crashes).
+   */
+  getState: (token: string) =>
+    _call<CandidateSessionState>(
+      'GET',
+      `/api/candidate-session/${token}/state`,
     ),
 }
