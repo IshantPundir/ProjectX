@@ -238,17 +238,38 @@ async def entrypoint(ctx: JobContext) -> None:
     """Per-session entrypoint."""
     metadata = json.loads(ctx.job.metadata or "{}")
 
-    session_id = metadata["session_id"]
+    session_id_str = metadata["session_id"]
     tenant_id_str = metadata["tenant_id"]
-    correlation_id = metadata.get("correlation_id", session_id)
+    correlation_id = metadata.get("correlation_id", session_id_str)
+    session_uuid = uuid.UUID(session_id_str)
     tenant_uuid = uuid.UUID(tenant_id_str)
 
     structlog.contextvars.bind_contextvars(
-        session_id=session_id,
+        session_id=session_id_str,
         tenant_id=tenant_id_str,
         correlation_id=correlation_id,
     )
     log.info("engine.dispatch.received", agent_name=settings.engine_agent_name)
+
+    await _run_entrypoint(ctx, session_uuid, tenant_uuid, correlation_id)
+
+
+async def _run_entrypoint(
+    ctx: JobContext,
+    session_uuid: uuid.UUID,
+    tenant_uuid: uuid.UUID,
+    correlation_id: str,
+) -> None:
+    """The body of the per-session entrypoint.
+
+    Extracted from `entrypoint()` so Phase 2.2 can wrap the call site
+    with a try/except. Pure code motion — no behavior change inside.
+    """
+    # Re-establish the string forms that the existing inline code uses
+    # (session_id, tenant_id_str). This avoids having to rename every
+    # internal reference.
+    session_id = str(session_uuid)
+    tenant_id_str = str(tenant_uuid)
 
     async with get_bypass_session() as db:
         session_config = await build_session_config(
