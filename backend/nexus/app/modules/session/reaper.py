@@ -70,7 +70,12 @@ async def run_stuck_session_reaper() -> None:
                     transitioned += 1
             await db.commit()
 
-            log.info(
+            # Log at INFO when work happened, DEBUG on idle ticks. At a
+            # 5-min interval, idle-tick INFO would be ~288 lines/day per
+            # replica of pure noise — the no-op case isn't worth filtering
+            # downstream.
+            log_fn = log.info if stuck else log.debug
+            log_fn(
                 "reaper.tick",
                 stuck_found=len(stuck),
                 transitioned=transitioned,
