@@ -553,3 +553,456 @@ def _patch_orch_session(monkeypatch, orch_mod, test_db):
     )
     # The orchestrator's _is_job_quarantined opens its own session — same
     # patch covers it because _open_db is the single seam.
+
+
+# ─────────────── _upsert_assignment — identity + idempotency ────────────────
+#
+# These tests cover the bugfix where _upsert_assignment used to look up
+# existing rows by (tenant, source, external_id) — which is provenance
+# metadata, not identity. The DB unique constraint is on (candidate, job),
+# so a recruiter who manually assigned a candidate to a job, or a re-sync
+# of an existing ATS submission with a different external_id, would slip
+# past the lookup and crash on UniqueViolationError.
+
+
+async def _seed_job_with_pipeline(
+    db, *, tenant_id: uuid.UUID, root_unit_id: uuid.UUID, actor_id: uuid.UUID,
+    title: str = "Test Role",
+) -> tuple[uuid.UUID, uuid.UUID]:
+    """Create a job + its bookend pipeline. Returns (job_id, first_stage_id)."""
+    job_id = uuid.uuid4()
+    instance_id = uuid.uuid4()
+    stage_id = uuid.uuid4()
+    debrief_id = uuid.uuid4()
+    await db.execute(
+        text(
+            "INSERT INTO job_postings "
+            "(id, tenant_id, org_unit_id, title, description_raw, status, "
+            " source, created_by) "
+            "VALUES (:j, :t, :o, :title, '...', 'active', 'manual', :u)"
+        ),
+        {"j": job_id, "t": tenant_id, "o": root_unit_id, "title": title,
+         "u": actor_id},
+    )
+    await db.execute(
+        text(
+            "INSERT INTO job_pipeline_instances "
+            "(id, tenant_id, job_posting_id, pipeline_version) "
+            "VALUES (:i, :t, :j, 1)"
+        ),
+        {"i": instance_id, "t": tenant_id, "j": job_id},
+    )
+    await db.execute(
+        text(
+            "INSERT INTO job_pipeline_stages "
+            "(id, tenant_id, instance_id, position, name, stage_type, "
+            " advance_behavior, otp_required_default) "
+            "VALUES (:s, :t, :i, 0, 'Intake', 'intake', 'auto_advance', false)"
+        ),
+        {"s": stage_id, "t": tenant_id, "i": instance_id},
+    )
+    await db.execute(
+        text(
+            "INSERT INTO job_pipeline_stages "
+            "(id, tenant_id, instance_id, position, name, stage_type, "
+            " advance_behavior, otp_required_default) "
+            "VALUES (:s, :t, :i, 1, 'Debrief', 'debrief', 'manual_review', "
+            "false)"
+        ),
+        {"s": debrief_id, "t": tenant_id, "i": instance_id},
+    )
+    await db.flush()
+    return job_id, stage_id
+
+
+async def _seed_candidate(
+    db, *, tenant_id: uuid.UUID, created_by: uuid.UUID,
+    email: str = "cand@acme.com",
+) -> uuid.UUID:
+    cand_id = uuid.uuid4()
+    await db.execute(
+        text(
+            "INSERT INTO candidates "
+            "(id, tenant_id, name, email, source, created_by) "
+            "VALUES (:c, :t, 'C', :e, 'manual', :u)"
+        ),
+        {"c": cand_id, "t": tenant_id, "e": email, "u": created_by},
+    )
+    await db.flush()
+    return cand_id
+
+
+def _submission(
+    *, external_id: str = "SUB-1",
+    job_external_id: str = "J-1",
+    external_status: str = "Submitted",
+    pipeline_status: str | None = None,
+) -> ATSSubmissionPayload:
+    now = datetime.now(tz=UTC)
+    return ATSSubmissionPayload(
+        external_id=external_id,
+        job_external_id=job_external_id,
+        applicant_external_id="A-1",
+        external_status=external_status,
+        pipeline_status=pipeline_status,
+        external_submitted_at=now,
+        external_modified_at=now,
+        raw={"id": external_id, "submission_status": external_status},
+    )
+
+
+@pytest.mark.asyncio
+async def test_upsert_assignment_creates_new_with_ats_source(
+    db, seeded, monkeypatch,
+):
+    """No existing (candidate, job) row → INSERT with source='ats_ceipal'."""
+    from app.modules.jd.models import JobPosting
+    from app.modules.ats import orchestrator as orch_mod
+    _patch_orch_session(monkeypatch, orch_mod, db)
+
+    tenant_id = seeded["tenant_id"]
+    actor_id = seeded["actor_user_id"]
+    job_id, _stage_id = await _seed_job_with_pipeline(
+        db, tenant_id=tenant_id, root_unit_id=seeded["root_unit_id"],
+        actor_id=actor_id,
+    )
+    cand_id = await _seed_candidate(db, tenant_id=tenant_id, created_by=actor_id)
+    job = await db.get(JobPosting, job_id)
+
+    state = _state(tenant_id)
+    adapter = FakeAdapter(state)
+    orch = _make_orch(adapter, tenant_id, actor_id)
+
+    sub = _submission(external_id="ZZ-NEW", external_status="Submitted")
+    diff = await orch._upsert_assignment(
+        db, sub, candidate_id=cand_id, job=job,
+    )
+
+    assert diff.kind == "created"
+    assert diff.assignment.source == "ats_ceipal"
+    assert diff.assignment.external_id == "ZZ-NEW"
+    assert diff.assignment.external_status == "Submitted"
+    assert diff.assignment.candidate_id == cand_id
+    assert diff.assignment.job_posting_id == job_id
+
+
+@pytest.mark.asyncio
+async def test_upsert_assignment_claims_manual_row_preserving_provenance(
+    db, seeded, monkeypatch,
+):
+    """A recruiter manually assigned candidate→job; later ATS sync brings
+    a submission for the same pair. Upsert must:
+
+    - Find the existing row via (tenant, candidate, job) — NOT
+      (tenant, source, external_id), which is the bug we fixed.
+    - Update external_id / external_status / external_pipeline_status /
+      external_last_modified_at / source_metadata to claim the ATS link.
+    - Preserve provenance: source stays 'manual', assigned_by/current_stage
+      untouched.
+    - Return kind='updated' with external_id in changed_fields and a
+      status_transition reflecting NULL → 'Submitted'.
+
+    Repro for the original bug: lookup-by-provenance missed this row,
+    INSERT branch crashed on candidate_job_assignments_unique_candidate_job.
+    """
+    from app.modules.jd.models import JobPosting
+    from app.modules.ats import orchestrator as orch_mod
+    _patch_orch_session(monkeypatch, orch_mod, db)
+
+    tenant_id = seeded["tenant_id"]
+    actor_id = seeded["actor_user_id"]
+    job_id, stage_id = await _seed_job_with_pipeline(
+        db, tenant_id=tenant_id, root_unit_id=seeded["root_unit_id"],
+        actor_id=actor_id,
+    )
+    cand_id = await _seed_candidate(db, tenant_id=tenant_id, created_by=actor_id)
+
+    # Manual assignment — source='manual', external_id NULL.
+    manual_assignment_id = uuid.uuid4()
+    await db.execute(
+        text(
+            "INSERT INTO candidate_job_assignments "
+            "(id, tenant_id, candidate_id, job_posting_id, source, "
+            " current_stage_id, status, assigned_by) "
+            "VALUES (:a, :t, :c, :j, 'manual', :s, 'active', :u)"
+        ),
+        {"a": manual_assignment_id, "t": tenant_id, "c": cand_id,
+         "j": job_id, "s": stage_id, "u": actor_id},
+    )
+    await db.flush()
+
+    job = await db.get(JobPosting, job_id)
+    state = _state(tenant_id)
+    orch = _make_orch(FakeAdapter(state), tenant_id, actor_id)
+
+    sub = _submission(
+        external_id="ATS-CLAIM-1",
+        external_status="Submitted",
+        pipeline_status="L1 In-Process",
+    )
+    diff = await orch._upsert_assignment(
+        db, sub, candidate_id=cand_id, job=job,
+    )
+
+    assert diff.kind == "updated"
+    assert diff.assignment.id == manual_assignment_id
+    # Provenance preserved.
+    assert diff.assignment.source == "manual"
+    assert diff.assignment.assigned_by == actor_id
+    assert diff.assignment.current_stage_id == stage_id
+    # ATS metadata populated.
+    assert diff.assignment.external_id == "ATS-CLAIM-1"
+    assert diff.assignment.external_status == "Submitted"
+    assert diff.assignment.external_pipeline_status == "L1 In-Process"
+    # Diff captures the new fields.
+    assert "external_id" in diff.changed_fields
+    assert "external_status" in diff.changed_fields
+    assert "external_pipeline_status" in diff.changed_fields
+    assert diff.status_transition == (None, "Submitted")
+
+
+@pytest.mark.asyncio
+async def test_upsert_assignment_idempotent_resync(db, seeded, monkeypatch):
+    """Re-syncing the same submission with no field changes → unchanged.
+
+    Regression: the original orchestrator would also crash if Ceipal
+    re-issued the same submission ID and the row already existed under a
+    prior (source, external_id) lookup miss.
+    """
+    from app.modules.jd.models import JobPosting
+    from app.modules.ats import orchestrator as orch_mod
+    _patch_orch_session(monkeypatch, orch_mod, db)
+
+    tenant_id = seeded["tenant_id"]
+    actor_id = seeded["actor_user_id"]
+    job_id, _stage_id = await _seed_job_with_pipeline(
+        db, tenant_id=tenant_id, root_unit_id=seeded["root_unit_id"],
+        actor_id=actor_id,
+    )
+    cand_id = await _seed_candidate(db, tenant_id=tenant_id, created_by=actor_id)
+    job = await db.get(JobPosting, job_id)
+    orch = _make_orch(
+        FakeAdapter(_state(tenant_id)), tenant_id, actor_id,
+    )
+
+    sub = _submission(external_id="SUB-IDEM", external_status="Submitted")
+
+    first = await orch._upsert_assignment(
+        db, sub, candidate_id=cand_id, job=job,
+    )
+    assert first.kind == "created"
+
+    second = await orch._upsert_assignment(
+        db, sub, candidate_id=cand_id, job=job,
+    )
+    assert second.kind == "unchanged"
+    assert second.assignment.id == first.assignment.id
+
+
+@pytest.mark.asyncio
+async def test_upsert_assignment_resync_with_changed_external_id(
+    db, seeded, monkeypatch,
+):
+    """Re-sync where Ceipal re-issued the submission ID for the same
+    (candidate, job) pair. Old code would miss the existing row in the
+    (tenant, source, external_id) lookup and crash on the UNIQUE
+    (candidate, job) constraint. New code finds it by canonical identity
+    and updates external_id in place.
+    """
+    from app.modules.jd.models import JobPosting
+    from app.modules.ats import orchestrator as orch_mod
+    _patch_orch_session(monkeypatch, orch_mod, db)
+
+    tenant_id = seeded["tenant_id"]
+    actor_id = seeded["actor_user_id"]
+    job_id, _stage_id = await _seed_job_with_pipeline(
+        db, tenant_id=tenant_id, root_unit_id=seeded["root_unit_id"],
+        actor_id=actor_id,
+    )
+    cand_id = await _seed_candidate(db, tenant_id=tenant_id, created_by=actor_id)
+    job = await db.get(JobPosting, job_id)
+    orch = _make_orch(
+        FakeAdapter(_state(tenant_id)), tenant_id, actor_id,
+    )
+
+    first = await orch._upsert_assignment(
+        db,
+        _submission(external_id="OLD-ID", external_status="Submitted"),
+        candidate_id=cand_id, job=job,
+    )
+    assert first.kind == "created"
+
+    diff = await orch._upsert_assignment(
+        db,
+        _submission(external_id="NEW-ID", external_status="Submitted"),
+        candidate_id=cand_id, job=job,
+    )
+    assert diff.kind == "updated"
+    assert diff.assignment.external_id == "NEW-ID"
+    assert "external_id" in diff.changed_fields
+    # Status did not change — no transition recorded.
+    assert diff.status_transition is None
+
+
+# ──────────── trigger_manual_sync — stranded-row recovery ────────────
+#
+# Recovers the system after a worker crash that left an ats_sync_logs
+# row in status='running' without a live actor holding the advisory
+# lock. Pre-fix, the in-flight pre-check raised 409 unconditionally,
+# making this state unrecoverable from the UI.
+
+
+async def _seed_ats_connection(
+    db, *, tenant_id: uuid.UUID, created_by: uuid.UUID,
+) -> uuid.UUID:
+    """Insert a minimal active ATSConnection row."""
+    conn_id = uuid.uuid4()
+    await db.execute(
+        text(
+            "INSERT INTO ats_connections "
+            "(id, tenant_id, vendor, credentials_ciphertext, active, "
+            " job_status_filter, created_by) "
+            "VALUES (:c, :t, 'ats_ceipal', :blob, true, "
+            " '{\"ids\": [1], \"names\": [\"Active\"]}'::jsonb, :u)"
+        ),
+        {"c": conn_id, "t": tenant_id, "blob": b"x", "u": created_by},
+    )
+    await db.flush()
+    return conn_id
+
+
+async def _seed_running_sync_log(
+    db, *, tenant_id: uuid.UUID, connection_id: uuid.UUID,
+) -> uuid.UUID:
+    """Insert a fake stranded ats_sync_logs row (status='running')."""
+    log_id = uuid.uuid4()
+    await db.execute(
+        text(
+            "INSERT INTO ats_sync_logs "
+            "(id, tenant_id, connection_id, status, started_at, "
+            " correlation_id) "
+            "VALUES (:l, :t, :c, 'running', now(), :corr)"
+        ),
+        {"l": log_id, "t": tenant_id, "c": connection_id,
+         "corr": f"corr-{log_id}"},
+    )
+    await db.flush()
+    return log_id
+
+
+@pytest.mark.asyncio
+async def test_trigger_cleans_stranded_running_row_and_enqueues(
+    db, seeded, monkeypatch,
+):
+    """A 'running' sync_log with no actor holding the advisory lock is
+    stranded from a dead worker. trigger_manual_sync must mark it
+    failed (so the polling dialog can flip out of "Syncing…") and
+    enqueue the new sync, NOT raise SyncAlreadyRunningError.
+
+    Without this, one crashed worker permanently bricks the
+    connection's sync — every subsequent trigger 409s.
+    """
+    from app.modules.ats import service as ats_service
+
+    tenant_id = seeded["tenant_id"]
+    actor_id = seeded["actor_user_id"]
+    conn_id = await _seed_ats_connection(
+        db, tenant_id=tenant_id, created_by=actor_id,
+    )
+    stranded_id = await _seed_running_sync_log(
+        db, tenant_id=tenant_id, connection_id=conn_id,
+    )
+
+    sent_args: list[tuple] = []
+
+    class _FakeActor:
+        @staticmethod
+        def send(*args, **kwargs):
+            sent_args.append((args, kwargs))
+
+    monkeypatch.setattr(
+        "app.modules.ats.actors.poll_ats_connection", _FakeActor,
+    )
+
+    await ats_service.trigger_manual_sync(
+        db, connection_id=conn_id, tenant_id=tenant_id, actor_id=actor_id,
+    )
+
+    # Stranded row finalized.
+    row = (await db.execute(
+        text(
+            "SELECT status, error_phase FROM ats_sync_logs WHERE id = :i"
+        ).bindparams(i=stranded_id),
+    )).one()
+    assert row.status == "failed"
+    assert row.error_phase == "abandoned"
+
+    # New sync actually enqueued.
+    assert len(sent_args) == 1
+    assert sent_args[0][0] == (str(conn_id), str(tenant_id), str(actor_id))
+
+
+@pytest.mark.asyncio
+async def test_trigger_rejects_when_actor_holds_advisory_lock(
+    db, seeded, monkeypatch,
+):
+    """When another session (the live actor) holds the per-connection
+    advisory lock, trigger_manual_sync must raise SyncAlreadyRunningError
+    — the row is NOT stranded; an actor is genuinely processing.
+
+    Simulated by acquiring the lock on a second connection from the
+    same pool before calling trigger_manual_sync. The probe in trigger
+    uses pg_try_advisory_xact_lock, which respects locks held by any
+    other session.
+    """
+    # Use the test engine (not app.database.engine) so the holder
+    # connection lives in the same Postgres database as the test
+    # session — advisory locks are per-database, not cluster-wide.
+    from tests.conftest import test_engine
+    from app.modules.ats import service as ats_service
+    from app.modules.ats.actors import _advisory_lock_key
+    from app.modules.ats.service import SyncAlreadyRunningError
+
+    tenant_id = seeded["tenant_id"]
+    actor_id = seeded["actor_user_id"]
+    conn_id = await _seed_ats_connection(
+        db, tenant_id=tenant_id, created_by=actor_id,
+    )
+    await _seed_running_sync_log(
+        db, tenant_id=tenant_id, connection_id=conn_id,
+    )
+
+    # Patch the actor send so a stray enqueue (would indicate the
+    # function didn't raise as expected) fails the test loudly.
+    def _should_not_enqueue(*a, **kw):
+        raise AssertionError(
+            "trigger_manual_sync enqueued a sync while another actor "
+            "supposedly held the lock — pre-check is broken",
+        )
+
+    class _FakeActor:
+        send = staticmethod(_should_not_enqueue)
+
+    monkeypatch.setattr(
+        "app.modules.ats.actors.poll_ats_connection", _FakeActor,
+    )
+
+    # Hold the advisory lock on a *separate* connection. We use
+    # pg_advisory_lock (session-scoped) so it survives until we
+    # explicitly release.
+    lock_key = _advisory_lock_key(conn_id)
+    holder = await test_engine.connect()
+    try:
+        await holder.execute(
+            text("SELECT pg_advisory_lock(:k)").bindparams(k=lock_key),
+        )
+        with pytest.raises(SyncAlreadyRunningError):
+            await ats_service.trigger_manual_sync(
+                db, connection_id=conn_id, tenant_id=tenant_id,
+                actor_id=actor_id,
+            )
+    finally:
+        await holder.execute(
+            text("SELECT pg_advisory_unlock(:k)").bindparams(k=lock_key),
+        )
+        await holder.close()

@@ -367,6 +367,19 @@ export default function JobsListPage() {
   })
   const latestLog = syncLogsQuery.data?.[0]
   const isSyncRunning = latestLog?.status === 'running'
+  // A sync log stuck in `running` for longer than this is almost
+  // certainly stranded from a worker that died mid-sync (SIGKILL, OOM,
+  // unhandled exception before the catch-all landed). Treat it as
+  // re-triggerable so the user is never locked out by a dead worker;
+  // the backend's trigger pre-check confirms-via-advisory-lock and
+  // cleans the stale row up before enqueueing a fresh sync. A
+  // legitimate large-tenant sync should finish well under this.
+  const SYNC_STALE_AFTER_MS = 10 * 60 * 1000
+  const isSyncStuck =
+    isSyncRunning
+    && latestLog
+    && Date.now() - new Date(latestLog.started_at).getTime() > SYNC_STALE_AFTER_MS
+  const canTriggerSync = !isSyncRunning || isSyncStuck
   // The new orchestrator (spec 2026-05-14) writes a flat counter map into
   // `entity_counts` only at completion, and leaves `progress` empty
   // during a run — there's no mid-sync denominator anymore. We keep this
@@ -558,10 +571,20 @@ export default function JobsListPage() {
           <button
             type="button"
             onClick={() => setSyncDialogOpen(true)}
-            disabled={isSyncRunning}
+            disabled={!canTriggerSync}
             className="px-btn outline sm"
+            title={
+              isSyncStuck
+                ? 'Previous sync appears stuck. Click to re-trigger; '
+                  + 'the backend will reclaim it if no worker is alive.'
+                : undefined
+            }
           >
-            {isSyncRunning ? 'Syncing…' : 'Sync jobs from ATS'}
+            {isSyncStuck
+              ? 'Re-trigger sync'
+              : isSyncRunning
+                ? 'Syncing…'
+                : 'Sync jobs from ATS'}
           </button>
         )}
 

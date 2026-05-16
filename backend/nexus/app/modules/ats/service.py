@@ -272,21 +272,76 @@ async def trigger_manual_sync(
             "No job statuses selected — configure the filter first",
         )
 
-    # Check for an in-flight sync on this connection. The orchestrator's
-    # advisory lock is the authoritative concurrency guard; this pre-check
-    # surfaces a friendly 409 before we even enqueue. The advisory lock
-    # backstops it for the race window between this query and Dramatiq
-    # picking up the message.
-    from sqlalchemy import select
+    # Check for an in-flight sync on this connection.
+    #
+    # A row with status='running' has two possible interpretations:
+    #   (a) An actor is genuinely processing the sync right now.
+    #   (b) An actor died mid-sync (SIGKILL, OOM, container restart,
+    #       unhandled exception before the Phase-C catch-all landed) and
+    #       the row is stranded — nothing will ever finalize it.
+    #
+    # The orchestrator's per-connection session-scoped advisory lock
+    # (acquired inside actors._do_poll Phase C and released only when
+    # the session ends) distinguishes them: if no actor holds the lock,
+    # there is no live sync — any 'running' row is stranded.
+    #
+    # We probe with pg_try_advisory_xact_lock so the probe lock is
+    # auto-released at COMMIT and does not interfere with the new actor
+    # we are about to enqueue. Locks share the same key namespace
+    # regardless of scope, so this correctly detects either a
+    # transaction-scoped or session-scoped holder.
+    #
+    # When the lock is free, we mark the stranded row 'failed' in place
+    # — this gives the recruiter's polling dialog an immediate exit
+    # from "Syncing…" and avoids deadlocking the whole sync system on
+    # one dead actor.
+    from sqlalchemy import func, select, text, update as sql_update
 
-    in_flight = await db.execute(
+    in_flight_id = (await db.execute(
         select(ATSSyncLog.id)
         .where(ATSSyncLog.connection_id == connection_id)
         .where(ATSSyncLog.status == "running")
         .limit(1),
-    )
-    if in_flight.scalar_one_or_none() is not None:
-        raise SyncAlreadyRunningError("A sync is already running")
+    )).scalar_one_or_none()
+
+    if in_flight_id is not None:
+        # Local import: actors imports service for the sync_log helpers,
+        # so a top-level import here would form a cycle. The function is
+        # a pure deterministic mapping (UUID → bigint); no side effects.
+        from app.modules.ats.actors import _advisory_lock_key
+
+        lock_key = _advisory_lock_key(connection_id)
+        probe_acquired = bool((await db.execute(
+            text("SELECT pg_try_advisory_xact_lock(:k)").bindparams(
+                k=lock_key,
+            ),
+        )).scalar_one())
+        if not probe_acquired:
+            raise SyncAlreadyRunningError("A sync is already running")
+
+        await db.execute(
+            sql_update(ATSSyncLog)
+            .where(ATSSyncLog.id == in_flight_id)
+            .values(
+                status="failed",
+                completed_at=func.now(),
+                error_phase="abandoned",
+                error_summary=(
+                    "worker died mid-sync (no advisory lock held); "
+                    "cleaned up at trigger time"
+                ),
+            ),
+        )
+        await log_event(
+            db,
+            tenant_id=tenant_id,
+            actor_id=actor_id,
+            actor_email="recruiter",
+            action="ats.sync.orphan_cleaned_at_trigger",
+            resource="ats_sync_log",
+            resource_id=in_flight_id,
+            payload={"connection_id": str(connection_id)},
+        )
 
     await log_event(
         db,

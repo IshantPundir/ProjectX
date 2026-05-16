@@ -42,6 +42,7 @@ from typing import Any, Literal
 
 import structlog
 from sqlalchemy import func, select, text, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_bypass_session
@@ -1262,25 +1263,38 @@ class ATSSyncOrchestrator:
         candidate_id: uuid.UUID,
         job: JobPosting,
     ) -> SubmissionDiffResult:
-        """Insert or update the candidate_job_assignments row.
+        """Insert or update the candidate_job_assignments row keyed by
+        (tenant, candidate, job) — the canonical business identity that
+        matches the ``candidate_job_assignments_unique_candidate_job``
+        DB constraint.
 
-        Returns a SubmissionDiffResult.
+        Provenance vs identity. ``source`` records *how* the row came to
+        exist (``'manual'`` for a recruiter-created assignment,
+        ``'ats_ceipal'`` for a sync-created one) and is preserved across
+        ATS updates — a manually-created assignment that is later claimed
+        by an ATS sync keeps ``source='manual'`` and gains its
+        ``external_id`` / ``external_status`` / etc. The ATS link is
+        captured by the external_* fields; ``source`` is not used for
+        lookup.
+
+        Concurrency. Per-connection advisory lock (acquired in
+        ``actors._do_poll``) serializes ATS syncs of the same connection,
+        but recruiter manual-adds (``candidates.service.assign_candidate``)
+        run on a separate path with no lock. The insert path therefore
+        uses Postgres ``INSERT ... ON CONFLICT DO NOTHING`` against the
+        ``unique_candidate_job`` constraint: if a manual-add wins the
+        race between our SELECT and INSERT, ``RETURNING`` yields zero
+        rows and we fall through to the update path.
         """
-        row = await db.execute(
-            select(CandidateJobAssignment)
-            .where(CandidateJobAssignment.tenant_id == self.tenant_id)
-            .where(
-                CandidateJobAssignment.source == self.adapter.vendor,
-            )
-            .where(
-                CandidateJobAssignment.external_id == sub.external_id,
+        existing = (await db.execute(
+            select(CandidateJobAssignment).where(
+                CandidateJobAssignment.tenant_id == self.tenant_id,
+                CandidateJobAssignment.candidate_id == candidate_id,
+                CandidateJobAssignment.job_posting_id == job.id,
             ),
-        )
-        existing = row.scalar_one_or_none()
+        )).scalar_one_or_none()
 
         if existing is None:
-            # New assignment. We need a current_stage_id — try the job's
-            # first pipeline stage; if none exists, skip with a warning.
             stage_id = await _first_pipeline_stage_id(db, job.id)
             if stage_id is None or self.actor_id is None:
                 await log_event(
@@ -1296,37 +1310,64 @@ class ATSSyncOrchestrator:
                         "correlation_id": self.correlation_id,
                     },
                 )
-                # Synthesize an unchanged placeholder so the counter logic
-                # downstream is consistent.
+                # Synthesize an unchanged placeholder so the counter
+                # logic downstream is consistent.
                 return SubmissionDiffResult(
                     kind="unchanged",
                     assignment=CandidateJobAssignment(),
                 )
 
-            assignment = CandidateJobAssignment(
-                tenant_id=self.tenant_id,
-                candidate_id=candidate_id,
-                job_posting_id=job.id,
-                source=self.adapter.vendor,
-                external_id=sub.external_id,
-                source_metadata=sub.raw,
-                current_stage_id=stage_id,
-                status="active",
-                external_status=sub.external_status,
-                external_pipeline_status=sub.pipeline_status,
-                external_last_modified_at=sub.external_modified_at,
-                assigned_by=self.actor_id,
+            stmt = (
+                pg_insert(CandidateJobAssignment.__table__)
+                .values(
+                    tenant_id=self.tenant_id,
+                    candidate_id=candidate_id,
+                    job_posting_id=job.id,
+                    source=self.adapter.vendor,
+                    external_id=sub.external_id,
+                    source_metadata=sub.raw,
+                    current_stage_id=stage_id,
+                    status="active",
+                    external_status=sub.external_status,
+                    external_pipeline_status=sub.pipeline_status,
+                    external_last_modified_at=sub.external_modified_at,
+                    assigned_by=self.actor_id,
+                )
+                .on_conflict_do_nothing(
+                    constraint="candidate_job_assignments_unique_candidate_job",
+                )
+                .returning(CandidateJobAssignment.__table__.c.id)
             )
-            db.add(assignment)
-            await db.flush()
-            return SubmissionDiffResult(
-                kind="created", assignment=assignment,
-            )
+            result = await db.execute(stmt)
+            new_id = result.scalar_one_or_none()
+            if new_id is not None:
+                # Insert won. Re-load as ORM so audit/callers get a
+                # tracked object.
+                created = await db.get(CandidateJobAssignment, new_id)
+                assert created is not None
+                return SubmissionDiffResult(
+                    kind="created", assignment=created,
+                )
 
-        # Existing — diff.
+            # Lost the race to a concurrent manual-add. Re-fetch the
+            # row the other writer inserted and fall through to update.
+            existing = (await db.execute(
+                select(CandidateJobAssignment).where(
+                    CandidateJobAssignment.tenant_id == self.tenant_id,
+                    CandidateJobAssignment.candidate_id == candidate_id,
+                    CandidateJobAssignment.job_posting_id == job.id,
+                ),
+            )).scalar_one()
+
+        # Existing row — diff and update ATS-tracked metadata only.
+        # source / assigned_by / assigned_at / current_stage_id / status
+        # are recruiter or origin state and never overwritten by a sync.
         changed: list[str] = []
         status_transition: tuple[str | None, str] | None = None
 
+        if existing.external_id != sub.external_id:
+            existing.external_id = sub.external_id
+            changed.append("external_id")
         if existing.external_status != sub.external_status:
             status_transition = (
                 existing.external_status, sub.external_status,

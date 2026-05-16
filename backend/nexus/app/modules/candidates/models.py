@@ -109,8 +109,11 @@ class CandidateJobAssignment(Base):
     )
     external_id: Mapped[str | None] = mapped_column(Text)
     source_metadata: Mapped[dict | None] = mapped_column(JSONB)
-    # External lifecycle tracking — populated only when source LIKE 'ats_%'.
-    # See migration 0036. Drives the kanban indicator + advisory-action flow.
+    # External lifecycle tracking. Populated whenever an ATS sync has
+    # claimed the row — regardless of whether ``source`` is ``'manual'``
+    # (recruiter created it first; ATS later attached an external_id) or
+    # ``'ats_*'`` (created by the sync directly). See migration 0036.
+    # Drives the kanban indicator + advisory-action flow.
     external_status: Mapped[str | None] = mapped_column(Text)
     external_pipeline_status: Mapped[str | None] = mapped_column(Text)
     external_last_modified_at: Mapped[datetime | None] = mapped_column(

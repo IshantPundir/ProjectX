@@ -376,6 +376,37 @@ async def _do_poll(
                 )
                 await db.commit()
             raise  # lands in DLQ for visibility
+        except Exception as exc:
+            # Catch-all for unexpected exceptions (IntegrityError,
+            # OperationalError, network blips, anything not already
+            # typed). Without this, the sync_log row stays in
+            # 'running' indefinitely and the recruiter's "Syncing
+            # jobs from ATS…" dialog never closes. Mark failed, log,
+            # then re-raise so Dramatiq's retry path runs and the
+            # message ultimately lands in the DLQ for engineer
+            # visibility.
+            async with get_bypass_session() as db:
+                await db.execute(
+                    text(f"SET LOCAL app.current_tenant = '{safe_tenant}'"),
+                )
+                await finalize_sync_log_failure(
+                    db, sync_log_id, phase="sync",
+                    error_summary=f"{type(exc).__name__}: {exc}"[:1024],
+                )
+                await log_event(
+                    db,
+                    tenant_id=tenant_id,
+                    actor_id=actor_id,
+                    actor_email="recruiter",
+                    action="ats.sync.failed",
+                    resource="ats_connection",
+                    resource_id=connection_id,
+                    payload={
+                        "reason": f"{type(exc).__name__}: {exc}"[:300],
+                    },
+                )
+                await db.commit()
+            raise
 
         # ---- Phase D: close log on success ----
         async with get_bypass_session() as db:
