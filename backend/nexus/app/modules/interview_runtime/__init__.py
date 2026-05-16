@@ -6,6 +6,10 @@ HTTP boundary and the engine dispatch JWT were retired in Phase 3 of
 the modular-monolith uplift.
 """
 
+from app.modules.interview_runtime.errors import (
+    CompanyProfileMissingError,
+    QuestionBankNotReadyError,
+)
 from app.modules.interview_runtime.schemas import (
     CandidateContext,
     CompanyContext,
@@ -27,7 +31,9 @@ from app.modules.interview_runtime.service import (
 __all__ = [
     "CandidateContext",
     "CompanyContext",
+    "CompanyProfileMissingError",
     "KnockoutFailure",
+    "QuestionBankNotReadyError",
     "QuestionConfig",
     "QuestionRubric",
     "SessionConfig",

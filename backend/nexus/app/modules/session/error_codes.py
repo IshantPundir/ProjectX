@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from app.modules.interview_runtime.errors import (
+from app.modules.interview_runtime import (
     CompanyProfileMissingError,
     QuestionBankNotReadyError,
 )

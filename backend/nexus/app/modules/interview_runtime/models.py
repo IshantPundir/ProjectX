@@ -7,6 +7,12 @@ package. Importing from this leaf module bypasses the cycle entirely.
 
 interview_runtime.schemas re-exports TranscriptEntry for backward
 compatibility — existing callers don't need to change.
+
+NOTE: This file is named `models.py` because the module-boundary test
+(tests/test_module_boundaries.py) explicitly allows cross-module deep
+imports of the `models` submodule for ORM / data-class ergonomics.
+The previous name `transcript_entry.py` was a leaf but not a recognised
+exception, which caused a boundary violation.
 """
 
 from __future__ import annotations

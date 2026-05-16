@@ -105,8 +105,7 @@ from app.modules.interview_runtime import (
     build_session_config,
     record_session_result,
 )
-from app.modules.session.error_codes import classify_engine_exception
-from app.modules.session.service import transition_to_error
+from app.modules.session import classify_engine_exception, transition_to_error
 from app.modules.tenant_settings import get_tenant_settings
 
 log = structlog.get_logger("interview-engine")
