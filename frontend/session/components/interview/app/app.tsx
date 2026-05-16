@@ -3,7 +3,7 @@
 import { Room, RoomEvent, TokenSource } from 'livekit-client'
 import type { DisconnectReason } from '@livekit/protocol'
 import { useSession } from '@livekit/components-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import type { AppConfig } from '@/app-config'
 import { AgentSessionProvider } from '@/components/agents-ui/agent-session-provider'
@@ -16,8 +16,10 @@ import {
 import { toAudioCaptureOptions } from '@/lib/api/audio-hints'
 
 import { useSessionOutcome } from './hooks/use-session-outcome'
+import { useSessionStateFallback } from './hooks/use-session-state-fallback'
 import { type SessionOutcome } from '../lib/session-outcome'
 import { ViewController, type Outcome } from './view-controller'
+import { SessionErrorScreen } from './session-error-screen'
 
 interface Props {
   appConfig: AppConfig
@@ -130,19 +132,74 @@ export function App({ appConfig, token, preCheck, mode }: Props) {
         onCompleted={onCompleted}
         onError={setError}
       />
-      <ViewController
-        appConfig={appConfig}
-        preCheck={preCheck}
-        mode={mode}
-        outcome={outcome}
-        errorCode={errorCode}
-        isStartPending={isStartPending}
-        onStart={onStart}
-        onError={setError}
-      />
+      <OutcomePrecedenceController
+        token={token}
+        sessionId={preCheck.session_id}
+      >
+        <ViewController
+          appConfig={appConfig}
+          preCheck={preCheck}
+          mode={mode}
+          outcome={outcome}
+          errorCode={errorCode}
+          isStartPending={isStartPending}
+          onStart={onStart}
+          onError={setError}
+        />
+      </OutcomePrecedenceController>
       <StartAudioButton label="Start audio" />
     </AgentSessionProvider>
   )
+}
+
+/**
+ * Lives inside AgentSessionProvider (LiveKit context required for
+ * useSessionOutcome). Applies the engine-failure precedence rule:
+ *
+ *   1. If the LK room attribute `session_outcome='error'` is observed,
+ *      render <SessionErrorScreen errorCode={null}> (no code from LK path).
+ *   2. Else if the HTTP /state poll returns state='error', render
+ *      <SessionErrorScreen errorCode={fallbackState.error_code}> (full code
+ *      from the DB).
+ *   3. Otherwise render {children} — the live-session ViewController.
+ *
+ * Both paths surface the same screen; only the error_code differs (null vs
+ * the backend taxonomy string). Prefer the polled code when available because
+ * it carries the full taxonomy.
+ */
+export function OutcomePrecedenceController({
+  token,
+  sessionId,
+  children,
+}: {
+  token: string
+  sessionId: string
+  children: ReactNode
+}) {
+  const lkOutcome = useSessionOutcome()
+  const fallbackState = useSessionStateFallback(token, /* enabled */ true)
+
+  if (lkOutcome === 'error') {
+    // LK attribute arrived: no error_code on this path (the attribute carries
+    // only the outcome string). Prefer the polled code if it has also arrived —
+    // that way if both paths surface simultaneously the candidate sees specific
+    // copy rather than the generic fallback.
+    const errorCode =
+      fallbackState?.state === 'error' ? fallbackState.error_code : null
+    return <SessionErrorScreen errorCode={errorCode} sessionId={sessionId} />
+  }
+
+  if (fallbackState?.state === 'error') {
+    // HTTP poll surfaced the error before (or instead of) the LK attribute.
+    return (
+      <SessionErrorScreen
+        errorCode={fallbackState.error_code}
+        sessionId={sessionId}
+      />
+    )
+  }
+
+  return <>{children}</>
 }
 
 /**
