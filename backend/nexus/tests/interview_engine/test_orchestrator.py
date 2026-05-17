@@ -1482,3 +1482,63 @@ async def test_empty_speaker_output_fallback_does_not_pollute_repeat_cache(
 
     # Cache unchanged. Fallback was played but not cached.
     assert "t-empty" not in state_engine._question_utterances
+
+
+# ---------------------------------------------------------------------------
+# Unit tests for _maybe_synthesize_repeat (Cluster 6 pre-filter)
+# ---------------------------------------------------------------------------
+
+def test_pre_filter_matches_repeat_that():
+    from app.modules.interview_engine.orchestrator import _maybe_synthesize_repeat
+    out = _maybe_synthesize_repeat("Can you repeat that?")
+    assert out is not None
+    assert out.next_action.value == "repeat"
+
+
+def test_pre_filter_matches_say_it_again():
+    from app.modules.interview_engine.orchestrator import _maybe_synthesize_repeat
+    out = _maybe_synthesize_repeat("Sorry, say it again please.")
+    assert out is not None
+
+
+def test_pre_filter_matches_one_more_time():
+    from app.modules.interview_engine.orchestrator import _maybe_synthesize_repeat
+    out = _maybe_synthesize_repeat("One more time please.")
+    assert out is not None
+
+
+def test_pre_filter_declines_mixed_explain():
+    """Candidate asked to repeat AND explain — let Judge handle it (clarify)."""
+    from app.modules.interview_engine.orchestrator import _maybe_synthesize_repeat
+    out = _maybe_synthesize_repeat("Can you repeat AND explain the question?")
+    assert out is None
+
+
+def test_pre_filter_declines_long_utterance():
+    """Long utterances (> 40 words) are not pure repeat requests."""
+    from app.modules.interview_engine.orchestrator import _maybe_synthesize_repeat
+    long_utterance = (
+        "OK so I was thinking about the question and trying to remember what "
+        "you said but the audio cut out a bit and I think you mentioned something "
+        "about REST APIs and migrations and performance and retry logic, "
+        "can you say that again please?"
+    )
+    out = _maybe_synthesize_repeat(long_utterance)
+    assert out is None  # let Judge handle long mixed-intent
+
+
+def test_pre_filter_declines_no_match():
+    from app.modules.interview_engine.orchestrator import _maybe_synthesize_repeat
+    assert _maybe_synthesize_repeat("I would use validators for this.") is None
+    assert _maybe_synthesize_repeat("") is None
+
+
+def test_pre_filter_returns_synthetic_judge_output_shape():
+    """Returned JudgeOutput has the v2 reasoning field populated."""
+    from app.modules.interview_engine.orchestrator import _maybe_synthesize_repeat
+    out = _maybe_synthesize_repeat("Repeat that please.")
+    assert out is not None
+    assert len(out.reasoning) >= 20
+    assert out.observations == []
+    assert out.candidate_claims == []
+    assert out.next_action.value == "repeat"

@@ -7,6 +7,7 @@ Speaker on each candidate turn. on_close builds the SessionResult.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -39,6 +40,9 @@ from app.modules.interview_engine.frontend_attributes import (
     ATTR_TOTAL_QUESTIONS, AttributePublisher,
 )
 from app.modules.interview_engine.judge.service import JudgeService
+from app.modules.interview_engine.models.judge import (
+    JudgeOutput, NextAction, RepeatPayload, TurnMetadata,
+)
 from app.modules.interview_engine.models.speaker import InstructionKind
 from app.modules.interview_engine.speaker.service import SpeakerService
 from app.modules.interview_engine.state.engine import (
@@ -57,6 +61,64 @@ _log = structlog.get_logger(__name__)
 # inflation forever. With 80-turn sessions this caps recent_turns at
 # ~1.5 KB instead of ~12 KB.
 _RECENT_TURNS_WINDOW = 8
+
+# ---------------------------------------------------------------------------
+# v2: Orchestrator pre-filter for `repeat` intent (Cluster 6, spec §10)
+# ---------------------------------------------------------------------------
+
+_REPEAT_PATTERN = re.compile(
+    r"\b("
+    r"repeat (that|it|the question|please)"
+    r"|say (that|it) again"
+    r"|what (was|did you say) (that|the question) again"
+    r"|one more time"
+    r"|sorry,? again\??"
+    r"|come again\??"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_REPEAT_DECLINE_PATTERN = re.compile(
+    r"\b(explain|rephrase|what do you mean|i don't understand)\b",
+    re.IGNORECASE,
+)
+
+
+def _maybe_synthesize_repeat(utterance: str) -> JudgeOutput | None:
+    """Pre-filter for `repeat` intent.
+
+    Returns a synthetic JudgeOutput when the candidate clearly asked to
+    hear the last agent utterance again. Returns None for everything
+    else, in which case the Judge runs normally.
+
+    Negative guards (return None even on match):
+    - utterance also contains "explain" / "rephrase" / "what do you
+      mean" / "I don't understand" → that's clarify, not repeat (Judge
+      prompt §1 tie-breaker preserved).
+    - utterance is > 40 words → unlikely a pure repeat request; let the
+      Judge see it.
+
+    Spec: docs/superpowers/specs/2026-05-17-interview-engine-v2-design.md §10.
+    """
+    if not utterance:
+        return None
+    if len(utterance.split()) > 40:
+        return None
+    if _REPEAT_DECLINE_PATTERN.search(utterance):
+        return None
+    if not _REPEAT_PATTERN.search(utterance):
+        return None
+    return JudgeOutput(
+        reasoning=(
+            "Pre-filter: candidate asked to hear the last turn again. "
+            "Deterministic intent classification — Judge skipped."
+        ),
+        observations=[],
+        candidate_claims=[],
+        next_action=NextAction.repeat,
+        next_action_payload=RepeatPayload(),
+        turn_metadata=TurnMetadata(),
+    )
 
 
 def _slice_recent_turns(transcript: list) -> list:
@@ -657,15 +719,29 @@ class InterviewOrchestrator:
             active_question_consecutive_dont_know_count=active_dont_know_count,
         )
 
-        result = await self._judge.call(
-            turn_id=turn_id, input_payload=judge_input,
-            correlation_id=self._correlation_id,
-            tenant_id=self._tenant_id,
-        )
-        self._append_judge_event(turn_id=turn_id, result=result, input_payload=judge_input)
+        # v2: orchestrator pre-filter for `repeat` intent. Bypasses the Judge
+        # call entirely for clear repeat-intent utterances (≤40 words, no mixed
+        # "explain"/"rephrase" intent). Emits judge.synthetic instead of
+        # judge.call. Spec §10.
+        pre_filter_repeat = _maybe_synthesize_repeat(candidate_text or "")
+        if pre_filter_repeat is not None:
+            self._append(JUDGE_SYNTHETIC, JudgeSyntheticPayload(
+                turn_id=turn_id,
+                output=pre_filter_repeat.model_dump(mode="json"),
+                reason="pre_filter_repeat",
+            ).model_dump())
+            judge_output_for_state = pre_filter_repeat
+        else:
+            result = await self._judge.call(
+                turn_id=turn_id, input_payload=judge_input,
+                correlation_id=self._correlation_id,
+                tenant_id=self._tenant_id,
+            )
+            self._append_judge_event(turn_id=turn_id, result=result, input_payload=judge_input)
+            judge_output_for_state = result.judge_output
 
         decision = self._state.process_judge_output(
-            turn_id=turn_id, judge_output=result.judge_output,
+            turn_id=turn_id, judge_output=judge_output_for_state,
             candidate_utterance_text=candidate_text, elapsed_ms=elapsed_ms,
         )
         self._append_validation_warnings(turn_id=turn_id, decision=decision)

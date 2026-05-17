@@ -100,7 +100,7 @@ class JudgeCallPayload(BaseModel):
 class JudgeSyntheticPayload(BaseModel):
     turn_id: str
     output: dict[str, Any]
-    reason: Literal["session_start"] = "session_start"
+    reason: Literal["session_start", "pre_filter_repeat"] = "session_start"
 
 
 class JudgeFallbackPayload(BaseModel):

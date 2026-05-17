@@ -977,3 +977,106 @@ async def test_speaker_input_emitted_before_speaker_call(
     assert "instruction_kind" in payload["speaker_input"], (
         "speaker_input dict must contain 'instruction_kind' from SpeakerInput."
     )
+
+
+# ---------------------------------------------------------------------------
+# Cluster 6 — repeat pre-filter bypasses Judge LLM
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_bypasses_judge_on_clear_repeat_intent(
+    make_session_config, make_question,
+) -> None:
+    """A `Can you repeat that?` utterance produces a judge.synthetic event
+    with reason='pre_filter_repeat' and NO judge.call event for that turn.
+
+    This is the regression guard for Cluster 6: the orchestrator's
+    deterministic regex pre-filter must short-circuit the Judge LLM
+    entirely for clear repeat-intent utterances, emitting a synthetic
+    audit event instead.
+
+    Session layout:
+      Turn 0 (on_enter): deliver_first_question — Speaker LLM invoked.
+      Turn 1 (repeat):   'Can you repeat that?' — pre-filter fires,
+                          NO Judge LLM call, judge.synthetic emitted
+                          with reason='pre_filter_repeat'.
+
+    After the pre-filter the State Engine's repeat path resolves the
+    cached question text and emits SPEAKER_CACHED, so Speaker LLM is
+    also NOT invoked for turn 1.
+    """
+    from app.modules.interview_engine.event_kinds import JUDGE_CALL, JUDGE_SYNTHETIC
+
+    # No Judge LLM scripted outputs needed — the pre-filter bypasses Judge
+    # entirely for the repeat turn. We provide an empty side_effect list
+    # and assert await_count == 0 afterwards.
+    judge_outputs: list[JudgeOutput] = []
+
+    speaker_outputs = [
+        # on_enter: deliver_first_question — this populates the repeat cache.
+        "Walk me through how you'd design a Jira workflow.",
+    ]
+
+    orch, agent = _build_orch(
+        make_session_config=make_session_config,
+        make_question=make_question,
+        scripted_judge_outputs=judge_outputs,
+        scripted_speaker_outputs=speaker_outputs,
+        knockout_signal="jira_admin",
+    )
+
+    await orch.on_enter(agent)
+    await orch.on_user_turn_completed(
+        agent, MagicMock(), _msg("Can you repeat that?"),
+    )
+
+    events = orch._collector.events
+
+    # ----- judge.synthetic with reason='pre_filter_repeat' ------------------
+    # Note: on_enter also emits one judge.synthetic (reason='session_start'),
+    # so we filter by reason to isolate the pre-filter event.
+    pre_filter_events = [
+        e for e in events
+        if e.kind == JUDGE_SYNTHETIC and e.payload.get("reason") == "pre_filter_repeat"
+    ]
+    assert len(pre_filter_events) == 1, (
+        f"Expected exactly one judge.synthetic(reason='pre_filter_repeat') event; "
+        f"got {len(pre_filter_events)}. "
+        "The pre-filter must emit a synthetic audit event for repeat-intent turns."
+    )
+
+    # ----- NO judge.call for the repeat turn --------------------------------
+    judge_call_events = [e for e in events if e.kind == JUDGE_CALL]
+    assert len(judge_call_events) == 0, (
+        f"judge.call must NOT be emitted when the pre-filter fires; "
+        f"got {len(judge_call_events)} judge.call event(s). "
+        "The pre-filter must bypass the Judge LLM entirely."
+    )
+
+    # ----- Judge mock was never awaited ------------------------------------
+    assert orch._judge.call.await_count == 0, (
+        f"Judge service must not be called for a pre-filter repeat; "
+        f"await_count={orch._judge.call.await_count}."
+    )
+
+    # ----- Speaker also bypassed (repeat = cached delivery) -----------------
+    # Speaker LLM called once (on_enter only); the repeat turn is cached.
+    assert orch._speaker.stream.await_count == 1, (
+        f"Speaker LLM must only be called for on_enter (await_count=1); "
+        f"got {orch._speaker.stream.await_count}. "
+        "The repeat path must use the cached question, not the Speaker LLM."
+    )
+
+    # ----- SPEAKER_CACHED event replayed the original question --------------
+    from app.modules.interview_engine.event_kinds import SPEAKER_CACHED
+    cached_events = [e for e in events if e.kind == SPEAKER_CACHED]
+    assert len(cached_events) == 1, (
+        f"Exactly one SPEAKER_CACHED event expected for the repeat turn; "
+        f"got {len(cached_events)}."
+    )
+    final_utterance = cached_events[0].payload["final_utterance"]
+    assert "Jira" in final_utterance, (
+        f"SPEAKER_CACHED must replay the original question text; "
+        f"got {final_utterance!r}."
+    )
