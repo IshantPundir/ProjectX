@@ -1,11 +1,15 @@
 """QuestionQueue — per-question state machine with mandatory enforcement and hard-advance."""
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from app.modules.interview_engine.models.ledger import CoverageState, SignalSnapshot
 from app.modules.interview_engine.models.queue import (
     QuestionQueueSnapshot, QuestionState, QuestionStatus,
 )
+
+if TYPE_CHECKING:
+    pass
 
 
 class QueueError(Exception):
@@ -29,9 +33,13 @@ class QuestionQueue:
 
     @classmethod
     def from_initial(cls, *, questions: list[dict[str, Any]]) -> "QuestionQueue":
-        """Build from a list of dicts: {question_id, is_mandatory, follow_ups: list[str]}.
+        """Build from a list of dicts: {question_id, is_mandatory, follow_ups: list[str],
+        signal_values: list[str] (optional, empty list if not provided)}.
 
         Each follow_up's array index becomes its probe_id ('0', '1', ...).
+        ``signal_values`` is used by the non-mandatory question selector
+        (Cluster G) to check whether any of the question's signals still
+        have uncovered coverage.
         """
         states: list[QuestionState] = []
         for position, q in enumerate(questions):
@@ -43,6 +51,7 @@ class QuestionQueue:
                     is_mandatory=q["is_mandatory"],
                     status=QuestionStatus.pending,
                     probes_remaining_ids=probe_ids,
+                    signal_values=list(q.get("signal_values", [])),
                 )
             )
         return cls(states)
@@ -75,6 +84,47 @@ class QuestionQueue:
         for s in self._states:
             if s.is_mandatory and s.status == QuestionStatus.pending:
                 return s.question_id
+        return None
+
+    def next_pending_question_id(
+        self,
+        *,
+        signal_coverage: dict[str, SignalSnapshot],
+    ) -> tuple[str, bool] | None:
+        """Return (question_id, is_mandatory) of the next question to ask.
+
+        Selection rule:
+        1. Mandatory pending questions first, in position order (unchanged from
+           legacy next_pending_mandatory_id behavior — they still gate the
+           session).
+        2. When mandatory queue exhausted, walk non-mandatory pending questions
+           in position order. For each candidate, check whether any of its
+           signal_values have current coverage in {none, partial}. Return the
+           first one that does — that question can still add signal evidence.
+           Skip questions whose signals are all already ``sufficient``.
+        3. Return None when no question qualifies. Caller treats None as
+           "session done, emit polite_close".
+
+        Time budget is NOT re-checked here; the bank-generator already owned
+        that at generation time. The Judge prompt's existing
+        ``time_remaining_seconds ≤ 60 + current_partial → polite_close`` rule
+        handles in-flight termination.
+        """
+        # 1. Mandatory first (position order).
+        for s in self._states:
+            if s.is_mandatory and s.status == QuestionStatus.pending:
+                return s.question_id, True
+
+        # 2. Non-mandatory with at least one uncovered signal.
+        for s in self._states:
+            if s.is_mandatory or s.status != QuestionStatus.pending:
+                continue
+            for sv in s.signal_values:
+                snap = signal_coverage.get(sv)
+                if snap is None or snap.coverage in {CoverageState.none, CoverageState.partial}:
+                    return s.question_id, False
+            # All signals are sufficient (or failed) — skip this question.
+
         return None
 
     def all_mandatory_complete(self) -> bool:

@@ -50,12 +50,13 @@ def test_build_judge_input_carries_active_question_only():
         ],
         candidate_utterance="I worked on it.",
         time_remaining_seconds=350,
-        next_pending_mandatory_id="q2",
+        next_pending_question=("q2", True),
     )
     assert payload.active_question_id == "q1"
     assert payload.candidate_utterance == "I worked on it."
     assert payload.time_remaining_seconds == 350
-    assert payload.next_pending_mandatory_question_id == "q2"
+    assert payload.next_pending_question_id == "q2"
+    assert payload.next_pending_question_is_mandatory is True
     # signal_coverage carries the per-signal current state, not the
     # full append-only entries[] log.
     assert "S1" in payload.signal_coverage
@@ -78,7 +79,7 @@ def test_recent_turns_passthrough_uncapped_at_input_builder_level():
         recent_turns=turns,
         candidate_utterance="x",
         time_remaining_seconds=10,
-        next_pending_mandatory_id=None,
+        next_pending_question=None,
     )
     assert len(payload.recent_turns) == 20
     assert payload.recent_turns[0].text == "c0"
@@ -95,7 +96,7 @@ def test_build_judge_input_excludes_other_questions_rubric():
         recent_turns=[],
         candidate_utterance="x",
         time_remaining_seconds=10,
-        next_pending_mandatory_id=None,
+        next_pending_question=None,
     )
     assert payload.active_question_positive_evidence == ["a", "b", "c"]
     assert payload.active_question_red_flags == ["x", "y"]
@@ -114,7 +115,7 @@ def test_build_judge_input_remaining_probes_passthrough():
         recent_turns=[],
         candidate_utterance="x",
         time_remaining_seconds=10,
-        next_pending_mandatory_id=None,
+        next_pending_question=None,
         active_remaining_probes={"1": "fu1", "2": "fu2"},
     )
     # Probe "0" is intentionally NOT in the dict (already consumed); the
@@ -137,7 +138,7 @@ def test_active_signal_metadata_carries_through():
         recent_turns=[],
         candidate_utterance="x",
         time_remaining_seconds=10,
-        next_pending_mandatory_id=None,
+        next_pending_question=None,
         active_signal_metadata=meta,
     )
     assert len(payload.active_question_signal_metadata) == 2
@@ -158,7 +159,7 @@ def test_active_signal_metadata_default_empty_list():
         recent_turns=[],
         candidate_utterance="x",
         time_remaining_seconds=10,
-        next_pending_mandatory_id=None,
+        next_pending_question=None,
     )
     assert payload.active_question_signal_metadata == []
 
@@ -174,7 +175,8 @@ def test_judge_input_payload_does_not_carry_full_ledger_or_queue():
     # New slim fields are present.
     assert "signal_coverage" in fields
     assert "candidate_claims" in fields
-    assert "next_pending_mandatory_question_id" in fields
+    assert "next_pending_question_id" in fields
+    assert "next_pending_question_is_mandatory" in fields
 
 
 def test_judge_input_field_order_stable_first_dynamic_last():
@@ -189,7 +191,8 @@ def test_judge_input_field_order_stable_first_dynamic_last():
         "active_question_rubric",
         "active_question_evaluation_hint",
         "active_question_signal_metadata",
-        "next_pending_mandatory_question_id",
+        "next_pending_question_id",
+        "next_pending_question_is_mandatory",
         "active_question_push_back_count",
         "active_question_consecutive_dont_know_count",
         "active_question_remaining_probes",
@@ -219,7 +222,7 @@ def test_push_back_count_defaults_zero():
         recent_turns=[],
         candidate_utterance="x",
         time_remaining_seconds=10,
-        next_pending_mandatory_id=None,
+        next_pending_question=None,
     )
     assert payload.active_question_push_back_count == 0
 
@@ -236,7 +239,7 @@ def test_push_back_count_passthrough():
         recent_turns=[],
         candidate_utterance="x",
         time_remaining_seconds=10,
-        next_pending_mandatory_id=None,
+        next_pending_question=None,
         active_question_push_back_count=2,
     )
     assert payload.active_question_push_back_count == 2
@@ -256,7 +259,7 @@ def test_active_signal_meta_type_carries_through_build_judge_input():
         recent_turns=[],
         candidate_utterance="x",
         time_remaining_seconds=10,
-        next_pending_mandatory_id=None,
+        next_pending_question=None,
         active_signal_metadata=meta,
     )
     assert len(payload.active_question_signal_metadata) == 1

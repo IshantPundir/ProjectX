@@ -246,6 +246,7 @@ class StateEngine:
                     "question_id": q.id,
                     "is_mandatory": q.is_mandatory,
                     "follow_ups": q.follow_ups,
+                    "signal_values": q.signal_values,
                 }
                 for q in session_config.stage.questions
             ],
@@ -303,6 +304,14 @@ class StateEngine:
 
         if self._lifecycle.snapshot().state.value == "pre_start":
             self._lifecycle.transition_to_active()
+
+        # Capture per-signal coverage BEFORE any observations are applied
+        # this turn. The Cluster G reverse-rule guard (step 6 below) needs
+        # the pre-mutation coverage to detect whether a knockout signal was
+        # already `sufficient` at the START of this turn — after applying
+        # a `sufficient→failed` observation the snapshot would show `failed`,
+        # causing the guard to miss the reverse-rule case.
+        pre_turn_signal_snapshots = dict(self._ledger.snapshot().snapshots)
 
         # 1. Apply observations (drop on illegal transition).
         # Track which observations succeeded so the knockout-detection
@@ -848,36 +857,79 @@ class StateEngine:
         # changes. `record_only` keeps the audit trail (the
         # KnockoutFailure was recorded above) but lets the interview
         # continue.
+        #
+        # Cluster G reverse-rule guard: if a candidate already proved a
+        # knockout signal on a MANDATORY question (coverage=sufficient),
+        # then later disclaims experience on a NON-MANDATORY question
+        # that targets the SAME knockout signal, the earlier proof stands.
+        # We record the contradiction for review but do NOT close the
+        # session. Matches the equivalent guard in
+        # _maybe_promote_meta_confession.
         if (
             knockout_failures_this_turn
             and self._eng_cfg.knockout_policy == "close_polite"
         ):
-            warnings.append(ValidationWarning(
-                code="knockout_policy_override",
-                level="warning",  # not an error — this is correct enforcement
-                details={
-                    "policy": "close_polite",
-                    "knockout_signals": [
-                        str(f.signal_values[0])
-                        for f in knockout_failures_this_turn
-                    ],
-                    "original_action": action.value,
-                },
-            ))
-            instruction = InstructionKind.polite_close
-            # Q-3: thread the failed signal so polite_close.txt can
-            # acknowledge the disclosure ("Got it on Jira — thanks for
-            # being upfront. We'll be in touch with next steps.") before
-            # the canned close. Pick the first knockout failure's first
-            # signal_value — typical case is a single failure per turn.
-            closing_disclosure_signal = knockout_failures_this_turn[0].signal_values[0]
-            self._lifecycle.set_last_outcome(SessionOutcome.knockout_closed)
-            # Guard against double-transition: if the action was already
-            # polite_close (or end_session, fallback_advance with no
-            # remaining mandatory) the lifecycle has already moved to
-            # closing.
-            if self._lifecycle.snapshot().state.value == "active":
-                self._lifecycle.transition_to_closing()
+            # Use the PRE-TURN snapshot for the reverse-rule check. The
+            # ledger has already applied `sufficient→failed` transitions
+            # by the time we reach this block, so the post-turn snapshot
+            # would show `failed` (not `sufficient`) and the guard would
+            # never fire. The pre-turn snapshot reflects the coverage state
+            # BEFORE this turn's observations, which is what we want:
+            # "was this signal already proven before the candidate's current
+            # contradiction?"
+            actionable_failures = [
+                f for f in knockout_failures_this_turn
+                if not any(
+                    pre_turn_signal_snapshots.get(sv) is not None
+                    and pre_turn_signal_snapshots[sv].coverage == CoverageState.sufficient
+                    for sv in f.signal_values
+                )
+            ]
+            skipped_failures = [
+                f for f in knockout_failures_this_turn
+                if f not in actionable_failures
+            ]
+
+            if skipped_failures:
+                warnings.append(ValidationWarning(
+                    code="knockout_policy_reverse_rule_skipped",
+                    level="warning",
+                    details={
+                        "skipped_signals": [
+                            str(f.signal_values[0])
+                            for f in skipped_failures
+                        ],
+                        "reason": "signal already proven sufficient on earlier turn",
+                    },
+                ))
+
+            if actionable_failures:
+                warnings.append(ValidationWarning(
+                    code="knockout_policy_override",
+                    level="warning",  # not an error — this is correct enforcement
+                    details={
+                        "policy": "close_polite",
+                        "knockout_signals": [
+                            str(f.signal_values[0])
+                            for f in actionable_failures
+                        ],
+                        "original_action": action.value,
+                    },
+                ))
+                instruction = InstructionKind.polite_close
+                # Q-3: thread the failed signal so polite_close.txt can
+                # acknowledge the disclosure ("Got it on Jira — thanks for
+                # being upfront. We'll be in touch with next steps.") before
+                # the canned close. Pick the first actionable failure's first
+                # signal_value — typical case is a single failure per turn.
+                closing_disclosure_signal = actionable_failures[0].signal_values[0]
+                self._lifecycle.set_last_outcome(SessionOutcome.knockout_closed)
+                # Guard against double-transition: if the action was already
+                # polite_close (or end_session, fallback_advance with no
+                # remaining mandatory) the lifecycle has already moved to
+                # closing.
+                if self._lifecycle.snapshot().state.value == "active":
+                    self._lifecycle.transition_to_closing()
 
         speaker_input = self._build_speaker_input(
             instruction_kind=instruction,
@@ -1074,8 +1126,30 @@ class StateEngine:
     # --- Snapshot accessors ---
 
     def next_pending_mandatory_id(self) -> str | None:
-        """Public accessor used by JudgeService.next_pending_mandatory_resolver."""
+        """Public accessor used by JudgeService.next_pending_mandatory_resolver.
+
+        .. deprecated::
+            Use ``next_pending_question()`` instead. This method returns
+            only mandatory question IDs; ``next_pending_question()`` also
+            returns non-mandatory questions when the mandatory queue is
+            exhausted and uncovered signals remain (Cluster G).
+        """
         return self._queue.next_pending_mandatory_id()
+
+    def next_pending_question(self) -> tuple[str, bool] | None:
+        """Return (question_id, is_mandatory) of the next question to ask.
+
+        Public accessor used by the orchestrator to populate
+        JudgeInputPayload.next_pending_question_id + next_pending_question_is_mandatory.
+
+        Selection rule: mandatory pending first (position order), then
+        non-mandatory pending in position order if any of their signals
+        still have coverage in {none, partial}. Returns None when no
+        question qualifies (→ polite_close).
+        """
+        return self._queue.next_pending_question_id(
+            signal_coverage=self._ledger.snapshot().snapshots,
+        )
 
     def transcript_snapshot(self) -> list[TranscriptEntry]:
         return [t.model_copy() for t in self._transcript]

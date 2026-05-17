@@ -1,7 +1,11 @@
 {
   "id": "019_abusive_redirect",
   "description": "Candidate responds with hostile, abusive language directed at the interviewer. Judge must redirect with candidate_abusive=true.",
-  "tags": ["redirect", "abusive", "synthesized"],
+  "tags": [
+    "redirect",
+    "abusive",
+    "synthesized"
+  ],
   "judge_input": {
     "active_question_id": "606b1bcb-9205-4509-96d0-468326b73c5d",
     "active_question_text": "You're inheriting a portfolio of ~40-50 integrations. In your first 90 days, how would you assess, stabilize, and standardize the estate?",
@@ -28,7 +32,8 @@
         "priority": "required"
       }
     ],
-    "next_pending_mandatory_question_id": null,
+    "next_pending_question_id": null,
+    "next_pending_question_is_mandatory": null,
     "active_question_push_back_count": 0,
     "active_question_consecutive_dont_know_count": 0,
     "active_question_remaining_probes": {
@@ -44,7 +49,12 @@
     },
     "candidate_claims": [],
     "recent_turns": [
-      {"role": "agent", "text": "You're inheriting a portfolio of integrations. In your first 90 days, how would you assess the estate?", "timestamp_ms": 0, "question_id": "606b1bcb-9205-4509-96d0-468326b73c5d"}
+      {
+        "role": "agent",
+        "text": "You're inheriting a portfolio of integrations. In your first 90 days, how would you assess the estate?",
+        "timestamp_ms": 0,
+        "question_id": "606b1bcb-9205-4509-96d0-468326b73c5d"
+      }
     ],
     "candidate_utterance": "These questions are stupid. Stop wasting my time with this nonsense. This interview is a joke.",
     "time_remaining_seconds": 1000
@@ -56,7 +66,10 @@
     },
     "observations_min_count": 0,
     "observations_max_count": 0,
-    "expected_reasoning_substrings": ["abusive", "redirect"]
+    "expected_reasoning_substrings": [
+      "abusive",
+      "redirect"
+    ]
   },
   "source": "synthesized",
   "labeled_by": "ishant",

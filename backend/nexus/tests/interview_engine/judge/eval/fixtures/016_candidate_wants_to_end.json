@@ -1,7 +1,10 @@
 {
   "id": "016_candidate_wants_to_end",
-  "description": "Candidate explicitly states they want to end the interview — they feel unwell or have an emergency. Judge must emit end_session.",
-  "tags": ["end_session", "synthesized"],
+  "description": "Candidate explicitly states they want to end the interview \u2014 they feel unwell or have an emergency. Judge must emit end_session.",
+  "tags": [
+    "end_session",
+    "synthesized"
+  ],
   "judge_input": {
     "active_question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a",
     "active_question_text": "Using your primary iPaaS, how would you implement a near-real-time order sync from Salesforce to an on-prem ERP?",
@@ -26,7 +29,8 @@
         "priority": "required"
       }
     ],
-    "next_pending_mandatory_question_id": "606b1bcb-9205-4509-96d0-468326b73c5d",
+    "next_pending_question_id": "606b1bcb-9205-4509-96d0-468326b73c5d",
+    "next_pending_question_is_mandatory": true,
     "active_question_push_back_count": 0,
     "active_question_consecutive_dont_know_count": 0,
     "active_question_remaining_probes": {
@@ -42,7 +46,12 @@
     },
     "candidate_claims": [],
     "recent_turns": [
-      {"role": "agent", "text": "Using your primary iPaaS, walk me through a Salesforce to on-prem ERP order sync.", "timestamp_ms": 0, "question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a"}
+      {
+        "role": "agent",
+        "text": "Using your primary iPaaS, walk me through a Salesforce to on-prem ERP order sync.",
+        "timestamp_ms": 0,
+        "question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a"
+      }
     ],
     "candidate_utterance": "I'm sorry, I need to stop the interview. I'm not feeling well right now and I need to end this session.",
     "time_remaining_seconds": 800
@@ -54,7 +63,9 @@
     },
     "observations_min_count": 0,
     "observations_max_count": 0,
-    "expected_reasoning_substrings": ["end"]
+    "expected_reasoning_substrings": [
+      "end"
+    ]
   },
   "source": "synthesized",
   "labeled_by": "ishant",

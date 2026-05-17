@@ -10,9 +10,11 @@ Promotion fires iff:
   - primary signal coverage in {none, partial}    (not already proven)
 """
 from app.modules.interview_engine.models.judge import (
+    AdvancePayload,
     AcknowledgeNoExperiencePayload,
     JudgeOutput,
     NextAction,
+    Observation,
     PushBackPayload,
     TurnMetadata,
 )
@@ -478,5 +480,251 @@ def test_promotion_chains_through_knockout_policy_for_knockout_signal():
     assert "meta_confession_knockout" in codes
     assert "knockout_policy_override" in codes
     # With knockout + close_polite, final instruction must be polite_close.
+    assert decision.speaker_input.instruction_kind == InstructionKind.polite_close
+    assert eng.lifecycle_snapshot().state.value == "closing"
+
+
+# ---------------------------------------------------------------------------
+# Cluster G — Reverse-rule guard tests
+#
+# Guard: if a candidate already proved a knockout signal (coverage=sufficient)
+# on a mandatory question, then later disclaims experience on a non-mandatory
+# question targeting the SAME knockout signal, the earlier proof stands.
+# The session must NOT close; the contradiction is recorded for review.
+# ---------------------------------------------------------------------------
+
+def _make_session_config_two_questions_same_knockout_signal() -> SessionConfig:
+    """Session with:
+       - q1: mandatory, knockout signal 'primary'
+       - q2: non-mandatory, same knockout signal 'primary'
+    """
+    q1 = QuestionConfig(
+        id="q1",
+        position=0,
+        text="Tell me about your experience with this platform.",
+        signal_values=["primary"],
+        estimated_minutes=2.0,
+        is_mandatory=True,
+        follow_ups=[],
+        positive_evidence=["ev-a", "ev-b", "ev-c"],
+        red_flags=["fl-x", "fl-y"],
+        rubric=QuestionRubric(excellent="ex", meets_bar="mb", below_bar="bb"),
+        evaluation_hint="hint hint hint hint hint",
+        question_kind="technical_depth",
+    )
+    q2 = QuestionConfig(
+        id="q2",
+        position=1,
+        text="Give another example of using this platform.",
+        signal_values=["primary"],
+        estimated_minutes=2.0,
+        is_mandatory=False,
+        follow_ups=[],
+        positive_evidence=["ev-a", "ev-b", "ev-c"],
+        red_flags=["fl-x", "fl-y"],
+        rubric=QuestionRubric(excellent="ex", meets_bar="mb", below_bar="bb"),
+        evaluation_hint="hint hint hint hint hint",
+        question_kind="technical_depth",
+    )
+    signal_metadata = [SignalMetadata(
+        value="primary", type="competency", priority="required",
+        weight=3, knockout=True, stage="screen",
+        evaluation_method="verbal_response",
+    )]
+    return SessionConfig(
+        session_id="sess-reverse-rule-test",
+        job_id="job-reverse-rule-test",
+        candidate_id="cand-reverse-rule-test",
+        job_title="SRE",
+        role_summary="role role role role role",
+        seniority_level="Senior",
+        company=CompanyContext(
+            about="A test company building great things for engineers.",
+            industry="software",
+            company_stage="growth",
+            hiring_bar="High bar only.",
+        ),
+        candidate=CandidateContext(name="Alice"),
+        stage=StageConfig(
+            stage_id="stg-reverse-rule",
+            name="AI Screening",
+            stage_type="ai_screening",
+            difficulty="medium",
+            duration_minutes=10,
+            questions=[q1, q2],
+        ),
+        signals=["primary"],
+        signal_metadata=signal_metadata,
+    )
+
+
+def test_reverse_rule_guard_does_not_close_when_signal_already_sufficient():
+    """Reverse-rule guard: candidate proved 'primary' on q1 (coverage=sufficient);
+    later disclaims on q2 (non-mandatory, same signal). Session must NOT close.
+    The audit trail must include 'knockout_policy_reverse_rule_skipped'."""
+    from app.modules.interview_engine.models.judge import (
+        CoverageQuality, CoverageTransition,
+    )
+    cfg = _make_session_config_two_questions_same_knockout_signal()
+    eng = StateEngine(
+        session_config=cfg,
+        config=StateEngineConfig(knockout_policy="close_polite"),
+    )
+
+    # Step 1: Activate q1.
+    eng.process_judge_output(
+        turn_id="t-0",
+        judge_output=eng.initialize_for_session_start(),
+        candidate_utterance_text=None,
+        elapsed_ms=0,
+    )
+
+    # Step 2: Strong answer on q1 → coverage moves to sufficient.
+    eng.process_judge_output(
+        turn_id="t-1",
+        judge_output=JudgeOutput(
+            reasoning="Candidate gave a strong concrete answer demonstrating the signal.",
+            observations=[
+                Observation(
+                    signal_value="primary",
+                    anchor_id=0,
+                    evidence_quote="I used it for five years in production",
+                    coverage_transition=CoverageTransition.none_to_sufficient,
+                    quality=CoverageQuality.strong,
+                )
+            ],
+            candidate_claims=[],
+            next_action=NextAction.advance,
+            next_action_payload=AdvancePayload(target_question_id="q2"),
+            turn_metadata=TurnMetadata(),
+        ),
+        candidate_utterance_text="I used it for five years in production.",
+        elapsed_ms=1000,
+    )
+
+    # Sanity: coverage should now be sufficient.
+    snap = eng.ledger_snapshot().snapshots.get("primary")
+    assert snap is not None and snap.coverage.value == "sufficient"
+
+    # Step 3: On q2 (non-mandatory), candidate disclaims experience on 'primary'.
+    decision = eng.process_judge_output(
+        turn_id="t-2",
+        judge_output=JudgeOutput(
+            reasoning="Candidate now says they've never used the platform.",
+            observations=[
+                Observation(
+                    signal_value="primary",
+                    anchor_id=-1,
+                    evidence_quote="actually I've never used it",
+                    coverage_transition=CoverageTransition.sufficient_to_failed,
+                )
+            ],
+            candidate_claims=[],
+            next_action=NextAction.acknowledge_no_experience,
+            next_action_payload=AcknowledgeNoExperiencePayload(
+                failed_signal_value="primary",
+            ),
+            turn_metadata=TurnMetadata(candidate_disclosed_no_experience=True),
+        ),
+        candidate_utterance_text="Actually I've never used it.",
+        elapsed_ms=2000,
+    )
+
+    codes = [w.code for w in decision.validation_warnings]
+    # Reverse-rule guard must have fired.
+    assert "knockout_policy_reverse_rule_skipped" in codes, (
+        f"Expected knockout_policy_reverse_rule_skipped in {codes}"
+    )
+    # Session must NOT close — polite_close is forbidden here.
+    assert decision.speaker_input.instruction_kind != InstructionKind.polite_close, (
+        "Reverse-rule guard failed: session was closed despite signal being already sufficient"
+    )
+    # knockout_policy_override must NOT be in the codes (the guard swallowed it).
+    assert "knockout_policy_override" not in codes, (
+        f"Unexpected knockout_policy_override fired when signal was already sufficient: {codes}"
+    )
+    # Session lifecycle must still be active (not closing).
+    assert eng.lifecycle_snapshot().state.value == "active"
+
+
+def test_reverse_rule_guard_does_not_fire_when_signal_not_sufficient():
+    """When signal coverage is NOT sufficient (partial), the normal knockout_policy
+    override fires as expected — no reverse-rule guard."""
+    from app.modules.interview_engine.models.judge import (
+        CoverageQuality, CoverageTransition,
+    )
+    cfg = _make_session_config_two_questions_same_knockout_signal()
+    eng = StateEngine(
+        session_config=cfg,
+        config=StateEngineConfig(knockout_policy="close_polite"),
+    )
+
+    # Activate q1.
+    eng.process_judge_output(
+        turn_id="t-0",
+        judge_output=eng.initialize_for_session_start(),
+        candidate_utterance_text=None,
+        elapsed_ms=0,
+    )
+
+    # Partial answer on q1 → coverage stays at partial (not sufficient).
+    eng.process_judge_output(
+        turn_id="t-1",
+        judge_output=JudgeOutput(
+            reasoning="Candidate gave a thin answer.",
+            observations=[
+                Observation(
+                    signal_value="primary",
+                    anchor_id=0,
+                    evidence_quote="I used it a bit",
+                    coverage_transition=CoverageTransition.none_to_partial,
+                    quality=CoverageQuality.concrete,
+                )
+            ],
+            candidate_claims=[],
+            next_action=NextAction.advance,
+            next_action_payload=AdvancePayload(target_question_id="q2"),
+            turn_metadata=TurnMetadata(),
+        ),
+        candidate_utterance_text="I used it a bit.",
+        elapsed_ms=1000,
+    )
+
+    # Sanity: coverage should be partial, NOT sufficient.
+    snap = eng.ledger_snapshot().snapshots.get("primary")
+    assert snap is not None and snap.coverage.value == "partial"
+
+    # On q2, candidate disclaims — this should fire knockout_policy_override.
+    decision = eng.process_judge_output(
+        turn_id="t-2",
+        judge_output=JudgeOutput(
+            reasoning="Candidate says they've never really used the platform.",
+            observations=[
+                Observation(
+                    signal_value="primary",
+                    anchor_id=-1,
+                    evidence_quote="I've never really used it seriously",
+                    coverage_transition=CoverageTransition.partial_to_failed,
+                )
+            ],
+            candidate_claims=[],
+            next_action=NextAction.acknowledge_no_experience,
+            next_action_payload=AcknowledgeNoExperiencePayload(
+                failed_signal_value="primary",
+            ),
+            turn_metadata=TurnMetadata(candidate_disclosed_no_experience=True),
+        ),
+        candidate_utterance_text="I've never really used it seriously.",
+        elapsed_ms=2000,
+    )
+
+    codes = [w.code for w in decision.validation_warnings]
+    # Normal knockout_policy_override should fire.
+    assert "knockout_policy_override" in codes, (
+        f"Expected knockout_policy_override in {codes}"
+    )
+    # Reverse-rule guard must NOT have fired.
+    assert "knockout_policy_reverse_rule_skipped" not in codes
+    # Session must have closed.
     assert decision.speaker_input.instruction_kind == InstructionKind.polite_close
     assert eng.lifecycle_snapshot().state.value == "closing"

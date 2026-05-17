@@ -10,7 +10,7 @@ from app.modules.interview_engine.models.judge import (
 
 def test_fallback_with_target_emits_advance():
     out = synthesize_fallback(
-        reason=FallbackReason.timeout, next_pending_mandatory_id="q2",
+        reason=FallbackReason.timeout, next_pending_question=("q2", True),
     )
     assert out.next_action == NextAction.advance
     assert isinstance(out.next_action_payload, AdvancePayload)
@@ -21,7 +21,7 @@ def test_fallback_with_target_emits_advance():
 
 def test_fallback_with_no_target_emits_polite_close():
     out = synthesize_fallback(
-        reason=FallbackReason.parse_error, next_pending_mandatory_id=None,
+        reason=FallbackReason.parse_error, next_pending_question=None,
     )
     assert out.next_action == NextAction.polite_close
     assert isinstance(out.next_action_payload, PoliteClosePayload)
@@ -33,7 +33,7 @@ def test_synthesized_output_carries_no_audit_fields(reason):
     never read by the State Engine). Fallback context lives on the
     JUDGE_FALLBACK audit event payload's original_failure_context, not on
     the synthesized JudgeOutput itself."""
-    out = synthesize_fallback(reason=reason, next_pending_mandatory_id="q1")
+    out = synthesize_fallback(reason=reason, next_pending_question=("q1", True))
     assert not hasattr(out, "thought")
     # Synthesized fallback only emits the minimum fields required for the
     # State Engine to make a forward-progress decision.
@@ -53,7 +53,7 @@ def test_validation_error_synthesizes_clarify_not_advance() -> None:
 
     output = synthesize_fallback(
         reason=FallbackReason.validation_error,
-        next_pending_mandatory_id="q-2",
+        next_pending_question=("q-2", True),
     )
     assert output.next_action == NextAction.clarify
     assert isinstance(output.next_action_payload, ClarifyPayload)
@@ -72,14 +72,14 @@ def test_timeout_still_synthesizes_advance() -> None:
     )
 
     out = synthesize_fallback(
-        reason=FallbackReason.timeout, next_pending_mandatory_id="q-3",
+        reason=FallbackReason.timeout, next_pending_question=("q-3", True),
     )
     assert out.next_action == NextAction.advance
     assert isinstance(out.next_action_payload, AdvancePayload)
     assert out.next_action_payload.target_question_id == "q-3"
 
     out2 = synthesize_fallback(
-        reason=FallbackReason.timeout, next_pending_mandatory_id=None,
+        reason=FallbackReason.timeout, next_pending_question=None,
     )
     assert out2.next_action == NextAction.polite_close
     assert isinstance(out2.next_action_payload, PoliteClosePayload)

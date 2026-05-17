@@ -24,7 +24,8 @@ def _payload():
         recent_turns=[],
         candidate_utterance="hi",
         time_remaining_seconds=300,
-        next_pending_mandatory_question_id=None,
+        next_pending_question_id=None,
+        next_pending_question_is_mandatory=None,
     )
 
 
@@ -50,7 +51,7 @@ async def test_judge_returns_parsed_output_on_success():
     svc = JudgeService(
         openai_client=mock_client, model="gpt-test",
         system_prompt="SYS", system_prompt_hash="sha256:abc",
-        next_pending_mandatory_resolver=lambda: "q1",
+        next_pending_question_resolver=lambda: ("q1", True),
     )
     result = await svc.call(
         turn_id="t-1", input_payload=_payload(),
@@ -90,7 +91,7 @@ async def test_judge_call_propagates_cancelled_error():
     svc = JudgeService(
         openai_client=mock_client, model="gpt-test",
         system_prompt="SYS", system_prompt_hash="sha256:abc",
-        next_pending_mandatory_resolver=lambda: "q1",
+        next_pending_question_resolver=lambda: ("q1", True),
         # Plenty of budget — we are NOT testing the timeout fallback. We
         # want the call to be waiting on the openai mock when we cancel.
         total_budget_ms=60_000,
@@ -119,7 +120,7 @@ async def test_judge_falls_back_on_parse_error():
     svc = JudgeService(
         openai_client=mock_client, model="gpt-test",
         system_prompt="SYS", system_prompt_hash="sha256:abc",
-        next_pending_mandatory_resolver=lambda: "q1",
+        next_pending_question_resolver=lambda: ("q1", True),
     )
     result = await svc.call(
         turn_id="t-1", input_payload=_payload(),
@@ -142,7 +143,7 @@ async def test_judge_falls_back_on_validation_error():
     svc = JudgeService(
         openai_client=mock_client, model="gpt-test",
         system_prompt="SYS", system_prompt_hash="sha256:abc",
-        next_pending_mandatory_resolver=lambda: "q1",
+        next_pending_question_resolver=lambda: ("q1", True),
     )
     result = await svc.call(
         turn_id="t-1", input_payload=_payload(),
@@ -204,7 +205,7 @@ async def test_validation_error_fallback_context_is_json_serializable():
     svc = JudgeService(
         openai_client=mock_client, model="gpt-test",
         system_prompt="SYS", system_prompt_hash="sha256:abc",
-        next_pending_mandatory_resolver=lambda: "q1",
+        next_pending_question_resolver=lambda: ("q1", True),
     )
     result = await svc.call(
         turn_id="t-1", input_payload=_payload(),
@@ -233,7 +234,7 @@ async def test_judge_retries_once_on_timeout_then_falls_back():
     svc = JudgeService(
         openai_client=mock_client, model="gpt-test",
         system_prompt="SYS", system_prompt_hash="sha256:abc",
-        next_pending_mandatory_resolver=lambda: "q1",
+        next_pending_question_resolver=lambda: ("q1", True),
         total_budget_ms=200, retry_wait_ms=50,
     )
     result = await svc.call(
@@ -257,7 +258,7 @@ async def test_judge_falls_back_to_polite_close_when_no_target():
     svc = JudgeService(
         openai_client=mock_client, model="gpt-test",
         system_prompt="SYS", system_prompt_hash="sha256:abc",
-        next_pending_mandatory_resolver=lambda: None,
+        next_pending_question_resolver=lambda: None,
     )
     result = await svc.call(
         turn_id="t-1", input_payload=_payload(),
@@ -280,7 +281,7 @@ async def test_judge_uses_responses_api_strict_json_schema_not_json_object():
     svc = JudgeService(
         openai_client=mock_client, model="gpt-test",
         system_prompt="SYS", system_prompt_hash="sha256:abc",
-        next_pending_mandatory_resolver=lambda: "q1",
+        next_pending_question_resolver=lambda: ("q1", True),
     )
     await svc.call(turn_id="t-1", input_payload=_payload(),
                    correlation_id="c", tenant_id="ten")
@@ -370,7 +371,7 @@ async def test_judge_real_openai_returns_parsed_output():
             "and turn_metadata at their defaults."
         ),
         system_prompt_hash="sha256:smoke",
-        next_pending_mandatory_resolver=lambda: "q1",
+        next_pending_question_resolver=lambda: ("q1", True),
         total_budget_ms=20000,
     )
     result = await svc.call(

@@ -70,14 +70,19 @@ transition; default observation to `partial→partial` not `partial→sufficient
 
 7. ADVANCE   — at least one concrete or strong observation on this
                 question AND coverage is sufficient OR time is short.
-                target_question_id MUST equal
-                next_pending_mandatory_question_id.
+                target_question_id MUST equal next_pending_question_id.
+                This ID may be mandatory OR optional — the State Engine
+                has already applied the selection (mandatory first, then
+                non-mandatory only if signals still uncovered). Just
+                advance to whatever is provided.
                 FAN-OUT CHECK: Before emitting advance, ask yourself —
                 did this turn name ≥2 distinct concepts (tools, techniques,
                 reliability patterns)? If yes, expand observations to one
                 per signal touched BEFORE advancing.
 
-8. POLITE_CLOSE — all mandatory questions complete OR time remaining
+8. POLITE_CLOSE — next_pending_question_id is null (covers both: all
+                mandatory complete AND no non-mandatory question would
+                add uncovered-signal evidence) OR time remaining
                 ≤ 60 seconds and current question at least partial.
 
 9. END_SESSION — candidate explicitly said they want to end ("I'm
@@ -101,9 +106,14 @@ transition; default observation to `partial→partial` not `partial→sufficient
   already consumed are NOT in this map. When emitting `probe`,
   probe_id MUST be a key here.
 
-- `next_pending_mandatory_question_id` — the question_id to use as
+- `next_pending_question_id` — the question_id to use as
   `target_question_id` when emitting `advance`. Pre-resolved by the
-  State Engine.
+  State Engine. May be a mandatory question OR a non-mandatory one
+  (when mandatory queue is exhausted and uncovered signals remain).
+
+- `next_pending_question_is_mandatory` — true if next_pending_question_id
+  is a mandatory question, false if non-mandatory, null if no next
+  question exists (→ polite_close).
 
 - `active_question_push_back_count` — pushes already applied to the
   active question. Hard cap = 2.
@@ -171,7 +181,9 @@ Example reasoning (good):
 ADVANCE
   The active question is sufficiently covered (at least one concrete or
   strong observation) OR failed. Emit target_question_id =
-  next_pending_mandatory_question_id. If that field is null, emit
+  next_pending_question_id. This may be a mandatory question or a
+  non-mandatory one (when all mandatory questions are complete but
+  uncovered signals remain). If next_pending_question_id is null, emit
   POLITE_CLOSE instead.
 
 PROBE
@@ -292,8 +304,8 @@ ACKNOWLEDGE_NO_EXPERIENCE
 
 POLITE_CLOSE
   Emit when:
-    - all mandatory questions complete (next_pending_mandatory_question_id
-      is null), OR
+    - next_pending_question_id is null (all mandatory complete AND no
+      non-mandatory question would add uncovered-signal evidence), OR
     - time exhausted (time_remaining_seconds ≤ 60 AND current
       question at least partial).
 

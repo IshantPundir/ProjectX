@@ -1,7 +1,11 @@
 {
   "id": "024_recovery_after_meta_confession",
   "description": "After saying they couldn't answer the specific probe, the candidate recovers with a substantive answer about idempotency, dead-letter queues, and monitoring. Should advance or probe depending on coverage. From session 2115a63a turn 374.",
-  "tags": ["advance", "recovery", "real_session"],
+  "tags": [
+    "advance",
+    "recovery",
+    "real_session"
+  ],
   "judge_input": {
     "active_question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a",
     "active_question_text": "Using your primary iPaaS, how would you implement a near-real-time order sync from Salesforce to an on-prem ERP?",
@@ -29,7 +33,8 @@
         "priority": "required"
       }
     ],
-    "next_pending_mandatory_question_id": "606b1bcb-9205-4509-96d0-468326b73c5d",
+    "next_pending_question_id": "606b1bcb-9205-4509-96d0-468326b73c5d",
+    "next_pending_question_is_mandatory": true,
     "active_question_push_back_count": 1,
     "active_question_consecutive_dont_know_count": 0,
     "active_question_remaining_probes": {
@@ -46,17 +51,26 @@
     },
     "candidate_claims": [],
     "recent_turns": [
-      {"role": "agent", "text": "Please continue with the previous question and walk me through that end-to-end sync flow.", "timestamp_ms": 0, "question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a"}
+      {
+        "role": "agent",
+        "text": "Please continue with the previous question and walk me through that end-to-end sync flow.",
+        "timestamp_ms": 0,
+        "question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a"
+      }
     ],
     "candidate_utterance": "I'd build it on MuleSoft using Anypoint connectors for both Salesforce and the on-prem system, VPN tunnel for the on-prem hop, and for reliability I'd use exponential backoff retries, idempotency keys on order IDs to prevent duplicates, and a dead-letter queue with replay support.",
     "time_remaining_seconds": 1000
   },
   "expected": {
     "next_action": "advance",
-    "forbidden_actions": ["acknowledge_no_experience"],
+    "forbidden_actions": [
+      "acknowledge_no_experience"
+    ],
     "observations_min_count": 1,
     "forbidden_failure_observations": true,
-    "expected_reasoning_substrings": ["advance"]
+    "expected_reasoning_substrings": [
+      "advance"
+    ]
   },
   "source": "session_2115a63a_turn374",
   "labeled_by": "ishant",

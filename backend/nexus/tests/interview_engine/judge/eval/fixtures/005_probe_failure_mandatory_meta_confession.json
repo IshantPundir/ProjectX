@@ -1,7 +1,12 @@
 {
   "id": "005_probe_failure_mandatory_meta_confession",
-  "description": "Candidate engaged earlier but cannot answer a concrete probe on a mandatory signal — bluff-catch scenario from session 70c126b4 turn 8.",
-  "tags": ["bluff_catch", "meta_confession", "mandatory_signal", "real_session"],
+  "description": "Candidate engaged earlier but cannot answer a concrete probe on a mandatory signal \u2014 bluff-catch scenario from session 70c126b4 turn 8.",
+  "tags": [
+    "bluff_catch",
+    "meta_confession",
+    "mandatory_signal",
+    "real_session"
+  ],
   "judge_input": {
     "active_question_id": "606b1bcb-9205-4509-96d0-468326b73c5d",
     "active_question_text": "You're inheriting a portfolio of ~40-50 integrations across cloud and on-prem. In your first 90 days, how would you assess, stabilize, and standardize the estate? Outline the plan, artifacts you'd produce, and success metrics.",
@@ -31,7 +36,8 @@
         "priority": "required"
       }
     ],
-    "next_pending_mandatory_question_id": null,
+    "next_pending_question_id": null,
+    "next_pending_question_is_mandatory": null,
     "active_question_push_back_count": 1,
     "active_question_consecutive_dont_know_count": 0,
     "active_question_remaining_probes": {},
@@ -39,14 +45,26 @@
       "8+ years overall experience in enterprise integration design and implementation": {
         "signal_value": "8+ years overall experience in enterprise integration design and implementation",
         "coverage": "partial",
-        "anchors_hit": [0],
+        "anchors_hit": [
+          0
+        ],
         "last_observation_seq": 12
       }
     },
     "candidate_claims": [],
     "recent_turns": [
-      {"role": "agent", "text": "Can you walk through one integration you'd stabilize first, including specific checks and rollback steps?", "timestamp_ms": 0, "question_id": "606b1bcb-9205-4509-96d0-468326b73c5d"},
-      {"role": "candidate", "text": "Hmm Okay Let me think about this. So like I would like to optimize for Uh, actually I don't know, I'm not sure how to answer this question.", "timestamp_ms": 41123, "question_id": "606b1bcb-9205-4509-96d0-468326b73c5d"}
+      {
+        "role": "agent",
+        "text": "Can you walk through one integration you'd stabilize first, including specific checks and rollback steps?",
+        "timestamp_ms": 0,
+        "question_id": "606b1bcb-9205-4509-96d0-468326b73c5d"
+      },
+      {
+        "role": "candidate",
+        "text": "Hmm Okay Let me think about this. So like I would like to optimize for Uh, actually I don't know, I'm not sure how to answer this question.",
+        "timestamp_ms": 41123,
+        "question_id": "606b1bcb-9205-4509-96d0-468326b73c5d"
+      }
     ],
     "candidate_utterance": "Hmm Okay Let me think about this. So like I would like to optimize for Uh, actually I don't know, I'm not sure how to answer this question.",
     "time_remaining_seconds": 600
@@ -56,11 +74,17 @@
     "turn_metadata": {
       "candidate_meta_confession": true
     },
-    "forbidden_actions": ["acknowledge_no_experience", "polite_close"],
+    "forbidden_actions": [
+      "acknowledge_no_experience",
+      "polite_close"
+    ],
     "observations_min_count": 0,
     "observations_max_count": 1,
     "forbidden_failure_observations": true,
-    "expected_reasoning_substrings": ["meta", "confession"]
+    "expected_reasoning_substrings": [
+      "meta",
+      "confession"
+    ]
   },
   "source": "session_70c126b4_turn8",
   "labeled_by": "ishant",

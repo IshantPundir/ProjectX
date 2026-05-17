@@ -1,7 +1,10 @@
 {
   "id": "012_candidate_explain_request",
-  "description": "Candidate explicitly asks for the question to be explained or rephrased in a different way — 'I don't understand what you mean.' This is a clarify, not a repeat. The candidate is asking for a different explanation, not a verbatim replay.",
-  "tags": ["clarify", "synthesized"],
+  "description": "Candidate explicitly asks for the question to be explained or rephrased in a different way \u2014 'I don't understand what you mean.' This is a clarify, not a repeat. The candidate is asking for a different explanation, not a verbatim replay.",
+  "tags": [
+    "clarify",
+    "synthesized"
+  ],
   "judge_input": {
     "active_question_id": "606b1bcb-9205-4509-96d0-468326b73c5d",
     "active_question_text": "You're inheriting a portfolio of ~40-50 integrations across cloud and on-prem. In your first 90 days, how would you assess, stabilize, and standardize the estate?",
@@ -28,7 +31,8 @@
         "priority": "required"
       }
     ],
-    "next_pending_mandatory_question_id": null,
+    "next_pending_question_id": null,
+    "next_pending_question_is_mandatory": null,
     "active_question_push_back_count": 0,
     "active_question_consecutive_dont_know_count": 0,
     "active_question_remaining_probes": {
@@ -44,17 +48,28 @@
     },
     "candidate_claims": [],
     "recent_turns": [
-      {"role": "agent", "text": "You're inheriting a large portfolio of integrations. In your first 90 days, how would you assess and stabilize the estate?", "timestamp_ms": 0, "question_id": "606b1bcb-9205-4509-96d0-468326b73c5d"}
+      {
+        "role": "agent",
+        "text": "You're inheriting a large portfolio of integrations. In your first 90 days, how would you assess and stabilize the estate?",
+        "timestamp_ms": 0,
+        "question_id": "606b1bcb-9205-4509-96d0-468326b73c5d"
+      }
     ],
     "candidate_utterance": "I'm not sure I understand what you're asking. Can you explain it in a different way or give me an example?",
     "time_remaining_seconds": 1100
   },
   "expected": {
     "next_action": "clarify",
-    "forbidden_actions": ["repeat", "push_back", "redirect"],
+    "forbidden_actions": [
+      "repeat",
+      "push_back",
+      "redirect"
+    ],
     "observations_min_count": 0,
     "observations_max_count": 0,
-    "expected_reasoning_substrings": ["clarify"]
+    "expected_reasoning_substrings": [
+      "clarify"
+    ]
   },
   "source": "synthesized",
   "labeled_by": "ishant",

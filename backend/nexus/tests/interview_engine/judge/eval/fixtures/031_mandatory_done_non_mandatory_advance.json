@@ -1,11 +1,11 @@
 {
-  "id": "002_what_is_term_question",
-  "description": "Candidate asks 'what's an ERP?' immediately after the first question \u2014 a mix of greeting and clarifying question about a term. From session 70c126b4 turn 38. Judge must redirect (greeting flag) or clarify (term question). Because social_or_greeting=true forces redirect, clarify is forbidden.",
+  "id": "031_mandatory_done_non_mandatory_advance",
+  "description": "Q1 (mandatory, active) is being answered; Q2 (mandatory) is already complete with sufficient coverage. Q3 is non-mandatory with an uncovered signal, so next_pending_question_id points to Q3 (is_mandatory=false). Candidate gives a strong answer on Q1. Judge should emit advance with target_question_id=Q3 — NOT polite_close.",
   "tags": [
-    "clarify",
-    "redirect",
-    "term_question",
-    "real_session"
+    "advance",
+    "non_mandatory",
+    "cluster_g",
+    "synthesized"
   ],
   "judge_input": {
     "active_question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a",
@@ -20,10 +20,10 @@
     "active_question_red_flags": [
       "Tool-agnostic answer with no concrete platform components or connectors",
       "No clear plan for idempotency/retries; accepts duplicates or manual cleanup",
-      "Unclear or insecure on-prem connectivity path; hand-waves promotion strategy"
+      "Unclear or insecure on-prem connectivity path"
     ],
     "active_question_rubric": {
-      "excellent": "Identifies concrete iPaaS components and connectors, secures on-prem access (agent/VPN) with specific auth methods, defines JSON/XML contracts and validation, and details reliability.",
+      "excellent": "Identifies concrete iPaaS components and connectors, secures on-prem access (agent/VPN) with specific auth methods, defines JSON/XML contracts and validation, and details reliability (retry/backoff, idempotency keys, DLQ/replay) with scale/SLA considerations.",
       "meets_bar": "Provides a mostly correct design with platform references, basic secure connectivity, and mapping plus some reliability controls.",
       "below_bar": "Stays generic or theoretical, lacks concrete platform usage, ignores secure on-prem connectivity."
     },
@@ -36,18 +36,29 @@
         "priority": "required"
       }
     ],
-    "next_pending_question_id": "606b1bcb-9205-4509-96d0-468326b73c5d",
-    "next_pending_question_is_mandatory": true,
+    "next_pending_question_id": "a1b2c3d4-0001-4000-8000-000000000003",
+    "next_pending_question_is_mandatory": false,
     "active_question_push_back_count": 0,
     "active_question_consecutive_dont_know_count": 0,
     "active_question_remaining_probes": {
       "0": "How would you handle retries and idempotency to avoid duplicate orders during transient failures?",
-      "1": "What connectivity approach would you use to reach on-prem (e.g., agent/VPN/reverse proxy), and how would you secure it?",
-      "2": "How would you structure environments and promote changes safely from dev to test to prod?"
+      "1": "What connectivity approach would you use to reach on-prem (e.g., agent/VPN/reverse proxy), and how would you secure it?"
     },
     "signal_coverage": {
       "5+ years hands-on production experience with at least one iPaaS/ESB platform (MuleSoft, TIBCO, or Dell Boomi)": {
         "signal_value": "5+ years hands-on production experience with at least one iPaaS/ESB platform (MuleSoft, TIBCO, or Dell Boomi)",
+        "coverage": "none",
+        "anchors_hit": [],
+        "last_observation_seq": null
+      },
+      "8+ years overall experience in enterprise integration design and implementation": {
+        "signal_value": "8+ years overall experience in enterprise integration design and implementation",
+        "coverage": "sufficient",
+        "anchors_hit": [0, 1],
+        "last_observation_seq": 4
+      },
+      "Ability to influence technical direction with non-technical stakeholders": {
+        "signal_value": "Ability to influence technical direction with non-technical stakeholders",
         "coverage": "none",
         "anchors_hit": [],
         "last_observation_seq": null
@@ -57,30 +68,23 @@
     "recent_turns": [
       {
         "role": "agent",
-        "text": "Using your primary iPaaS, walk me through an end-to-end near-real-time Salesforce to on-prem ERP order sync.",
+        "text": "Let's get started. Using your primary iPaaS, walk me through a near-real-time Salesforce to on-prem ERP order sync.",
         "timestamp_ms": 0,
         "question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a"
       }
     ],
-    "candidate_utterance": "Hey, hi, what's an ERP?",
-    "time_remaining_seconds": 1180
+    "candidate_utterance": "Sure. So I trigger from Salesforce using platform events, MuleSoft consumes those with an Anypoint connector, DataWeave transforms the payload to the ERP schema. On-prem connectivity goes via VPN tunnel with OAuth client credentials. For reliability, I use exponential backoff with a maximum of 5 retries, idempotency keys on order IDs to prevent duplicates, and a dead-letter queue with replay support for anything that keeps failing.",
+    "time_remaining_seconds": 900
   },
   "expected": {
-    "next_action": "redirect",
-    "forbidden_actions": [
-      "clarify"
-    ],
-    "turn_metadata": {
-      "candidate_social_or_greeting": true
-    },
-    "observations_min_count": 0,
-    "observations_max_count": 0,
-    "expected_reasoning_substrings": [
-      "greeting",
-      "redirect"
-    ]
+    "next_action": "advance",
+    "forbidden_actions": ["push_back", "redirect", "acknowledge_no_experience", "polite_close"],
+    "target_question_id": "a1b2c3d4-0001-4000-8000-000000000003",
+    "observations_min_count": 1,
+    "forbidden_failure_observations": true,
+    "expected_reasoning_substrings": ["advance"]
   },
-  "source": "session_70c126b4_turn38",
+  "source": "synthesized",
   "labeled_by": "ishant",
   "labeled_at": "2026-05-17"
 }

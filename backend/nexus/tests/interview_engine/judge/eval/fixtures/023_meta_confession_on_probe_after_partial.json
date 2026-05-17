@@ -1,7 +1,12 @@
 {
   "id": "023_meta_confession_on_probe_after_partial",
   "description": "Candidate gave a partial answer to main Q1, then when pushed for specifics on the idempotency upsert probe, says 'I'm not sure if I can answer that.' Meta-confession on a probe after partial coverage. From session 2115a63a turn 282.",
-  "tags": ["meta_confession", "push_back", "probe", "real_session"],
+  "tags": [
+    "meta_confession",
+    "push_back",
+    "probe",
+    "real_session"
+  ],
   "judge_input": {
     "active_question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a",
     "active_question_text": "Using your primary iPaaS, how would you implement a near-real-time order sync from Salesforce to an on-prem ERP?",
@@ -29,7 +34,8 @@
         "priority": "required"
       }
     ],
-    "next_pending_mandatory_question_id": "606b1bcb-9205-4509-96d0-468326b73c5d",
+    "next_pending_question_id": "606b1bcb-9205-4509-96d0-468326b73c5d",
+    "next_pending_question_is_mandatory": true,
     "active_question_push_back_count": 1,
     "active_question_consecutive_dont_know_count": 0,
     "active_question_remaining_probes": {
@@ -46,8 +52,18 @@
     },
     "candidate_claims": [],
     "recent_turns": [
-      {"role": "agent", "text": "You mentioned conditional upserts for order IDs — walk me through one exact upsert step and its success criteria.", "timestamp_ms": 0, "question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a"},
-      {"role": "candidate", "text": "Hmm I'm not sure if I can answer that.", "timestamp_ms": 8000, "question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a"}
+      {
+        "role": "agent",
+        "text": "You mentioned conditional upserts for order IDs \u2014 walk me through one exact upsert step and its success criteria.",
+        "timestamp_ms": 0,
+        "question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a"
+      },
+      {
+        "role": "candidate",
+        "text": "Hmm I'm not sure if I can answer that.",
+        "timestamp_ms": 8000,
+        "question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a"
+      }
     ],
     "candidate_utterance": "Hmm I'm not sure if I can answer that.",
     "time_remaining_seconds": 1050
@@ -57,11 +73,17 @@
     "turn_metadata": {
       "candidate_meta_confession": true
     },
-    "forbidden_actions": ["acknowledge_no_experience", "polite_close"],
+    "forbidden_actions": [
+      "acknowledge_no_experience",
+      "polite_close"
+    ],
     "observations_min_count": 0,
     "observations_max_count": 1,
     "forbidden_failure_observations": true,
-    "expected_reasoning_substrings": ["meta", "push_back"]
+    "expected_reasoning_substrings": [
+      "meta",
+      "push_back"
+    ]
   },
   "source": "session_2115a63a_turn282",
   "labeled_by": "ishant",

@@ -8,7 +8,7 @@ Field order is deliberately STABLE-FIRST → DYNAMIC-LAST so the JSON byte
 prefix sent to OpenAI is cache-friendly:
 
     1. active_question_*           (changes only on advance — ~every 3-4 turns)
-    2. next_pending_mandatory_*    (changes only on advance)
+    2. next_pending_question_*     (changes only on advance)
     3. active_question_remaining_probes (changes only on probe consumption)
     4. signal_coverage             (current coverage per signal — can change per turn)
     5. candidate_claims            (grows when claims emitted — can change per turn)
@@ -18,7 +18,7 @@ prefix sent to OpenAI is cache-friendly:
 
 The full append-only ledger entries[] and the full QuestionQueueSnapshot were
 removed: the Judge only needs current per-signal coverage and the next
-pending mandatory ID, both of which the orchestrator resolves before the
+pending question ID, both of which the orchestrator resolves before the
 call. Forensic state (entries, per-question turn counters, time_spent_ms)
 lives on the State Engine and the SessionResult — not on the LLM input.
 """
@@ -82,13 +82,22 @@ class JudgeInputPayload(BaseModel):
     )
 
     # --- Semi-stable — changes only when the queue advances or a probe is consumed ---
-    next_pending_mandatory_question_id: str | None = Field(
+    next_pending_question_id: str | None = Field(
         default=None,
         description=(
             "The question_id the Judge MUST use as target_question_id when "
-            "emitting `advance`. Resolved by the orchestrator from the queue "
-            "before the call so the Judge does not have to walk a queue "
-            "snapshot itself."
+            "emitting `advance`. Pre-resolved by the State Engine — may be a "
+            "mandatory question OR a non-mandatory one (when mandatory queue "
+            "exhausted and uncovered signals remain). The Judge does not "
+            "decide selection; it just advances to whatever is provided."
+        ),
+    )
+    next_pending_question_is_mandatory: bool | None = Field(
+        default=None,
+        description=(
+            "True if next_pending_question_id is mandatory, False if "
+            "non-mandatory (selected because its signals are still "
+            "uncovered), None if no next question exists (→ polite_close)."
         ),
     )
     active_question_push_back_count: int = Field(
@@ -160,7 +169,7 @@ def build_judge_input(
     recent_turns: list[TranscriptEntry],
     candidate_utterance: str,
     time_remaining_seconds: int,
-    next_pending_mandatory_id: str | None,
+    next_pending_question: tuple[str, bool] | None,
     active_signal_metadata: list[ActiveSignalMeta] | None = None,
     active_remaining_probes: dict[str, str] | None = None,
     active_question_push_back_count: int = 0,
@@ -173,9 +182,20 @@ def build_judge_input(
         decision-making; ``entries`` is forensic data that grew ~30 tok/turn
         in older sessions for no decision benefit.
       * The Judge consumes only the active question and the next pending
-        mandatory ID. Per-question turn counters and time_spent_ms grew the
+        question ID. Per-question turn counters and time_spent_ms grew the
         prompt without affecting any decision.
+
+    ``next_pending_question`` is a tuple ``(question_id, is_mandatory)`` or
+    None. When not None, the question_id may be mandatory OR non-mandatory
+    (when the mandatory queue is exhausted and uncovered signals remain).
+    The Judge does not decide selection; the State Engine already applied
+    the selection rule.
     """
+    next_id: str | None = None
+    next_is_mandatory: bool | None = None
+    if next_pending_question is not None:
+        next_id, next_is_mandatory = next_pending_question
+
     return JudgeInputPayload(
         active_question_id=active_question.id if active_question else None,
         active_question_text=active_question.text if active_question else None,
@@ -192,7 +212,8 @@ def build_judge_input(
             active_question.evaluation_hint if active_question else None
         ),
         active_question_signal_metadata=list(active_signal_metadata or []),
-        next_pending_mandatory_question_id=next_pending_mandatory_id,
+        next_pending_question_id=next_id,
+        next_pending_question_is_mandatory=next_is_mandatory,
         active_question_push_back_count=active_question_push_back_count,
         active_question_consecutive_dont_know_count=active_question_consecutive_dont_know_count,
         active_question_remaining_probes=dict(active_remaining_probes or {}),

@@ -49,12 +49,19 @@ async def run_fixture(
 
     openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
 
+    def _next_pending_resolver() -> tuple[str, bool] | None:
+        nid = fixture.judge_input.next_pending_question_id
+        is_mand = fixture.judge_input.next_pending_question_is_mandatory
+        if nid is None:
+            return None
+        return (nid, bool(is_mand))
+
     judge = JudgeService(
         openai_client=openai_client,
         model=os.getenv("ENGINE_JUDGE_MODEL", settings.engine_judge_model),
         system_prompt=system_prompt,
         system_prompt_hash=prompt_hash,
-        next_pending_mandatory_resolver=lambda: fixture.judge_input.next_pending_mandatory_question_id,
+        next_pending_question_resolver=_next_pending_resolver,
         total_budget_ms=int(os.getenv("ENGINE_JUDGE_TOTAL_BUDGET_MS", "10000")),
         retry_wait_ms=int(os.getenv("ENGINE_JUDGE_RETRY_WAIT_MS", "250")),
     )

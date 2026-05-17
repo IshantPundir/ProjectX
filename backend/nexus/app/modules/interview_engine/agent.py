@@ -376,7 +376,7 @@ async def _run_entrypoint(
         model=settings.engine_judge_model,
         system_prompt=judge_prompt,
         system_prompt_hash=judge_hash,
-        next_pending_mandatory_resolver=state_engine.next_pending_mandatory_id,
+        next_pending_question_resolver=state_engine.next_pending_question,
         prompt_version=settings.engine_judge_prompt_version,
         total_budget_ms=settings.engine_judge_total_budget_ms,
         retry_wait_ms=settings.engine_judge_retry_wait_ms,

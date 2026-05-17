@@ -1,10 +1,11 @@
 {
-  "id": "025_q2_strong_assessment_plan",
-  "description": "On Q2 (90-day integration assessment), candidate gives a structured answer: inventory, owner identification, SLA classification, failure rates, and looking at logs. Covers 2-3 evidence points. From session 2115a63a turn 587.",
+  "id": "032_mandatory_done_all_covered_polite_close",
+  "description": "Both mandatory questions and the non-mandatory question's signals are all at coverage=sufficient. next_pending_question_id is null (State Engine found no question with uncovered signals). Candidate gives a brief response. Judge must emit polite_close.",
   "tags": [
-    "advance",
-    "real_session",
-    "q2"
+    "polite_close",
+    "non_mandatory",
+    "cluster_g",
+    "synthesized"
   ],
   "judge_input": {
     "active_question_id": "606b1bcb-9205-4509-96d0-468326b73c5d",
@@ -39,44 +40,46 @@
     "next_pending_question_is_mandatory": null,
     "active_question_push_back_count": 0,
     "active_question_consecutive_dont_know_count": 0,
-    "active_question_remaining_probes": {
-      "0": "What evidence and environment data would you gather in week 1 (logs, configs, SLAs, error rates)?",
-      "1": "How would you prioritize remediation work? Which risks or metrics drive sequencing?",
-      "2": "What reusable standards or libraries would you introduce to reduce future incidents?"
-    },
+    "active_question_remaining_probes": {},
     "signal_coverage": {
+      "5+ years hands-on production experience with at least one iPaaS/ESB platform (MuleSoft, TIBCO, or Dell Boomi)": {
+        "signal_value": "5+ years hands-on production experience with at least one iPaaS/ESB platform (MuleSoft, TIBCO, or Dell Boomi)",
+        "coverage": "sufficient",
+        "anchors_hit": [0, 1, 2],
+        "last_observation_seq": 3
+      },
       "8+ years overall experience in enterprise integration design and implementation": {
         "signal_value": "8+ years overall experience in enterprise integration design and implementation",
-        "coverage": "none",
-        "anchors_hit": [],
-        "last_observation_seq": null
+        "coverage": "sufficient",
+        "anchors_hit": [0, 1],
+        "last_observation_seq": 6
+      },
+      "Ability to influence technical direction with non-technical stakeholders": {
+        "signal_value": "Ability to influence technical direction with non-technical stakeholders",
+        "coverage": "sufficient",
+        "anchors_hit": [0],
+        "last_observation_seq": 8
       }
     },
     "candidate_claims": [],
     "recent_turns": [
       {
         "role": "agent",
-        "text": "OK, let's switch gears. You inherit 40-50 integrations; in your first 90 days, how do you assess and stabilize them?",
+        "text": "How would you assess and standardize a portfolio of 40-50 integrations in your first 90 days?",
         "timestamp_ms": 0,
         "question_id": "606b1bcb-9205-4509-96d0-468326b73c5d"
       }
     ],
-    "candidate_utterance": "Uh, sure. So like, I'd first of all like I'd inventory all integrations, identify the owners, SLAs, dependencies, failure rates, and critical business parts. I'll look at the logs and latency graphs to identify which ones are struggling and prioritize fixing those first. Then I'd establish some common standards for error handling.",
-    "time_remaining_seconds": 1000
+    "candidate_utterance": "I'd inventory integrations, set baselines for SLAs and failure rates, introduce standard error handling and correlation IDs, and set measurable goals like reducing incidents by 30 percent.",
+    "time_remaining_seconds": 180
   },
   "expected": {
-    "next_action": "advance",
-    "forbidden_actions": [
-      "push_back",
-      "acknowledge_no_experience"
-    ],
-    "observations_min_count": 1,
-    "forbidden_failure_observations": true,
-    "expected_reasoning_substrings": [
-      "advance"
-    ]
+    "next_action": "polite_close",
+    "forbidden_actions": ["advance", "push_back", "probe", "redirect", "acknowledge_no_experience"],
+    "observations_min_count": 0,
+    "expected_reasoning_substrings": []
   },
-  "source": "session_2115a63a_turn587",
+  "source": "synthesized",
   "labeled_by": "ishant",
   "labeled_at": "2026-05-17"
 }

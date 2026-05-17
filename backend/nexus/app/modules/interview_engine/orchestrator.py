@@ -712,7 +712,7 @@ class InterviewOrchestrator:
             ledger_snapshot=ledger, queue_snapshot=queue, claims_snapshot=claims,
             recent_turns=recent, candidate_utterance=candidate_text,
             time_remaining_seconds=time_remaining,
-            next_pending_mandatory_id=self._state.next_pending_mandatory_id(),
+            next_pending_question=self._state.next_pending_question(),
             active_signal_metadata=active_signal_meta,
             active_remaining_probes=remaining_probes_dict,
             active_question_push_back_count=active_push_back_count,

@@ -59,6 +59,15 @@ class QuestionState(BaseModel):
             "and surfaced to the Report Builder for downstream analytics."
         ),
     )
+    signal_values: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Signal values this question targets. Used by the non-mandatory "
+            "question selector (Cluster G) to check whether any of the "
+            "question's signals still have uncovered coverage, gating "
+            "whether the non-mandatory question should be asked."
+        ),
+    )
 
 
 class QuestionQueueSnapshot(BaseModel):

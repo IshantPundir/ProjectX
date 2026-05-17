@@ -108,7 +108,7 @@ class JudgeService:
         model: str,
         system_prompt: str,
         system_prompt_hash: str,
-        next_pending_mandatory_resolver: Callable[[], str | None],
+        next_pending_question_resolver: Callable[[], tuple[str, bool] | None],
         prompt_version: str = "v1",
         total_budget_ms: int = 10000,
         retry_wait_ms: int = 250,
@@ -117,7 +117,7 @@ class JudgeService:
         self._model = model
         self._system_prompt = system_prompt
         self._system_prompt_hash = system_prompt_hash
-        self._next_pending_resolver = next_pending_mandatory_resolver
+        self._next_pending_resolver = next_pending_question_resolver
         self._prompt_version = prompt_version
         self._total_budget_ms = total_budget_ms
         self._retry_wait_ms = retry_wait_ms
@@ -274,9 +274,10 @@ class JudgeService:
         latency_ms: int,
         usage: dict[str, int] | None,
     ) -> JudgeCallResult:
+        next_pending = self._next_pending_resolver()
         synthesized = synthesize_fallback(
             reason=reason,
-            next_pending_mandatory_id=self._next_pending_resolver(),
+            next_pending_question=next_pending,
         )
         return JudgeCallResult(
             judge_output=synthesized,

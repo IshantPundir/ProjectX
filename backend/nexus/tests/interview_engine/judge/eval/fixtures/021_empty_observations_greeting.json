@@ -1,7 +1,12 @@
 {
   "id": "021_empty_observations_greeting",
-  "description": "Pure social greeting at session start — 'Hi, I didn't quite understand the question. Can you please explain it to me?' This is a greeting+explain hybrid from session 2115a63a turn 37. The greeting flag should be set, redirect emitted, and observations should be EMPTY (position-bias defense).",
-  "tags": ["redirect", "greeting", "empty_observations", "real_session"],
+  "description": "Pure social greeting at session start \u2014 'Hi, I didn't quite understand the question. Can you please explain it to me?' This is a greeting+explain hybrid from session 2115a63a turn 37. The greeting flag should be set, redirect emitted, and observations should be EMPTY (position-bias defense).",
+  "tags": [
+    "redirect",
+    "greeting",
+    "empty_observations",
+    "real_session"
+  ],
   "judge_input": {
     "active_question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a",
     "active_question_text": "Using your primary iPaaS (MuleSoft, TIBCO, or Boomi), how would you implement a near-real-time order sync from Salesforce to an on-prem ERP? Walk through the flow end-to-end.",
@@ -29,7 +34,8 @@
         "priority": "required"
       }
     ],
-    "next_pending_mandatory_question_id": "606b1bcb-9205-4509-96d0-468326b73c5d",
+    "next_pending_question_id": "606b1bcb-9205-4509-96d0-468326b73c5d",
+    "next_pending_question_is_mandatory": true,
     "active_question_push_back_count": 0,
     "active_question_consecutive_dont_know_count": 0,
     "active_question_remaining_probes": {
@@ -47,7 +53,12 @@
     },
     "candidate_claims": [],
     "recent_turns": [
-      {"role": "agent", "text": "Using your primary iPaaS, walk me through an end-to-end near-real-time Salesforce to on-prem ERP order sync.", "timestamp_ms": 0, "question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a"}
+      {
+        "role": "agent",
+        "text": "Using your primary iPaaS, walk me through an end-to-end near-real-time Salesforce to on-prem ERP order sync.",
+        "timestamp_ms": 0,
+        "question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a"
+      }
     ],
     "candidate_utterance": "Hi, I didn't quite understand the question. Can you please explain it to me?",
     "time_remaining_seconds": 1200
@@ -59,7 +70,10 @@
     },
     "observations_min_count": 0,
     "observations_max_count": 0,
-    "expected_reasoning_substrings": ["greeting", "redirect"]
+    "expected_reasoning_substrings": [
+      "greeting",
+      "redirect"
+    ]
   },
   "source": "session_2115a63a_turn37",
   "labeled_by": "ishant",

@@ -887,3 +887,58 @@ All persistence (sessions, knockout_failures, audio_tuning_summary) is JSONB; ne
 ### Diagnostic source
 
 The findings driving this spec come from the diagnostic conducted 2026-05-17 on session `engine-events/70c126b4-1c5b-4d2d-bee0-2e1259f40a5d.json` (job: Sr. Integration Engineer / Workato, candidate: Punar). Six Judge calls, three confirmed defects (illegal failure observation, narrow signal focus, false anti-pattern routing).
+
+---
+
+## 16. Cluster G — Non-mandatory question selection + reverse-rule guard (added 2026-05-17)
+
+After v2's first live session (commit `e000ce5`, Punar), two product gaps surfaced:
+
+1. The engine stopped after Q2 (last mandatory) with 11 minutes of stage budget unused and 3 non-mandatory questions never asked. Bank-generator emits non-mandatory questions; runtime never consumed them.
+2. Edge case: explicit no-experience disclosure on a knockout signal already proven on a mandatory question would reverse-rule and close the session.
+
+### 16.1 Non-mandatory selection
+
+`QuestionQueue` gains `next_pending_question_id(*, signal_coverage)` returning `(id, is_mandatory)` or `None`. Selection rule:
+1. Mandatory pending in position order (unchanged for mandatory).
+2. When mandatory queue empty, non-mandatory pending in position order, skipping any whose signals are all already at `coverage=sufficient`.
+3. Return `None` → polite_close fires.
+
+No per-question time gate. Bank-generator owns time planning at generation; runtime trusts the bank. Existing `time_remaining_seconds ≤ 60 + partial → polite_close` rule handles in-flight termination.
+
+`QuestionState` gains `signal_values: list[str]` (default empty, backward-compatible). `QuestionQueue.from_initial` extracts this from the input dict alongside `question_id`, `is_mandatory`, `follow_ups`.
+
+`StateEngine` gains `next_pending_question() -> tuple[str, bool] | None` public accessor (delegates to `self._queue.next_pending_question_id(signal_coverage=self._ledger.snapshot().snapshots)`). The legacy `next_pending_mandatory_id()` is kept with a deprecation notice for internal fallback use.
+
+`JudgeInputPayload.next_pending_mandatory_question_id` renamed → `next_pending_question_id`. New field `next_pending_question_is_mandatory: bool | None` added for audit clarity. Both fields updated in the orchestrator, fallback synthesizer, and all 30 eval fixtures.
+
+### 16.2 Reverse-rule guard
+
+`state/engine.py` explicit-no-experience knockout_policy override now:
+1. Captures `pre_turn_signal_snapshots` at the TOP of `process_judge_output`, before any observations are applied.
+2. Filters `knockout_failures_this_turn` into `actionable_failures` (those where no signal was already `sufficient` in `pre_turn_signal_snapshots`).
+3. If all failures are on already-proven signals, records `knockout_policy_reverse_rule_skipped` audit warning and does NOT close.
+4. If `actionable_failures` is non-empty, fires `knockout_policy_override` and closes as before.
+
+The pre-turn snapshot is required because the ledger applies `sufficient→failed` transitions before the knockout guard runs — reading the post-turn snapshot would always see `failed`, never catching the reverse-rule case.
+
+Matches the equivalent guard in `_maybe_promote_meta_confession` (which already had this guard at the `meta_confession_knockout` level).
+
+### 16.3 Files changed
+
+- `app/modules/interview_engine/models/queue.py` — `QuestionState.signal_values` field
+- `app/modules/interview_engine/state/queue.py` — `from_initial` dict parsing + `next_pending_question_id` method
+- `app/modules/interview_engine/state/engine.py` — `signal_values` plumbed through, `next_pending_question()` accessor, pre-turn snapshot capture, reverse-rule guard
+- `app/modules/interview_engine/judge/input_builder.py` — field rename + new `is_mandatory` field
+- `app/modules/interview_engine/judge/service.py` — `next_pending_question_resolver` param rename
+- `app/modules/interview_engine/judge/fallback.py` — `next_pending_question` param rename
+- `app/modules/interview_engine/orchestrator.py` — call site updated
+- `app/modules/interview_engine/agent.py` — resolver call site updated
+- `prompts/v2/engine/judge.system.txt` — §1 step 7+8, §2 INPUT FIELDS, §4 ADVANCE + POLITE_CLOSE updated
+- `tests/interview_engine/judge/eval/fixtures/*.json` — all 30 existing rebased + 2 new (031, 032)
+- `tests/interview_engine/judge/eval/runner.py` — resolver lambda updated
+- `tests/interview_engine/judge/test_input_builder.py` — updated for renamed param + new field
+- `tests/interview_engine/judge/test_service.py` — resolver param rename
+- `tests/interview_engine/judge/test_fallback.py` — `next_pending_question` param rename
+- `tests/interview_engine/state/test_queue.py` — 8 new tests for `next_pending_question_id`
+- `tests/interview_engine/state/test_meta_confession_promotion.py` — 2 new reverse-rule guard tests

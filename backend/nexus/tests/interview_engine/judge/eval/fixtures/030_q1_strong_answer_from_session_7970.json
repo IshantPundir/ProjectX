@@ -1,7 +1,10 @@
 {
   "id": "030_q1_strong_answer_from_session_7970",
   "description": "Candidate from session 7970e91c gives a substantive answer about Salesforce platform events, connectivity via on-prem agent, and retry with exponential backoff. Should advance. From session 7970e91c turn 255.",
-  "tags": ["advance", "real_session"],
+  "tags": [
+    "advance",
+    "real_session"
+  ],
   "judge_input": {
     "active_question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a",
     "active_question_text": "Using your primary iPaaS (MuleSoft, TIBCO, or Boomi), how would you implement a near-real-time order sync from Salesforce to an on-prem ERP?",
@@ -29,7 +32,8 @@
         "priority": "required"
       }
     ],
-    "next_pending_mandatory_question_id": "606b1bcb-9205-4509-96d0-468326b73c5d",
+    "next_pending_question_id": "606b1bcb-9205-4509-96d0-468326b73c5d",
+    "next_pending_question_is_mandatory": true,
     "active_question_push_back_count": 0,
     "active_question_consecutive_dont_know_count": 0,
     "active_question_remaining_probes": {
@@ -47,19 +51,39 @@
     },
     "candidate_claims": [],
     "recent_turns": [
-      {"role": "agent", "text": "Using your primary iPaaS, walk me through a near-real-time Salesforce to on-prem ERP order sync.", "timestamp_ms": 0, "question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a"},
-      {"role": "candidate", "text": "Okay Uh, hey, uh, sorry, uh, I didn't quite understand the question, but it's ARP.", "timestamp_ms": 5000, "question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a"},
-      {"role": "agent", "text": "An ERP is an on-prem system for orders and inventory. Using your iPaaS, how would you sync Salesforce orders into it in near real time?", "timestamp_ms": 0, "question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a"}
+      {
+        "role": "agent",
+        "text": "Using your primary iPaaS, walk me through a near-real-time Salesforce to on-prem ERP order sync.",
+        "timestamp_ms": 0,
+        "question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a"
+      },
+      {
+        "role": "candidate",
+        "text": "Okay Uh, hey, uh, sorry, uh, I didn't quite understand the question, but it's ARP.",
+        "timestamp_ms": 5000,
+        "question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a"
+      },
+      {
+        "role": "agent",
+        "text": "An ERP is an on-prem system for orders and inventory. Using your iPaaS, how would you sync Salesforce orders into it in near real time?",
+        "timestamp_ms": 0,
+        "question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a"
+      }
     ],
     "candidate_utterance": "Uh, sure. So like, I'd first like expose, say its Salesforce platform event, consume it via my iPaaS tool, then transform the payload and send it to the on-prem ERP through a secure channel like a VPN or on-prem agent. I implement retrace with exponential backoffs to make sure it's working and it's secure and idempotent using order IDs.",
     "time_remaining_seconds": 1100
   },
   "expected": {
     "next_action": "advance",
-    "forbidden_actions": ["push_back", "acknowledge_no_experience"],
+    "forbidden_actions": [
+      "push_back",
+      "acknowledge_no_experience"
+    ],
     "observations_min_count": 1,
     "forbidden_failure_observations": true,
-    "expected_reasoning_substrings": ["advance"]
+    "expected_reasoning_substrings": [
+      "advance"
+    ]
   },
   "source": "session_7970e91c_turn255",
   "labeled_by": "ishant",

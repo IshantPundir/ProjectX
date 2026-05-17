@@ -26,7 +26,7 @@ class FallbackReason(StrEnum):
 def synthesize_fallback(
     *,
     reason: FallbackReason,
-    next_pending_mandatory_id: str | None,
+    next_pending_question: tuple[str, bool] | None,
 ) -> JudgeOutput:
     # Phase 9.5 (2026-05-12): validation_error synthesizes clarify
     # instead of advance. The original behavior force-walked the queue
@@ -45,22 +45,24 @@ def synthesize_fallback(
             next_action_payload=ClarifyPayload(),
             turn_metadata=TurnMetadata(),
         )
-    if next_pending_mandatory_id is None:
+    if next_pending_question is None:
         return JudgeOutput(
-            reasoning="Fallback: no pending mandatory question remains. Closing politely.",
+            reasoning="Fallback: no pending question remains (mandatory queue empty and no non-mandatory questions with uncovered signals). Closing politely.",
             observations=[],
             candidate_claims=[],
             next_action=NextAction.polite_close,
             next_action_payload=PoliteClosePayload(),
             turn_metadata=TurnMetadata(),
         )
+    next_id, is_mandatory = next_pending_question
+    label = "mandatory" if is_mandatory else "non-mandatory"
     return JudgeOutput(
-        reasoning=f"Fallback ({reason.value}): advancing to next pending mandatory question.",
+        reasoning=f"Fallback ({reason.value}): advancing to next pending {label} question.",
         observations=[],
         candidate_claims=[],
         next_action=NextAction.advance,
         next_action_payload=AdvancePayload(
-            target_question_id=next_pending_mandatory_id,
+            target_question_id=next_id,
         ),
         turn_metadata=TurnMetadata(),
     )

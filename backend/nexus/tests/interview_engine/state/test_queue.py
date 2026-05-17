@@ -115,3 +115,159 @@ def test_completed_when_all_mandatory_done():
     q.advance_to("q2", at_turn=2)
     q.complete_active(at_turn=4)
     assert q.all_mandatory_complete() is True
+
+
+# ---------------------------------------------------------------------------
+# Tests for next_pending_question_id (Cluster G)
+# ---------------------------------------------------------------------------
+
+from app.modules.interview_engine.models.ledger import CoverageState, SignalSnapshot  # noqa: E402
+
+
+def _make_coverage(
+    mapping: dict[str, CoverageState],
+) -> dict[str, "SignalSnapshot"]:
+    """Build a signal_coverage dict from signal_value → CoverageState."""
+    from app.modules.interview_engine.models.ledger import SignalSnapshot
+    return {
+        sv: SignalSnapshot(signal_value=sv, coverage=state)
+        for sv, state in mapping.items()
+    }
+
+
+def _build_queue_with_signals() -> QuestionQueue:
+    """3-question queue:
+        q1: mandatory, signal "sig_a"
+        q2: mandatory, signal "sig_b"
+        q3: non-mandatory, signal "sig_c"
+        q4: non-mandatory, signals "sig_d"
+    """
+    return QuestionQueue.from_initial(
+        questions=[
+            {
+                "question_id": "q1",
+                "is_mandatory": True,
+                "follow_ups": [],
+                "signal_values": ["sig_a"],
+            },
+            {
+                "question_id": "q2",
+                "is_mandatory": True,
+                "follow_ups": [],
+                "signal_values": ["sig_b"],
+            },
+            {
+                "question_id": "q3",
+                "is_mandatory": False,
+                "follow_ups": [],
+                "signal_values": ["sig_c"],
+            },
+            {
+                "question_id": "q4",
+                "is_mandatory": False,
+                "follow_ups": [],
+                "signal_values": ["sig_d"],
+            },
+        ],
+    )
+
+
+def test_next_pending_question_mandatory_pending():
+    """Mandatory still pending → returns mandatory ID with is_mandatory=True."""
+    q = _build_queue_with_signals()
+    result = q.next_pending_question_id(signal_coverage={})
+    assert result == ("q1", True)
+
+
+def test_next_pending_question_mandatory_all_done_no_nonmandatory():
+    """All mandatory done, no non-mandatory questions → returns None."""
+    q = QuestionQueue.from_initial(
+        questions=[
+            {"question_id": "q1", "is_mandatory": True, "follow_ups": [], "signal_values": ["sig_a"]},
+            {"question_id": "q2", "is_mandatory": True, "follow_ups": [], "signal_values": ["sig_b"]},
+        ],
+    )
+    q.advance_to("q1", at_turn=0)
+    q.advance_to("q2", at_turn=1)
+    q.complete_active(at_turn=2)
+    result = q.next_pending_question_id(signal_coverage=_make_coverage({"sig_a": CoverageState.sufficient, "sig_b": CoverageState.sufficient}))
+    assert result is None
+
+
+def test_next_pending_question_nonmandatory_all_signals_sufficient():
+    """All mandatory done; non-mandatory's signal already sufficient → returns None."""
+    q = _build_queue_with_signals()
+    q.advance_to("q1", at_turn=0)
+    q.advance_to("q2", at_turn=1)
+    q.complete_active(at_turn=2)
+    # Both non-mandatory signals are already sufficient
+    coverage = _make_coverage({
+        "sig_a": CoverageState.sufficient,
+        "sig_b": CoverageState.sufficient,
+        "sig_c": CoverageState.sufficient,
+        "sig_d": CoverageState.sufficient,
+    })
+    result = q.next_pending_question_id(signal_coverage=coverage)
+    assert result is None
+
+
+def test_next_pending_question_nonmandatory_uncovered_signal():
+    """All mandatory done; q3 has uncovered signal → returns (q3_id, False)."""
+    q = _build_queue_with_signals()
+    q.advance_to("q1", at_turn=0)
+    q.advance_to("q2", at_turn=1)
+    q.complete_active(at_turn=2)
+    # sig_c is uncovered, sig_d is sufficient
+    coverage = _make_coverage({
+        "sig_a": CoverageState.sufficient,
+        "sig_b": CoverageState.sufficient,
+        "sig_c": CoverageState.none,
+        "sig_d": CoverageState.sufficient,
+    })
+    result = q.next_pending_question_id(signal_coverage=coverage)
+    assert result == ("q3", False)
+
+
+def test_next_pending_question_nonmandatory_position_order():
+    """First non-mandatory with uncovered signals wins (position order)."""
+    q = _build_queue_with_signals()
+    q.advance_to("q1", at_turn=0)
+    q.advance_to("q2", at_turn=1)
+    q.complete_active(at_turn=2)
+    # Both non-mandatory signals uncovered → first (q3) wins
+    coverage = _make_coverage({
+        "sig_a": CoverageState.sufficient,
+        "sig_b": CoverageState.sufficient,
+        "sig_c": CoverageState.none,
+        "sig_d": CoverageState.partial,
+    })
+    result = q.next_pending_question_id(signal_coverage=coverage)
+    assert result == ("q3", False)
+
+
+def test_next_pending_question_first_nonmandatory_sufficient_second_uncovered():
+    """First non-mandatory has all-sufficient signals; second has uncovered → returns second."""
+    q = _build_queue_with_signals()
+    q.advance_to("q1", at_turn=0)
+    q.advance_to("q2", at_turn=1)
+    q.complete_active(at_turn=2)
+    # sig_c (q3's signal) is sufficient; sig_d (q4's signal) is none
+    coverage = _make_coverage({
+        "sig_a": CoverageState.sufficient,
+        "sig_b": CoverageState.sufficient,
+        "sig_c": CoverageState.sufficient,
+        "sig_d": CoverageState.none,
+    })
+    result = q.next_pending_question_id(signal_coverage=coverage)
+    assert result == ("q4", False)
+
+
+def test_next_pending_question_unknown_signal_counts_as_uncovered():
+    """A non-mandatory question whose signal has no coverage entry is treated as uncovered."""
+    q = _build_queue_with_signals()
+    q.advance_to("q1", at_turn=0)
+    q.advance_to("q2", at_turn=1)
+    q.complete_active(at_turn=2)
+    # No coverage entry for sig_c or sig_d → both uncovered → q3 wins (position order)
+    result = q.next_pending_question_id(signal_coverage={})
+    assert result == ("q3", False)
