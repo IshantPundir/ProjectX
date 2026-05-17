@@ -2,6 +2,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.ai.prompts import PromptLoader
 from app.modules.interview_engine.models.speaker import (
     InstructionKind, SpeakerInput,
 )
@@ -84,6 +85,7 @@ async def test_speaker_streams_tokens_and_returns_final_text():
     mock_client.responses.stream = MagicMock(return_value=mock_cm)
 
     svc = SpeakerService(
+        loader=PromptLoader(version="v2"),
         openai_client=mock_client, model="gpt-test",
     )
     handle = await svc.stream(
@@ -130,6 +132,7 @@ async def test_speaker_service_loads_prompt_per_instruction_kind():
         responses = FakeResponses()
 
     svc = SpeakerService(
+        loader=PromptLoader(version="v2"),
         openai_client=FakeClient(),
         model="speaker-test",
     )
@@ -176,7 +179,7 @@ async def test_handle_captures_event_types_seen_on_normal_stream():
             input_tokens_details=MagicMock(cached_tokens=0),
         ),
     )))
-    svc = SpeakerService(openai_client=client, model="gpt-x")
+    svc = SpeakerService(openai_client=client, model="gpt-x", loader=PromptLoader(version="v2"))
     handle = await svc.stream(
         turn_id="t", speaker_input=_input(),
         correlation_id="c", tenant_id="te",
@@ -217,7 +220,7 @@ async def test_handle_captures_refusal_text_when_safety_filter_fires():
 
     client = MagicMock()
     client.responses.stream = MagicMock(return_value=_AsyncCM(_S()))
-    svc = SpeakerService(openai_client=client, model="gpt-x")
+    svc = SpeakerService(openai_client=client, model="gpt-x", loader=PromptLoader(version="v2"))
     handle = await svc.stream(
         turn_id="t", speaker_input=_input(),
         correlation_id="c", tenant_id="te",
@@ -254,7 +257,7 @@ async def test_handle_captures_response_id_on_completed():
 
     client = MagicMock()
     client.responses.stream = MagicMock(return_value=_AsyncCM(_S()))
-    svc = SpeakerService(openai_client=client, model="gpt-x")
+    svc = SpeakerService(openai_client=client, model="gpt-x", loader=PromptLoader(version="v2"))
     handle = await svc.stream(
         turn_id="t", speaker_input=_input(),
         correlation_id="c", tenant_id="te",
@@ -289,7 +292,7 @@ async def test_handle_finish_reason_captured_when_present():
 
     client = MagicMock()
     client.responses.stream = MagicMock(return_value=_AsyncCM(_S()))
-    svc = SpeakerService(openai_client=client, model="gpt-x")
+    svc = SpeakerService(openai_client=client, model="gpt-x", loader=PromptLoader(version="v2"))
     handle = await svc.stream(
         turn_id="t", speaker_input=_input(),
         correlation_id="c", tenant_id="te",
