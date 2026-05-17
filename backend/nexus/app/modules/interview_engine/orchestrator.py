@@ -1135,11 +1135,21 @@ class InterviewOrchestrator:
         return fallback
 
     def _compose_empty_output_fallback(self, speaker_input: Any) -> str:
-        """Deterministic, no LLM. Restates bank_text when available;
-        otherwise a generic re-ask."""
+        """Deterministic, no LLM. Reads PersonaSpec for the Arjun-voiced
+        fallback templates.
+
+        Bank-text path splices the literal active question (same
+        rubric-leak risk as the previous implementation — accepted because
+        (i) rare failure path, (ii) candidate already heard the question,
+        (iii) the alternative is a recursive LLM call that might also
+        fail).
+        """
+        from app.modules.interview_engine.speaker.persona import DEFAULT_PERSONA
         if speaker_input.bank_text:
-            return f"Let me restate that. {speaker_input.bank_text}"
-        return "Could you take it from the top?"
+            return DEFAULT_PERSONA.fallback_empty_output.format(
+                bank_text=speaker_input.bank_text,
+            )
+        return DEFAULT_PERSONA.fallback_empty_output_no_bank
 
     async def _publish_attributes(
         self, *, turn_id: str | None,

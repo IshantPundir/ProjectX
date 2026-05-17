@@ -1253,7 +1253,8 @@ async def test_empty_speaker_output_fallback_without_bank_text(
     outcome = await orch._stream_speaker_and_say(
         agent=agent, turn_id="t2", speaker_input=speaker_input,
     )
-    assert outcome.final_text == "Could you take it from the top?"
+    from app.modules.interview_engine.speaker.persona import DEFAULT_PERSONA
+    assert outcome.final_text == DEFAULT_PERSONA.fallback_empty_output_no_bank
     assert outcome.interrupted is False
 
 
