@@ -163,7 +163,7 @@ class SpeakerService:
         )
         set_llm_span_attributes(
             prompt_name=f"engine/speaker/{speaker_input.instruction_kind.value}",
-            prompt_version="v1",
+            prompt_version=self._loader.version,
             tenant_id=tenant_id,
             correlation_id=correlation_id,
             turn_id=turn_id,

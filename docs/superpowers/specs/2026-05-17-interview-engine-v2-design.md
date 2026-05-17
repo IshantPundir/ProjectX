@@ -822,9 +822,8 @@ Six logical commit clusters within the branch, **in dependency order** (later cl
 3. Run the eval suite on v2 — must hit ≥ 95% pass.
 4. Run eval A/B (v1 vs v2) on the same fixtures — manually inspect diff, no regressions allowed.
 5. Run at least one live session — verify audit envelope shape is correct, no crashes, agent behavior subjectively sane.
-6. Merge branch to `main`. `AIConfig.judge_prompt_version` defaults to `v2`; `speaker_prompt_version` defaults to `v2`. v1 files stay in repo for one sprint as rollback path.
-7. **Rollback path:** flip env vars `JUDGE_PROMPT_VERSION=v1` + `SPEAKER_PROMPT_VERSION=v1` and restart engine container. v2 schema additions (`reasoning`, `meta_confession`) are backwards-compatible — v1 prompts will simply emit defaults for the new fields. One env-var flip = full rollback, no DB migration to reverse.
-8. After 1 sprint of v2 in production with no rollback, delete `prompts/v1/engine/`.
+6. Merge branch to `main`. `AIConfig.judge_prompt_version` defaults to `v2`; `speaker_prompt_version` defaults to `v2`.
+7. **Rollback path (revised 2026-05-17):** The originally-planned "env-var flip to v1" rollback is no longer available — the v1 engine prompts (`prompts/v1/engine/`) were deleted at merge time because v1 is structurally incompatible with v2 schema (the new required `JudgeOutput.reasoning` field causes v1 Judge outputs to fail Pydantic validation, with the fallback synthesizer firing on every turn). If v2 ships a regression that requires rollback, the path is `git revert <v2-merge-commit>` on `main` and redeploy. The JD pipeline + question-bank generation v1 prompts (`prompts/v1/jd_*.txt`, `prompts/v1/question_bank_*.txt`, etc.) are unrelated and remain in place.
 
 ### 13.3 No DB migration
 

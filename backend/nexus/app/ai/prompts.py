@@ -99,6 +99,11 @@ class PromptLoader:
         self._version = version
         self._cache: dict[str, str] = {}
 
+    @property
+    def version(self) -> str:
+        """The prompts/v{N}/ directory this loader reads from."""
+        return self._version
+
     def get(self, name: str) -> str:
         if name not in self._cache:
             path = PROMPTS_ROOT / self._version / f"{name}.txt"

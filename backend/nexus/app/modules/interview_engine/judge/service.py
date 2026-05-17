@@ -109,7 +109,7 @@ class JudgeService:
         system_prompt: str,
         system_prompt_hash: str,
         next_pending_question_resolver: Callable[[], tuple[str, bool] | None],
-        prompt_version: str = "v1",
+        prompt_version: str = "v2",
         total_budget_ms: int = 10000,
         retry_wait_ms: int = 250,
     ) -> None:
