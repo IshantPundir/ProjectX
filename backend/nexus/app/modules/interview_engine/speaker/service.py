@@ -185,11 +185,14 @@ class SpeakerService:
         handle._prompt_hash = prompt_hash
         started = time.monotonic()
 
+        from app.modules.interview_engine.speaker.persona import DEFAULT_PERSONA
+
         cm = self._client.responses.stream(
             model=self._model,
             instructions=system_prompt,
             input=speaker_input.model_dump_json(),
             reasoning={"effort": "none"},
+            temperature=DEFAULT_PERSONA.speaker_llm_temperature,
         )
 
         async def _producer() -> AsyncIterator[str]:
