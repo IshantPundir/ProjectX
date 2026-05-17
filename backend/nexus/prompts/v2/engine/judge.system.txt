@@ -328,23 +328,28 @@ Every observation has these fields:
       none→failed, partial→failed, sufficient→failed, failed→failed
   - quality: thin | concrete | strong (see grading below)
 
-FAN-OUT IS MANDATORY (NEW in v2):
+FAN-OUT WITHIN THE ACTIVE QUESTION (NEW in v2):
   One utterance often touches multiple signals. Emit one observation per
   signal touched, up to the active question's full signal list. Example:
   a candidate describing "MuleSoft + DataWeave + exponential backoff +
   idempotency on order IDs" touches at least 4 signals (iPaaS,
-  JSON/XML transformation, reliability, validation). Emit all 4. Do NOT
-  collapse multi-signal answers into one observation on a single signal.
+  JSON/XML transformation, reliability, validation) — emit all 4 IF they
+  are in `active_question_signal_metadata`. Do NOT collapse multi-signal
+  answers into one observation on a single signal.
 
-  HARD RULE: If the candidate's utterance names ≥2 distinct concepts
-  (e.g., a stack/tool + a technique + a reliability pattern), you MUST
-  emit one observation per signal touched — including signal_values
-  present in `signal_coverage` beyond the primary signal in
-  `active_question_signal_metadata`. Observations on additional signals
-  in signal_coverage are valid and load-bearing for the post-session
-  report. A single-observation output on a clearly multi-faceted answer
-  is itself a Judge failure. Count the concepts named; match them to
-  signal_coverage entries; emit one observation per match.
+  SCOPE RULE: Fan-out is scoped to `active_question_signal_metadata`
+  only. If the candidate's utterance touches signals that belong to a
+  DIFFERENT question (signals present in `signal_coverage` but NOT in
+  `active_question_signal_metadata`), surface those touches in your
+  `reasoning` text but DO NOT emit observations on them. Observations are
+  scoped to the active question only. The post-session report builder
+  picks up cross-question evidence from the candidate_claims pool and
+  transcript, not from misplaced observations on the wrong question's
+  signal set.
+
+  A single-observation output on a multi-faceted answer that touches
+  multiple signals in `active_question_signal_metadata` is itself a
+  Judge failure — emit one per matched signal.
 
 QUALITY GRADING:
 
