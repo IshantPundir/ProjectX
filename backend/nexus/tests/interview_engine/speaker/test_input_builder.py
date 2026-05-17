@@ -454,10 +454,11 @@ def test_recent_reply_starts_threaded_for_non_contextual_kinds():
         )
 
 
-def test_recent_reply_starts_dropped_for_contextual_kinds():
-    """Contextual kinds (deliver_*, clarify, deliver_probe) already see
-    recent_turns; threading reply-start slugs there is redundant prompt
-    bloat."""
+def test_recent_reply_starts_threaded_for_contextual_kinds():
+    """Contextual kinds (deliver_*, clarify, deliver_probe) now also receive
+    recent_reply_starts for opener variation. Previously these were dropped
+    (anti-repetition relied only on recent_turns); the symmetric change
+    makes the anti-repetition signal universal."""
     queue = QuestionQueue.from_initial(
         questions=[{"question_id": "q1", "is_mandatory": True, "follow_ups": ["FU-0"]}],
     )
@@ -472,10 +473,10 @@ def test_recent_reply_starts_dropped_for_contextual_kinds():
         recent_turns=[],
         persona_name="Sam",
         last_candidate_utterance="x",
-        recent_reply_starts=["Should not appear"],
+        recent_reply_starts=["Should appear"],
     )
-    assert s.recent_reply_starts == [], (
-        "Contextual kind must NOT carry recent_reply_starts"
+    assert s.recent_reply_starts == ["Should appear"], (
+        "Contextual kind must carry recent_reply_starts for opener variation"
     )
 
 
@@ -674,3 +675,43 @@ def test_clarify_without_prior_probe_passes_main_text():
         f"Expected main question text but got {s.bank_text!r}. "
         "When no probe has been asked, clarify must fall back to the main question text."
     )
+
+
+def test_recent_reply_starts_passed_to_contextual_kinds() -> None:
+    """recent_reply_starts must reach contextual kinds (deliver_question /
+    deliver_probe / clarify). Phrase variation is the highest-frequency
+    AI-tell across turns; contextual kinds fire most often and benefit
+    most from anti-repetition."""
+    from unittest.mock import MagicMock
+    from app.modules.interview_engine.models.judge import (
+        AdvancePayload, JudgeOutput, NextAction, TurnMetadata,
+    )
+
+    judge_output = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
+        observations=[],
+        candidate_claims=[],
+        next_action=NextAction.advance,
+        next_action_payload=AdvancePayload(target_question_id="q1"),
+        turn_metadata=TurnMetadata(),
+    )
+    queue = MagicMock()
+    queue.active_state.return_value = None
+    claims_pool = MagicMock()
+    claims_pool.snapshot.return_value.entries = []
+
+    speaker_input = build_speaker_input(
+        instruction_kind=InstructionKind.deliver_question,
+        judge_output=judge_output,
+        active_question=MagicMock(text="some bank text"),
+        queue=queue,
+        claims_pool=claims_pool,
+        recent_turns=[],
+        persona_name="Arjun",
+        last_candidate_utterance="thanks",
+        candidate_name="Punar",
+        recent_reply_starts=["Mm, OK —", "See —"],
+        is_post_cap_advance=False,
+    )
+
+    assert speaker_input.recent_reply_starts == ["Mm, OK —", "See —"]
