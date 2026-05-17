@@ -70,3 +70,33 @@ def test_resolve_persona_name_falls_back_to_settings_when_tenant_empty() -> None
 
     name = resolve_persona_name(tenant_settings=_Tenant(), settings=_Settings())
     assert name == "Configured"
+
+
+def test_render_preamble_substitutes_name_and_archetype() -> None:
+    from app.modules.interview_engine.speaker.persona import render_preamble
+    template = "You are {name}, {archetype}. Register: {register}."
+    out = render_preamble(template, DEFAULT_PERSONA)
+    assert "Arjun" in out
+    assert "Senior Engineering Manager" in out
+    assert "Pronounced Indian English" in out
+
+
+def test_render_preamble_emits_bulleted_lists() -> None:
+    from app.modules.interview_engine.speaker.persona import render_preamble
+    template = (
+        "Openers:\n{opener_rotation_bulleted}\n"
+        "Banned:\n{vocab_banned_bulleted}"
+    )
+    out = render_preamble(template, DEFAULT_PERSONA)
+    # Bulleted form: each line starts with "  - "
+    assert "  - See —" in out
+    assert "  - delve" in out
+
+
+def test_render_preamble_deterministic() -> None:
+    """Same input → byte-identical output. Critical for prompt caching."""
+    from app.modules.interview_engine.speaker.persona import render_preamble
+    template = "{name} {archetype} {opener_rotation_bulleted}"
+    first = render_preamble(template, DEFAULT_PERSONA)
+    second = render_preamble(template, DEFAULT_PERSONA)
+    assert first == second

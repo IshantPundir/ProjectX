@@ -100,3 +100,27 @@ def resolve_persona_name(*, tenant_settings: Any, settings: Any) -> str:
     if settings_name:
         return settings_name
     return DEFAULT_PERSONA.name
+
+
+def render_preamble(template: str, persona: PersonaSpec) -> str:
+    """Substitute PersonaSpec fields into a preamble template.
+
+    Renders tuples (opener_rotation, vocab_preferred, vocab_banned) as
+    indented-bullet text. Result is deterministic — same persona always
+    produces same output bytes. This is what lets the rendered preamble
+    cache key match across calls (and across sessions in the same
+    deployment).
+    """
+    def _bullets(items: tuple[str, ...]) -> str:
+        return "\n".join(f"  - {item}" for item in items)
+
+    return template.format(
+        name=persona.name,
+        archetype=persona.archetype,
+        register=persona.register,
+        opener_rotation_bulleted=_bullets(persona.opener_rotation),
+        vocab_preferred_bulleted=_bullets(persona.vocab_preferred),
+        vocab_banned_bulleted=_bullets(persona.vocab_banned),
+        disfluency_density=persona.disfluency_density,
+        name_usage_policy=persona.name_usage_policy,
+    )
