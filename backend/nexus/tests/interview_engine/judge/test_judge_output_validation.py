@@ -287,3 +287,40 @@ def test_greeting_flag_with_redirect_ok():
         turn_metadata=TurnMetadata(candidate_social_or_greeting=True),
     )
     assert out.turn_metadata.candidate_social_or_greeting is True
+
+
+def test_meta_confession_and_no_experience_simultaneously_always_rejected():
+    """Both flags true is semantically incoherent:
+    - meta_confession = candidate can't answer THIS question
+    - no_experience = candidate has never used the signal
+    These are about different referents. The validator stack ensures
+    no `next_action` satisfies both flags at once — the Judge cannot
+    legitimately emit this combination. Any attempt triggers a
+    ValidationError and the JudgeService fallback path fires.
+    """
+    from pydantic import ValidationError
+    from app.modules.interview_engine.models.judge import (
+        JudgeOutput, NextAction, AcknowledgeNoExperiencePayload,
+        PoliteClosePayload, PushBackPayload, ClarifyPayload, TurnMetadata,
+    )
+
+    both_flags = TurnMetadata(
+        candidate_meta_confession=True,
+        candidate_disclosed_no_experience=True,
+    )
+    common = dict(
+        reasoning="Hypothetical: candidate hit both flags somehow; validators must reject.",
+        observations=[],
+        candidate_claims=[],
+        turn_metadata=both_flags,
+    )
+    cases = [
+        (NextAction.acknowledge_no_experience,
+         AcknowledgeNoExperiencePayload(failed_signal_value="x")),
+        (NextAction.polite_close, PoliteClosePayload()),
+        (NextAction.push_back, PushBackPayload(reason_code="missing_specifics")),
+        (NextAction.clarify, ClarifyPayload()),
+    ]
+    for action, payload in cases:
+        with pytest.raises(ValidationError):
+            JudgeOutput(**common, next_action=action, next_action_payload=payload)

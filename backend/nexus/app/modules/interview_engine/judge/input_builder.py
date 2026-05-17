@@ -51,7 +51,7 @@ class ActiveSignalMeta(BaseModel):
     """
 
     value: str
-    type: Literal["experience", "credential", "competency", "behavioral"]
+    type: Literal["competency", "experience", "credential", "behavioral"]
     knockout: bool
     priority: Literal["required", "preferred"]
 

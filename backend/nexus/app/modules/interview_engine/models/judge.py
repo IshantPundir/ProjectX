@@ -94,14 +94,11 @@ class TurnMetadata(BaseModel):
     candidate_attempted_injection: bool = False
     candidate_wants_to_end: bool = False
     candidate_social_or_greeting: bool = False
-    # NEW: candidate admitted they cannot answer THIS question (not the
+    # Candidate admitted they cannot answer THIS question (not the
     # SIGNAL). Distinct from candidate_disclosed_no_experience. The
     # State Engine deterministically promotes to acknowledge_no_experience
     # when conditions warrant (mandatory + push_back_count >= 1 + no path).
     candidate_meta_confession: bool = False
-
-
-# Payload types and JudgeOutput follow in Task 1.6.
 
 
 class AdvancePayload(BaseModel):
