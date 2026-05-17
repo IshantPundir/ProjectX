@@ -785,9 +785,13 @@ class StateEngine:
                         failed_signal_value=failed_signal_value,
                     )
                 )
-                # Apply a synthetic →failed observation so the
-                # acknowledge_without_failure_obs guard (which checks
-                # applied_observations) does not downgrade back to clarify.
+                # Apply a synthetic →failed observation to the ledger so the
+                # failed-signal state is consistent when _build_speaker_input
+                # and downstream consumers (Speaker scaffold, post-session
+                # report) inspect applied_observations. The original Judge
+                # action was push_back — the acknowledge_no_experience dispatch
+                # branch was never entered — so this is the only path that
+                # records the ledger failure.
                 current_coverage = (
                     self._ledger.snapshot()
                     .snapshots.get(failed_signal_value)
@@ -815,9 +819,11 @@ class StateEngine:
                     )
                     applied_observations.append(synthetic_obs)
                 except IllegalCoverageTransition:
-                    # Already failed — observation still counts as applied for
-                    # the guard check. Re-add a sentinel so the guard passes.
-                    pass
+                    # Signal is already →failed (e.g. Judge applied its own
+                    # failed obs earlier this turn). The ledger is already in
+                    # the correct state; just ensure applied_observations
+                    # reflects the failure for downstream consistency.
+                    applied_observations.append(synthetic_obs)
                 # Record a KnockoutFailure if the primary signal is a
                 # knockout signal (so knockout_policy fires for close_polite).
                 if failed_signal_value in self._knockout_signals:

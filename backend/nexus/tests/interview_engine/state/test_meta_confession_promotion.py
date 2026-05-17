@@ -9,8 +9,6 @@ Promotion fires iff:
   - remaining_probes is empty                     (probes already exhausted)
   - primary signal coverage in {none, partial}    (not already proven)
 """
-import pytest
-
 from app.modules.interview_engine.models.judge import (
     AcknowledgeNoExperiencePayload,
     JudgeOutput,
