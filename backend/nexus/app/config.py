@@ -398,8 +398,10 @@ class Settings(BaseSettings):
     # Maximum number of candidate utterance claims to keep in the pool.
     engine_claims_pool_max: int = 50
     # Prompt version tags — controls which versioned prompt file is loaded.
-    engine_judge_prompt_version: str = "v1"
-    engine_speaker_prompt_version: str = "v1"
+    # Default v2 (shipped 2026-05-17). Rollback: set to v1 and restart
+    # the engine container — v1 files remain in repo for one sprint.
+    engine_judge_prompt_version: str = "v2"
+    engine_speaker_prompt_version: str = "v2"
 
     # Canned terminal message played to the candidate after the session
     # lifecycle has entered 'closing' or 'closed' (e.g. polite_close was

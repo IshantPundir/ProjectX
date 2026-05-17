@@ -146,5 +146,14 @@ class AIConfig:
     def engine_speaker_model(self) -> str:
         return self._settings.engine_speaker_model
 
+    # v2 prompt versioning — one env var per prompt family
+    @property
+    def engine_judge_prompt_version(self) -> str:
+        return self._settings.engine_judge_prompt_version
+
+    @property
+    def engine_speaker_prompt_version(self) -> str:
+        return self._settings.engine_speaker_prompt_version
+
 
 ai_config = AIConfig(settings)

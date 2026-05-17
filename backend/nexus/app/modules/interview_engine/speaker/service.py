@@ -18,7 +18,7 @@ import hashlib
 import time
 from typing import Any, AsyncIterator
 
-from app.ai.prompts import prompt_loader
+from app.ai.prompts import PromptLoader, prompt_loader
 from app.ai.tracing import set_llm_span_attributes
 from app.modules.interview_engine.models.speaker import SpeakerInput
 
@@ -127,9 +127,13 @@ class SpeakerService:
         *,
         openai_client: Any,
         model: str,
+        loader: PromptLoader | None = None,
     ) -> None:
         self._client = openai_client
         self._model = model
+        # Version-selected PromptLoader. Defaults to the module-level v1
+        # singleton for backward compat; agent.py passes a versioned loader.
+        self._loader: PromptLoader = loader if loader is not None else prompt_loader
 
     def _resolve_prompt(self, instruction_kind: Any) -> tuple[str, str]:
         """Compose preamble + per-action body for ``instruction_kind``.
@@ -139,7 +143,7 @@ class SpeakerService:
         cached file reads; only the concatenation + hash run per call.
         Hash is over the exact bytes sent to the model.
         """
-        body = prompt_loader.load_pair(
+        body = self._loader.load_pair(
             "engine/speaker/_preamble",
             f"engine/speaker/{instruction_kind.value}",
         )

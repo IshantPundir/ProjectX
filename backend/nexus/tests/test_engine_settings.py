@@ -13,8 +13,8 @@ def test_settings_engine_fields_present(monkeypatch):
     monkeypatch.setenv("ENGINE_CHECKPOINT_TURNS", "10")
     monkeypatch.setenv("ENGINE_CHECKPOINT_SECONDS", "30")
     monkeypatch.setenv("ENGINE_CLAIMS_POOL_MAX", "50")
-    monkeypatch.setenv("ENGINE_JUDGE_PROMPT_VERSION", "v1")
-    monkeypatch.setenv("ENGINE_SPEAKER_PROMPT_VERSION", "v1")
+    monkeypatch.setenv("ENGINE_JUDGE_PROMPT_VERSION", "v2")
+    monkeypatch.setenv("ENGINE_SPEAKER_PROMPT_VERSION", "v2")
 
     s = Settings()
     assert s.engine_judge_model == "gpt-5.4-mini-2026-03-17"
@@ -25,8 +25,8 @@ def test_settings_engine_fields_present(monkeypatch):
     assert s.engine_checkpoint_turns == 10
     assert s.engine_checkpoint_seconds == 30
     assert s.engine_claims_pool_max == 50
-    assert s.engine_judge_prompt_version == "v1"
-    assert s.engine_speaker_prompt_version == "v1"
+    assert s.engine_judge_prompt_version == "v2"
+    assert s.engine_speaker_prompt_version == "v2"
 
 
 def test_stale_settings_removed():
@@ -46,6 +46,15 @@ def test_aiconfig_exposes_engine_models(monkeypatch):
     cfg = AIConfig()
     assert cfg.engine_judge_model == "abc"
     assert cfg.engine_speaker_model == "def"
+
+
+def test_aiconfig_exposes_prompt_versions(monkeypatch):
+    """AIConfig surfaces the two prompt-version env vars added in v2."""
+    monkeypatch.setenv("ENGINE_JUDGE_PROMPT_VERSION", "v2")
+    monkeypatch.setenv("ENGINE_SPEAKER_PROMPT_VERSION", "v2")
+    cfg = AIConfig()
+    assert cfg.engine_judge_prompt_version == "v2"
+    assert cfg.engine_speaker_prompt_version == "v2"
 
 
 def test_engine_endpointing_max_delay_default_is_patient(monkeypatch):

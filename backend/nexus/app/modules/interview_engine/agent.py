@@ -74,7 +74,7 @@ from opentelemetry.trace import set_tracer_provider as _otel_set_global_provider
 
 from app.ai.config import ai_config
 from app.ai.otel import bootstrap_tracer_provider
-from app.ai.prompts import prompt_loader
+from app.ai.prompts import PromptLoader, prompt_loader
 from app.ai.realtime import (
     build_interruption_options,
     build_llm_plugin,
@@ -346,16 +346,23 @@ async def _run_entrypoint(
     # engine/speaker/<instruction_kind>; per-call hashes flow into each
     # speaker.call audit event. The session-level envelope captures the
     # preamble hash under task_prompt_hashes["speaker_preamble"] as the
-    # stable proxy for "this session ran on the v1 speaker prompt set".
+    # stable proxy for "this session ran on the vN speaker prompt set".
+    #
+    # Version selection: ENGINE_JUDGE_PROMPT_VERSION (default v2) and
+    # ENGINE_SPEAKER_PROMPT_VERSION (default v2). Rollback: set to v1
+    # and restart the engine container — v1 files remain in repo as the
+    # fallback path.
+    judge_loader = PromptLoader(version=settings.engine_judge_prompt_version)
     try:
-        judge_prompt = prompt_loader.get("engine/judge.system")
+        judge_prompt = judge_loader.get("engine/judge.system")
     except FileNotFoundError:
         judge_prompt = "(engine/judge.system prompt not yet authored)"
 
     judge_hash = "sha256:" + hashlib.sha256(judge_prompt.encode("utf-8")).hexdigest()
 
+    speaker_loader = PromptLoader(version=settings.engine_speaker_prompt_version)
     try:
-        speaker_preamble_body = prompt_loader.get("engine/speaker/_preamble")
+        speaker_preamble_body = speaker_loader.get("engine/speaker/_preamble")
     except FileNotFoundError:
         speaker_preamble_body = "(engine/speaker/_preamble prompt not yet authored)"
     speaker_preamble_hash = "sha256:" + hashlib.sha256(
@@ -376,6 +383,7 @@ async def _run_entrypoint(
     speaker_service = SpeakerService(
         openai_client=openai_client,
         model=settings.engine_speaker_model,
+        loader=speaker_loader,
     )
 
     attr_pub = AttributePublisher(room=ctx.room)
