@@ -685,7 +685,8 @@ async def test_post_close_turn_plays_canned_message_and_skips_judge(
     fake_session.say.assert_awaited_once()
     say_args, say_kwargs = fake_session.say.call_args
     msg_arg = say_args[0] if say_args else say_kwargs.get("text", "")
-    assert "this session has ended" in msg_arg.lower()
+    # PersonaSpec.fallback_session_ended is the default (no override set).
+    assert "the recruiter will be in touch" in msg_arg.lower()
     # Shutdown was scheduled.
     fake_session.shutdown.assert_called_once()
     # Audit event recorded.

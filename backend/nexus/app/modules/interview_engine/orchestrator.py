@@ -192,15 +192,10 @@ class _SpeakerStreamOutcome:
 class OrchestratorConfig:
     checkpoint_turns: int = 10
     checkpoint_seconds: int = 30
-    # Canned terminal message played when the candidate keeps talking
-    # after lifecycle has already entered closing/closed. Supports a
-    # ``{candidate_name}`` placeholder. Default has no placeholder so
-    # the entrypoint's env-driven Settings value is the source of truth
-    # in production; this default keeps tests deterministic.
-    session_ended_message: str = (
-        "Thanks for your time. This session has ended; the recruitment "
-        "team will be in contact with you."
-    )
+    # Canned terminal message override. None = use PersonaSpec.fallback_session_ended
+    # (Arjun-voiced default). Populated from settings.engine_session_ended_message
+    # at agent startup; tests leave it None to exercise the PersonaSpec path.
+    session_ended_message: str | None = None
 
     # Conversational continuation — pre-Speaker cancellation watcher.
     # See docs/superpowers/specs/2026-05-17-conversational-continuation-design.md
@@ -869,18 +864,27 @@ class InterviewOrchestrator:
         return DEFAULT_PERSONA.fallback_recovery
 
     def _format_session_ended_message(self) -> str:
-        """Render the canned terminal message with candidate-name interpolation.
+        """Render the terminal message.
 
-        When ``candidate.name`` is empty, the placeholder is removed and any
-        leading "Thanks for your time, ." artifact is cleaned up so the
-        candidate hears a grammatical sentence regardless of name presence.
+        Override path (``session_ended_message`` is set): uses the legacy
+        ``{candidate_name}`` template and cleans up punctuation artifacts when
+        the name is absent.
+
+        Default path (``session_ended_message`` is None): falls back to
+        ``PersonaSpec.fallback_session_ended`` — Arjun-voiced, uses
+        ``{comma_name}`` which collapses gracefully when no name is present.
         """
-        template = self._config.session_ended_message
+        from app.modules.interview_engine.speaker.persona import DEFAULT_PERSONA
+
         name = (self._cfg.candidate.name or "").strip()
-        msg = template.format(candidate_name=name)
-        # Clean up artifacts when name is empty.
-        msg = msg.replace(", .", ".").replace(",  ", " ").replace(" ,", "")
-        return msg.strip()
+        override = self._config.session_ended_message
+        if override:
+            # Legacy template path — uses {candidate_name}, needs cleanup.
+            msg = override.format(candidate_name=name)
+            msg = msg.replace(", .", ".").replace(",  ", " ").replace(" ,", "")
+            return msg.strip()
+        comma_name = f", {name}" if name else ""
+        return DEFAULT_PERSONA.fallback_session_ended.format(comma_name=comma_name)
 
     async def _handle_post_close_turn(
         self, *, agent: Any, candidate_text: str,
