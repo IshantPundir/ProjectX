@@ -163,19 +163,41 @@ class JudgeService:
             )
             return response.output_text, response.usage
 
-        # Attempt #1
+        # Attempt #1.
+        #
+        # IMPORTANT: do NOT catch ``asyncio.CancelledError`` here. The
+        # 2026-05-17 conversational-continuation design relies on the
+        # orchestrator's ability to cancel an in-flight Judge call via
+        # ``turn_task.cancel()`` when the candidate resumes speaking
+        # before the commit point. Swallowing CancelledError lets the
+        # turn body run to completion (Speaker → TTS → committed) and
+        # then "abort" after the fact — restoring State Engine state
+        # AFTER the agent has audibly responded. Session 7970e91c
+        # demonstrated this exact failure mode: the candidate heard four
+        # back-to-back agent responses to one user utterance because
+        # cancellation was silently dropped here.
+        #
+        # In Python 3.13 ``asyncio.CancelledError`` inherits from
+        # ``BaseException`` (not ``Exception``), so the bare
+        # ``except Exception`` clauses below will not catch it either —
+        # which is exactly what we want. CancelledError propagates to
+        # the orchestrator and the turn body unwinds before any audible
+        # commit can happen.
         try:
             attempt_text, usage = await asyncio.wait_for(
                 _one_attempt(), timeout=per_attempt_seconds,
             )
-        except (asyncio.TimeoutError, asyncio.CancelledError) as exc:
+        except asyncio.TimeoutError as exc:
             last_exc = exc
             attempt_text = None
         except Exception as exc:  # network / 5xx / rate-limit / 400
             last_exc = exc
             attempt_text = None
 
-        # Retry once on any failure after a flat wait.
+        # Retry once on any non-cancellation failure after a flat wait.
+        # ``asyncio.sleep`` is itself a cancellation point — if the
+        # orchestrator cancels during the retry-wait, CancelledError
+        # propagates here too.
         if attempt_text is None:
             await asyncio.sleep(retry_wait_seconds)
             try:

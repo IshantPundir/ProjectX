@@ -119,3 +119,36 @@ def test_turn_coalesced_in_registry():
     )
     assert TURN_COALESCED == "turn.coalesced"
     assert TURN_COALESCED in ALL_EVENT_KINDS
+
+
+def test_continuation_event_kinds_present():
+    """2026-05-17 conversational-continuation design adds six new event kinds.
+
+    Three for turn-level control flow (stitch / abort / loop-guard), three
+    for the snapshot-restore lifecycle. All must be declared as
+    module-level constants AND registered in ALL_EVENT_KINDS.
+    """
+    from app.modules.interview_engine.event_kinds import (
+        ALL_EVENT_KINDS,
+        STATE_SNAPSHOT_COMMITTED,
+        STATE_SNAPSHOT_RESTORED,
+        STATE_SNAPSHOT_TAKEN,
+        TURN_ABORTED_FOR_CONTINUATION,
+        TURN_LOOP_GUARD_FIRED,
+        TURN_STITCHED_CONTINUATION,
+    )
+    assert TURN_STITCHED_CONTINUATION == "turn.stitched_continuation"
+    assert TURN_ABORTED_FOR_CONTINUATION == "turn.aborted_for_continuation"
+    assert TURN_LOOP_GUARD_FIRED == "turn.loop_guard_fired"
+    assert STATE_SNAPSHOT_TAKEN == "state.snapshot.taken"
+    assert STATE_SNAPSHOT_RESTORED == "state.snapshot.restored"
+    assert STATE_SNAPSHOT_COMMITTED == "state.snapshot.committed"
+    for k in (
+        TURN_STITCHED_CONTINUATION,
+        TURN_ABORTED_FOR_CONTINUATION,
+        TURN_LOOP_GUARD_FIRED,
+        STATE_SNAPSHOT_TAKEN,
+        STATE_SNAPSHOT_RESTORED,
+        STATE_SNAPSHOT_COMMITTED,
+    ):
+        assert k in ALL_EVENT_KINDS

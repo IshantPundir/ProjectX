@@ -62,6 +62,47 @@ class TestComputeAudioTuningSummary:
         summary = _compute_audio_tuning_summary(events=[], config_snapshot=snapshot)
         assert summary["config_snapshot"] == snapshot
 
+    def test_continuation_block_tallies_2026_05_17_events(self) -> None:
+        """audio.tuning_summary aggregates aborts/stitches/loop-guard fires.
+
+        Required by the 2026-05-17 conversational-continuation design so
+        per-session forensic counters land in the same envelope the rest
+        of the tuning data already lives in.
+        """
+        events = [
+            _ev("turn.aborted_for_continuation", {
+                "turn_id": "t1", "phase": "judge", "elapsed_ms": 500,
+                "text_chars": 80, "consecutive_aborts": 1,
+            }, 1000),
+            _ev("turn.aborted_for_continuation", {
+                "turn_id": "t2", "phase": "judge", "elapsed_ms": 600,
+                "text_chars": 90, "consecutive_aborts": 2,
+            }, 2000),
+            _ev("turn.stitched_continuation", {
+                "turn_id": "t3", "prior_chars": 80,
+                "current_chars": 40, "combined_chars": 121, "gap_ms": 3000,
+            }, 3000),
+            _ev("turn.loop_guard_fired", {
+                "turn_id": "t4", "consecutive_aborts": 3,
+            }, 4000),
+            _ev("state.snapshot.committed", {"turn_id": "t4"}, 4500),
+            _ev("state.snapshot.committed", {"turn_id": "t5"}, 5500),
+        ]
+        summary = _compute_audio_tuning_summary(events=events, config_snapshot={})
+        cont = summary["continuation"]
+        assert cont["aborts_total"] == 2
+        assert cont["stitches_total"] == 1
+        assert cont["loop_guard_fires"] == 1
+        assert cont["commit_point_reached_count"] == 2
+
+    def test_continuation_block_zero_when_no_continuation_events(self) -> None:
+        summary = _compute_audio_tuning_summary(events=[], config_snapshot={})
+        cont = summary["continuation"]
+        assert cont["aborts_total"] == 0
+        assert cont["stitches_total"] == 0
+        assert cont["loop_guard_fires"] == 0
+        assert cont["commit_point_reached_count"] == 0
+
     def test_latency_block_computed_from_metrics_events(self) -> None:
         events = [
             _ev(

@@ -61,6 +61,53 @@ async def test_judge_returns_parsed_output_on_success():
 
 
 @pytest.mark.asyncio
+async def test_judge_call_propagates_cancelled_error():
+    """Regression: orchestrator's cancellation watcher (2026-05-17 design)
+    calls ``turn_task.cancel()`` to abort an in-flight Judge call when the
+    candidate resumes speaking before the commit point. CancelledError MUST
+    propagate out of ``JudgeService.call`` for that mechanism to work.
+
+    Session 7970e91c (2026-05-17) demonstrated the failure mode: this
+    method previously caught CancelledError alongside TimeoutError and
+    retried, swallowing the cancellation entirely. The turn body ran to
+    completion (Judge → Speaker → TTS), audio was played to the candidate,
+    THEN the abort branch fired and rolled back State Engine state. Audit
+    envelope said "aborted"; candidate actually heard the response.
+
+    Contract: a CancelledError raised inside the openai call must surface
+    out of ``svc.call``, NOT be converted into a fallback response.
+    """
+    mock_client = MagicMock()
+
+    async def _slow_create(**_kwargs):
+        # Long enough that the test's cancel() arrives mid-flight.
+        await asyncio.sleep(10.0)
+        return MagicMock(output_text="{}", usage=MagicMock(input_tokens=0, output_tokens=0))
+
+    mock_client.responses.create = AsyncMock(side_effect=_slow_create)
+
+    svc = JudgeService(
+        openai_client=mock_client, model="gpt-test",
+        system_prompt="SYS", system_prompt_hash="sha256:abc",
+        next_pending_mandatory_resolver=lambda: "q1",
+        # Plenty of budget — we are NOT testing the timeout fallback. We
+        # want the call to be waiting on the openai mock when we cancel.
+        total_budget_ms=60_000,
+        retry_wait_ms=100,
+    )
+
+    task = asyncio.create_task(svc.call(
+        turn_id="t-1", input_payload=_payload(),
+        correlation_id="c", tenant_id="ten",
+    ))
+    # Let the call enter `await mock_client.responses.create(...)`.
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.asyncio
 async def test_judge_falls_back_on_parse_error():
     mock_client = MagicMock()
     response = MagicMock()

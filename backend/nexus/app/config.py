@@ -301,8 +301,46 @@ class Settings(BaseSettings):
     #   min_duration→1.0s) has stablized EOU detection; long-pause
     #   tolerance built into the orchestrator coalescing logic
     #   (docs/superpowers/specs/2026-05-11-turn-continuation-coalescing-design.md).
-    engine_endpointing_min_delay: float = 1.0
-    engine_endpointing_max_delay: float = 3.0
+    # Endpointing tuning (2026-05-17 conversational-continuation design).
+    #
+    # mode "dynamic" (Python-only): the framework computes an EMA over the
+    #   session's pause statistics and adapts the effective delay within
+    #   [min_delay, max_delay]. Fast talker → tighter; thinker → looser.
+    #   Requires MultilingualModel or VAD-based turn detection.
+    #
+    # min_delay 0.8s (was 1.0): slight tightening for the snappy-end of the
+    #   dynamic range.
+    # max_delay 4.5s (was 3.0): headroom for thinking pauses. The canonical
+    #   failure session (engine-events/2115a63a-…json) had a 3.32s pause
+    #   that crossed the 3.0s ceiling and caused an orphan fragment turn.
+    #   4.5s swallows that pause without firing EOU.
+    engine_endpointing_mode: Literal["fixed", "dynamic"] = "dynamic"
+    engine_endpointing_min_delay: float = 0.8
+    engine_endpointing_max_delay: float = 4.5
+
+    # Conversational continuation — pre-Speaker cancellation watcher.
+    # See docs/superpowers/specs/2026-05-17-conversational-continuation-design.md
+    #
+    # The watcher subscribes to ``user_input_transcribed`` during an
+    # in-flight turn. When STT delivers a final transcript with at least
+    # ``engine_continuation_min_word_count`` words AND the agent has not
+    # yet started speaking (commit_event not set), the in-flight Judge
+    # task is cancelled, the State Engine is rolled back to the pre-turn
+    # snapshot, and the candidate's text is buffered for stitching into
+    # the next turn.
+    #
+    # Trigger switched from VAD-based (sustained user_state speaking) to
+    # STT-based (is_final=True + word-count gate) on 2026-05-17 after
+    # session 7970e91c showed VAD-triggered aborts on non-speech sounds
+    # and brief filler interjections.
+    #
+    # ``engine_continuation_enabled`` is the kill switch. Set to False to
+    # disable the entire mechanism (orchestrator behaves identically to
+    # the pre-2026-05-17 code path) — useful for emergency rollback
+    # without a code deploy.
+    engine_continuation_enabled: bool = True
+    engine_continuation_min_word_count: int = 2
+    engine_continuation_consecutive_abort_cap: int = 3
     # Phase 3D — audio pipeline tuning (LK Cloud locked, 2026-05-06)
     # Architecture is locked to LK Cloud + ai-coustics exclusively.
     # "off" and "krisp_nc" are no longer valid values.

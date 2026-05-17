@@ -278,3 +278,96 @@ class SessionTerminalDeliveredPayload(BaseModel):
     lifecycle_state: Literal["closing", "closed"]
     lifecycle_outcome: str | None  # last_outcome value if set
     message: str  # the canned terminal text actually delivered
+
+
+# ---------------------------------------------------------------------------
+# 2026-05-17 conversational-continuation payloads
+#
+# Six event kinds working together. The "turn" payloads record the
+# orchestrator's continuation decisions; the "state.snapshot" payloads
+# record the rollback machinery's progress through each turn. Together
+# they let replay tools reconstruct exactly what happened on a turn that
+# was aborted-and-stitched vs one that committed cleanly.
+# ---------------------------------------------------------------------------
+
+
+class TurnStitchedContinuationPayload(BaseModel):
+    """Fired on the turn that re-processes a stitched utterance.
+
+    The current turn's candidate_text was prepended with the prior
+    aborted turn's text before the Judge call. Char counts are the
+    redaction-safe summary; the actual text flows through the normal
+    audit redaction path (metadata mode hashes; full mode preserves).
+    """
+
+    turn_id: str
+    prior_chars: int = Field(ge=0)
+    current_chars: int = Field(ge=0)
+    combined_chars: int = Field(ge=0)
+    # Monotonic ms between the prior aborted turn's TURN_ABORTED event
+    # and the current turn's TURN_STARTED event. Useful for tuning the
+    # endpointing max_delay against real session pause distributions.
+    gap_ms: int = Field(ge=0)
+
+
+class TurnAbortedForContinuationPayload(BaseModel):
+    """Fired when the cancellation watcher fires before the commit point.
+
+    ``phase`` records WHERE in the turn pipeline the abort happened:
+    ``judge`` (most common — watcher fired during Judge LLM call),
+    ``pre_speaker`` (Judge returned, State Engine processed, but Speaker
+    not yet streaming), ``speaker_pre_commit`` (Speaker invoked but TTS
+    audio hasn't first-played, i.e., we still hold the commit gate).
+
+    ``elapsed_ms`` measures from ``on_user_turn_completed`` entry to
+    the abort firing. ``consecutive_aborts`` is the post-increment value,
+    used by replay tools to spot loop-guard triggers.
+    """
+
+    turn_id: str
+    phase: Literal["judge", "pre_speaker", "speaker_pre_commit"]
+    elapsed_ms: int = Field(ge=0)
+    text_chars: int = Field(ge=0)
+    consecutive_aborts: int = Field(ge=1)
+
+
+class TurnLoopGuardFiredPayload(BaseModel):
+    """Fired when consecutive aborts hit the cap and we force a commit.
+
+    Skip-the-watcher signal — the current turn runs Judge → State →
+    Speaker unmonitored to guarantee forward progress.
+    """
+
+    turn_id: str
+    consecutive_aborts: int = Field(ge=3)
+
+
+class StateSnapshotTakenPayload(BaseModel):
+    """Pre-Judge snapshot captured. Pairs with the eventual
+    STATE_SNAPSHOT_RESTORED (abort path) or STATE_SNAPSHOT_COMMITTED
+    (success path) event.
+
+    Carries lightweight forensic identifiers — full state lives in the
+    in-process EngineCheckpoint, which is too big to persist per-turn.
+    """
+
+    turn_id: str
+    transcript_entries: int = Field(ge=0)
+    queue_active_index: int | None = None
+
+
+class StateSnapshotRestoredPayload(BaseModel):
+    """Pre-Speaker abort path completed: in-turn mutations have been
+    rolled back via ``StateEngine.restore_from``.
+    """
+
+    turn_id: str
+
+
+class StateSnapshotCommittedPayload(BaseModel):
+    """Turn ran to its commit point; in-turn mutations are now permanent.
+    Emitted on every successful turn for replay-symmetry with the abort
+    path's restore event.
+    """
+
+    turn_id: str

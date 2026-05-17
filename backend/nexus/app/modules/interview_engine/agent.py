@@ -439,6 +439,13 @@ async def _run_entrypoint(
             checkpoint_turns=settings.engine_checkpoint_turns,
             checkpoint_seconds=settings.engine_checkpoint_seconds,
             session_ended_message=settings.engine_session_ended_message,
+            continuation_enabled=settings.engine_continuation_enabled,
+            continuation_min_word_count=(
+                settings.engine_continuation_min_word_count
+            ),
+            continuation_consecutive_abort_cap=(
+                settings.engine_continuation_consecutive_abort_cap
+            ),
         ),
         tenant_id=str(tenant_uuid),
     )
@@ -460,7 +467,7 @@ async def _run_entrypoint(
             # only race the orchestrator.
             preemptive_generation={"enabled": False},
             endpointing={
-                "mode": "dynamic",
+                "mode": settings.engine_endpointing_mode,
                 "min_delay": settings.engine_endpointing_min_delay,
                 "max_delay": settings.engine_endpointing_max_delay,
             },
@@ -834,10 +841,30 @@ def _compute_audio_tuning_summary(
         "tts_ttfb_ms": _percentile_stats(_extract_ms(tts_events, "ttfb")),
     }
 
+    # Conversational-continuation aggregate (2026-05-17 design). Simple
+    # counter rollup so per-session forensic tallies land alongside the
+    # audio-tuning data instead of in a separate envelope. Healthy
+    # session: 0–2 aborts. >5 aborts in 15min → investigate.
+    continuation_block = {
+        "aborts_total": sum(
+            1 for ev in events if ev.get("kind") == "turn.aborted_for_continuation"
+        ),
+        "stitches_total": sum(
+            1 for ev in events if ev.get("kind") == "turn.stitched_continuation"
+        ),
+        "loop_guard_fires": sum(
+            1 for ev in events if ev.get("kind") == "turn.loop_guard_fired"
+        ),
+        "commit_point_reached_count": sum(
+            1 for ev in events if ev.get("kind") == "state.snapshot.committed"
+        ),
+    }
+
     return {
         "pauses": pauses_block,
         "interruptions": interruptions_block,
         "latency": latency_block,
+        "continuation": continuation_block,
         "config_snapshot": dict(config_snapshot),
     }
 

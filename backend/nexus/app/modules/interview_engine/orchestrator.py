@@ -6,23 +6,32 @@ Speaker on each candidate turn. on_close builds the SessionResult.
 """
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from dataclasses import dataclass
 from typing import Any
 
 import structlog
+from livekit.agents import StopResponse
 
 from app.modules.interview_engine.audit_events import (
     FrontendAttributePayload, JudgeSyntheticPayload,
     SessionTerminalDeliveredPayload,
     SpeakerCallPayload, SpeakerOutputPayload,
-    TurnCompletedPayload, TurnStartedPayload,
+    StateSnapshotCommittedPayload, StateSnapshotRestoredPayload,
+    StateSnapshotTakenPayload,
+    TurnAbortedForContinuationPayload, TurnCompletedPayload,
+    TurnLoopGuardFiredPayload, TurnStartedPayload,
+    TurnStitchedContinuationPayload,
 )
 from app.modules.interview_engine.event_kinds import (
     FRONTEND_ATTRIBUTE_PUBLISHED, JUDGE_SYNTHETIC,
     SESSION_TERMINAL_DELIVERED,
-    SPEAKER_CALL, SPEAKER_OUTPUT, TURN_COMPLETED, TURN_STARTED,
+    SPEAKER_CALL, SPEAKER_OUTPUT,
+    STATE_SNAPSHOT_COMMITTED, STATE_SNAPSHOT_RESTORED, STATE_SNAPSHOT_TAKEN,
+    TURN_ABORTED_FOR_CONTINUATION, TURN_COMPLETED, TURN_LOOP_GUARD_FIRED,
+    TURN_STARTED, TURN_STITCHED_CONTINUATION,
 )
 from app.modules.interview_engine.event_log.collector import EventCollector
 from app.modules.interview_engine.frontend_attributes import (
@@ -131,6 +140,29 @@ class OrchestratorConfig:
         "team will be in contact with you."
     )
 
+    # Conversational continuation — pre-Speaker cancellation watcher.
+    # See docs/superpowers/specs/2026-05-17-conversational-continuation-design.md
+    #
+    # continuation_enabled: kill switch. When False the orchestrator
+    #   skips the snapshot/watcher entirely and behaves like the
+    #   pre-2026-05-17 code path.
+    # continuation_min_word_count: noise filter — STT-final transcripts
+    #   below this word count are treated as filler ("uh", "okay") and
+    #   do not trigger the abort path. Default of 2 matches LiveKit's
+    #   adaptive-interruption ``min_words`` convention.
+    #
+    #   Switched from VAD-based (user_state speaking sustained N ms) to
+    #   STT-based (user_input_transcribed is_final=True with N words) on
+    #   2026-05-17 after session 7970e91c showed VAD-triggered aborts on
+    #   non-speech sounds. STT confirms the candidate actually produced
+    #   recognizable content before we discard a turn.
+    # continuation_consecutive_abort_cap: safety bound. After this many
+    #   consecutive aborts on the same conceptual turn, the watcher is
+    #   skipped to guarantee forward progress.
+    continuation_enabled: bool = True
+    continuation_min_word_count: int = 2
+    continuation_consecutive_abort_cap: int = 3
+
 
 class InterviewOrchestrator:
     def __init__(
@@ -165,6 +197,21 @@ class InterviewOrchestrator:
         # the post-Judge knockout-policy-override path both call into
         # ``_schedule_shutdown``; this flag keeps it idempotent.
         self._shutdown_scheduled: bool = False
+
+        # Conversational-continuation state (2026-05-17 design).
+        # _pending_continuation_text: prior aborted turn's candidate text.
+        #   Stitched at the top of the NEXT on_user_turn_completed and
+        #   cleared. Single nullable string — there is no queue.
+        # _consecutive_aborts: counter, incremented on each abort, reset
+        #   on each commit. When it reaches
+        #   config.continuation_consecutive_abort_cap the watcher is
+        #   skipped for the next turn to guarantee forward progress.
+        # _last_abort_elapsed_ms: timestamp of the most recent abort,
+        #   used to populate the gap_ms field on the TURN_STITCHED
+        #   audit event. None when no prior abort exists.
+        self._pending_continuation_text: str | None = None
+        self._consecutive_aborts: int = 0
+        self._last_abort_elapsed_ms: int | None = None
 
     # --- Public accessors ---
 
@@ -268,11 +315,31 @@ class InterviewOrchestrator:
     async def on_user_turn_completed(
         self, agent: Any, turn_ctx: Any, new_message: Any,
     ) -> None:
-        # No StopResponse here — see StructuredInterviewAgent docstring.
-        # Returning normally lets the framework auto-append new_message to
-        # chat_ctx, which fires conversation_item_added and populates the
-        # LiveKit chat_history. The agent's llm_node override yields
-        # nothing, so no duplicate LLM reply is generated.
+        """Top-level per-turn hook.
+
+        Two layers wrapped around the actual Judge → State → Speaker
+        pipeline (which lives in :meth:`_run_turn_pipeline`):
+
+        1. **Early returns** — empty text or lifecycle in closing/closed
+           bypass everything and either no-op or play the canned terminal
+           message.
+
+        2. **Continuation control** (2026-05-17 design) — when enabled,
+           stitch any pending continuation text into the candidate input,
+           snapshot the State Engine, run the pipeline under a
+           cancellation watcher, and either commit or restore-and-abort
+           based on whether the candidate resumed speaking before the
+           first TTS audio frame.
+
+        Returns normally on success (commit), raises ``StopResponse``
+        on abort (the framework keeps listening for the merged text).
+        """
+        # No StopResponse here on the happy path — see
+        # StructuredInterviewAgent docstring. Returning normally lets the
+        # framework auto-append new_message to chat_ctx, which fires
+        # conversation_item_added and populates LiveKit's chat_history.
+        # The agent's llm_node override yields nothing, so no duplicate
+        # LLM reply is generated.
         candidate_text = getattr(new_message, "text_content", None)
         # ChatMessage.text_content can be a property — call it if it's a method,
         # otherwise it's a string already.
@@ -294,15 +361,229 @@ class InterviewOrchestrator:
             )
             return
 
-        turn_id = str(uuid.uuid4())
+        # --- Stitch pending continuation (2026-05-17) ----------------------
+        # On a prior abort, the candidate's text was buffered. Prepend it
+        # here so the merged utterance reaches the Judge as one input.
+        # Cleared unconditionally — there is no re-buffer path.
+        stitch_payload: TurnStitchedContinuationPayload | None = None
+        prior_chars = 0
+        if self._pending_continuation_text is not None:
+            prior_chars = len(self._pending_continuation_text)
+            current_chars = len(candidate_text)
+            candidate_text = self._pending_continuation_text + " " + candidate_text
+            # gap_ms: time since the prior abort. Falls back to 0 when
+            # we have no abort timestamp (e.g. test pre-seeded the buffer).
+            gap_ms = 0
+            if self._last_abort_elapsed_ms is not None:
+                gap_ms = max(0, self._elapsed_ms() - self._last_abort_elapsed_ms)
+            stitch_payload = TurnStitchedContinuationPayload(
+                turn_id="",  # filled below after turn_id is allocated
+                prior_chars=prior_chars,
+                current_chars=current_chars,
+                combined_chars=len(candidate_text),
+                gap_ms=gap_ms,
+            )
+            self._pending_continuation_text = None
+            self._last_abort_elapsed_ms = None
 
+        # --- Continuation-disabled fast path -------------------------------
+        if not self._config.continuation_enabled:
+            await self._run_turn_pipeline_unwatched(
+                agent=agent, candidate_text=candidate_text,
+                stitch_payload=stitch_payload,
+            )
+            return
+
+        # --- Continuation-enabled path -------------------------------------
+        turn_id = str(uuid.uuid4())
         self._turn_index += 1
         elapsed_ms = self._elapsed_ms()
         self._append(TURN_STARTED, TurnStartedPayload(
             turn_id=turn_id, turn_index=self._turn_index,
             stt_text_raw=candidate_text, stt_text_used=candidate_text,
         ).model_dump())
+        if stitch_payload is not None:
+            stitch_payload = stitch_payload.model_copy(update={"turn_id": turn_id})
+            self._append(
+                TURN_STITCHED_CONTINUATION, stitch_payload.model_dump(),
+            )
         self._append_state_snapshot(turn_id=turn_id)
+
+        # Snapshot the State Engine. All in-turn mutations to self._state
+        # below this line are reversible via restore_from(snapshot) on
+        # the abort path.
+        snapshot = self._state.snapshot_full()
+        active_index = snapshot.queue.active_index
+        self._append(STATE_SNAPSHOT_TAKEN, StateSnapshotTakenPayload(
+            turn_id=turn_id,
+            transcript_entries=len(snapshot.transcript),
+            queue_active_index=active_index,
+        ).model_dump())
+
+        # Loop guard — after `cap` consecutive aborts on the same
+        # conceptual turn, commit no-matter-what to guarantee forward
+        # progress. The watcher is bypassed; the snapshot is still taken
+        # so the audit trail is consistent.
+        skip_watcher = (
+            self._consecutive_aborts
+            >= self._config.continuation_consecutive_abort_cap
+        )
+        if skip_watcher:
+            self._append(TURN_LOOP_GUARD_FIRED, TurnLoopGuardFiredPayload(
+                turn_id=turn_id,
+                consecutive_aborts=self._consecutive_aborts,
+            ).model_dump())
+            await self._run_turn_body(
+                agent=agent, turn_id=turn_id,
+                candidate_text=candidate_text, elapsed_ms=elapsed_ms,
+            )
+            self._append(STATE_SNAPSHOT_COMMITTED, StateSnapshotCommittedPayload(
+                turn_id=turn_id,
+            ).model_dump())
+            self._consecutive_aborts = 0
+            return
+
+        # --- Watcher race ---------------------------------------------------
+        #
+        # Trigger model (2026-05-17, updated after session 7970e91c):
+        #   * ``cancel_event`` fires when a ``user_input_transcribed`` event
+        #     arrives with ``is_final=True`` AND a transcript word count
+        #     >= ``continuation_min_word_count``. STT-final means the
+        #     candidate produced recognizable speech; the word-count gate
+        #     filters out brief interjections ("uh", "okay") that don't
+        #     warrant aborting an in-flight turn.
+        #   * ``commit_event`` fires when ``agent_state_changed`` reports
+        #     ``new_state == "speaking"`` — the first audible TTS frame.
+        #     After that the framework's adaptive interruption handles
+        #     candidate speech, so we disengage.
+        #
+        # The previous VAD-based trigger (user_state speaking sustained for
+        # 500ms) fired on non-speech sounds and on the candidate's natural
+        # short-utterance follow-ups, leading to spurious aborts.
+        commit_event = asyncio.Event()
+        cancel_event = asyncio.Event()
+
+        def _on_user_input_transcribed(ev: Any) -> None:
+            if commit_event.is_set():
+                return
+            if not getattr(ev, "is_final", False):
+                return
+            transcript = getattr(ev, "transcript", "") or ""
+            if not transcript.strip():
+                return
+            word_count = len(transcript.split())
+            if word_count < self._config.continuation_min_word_count:
+                return
+            cancel_event.set()
+
+        def _on_agent_state(ev: Any) -> None:
+            new_state = getattr(ev, "new_state", None)
+            if new_state == "speaking":
+                commit_event.set()
+
+        agent.session.on("user_input_transcribed", _on_user_input_transcribed)
+        agent.session.on("agent_state_changed", _on_agent_state)
+
+        turn_task = asyncio.create_task(self._run_turn_body(
+            agent=agent, turn_id=turn_id,
+            candidate_text=candidate_text, elapsed_ms=elapsed_ms,
+        ))
+        cancel_wait_task = asyncio.create_task(cancel_event.wait())
+
+        try:
+            await asyncio.wait(
+                {turn_task, cancel_wait_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            # Abort path: watcher fired AND we haven't committed yet.
+            if cancel_event.is_set() and not commit_event.is_set():
+                turn_task.cancel()
+                try:  # noqa: SIM105
+                    await turn_task
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                    pass
+                # Best-effort: cancel any TTS that may have started but
+                # not yet played audibly. session.interrupt() is a sync
+                # method on the real AgentSession that returns None.
+                try:  # noqa: SIM105
+                    agent.session.interrupt()
+                except Exception:  # noqa: BLE001
+                    pass
+                self._state.restore_from(snapshot)
+                self._append(STATE_SNAPSHOT_RESTORED, StateSnapshotRestoredPayload(
+                    turn_id=turn_id,
+                ).model_dump())
+                self._consecutive_aborts += 1
+                self._pending_continuation_text = candidate_text
+                self._last_abort_elapsed_ms = elapsed_ms
+                self._append(
+                    TURN_ABORTED_FOR_CONTINUATION,
+                    TurnAbortedForContinuationPayload(
+                        turn_id=turn_id,
+                        phase="judge",
+                        elapsed_ms=max(0, self._elapsed_ms() - elapsed_ms),
+                        text_chars=len(candidate_text),
+                        consecutive_aborts=self._consecutive_aborts,
+                    ).model_dump(),
+                )
+                raise StopResponse()
+
+            # Commit path: turn_task finished first. Drain any exception
+            # the body may have raised.
+            cancel_wait_task.cancel()
+            try:  # noqa: SIM105
+                await cancel_wait_task
+            except asyncio.CancelledError:
+                pass
+            await turn_task  # propagates exceptions from the body
+
+            self._append(STATE_SNAPSHOT_COMMITTED, StateSnapshotCommittedPayload(
+                turn_id=turn_id,
+            ).model_dump())
+            self._consecutive_aborts = 0
+        finally:
+            agent.session.off("user_input_transcribed", _on_user_input_transcribed)
+            agent.session.off("agent_state_changed", _on_agent_state)
+
+    async def _run_turn_pipeline_unwatched(
+        self, *, agent: Any, candidate_text: str,
+        stitch_payload: TurnStitchedContinuationPayload | None,
+    ) -> None:
+        """Legacy / kill-switch path — run the turn pipeline without
+        snapshot or watcher. Identical to the pre-2026-05-17 code path.
+
+        Used when ``config.continuation_enabled=False``.
+        """
+        turn_id = str(uuid.uuid4())
+        self._turn_index += 1
+        elapsed_ms = self._elapsed_ms()
+        self._append(TURN_STARTED, TurnStartedPayload(
+            turn_id=turn_id, turn_index=self._turn_index,
+            stt_text_raw=candidate_text, stt_text_used=candidate_text,
+        ).model_dump())
+        if stitch_payload is not None:
+            stitch_payload = stitch_payload.model_copy(update={"turn_id": turn_id})
+            self._append(
+                TURN_STITCHED_CONTINUATION, stitch_payload.model_dump(),
+            )
+        self._append_state_snapshot(turn_id=turn_id)
+        await self._run_turn_body(
+            agent=agent, turn_id=turn_id,
+            candidate_text=candidate_text, elapsed_ms=elapsed_ms,
+        )
+
+    async def _run_turn_body(
+        self, *, agent: Any, turn_id: str,
+        candidate_text: str, elapsed_ms: int,
+    ) -> None:
+        """The Judge → State → Speaker turn body.
+
+        Pure code motion from the previous in-line on_user_turn_completed
+        body. Kept here so both the watched and the unwatched code paths
+        can drive it. The TURN_STARTED + state-snapshot audit events are
+        already emitted by the caller before this runs.
+        """
 
         from app.modules.interview_engine.judge.input_builder import (
             ActiveSignalMeta, build_judge_input,

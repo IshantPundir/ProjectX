@@ -93,6 +93,45 @@ SESSION_TERMINAL_DELIVERED = "session.terminal_delivered"
 
 
 # ---------------------------------------------------------------------------
+# Conversational continuation (2026-05-17 design)
+#
+# When the candidate resumes speaking after a premature EOU, the
+# orchestrator aborts the in-flight Judge call, restores the State
+# Engine from a pre-turn snapshot, and stitches the prior text into the
+# NEXT turn's input. The audit trail makes each step visible so replay
+# tooling can reconstruct what happened.
+# ---------------------------------------------------------------------------
+
+# Emitted on the turn that re-processes a stitched utterance — its
+# candidate_text was prepended with the prior aborted turn's text before
+# the Judge call.
+TURN_STITCHED_CONTINUATION = "turn.stitched_continuation"
+
+# Emitted when the cancellation watcher fires and the turn aborts before
+# the commit point (first TTS audio frame). The current turn's text is
+# saved to _pending_continuation_text and StopResponse is raised.
+TURN_ABORTED_FOR_CONTINUATION = "turn.aborted_for_continuation"
+
+# Emitted when the 3-strike loop guard forces a commit. The current
+# turn is processed without the cancellation watcher to guarantee
+# forward progress for a candidate who keeps fragmenting.
+TURN_LOOP_GUARD_FIRED = "turn.loop_guard_fired"
+
+# Pre-Judge snapshot was captured. Forensic marker so replay tools can
+# pair every commit/restore with its origin.
+STATE_SNAPSHOT_TAKEN = "state.snapshot.taken"
+
+# Snapshot was used to roll back in-turn mutations on cancellation. The
+# next turn will see the State Engine as it was at snapshot time.
+STATE_SNAPSHOT_RESTORED = "state.snapshot.restored"
+
+# Turn ran to its commit point; in-turn mutations are now permanent.
+# Emitted regardless of whether the watcher ever armed (e.g. when the
+# loop guard skipped it).
+STATE_SNAPSHOT_COMMITTED = "state.snapshot.committed"
+
+
+# ---------------------------------------------------------------------------
 # Aggregate registry — used by tests to assert no duplicates and by any
 # future docs-generator to enumerate every kind. Adding a constant above
 # without adding it here is a programmer error caught by
@@ -134,4 +173,10 @@ ALL_EVENT_KINDS: frozenset[str] = frozenset({
     CHECKPOINT_WRITTEN,
     FRONTEND_ATTRIBUTE_PUBLISHED,
     SESSION_TERMINAL_DELIVERED,
+    TURN_STITCHED_CONTINUATION,
+    TURN_ABORTED_FOR_CONTINUATION,
+    TURN_LOOP_GUARD_FIRED,
+    STATE_SNAPSHOT_TAKEN,
+    STATE_SNAPSHOT_RESTORED,
+    STATE_SNAPSHOT_COMMITTED,
 })

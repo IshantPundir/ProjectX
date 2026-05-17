@@ -141,3 +141,97 @@ def test_state_snapshot_payload_round_trip() -> None:
                    "time_elapsed_seconds": 0.0, "last_outcome": None},
     )
     assert payload.model_dump()["lifecycle"]["state"] == "active"
+
+
+# -- 2026-05-17 continuation payloads -------------------------------------------------
+
+def test_turn_stitched_continuation_payload_round_trip() -> None:
+    from app.modules.interview_engine.audit_events import (
+        TurnStitchedContinuationPayload,
+    )
+
+    p = TurnStitchedContinuationPayload(
+        turn_id="t-new",
+        prior_chars=120,
+        current_chars=80,
+        combined_chars=201,
+        gap_ms=3000,
+    )
+    d = p.model_dump()
+    assert d["turn_id"] == "t-new"
+    assert d["prior_chars"] == 120
+    assert d["combined_chars"] == 201
+    assert TurnStitchedContinuationPayload.model_validate(d) == p
+
+
+def test_turn_aborted_for_continuation_payload_round_trip() -> None:
+    from app.modules.interview_engine.audit_events import (
+        TurnAbortedForContinuationPayload,
+    )
+
+    p = TurnAbortedForContinuationPayload(
+        turn_id="t-abort",
+        phase="judge",
+        elapsed_ms=500,
+        text_chars=120,
+        consecutive_aborts=1,
+    )
+    d = p.model_dump()
+    assert d["phase"] == "judge"
+    assert d["consecutive_aborts"] == 1
+    assert TurnAbortedForContinuationPayload.model_validate(d) == p
+
+
+def test_turn_aborted_for_continuation_payload_rejects_invalid_phase() -> None:
+    from pydantic import ValidationError
+
+    from app.modules.interview_engine.audit_events import (
+        TurnAbortedForContinuationPayload,
+    )
+
+    with pytest.raises(ValidationError):
+        TurnAbortedForContinuationPayload(
+            turn_id="t-abort",
+            phase="post_speaker",  # invalid — only judge / pre_speaker / speaker_pre_commit allowed
+            elapsed_ms=500,
+            text_chars=120,
+            consecutive_aborts=1,
+        )
+
+
+def test_turn_loop_guard_fired_payload_round_trip() -> None:
+    from app.modules.interview_engine.audit_events import (
+        TurnLoopGuardFiredPayload,
+    )
+
+    p = TurnLoopGuardFiredPayload(turn_id="t-x", consecutive_aborts=3)
+    assert TurnLoopGuardFiredPayload.model_validate(p.model_dump()) == p
+
+
+def test_state_snapshot_taken_payload_round_trip() -> None:
+    from app.modules.interview_engine.audit_events import StateSnapshotTakenPayload
+
+    p = StateSnapshotTakenPayload(
+        turn_id="t-1", transcript_entries=4, queue_active_index=1,
+    )
+    d = p.model_dump()
+    assert d["queue_active_index"] == 1
+    assert StateSnapshotTakenPayload.model_validate(d) == p
+
+    # active_index can be None at session start.
+    p2 = StateSnapshotTakenPayload(
+        turn_id="t-syn", transcript_entries=0, queue_active_index=None,
+    )
+    assert p2.queue_active_index is None
+
+
+def test_state_snapshot_restored_and_committed_payloads_round_trip() -> None:
+    from app.modules.interview_engine.audit_events import (
+        StateSnapshotCommittedPayload,
+        StateSnapshotRestoredPayload,
+    )
+
+    r = StateSnapshotRestoredPayload(turn_id="t-1")
+    c = StateSnapshotCommittedPayload(turn_id="t-1")
+    assert StateSnapshotRestoredPayload.model_validate(r.model_dump()) == r
+    assert StateSnapshotCommittedPayload.model_validate(c.model_dump()) == c

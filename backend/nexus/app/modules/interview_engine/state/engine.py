@@ -912,6 +912,76 @@ class StateEngine:
     def lifecycle_snapshot(self) -> LifecycleSnapshot:
         return self._lifecycle.snapshot()
 
+    def turn_count_snapshot(self) -> int:
+        return self._turn_count
+
+    # --- Full snapshot / restore (2026-05-17 conversational-continuation design) ---
+    #
+    # snapshot_full + restore_from let the orchestrator wrap an entire turn
+    # (Judge → State Engine → Speaker) in a two-phase commit. The orchestrator
+    # takes a snapshot at the top of on_user_turn_completed; mutations during
+    # the turn happen on the live engine; if the cancellation watcher fires
+    # before the commit point (first TTS audio frame), the orchestrator calls
+    # restore_from(snapshot) and the pre-turn state is back, byte-identical.
+    #
+    # Implementation: the existing EngineCheckpoint already serializes
+    # ledger / queue / claims / lifecycle. v2 (added 2026-05-17) extends it
+    # with turn_count + transcript + question_utterances so the snapshot
+    # captures EVERY field process_judge_output mutates. The restore path
+    # rebuilds the four sub-state machines via their from_snapshot
+    # constructors and re-assigns the three scalar/collection fields.
+
+    def snapshot_full(
+        self,
+        *,
+        last_audit_seq_flushed: int = 0,
+        captured_at_ms: int = 0,
+    ) -> EngineCheckpoint:
+        """Capture all mutable in-process state into an EngineCheckpoint.
+
+        The audit/timing fields default to 0 because in-turn snapshots are
+        forensic-only — the orchestrator does not persist them. Crash
+        recovery still goes through ``to_checkpoint`` which the caller
+        supplies real values for.
+        """
+        return EngineCheckpoint(
+            schema_version=2,
+            session_id=self._cfg.session_id,
+            ledger=self.ledger_snapshot(),
+            queue=self.queue_snapshot(),
+            claims=self.claims_snapshot(),
+            lifecycle=self.lifecycle_snapshot(),
+            last_audit_seq_flushed=last_audit_seq_flushed,
+            captured_at_ms=captured_at_ms,
+            turn_count=self._turn_count,
+            transcript=[t.model_copy() for t in self._transcript],
+            question_utterances=dict(self._question_utterances),
+        )
+
+    def restore_from(self, checkpoint: EngineCheckpoint) -> None:
+        """Atomically replace all mutable state with the checkpoint's contents.
+
+        After this call ``self`` is byte-identical to the state at the
+        time ``snapshot_full`` was taken. Wiring (config, knockout_signals,
+        persona_name_override) is preserved — only data state is replaced.
+
+        Used by the orchestrator's pre-Speaker cancellation path to wipe
+        in-turn mutations cleanly. Safe to call repeatedly with the same
+        checkpoint.
+        """
+        signal_values = [s.value for s in self._cfg.signal_metadata]
+        self._ledger = SignalLedger.from_snapshot(
+            checkpoint.ledger, signal_values=signal_values,
+        )
+        self._queue = QuestionQueue.from_snapshot(checkpoint.queue)
+        self._claims = CandidateClaimsPool.from_snapshot(
+            checkpoint.claims, max_size=self._eng_cfg.claims_pool_max,
+        )
+        self._lifecycle = SessionLifecycle.from_snapshot(checkpoint.lifecycle)
+        self._turn_count = checkpoint.turn_count
+        self._transcript = [t.model_copy() for t in checkpoint.transcript]
+        self._question_utterances = dict(checkpoint.question_utterances)
+
     def set_time_elapsed(self, seconds: float) -> None:
         """Public accessor for the orchestrator to update elapsed time per turn.
 
