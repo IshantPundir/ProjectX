@@ -18,6 +18,7 @@ from livekit.agents import StopResponse
 
 from app.modules.interview_engine.audit_events import (
     FrontendAttributePayload, JudgeSyntheticPayload,
+    NaturalnessFlags,
     SessionTerminalDeliveredPayload,
     SpeakerCallPayload, SpeakerOutputPayload,
     StateSnapshotCommittedPayload, StateSnapshotRestoredPayload,
@@ -269,6 +270,11 @@ class InterviewOrchestrator:
         self._pending_continuation_text: str | None = None
         self._consecutive_aborts: int = 0
         self._last_abort_elapsed_ms: int | None = None
+
+        # Tracks the previous turn's Speaker output text so naturalness
+        # flag detection can flag name-overuse across turns. None on
+        # first turn / after empty/interrupted output.
+        self._prior_speaker_output: str | None = None
 
     # --- Public accessors ---
 
@@ -1018,9 +1024,31 @@ class InterviewOrchestrator:
                 latency_ms_total=handle.latency_ms_total,
                 usage=handle.usage, final_utterance=final_text,
             ).model_dump())
+            from app.modules.interview_engine.speaker.naturalness import (
+                detect_banned_phrases,
+                detect_exceeded_soft_target,
+                detect_name_overuse,
+                detect_repeated_opener,
+            )
+            flags = NaturalnessFlags(
+                repeated_opener=detect_repeated_opener(
+                    final_text, speaker_input.recent_reply_starts,
+                ),
+                banned_phrases_emitted=detect_banned_phrases(final_text),
+                name_overuse=detect_name_overuse(
+                    final_text,
+                    speaker_input.candidate_name,
+                    self._prior_speaker_output,
+                ),
+                exceeded_soft_target=detect_exceeded_soft_target(
+                    final_text, speaker_input.instruction_kind.value,
+                ),
+            )
             self._append(SPEAKER_OUTPUT, SpeakerOutputPayload(
                 turn_id=turn_id, final_utterance=final_text,
+                naturalness_flags=flags,
             ).model_dump())
+            self._prior_speaker_output = final_text
 
             # register_agent_utterance is transcript-only;
             # register_agent_question_for_repeat does the cache update
