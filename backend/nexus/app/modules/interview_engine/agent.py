@@ -74,7 +74,7 @@ from opentelemetry.trace import set_tracer_provider as _otel_set_global_provider
 
 from app.ai.config import ai_config
 from app.ai.otel import bootstrap_tracer_provider
-from app.ai.prompts import PromptLoader, prompt_loader
+from app.ai.prompts import PromptLoader
 from app.ai.realtime import (
     build_interruption_options,
     build_llm_plugin,
@@ -377,6 +377,7 @@ async def _run_entrypoint(
         system_prompt=judge_prompt,
         system_prompt_hash=judge_hash,
         next_pending_mandatory_resolver=state_engine.next_pending_mandatory_id,
+        prompt_version=settings.engine_judge_prompt_version,
         total_budget_ms=settings.engine_judge_total_budget_ms,
         retry_wait_ms=settings.engine_judge_retry_wait_ms,
     )

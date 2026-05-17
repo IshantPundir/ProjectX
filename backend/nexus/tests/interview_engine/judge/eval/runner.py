@@ -70,7 +70,7 @@ async def run_fixture(
         return EvalResult(
             fixture_id=fixture.id,
             output=call_result.judge_output,
-            error=f"judge service fellback: {call_result.fallback_reason}",
+            error=f"judge service fell back: {call_result.fallback_reason}",
             passed=False,
             failures=[f"fallback path fired: {call_result.fallback_reason}"],
             soft_warnings=[],

@@ -109,6 +109,7 @@ class JudgeService:
         system_prompt: str,
         system_prompt_hash: str,
         next_pending_mandatory_resolver: Callable[[], str | None],
+        prompt_version: str = "v1",
         total_budget_ms: int = 10000,
         retry_wait_ms: int = 250,
     ) -> None:
@@ -117,6 +118,7 @@ class JudgeService:
         self._system_prompt = system_prompt
         self._system_prompt_hash = system_prompt_hash
         self._next_pending_resolver = next_pending_mandatory_resolver
+        self._prompt_version = prompt_version
         self._total_budget_ms = total_budget_ms
         self._retry_wait_ms = retry_wait_ms
 
@@ -130,7 +132,7 @@ class JudgeService:
     ) -> JudgeCallResult:
         set_llm_span_attributes(
             prompt_name="engine/judge.system",
-            prompt_version="v1",
+            prompt_version=self._prompt_version,
             tenant_id=tenant_id,
             correlation_id=correlation_id,
             turn_id=turn_id,
