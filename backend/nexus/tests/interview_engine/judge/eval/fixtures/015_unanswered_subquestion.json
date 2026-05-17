@@ -30,13 +30,9 @@
       }
     ],
     "next_pending_mandatory_question_id": null,
-    "active_question_push_back_count": 0,
+    "active_question_push_back_count": 1,
     "active_question_consecutive_dont_know_count": 0,
-    "active_question_remaining_probes": {
-      "0": "What evidence and environment data would you gather in week 1?",
-      "1": "How would you prioritize remediation work?",
-      "2": "What reusable standards would you introduce to reduce future incidents?"
-    },
+    "active_question_remaining_probes": {},
     "signal_coverage": {
       "8+ years overall experience in enterprise integration design and implementation": {
         "signal_value": "8+ years overall experience in enterprise integration design and implementation",

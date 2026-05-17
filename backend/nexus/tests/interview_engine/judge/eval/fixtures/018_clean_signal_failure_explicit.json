@@ -1,6 +1,6 @@
 {
   "id": "018_clean_signal_failure_explicit",
-  "description": "Candidate says clearly 'I don't know how to answer that' on a question about ERP integration after multiple redirects — unambiguous no-experience disclosure. From session 7970e91c turn 697.",
+  "description": "Candidate makes an unambiguous no-experience disclosure on iPaaS platforms — explicitly names MuleSoft/TIBCO/Boomi as tools they have never used. Judge should emit acknowledge_no_experience with failure observation. (Utterance updated from ambiguous 'I don't know how to answer that' which post-v2 reads as meta-confession.)",
   "tags": ["acknowledge_no_experience", "real_session"],
   "judge_input": {
     "active_question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a",
@@ -46,7 +46,7 @@
       {"role": "candidate", "text": "Uh huh Okay Uh, what is an ERP? Uh, I don't know.", "timestamp_ms": 5000, "question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a"},
       {"role": "agent", "text": "An ERP is an on-prem system for orders, inventory, and shipping. Have you used MuleSoft, TIBCO, or Boomi to connect cloud services to such a system?", "timestamp_ms": 0, "question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a"}
     ],
-    "candidate_utterance": "Uh, I don't know how to answer that.",
+    "candidate_utterance": "I've actually never used MuleSoft, TIBCO, or Boomi. I've only worked with Workato.",
     "time_remaining_seconds": 1000
   },
   "expected": {

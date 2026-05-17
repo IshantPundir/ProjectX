@@ -48,7 +48,7 @@
     "recent_turns": [
       {"role": "agent", "text": "Please continue with the previous question and walk me through that end-to-end sync flow.", "timestamp_ms": 0, "question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a"}
     ],
-    "candidate_utterance": "Uh, sure. Uh, so like I'll use an idempotency case based on order IDs to prevent duplicates and like a dead letter queue for failed events with replay support. I'd also add correlation IDs and monitoring on error rates and latency.",
+    "candidate_utterance": "I'd build it on MuleSoft using Anypoint connectors for both Salesforce and the on-prem system, VPN tunnel for the on-prem hop, and for reliability I'd use exponential backoff retries, idempotency keys on order IDs to prevent duplicates, and a dead-letter queue with replay support.",
     "time_remaining_seconds": 1000
   },
   "expected": {

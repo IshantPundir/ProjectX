@@ -29,6 +29,24 @@
         "type": "experience",
         "knockout": true,
         "priority": "required"
+      },
+      {
+        "value": "JSON/XML transformation and schema validation (DataWeave, XSLT, or equivalent)",
+        "type": "competency",
+        "knockout": false,
+        "priority": "preferred"
+      },
+      {
+        "value": "Reliability controls: retry with backoff, idempotency keys, dead-letter queue",
+        "type": "competency",
+        "knockout": false,
+        "priority": "preferred"
+      },
+      {
+        "value": "Secure on-prem connectivity (VPN, agent, reverse proxy)",
+        "type": "competency",
+        "knockout": false,
+        "priority": "preferred"
       }
     ],
     "next_pending_mandatory_question_id": "606b1bcb-9205-4509-96d0-468326b73c5d",
@@ -42,6 +60,24 @@
     "signal_coverage": {
       "5+ years hands-on production experience with at least one iPaaS/ESB platform (MuleSoft, TIBCO, or Dell Boomi)": {
         "signal_value": "5+ years hands-on production experience with at least one iPaaS/ESB platform (MuleSoft, TIBCO, or Dell Boomi)",
+        "coverage": "none",
+        "anchors_hit": [],
+        "last_observation_seq": null
+      },
+      "JSON/XML transformation and schema validation (DataWeave, XSLT, or equivalent)": {
+        "signal_value": "JSON/XML transformation and schema validation (DataWeave, XSLT, or equivalent)",
+        "coverage": "none",
+        "anchors_hit": [],
+        "last_observation_seq": null
+      },
+      "Reliability controls: retry with backoff, idempotency keys, dead-letter queue": {
+        "signal_value": "Reliability controls: retry with backoff, idempotency keys, dead-letter queue",
+        "coverage": "none",
+        "anchors_hit": [],
+        "last_observation_seq": null
+      },
+      "Secure on-prem connectivity (VPN, agent, reverse proxy)": {
+        "signal_value": "Secure on-prem connectivity (VPN, agent, reverse proxy)",
         "coverage": "none",
         "anchors_hit": [],
         "last_observation_seq": null

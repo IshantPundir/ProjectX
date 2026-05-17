@@ -51,7 +51,7 @@
       {"role": "candidate", "text": "Hi, I didn't quite understand the question. Can you please explain it to me?", "timestamp_ms": 16455, "question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a"},
       {"role": "agent", "text": "OK, let me put it differently. Imagine a new Salesforce order comes in every few seconds and you need it in an on-prem ERP almost immediately; using your iPaaS, walk me through the end-to-end sync flow.", "timestamp_ms": 0, "question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a"}
     ],
-    "candidate_utterance": "Uh, sure. So like for a near real-time order sync, uh, I trigger from Salesforce using, uh, something like platform events or webhook notifications. Uh, MuleSoft would consume these events, validate payload structure, and then transform the Salesforce JSON into the ERP schema using DataWeave. Since ERP is on-prem, I'd establish secure connectivity via VPN.",
+    "candidate_utterance": "Uh, sure. So like for a near real-time order sync, uh, I trigger from Salesforce using, uh, something like platform events or webhook notifications. Uh, MuleSoft would consume these events, validate payload structure, and then transform the Salesforce JSON into the ERP schema using DataWeave. Since ERP is on-prem, I'd establish secure connectivity via VPN. And for reliability I'd add retries with exponential backoff and idempotency keys on order IDs to avoid duplicates.",
     "time_remaining_seconds": 1100
   },
   "expected": {
