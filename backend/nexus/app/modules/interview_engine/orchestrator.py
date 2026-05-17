@@ -860,7 +860,13 @@ class InterviewOrchestrator:
 
     # --- Internals ---
 
-    _RECOVERY_TEXT = "I apologize — could you say that again?"
+    @property
+    def _RECOVERY_TEXT(self) -> str:
+        """Persona-voiced recovery text. Read from PersonaSpec so tone
+        stays consistent with the rest of the Speaker output even on
+        exception paths that bypass the LLM."""
+        from app.modules.interview_engine.speaker.persona import DEFAULT_PERSONA
+        return DEFAULT_PERSONA.fallback_recovery
 
     def _format_session_ended_message(self) -> str:
         """Render the canned terminal message with candidate-name interpolation.

@@ -45,7 +45,7 @@ class _FakeSpeakerHandle:
         # Phase 9.3 diagnostic state — orchestrator reads these on the
         # speaker.output.empty path. Without them, the AttributeError
         # routes the empty-fallback branch into the speaker-error
-        # recovery path ("I apologize — could you say that again?").
+        # recovery path (DEFAULT_PERSONA.fallback_recovery).
         self.event_types_seen: list[str] = []
         self.refusal_text: str | None = None
         self.response_id: str | None = None
