@@ -610,3 +610,67 @@ def test_closing_disclosure_signal_ignored_for_non_polite_close_kinds():
         closing_disclosure_signal="should-be-ignored",
     )
     assert s.failed_signal_value is None
+
+
+def test_clarify_after_probe_passes_probe_text_not_main():
+    """When the candidate is clarifying after a probe was just delivered,
+    bank_text on the SpeakerInput should be the PROBE text, not the main
+    question text (v2 fix — cluster 5).
+
+    Diagnostic: session 70c126b4 turns 5-6 — candidate said 'I didn't quite
+    understand the question' after a probe, but the agent rephrased the MAIN
+    question Q2 instead of the probe about metrics. UX failure."""
+    from app.modules.interview_engine.models.judge import ClarifyPayload
+
+    queue = QuestionQueue.from_initial(
+        questions=[{"question_id": "q1", "is_mandatory": True,
+                    "follow_ups": ["PROBE-0-TEXT", "PROBE-1-TEXT"]}],
+    )
+    queue.advance_to("q1", at_turn=0)
+    # Simulate that probe "1" was the last probe delivered.
+    queue.apply_probe(probe_id="1", at_turn=1)
+
+    s = build_speaker_input(
+        instruction_kind=InstructionKind.clarify,
+        judge_output=_judge(NextAction.clarify, ClarifyPayload()),
+        active_question=_q(text="MAIN-QUESTION-TEXT", follow_ups=["PROBE-0-TEXT", "PROBE-1-TEXT"]),
+        queue=queue,
+        claims_pool=CandidateClaimsPool(max_size=50),
+        recent_turns=[],
+        persona_name="Sam",
+        last_candidate_utterance="I didn't quite understand the question.",
+    )
+    # Should serve probe text, NOT the main question text.
+    assert s.bank_text == "PROBE-1-TEXT", (
+        f"Expected probe text 'PROBE-1-TEXT' but got {s.bank_text!r}. "
+        "The clarify branch must rephrase the most-recently-delivered probe, "
+        "not the main question, when a probe has been asked."
+    )
+
+
+def test_clarify_without_prior_probe_passes_main_text():
+    """When clarify fires without any prior probe on this question,
+    bank_text falls back to active_question.text (v1 behavior preserved)."""
+    from app.modules.interview_engine.models.judge import ClarifyPayload
+
+    queue = QuestionQueue.from_initial(
+        questions=[{"question_id": "q1", "is_mandatory": True,
+                    "follow_ups": ["PROBE-0-TEXT"]}],
+    )
+    queue.advance_to("q1", at_turn=0)
+    # No probe applied — probes_asked_ids will be empty.
+
+    s = build_speaker_input(
+        instruction_kind=InstructionKind.clarify,
+        judge_output=_judge(NextAction.clarify, ClarifyPayload()),
+        active_question=_q(text="MAIN-QUESTION-TEXT", follow_ups=["PROBE-0-TEXT"]),
+        queue=queue,
+        claims_pool=CandidateClaimsPool(max_size=50),
+        recent_turns=[],
+        persona_name="Sam",
+        last_candidate_utterance="I don't understand.",
+    )
+    assert s.bank_text == "MAIN-QUESTION-TEXT", (
+        f"Expected main question text but got {s.bank_text!r}. "
+        "When no probe has been asked, clarify must fall back to the main question text."
+    )

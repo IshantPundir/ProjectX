@@ -78,7 +78,21 @@ def build_speaker_input(
                 bank_text = active_question.follow_ups[idx]
 
     elif instruction_kind == InstructionKind.clarify:
-        bank_text = active_question.text if active_question else None
+        # v2: if the candidate is clarifying after a probe, rephrase the
+        # PROBE, not the main question. The Speaker's clarify.txt v2 handles
+        # short bank_text as "rephrase the follow-up" — do not widen back
+        # to the main topic. (Diagnostic: session 70c126b4 turns 5-6 —
+        # candidate said "I didn't quite understand the question" after a
+        # probe, and the agent rephrased the MAIN question Q2 instead of
+        # the probe about metrics. UX failure.)
+        active_state = queue.active_state()
+        if active_question and active_state and active_state.probes_asked_ids:
+            last_probe_id = active_state.probes_asked_ids[-1]
+            idx = int(last_probe_id)
+            if 0 <= idx < len(active_question.follow_ups):
+                bank_text = active_question.follow_ups[idx]
+        if bank_text is None:
+            bank_text = active_question.text if active_question else None
 
     elif instruction_kind == InstructionKind.acknowledge_no_experience:
         from app.modules.interview_engine.models.judge import (
