@@ -12,11 +12,16 @@ from typing import ClassVar, Literal
 from app.modules.interview_engine.models.claims import ClaimsPoolSnapshot
 from app.modules.interview_engine.models.judge import (
     AdvancePayload, AcknowledgeNoExperiencePayload, ClarifyPayload,
-    CoverageQuality, EndSessionPayload, JudgeOutput, NextAction, Observation,
-    PoliteClosePayload, ProbePayload, PushBackPayload, RepeatPayload,
+    CoverageQuality, CoverageTransition, EndSessionPayload, JudgeOutput,
+    NextAction, Observation, PoliteClosePayload, ProbePayload, PushBackPayload,
+    RepeatPayload,
 )
-from app.modules.interview_engine.models.ledger import SignalLedgerSnapshot
-from app.modules.interview_engine.models.queue import QuestionQueueSnapshot
+from app.modules.interview_engine.models.ledger import (
+    CoverageState, SignalLedgerSnapshot,
+)
+from app.modules.interview_engine.models.queue import (
+    QuestionQueueSnapshot, QuestionState,
+)
 from app.modules.interview_engine.models.speaker import (
     InstructionKind, SpeakerInput,
 )
@@ -32,7 +37,8 @@ from app.modules.interview_engine.state.queue import (
     NoActiveQuestionError, QueueError, QuestionQueue,
 )
 from app.modules.interview_runtime import (
-    KnockoutFailure, SessionConfig, TranscriptEntry,
+    KnockoutFailure, QuestionConfig, SessionConfig, SignalMetadata,
+    TranscriptEntry,
 )
 
 
@@ -90,6 +96,74 @@ def _is_dont_know_utterance(text: str | None) -> bool:
     if _QUALIFYING_CONJUNCTIONS.search(stripped):
         return False
     return True
+
+
+def _maybe_promote_meta_confession(
+    *,
+    judge_output: JudgeOutput,
+    active_question: QuestionConfig,
+    question_state: QuestionState,
+    remaining_probes: dict[str, str],
+    ledger: SignalLedgerSnapshot,
+    session_signal_metadata: list[SignalMetadata],
+) -> ValidationWarning | None:
+    """Bluff-catch promotion (v2, see spec 2026-05-17 §6).
+
+    Trigger: candidate_meta_confession=true AND active question is
+    mandatory AND push_back_count >= 1 AND no remaining probes on this
+    question AND the question's primary signal (highest weight from
+    session_signal_metadata filtered by question.signal_values) is
+    uncovered (coverage in {none, partial}).
+
+    The Judge classifies; the State Engine decides. The Judge's emitted
+    action (typically push_back) is overridden to acknowledge_no_experience
+    so the existing knockout-policy override and post-session report
+    pipelines treat this exactly as an explicit no-experience disclosure.
+
+    Returns a ValidationWarning with code="meta_confession_knockout" if
+    promotion fires, or None if any guard fails.
+
+    NOTE: this function is PURE — it inspects state but does NOT mutate
+    judge_output, the ledger, or the lifecycle. The caller (StateEngine.
+    process_judge_output) is responsible for applying the mutations when
+    the return value is non-None.
+    """
+    if not judge_output.turn_metadata.candidate_meta_confession:
+        return None
+    if not active_question.is_mandatory:
+        return None
+    if question_state.push_back_count < 1:
+        return None
+    if remaining_probes:
+        return None  # let probes run first
+    # Find the primary signal: highest weight among the signals this
+    # question targets, looked up in session_signal_metadata.
+    question_signal_meta = [
+        m for m in session_signal_metadata
+        if m.value in active_question.signal_values
+    ]
+    if not question_signal_meta:
+        return None  # no metadata to fail on; defensive
+    primary_signal = max(question_signal_meta, key=lambda s: s.weight)
+    snap = ledger.snapshots.get(primary_signal.value)
+    if snap is not None and snap.coverage == CoverageState.sufficient:
+        return None  # already proven; don't reverse that evidence
+    return ValidationWarning(
+        code="meta_confession_knockout",
+        level="warning",
+        details={
+            "active_question_id": active_question.id,
+            "original_action": judge_output.next_action.value,
+            "promoted_to": NextAction.acknowledge_no_experience.value,
+            "failed_signal_value": primary_signal.value,
+            "push_back_count": question_state.push_back_count,
+            "reason": (
+                f"meta_confession + mandatory + "
+                f"push_back_count={question_state.push_back_count} + "
+                f"no_probes_remain + primary_signal_uncovered"
+            ),
+        },
+    )
 
 
 @dataclass(slots=True)
@@ -661,6 +735,105 @@ class StateEngine:
                 details={"action": action.value},
             ))
             instruction = self._fallback_advance_to_next_pending(warnings)
+
+        # 5a. meta_confession promotion (v2, spec 2026-05-17 §6).
+        #
+        # Runs AFTER the action dispatch (including inverse_quality_gate which
+        # short-circuits on remaining probes) and BEFORE knockout_policy so the
+        # promoted acknowledge_no_experience chains through the existing
+        # record_only / close_polite logic unchanged.
+        #
+        # Condition: Judge classified candidate_meta_confession=true AND the
+        # active question is mandatory AND push_back_count >= 1 AND no probes
+        # remain AND the primary signal is still uncovered. When all five hold,
+        # the Judge's emitted action is overridden to acknowledge_no_experience
+        # with the primary signal as failed_signal_value. A synthetic →failed
+        # observation is applied to the ledger so the acknowledge_without_
+        # failure_obs guard passes, and a KnockoutFailure is recorded if the
+        # primary signal is a knockout signal (so the knockout_policy block
+        # below fires correctly for close_polite tenants).
+        active_q_state = self._queue.active_state()
+        active_q_cfg_for_meta = next(
+            (
+                q for q in self._cfg.stage.questions
+                if active_q_state and q.id == active_q_state.question_id
+            ),
+            None,
+        )
+        if active_q_cfg_for_meta is not None and active_q_state is not None:
+            remaining_probes_map = {
+                pid: pid for pid in active_q_state.probes_remaining_ids
+            }
+            meta_warn = _maybe_promote_meta_confession(
+                judge_output=judge_output,
+                active_question=active_q_cfg_for_meta,
+                question_state=active_q_state,
+                remaining_probes=remaining_probes_map,
+                ledger=self._ledger.snapshot(),
+                session_signal_metadata=self._cfg.signal_metadata,
+            )
+            if meta_warn is not None:
+                warnings.append(meta_warn)
+                failed_signal_value = str(
+                    meta_warn.details["failed_signal_value"]
+                )
+                # Override judge_output in-place so _build_speaker_input
+                # and the knockout_policy block see the promoted action.
+                judge_output.next_action = NextAction.acknowledge_no_experience
+                judge_output.next_action_payload = (
+                    AcknowledgeNoExperiencePayload(
+                        failed_signal_value=failed_signal_value,
+                    )
+                )
+                # Apply a synthetic →failed observation so the
+                # acknowledge_without_failure_obs guard (which checks
+                # applied_observations) does not downgrade back to clarify.
+                current_coverage = (
+                    self._ledger.snapshot()
+                    .snapshots.get(failed_signal_value)
+                )
+                if current_coverage is not None:
+                    current_state = current_coverage.coverage
+                else:
+                    current_state = CoverageState.none
+                transition = (
+                    CoverageTransition.partial_to_failed
+                    if current_state == CoverageState.partial
+                    else CoverageTransition.none_to_failed
+                )
+                synthetic_obs = Observation(
+                    signal_value=failed_signal_value,
+                    anchor_id=-1,
+                    evidence_quote="[meta_confession_knockout: synthetic failure]",
+                    coverage_transition=transition,
+                )
+                try:
+                    self._ledger.apply_observation(
+                        synthetic_obs,
+                        turn_id=turn_id,
+                        recorded_at_ms=elapsed_ms,
+                    )
+                    applied_observations.append(synthetic_obs)
+                except IllegalCoverageTransition:
+                    # Already failed — observation still counts as applied for
+                    # the guard check. Re-add a sentinel so the guard passes.
+                    pass
+                # Record a KnockoutFailure if the primary signal is a
+                # knockout signal (so knockout_policy fires for close_polite).
+                if failed_signal_value in self._knockout_signals:
+                    meta_failure = KnockoutFailure(
+                        question_id=active_q_cfg_for_meta.id,
+                        reason=(
+                            f"meta_confession_knockout: candidate admitted "
+                            f"they cannot answer on {failed_signal_value!r}"
+                        )[:200],
+                        signal_values=[failed_signal_value],
+                        occurred_at_ms=elapsed_ms,
+                    )
+                    self._lifecycle.record_knockout(meta_failure)
+                    knockout_failures_this_turn.append(meta_failure)
+                # Override the instruction.
+                instruction = InstructionKind.acknowledge_no_experience
 
         # 6. Policy override: knockout recorded this turn AND policy is
         # close_polite → force polite_close regardless of the Judge's
