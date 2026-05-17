@@ -1,0 +1,64 @@
+{
+  "id": "014_deflection_disclaimed_responsibility",
+  "description": "Candidate deflects by attributing the decision to their team or manager rather than engaging with the technical question themselves — classic responsibility-disclaiming deflection.",
+  "tags": ["push_back", "deflection", "synthesized"],
+  "judge_input": {
+    "active_question_id": "606b1bcb-9205-4509-96d0-468326b73c5d",
+    "active_question_text": "You're inheriting a portfolio of ~40-50 integrations across cloud and on-prem. In your first 90 days, how would you assess, stabilize, and standardize the estate?",
+    "active_question_positive_evidence": [
+      "Creates an inventory and dependency map",
+      "Establishes metric baselines",
+      "Proposes standardized error-handling framework",
+      "Quantifies targets and outcomes"
+    ],
+    "active_question_red_flags": [
+      "Vague stakeholder meetings with no technical assessment",
+      "No prioritization framework"
+    ],
+    "active_question_rubric": {
+      "excellent": "Concrete 90-day plan with inventory, metric baselines, prioritized remediation.",
+      "meets_bar": "Plausible plan covering assessment and some metrics.",
+      "below_bar": "High-level activity list without artifacts."
+    },
+    "active_question_evaluation_hint": "Look for lifecycle ownership indicators.",
+    "active_question_signal_metadata": [
+      {
+        "value": "8+ years overall experience in enterprise integration design and implementation",
+        "type": "experience",
+        "knockout": true,
+        "priority": "required"
+      }
+    ],
+    "next_pending_mandatory_question_id": null,
+    "active_question_push_back_count": 0,
+    "active_question_consecutive_dont_know_count": 0,
+    "active_question_remaining_probes": {
+      "0": "What evidence and environment data would you gather in week 1?",
+      "1": "How would you prioritize remediation work?"
+    },
+    "signal_coverage": {
+      "8+ years overall experience in enterprise integration design and implementation": {
+        "signal_value": "8+ years overall experience in enterprise integration design and implementation",
+        "coverage": "none",
+        "anchors_hit": [],
+        "last_observation_seq": null
+      }
+    },
+    "candidate_claims": [],
+    "recent_turns": [
+      {"role": "agent", "text": "You're inheriting a portfolio of integrations. In your first 90 days, how would you assess and stabilize the estate?", "timestamp_ms": 0, "question_id": "606b1bcb-9205-4509-96d0-468326b73c5d"}
+    ],
+    "candidate_utterance": "That would really depend on what my manager and the team decide. I'd just follow whatever process they already have in place and support the existing workflows. I'm flexible and adapt to team norms.",
+    "time_remaining_seconds": 1100
+  },
+  "expected": {
+    "next_action": "push_back",
+    "forbidden_actions": ["advance", "acknowledge_no_experience"],
+    "observations_min_count": 0,
+    "forbidden_failure_observations": true,
+    "expected_reasoning_substrings": ["deflect"]
+  },
+  "source": "synthesized",
+  "labeled_by": "ishant",
+  "labeled_at": "2026-05-17"
+}

@@ -1,0 +1,70 @@
+{
+  "id": "002_what_is_term_question",
+  "description": "Candidate asks 'what's an ERP?' immediately after the first question — a mix of greeting and clarifying question about a term. From session 70c126b4 turn 38. Judge must redirect (greeting flag) or clarify (term question). Because social_or_greeting=true forces redirect, clarify is forbidden.",
+  "tags": ["clarify", "redirect", "term_question", "real_session"],
+  "judge_input": {
+    "active_question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a",
+    "active_question_text": "Using your primary iPaaS (MuleSoft, TIBCO, or Boomi), how would you implement a near-real-time order sync from Salesforce to an on-prem ERP? Walk through the flow end-to-end and highlight the key design choices you'd make.",
+    "active_question_positive_evidence": [
+      "Names specific platform components and connectors (e.g., Mule flows/Anypoint connectors, TIBCO BW palettes, Boomi connectors/Atoms) and explains why chosen",
+      "Describes auth and secure connectivity (OAuth 2.0, client credentials, VPN/agent) and network path from cloud to on-prem",
+      "Explains JSON/XML mapping with schema validation (OpenAPI/XSD/JSON Schema) and field-level transformations",
+      "Details reliability controls: retry with backoff, idempotency keys/conditional upsert, dead-letter/replay; cites expected throughput/SLAs",
+      "Outlines environment strategy and deployment approach (separate runtimes, config per env, rollback plan, smoke tests)"
+    ],
+    "active_question_red_flags": [
+      "Tool-agnostic answer with no concrete platform components or connectors",
+      "No clear plan for idempotency/retries; accepts duplicates or manual cleanup",
+      "Unclear or insecure on-prem connectivity path; hand-waves promotion strategy"
+    ],
+    "active_question_rubric": {
+      "excellent": "Identifies concrete iPaaS components and connectors, secures on-prem access (agent/VPN) with specific auth methods, defines JSON/XML contracts and validation, and details reliability.",
+      "meets_bar": "Provides a mostly correct design with platform references, basic secure connectivity, and mapping plus some reliability controls.",
+      "below_bar": "Stays generic or theoretical, lacks concrete platform usage, ignores secure on-prem connectivity."
+    },
+    "active_question_evaluation_hint": "Verify platform-specific depth, reliability controls, and secure on-prem connectivity choices.",
+    "active_question_signal_metadata": [
+      {
+        "value": "5+ years hands-on production experience with at least one iPaaS/ESB platform (MuleSoft, TIBCO, or Dell Boomi)",
+        "type": "experience",
+        "knockout": true,
+        "priority": "required"
+      }
+    ],
+    "next_pending_mandatory_question_id": "606b1bcb-9205-4509-96d0-468326b73c5d",
+    "active_question_push_back_count": 0,
+    "active_question_consecutive_dont_know_count": 0,
+    "active_question_remaining_probes": {
+      "0": "How would you handle retries and idempotency to avoid duplicate orders during transient failures?",
+      "1": "What connectivity approach would you use to reach on-prem (e.g., agent/VPN/reverse proxy), and how would you secure it?",
+      "2": "How would you structure environments and promote changes safely from dev to test to prod?"
+    },
+    "signal_coverage": {
+      "5+ years hands-on production experience with at least one iPaaS/ESB platform (MuleSoft, TIBCO, or Dell Boomi)": {
+        "signal_value": "5+ years hands-on production experience with at least one iPaaS/ESB platform (MuleSoft, TIBCO, or Dell Boomi)",
+        "coverage": "none",
+        "anchors_hit": [],
+        "last_observation_seq": null
+      }
+    },
+    "candidate_claims": [],
+    "recent_turns": [
+      {"role": "agent", "text": "Using your primary iPaaS, walk me through an end-to-end near-real-time Salesforce to on-prem ERP order sync.", "timestamp_ms": 0, "question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a"}
+    ],
+    "candidate_utterance": "Hey, hi, what's an ERP?",
+    "time_remaining_seconds": 1180
+  },
+  "expected": {
+    "next_action": "redirect",
+    "forbidden_actions": ["clarify"],
+    "turn_metadata": {
+      "candidate_social_or_greeting": true
+    },
+    "observations_min_count": 0,
+    "observations_max_count": 0,
+    "expected_reasoning_substrings": ["greeting", "redirect"]
+  },
+  "source": "session_70c126b4_turn38",
+  "labeled_by": "ishant",
+  "labeled_at": "2026-05-17"
+}

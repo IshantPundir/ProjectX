@@ -1,0 +1,67 @@
+{
+  "id": "025_q2_strong_assessment_plan",
+  "description": "On Q2 (90-day integration assessment), candidate gives a structured answer: inventory, owner identification, SLA classification, failure rates, and looking at logs. Covers 2-3 evidence points. From session 2115a63a turn 587.",
+  "tags": ["advance", "real_session", "q2"],
+  "judge_input": {
+    "active_question_id": "606b1bcb-9205-4509-96d0-468326b73c5d",
+    "active_question_text": "You're inheriting a portfolio of ~40-50 integrations across cloud and on-prem. In your first 90 days, how would you assess, stabilize, and standardize the estate? Outline the plan, artifacts you'd produce, and success metrics.",
+    "active_question_positive_evidence": [
+      "Creates an inventory and dependency map; classifies by interface type, criticality, owners, and environments",
+      "Establishes baselines (failure rate, p95 latency, backlog size, throughput) and defines SLAs/SLOs",
+      "Proposes a standardized error-handling/logging framework (global handlers, correlation IDs) and documentation templates",
+      "Introduces CI/CD gates (linting, contract tests, smoke/perf checks) and code review/test plans",
+      "Quantifies targets/outcomes (e.g., 30% incident reduction, MTTR < X mins) with cadence for reviews"
+    ],
+    "active_question_red_flags": [
+      "Vague stakeholder meetings with no technical assessment",
+      "No prioritization framework",
+      "Ignores operational hygiene and lacks measurable goals"
+    ],
+    "active_question_rubric": {
+      "excellent": "Concrete 90-day plan with inventory/dependency mapping, metric baselines, prioritized remediation, reusable error/logging standards, CI/CD gates, and quantified targets.",
+      "meets_bar": "Plausible plan covering assessment, some metrics, and basic standardization.",
+      "below_bar": "High-level activity list without technical artifacts, metrics, or prioritization."
+    },
+    "active_question_evaluation_hint": "Look for lifecycle ownership indicators and metric-driven prioritization at scale.",
+    "active_question_signal_metadata": [
+      {
+        "value": "8+ years overall experience in enterprise integration design and implementation",
+        "type": "experience",
+        "knockout": true,
+        "priority": "required"
+      }
+    ],
+    "next_pending_mandatory_question_id": null,
+    "active_question_push_back_count": 0,
+    "active_question_consecutive_dont_know_count": 0,
+    "active_question_remaining_probes": {
+      "0": "What evidence and environment data would you gather in week 1 (logs, configs, SLAs, error rates)?",
+      "1": "How would you prioritize remediation work? Which risks or metrics drive sequencing?",
+      "2": "What reusable standards or libraries would you introduce to reduce future incidents?"
+    },
+    "signal_coverage": {
+      "8+ years overall experience in enterprise integration design and implementation": {
+        "signal_value": "8+ years overall experience in enterprise integration design and implementation",
+        "coverage": "none",
+        "anchors_hit": [],
+        "last_observation_seq": null
+      }
+    },
+    "candidate_claims": [],
+    "recent_turns": [
+      {"role": "agent", "text": "OK, let's switch gears. You inherit 40-50 integrations; in your first 90 days, how do you assess and stabilize them?", "timestamp_ms": 0, "question_id": "606b1bcb-9205-4509-96d0-468326b73c5d"}
+    ],
+    "candidate_utterance": "Uh, sure. So like, I'd first of all like I'd inventory all integrations, identify the owners, SLAs, dependencies, failure rates, and critical business parts. I'll look at the logs and latency graphs to identify which ones are struggling and prioritize fixing those first. Then I'd establish some common standards for error handling.",
+    "time_remaining_seconds": 1000
+  },
+  "expected": {
+    "next_action": "advance",
+    "forbidden_actions": ["push_back", "acknowledge_no_experience"],
+    "observations_min_count": 1,
+    "forbidden_failure_observations": true,
+    "expected_reasoning_substrings": ["advance"]
+  },
+  "source": "session_2115a63a_turn587",
+  "labeled_by": "ishant",
+  "labeled_at": "2026-05-17"
+}

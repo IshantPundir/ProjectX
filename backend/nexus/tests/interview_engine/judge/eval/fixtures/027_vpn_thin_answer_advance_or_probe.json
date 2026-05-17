@@ -1,0 +1,61 @@
+{
+  "id": "027_vpn_thin_answer_advance_or_probe",
+  "description": "Candidate answers the connectivity probe with 'I would use VPN for secure connectivity' — partially correct but thin; no specific auth, no agent alternative mentioned. Remaining probes exist. Should probe for depth. From session 2115a63a turn 433.",
+  "tags": ["advance", "probe", "real_session", "thin_answer"],
+  "judge_input": {
+    "active_question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a",
+    "active_question_text": "Using your primary iPaaS, how would you implement a near-real-time order sync from Salesforce to an on-prem ERP?",
+    "active_question_positive_evidence": [
+      "Describes auth and secure connectivity (OAuth 2.0, client credentials, VPN/agent) and network path",
+      "Names specific platform components",
+      "Details reliability controls"
+    ],
+    "active_question_red_flags": [
+      "Unclear or insecure on-prem connectivity path",
+      "No idempotency/retries plan"
+    ],
+    "active_question_rubric": {
+      "excellent": "Concrete iPaaS components, secure on-prem access with specific auth methods, reliability controls.",
+      "meets_bar": "Platform references and basic connectivity.",
+      "below_bar": "Generic, theoretical."
+    },
+    "active_question_evaluation_hint": "Verify platform-specific depth and reliability controls.",
+    "active_question_signal_metadata": [
+      {
+        "value": "5+ years hands-on production experience with at least one iPaaS/ESB platform (MuleSoft, TIBCO, or Dell Boomi)",
+        "type": "experience",
+        "knockout": true,
+        "priority": "required"
+      }
+    ],
+    "next_pending_mandatory_question_id": "606b1bcb-9205-4509-96d0-468326b73c5d",
+    "active_question_push_back_count": 1,
+    "active_question_consecutive_dont_know_count": 0,
+    "active_question_remaining_probes": {
+      "2": "How would you structure environments and promote changes safely from dev to test to prod?"
+    },
+    "signal_coverage": {
+      "5+ years hands-on production experience with at least one iPaaS/ESB platform (MuleSoft, TIBCO, or Dell Boomi)": {
+        "signal_value": "5+ years hands-on production experience with at least one iPaaS/ESB platform (MuleSoft, TIBCO, or Dell Boomi)",
+        "coverage": "none",
+        "anchors_hit": [],
+        "last_observation_seq": null
+      }
+    },
+    "candidate_claims": [],
+    "recent_turns": [
+      {"role": "agent", "text": "What connectivity approach would you use to reach on-prem, and how would you secure it?", "timestamp_ms": 0, "question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a"}
+    ],
+    "candidate_utterance": "I would use VPN for secure connectivity. We can use VPN or something also, something like an agent.",
+    "time_remaining_seconds": 950
+  },
+  "expected": {
+    "forbidden_actions": ["acknowledge_no_experience"],
+    "observations_min_count": 0,
+    "forbidden_failure_observations": true,
+    "expected_reasoning_substrings": ["VPN", "connectivity"]
+  },
+  "source": "session_2115a63a_turn433",
+  "labeled_by": "ishant",
+  "labeled_at": "2026-05-17"
+}

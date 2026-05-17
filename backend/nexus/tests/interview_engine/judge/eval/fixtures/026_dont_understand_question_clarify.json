@@ -1,0 +1,65 @@
+{
+  "id": "026_dont_understand_question_clarify",
+  "description": "Candidate says 'I didn't quite understand the question' on a technical question — no greeting, no abusive language, just genuine confusion. Judge should clarify, not redirect. From session 70c126b4 turn 435.",
+  "tags": ["clarify", "real_session"],
+  "judge_input": {
+    "active_question_id": "606b1bcb-9205-4509-96d0-468326b73c5d",
+    "active_question_text": "You're inheriting a portfolio of ~40-50 integrations across cloud and on-prem. In your first 90 days, how would you assess, stabilize, and standardize the estate?",
+    "active_question_positive_evidence": [
+      "Creates an inventory and dependency map",
+      "Establishes metric baselines",
+      "Proposes standardized error-handling framework",
+      "Quantifies targets and outcomes"
+    ],
+    "active_question_red_flags": [
+      "Vague stakeholder meetings",
+      "No prioritization framework"
+    ],
+    "active_question_rubric": {
+      "excellent": "Concrete 90-day plan with inventory, baselines, prioritized remediation.",
+      "meets_bar": "Plausible plan covering assessment and some metrics.",
+      "below_bar": "High-level activity list without artifacts."
+    },
+    "active_question_evaluation_hint": "Look for lifecycle ownership indicators.",
+    "active_question_signal_metadata": [
+      {
+        "value": "8+ years overall experience in enterprise integration design and implementation",
+        "type": "experience",
+        "knockout": true,
+        "priority": "required"
+      }
+    ],
+    "next_pending_mandatory_question_id": null,
+    "active_question_push_back_count": 0,
+    "active_question_consecutive_dont_know_count": 0,
+    "active_question_remaining_probes": {
+      "0": "What evidence and environment data would you gather in week 1?",
+      "2": "What reusable standards or libraries would you introduce to reduce future incidents?"
+    },
+    "signal_coverage": {
+      "8+ years overall experience in enterprise integration design and implementation": {
+        "signal_value": "8+ years overall experience in enterprise integration design and implementation",
+        "coverage": "partial",
+        "anchors_hit": [0],
+        "last_observation_seq": 11
+      }
+    },
+    "candidate_claims": [],
+    "recent_turns": [
+      {"role": "agent", "text": "What evidence and environment data would you gather in week 1 to understand the estate?", "timestamp_ms": 0, "question_id": "606b1bcb-9205-4509-96d0-468326b73c5d"}
+    ],
+    "candidate_utterance": "I didn't quite understand the question.",
+    "time_remaining_seconds": 950
+  },
+  "expected": {
+    "next_action": "clarify",
+    "forbidden_actions": ["redirect", "push_back", "acknowledge_no_experience"],
+    "forbidden_meta_flags": ["candidate_social_or_greeting"],
+    "observations_min_count": 0,
+    "observations_max_count": 0,
+    "expected_reasoning_substrings": ["clarify"]
+  },
+  "source": "session_70c126b4_turn435",
+  "labeled_by": "ishant",
+  "labeled_at": "2026-05-17"
+}

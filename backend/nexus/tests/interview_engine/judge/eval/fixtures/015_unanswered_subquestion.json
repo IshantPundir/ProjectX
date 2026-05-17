@@ -1,0 +1,65 @@
+{
+  "id": "015_unanswered_subquestion",
+  "description": "Agent asked a compound question with two sub-parts; candidate answered only the first (inventory) and ignored the second (success metrics). Judge should push_back to get the missing sub-part.",
+  "tags": ["push_back", "unanswered_subquestion", "synthesized"],
+  "judge_input": {
+    "active_question_id": "606b1bcb-9205-4509-96d0-468326b73c5d",
+    "active_question_text": "You're inheriting a portfolio of ~40-50 integrations across cloud and on-prem. In your first 90 days, how would you assess, stabilize, and standardize the estate? Outline the plan, artifacts you'd produce, and success metrics.",
+    "active_question_positive_evidence": [
+      "Creates an inventory and dependency map",
+      "Establishes baselines (failure rate, p95 latency) and defines SLAs/SLOs",
+      "Proposes a standardized error-handling/logging framework",
+      "Quantifies targets/outcomes (e.g., 30% incident reduction, MTTR < X mins)"
+    ],
+    "active_question_red_flags": [
+      "Vague stakeholder meetings with no technical assessment",
+      "No prioritization framework"
+    ],
+    "active_question_rubric": {
+      "excellent": "Concrete 90-day plan with inventory, metric baselines, prioritized remediation, and quantified targets.",
+      "meets_bar": "Plausible plan covering assessment and some metrics.",
+      "below_bar": "High-level activity list without artifacts or metrics."
+    },
+    "active_question_evaluation_hint": "Look for lifecycle ownership indicators and metric-driven prioritization.",
+    "active_question_signal_metadata": [
+      {
+        "value": "8+ years overall experience in enterprise integration design and implementation",
+        "type": "experience",
+        "knockout": true,
+        "priority": "required"
+      }
+    ],
+    "next_pending_mandatory_question_id": null,
+    "active_question_push_back_count": 0,
+    "active_question_consecutive_dont_know_count": 0,
+    "active_question_remaining_probes": {
+      "0": "What evidence and environment data would you gather in week 1?",
+      "1": "How would you prioritize remediation work?",
+      "2": "What reusable standards would you introduce to reduce future incidents?"
+    },
+    "signal_coverage": {
+      "8+ years overall experience in enterprise integration design and implementation": {
+        "signal_value": "8+ years overall experience in enterprise integration design and implementation",
+        "coverage": "none",
+        "anchors_hit": [],
+        "last_observation_seq": null
+      }
+    },
+    "candidate_claims": [],
+    "recent_turns": [
+      {"role": "agent", "text": "You're inheriting 40-50 integrations. How would you assess the estate and what success metrics would you target?", "timestamp_ms": 0, "question_id": "606b1bcb-9205-4509-96d0-468326b73c5d"}
+    ],
+    "candidate_utterance": "I would start by doing an inventory of all the integrations — who owns them, what they connect, and whether they're cloud or on-prem. That way I'd have a full picture of what I'm working with.",
+    "time_remaining_seconds": 1100
+  },
+  "expected": {
+    "next_action": "push_back",
+    "forbidden_actions": ["advance", "acknowledge_no_experience"],
+    "observations_min_count": 0,
+    "forbidden_failure_observations": true,
+    "expected_reasoning_substrings": ["metric", "success"]
+  },
+  "source": "synthesized",
+  "labeled_by": "ishant",
+  "labeled_at": "2026-05-17"
+}
