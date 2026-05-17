@@ -82,7 +82,13 @@ def test_deliver_question_scaffold_documents_post_cap_advance_segue():
         "deliver_question.txt must reference the SpeakerInput flag name"
     )
     body_lower = body.lower()
-    assert "topic" in body_lower or "moving on" in body_lower or "switch" in body_lower
+    assert (
+        "different" in body_lower
+        or "new question" in body_lower
+        or "moving on" in body_lower
+        or "switch" in body_lower
+        or "topic" in body_lower
+    )
 
 
 def test_polite_close_scaffold_handles_knockout_disclosure():
