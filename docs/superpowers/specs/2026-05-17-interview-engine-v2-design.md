@@ -312,9 +312,10 @@ The validator `_check_push_back_alignment` was relaxed 2026-05-12 to permit `pus
 @model_validator(mode="after")
 def _check_meta_confession_consistency(self) -> "JudgeOutput":
     """meta_confession is a CLASSIFICATION flag. Judge does NOT decide
-    knockout; State Engine does. Allowed actions when meta_confession=true:
-    push_back, advance, clarify. Forbidden: acknowledge_no_experience or
-    polite_close — those are State Engine overrides, not Judge calls."""
+    knockout; State Engine does. Forbidden when meta_confession=true:
+    acknowledge_no_experience and polite_close — those are State Engine
+    overrides, not Judge calls. Every other action (push_back, advance,
+    probe, clarify, redirect, repeat, end_session) is permitted."""
     if not self.turn_metadata.candidate_meta_confession:
         return self
     forbidden = {NextAction.acknowledge_no_experience, NextAction.polite_close}
@@ -322,7 +323,8 @@ def _check_meta_confession_consistency(self) -> "JudgeOutput":
         raise ValueError(
             f"candidate_meta_confession=true is a CLASSIFICATION flag; "
             f"do NOT decide knockout. State Engine promotes when warranted. "
-            f"Got {self.next_action.value!r}. Use push_back/advance/clarify."
+            f"Got {self.next_action.value!r}. Use push_back (typical), or "
+            f"any non-knockout action."
         )
     return self
 ```
@@ -443,7 +445,7 @@ JUDGE — INTERVIEW DECISION ENGINE (v2)
 
 §0  ROLE + OUTPUT CONTRACT          (10 lines — what you are, what you emit)
 §1  DECISION TREE                   (35 lines — IN-ORDER priority list, moved
-                                     from old §8 to TOP. See diagnostic B13.)
+                                     from old §8 to TOP.)
 §2  INPUT FIELDS                    (45 lines — what you receive, including
                                      ActiveSignalMeta.type and the new
                                      meta_confession field semantics.)
@@ -474,6 +476,8 @@ CHANGELOG (separate file)           prompts/v2/engine/CHANGELOG.md
 ### 7.4 Key content changes (relative to v1)
 
 1. **§1 Decision tree at top.** Priority list moves from line 555 to ~30-60. Reasoning models attend strongly to early prompt content. Includes tiebreaker: "when in doubt, prefer the more conservative transition; default observation to `partial→partial` not `partial→sufficient`."
+
+   *Source: OpenAI GPT-5.1 guide + Eugene Yan's LLM-evaluator structure guidance — early prompt content is where reasoning-class models commit their search space.*
 
 2. **§3 Reasoning field — new section.** Tells the Judge how to write the new `reasoning` field: 2-4 sentences, name the candidate's utterance shape, name which signals/anchors were touched, name the action choice + brief why. Forbids restating the rubric. Caps at ~300 tokens to bound latency.
 
@@ -524,7 +528,7 @@ CHANGELOG (separate file)           prompts/v2/engine/CHANGELOG.md
    - B: explicit no-experience → `acknowledge_no_experience` with `anchor=-1`.
    - C: meta_confession on a follow-up → `push_back` + meta_confession flag (NEW).
    - D: thin answer → `push_back`, `missing_specifics`, quality=thin.
-   - E: bare greeting → `redirect`, EMPTY observations + EMPTY claims (defeats position-bias toward always emitting observations — diagnostic B12).
+   - E: bare greeting → `redirect`, EMPTY observations + EMPTY claims (defeats position-bias toward always-emitting-observations — 4 of 5 v1 examples emitted observations; this rebalances).
    - F: prompt injection → `redirect` with injection flag.
 
 10. **CHANGELOG externalized** to `prompts/v2/engine/CHANGELOG.md`. Session-reference notes that v1 sprinkled in the system prompt body move to a file the model never sees. Frees ~30-50 lines per call.
@@ -802,12 +806,12 @@ Per user decision: all 6 workstreams ship together on one branch (`feature/inter
 
 Single feature branch: `feature/interview-engine-v2` (already cut from main at `001b472`).
 
-Six logical commit clusters within the branch:
+Six logical commit clusters within the branch, **in dependency order** (later clusters consume earlier ones):
 
-1. `eval: add Judge eval harness + initial corpus` (Workstream A)
-2. `schema: Judge reasoning field + meta_confession + signal type + validators` (Workstream B)
-3. `state: meta_confession promotion + new override audit event` (Workstream B/C bridge)
-4. `prompts(v2): Judge prompt rewrite + Speaker prompts v2 + CHANGELOG` (Workstreams C + D)
+1. `schema: Judge reasoning field + meta_confession + signal type + validators` (Workstream B — must land first; eval corpus references the new fields)
+2. `state: meta_confession promotion + new override audit event` (Workstream B continuation — same module surface, separated for review hygiene)
+3. `eval: add Judge eval harness + initial corpus` (Workstream A — corpus uses v2 schema shapes)
+4. `prompts(v2): Judge prompt rewrite + Speaker prompts v2 + CHANGELOG` (Workstreams C + D — eval harness validates each)
 5. `code: Speaker input_builder clarify-on-probe fix` (Workstream E)
 6. `code: orchestrator regex pre-filter for repeat intent` (Workstream F)
 
@@ -832,7 +836,7 @@ All persistence (sessions, knockout_failures, audio_tuning_summary) is JSONB; ne
 
 ### 14.1 Risks
 
-1. **Latency growth.** Adding `reasoning` (~100-300 output tokens) adds an estimated 300-800ms to Judge p95. Current Judge budget is 10s wall-clock (5s per attempt × 2 + 250ms wait); plenty of headroom. The real-time AI budget per CLAUDE.md is 1200ms P50 / 1500ms P95 end-to-end (one segment of which is the Judge call). Mitigation: if measured Judge p95 in production exceeds 1200ms post-v2, reduce `reasoning` max_length 2000 → 1000 OR drop `reasoning_effort` from `medium` → `low` (per OpenAI-5.1: most workflows succeed at low).
+1. **Latency growth.** Adding `reasoning` (~100-300 output tokens) is realistically expected to add **500-2000ms** to Judge p95 — `gpt-5.4-mini` typically streams at 40-150 tokens/sec depending on prompt + reasoning load. Current Judge budget is 10s wall-clock (5s per attempt × 2 + 250ms wait); v2 still fits with headroom. **But:** the real-time AI budget per CLAUDE.md is 1200ms P50 / 1500ms P95 *end-to-end*, of which Judge is one segment. If the new reasoning field pushes the Judge call past ~1500ms p95, the end-to-end budget will be missed. Mitigations, in order: (a) tighten `reasoning` max_length 2000 → 800 in v2 §3 prompt guidance; (b) drop `reasoning_effort` from default `medium` → `low` (per OpenAI-5.1 guidance: most workflows succeed at `low`); (c) accept the latency cost — `auditability` is a goal of v2, and the per-segment p95 was already slack in v1. Decision deferred to first production measurement (O1).
 
 2. **Eval fixture quality.** ~30 hand-labeled fixtures at v2 ship is a small corpus; false-positive eval passes are possible. Mitigation: corpus growth playbook (every surprising real-session decision becomes a fixture); minimum target of 50 by end of first month of v2 in production.
 
@@ -843,6 +847,8 @@ All persistence (sessions, knockout_failures, audio_tuning_summary) is JSONB; ne
 5. **Pre-filter regex false negatives.** A repeat-intent utterance the regex misses gets handled by the Judge (slower but correct — graceful degradation). False positives are riskier: a non-repeat utterance flagged as repeat would replay the wrong content. Mitigation: negative guards in the pre-filter (explicit "explain"/"rephrase" exclusions, word-count cap) + 4 eval fixtures specifically exercising the boundary.
 
 6. **Big-bang cutover risk** (user's explicit acceptance). Mitigation: eval harness as the bisect tool; 6 logical commit clusters on the branch (so `git log --oneline` on the merge shows the boundaries); env-var rollback path.
+
+7. **Validator-rejection loses Judge observations.** When either new validator (meta_confession-action coupling, greeting-action coupling) rejects, the existing fallback (`judge/fallback.py::synthesize_fallback(validation_error)`) emits an empty `clarify` JudgeOutput. Any observations / claims the Judge had already extracted on that same turn are lost. The candidate's answer-quality evidence on that turn is forfeit. Mitigation today: this only happens when the Judge's output is internally inconsistent (a buggy turn), so losing the observations is arguably the right call. Mitigation later (post-v2 if observed in production): teach the fallback synthesizer to PRESERVE the observations + claims and only override the offending field (e.g., flip `social_or_greeting=false` and re-validate). Out of scope for v2.
 
 ### 14.2 Open questions (resolve in implementation, not design)
 
