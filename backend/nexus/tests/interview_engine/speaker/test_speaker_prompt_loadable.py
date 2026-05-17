@@ -27,7 +27,7 @@ def test_all_per_action_speaker_prompts_load():
             "engine/speaker/_preamble",
             f"engine/speaker/{kind.value}",
         )
-        assert "OUTPUT FORMAT" in body, f"preamble missing for {kind.value}"
+        assert "OUTPUT RULES" in body, f"preamble missing for {kind.value}"
         assert "TASK" in body, f"task statement missing for {kind.value}"
         assert "EXAMPLES" in body or "EXAMPLE" in body, f"examples missing for {kind.value}"
         assert len(body) > 200, f"body suspiciously short for {kind.value}"
