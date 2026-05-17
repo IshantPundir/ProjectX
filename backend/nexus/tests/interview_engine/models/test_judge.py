@@ -137,6 +137,7 @@ def test_end_session_initiated_by_enum():
 
 def test_judge_output_discriminator_alignment_passes():
     out = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[],
         candidate_claims=[],
         next_action=NextAction.advance,
@@ -149,6 +150,7 @@ def test_judge_output_discriminator_alignment_passes():
 def test_judge_output_discriminator_mismatch_rejected():
     with pytest.raises(ValidationError) as exc_info:
         JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
             observations=[],
             candidate_claims=[],
             next_action=NextAction.probe,
@@ -167,6 +169,7 @@ def test_no_experience_flag_with_redirect_action_rejected():
     from app.modules.interview_engine.models.judge import RedirectPayload
     with pytest.raises(ValidationError) as exc_info:
         JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
             observations=[],
             candidate_claims=[],
             next_action=NextAction.redirect,
@@ -179,6 +182,7 @@ def test_no_experience_flag_with_redirect_action_rejected():
 def test_no_experience_flag_with_clarify_action_rejected():
     with pytest.raises(ValidationError) as exc_info:
         JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
             observations=[],
             candidate_claims=[],
             next_action=NextAction.clarify,
@@ -191,6 +195,7 @@ def test_no_experience_flag_with_clarify_action_rejected():
 def test_no_experience_flag_with_acknowledge_action_passes():
     """The aligned shape: flag set + acknowledge_no_experience action."""
     out = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[],
         candidate_claims=[],
         next_action=NextAction.acknowledge_no_experience,
@@ -204,6 +209,7 @@ def test_no_experience_flag_with_polite_close_passes():
     """polite_close is also coherent — used when all mandatory questions
     are complete and the disclosure happens on the way out."""
     out = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[],
         candidate_claims=[],
         next_action=NextAction.polite_close,
@@ -216,6 +222,7 @@ def test_no_experience_flag_with_polite_close_passes():
 def test_judge_output_no_thought_field():
     """thought was removed (audit-only, never read by State Engine)."""
     out = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[],
         candidate_claims=[],
         next_action=NextAction.advance,
@@ -231,6 +238,7 @@ def test_redirect_action_with_payload():
         JudgeOutput, NextAction, RedirectPayload, TurnMetadata,
     )
     output = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[],
         candidate_claims=[],
         next_action=NextAction.redirect,
@@ -308,6 +316,7 @@ def test_push_back_payload_rejects_unknown_reason_code():
 def test_push_back_action_with_thin_observations_passes():
     """The aligned shape: push_back action + observations all marked thin."""
     out = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[
             Observation(
                 signal_value="x",
@@ -335,6 +344,7 @@ def test_push_back_action_with_concrete_observation_passes():
     synthesize_fallback and force-advanced the queue.
     """
     out = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[
             Observation(
                 signal_value="x",
@@ -360,6 +370,7 @@ def test_push_back_action_with_strong_observation_passes():
     observation. The State Engine's inverse_quality_gate handles inversion.
     """
     out = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[
             Observation(
                 signal_value="x",
@@ -384,6 +395,7 @@ def test_push_back_action_rejects_no_experience_flag():
     to acknowledge_no_experience (or polite_close)."""
     with pytest.raises(ValidationError) as exc_info:
         JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
             observations=[],
             candidate_claims=[],
             next_action=NextAction.push_back,
@@ -399,6 +411,7 @@ def test_push_back_action_with_no_observations_passes():
     """push_back without any observation is valid — the candidate said
     something on-topic but the Judge couldn't anchor any partial coverage."""
     out = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[],
         candidate_claims=[],
         next_action=NextAction.push_back,
@@ -415,6 +428,7 @@ def test_advance_with_thin_observation_passes_validator():
     coupling. An advance with thin obs is schema-legal; the State Engine
     decides whether to honor it."""
     out = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[
             Observation(
                 signal_value="x",

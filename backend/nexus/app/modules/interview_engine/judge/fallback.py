@@ -38,6 +38,7 @@ def synthesize_fallback(
     if reason == FallbackReason.validation_error:
         from app.modules.interview_engine.models.judge import ClarifyPayload
         return JudgeOutput(
+            reasoning="Fallback: Judge output failed Pydantic validation. Defaulting to clarify so the candidate gets another chance.",
             observations=[],
             candidate_claims=[],
             next_action=NextAction.clarify,
@@ -46,6 +47,7 @@ def synthesize_fallback(
         )
     if next_pending_mandatory_id is None:
         return JudgeOutput(
+            reasoning="Fallback: no pending mandatory question remains. Closing politely.",
             observations=[],
             candidate_claims=[],
             next_action=NextAction.polite_close,
@@ -53,6 +55,7 @@ def synthesize_fallback(
             turn_metadata=TurnMetadata(),
         )
     return JudgeOutput(
+        reasoning=f"Fallback ({reason.value}): advancing to next pending mandatory question.",
         observations=[],
         candidate_claims=[],
         next_action=NextAction.advance,

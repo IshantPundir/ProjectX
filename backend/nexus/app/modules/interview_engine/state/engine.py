@@ -205,6 +205,7 @@ class StateEngine:
         first = self._cfg.stage.questions[0]
         from app.modules.interview_engine.models.judge import TurnMetadata
         return JudgeOutput(
+            reasoning="Session start: initializing by advancing to the first question in the bank.",
             observations=[],
             candidate_claims=[],
             next_action=NextAction.advance,

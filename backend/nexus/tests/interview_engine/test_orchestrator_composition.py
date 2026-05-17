@@ -242,6 +242,7 @@ async def test_full_session_no_false_knockout_no_silence_correct_repeat(
     judge_outputs = [
         # Turn 1: candidate says "Hi" → redirect (social).
         JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
             observations=[],
             candidate_claims=[],
             next_action=NextAction.redirect,
@@ -250,6 +251,7 @@ async def test_full_session_no_false_knockout_no_silence_correct_repeat(
         ),
         # Turn 2: "How are you?" → redirect (Speaker output empty — Bug D).
         JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
             observations=[],
             candidate_claims=[],
             next_action=NextAction.redirect,
@@ -258,6 +260,7 @@ async def test_full_session_no_false_knockout_no_silence_correct_repeat(
         ),
         # Turn 3: "Can you repeat?" → repeat (cached delivery, no Speaker call).
         JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
             observations=[],
             candidate_claims=[],
             next_action=NextAction.repeat,
@@ -268,6 +271,7 @@ async def test_full_session_no_false_knockout_no_silence_correct_repeat(
         # simulation. The ->failed guard MUST drop this; the lifecycle
         # MUST NOT record a knockout. The probe action proceeds normally.
         JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
             observations=[
                 Observation(
                     signal_value=KNOCKOUT_SIGNAL,
@@ -448,6 +452,7 @@ async def test_push_back_flows_end_to_end_and_increments_count_in_judge_input(
         # Turn 1: candidate says "I would add validation checks" (vague).
         # Judge emits push_back vague_answer with one thin observation.
         JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
             observations=[
                 Observation(
                     signal_value="S1", anchor_id=0,
@@ -467,6 +472,7 @@ async def test_push_back_flows_end_to_end_and_increments_count_in_judge_input(
         # threading; the state engine's advance-quality-gate has its own
         # dedicated tests in test_engine.py.)
         JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
             observations=[
                 Observation(
                     signal_value="S1", anchor_id=2,
@@ -570,6 +576,7 @@ async def test_repeat_after_interrupted_push_back_replays_prior_question_not_emp
     judge_outputs = [
         # Turn 1: candidate gives a vague answer → push_back/vague_answer
         JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
             observations=[
                 Observation(
                     signal_value="S1", anchor_id=0,
@@ -585,6 +592,7 @@ async def test_repeat_after_interrupted_push_back_replays_prior_question_not_emp
         ),
         # Turn 2: candidate asks for a repeat
         JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
             observations=[], candidate_claims=[],
             next_action=NextAction.repeat,
             next_action_payload=RepeatPayload(),
@@ -687,6 +695,7 @@ async def test_repeat_after_empty_speaker_output_replays_prior_question_not_fall
 
     judge_outputs = [
         JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
             observations=[
                 Observation(
                     signal_value="S1", anchor_id=0, evidence_quote="vague",
@@ -700,6 +709,7 @@ async def test_repeat_after_empty_speaker_output_replays_prior_question_not_fall
             turn_metadata=TurnMetadata(),
         ),
         JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
             observations=[], candidate_claims=[],
             next_action=NextAction.repeat,
             next_action_payload=RepeatPayload(),
@@ -776,6 +786,7 @@ async def test_judge_call_audit_carries_full_input_summary(
     judge_outputs = [
         # Turn 1: candidate gives a substantive answer → probe.
         JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
             observations=[],
             candidate_claims=[],
             next_action=NextAction.probe,
@@ -845,6 +856,7 @@ async def test_state_snapshot_emitted_before_judge_call(
     judge_outputs = [
         # Turn 1: candidate gives a substantive answer → probe.
         JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
             observations=[],
             candidate_claims=[],
             next_action=NextAction.probe,
@@ -916,6 +928,7 @@ async def test_speaker_input_emitted_before_speaker_call(
     judge_outputs = [
         # Turn 1: candidate gives a substantive answer → probe.
         JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
             observations=[],
             candidate_claims=[],
             next_action=NextAction.probe,

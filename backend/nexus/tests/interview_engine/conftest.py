@@ -93,6 +93,7 @@ def make_judge_output():
         else:
             raise ValueError(f"factory does not support {action}; build directly")
         return JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
             observations=observations or [],
             candidate_claims=claims or [],
             next_action=action,

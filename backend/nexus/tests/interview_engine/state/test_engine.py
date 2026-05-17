@@ -66,6 +66,7 @@ def _config():
 
 def _judge_advance(target: str) -> JudgeOutput:
     return JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[],
         candidate_claims=[],
         next_action=NextAction.advance,
@@ -106,6 +107,7 @@ def test_process_probe_consumes_remaining():
         candidate_utterance_text=None, elapsed_ms=0,
     )
     j = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[
             Observation(signal_value="S1", anchor_id=0, evidence_quote="ev",
                         coverage_transition=CoverageTransition.none_to_partial),
@@ -130,6 +132,7 @@ def test_no_experience_disclosure_marks_signal_failed():
         candidate_utterance_text=None, elapsed_ms=0,
     )
     j = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[
             Observation(signal_value="S1", anchor_id=-1, evidence_quote="never used it",
                         coverage_transition=CoverageTransition.none_to_failed),
@@ -163,6 +166,7 @@ def test_repeat_action_uses_cached_utterance():
         instruction_kind=InstructionKind.deliver_first_question,
     )
     j = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[],
         candidate_claims=[],
         next_action=NextAction.repeat,
@@ -187,6 +191,7 @@ def test_repeat_without_prior_utterance_degrades_to_clarify():
     )
     # NO register_agent_utterance call.
     j = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[],
         candidate_claims=[],
         next_action=NextAction.repeat,
@@ -210,6 +215,7 @@ def test_invalid_probe_id_falls_back_to_first_unused_followup():
         candidate_utterance_text=None, elapsed_ms=0,
     )
     j = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[],
         candidate_claims=[],
         next_action=NextAction.probe,
@@ -243,6 +249,7 @@ def test_advance_to_unknown_target_picks_next_pending_mandatory():
     # the gate requires >=1 concrete obs on the active question or the
     # advance is downgraded to push_back).
     j = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[
             Observation(
                 signal_value="S1", anchor_id=0,
@@ -271,6 +278,7 @@ def test_end_session_blocked_without_knockout_or_complete():
     )
     from app.modules.interview_engine.models.judge import EndSessionPayload
     j = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[],
         candidate_claims=[],
         next_action=NextAction.end_session,
@@ -327,6 +335,7 @@ def test_knockout_signal_failure_records_knockout_failure(make_session_config, m
         candidate_utterance_text=None, elapsed_ms=0,
     )
     j = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[
             Observation(signal_value="S_KO", anchor_id=-1,
                         evidence_quote="I have no experience with this",
@@ -362,6 +371,7 @@ def test_close_polite_policy_overrides_action_on_knockout(make_session_config, m
         candidate_utterance_text=None, elapsed_ms=0,
     )
     j = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[
             Observation(signal_value="S_KO", anchor_id=-1,
                         evidence_quote="never used it",
@@ -400,6 +410,7 @@ def test_record_only_policy_does_not_close_on_knockout(make_session_config, make
         candidate_utterance_text=None, elapsed_ms=0,
     )
     j = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[
             Observation(signal_value="S_KO", anchor_id=-1,
                         evidence_quote="never used",
@@ -460,6 +471,7 @@ def test_failed_with_positive_anchor_is_dropped(make_session_config, make_questi
     # observation passes the ledger precondition (matching the
     # session 8317142f turn-7 state).
     warmup = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[
             Observation(
                 signal_value="S_KO", anchor_id=1,
@@ -485,6 +497,7 @@ def test_failed_with_positive_anchor_is_dropped(make_session_config, make_questi
         coverage_transition=CoverageTransition.sufficient_to_failed,
     )
     output = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[bogus_obs],
         candidate_claims=[],
         next_action=NextAction.probe,
@@ -563,6 +576,7 @@ def test_redirect_action_maps_to_redirect_instruction_kind():
         candidate_utterance_text=None, elapsed_ms=0,
     )
     output = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[],
         candidate_claims=[],
         next_action=NextAction.redirect,
@@ -594,6 +608,7 @@ def test_non_knockout_signal_failure_does_not_record_knockout(make_session_confi
         candidate_utterance_text=None, elapsed_ms=0,
     )
     j = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[
             Observation(signal_value="S_PLAIN", anchor_id=-1,
                         evidence_quote="never used",
@@ -652,6 +667,7 @@ def test_drift_guard_drops_failure_obs_when_action_is_clarify(
     )
 
     bogus = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[
             Observation(
                 signal_value="S_KO",
@@ -711,6 +727,7 @@ def test_drift_guard_does_not_fire_for_legitimate_acknowledge(
     )
 
     j = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[
             Observation(
                 signal_value="S_KO",
@@ -763,6 +780,7 @@ def test_drift_guard_drops_failure_obs_for_redirect_action(
     )
 
     bogus = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[
             Observation(
                 signal_value="S_KO",
@@ -823,6 +841,7 @@ def test_acknowledge_without_failure_obs_downgrades_to_clarify(
     # failure obs has anchor_id=3 (illegal — →failed requires sentinel)
     # so the existing guard drops it. Nothing survives → no real failure.
     bogus = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[
             Observation(
                 signal_value="S1",
@@ -885,6 +904,7 @@ def test_acknowledge_with_real_failure_obs_does_not_downgrade(
     )
 
     j = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[
             Observation(
                 signal_value="S1", anchor_id=-1,
@@ -929,6 +949,7 @@ def test_acknowledge_with_no_observations_at_all_downgrades(
     )
 
     j = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[],  # ← no failure obs at all
         candidate_claims=[],
         next_action=NextAction.acknowledge_no_experience,
@@ -955,6 +976,7 @@ def _judge_push_back(reason_code: str, observations=None) -> JudgeOutput:
         CoverageQuality, PushBackPayload,
     )
     return JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=observations or [],
         candidate_claims=[],
         next_action=NextAction.push_back,
@@ -976,6 +998,7 @@ def _judge_advance_with_quality(
     """
     from app.modules.interview_engine.models.judge import CoverageQuality
     return JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[
             Observation(
                 signal_value=signal,
@@ -1146,6 +1169,7 @@ def test_advance_with_mixed_qualities_is_honored():
     _activate_q1(eng)
 
     j = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[
             Observation(signal_value="S1", anchor_id=0, evidence_quote="thin1",
                         coverage_transition=CoverageTransition.none_to_partial,
@@ -1201,6 +1225,7 @@ def test_quality_observation_counts_recorded_per_grade():
     _activate_q1(eng)
 
     j = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[
             Observation(signal_value="S1", anchor_id=0, evidence_quote="t",
                         coverage_transition=CoverageTransition.none_to_partial,
@@ -1339,6 +1364,7 @@ def test_knockout_policy_override_threads_failed_signal_to_polite_close():
     )
     # Candidate discloses no experience on q2's knockout signal S2.
     j = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[
             Observation(
                 signal_value="S2", anchor_id=-1,
@@ -1378,6 +1404,7 @@ def test_clean_polite_close_has_no_failed_signal_value():
     _activate_q1(eng)
 
     j = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[],
         candidate_claims=[],
         next_action=NextAction.polite_close,

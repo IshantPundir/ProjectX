@@ -23,6 +23,7 @@ def _q(text="Tell me about your work.", follow_ups=None):
 
 def _judge(action, payload):
     return JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[], candidate_claims=[],
         next_action=action, next_action_payload=payload,
         turn_metadata=TurnMetadata(),
@@ -104,6 +105,7 @@ def test_redirect_kind_carries_turn_metadata_only():
     )
     queue.advance_to("q1", at_turn=0)
     judge_out = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[], candidate_claims=[],
         next_action=NextAction.redirect,
         next_action_payload=RedirectPayload(),
@@ -142,6 +144,7 @@ def test_non_redirect_kind_has_no_turn_metadata():
     )
     queue.advance_to("q1", at_turn=0)
     judge_out = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[], candidate_claims=[],
         next_action=NextAction.advance,
         next_action_payload=AdvancePayload(target_question_id="q1"),
@@ -308,6 +311,7 @@ def test_push_back_routes_reason_code_through():
     s = build_speaker_input(
         instruction_kind=InstructionKind.push_back,
         judge_output=JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
             observations=[],
             candidate_claims=[],
             next_action=NextAction.push_back,
@@ -355,6 +359,7 @@ def test_push_back_drops_recent_turns_and_claims_pool():
     s = build_speaker_input(
         instruction_kind=InstructionKind.push_back,
         judge_output=JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
             observations=[], candidate_claims=[],
             next_action=NextAction.push_back,
             next_action_payload=PushBackPayload(reason_code="vague_answer"),

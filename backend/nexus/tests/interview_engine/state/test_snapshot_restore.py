@@ -78,6 +78,7 @@ def test_restore_from_rewinds_ledger_observation(make_session_config, make_quest
     engine.process_judge_output(
         turn_id="t-probe",
         judge_output=JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
             observations=[obs],
             candidate_claims=[],
             next_action=NextAction.probe,
@@ -115,6 +116,7 @@ def test_restore_from_rewinds_queue_advance(make_session_config, make_question, 
     engine.process_judge_output(
         turn_id="t-adv",
         judge_output=JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
             observations=[obs_concrete],
             candidate_claims=[],
             next_action=NextAction.advance,
@@ -155,6 +157,7 @@ def test_restore_from_rewinds_lifecycle_state(make_session_config, make_question
     engine.process_judge_output(
         turn_id="t-close",
         judge_output=JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
             observations=[],
             candidate_claims=[],
             next_action=NextAction.polite_close,
@@ -184,6 +187,7 @@ def test_snapshot_full_then_restore_is_full_round_trip(make_session_config, make
     engine.process_judge_output(
         turn_id="t-1",
         judge_output=JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
             observations=[obs],
             candidate_claims=[],
             next_action=NextAction.probe,
@@ -209,6 +213,7 @@ def test_snapshot_full_then_restore_is_full_round_trip(make_session_config, make
     engine.process_judge_output(
         turn_id="t-2",
         judge_output=JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
             observations=[obs2],
             candidate_claims=[],
             next_action=NextAction.advance,
@@ -244,6 +249,7 @@ def test_snapshot_does_not_alias_internal_state(make_session_config, make_questi
     engine.process_judge_output(
         turn_id="t-after",
         judge_output=JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
             observations=[],
             candidate_claims=[],
             next_action=NextAction.probe,

@@ -375,6 +375,7 @@ async def test_on_close_session_aggregates_reflect_per_question_state(
         state_engine.process_judge_output(
             turn_id=f"t-pb-{i}",
             judge_output=JudgeOutput(
+                reasoning="Test-synthesized reasoning string for unit test fixture.",
                 observations=[Observation(
                     signal_value="S1", anchor_id=0,
                     evidence_quote="thin",
@@ -395,6 +396,7 @@ async def test_on_close_session_aggregates_reflect_per_question_state(
     state_engine.process_judge_output(
         turn_id="t-cap",
         judge_output=JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
             observations=[],
             candidate_claims=[],
             next_action=NextAction.push_back,
@@ -407,6 +409,7 @@ async def test_on_close_session_aggregates_reflect_per_question_state(
     state_engine.process_judge_output(
         turn_id="t-q2",
         judge_output=JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
             observations=[Observation(
                 signal_value="S1", anchor_id=2,
                 evidence_quote="concrete real example",
@@ -717,6 +720,7 @@ async def test_normal_turn_then_knockout_triggers_shutdown(
     judge = MagicMock()
     judge.call = AsyncMock(return_value=MagicMock(
         judge_output=JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
             observations=[Observation(
                 signal_value="S_KO", anchor_id=-1,
                 evidence_quote="never used",
@@ -1001,6 +1005,7 @@ async def test_session_close_outcome_reflects_lifecycle_last_outcome(
     judge = MagicMock()
     judge.call = AsyncMock(return_value=MagicMock(
         judge_output=JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
             observations=[Observation(
                 signal_value="S_KO", anchor_id=-1,
                 evidence_quote="never used",

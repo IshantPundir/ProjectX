@@ -30,6 +30,7 @@ def _payload():
 
 def _good_judge_dict() -> dict:
     out = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[], candidate_claims=[],
         next_action=NextAction.advance,
         next_action_payload=AdvancePayload(target_question_id="q1"),

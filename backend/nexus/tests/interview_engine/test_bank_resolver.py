@@ -24,6 +24,7 @@ def _q(qid="q1", text="Tell me about your work.", follow_ups=None):
 
 def _judge(action, payload):
     return JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[], candidate_claims=[],
         next_action=action, next_action_payload=payload,
         turn_metadata=TurnMetadata(),

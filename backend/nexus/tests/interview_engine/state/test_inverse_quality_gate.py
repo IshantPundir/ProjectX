@@ -55,6 +55,7 @@ def test_push_back_with_concrete_obs_downgrades_to_probe(
     )
 
     judge_output = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[Observation(
             signal_value=session_config_two_questions.signal_metadata[0].value,
             anchor_id=0,
@@ -100,6 +101,7 @@ def test_push_back_with_thin_obs_keeps_push_back(
     )
 
     judge_output = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[Observation(
             signal_value=session_config_two_questions.signal_metadata[0].value,
             anchor_id=0,
@@ -146,6 +148,7 @@ def test_push_back_concrete_no_probes_left_advances(
         engine.process_judge_output(
             turn_id=f"t-{i}",
             judge_output=JudgeOutput(
+                reasoning="Test-synthesized reasoning string for unit test fixture.",
                 observations=[],
                 candidate_claims=[],
                 next_action=NextAction.probe,
@@ -156,6 +159,7 @@ def test_push_back_concrete_no_probes_left_advances(
         )
 
     judge_output = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=[Observation(
             signal_value=session_config_two_questions.signal_metadata[0].value,
             anchor_id=0,

@@ -1,3 +1,5 @@
+import pytest
+
 from app.modules.interview_engine.judge.input_builder import (
     ActiveSignalMeta, JudgeInputPayload, build_judge_input,
 )
@@ -124,8 +126,8 @@ def test_build_judge_input_remaining_probes_passthrough():
 def test_active_signal_metadata_carries_through():
     """ActiveSignalMeta is surfaced when supplied; default is empty list."""
     meta = [
-        ActiveSignalMeta(value="S_KO", knockout=True, priority="required"),
-        ActiveSignalMeta(value="S_PLAIN", knockout=False, priority="preferred"),
+        ActiveSignalMeta(value="S_KO", type="experience", knockout=True, priority="required"),
+        ActiveSignalMeta(value="S_PLAIN", type="competency", knockout=False, priority="preferred"),
     ]
     payload = build_judge_input(
         active_question=_q(),
@@ -238,3 +240,59 @@ def test_push_back_count_passthrough():
         active_question_push_back_count=2,
     )
     assert payload.active_question_push_back_count == 2
+
+
+def test_active_signal_meta_type_carries_through_build_judge_input():
+    """When ActiveSignalMeta is built with type='experience', that type
+    is preserved through build_judge_input into the payload."""
+    meta = [
+        ActiveSignalMeta(value="S1", type="experience", knockout=False, priority="required"),
+    ]
+    payload = build_judge_input(
+        active_question=_q(),
+        ledger_snapshot=SignalLedgerSnapshot(entries=[], snapshots={}, next_seq=1),
+        queue_snapshot=QuestionQueueSnapshot(),
+        claims_snapshot=ClaimsPoolSnapshot(),
+        recent_turns=[],
+        candidate_utterance="x",
+        time_remaining_seconds=10,
+        next_pending_mandatory_id=None,
+        active_signal_metadata=meta,
+    )
+    assert len(payload.active_question_signal_metadata) == 1
+    assert payload.active_question_signal_metadata[0].type == "experience"
+
+
+def test_active_signal_meta_requires_type():
+    from pydantic import ValidationError
+    from app.modules.interview_engine.judge.input_builder import ActiveSignalMeta
+
+    with pytest.raises(ValidationError) as exc:
+        ActiveSignalMeta(
+            value="some signal",
+            knockout=False,
+            priority="required",
+            # missing type
+        )
+    assert "type" in str(exc.value).lower()
+
+
+def test_active_signal_meta_type_must_be_in_enum():
+    from pydantic import ValidationError
+    from app.modules.interview_engine.judge.input_builder import ActiveSignalMeta
+
+    with pytest.raises(ValidationError):
+        ActiveSignalMeta(
+            value="some signal",
+            type="invalid_type",  # not in Literal[...]
+            knockout=False,
+            priority="required",
+        )
+
+
+def test_active_signal_meta_accepts_valid_types():
+    from app.modules.interview_engine.judge.input_builder import ActiveSignalMeta
+
+    for t in ("experience", "credential", "competency", "behavioral"):
+        m = ActiveSignalMeta(value="x", type=t, knockout=False, priority="required")
+        assert m.type == t

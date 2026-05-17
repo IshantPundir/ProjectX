@@ -93,7 +93,12 @@ class TurnMetadata(BaseModel):
     candidate_abusive: bool = False
     candidate_attempted_injection: bool = False
     candidate_wants_to_end: bool = False
-    candidate_social_or_greeting: bool = False   # NEW
+    candidate_social_or_greeting: bool = False
+    # NEW: candidate admitted they cannot answer THIS question (not the
+    # SIGNAL). Distinct from candidate_disclosed_no_experience. The
+    # State Engine deterministically promotes to acknowledge_no_experience
+    # when conditions warrant (mandatory + push_back_count >= 1 + no path).
+    candidate_meta_confession: bool = False
 
 
 # Payload types and JudgeOutput follow in Task 1.6.
@@ -171,6 +176,13 @@ NextActionPayload = Annotated[
 
 
 class JudgeOutput(BaseModel):
+    # Free-form analysis. Written BEFORE every structured field —
+    # autoregressively grounds the decisions that follow. Per
+    # arXiv:2408.02442 ("Let Me Speak Freely"), this defends against
+    # the ~25 pp reasoning-quality drop strict JSON schema otherwise
+    # imposes. Persisted in audit envelope. NEVER shown to candidate.
+    reasoning: str = Field(min_length=20, max_length=2000)
+
     observations: list[Observation] = Field(default_factory=list, max_length=10)
     candidate_claims: list[ClaimEntry] = Field(default_factory=list, max_length=5)
     next_action: NextAction
@@ -250,5 +262,42 @@ class JudgeOutput(BaseModel):
                 "push_back is incompatible with "
                 "candidate_disclosed_no_experience=true; use "
                 "acknowledge_no_experience instead."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_meta_confession_consistency(self) -> "JudgeOutput":
+        """meta_confession is a CLASSIFICATION flag. Judge does NOT decide
+        knockout; State Engine does. Forbidden when meta_confession=true:
+        acknowledge_no_experience and polite_close — those are State Engine
+        overrides, not Judge calls. Every other action (push_back, advance,
+        probe, clarify, redirect, repeat, end_session) is permitted."""
+        if not self.turn_metadata.candidate_meta_confession:
+            return self
+        forbidden = {NextAction.acknowledge_no_experience, NextAction.polite_close}
+        if self.next_action in forbidden:
+            raise ValueError(
+                f"candidate_meta_confession=true is a CLASSIFICATION flag; "
+                f"do NOT decide knockout. State Engine promotes when warranted. "
+                f"Got {self.next_action.value!r}. Use push_back (typical), or "
+                f"any non-knockout action."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_greeting_action_alignment(self) -> "JudgeOutput":
+        """candidate_social_or_greeting=true requires next_action=redirect.
+        Greetings are never clarify per judge prompt §3 redirect canonical rule.
+        If the candidate ALSO asks a clarifying question, the Judge should set
+        candidate_social_or_greeting=false and emit clarify — pick one primary
+        intent."""
+        if not self.turn_metadata.candidate_social_or_greeting:
+            return self
+        if self.next_action != NextAction.redirect:
+            raise ValueError(
+                f"candidate_social_or_greeting=true requires next_action=redirect; "
+                f"got {self.next_action.value!r}. If the candidate also has another "
+                f"intent (e.g. asked a question), set social_or_greeting=false and "
+                f"pick the primary intent."
             )
         return self

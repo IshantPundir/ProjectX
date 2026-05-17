@@ -42,13 +42,16 @@ from app.modules.interview_runtime import (
 class ActiveSignalMeta(BaseModel):
     """Per-signal metadata projected from SessionConfig.signal_metadata.
 
-    Surfaces the knockout flag (and priority) for the *active* question's
-    signals so the Judge can phrase its reasoning with the right context.
-    Enforcement of knockout policy still happens deterministically at the
-    State Engine layer; this is purely informational.
+    Surfaces the knockout flag, priority, and type for the *active*
+    question's signals so the Judge can phrase its reasoning with the
+    right context (e.g., experience-class signals vs. competency-class
+    inform the first-I-don't-know disambiguation rule). Enforcement of
+    knockout policy still happens deterministically at the State Engine
+    layer; this is purely informational.
     """
 
     value: str
+    type: Literal["experience", "credential", "competency", "behavioral"]
     knockout: bool
     priority: Literal["required", "preferred"]
 

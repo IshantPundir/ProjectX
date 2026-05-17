@@ -87,3 +87,48 @@ class TestCompanyContextFreeText:
         ctx = CompanyContext(about="a", industry="x", hiring_bar="b")
         assert ctx.about == "a"
         assert ctx.hiring_bar == "b"
+
+
+class TestSignalMetadataType:
+    """Signal metadata `type` field is required and validated at runtime."""
+
+    def test_signal_metadata_has_type_field(self) -> None:
+        from app.modules.interview_runtime.schemas import SignalMetadata
+        sm = SignalMetadata(
+            value="sig1",
+            type="competency",
+            priority="required",
+            weight=2,
+            knockout=False,
+            stage="screen",
+            evaluation_method="verbal_response",
+        )
+        assert sm.type == "competency"
+
+    def test_signal_metadata_type_must_be_in_literal(self) -> None:
+        from pydantic import ValidationError
+        from app.modules.interview_runtime.schemas import SignalMetadata
+        with pytest.raises(ValidationError):
+            SignalMetadata(
+                value="sig1",
+                type="invalid_type",
+                priority="required",
+                weight=2,
+                knockout=False,
+                stage="screen",
+                evaluation_method="verbal_response",
+            )
+
+    def test_signal_metadata_type_accepts_all_four_values(self) -> None:
+        from app.modules.interview_runtime.schemas import SignalMetadata
+        for t in ("experience", "credential", "competency", "behavioral"):
+            sm = SignalMetadata(
+                value="sig1",
+                type=t,
+                priority="required",
+                weight=2,
+                knockout=False,
+                stage="screen",
+                evaluation_method="verbal_response",
+            )
+            assert sm.type == t

@@ -612,6 +612,7 @@ class InterviewOrchestrator:
                 if sm is not None:
                     active_signal_meta.append(ActiveSignalMeta(
                         value=sm.value,
+                        type=sm.type,
                         knockout=sm.knockout,
                         priority=sm.priority,
                     ))

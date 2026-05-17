@@ -154,6 +154,7 @@ def _build_orchestrator(
     else:
         raise ValueError(f"unsupported test action {judge_action!r}")
     judge_output = JudgeOutput(
+        reasoning="Test-synthesized reasoning string for unit test fixture.",
         observations=judge_observations or [],
         candidate_claims=[],
         next_action=judge_action,
