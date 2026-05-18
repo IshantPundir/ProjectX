@@ -483,7 +483,8 @@ class Settings(BaseSettings):
     interview_tts_language: str = "en-IN"
     # Sarvam-only TTS knobs; ignored when interview_tts_provider in {openai, cartesia}.
     # pace: 0.5–2.0; temperature: 0.01–1.0 (only used by bulbul:v3 / bulbul:v3-beta).
-    interview_tts_pace: float = 1.0
+    # Aligned to PersonaSpec.tts_*_recommended for Arjun (P4.3).
+    interview_tts_pace: float = 0.95
     interview_tts_temperature: float = 0.6
 
     # End-of-utterance confidence floor for the multilingual turn-detector

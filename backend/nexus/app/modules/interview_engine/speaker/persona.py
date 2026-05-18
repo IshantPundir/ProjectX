@@ -76,7 +76,9 @@ class PersonaSpec:
     )
 
     # --- TTS recommended values (documented; AIConfig defaults align) ---
-    tts_voice_recommended: str = "manoj"
+    # `shubh` is a male bulbul:v3 voice; the v2 options (manoj/arvind/abhilash)
+    # don't exist in v3 — discovered during the P4.1 plugin investigation.
+    tts_voice_recommended: str = "shubh"
     tts_pace_recommended: float = 0.95
     tts_temperature_recommended: float = 0.6
 
