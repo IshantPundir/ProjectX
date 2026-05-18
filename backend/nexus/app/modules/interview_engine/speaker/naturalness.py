@@ -12,7 +12,7 @@ from app.modules.interview_engine.speaker.persona import DEFAULT_PERSONA
 def detect_repeated_opener(
     output: str, recent_reply_starts: list[str],
 ) -> bool:
-    """True iff the first 3 words of `output` match the first 3 words
+    """True iff the first 3 words of ``output`` match the first 3 words
     of any recent opener.
 
     Anti-repetition signal. Per LiveKit/Vapi: the highest-frequency
@@ -21,16 +21,17 @@ def detect_repeated_opener(
     'Mm, OK — an' and 'Mm, OK — iPaaS' both register as the same
     opener — the candidate hears "Mm, OK —" repeat regardless of
     the divergent 4th word.
+
+    Slug definition delegated to ``speaker.openers.opener_slug`` so the
+    pre-prompt filter (``filter_available_openers``) and this post-hoc
+    detector share one implementation.
     """
     if not output or not recent_reply_starts:
         return False
-
-    def _slug(text: str) -> str:
-        return " ".join(text.strip().split()[:3]).lower()
-
-    output_slug = _slug(output)
+    from app.modules.interview_engine.speaker.openers import opener_slug
+    output_slug = opener_slug(output)
     return any(
-        output_slug == _slug(start)
+        output_slug == opener_slug(start)
         for start in recent_reply_starts if start.strip()
     )
 
