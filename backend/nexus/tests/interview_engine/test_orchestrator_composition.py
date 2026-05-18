@@ -359,10 +359,14 @@ async def test_full_session_no_false_knockout_no_silence_correct_repeat(
         "Exactly one empty-Speaker-output event expected (turn 2)."
     )
     fallback = speaker_empty_events[0].payload["fallback_text"]
-    # The fallback for redirect (no bank_text) is the generic "take it
-    # from the top" line; for deliver_question it is "Let me restate that.
-    # <bank_text>". Either substring confirms the fallback fired.
-    assert "restate" in fallback.lower() or "top" in fallback.lower(), (
+    # The fallback templates moved into PersonaSpec (Arjun voice) in P3.3.
+    # No-bank-text: "Mm — could you take it from the top?"
+    # With bank_text: "Right, so — let me put the question again. {bank_text}"
+    # Either substring confirms the fallback fired.
+    assert (
+        "put the question" in fallback.lower()
+        or "top" in fallback.lower()
+    ), (
         f"Fallback text doesn't match the expected templates: {fallback!r}"
     )
 
