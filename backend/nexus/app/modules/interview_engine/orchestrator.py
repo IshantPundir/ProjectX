@@ -1029,6 +1029,7 @@ class InterviewOrchestrator:
                 detect_exceeded_soft_target,
                 detect_name_overuse,
                 detect_repeated_opener,
+                detect_solution_leak,  # NEW
             )
             flags = NaturalnessFlags(
                 repeated_opener=detect_repeated_opener(
@@ -1041,7 +1042,19 @@ class InterviewOrchestrator:
                     self._prior_speaker_output,
                 ),
                 exceeded_soft_target=detect_exceeded_soft_target(
-                    final_text, speaker_input.instruction_kind.value,
+                    final_text,
+                    speaker_input.instruction_kind.value,
+                    clarify_kind=(
+                        speaker_input.clarify_kind.value
+                        if speaker_input.clarify_kind else None
+                    ),
+                ),
+                solution_leak_suspected=detect_solution_leak(
+                    final_text,
+                    clarify_kind=(
+                        speaker_input.clarify_kind.value
+                        if speaker_input.clarify_kind else None
+                    ),
                 ),
             )
             self._append(SPEAKER_OUTPUT, SpeakerOutputPayload(

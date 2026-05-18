@@ -161,6 +161,7 @@ class NaturalnessFlags(BaseModel):
     banned_phrases_emitted: list[str] = Field(default_factory=list)
     name_overuse: bool = False
     exceeded_soft_target: bool = False
+    solution_leak_suspected: bool = False
 
 
 class SpeakerOutputPayload(BaseModel):
