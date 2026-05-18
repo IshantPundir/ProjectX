@@ -12,17 +12,25 @@ from app.modules.interview_engine.speaker.persona import DEFAULT_PERSONA
 def detect_repeated_opener(
     output: str, recent_reply_starts: list[str],
 ) -> bool:
-    """True iff the first 3-4 words of `output` match any recent opener.
+    """True iff the first 3 words of `output` match the first 3 words
+    of any recent opener.
 
     Anti-repetition signal. Per LiveKit/Vapi: the highest-frequency
     'sounds AI' tell across turns is the same opener appearing on
-    consecutive turns.
+    consecutive turns. 3-word slug comparison (was 4-word) so that
+    'Mm, OK — an' and 'Mm, OK — iPaaS' both register as the same
+    opener — the candidate hears "Mm, OK —" repeat regardless of
+    the divergent 4th word.
     """
     if not output or not recent_reply_starts:
         return False
-    output_head = " ".join(output.strip().split()[:4]).lower()
+
+    def _slug(text: str) -> str:
+        return " ".join(text.strip().split()[:3]).lower()
+
+    output_slug = _slug(output)
     return any(
-        output_head.startswith(start.strip().lower())
+        output_slug == _slug(start)
         for start in recent_reply_starts if start.strip()
     )
 

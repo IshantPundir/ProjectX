@@ -31,6 +31,17 @@ def test_repeated_opener_false_on_empty_output() -> None:
     assert detect_repeated_opener("", ["Anything"]) is False
 
 
+def test_repeated_opener_catches_consecutive_three_word_slug() -> None:
+    """Session bf34128f turn 3: output 'Mm, OK — iPaaS means…' should
+    flag against recent_reply_starts=['Mm, OK — an']. The 4-word
+    comparison missed this (divergent 4th word); 3-word slug catches
+    it — the candidate hears 'Mm, OK —' twice in a row."""
+    assert detect_repeated_opener(
+        "Mm, OK — iPaaS means integration platform as a service",
+        ["Mm, OK — an"],
+    ) is True
+
+
 # ---------------- detect_banned_phrases ----------------
 
 def test_banned_phrase_detected_case_insensitive() -> None:
