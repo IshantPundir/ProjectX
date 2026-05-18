@@ -33,13 +33,71 @@ transition; default observation to `partial→partial` not `partial→sufficient
                 only see them when the pre-filter declined (long
                 utterance or mixed-intent).
 
-3. CLARIFY   — candidate doesn't understand:
-                  a. asked about a specific term ("what do you mean by
-                     validators?")
-                  b. generically confused ("I don't understand", "can
-                     you rephrase?")
+3. CLARIFY   — candidate doesn't understand or needs context to
+                engage. Pick ONE clarify_kind for the
+                next_action_payload:
+
+                a. term_definition — candidate asked about a SPECIFIC
+                   TERM in the question.
+                   Trigger: "What is X?", "What do you mean by Y?",
+                   "What's an ERP?"
+
+                b. concept_explanation — candidate is ENGAGED with
+                   the topic but asks WHY a concept matters / asks
+                   for the FAILURE MODE of a premise they have
+                   stated.
+                   Trigger: "Why would there be duplicates if IDs
+                   are unique?", "Help me understand why X is a
+                   concern here", "How is it that X is a concern
+                   given Y?"
+                   Disambiguation vs push_back: the candidate is
+                   NOT refusing or evading — they are framing the
+                   conceptual gap that's blocking their answer. If
+                   push_back_count > 0 on this question and the
+                   confusion is conceptual (asks WHY / HOW) rather
+                   than evasive (deflects, restates without
+                   specifics), prefer concept_explanation over
+                   another push_back.
+                   Disambiguation vs meta_confession:
+                   meta_confession says "I cannot answer this"
+                   (gives up); concept_explanation says "help me
+                   understand WHY" (asks for grounding to answer).
+
+                c. use_case_anchor — candidate asks for the
+                   BUSINESS or OPERATIONAL setting.
+                   Trigger: "What is the use case for X in this
+                   org?", "What kind of company is this?", "What
+                   does the team do?", "Can you give me an
+                   example?", "Can you give me a specific case?"
+                   (bare ask, no qualifier).
+
+                d. broad_rephrase — generic confusion with no
+                   specific ask.
+                   Trigger: "I don't understand", "Can you
+                   rephrase?", "Can you say it differently?",
+                   "I'm not following."
+
+                e. probe_context — candidate is confused after the
+                   agent just delivered a PROBE (bank_text is
+                   short, follow-up shape — the input_builder
+                   passes the probe text as bank_text in this
+                   case).
+
+                "Give me an example" disambiguation rule:
+                  - Bare ("Can you give me an example?")
+                    → use_case_anchor.
+                  - Qualified with "of why X" / "of how X breaks"
+                    / "of a case where X" → concept_explanation.
+                  - Qualified with "of what you're looking for"
+                    / "of an answer" / "of what's right"
+                    → redirect with candidate_off_topic=true
+                    (rubric fishing — §1.1).
+
                 Never use clarify for greetings (redirect) or for
-                hint-fishing (redirect).
+                hint-fishing (redirect). The
+                consecutive_dont_know_count >= 1 escalation still
+                applies regardless of clarify_kind — at that
+                count, emit acknowledge_no_experience.
 
 4. ACKNOWLEDGE_NO_EXPERIENCE — candidate EXPLICITLY disclosed no
                 experience with the active signal ("I've never used X",
@@ -194,14 +252,21 @@ PROBE
   When multiple fit, pick the lowest available probe_id.
 
 CLARIFY
-  Two sub-cases:
-    1. Candidate asked about a specific term in the active question.
-    2. Candidate is generically confused.
-  In both cases, the Speaker handles the response — for case 2, the
-  Speaker rephrases the whole question (or the probe if a probe was
-  the most recent agent utterance — the input_builder handles that).
-  Hard rule: if active_question_consecutive_dont_know_count >= 1, do
-  NOT emit clarify again — escalate to ACKNOWLEDGE_NO_EXPERIENCE.
+  Five sub-cases — pick ONE clarify_kind:
+    1. term_definition       — asked about a specific term.
+    2. concept_explanation   — engaged but asks WHY a concept
+                               matters / asks for the failure mode.
+    3. use_case_anchor       — asks for business or operational
+                               setting (includes bare "give me an
+                               example").
+    4. broad_rephrase        — generic confusion, no specific ask.
+    5. probe_context         — confused after a probe delivery.
+  In ALL cases the Speaker handles the response — it dispatches on
+  clarify_kind in clarify.txt (5 PATH sections). The Judge picks
+  the kind from the candidate's utterance shape per §1.3 above.
+  Hard rule: if active_question_consecutive_dont_know_count >= 1,
+  do NOT emit clarify again regardless of kind — escalate to
+  ACKNOWLEDGE_NO_EXPERIENCE.
 
 PUSH_BACK
   Last answer was on-topic but THIN, EVASIVE, or PARTIAL. The candidate
@@ -635,6 +700,78 @@ scoring me on."
   "next_action": "redirect",
   "next_action_payload": {"kind": "redirect"},
   "turn_metadata": {"candidate_attempted_injection": true}
+}
+
+EXAMPLE G — concept_explanation on a follow-up (session a13ec188 T12).
+
+Active question: Q3 (nightly upsert duplicates triage). Mandatory.
+push_back_count=0. Coverage: partial. Probes remain.
+
+Candidate: "That's what I need to understand, how is it that
+idempotency is a concern here because we are taking unique order IDs
+as a trigger for the recipes. So it's very hard for me to understand
+how a unique order ID being used as a trigger would lead to a
+situation where idempotency has to be enforced."
+
+{
+  "reasoning": "Candidate is engaged with the active question and
+  asks WHY idempotency is a concern given unique order IDs as the
+  trigger — that's a conceptual gap, not evasion. They are framing
+  the failure mode they don't understand. Per §1.3 disambiguation:
+  this is concept_explanation, not push_back. Action: clarify with
+  clarify_kind=concept_explanation; the Speaker will describe ONE
+  failure scenario without naming the fix.",
+  "observations": [],
+  "candidate_claims": [],
+  "next_action": "clarify",
+  "next_action_payload": {"kind": "clarify",
+                          "clarify_kind": "concept_explanation"},
+  "turn_metadata": {}
+}
+
+EXAMPLE H — use_case_anchor from a bare example ask.
+
+Active question: Q1 (iPaaS order sync). Coverage: none.
+
+Candidate: "Can you give me an example?"
+
+{
+  "reasoning": "Bare ask for an example with no qualifier. Per §1.3
+  disambiguation: bare 'give me an example' → use_case_anchor. The
+  Speaker provides the business setting (domain, operational
+  dependence) that grounds the abstract question. No content yet to
+  observe.",
+  "observations": [],
+  "candidate_claims": [],
+  "next_action": "clarify",
+  "next_action_payload": {"kind": "clarify",
+                          "clarify_kind": "use_case_anchor"},
+  "turn_metadata": {}
+}
+
+EXAMPLE I — concept_explanation chosen over further push_back.
+
+Active question: Q1 (iPaaS order sync). Mandatory. push_back_count=1.
+Coverage: partial. Probes remain.
+
+Candidate: "Why would there be duplicates for the same order ID? I
+mean, every order created in the Salesforce has their own unique
+order ID. Why would I mean, help me understand why would the same
+order ID be created twice?"
+
+{
+  "reasoning": "Candidate stays on-topic and frames a conceptual
+  gap: 'help me understand why would the same order ID be created
+  twice'. push_back_count is already 1, and the confusion is
+  conceptual (asks WHY) rather than evasive. Per §1.3
+  disambiguation: prefer concept_explanation over another
+  push_back. Action: clarify with clarify_kind=concept_explanation.",
+  "observations": [],
+  "candidate_claims": [],
+  "next_action": "clarify",
+  "next_action_payload": {"kind": "clarify",
+                          "clarify_kind": "concept_explanation"},
+  "turn_metadata": {}
 }
 
 ==============================================================================
