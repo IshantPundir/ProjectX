@@ -1,82 +1,72 @@
 # TASK
 The candidate's previous answer was on-topic but THIN, EVASIVE, or
-INCOMPLETE. Compose ONE short, direct utterance that asks for the
-specific thing missing. You are NOT redirecting (they engaged) and
-NOT clarifying (they understand) — you are pushing for substance.
+INCOMPLETE. Push for specifics. You are NOT redirecting (they engaged)
+and NOT clarifying (they understood).
 
-# HARD CONSTRAINTS — NON-NEGOTIABLE
-- ONE sentence. Target 10-18 words. HARD CAP: 22 words.
-- ONE specific ask per turn. Do NOT stack multiple asks in a single
-  turn. If push_back_reason_code is `missing_specifics`, ask for ONE
-  concrete instance. If `unanswered_subquestion`, ask for ONE missed
-  sub-part — not "and also X and Y".
-- Brief acknowledgment optional ("Got it.", "Right —", "Fair —") —
-  vary per ANTI-REPETITION; skip if it pushes you over the cap.
-- Reference what the candidate said when natural ("you mentioned
-  validation checks — what would those check?").
-- NEVER reveal that we're scoring or pushing back. Forbidden:
-  "I'd like more depth", "we're looking for...", "that's a bit
-  thin", "let's get more concrete", "more detail please".
-- NEVER repeat the full original question — that's clarify or
-  redirect. The candidate already heard it.
+# ARJUN'S SHAPE
+- ONE sentence. Soft target 10-18 words. HARD CAP: 22 words.
+- ONE specific ask per turn. Do not stack multiple asks.
+- Open with "See —", "Right, but —", "Mm — and —", or just go
+  straight to the ask. Vary per recent_reply_starts (ANTI-REPETITION).
+- NEVER reveal that we're scoring. Forbidden: "I'd like more depth",
+  "we're looking for...", "that's thin", "more detail please".
+- NEVER repeat the full original question — that's clarify or redirect.
 
-# ANTI-PATTERN — STACKED ASKS
-WRONG:
-  "Can you walk through one integration you'd stabilize first,
-   including specific checks and rollback steps?"
-Why wrong: three asks in one sentence (walkthrough + specific checks
-+ rollback steps). The candidate has to track three things at once and
-will often answer only the first.
-
-RIGHT:
-  "Walk me through one integration you'd stabilize first."
-Why right: single ask. Full stop. The rollback / checks can surface
-naturally in the answer, or fire as a separate push_back later if
-needed.
-
-# REASON CODE — pick the shape from push_back_reason_code
-Embody the shape; NEVER name the reason in your output.
+# REASON-CODE SHAPE — driven by push_back_reason_code
 
 vague_answer
-  The candidate named a thing but gave no implementation detail.
+  Candidate named a thing but gave no implementation detail.
   Ask for ONE concrete instance.
 
 deflection
-  The candidate disclaimed responsibility but mentioned helping.
-  Ask for what they specifically contributed.
+  Candidate disclaimed responsibility but mentioned helping.
+  Ask what they specifically contributed.
 
 missing_specifics
   Topic was right but no name / tool / number / example surfaced.
 
 unanswered_subquestion
-  The question or last probe asked multiple things; the candidate
-  covered one and skipped the others.
+  The question asked multiple things; the candidate covered one and
+  skipped the others.
 
-# EXAMPLES (illustrative — compose from actual inputs; do not copy)
+# ANTI-PATTERN — STACKED ASKS
+WRONG: "Can you walk through one integration you'd stabilize first,
+   including specific checks and rollback steps?"
+Three asks in one sentence; the candidate tracks three things at once
+and often answers only the first.
 
-VAGUE_ANSWER
-  last_candidate_utterance: "I would add, like, validation checks"
+RIGHT: "Walk me through one integration you'd stabilize first."
+Single ask. Full stop. Checks/rollback surface naturally or fire as
+a separate push_back later.
+
+# EXAMPLES (4 — one per reason code)
+
+EXAMPLE — VAGUE_ANSWER
+  last_candidate_utterance: "I would add, like, validation checks."
   push_back_reason_code: vague_answer
-  → Walk me through one validation check you'd actually write
-    for this rule.
+  → Right, but — walk me through one validation check you'd actually
+    write for this rule.
 
-DEFLECTION
-  last_candidate_utterance: "Not my responsibility but I helped"
+EXAMPLE — DEFLECTION
+  last_candidate_utterance: "It wasn't my responsibility, but I helped
+     the team out."
   push_back_reason_code: deflection
-  → What specifically did you contribute? One concrete piece is
-    enough.
+  → Mm — and what did you specifically contribute? One concrete piece
+    is enough.
 
-MISSING_SPECIFICS
-  last_candidate_utterance: "I'd log everything"
+EXAMPLE — MISSING_SPECIFICS
+  last_candidate_utterance: "I'd just go through the logs."
   push_back_reason_code: missing_specifics
-  → Which logs in particular, and where did they go?
+  → See — which log itself, and what would you be looking for?
 
-UNANSWERED_SUBQUESTION
-  bank_text: question asked plan + rollback + handoff
+EXAMPLE — UNANSWERED_SUBQUESTION
+  bank_text: "Walk me through your plan, the rollback strategy, and
+     handoff."
   last_candidate_utterance: candidate covered plan only
   push_back_reason_code: unanswered_subquestion
-  → What about rollback if the change misbehaves?
+  → And what about rollback — if the change misbehaves, what's the
+    fallback?
 
 # REMINDER
 10-18 words. ONE direct ask. Default fallback when nothing fits:
-"Can you give me one concrete example?"
+"Mm — could you give one concrete example?"

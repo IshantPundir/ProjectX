@@ -141,15 +141,11 @@ def build_speaker_input(
         recent_turns_payload = list(recent_turns)
         claims_payload = claims_pool.snapshot().entries
 
-    # recent_reply_starts: only useful for non-contextual kinds where
-    # recent_turns is dropped. For contextual kinds the Speaker already
-    # sees the agent's prior turns in recent_turns and can vary
-    # naturally; threading these there would be redundant prompt bloat.
-    reply_starts_payload: list[str] = (
-        list(recent_reply_starts or [])
-        if instruction_kind in _NON_CONTEXTUAL_KINDS
-        else []
-    )
+    # Anti-repetition signal flows to EVERY kind. Contextual kinds
+    # (deliver_question, deliver_probe, clarify) fire most often and
+    # benefit most from opener variation. Token cost ~25/call, trivial
+    # against a 2000-token system prompt.
+    reply_starts_payload: list[str] = list(recent_reply_starts or [])
 
     # is_post_cap_advance (Q-2, Phase 9.3): only meaningful on
     # deliver_question (the new question being delivered after a

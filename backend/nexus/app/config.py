@@ -403,15 +403,10 @@ class Settings(BaseSettings):
     engine_judge_prompt_version: str = "v2"
     engine_speaker_prompt_version: str = "v2"
 
-    # Canned terminal message played to the candidate after the session
-    # lifecycle has entered 'closing' or 'closed' (e.g. polite_close was
-    # already delivered but the candidate keeps talking). The
-    # ``{candidate_name}`` placeholder interpolates to the candidate's
-    # first name; falls back gracefully if the name is empty.
-    engine_session_ended_message: str = (
-        "Thanks for your time, {candidate_name}. This session has ended; "
-        "the recruitment team will be in contact with you."
-    )
+    # Canned terminal message override. None = use PersonaSpec.fallback_session_ended
+    # (Arjun-voiced default with {comma_name} that omits the comma when no name is
+    # present). Set to a literal string to override for a specific tenant / env.
+    engine_session_ended_message: str | None = None
 
     # Phase 1 (engine redesign) — event log sink config. The engine writes a
     # per-session JSON envelope at session close; the sink chosen here decides
@@ -488,7 +483,8 @@ class Settings(BaseSettings):
     interview_tts_language: str = "en-IN"
     # Sarvam-only TTS knobs; ignored when interview_tts_provider in {openai, cartesia}.
     # pace: 0.5–2.0; temperature: 0.01–1.0 (only used by bulbul:v3 / bulbul:v3-beta).
-    interview_tts_pace: float = 1.0
+    # Aligned to PersonaSpec.tts_*_recommended for Arjun (P4.3).
+    interview_tts_pace: float = 0.95
     interview_tts_temperature: float = 0.6
 
     # End-of-utterance confidence floor for the multilingual turn-detector

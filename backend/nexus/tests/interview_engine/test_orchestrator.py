@@ -45,7 +45,7 @@ class _FakeSpeakerHandle:
         # Phase 9.3 diagnostic state — orchestrator reads these on the
         # speaker.output.empty path. Without them, the AttributeError
         # routes the empty-fallback branch into the speaker-error
-        # recovery path ("I apologize — could you say that again?").
+        # recovery path (DEFAULT_PERSONA.fallback_recovery).
         self.event_types_seen: list[str] = []
         self.refusal_text: str | None = None
         self.response_id: str | None = None
@@ -685,7 +685,8 @@ async def test_post_close_turn_plays_canned_message_and_skips_judge(
     fake_session.say.assert_awaited_once()
     say_args, say_kwargs = fake_session.say.call_args
     msg_arg = say_args[0] if say_args else say_kwargs.get("text", "")
-    assert "this session has ended" in msg_arg.lower()
+    # PersonaSpec.fallback_session_ended is the default (no override set).
+    assert "the recruiter will be in touch" in msg_arg.lower()
     # Shutdown was scheduled.
     fake_session.shutdown.assert_called_once()
     # Audit event recorded.
@@ -1253,7 +1254,8 @@ async def test_empty_speaker_output_fallback_without_bank_text(
     outcome = await orch._stream_speaker_and_say(
         agent=agent, turn_id="t2", speaker_input=speaker_input,
     )
-    assert outcome.final_text == "Could you take it from the top?"
+    from app.modules.interview_engine.speaker.persona import DEFAULT_PERSONA
+    assert outcome.final_text == DEFAULT_PERSONA.fallback_empty_output_no_bank
     assert outcome.interrupted is False
 
 

@@ -150,9 +150,23 @@ class SpeakerCachedPayload(BaseModel):
     final_utterance: str
 
 
+class NaturalnessFlags(BaseModel):
+    """Per-turn naturalness signals computed post-LLM.
+
+    Attached to SpeakerOutputPayload as an optional field. Backward
+    compatible: replay tools that predate this field ignore unknown
+    keys.
+    """
+    repeated_opener: bool = False
+    banned_phrases_emitted: list[str] = Field(default_factory=list)
+    name_overuse: bool = False
+    exceeded_soft_target: bool = False
+
+
 class SpeakerOutputPayload(BaseModel):
     turn_id: str
     final_utterance: str
+    naturalness_flags: NaturalnessFlags | None = None
 
 
 class SpeakerInputPayload(BaseModel):

@@ -18,6 +18,7 @@ from livekit.agents import StopResponse
 
 from app.modules.interview_engine.audit_events import (
     FrontendAttributePayload, JudgeSyntheticPayload,
+    NaturalnessFlags,
     SessionTerminalDeliveredPayload,
     SpeakerCallPayload, SpeakerOutputPayload,
     StateSnapshotCommittedPayload, StateSnapshotRestoredPayload,
@@ -192,15 +193,10 @@ class _SpeakerStreamOutcome:
 class OrchestratorConfig:
     checkpoint_turns: int = 10
     checkpoint_seconds: int = 30
-    # Canned terminal message played when the candidate keeps talking
-    # after lifecycle has already entered closing/closed. Supports a
-    # ``{candidate_name}`` placeholder. Default has no placeholder so
-    # the entrypoint's env-driven Settings value is the source of truth
-    # in production; this default keeps tests deterministic.
-    session_ended_message: str = (
-        "Thanks for your time. This session has ended; the recruitment "
-        "team will be in contact with you."
-    )
+    # Canned terminal message override. None = use PersonaSpec.fallback_session_ended
+    # (Arjun-voiced default). Populated from settings.engine_session_ended_message
+    # at agent startup; tests leave it None to exercise the PersonaSpec path.
+    session_ended_message: str | None = None
 
     # Conversational continuation — pre-Speaker cancellation watcher.
     # See docs/superpowers/specs/2026-05-17-conversational-continuation-design.md
@@ -274,6 +270,11 @@ class InterviewOrchestrator:
         self._pending_continuation_text: str | None = None
         self._consecutive_aborts: int = 0
         self._last_abort_elapsed_ms: int | None = None
+
+        # Tracks the previous turn's Speaker output text so naturalness
+        # flag detection can flag name-overuse across turns. None on
+        # first turn / after empty/interrupted output.
+        self._prior_speaker_output: str | None = None
 
     # --- Public accessors ---
 
@@ -860,21 +861,36 @@ class InterviewOrchestrator:
 
     # --- Internals ---
 
-    _RECOVERY_TEXT = "I apologize — could you say that again?"
+    @property
+    def _RECOVERY_TEXT(self) -> str:
+        """Persona-voiced recovery text. Read from PersonaSpec so tone
+        stays consistent with the rest of the Speaker output even on
+        exception paths that bypass the LLM."""
+        from app.modules.interview_engine.speaker.persona import DEFAULT_PERSONA
+        return DEFAULT_PERSONA.fallback_recovery
 
     def _format_session_ended_message(self) -> str:
-        """Render the canned terminal message with candidate-name interpolation.
+        """Render the terminal message.
 
-        When ``candidate.name`` is empty, the placeholder is removed and any
-        leading "Thanks for your time, ." artifact is cleaned up so the
-        candidate hears a grammatical sentence regardless of name presence.
+        Override path (``session_ended_message`` is set): uses the legacy
+        ``{candidate_name}`` template and cleans up punctuation artifacts when
+        the name is absent.
+
+        Default path (``session_ended_message`` is None): falls back to
+        ``PersonaSpec.fallback_session_ended`` — Arjun-voiced, uses
+        ``{comma_name}`` which collapses gracefully when no name is present.
         """
-        template = self._config.session_ended_message
+        from app.modules.interview_engine.speaker.persona import DEFAULT_PERSONA
+
         name = (self._cfg.candidate.name or "").strip()
-        msg = template.format(candidate_name=name)
-        # Clean up artifacts when name is empty.
-        msg = msg.replace(", .", ".").replace(",  ", " ").replace(" ,", "")
-        return msg.strip()
+        override = self._config.session_ended_message
+        if override:
+            # Legacy template path — uses {candidate_name}, needs cleanup.
+            msg = override.format(candidate_name=name)
+            msg = msg.replace(", .", ".").replace(",  ", " ").replace(" ,", "")
+            return msg.strip()
+        comma_name = f", {name}" if name else ""
+        return DEFAULT_PERSONA.fallback_session_ended.format(comma_name=comma_name)
 
     async def _handle_post_close_turn(
         self, *, agent: Any, candidate_text: str,
@@ -1008,9 +1024,31 @@ class InterviewOrchestrator:
                 latency_ms_total=handle.latency_ms_total,
                 usage=handle.usage, final_utterance=final_text,
             ).model_dump())
+            from app.modules.interview_engine.speaker.naturalness import (
+                detect_banned_phrases,
+                detect_exceeded_soft_target,
+                detect_name_overuse,
+                detect_repeated_opener,
+            )
+            flags = NaturalnessFlags(
+                repeated_opener=detect_repeated_opener(
+                    final_text, speaker_input.recent_reply_starts,
+                ),
+                banned_phrases_emitted=detect_banned_phrases(final_text),
+                name_overuse=detect_name_overuse(
+                    final_text,
+                    speaker_input.candidate_name,
+                    self._prior_speaker_output,
+                ),
+                exceeded_soft_target=detect_exceeded_soft_target(
+                    final_text, speaker_input.instruction_kind.value,
+                ),
+            )
             self._append(SPEAKER_OUTPUT, SpeakerOutputPayload(
                 turn_id=turn_id, final_utterance=final_text,
+                naturalness_flags=flags,
             ).model_dump())
+            self._prior_speaker_output = final_text
 
             # register_agent_utterance is transcript-only;
             # register_agent_question_for_repeat does the cache update
@@ -1129,11 +1167,21 @@ class InterviewOrchestrator:
         return fallback
 
     def _compose_empty_output_fallback(self, speaker_input: Any) -> str:
-        """Deterministic, no LLM. Restates bank_text when available;
-        otherwise a generic re-ask."""
+        """Deterministic, no LLM. Reads PersonaSpec for the Arjun-voiced
+        fallback templates.
+
+        Bank-text path splices the literal active question (same
+        rubric-leak risk as the previous implementation — accepted because
+        (i) rare failure path, (ii) candidate already heard the question,
+        (iii) the alternative is a recursive LLM call that might also
+        fail).
+        """
+        from app.modules.interview_engine.speaker.persona import DEFAULT_PERSONA
         if speaker_input.bank_text:
-            return f"Let me restate that. {speaker_input.bank_text}"
-        return "Could you take it from the top?"
+            return DEFAULT_PERSONA.fallback_empty_output.format(
+                bank_text=speaker_input.bank_text,
+            )
+        return DEFAULT_PERSONA.fallback_empty_output_no_bank
 
     async def _publish_attributes(
         self, *, turn_id: str | None,

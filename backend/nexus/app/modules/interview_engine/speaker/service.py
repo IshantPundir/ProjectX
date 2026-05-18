@@ -134,19 +134,29 @@ class SpeakerService:
         # Version-selected PromptLoader. Defaults to the module-level v1
         # singleton for backward compat; agent.py passes a versioned loader.
         self._loader: PromptLoader = loader if loader is not None else prompt_loader
+        # Render preamble once from PersonaSpec. Result is deterministic
+        # so the composed (preamble + per-action) system prompt is
+        # byte-identical across calls of the same kind — that's what
+        # triggers OpenAI prompt caching.
+        from app.modules.interview_engine.speaker.persona import (
+            DEFAULT_PERSONA,
+            render_preamble,
+        )
+        preamble_template: str = self._loader.get("engine/speaker/_preamble")
+        self._rendered_preamble: str = render_preamble(preamble_template, DEFAULT_PERSONA)
 
     def _resolve_prompt(self, instruction_kind: Any) -> tuple[str, str]:
-        """Compose preamble + per-action body for ``instruction_kind``.
+        """Compose rendered preamble + per-action body for ``instruction_kind``.
 
-        Returns ``(composed_body, sha256_hex_hash)``. ``prompt_loader``
-        caches per-file, so repeated calls for the same kind reuse
-        cached file reads; only the concatenation + hash run per call.
-        Hash is over the exact bytes sent to the model.
+        Returns ``(composed_body, sha256_hex_hash)``. The preamble is
+        pre-rendered at __init__ time; only the per-action body is loaded
+        per-call (from PromptLoader's cache). Hash is over the exact
+        bytes sent to the model.
         """
-        body = self._loader.load_pair(
-            "engine/speaker/_preamble",
-            f"engine/speaker/{instruction_kind.value}",
+        per_action: str = self._loader.get(
+            f"engine/speaker/{instruction_kind.value}"
         )
+        body = self._rendered_preamble + "\n\n" + per_action
         digest = "sha256:" + hashlib.sha256(body.encode("utf-8")).hexdigest()
         return body, digest
 
@@ -175,11 +185,14 @@ class SpeakerService:
         handle._prompt_hash = prompt_hash
         started = time.monotonic()
 
+        from app.modules.interview_engine.speaker.persona import DEFAULT_PERSONA
+
         cm = self._client.responses.stream(
             model=self._model,
             instructions=system_prompt,
             input=speaker_input.model_dump_json(),
             reasoning={"effort": "none"},
+            temperature=DEFAULT_PERSONA.speaker_llm_temperature,
         )
 
         async def _producer() -> AsyncIterator[str]:

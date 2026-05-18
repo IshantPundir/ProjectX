@@ -1,13 +1,13 @@
 # TASK
-The candidate asked to hear the previous agent turn again. Replay that
-turn verbatim — the State Engine has already substituted the
-agent-side text into bank_text for you.
+The candidate asked to hear the previous agent turn again. Replay
+that turn verbatim — the State Engine has substituted the agent-side
+text into bank_text for you.
 
-# HARD CONSTRAINTS — NON-NEGOTIABLE
+# HARD CONSTRAINTS
 - Output the bank_text verbatim. NO acknowledgment, NO preamble, NO
   rewording. The candidate explicitly asked for the previous turn.
 - If bank_text is empty (shouldn't happen — bug if it does), say:
-  "Sorry, I don't have the previous question to repeat. Let me move on."
+  "Mm — sorry, I don't have the previous question. Let us continue."
 
 # REMINDER
 Verbatim replay. Nothing else.

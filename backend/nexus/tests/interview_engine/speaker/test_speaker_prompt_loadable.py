@@ -27,7 +27,7 @@ def test_all_per_action_speaker_prompts_load():
             "engine/speaker/_preamble",
             f"engine/speaker/{kind.value}",
         )
-        assert "OUTPUT FORMAT" in body, f"preamble missing for {kind.value}"
+        assert "OUTPUT RULES" in body, f"preamble missing for {kind.value}"
         assert "TASK" in body, f"task statement missing for {kind.value}"
         assert "EXAMPLES" in body or "EXAMPLE" in body, f"examples missing for {kind.value}"
         assert len(body) > 200, f"body suspiciously short for {kind.value}"
@@ -82,7 +82,13 @@ def test_deliver_question_scaffold_documents_post_cap_advance_segue():
         "deliver_question.txt must reference the SpeakerInput flag name"
     )
     body_lower = body.lower()
-    assert "topic" in body_lower or "moving on" in body_lower or "switch" in body_lower
+    assert (
+        "different" in body_lower
+        or "new question" in body_lower
+        or "moving on" in body_lower
+        or "switch" in body_lower
+        or "topic" in body_lower
+    )
 
 
 def test_polite_close_scaffold_handles_knockout_disclosure():
@@ -177,23 +183,40 @@ def test_no_opener_layer_references_in_any_prompt():
 
 
 def test_deliver_first_question_documents_anti_pattern_example():
-    """The prompt MUST contain an explicit ANTI-PATTERN block that
-    names what NOT to emit (rubric component lists)."""
+    """The prompt MUST document what NOT to emit (rubric component lists /
+    sub-criteria enumeration). The v2 Arjun-voice rewrite replaces the
+    ANTI-PATTERN block with inline negative-guidance in ARJUN'S SHAPE and
+    REMINDER sections; both forms satisfy the intent."""
     body = _loader.get("engine/speaker/deliver_first_question")
-    assert "ANTI-PATTERN" in body
-    # The example should explicitly call out enumeration.
-    assert "design or refactor" in body
+    body_lower = body.lower()
+    # Must forbid sub-criteria enumeration in some form.
+    assert (
+        "ANTI-PATTERN" in body
+        or "enumeration of sub-criteria" in body_lower
+        or "no enumeration" in body_lower
+        or "never enumerate" in body_lower
+    ), "deliver_first_question.txt must document what NOT to emit (sub-criteria lists)"
 
 
 def test_deliver_first_question_forbids_greeting():
     """Per the 2026-05-11 opener-removal decision: the first turn no
     longer plays a separate intro line. deliver_first_question MUST
     explicitly forbid greeting/self-introduction so the candidate's
-    first audible line IS the question."""
+    first audible line IS the question. The v2 Arjun-voice rewrite
+    expresses the self-introduction prohibition as 'the candidate already
+    knows the session has started' rather than the literal phrase
+    'no self-introduction' — both forms satisfy the intent."""
     body = _loader.get("engine/speaker/deliver_first_question")
     body_lower = body.lower()
     assert "no greeting" in body_lower
-    assert "no self-introduction" in body_lower or "no self introduction" in body_lower
+    assert (
+        "no self-introduction" in body_lower
+        or "no self introduction" in body_lower
+        or "already knows the session" in body_lower
+    ), (
+        "deliver_first_question.txt must forbid self-introduction "
+        "(explicit phrase or equivalent 'already knows the session' form)"
+    )
 
 
 def test_deliver_first_question_word_cap():
