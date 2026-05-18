@@ -5,6 +5,7 @@ from app.modules.interview_engine.models.judge import (
     AcknowledgeNoExperiencePayload,
     AdvancePayload,
     ClarifyPayload,
+    ClarifyKind,
     ClaimEntry as JudgeClaimEntry,
     CoverageQuality,
     CoverageTransition,
@@ -107,7 +108,7 @@ def test_probe_payload_requires_id():
 
 
 def test_clarify_payload_no_extra_fields():
-    p = ClarifyPayload()
+    p = ClarifyPayload(clarify_kind=ClarifyKind.broad_rephrase)
     assert p.kind == "clarify"
 
 
@@ -186,7 +187,7 @@ def test_no_experience_flag_with_clarify_action_rejected():
             observations=[],
             candidate_claims=[],
             next_action=NextAction.clarify,
-            next_action_payload=ClarifyPayload(),
+            next_action_payload=ClarifyPayload(clarify_kind=ClarifyKind.broad_rephrase),
             turn_metadata=TurnMetadata(candidate_disclosed_no_experience=True),
         )
     assert "candidate_disclosed_no_experience" in str(exc_info.value)

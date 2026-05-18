@@ -11,7 +11,7 @@ from __future__ import annotations
 from enum import StrEnum
 
 from app.modules.interview_engine.models.judge import (
-    AdvancePayload, JudgeOutput, NextAction, PoliteClosePayload,
+    AdvancePayload, ClarifyPayload, ClarifyKind, JudgeOutput, NextAction, PoliteClosePayload,
     TurnMetadata,
 )
 
@@ -42,7 +42,7 @@ def synthesize_fallback(
             observations=[],
             candidate_claims=[],
             next_action=NextAction.clarify,
-            next_action_payload=ClarifyPayload(),
+            next_action_payload=ClarifyPayload(clarify_kind=ClarifyKind.broad_rephrase),
             turn_metadata=TurnMetadata(),
         )
     if next_pending_question is None:

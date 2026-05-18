@@ -2,7 +2,7 @@ import pytest
 
 from app.modules.interview_engine.bank_resolver import resolve_bank_text
 from app.modules.interview_engine.models.judge import (
-    AcknowledgeNoExperiencePayload, AdvancePayload, ClarifyPayload,
+    AcknowledgeNoExperiencePayload, AdvancePayload, ClarifyPayload, ClarifyKind,
     EndSessionPayload, JudgeOutput, NextAction, PoliteClosePayload,
     ProbePayload, RedirectPayload, RepeatPayload, TurnMetadata,
 )
@@ -90,7 +90,7 @@ def test_polite_close_no_bank_text():
 
 
 def test_clarify_uses_active_question_text():
-    j = _judge(NextAction.clarify, ClarifyPayload())
+    j = _judge(NextAction.clarify, ClarifyPayload(clarify_kind=ClarifyKind.broad_rephrase))
     r = resolve_bank_text(j, active_question=_q(text="What do you mean?"), active_probe_index=None)
     assert r.instruction_kind == InstructionKind.clarify
     assert r.bank_text == "What do you mean?"

@@ -1,7 +1,7 @@
 import pytest
 
 from app.modules.interview_engine.models.judge import (
-    AdvancePayload, ClarifyPayload, CoverageTransition,
+    AdvancePayload, ClarifyPayload, ClarifyKind, CoverageTransition,
     JudgeOutput, NextAction, Observation, ProbePayload, RepeatPayload,
     ClaimEntry as JudgeClaimEntry, TurnMetadata,
     AcknowledgeNoExperiencePayload,
@@ -678,7 +678,7 @@ def test_drift_guard_drops_failure_obs_when_action_is_clarify(
         ],
         candidate_claims=[],
         next_action=NextAction.clarify,
-        next_action_payload=ClarifyPayload(),
+        next_action_payload=ClarifyPayload(clarify_kind=ClarifyKind.broad_rephrase),
         turn_metadata=TurnMetadata(),
     )
     decision = eng.process_judge_output(
