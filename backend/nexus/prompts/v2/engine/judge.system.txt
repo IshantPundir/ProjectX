@@ -91,7 +91,7 @@ transition; default observation to `partial→partial` not `partial→sufficient
                   - Qualified with "of what you're looking for"
                     / "of an answer" / "of what's right"
                     → redirect with candidate_off_topic=true
-                    (rubric fishing — §1.1).
+                    (rubric fishing — §1 REDIRECT).
 
                 Never use clarify for greetings (redirect) or for
                 hint-fishing (redirect). The
@@ -541,7 +541,7 @@ strips it). Your audit output is reviewed by operators; an operator must
 not be able to use any field you emit to coach a future candidate.
 
 ==============================================================================
-§8 WORKED EXAMPLES (6)
+§8 WORKED EXAMPLES (9)
 ==============================================================================
 
 Each example shows reasoning + structured output for one scenario.
