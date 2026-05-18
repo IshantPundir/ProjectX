@@ -833,3 +833,132 @@ def test_speaker_input_defaults_clarify_kind_to_none_and_openers_to_empty() -> N
     )
     assert si.clarify_kind is None
     assert si.available_openers == []
+
+
+# ---------------------------------------------------------------------------
+# Task 6 — build_speaker_input propagates clarify_kind + available_openers
+# ---------------------------------------------------------------------------
+
+from app.modules.interview_engine.models.judge import ClarifyPayload  # noqa: E402
+
+
+def test_input_builder_propagates_clarify_kind_when_clarify() -> None:
+    """Inside build_speaker_input, when instruction_kind=clarify AND the
+    judge_output.next_action_payload is a ClarifyPayload, the
+    SpeakerInput.clarify_kind field is populated with the value from
+    the payload.
+    """
+    judge_output = JudgeOutput(
+        reasoning="x" * 30,
+        observations=[],
+        candidate_claims=[],
+        next_action=NextAction.clarify,
+        next_action_payload=ClarifyPayload(clarify_kind=ClarifyKind.concept_explanation),
+        turn_metadata=TurnMetadata(),
+    )
+    si = build_speaker_input(
+        instruction_kind=InstructionKind.clarify,
+        judge_output=judge_output,
+        active_question=None,
+        queue=QuestionQueue.from_initial(questions=[]),
+        claims_pool=CandidateClaimsPool(max_size=50),
+        recent_turns=[],
+        persona_name="Arjun",
+        last_candidate_utterance="why does idempotency matter here?",
+    )
+    assert si.clarify_kind == ClarifyKind.concept_explanation
+
+
+def test_input_builder_clarify_kind_none_for_non_clarify_kinds() -> None:
+    """Non-clarify kinds carry clarify_kind=None even if judge_output's
+    payload happens to be a ClarifyPayload.
+    """
+    judge_output = JudgeOutput(
+        reasoning="x" * 30,
+        observations=[],
+        candidate_claims=[],
+        next_action=NextAction.clarify,
+        next_action_payload=ClarifyPayload(clarify_kind=ClarifyKind.concept_explanation),
+        turn_metadata=TurnMetadata(),
+    )
+    si = build_speaker_input(
+        instruction_kind=InstructionKind.deliver_question,  # NOT clarify
+        judge_output=judge_output,
+        active_question=None,
+        queue=QuestionQueue.from_initial(questions=[]),
+        claims_pool=CandidateClaimsPool(max_size=50),
+        recent_turns=[],
+        persona_name="Arjun",
+        last_candidate_utterance=None,
+    )
+    assert si.clarify_kind is None
+
+
+def test_input_builder_populates_available_openers_for_every_kind() -> None:
+    """available_openers is computed via filter_available_openers and
+    populated for every kind, not just clarify. When recent_reply_starts
+    contains entries starting with 'Mm, OK —', that opener is pruned;
+    the other 8 remain.
+    """
+    from app.modules.interview_engine.speaker.persona import DEFAULT_PERSONA
+    recent = ["Mm, OK — kindly", "Mm, OK — let's", "Mm, OK — that's"]
+    # build a minimal clarify payload to avoid construction errors
+    judge_output = JudgeOutput(
+        reasoning="x" * 30,
+        observations=[],
+        candidate_claims=[],
+        next_action=NextAction.clarify,
+        next_action_payload=ClarifyPayload(clarify_kind=ClarifyKind.broad_rephrase),
+        turn_metadata=TurnMetadata(),
+    )
+    for kind in (
+        InstructionKind.deliver_question,
+        InstructionKind.clarify,
+        InstructionKind.push_back,
+        InstructionKind.redirect,
+        InstructionKind.polite_close,
+    ):
+        si = build_speaker_input(
+            instruction_kind=kind,
+            judge_output=judge_output,
+            active_question=None,
+            queue=QuestionQueue.from_initial(questions=[]),
+            claims_pool=CandidateClaimsPool(max_size=50),
+            recent_turns=[],
+            persona_name="Arjun",
+            last_candidate_utterance=None,
+            recent_reply_starts=recent,
+        )
+        assert "Mm, OK —" not in si.available_openers, (
+            f"kind={kind.value}: Mm, OK — should be pruned"
+        )
+        assert len(si.available_openers) == len(DEFAULT_PERSONA.opener_rotation) - 1
+        # Other openers preserved.
+        assert "See —" in si.available_openers
+
+
+def test_input_builder_available_openers_full_when_recent_empty() -> None:
+    """When recent_reply_starts is empty (e.g., first turn),
+    available_openers equals the full PersonaSpec rotation.
+    """
+    from app.modules.interview_engine.speaker.persona import DEFAULT_PERSONA
+    judge_output = JudgeOutput(
+        reasoning="x" * 30,
+        observations=[],
+        candidate_claims=[],
+        next_action=NextAction.clarify,
+        next_action_payload=ClarifyPayload(clarify_kind=ClarifyKind.broad_rephrase),
+        turn_metadata=TurnMetadata(),
+    )
+    si = build_speaker_input(
+        instruction_kind=InstructionKind.deliver_first_question,
+        judge_output=judge_output,
+        active_question=None,
+        queue=QuestionQueue.from_initial(questions=[]),
+        claims_pool=CandidateClaimsPool(max_size=50),
+        recent_turns=[],
+        persona_name="Arjun",
+        last_candidate_utterance=None,
+        recent_reply_starts=[],
+    )
+    assert si.available_openers == list(DEFAULT_PERSONA.opener_rotation)

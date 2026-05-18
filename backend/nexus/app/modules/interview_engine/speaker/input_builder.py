@@ -3,10 +3,14 @@ from __future__ import annotations
 
 import re
 
-from app.modules.interview_engine.models.judge import JudgeOutput, TurnMetadata
+from app.modules.interview_engine.models.judge import (
+    ClarifyKind, ClarifyPayload, JudgeOutput, TurnMetadata,
+)
 from app.modules.interview_engine.models.speaker import (
     InstructionKind, SpeakerInput,
 )
+from app.modules.interview_engine.speaker.openers import filter_available_openers
+from app.modules.interview_engine.speaker.persona import DEFAULT_PERSONA
 from app.modules.interview_engine.state.claims import CandidateClaimsPool
 from app.modules.interview_engine.state.queue import QuestionQueue
 from app.modules.interview_runtime import (
@@ -196,6 +200,25 @@ def build_speaker_input(
     # against a 2000-token system prompt.
     reply_starts_payload: list[str] = list(recent_reply_starts or [])
 
+    # Per-turn opener pruning. PersonaSpec.opener_rotation is the
+    # master persona; available_openers is the subset valid for THIS
+    # turn (rotation minus recently-used). Populated for every kind —
+    # the rotation is a persona-wide concern, not clarify-specific.
+    available_openers_payload = filter_available_openers(
+        DEFAULT_PERSONA.opener_rotation,
+        reply_starts_payload,
+    )
+
+    # clarify_kind propagation. The Judge picks the kind on the
+    # ClarifyPayload; we surface it on SpeakerInput so the Speaker
+    # prompt can dispatch deterministically. Populated ONLY when the
+    # instruction is clarify — None for every other kind.
+    clarify_kind_payload: ClarifyKind | None = None
+    if instruction_kind == InstructionKind.clarify and isinstance(
+        judge_output.next_action_payload, ClarifyPayload,
+    ):
+        clarify_kind_payload = judge_output.next_action_payload.clarify_kind
+
     # is_post_cap_advance (Q-2, Phase 9.3): only meaningful on
     # deliver_question (the new question being delivered after a
     # cap-forced advance). Drop on every other path so the Speaker
@@ -227,4 +250,6 @@ def build_speaker_input(
         push_back_reason_code=push_back_reason_code,
         recent_reply_starts=reply_starts_payload,
         is_post_cap_advance=post_cap_payload,
+        clarify_kind=clarify_kind_payload,
+        available_openers=available_openers_payload,
     )
