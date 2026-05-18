@@ -187,12 +187,21 @@ class SpeakerService:
 
         from app.modules.interview_engine.speaker.persona import DEFAULT_PERSONA
 
+        # Explicit prompt_cache_key — all Speaker calls share the same
+        # cache namespace so OpenAI's prefix-cache can return hits on
+        # the byte-identical rendered preamble across DIFFERENT
+        # instruction_kind values (cross-kind cache hits). Without
+        # this, session bf34128f showed cached_tokens=0 on a clarify
+        # turn that immediately followed a deliver_first_question turn
+        # with the same preamble — auto-caching was routing the two
+        # requests to different cache shards.
         cm = self._client.responses.stream(
             model=self._model,
             instructions=system_prompt,
             input=speaker_input.model_dump_json(),
             reasoning={"effort": "none"},
             temperature=DEFAULT_PERSONA.speaker_llm_temperature,
+            prompt_cache_key="speaker:v2",
         )
 
         async def _producer() -> AsyncIterator[str]:
