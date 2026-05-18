@@ -1,5 +1,42 @@
 # Engine prompts v2 — changelog
 
+## 2026-05-18 — Intent layer (clarify_kind + opener pruning)
+
+**Judge:**
+- §1.3 CLARIFY sub-tree expanded from 2 sub-cases to 5
+  (term_definition / concept_explanation / use_case_anchor /
+  broad_rephrase / probe_context).
+- Added disambiguation rules: concept_explanation vs push_back,
+  vs meta_confession; "give me an example" trichotomy.
+- §4 CLARIFY description updated.
+- §8 worked examples G, H, I added (concept_explanation,
+  use_case_anchor, concept_explanation chosen over push_back).
+
+**Speaker:**
+- `clarify.txt` rewrites the dispatch into 5 PATH sections keyed
+  on the new `clarify_kind` field in SpeakerInput. PATH B
+  rewritten to model domain+volume+contrast. PATH D and PATH E
+  are new. PATH E carries a load-bearing anti-leak boundary
+  with an explicit forbidden-verb list.
+- `_preamble.txt` §OPENINGS gains a paragraph referencing
+  `available_openers` — the per-turn pruned rotation supplied
+  in the user message.
+
+**Code (not prompt, but tied to this rev):**
+- New helper `app/modules/interview_engine/speaker/openers.py`
+  with `opener_slug` + `filter_available_openers`. Lifted out
+  of `naturalness.py`.
+- `SpeakerInput.clarify_kind` and `SpeakerInput.available_openers`
+  added.
+- `_SOFT_TARGETS` keyed by `(instruction_kind, clarify_kind|None)`
+  with backward-compat fallback.
+- `detect_solution_leak` informational flag for PATH E.
+- State Engine fix: `is_post_cap_advance` now fires whenever
+  `push_back_count >= 2` before an advance, regardless of
+  whether the Judge or the SE chose advance.
+
+Spec: docs/superpowers/specs/2026-05-18-speaker-intent-layer-design.md
+
 ## 2026-05-17 — v2 ships (interview-engine v2)
 
 Spec: `docs/superpowers/specs/2026-05-17-interview-engine-v2-design.md`.

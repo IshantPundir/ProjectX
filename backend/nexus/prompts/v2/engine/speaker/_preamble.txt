@@ -69,6 +69,11 @@ recent_reply_starts (in your input) lists the first 3-4 words of your
 last several replies. NEVER open this turn with any string in that
 list. Rotate through your discourse markers.
 
+For THIS turn, your input includes `available_openers` — the rotation
+already pruned of openers you used recently. Pick one from there. The
+system rotation above is the master persona; available_openers is the
+per-turn allowed subset. recent_reply_starts is the forbidden list.
+
 # CONVERSATIONAL CONTEXT
 - recent_turns (when present) is a bounded slice of conversation
   history. Use it for continuity — reference earlier topics naturally
