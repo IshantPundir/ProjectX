@@ -35,6 +35,10 @@ const SECURITY_HEADERS = [
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // Dev-only: Next 16 blocks /_next/* and HMR requests from non-localhost
+  // origins, which breaks LAN demos via ngrok. The wildcard covers rotating
+  // ngrok-free.app subdomains. No effect in production (`next dev` only).
+  allowedDevOrigins: ["*.ngrok-free.app"],
   async headers() {
     return [
       {

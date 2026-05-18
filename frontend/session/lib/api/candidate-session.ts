@@ -73,6 +73,13 @@ async function _call<T>(
   path: string,
   body?: unknown,
 ): Promise<T> {
+  // `ngrok-skip-browser-warning` bypasses ngrok free-tier's HTML interstitial
+  // on cross-origin XHR. No-op against non-ngrok hosts, so safe in production.
+  const headers: Record<string, string> = {
+    'ngrok-skip-browser-warning': '1',
+  }
+  if (body) headers['Content-Type'] = 'application/json'
+
   const r = await fetch(`${API_BASE}${path}`, {
     method,
     // Candidate-session responses change on every state transition (pre_check
@@ -81,7 +88,7 @@ async function _call<T>(
     // hits the server. Without this, browser heuristic caching can serve a
     // stale /pre-check body and the wizard never advances.
     cache: 'no-store',
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   })
   if (!r.ok) {

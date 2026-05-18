@@ -3,3 +3,7 @@
 tmp/
 # Supabase CLI scratch when run from project root (legitimate migrations live in backend/supabase/)
 /supabase/
+# Runtime state for scripts/demo.sh (ngrok pid/log + env backups)
+scripts/.state/
+# Claude Code per-project state directory
+.claude/

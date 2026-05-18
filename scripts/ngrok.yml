@@ -1,0 +1,20 @@
+version: "3"
+
+# Endpoints for the LAN demo flow. Auth token lives in ~/.config/ngrok/ngrok.yml
+# (the global config); both files are passed to `ngrok start` so the agent
+# inherits the token without leaking it into the repo.
+#
+# Free-tier endpoints rotate URLs on every restart — that's why scripts/demo.sh
+# fetches the live URLs from the ngrok local API (127.0.0.1:4040) on each
+# `lan` invocation and rewrites the .env files afterwards.
+
+endpoints:
+  - name: nexus-backend
+    description: "Nexus FastAPI backend (port 8000)"
+    upstream:
+      url: 8000
+
+  - name: session-frontend
+    description: "Candidate session app (frontend/session, port 3002)"
+    upstream:
+      url: 3002
