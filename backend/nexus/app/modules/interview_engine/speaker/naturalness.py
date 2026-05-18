@@ -70,31 +70,92 @@ def detect_name_overuse(
 
 
 # Per-kind soft target ceiling (words). Output exceeding this by >50%
-# triggers the exceeded_soft_target flag. Values mirror the per-action
-# body 'Soft target' lines.
-_SOFT_TARGETS: dict[str, int] = {
-    "deliver_first_question": 22,
-    "deliver_question": 25,
-    "deliver_probe": 18,
-    "clarify": 35,
-    "push_back": 18,
-    "redirect": 18,
-    "acknowledge_no_experience": 12,
-    "polite_close": 20,
-    "repeat": 99999,  # verbatim replay — never flag
+# triggers the exceeded_soft_target flag. Keys are
+# (instruction_kind, clarify_kind | None) — the second element is None
+# for non-clarify kinds and for the legacy clarify fallback when the
+# Judge hasn't supplied a clarify_kind (back-compat with pre-intent-layer
+# audit envelopes).
+_SOFT_TARGETS: dict[tuple[str, str | None], int] = {
+    # clarify: per-kind targets reflect the speaker shape required.
+    # concept_explanation needs space for a failure scenario; term is
+    # one clause + re-ask; probe is short.
+    ("clarify", "term_definition"):     25,
+    ("clarify", "concept_explanation"): 50,
+    ("clarify", "use_case_anchor"):     40,
+    ("clarify", "broad_rephrase"):      35,
+    ("clarify", "probe_context"):       25,
+    ("clarify", None):                  35,  # legacy fallback
+    # Non-clarify kinds keep their existing targets unchanged.
+    ("deliver_first_question", None):     22,
+    ("deliver_question", None):           25,
+    ("deliver_probe", None):              18,
+    ("push_back", None):                  18,
+    ("redirect", None):                   18,
+    ("acknowledge_no_experience", None):  12,
+    ("polite_close", None):               20,
+    ("repeat", None):                     99999,
 }
 
 
 def detect_exceeded_soft_target(
-    output: str, instruction_kind: str,
+    output: str,
+    instruction_kind: str,
+    clarify_kind: str | None = None,
 ) -> bool:
-    """True iff `output` exceeds the per-kind soft target by >50%.
+    """True iff ``output`` exceeds the per-kind soft target by >50%.
 
-    Soft caps are not hard caps. Flag fires when the model is rambling
-    (1.5x the target), not for normal overrun. Per user feedback:
-    hard-capping produces choppy speech.
+    Soft caps are not hard caps. The flag fires when the model is
+    rambling (1.5x the target), not for normal overrun. Per user
+    feedback: hard-capping produces choppy speech.
+
+    Lookup is two-step: first ``(instruction_kind, clarify_kind)``, then
+    fallback to ``(instruction_kind, None)``. ``clarify_kind`` is only
+    meaningful when ``instruction_kind == 'clarify'`` — for every other
+    kind, the second-element-None entry is the target.
     """
-    target = _SOFT_TARGETS.get(instruction_kind)
+    target = (
+        _SOFT_TARGETS.get((instruction_kind, clarify_kind))
+        or _SOFT_TARGETS.get((instruction_kind, None))
+    )
     if not target or not output:
         return False
     return len(output.split()) > int(target * 1.5)
+
+
+# ---------------- detect_solution_leak ----------------
+
+
+# Last-sentence leak indicators for PATH E (concept_explanation). When
+# the Speaker output's last sentence contains one of these verbs (with
+# trailing space to avoid sub-word matches), the model has crossed the
+# anti-leak boundary by proposing the fix rather than handing the
+# question back. Informational — does not block emission; surfaces in
+# the audit envelope so we can grep across sessions.
+_LEAK_INDICATOR_VERBS: tuple[str, ...] = (
+    "use ", "implement ", "add a ", "store a ", "key on ",
+    "track ", "deduplicate by ",
+)
+
+
+def detect_solution_leak(
+    output: str,
+    clarify_kind: str | None,
+) -> bool:
+    """True iff PATH E (concept_explanation) output's last sentence
+    contains a leak-indicator verb.
+
+    Anti-leak signal specific to concept_explanation: the Speaker is
+    supposed to describe ONE failure scenario and hand the question
+    back, NOT propose the fix. A last sentence containing "use",
+    "implement", "add a", etc. almost always means the model proposed
+    the solution.
+
+    Returns False for any other clarify_kind (the signal is meaningless
+    outside concept_explanation) and for empty output.
+    """
+    if clarify_kind != "concept_explanation" or not output:
+        return False
+    # Take everything after the last period; strip trailing punctuation
+    # so a final "." or "?" doesn't interfere with substring matching.
+    last_sentence = output.rstrip(".!?").rsplit(".", 1)[-1].lower()
+    return any(verb in last_sentence for verb in _LEAK_INDICATOR_VERBS)

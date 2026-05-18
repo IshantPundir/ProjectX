@@ -4,6 +4,7 @@ from app.modules.interview_engine.speaker.naturalness import (
     detect_exceeded_soft_target,
     detect_name_overuse,
     detect_repeated_opener,
+    detect_solution_leak,
 )
 
 
@@ -126,3 +127,97 @@ def test_soft_target_repeat_kind_never_flags() -> None:
 
 def test_soft_target_empty_output_returns_false() -> None:
     assert detect_exceeded_soft_target("", "deliver_question") is False
+
+
+# -------------------- soft target tuple keys --------------------
+
+
+def test_clarify_concept_explanation_soft_target_is_fifty() -> None:
+    # 75 words ≤ 50 * 1.5 → no flag
+    output_75 = " ".join(["word"] * 75)
+    assert detect_exceeded_soft_target(
+        output_75, "clarify", clarify_kind="concept_explanation",
+    ) is False
+    # 76 words > 50 * 1.5 → flag
+    output_76 = " ".join(["word"] * 76)
+    assert detect_exceeded_soft_target(
+        output_76, "clarify", clarify_kind="concept_explanation",
+    ) is True
+
+
+def test_clarify_term_definition_soft_target_is_twenty_five() -> None:
+    output_37 = " ".join(["word"] * 37)  # 25 * 1.5 = 37.5
+    assert detect_exceeded_soft_target(
+        output_37, "clarify", clarify_kind="term_definition",
+    ) is False
+    output_38 = " ".join(["word"] * 38)
+    assert detect_exceeded_soft_target(
+        output_38, "clarify", clarify_kind="term_definition",
+    ) is True
+
+
+def test_clarify_with_none_clarify_kind_falls_back_to_legacy() -> None:
+    # Legacy fallback: (clarify, None) -> 35 words. 53 words > 35 * 1.5 = 52.5 triggers.
+    output_53 = " ".join(["word"] * 53)
+    assert detect_exceeded_soft_target(
+        output_53, "clarify", clarify_kind=None,
+    ) is True
+    output_52 = " ".join(["word"] * 52)
+    assert detect_exceeded_soft_target(
+        output_52, "clarify", clarify_kind=None,
+    ) is False
+
+
+def test_non_clarify_kind_unaffected_by_clarify_kind_param() -> None:
+    # deliver_question target = 25 words; clarify_kind irrelevant
+    output_38 = " ".join(["word"] * 38)
+    assert detect_exceeded_soft_target(
+        output_38, "deliver_question", clarify_kind=None,
+    ) is True
+    output_37 = " ".join(["word"] * 37)
+    assert detect_exceeded_soft_target(
+        output_37, "deliver_question", clarify_kind="anything",
+    ) is False
+
+
+# -------------------- detect_solution_leak --------------------
+
+
+def test_solution_leak_fires_on_use_verb_last_sentence() -> None:
+    output = (
+        "See — retries can re-fire after partial success, so you'd "
+        "want to use an idempotency key on the order ID."
+    )
+    assert detect_solution_leak(output, clarify_kind="concept_explanation") is True
+
+
+def test_solution_leak_fires_on_implement_verb() -> None:
+    output = "Mm — duplicates can happen. Implement a conditional upsert."
+    assert detect_solution_leak(output, clarify_kind="concept_explanation") is True
+
+
+def test_solution_leak_does_not_fire_on_correct_open_ended_question() -> None:
+    output = (
+        "See — your trigger fires once per new order ID, but the i-Paa-S "
+        "workflow itself can retry after a network blip. The retry now "
+        "fires the same order ID into the E-R-P again. So — given that, "
+        "what would you put in your design to handle it?"
+    )
+    assert detect_solution_leak(output, clarify_kind="concept_explanation") is False
+
+
+def test_solution_leak_only_fires_for_concept_explanation_kind() -> None:
+    leaky_output = "See — use an idempotency key on the order ID."
+    for kind in ("term_definition", "use_case_anchor", "broad_rephrase",
+                 "probe_context", None):
+        assert detect_solution_leak(leaky_output, clarify_kind=kind) is False
+    assert detect_solution_leak(leaky_output, clarify_kind="concept_explanation") is True
+
+
+def test_solution_leak_inspects_only_last_sentence() -> None:
+    # Same verbs in middle sentences are fine.
+    output = (
+        "See — at-least-once delivery can use the same event twice. "
+        "But what would you check first to confirm the duplicates?"
+    )
+    assert detect_solution_leak(output, clarify_kind="concept_explanation") is False
