@@ -1800,3 +1800,84 @@ def test_register_agent_utterance_appends_empty_text_to_transcript(
     assert "t-1" not in engine._question_utterances
 
 
+# ---------------------------------------------------------------------------
+# Phase 9.3 — Q-2 (addendum): Judge-voluntary advance at cap fires flag
+# (Session a13ec188 T8 reproducer)
+# ---------------------------------------------------------------------------
+
+
+def test_is_post_cap_advance_fires_on_judge_voluntary_advance_at_cap() -> None:
+    """Session a13ec188 T8 reproducer: Judge picked advance VOLUNTARILY
+    knowing push_back_count was already at cap=2 ("the cleanest move is
+    to advance to the next mandatory question"). The SE-forced downgrade
+    path (push_back branch) never ran — so is_post_cap_advance stayed
+    False and the Speaker had to discover the topic shift on its own.
+
+    After the fix, the NextAction.advance branch captures
+    prior_push_back_count BEFORE the queue mutation; if >= 2 it sets
+    is_post_cap_advance=True. Speaker scaffold uses the flag to emit
+    the topic-shift segue ("Thanks for that. Now —") instead of a
+    cold jump.
+
+    Spec: docs/superpowers/specs/2026-05-18-speaker-intent-layer-design.md §9
+    """
+    eng = _engine()
+    _activate_q1(eng)
+
+    # Drive two thin push_backs on Q1 so push_back_count reaches cap=2.
+    # Both must carry thin observations only — concrete observations would
+    # trigger the inverse_quality_gate and downgrade push_back→probe.
+    for i in range(2):
+        eng.process_judge_output(
+            turn_id=f"t-pb-{i}",
+            judge_output=_judge_push_back("vague_answer"),
+            candidate_utterance_text="thin answer",
+            elapsed_ms=1000 + i * 1000,
+        )
+
+    # Confirm push_back_count is now 2 (at the cap).
+    assert eng.queue_snapshot().questions[0].push_back_count == 2
+
+    # Now the Judge picks advance VOLUNTARILY — not a third push_back.
+    # push_back_count < 2 check in quality_gated_advance is False, so
+    # no quality downgrade fires. The advance goes through the try block.
+    decision = eng.process_judge_output(
+        turn_id="t-voluntary-advance",
+        judge_output=_judge_advance_with_quality("q2", "thin"),
+        candidate_utterance_text="another thin one",
+        elapsed_ms=3000,
+    )
+    assert decision.speaker_input.instruction_kind == InstructionKind.deliver_question
+    assert decision.speaker_input.is_post_cap_advance is True, (
+        "Judge picked advance with push_back_count already at cap; "
+        "Speaker must receive is_post_cap_advance=True so it adds the "
+        "topic-shift segue (per design 2026-05-18 §9)."
+    )
+
+
+def test_is_post_cap_advance_false_on_clean_advance_below_cap() -> None:
+    """Sanity: advance with push_back_count < 2 (just 1 prior push_back)
+    must NOT raise the flag. Speaker uses its normal acknowledgment path."""
+    eng = _engine()
+    _activate_q1(eng)
+
+    # One thin push_back — count is now 1, below cap=2.
+    eng.process_judge_output(
+        turn_id="t-pb-0",
+        judge_output=_judge_push_back("vague_answer"),
+        candidate_utterance_text="partial answer",
+        elapsed_ms=1000,
+    )
+    assert eng.queue_snapshot().questions[0].push_back_count == 1
+
+    # Advance with a concrete observation — quality gate passes cleanly.
+    decision = eng.process_judge_output(
+        turn_id="t-advance",
+        judge_output=_judge_advance_with_quality("q2", "concrete"),
+        candidate_utterance_text="now a concrete answer",
+        elapsed_ms=2000,
+    )
+    assert decision.speaker_input.instruction_kind == InstructionKind.deliver_question
+    assert decision.speaker_input.is_post_cap_advance is False
+
+

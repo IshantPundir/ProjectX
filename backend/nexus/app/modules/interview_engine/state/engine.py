@@ -479,6 +479,18 @@ class StateEngine:
 
         if action == NextAction.advance:
             target = judge_output.next_action_payload.target_question_id
+            # Capture push_back_count BEFORE any queue mutation. When the
+            # Judge picks advance VOLUNTARILY at the cap (session a13ec188
+            # T8 reproducer: "With push-back already at the cap, I should
+            # not continue looping; the cleanest move is to advance"), the
+            # SE-forced downgrade branch below never fires — so without
+            # this we miss the post-cap signal entirely. Speaker scaffold
+            # needs the flag to emit the topic-shift segue ("Thanks for
+            # that. Now —") instead of jumping cold.
+            prior_push_back_count = (
+                self._queue.active_push_back_count()
+                if self._queue.active_state() is not None else 0
+            )
             # Quality gate (Phase 9.2): downgrade `advance` to `push_back`
             # when no observation on the active question has reached
             # `concrete` or `strong`. The Judge prompt §4.5 instructs the
@@ -522,6 +534,14 @@ class StateEngine:
                 try:
                     self._queue.advance_to(target, at_turn=self._turn_count)
                     instruction = self._first_or_continuing_instruction()
+                    # Set the post-cap flag whenever the prior question
+                    # had push_back_count at the cap, regardless of who
+                    # chose advance (Judge or the SE-forced downgrade in
+                    # the push_back branch below). Mirrors the existing
+                    # is_post_cap_advance=True at the SE-downgrade site
+                    # for consistency in Speaker behavior.
+                    if prior_push_back_count >= 2:
+                        is_post_cap_advance = True
                 except QueueError as exc:
                     warnings.append(ValidationWarning(
                         code="invalid_target_question_id",
