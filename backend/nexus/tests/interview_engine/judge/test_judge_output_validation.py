@@ -141,7 +141,7 @@ def test_reasoning_field_is_required():
     """JudgeOutput.reasoning is required (no default) and must be ≥20 chars."""
     from pydantic import ValidationError
     from app.modules.interview_engine.models.judge import (
-        JudgeOutput, NextAction, ClarifyPayload,
+        JudgeOutput, NextAction, ClarifyPayload, ClarifyKind,
     )
 
     with pytest.raises(ValidationError) as exc:
@@ -149,7 +149,7 @@ def test_reasoning_field_is_required():
             observations=[],
             candidate_claims=[],
             next_action=NextAction.clarify,
-            next_action_payload=ClarifyPayload(),
+            next_action_payload=ClarifyPayload(clarify_kind=ClarifyKind.broad_rephrase),
         )
     assert "reasoning" in str(exc.value).lower()
 
@@ -158,7 +158,7 @@ def test_reasoning_field_min_length_20():
     """reasoning shorter than 20 chars rejected."""
     from pydantic import ValidationError
     from app.modules.interview_engine.models.judge import (
-        JudgeOutput, NextAction, ClarifyPayload,
+        JudgeOutput, NextAction, ClarifyPayload, ClarifyKind,
     )
 
     with pytest.raises(ValidationError) as exc:
@@ -167,7 +167,7 @@ def test_reasoning_field_min_length_20():
             observations=[],
             candidate_claims=[],
             next_action=NextAction.clarify,
-            next_action_payload=ClarifyPayload(),
+            next_action_payload=ClarifyPayload(clarify_kind=ClarifyKind.broad_rephrase),
         )
     assert "min_length" in str(exc.value) or "at least 20" in str(exc.value)
 
@@ -176,7 +176,7 @@ def test_reasoning_field_max_length_2000():
     """reasoning longer than 2000 chars rejected."""
     from pydantic import ValidationError
     from app.modules.interview_engine.models.judge import (
-        JudgeOutput, NextAction, ClarifyPayload,
+        JudgeOutput, NextAction, ClarifyPayload, ClarifyKind,
     )
 
     with pytest.raises(ValidationError) as exc:
@@ -185,7 +185,7 @@ def test_reasoning_field_max_length_2000():
             observations=[],
             candidate_claims=[],
             next_action=NextAction.clarify,
-            next_action_payload=ClarifyPayload(),
+            next_action_payload=ClarifyPayload(clarify_kind=ClarifyKind.broad_rephrase),
         )
     assert "max_length" in str(exc.value) or "at most 2000" in str(exc.value)
 
@@ -193,7 +193,7 @@ def test_reasoning_field_max_length_2000():
 def test_reasoning_field_valid():
     """A valid 50-char reasoning + minimal payload constructs successfully."""
     from app.modules.interview_engine.models.judge import (
-        JudgeOutput, NextAction, ClarifyPayload,
+        JudgeOutput, NextAction, ClarifyPayload, ClarifyKind,
     )
 
     out = JudgeOutput(
@@ -201,7 +201,7 @@ def test_reasoning_field_valid():
         observations=[],
         candidate_claims=[],
         next_action=NextAction.clarify,
-        next_action_payload=ClarifyPayload(),
+        next_action_payload=ClarifyPayload(clarify_kind=ClarifyKind.term_definition),
     )
     assert out.reasoning.startswith("Candidate asked")
 
@@ -260,7 +260,7 @@ def test_greeting_flag_requires_redirect():
     """social_or_greeting=true forces next_action=redirect."""
     from pydantic import ValidationError
     from app.modules.interview_engine.models.judge import (
-        JudgeOutput, NextAction, ClarifyPayload, TurnMetadata,
+        JudgeOutput, NextAction, ClarifyPayload, ClarifyKind, TurnMetadata,
     )
     with pytest.raises(ValidationError) as exc:
         JudgeOutput(
@@ -268,7 +268,7 @@ def test_greeting_flag_requires_redirect():
             observations=[],
             candidate_claims=[],
             next_action=NextAction.clarify,
-            next_action_payload=ClarifyPayload(),
+            next_action_payload=ClarifyPayload(clarify_kind=ClarifyKind.broad_rephrase),
             turn_metadata=TurnMetadata(candidate_social_or_greeting=True),
         )
     assert "social_or_greeting" in str(exc.value).lower() or "redirect" in str(exc.value).lower()
@@ -301,7 +301,7 @@ def test_meta_confession_and_no_experience_simultaneously_always_rejected():
     from pydantic import ValidationError
     from app.modules.interview_engine.models.judge import (
         JudgeOutput, NextAction, AcknowledgeNoExperiencePayload,
-        PoliteClosePayload, PushBackPayload, ClarifyPayload, TurnMetadata,
+        PoliteClosePayload, PushBackPayload, ClarifyPayload, ClarifyKind, TurnMetadata,
     )
 
     both_flags = TurnMetadata(
@@ -319,8 +319,63 @@ def test_meta_confession_and_no_experience_simultaneously_always_rejected():
          AcknowledgeNoExperiencePayload(failed_signal_value="x")),
         (NextAction.polite_close, PoliteClosePayload()),
         (NextAction.push_back, PushBackPayload(reason_code="missing_specifics")),
-        (NextAction.clarify, ClarifyPayload()),
+        (NextAction.clarify, ClarifyPayload(clarify_kind=ClarifyKind.broad_rephrase)),
     ]
     for action, payload in cases:
         with pytest.raises(ValidationError):
             JudgeOutput(**common, next_action=action, next_action_payload=payload)
+
+
+def _base_judge_output_kwargs() -> dict:
+    from app.modules.interview_engine.models.judge import NextAction, TurnMetadata
+    return {
+        "reasoning": "x" * 30,
+        "observations": [],
+        "candidate_claims": [],
+        "next_action": NextAction.clarify,
+        "turn_metadata": TurnMetadata(),
+    }
+
+
+def test_clarify_payload_requires_clarify_kind() -> None:
+    # Bare {"kind": "clarify"} without clarify_kind must raise.
+    with pytest.raises(ValidationError):
+        from app.modules.interview_engine.models.judge import ClarifyPayload
+        ClarifyPayload(**{})  # type: ignore[arg-type]
+
+
+def test_clarify_payload_accepts_all_five_clarify_kinds() -> None:
+    from app.modules.interview_engine.models.judge import ClarifyKind, ClarifyPayload
+    for kind in (
+        ClarifyKind.term_definition,
+        ClarifyKind.concept_explanation,
+        ClarifyKind.use_case_anchor,
+        ClarifyKind.broad_rephrase,
+        ClarifyKind.probe_context,
+    ):
+        payload = ClarifyPayload(clarify_kind=kind)
+        assert payload.clarify_kind == kind
+        assert payload.kind == "clarify"
+
+
+def test_judge_output_with_clarify_payload_concept_explanation_validates() -> None:
+    from app.modules.interview_engine.models.judge import (
+        ClarifyKind,
+        ClarifyPayload,
+        JudgeOutput,
+        NextAction,
+    )
+    payload = ClarifyPayload(clarify_kind=ClarifyKind.concept_explanation)
+    out = JudgeOutput(
+        **_base_judge_output_kwargs(),
+        next_action_payload=payload,
+    )
+    assert out.next_action == NextAction.clarify
+    assert isinstance(out.next_action_payload, ClarifyPayload)
+    assert out.next_action_payload.clarify_kind == ClarifyKind.concept_explanation
+
+
+def test_clarify_kind_rejects_unknown_value() -> None:
+    from app.modules.interview_engine.models.judge import ClarifyPayload
+    with pytest.raises(ValidationError):
+        ClarifyPayload(clarify_kind="invalid_kind")  # type: ignore[arg-type]

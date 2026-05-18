@@ -19,6 +19,26 @@ class NextAction(StrEnum):
     push_back = "push_back"
 
 
+class ClarifyKind(StrEnum):
+    """Sub-classification of a clarify action — see judge prompt §1.3.
+
+    Five sub-cases of "candidate doesn't understand or needs context":
+
+    - ``term_definition``     — asked about a specific term ("What is X?")
+    - ``concept_explanation`` — engaged with topic, asks WHY a concept
+                                matters / asks for failure mode
+    - ``use_case_anchor``     — asks for business or operational setting
+                                (including bare "give me an example")
+    - ``broad_rephrase``      — generic confusion, no specific ask
+    - ``probe_context``       — confused after a probe was delivered
+    """
+    term_definition     = "term_definition"
+    concept_explanation = "concept_explanation"
+    use_case_anchor     = "use_case_anchor"
+    broad_rephrase      = "broad_rephrase"
+    probe_context       = "probe_context"
+
+
 class CoverageQuality(StrEnum):
     """Per-observation quality grade — see judge prompt §4.5.
 
@@ -113,6 +133,15 @@ class ProbePayload(BaseModel):
 
 class ClarifyPayload(BaseModel):
     kind: Literal["clarify"] = "clarify"
+    clarify_kind: ClarifyKind = Field(
+        description=(
+            "Sub-classification picked by the Judge per prompt §1.3. "
+            "Drives Speaker dispatch in clarify.txt (5 PATH sections). "
+            "Default `broad_rephrase` is the safest fallback path — "
+            "the synthesizer fallback uses it when validation fails on "
+            "a clarify-shaped output."
+        ),
+    )
 
 
 class RepeatPayload(BaseModel):
