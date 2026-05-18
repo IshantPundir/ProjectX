@@ -1,6 +1,8 @@
 """Speaker input builder. Anti-leak: never carries rubric content."""
 from __future__ import annotations
 
+import re
+
 from app.modules.interview_engine.models.judge import JudgeOutput, TurnMetadata
 from app.modules.interview_engine.models.speaker import (
     InstructionKind, SpeakerInput,
@@ -10,6 +12,53 @@ from app.modules.interview_engine.state.queue import QuestionQueue
 from app.modules.interview_runtime import (
     QuestionConfig, TranscriptEntry,
 )
+
+
+# Acronyms Sarvam bulbul:v3 en-IN mispronounces or pronounces inconsistently
+# across mentions. Replace with hyphenated phonetic forms in bank_text before
+# the Speaker LLM sees it, so the model mirrors the spell-out into its output
+# and Sarvam reads them letter-by-letter every time.
+#
+# Diagnostic: session bf34128f (2026-05-18) — "ERP" came out as "E-R-P" on
+# first mention (LLM honored prompt rule) then reverted to "ERP" on the
+# clarify turn that defined the term. Deterministic input-side preprocessing
+# is more reliable than relying on the small-model nano-tier LLM to follow
+# the "spell on every mention" rule perfectly.
+#
+# Order matters: longer acronyms first, to avoid prefix shadowing (e.g.
+# "REST" shouldn't trigger on a substring of "RESTART"). All matches use
+# \\b word boundaries so embedded substrings ("ERPLY") don't get rewritten.
+_ACRONYM_REPLACEMENTS: tuple[tuple[str, str], ...] = (
+    ("HTTP", "H-T-T-P"),
+    ("HTML", "H-T-M-L"),
+    ("JSON", "JSON"),    # word-pronounceable; keep as-is (no replacement)
+    ("REST", "REST"),    # word-pronounceable
+    ("ERP", "E-R-P"),
+    ("API", "A-P-I"),
+    ("SQL", "S-Q-L"),
+    ("URL", "U-R-L"),
+    ("CDN", "C-D-N"),
+    ("AI", "A-I"),
+)
+
+
+def _preprocess_acronyms(text: str | None) -> str | None:
+    """Replace known-mispronounced acronyms in `text` with hyphenated
+    phonetic forms. Word-boundary safe — embedded substrings are not
+    touched. Returns `text` unchanged when None or empty.
+
+    Identity-mapped entries (e.g. JSON → JSON) are listed for
+    documentation only; they short-circuit the regex pass for that
+    acronym (a no-op rewrite is fine but explicit is clearer).
+    """
+    if not text:
+        return text
+    out = text
+    for raw, phonetic in _ACRONYM_REPLACEMENTS:
+        if raw == phonetic:
+            continue
+        out = re.sub(rf"\b{re.escape(raw)}\b", phonetic, out)
+    return out
 
 
 # Instruction kinds where the Speaker does NOT need conversational context.
@@ -156,6 +205,14 @@ def build_speaker_input(
         is_post_cap_advance
         and instruction_kind == InstructionKind.deliver_question
     )
+
+    # Acronym preprocessing — bank_text only. Replaces letter-by-letter
+    # acronyms (ERP, API, …) with hyphenated phonetic forms so Sarvam
+    # bulbul:v3 reads them consistently. Applied here (once, post all
+    # bank_text assignments) so it covers every kind that sets bank_text
+    # — deliver_first_question / deliver_question / deliver_probe /
+    # clarify / redirect / push_back.
+    bank_text = _preprocess_acronyms(bank_text)
 
     return SpeakerInput(
         instruction_kind=instruction_kind,

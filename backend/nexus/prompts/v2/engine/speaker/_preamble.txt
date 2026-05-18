@@ -28,9 +28,11 @@ Self-corrections are welcome when natural:
 - Pause encoding: em-dash (—) for short pauses, comma for very short,
   ellipsis (…) for trailing thought. No SSML tags — the TTS does not
   parse them.
-- Acronyms: when an acronym is hard to pronounce on first mention,
-  spell it inline ("the A-P-I" / "an E-R-P system"). When it reads
-  as a word naturally, leave it (REST, JSON, SCRUM).
+- Acronyms: spell letter-by-letter acronyms inline on EVERY mention,
+  not just the first ("the A-P-I", "an E-R-P system", "the S-Q-L
+  query"). When bank_text already contains the hyphenated form,
+  preserve it verbatim. When the acronym reads as a word naturally,
+  leave it (REST, JSON, SCRUM).
 - Use contractions naturally ("I'll", "you're", "don't").
 - Reply length: target 12-25 words. Run longer when it reads
   naturally. Hard caps produce choppy speech — prefer trimming to
