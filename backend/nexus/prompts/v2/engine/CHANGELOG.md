@@ -66,3 +66,155 @@ Substantively edited:
 Mechanically copied unchanged: `_preamble.txt`, `deliver_first_question.txt`,
 `deliver_probe.txt`, `redirect.txt`, `polite_close.txt`,
 `acknowledge_no_experience.txt`, `repeat.txt`.
+
+---
+
+## 2026-05-17 — v2 Speaker realism rewrite
+
+Spec: `docs/superpowers/specs/2026-05-17-speaker-realism-design.md`.
+Plan: `docs/superpowers/plans/2026-05-17-speaker-realism.md`.
+
+Full rewrite of the v2 Speaker prompt set + persona module to make the
+candidate hear **Arjun, Senior Engineering Manager (pronounced Indian
+English)** consistently across all 9 InstructionKinds and all 3 canned
+fallback paths. Diagnostic: session `d82d7407-5d7b-4004-af35-cc1ab50768c8`
+(7/8 contextual turns echoed bank vocabulary, 2 redirect turns leaked
+rubric content, 0 opener variation across 16 turns).
+
+### `_preamble.txt` — full rewrite
+
+Now a PersonaSpec template (~1200 tokens after render). Eight labeled
+sections per OpenAI Realtime prompting guide structure:
+
+1. WHO YOU ARE — Arjun's identity (`{name}`, `{archetype}`)
+2. VOICE — `{register}`, opener rotation, vocab cues, disfluency density,
+   name-usage policy
+3. OUTPUT RULES — spoken-output framing, em-dash pause encoding (no SSML
+   — Sarvam bulbul:v3 doesn't parse it), acronym spell-out rule
+4. BANNED PHRASES — `{vocab_banned_bulleted}` + principle
+5. ANTI-LEAK (load-bearing) — 4 numbered rules including
+   ANTI-ENUMERATION
+6. OPENINGS & ANTI-REPETITION — `recent_reply_starts` contract
+7. CONVERSATIONAL CONTEXT — `recent_turns` + `claims_pool_snapshot` use
+8. WHAT FOLLOWS — pointer to per-action body + soft-cap framing
+
+Rendered from `PersonaSpec` at `SpeakerService.__init__` time via
+`render_preamble()`. Result is deterministic + module-level → byte-identical
+across calls of the same kind and across sessions in the same deployment.
+Triggers OpenAI Responses-API auto-caching of the `instructions` field.
+
+### `PersonaSpec` dataclass — new
+
+Replaces the previous `DEFAULT_PERSONA` dict in `speaker/persona.py`.
+Frozen dataclass; single source of truth for prompt content, canned
+fallback strings, and observability flag detection (read by
+`naturalness.py`). Tenant override remains scoped to `name` (via
+`engine_agent_name`); other fields are locked in code.
+
+Key fields:
+- `name = "Arjun"`, `archetype = "Senior Engineering Manager at the hiring company"`
+- `register` describes pronounced Indian English
+- `opener_rotation` — 9 discourse markers (`See —`, `Right, so —`,
+  `Mm, OK —`, `Let me put it this way —`, …)
+- `vocab_banned` — short curated list (delve, leverage, streamline,
+  robust, Great question, Certainly, Absolutely) + principle
+- `fallback_recovery`, `fallback_empty_output{_no_bank}`,
+  `fallback_session_ended` — Arjun-voiced strings
+- `tts_voice_recommended = "shubh"` (bulbul:v3 male; locked P4.3)
+- `tts_pace_recommended = 0.95`, `tts_temperature_recommended = 0.6`
+- `speaker_llm_temperature = 0.7` (was implicit 1.0)
+
+### Per-action bodies (9 files) — all rewritten in Arjun's voice
+
+Each follows: TASK / ARJUN'S SHAPE / EXAMPLES / REMINDER structure
+with heavy few-shot exemplars (3-6 per file). Pronounced Indian English
+register throughout — "See —", "Kindly walk me through", "Let us stay
+with", "What is the first thing".
+
+- `deliver_first_question.txt` — 3 exemplars (procedural/scenario/open-ended)
+- `deliver_question.txt` — 4 exemplars incl. `is_post_cap_advance` segue
+- `deliver_probe.txt` — 3 exemplars; default no recap
+- `clarify.txt` — 4 exemplars; three explicit paths (A: specific term,
+  B: generic confusion, C: probe-context); ANTI-PATTERN block
+- `push_back.txt` — 4 exemplars, one per `push_back_reason_code`;
+  ANTI-PATTERN for stacked asks
+- `redirect.txt` — 6 scenario exemplars (salary, hint-fishing, logistics,
+  social, injection, abusive) + generalization principle for novel
+  off-topic patterns
+- `acknowledge_no_experience.txt` — 2 exemplars (more-mandatory / last)
+- `polite_close.txt` — 4 exemplars; two branches (clean / knockout);
+  ANTI-PATTERN forbidding duplication of prior-turn acknowledgment
+- `repeat.txt` — empty-bank fallback line in Arjun voice
+
+### Code paths
+
+- `speaker/input_builder.py` — `recent_reply_starts` now symmetric across
+  all kinds (was non-contextual-only). Contextual kinds fire most often
+  in a session; phrase variation is the highest-frequency 'sounds AI'
+  tell per LiveKit/Vapi/OpenAI research.
+- `speaker/service.py` — preamble rendered once at `__init__`; explicit
+  `temperature=DEFAULT_PERSONA.speaker_llm_temperature` (0.7) on the
+  Responses-API call.
+- `orchestrator.py` — three canned fallback paths
+  (`_RECOVERY_TEXT`, `_compose_empty_output_fallback`,
+  `_format_session_ended_message`) now read PersonaSpec strings. No
+  failure path bypasses the persona.
+- `app/config.py` — `engine_session_ended_message` default → `None`
+  (orchestrator falls back to PersonaSpec); `interview_tts_pace`
+  default → `0.95`.
+
+### Observability — new `speaker/naturalness.py`
+
+Four pure-function flag detectors that run after every successful
+Speaker turn. Results attached to existing `SPEAKER_OUTPUT` audit event
+as `naturalness_flags` (optional Pydantic model, backward-compatible).
+
+- `detect_repeated_opener(output, recent_reply_starts) -> bool`
+- `detect_banned_phrases(output) -> list[str]` (reads `PersonaSpec.vocab_banned`)
+- `detect_name_overuse(output, candidate_name, prior_output) -> bool`
+  (orchestrator tracks `_prior_speaker_output` instance state)
+- `detect_exceeded_soft_target(output, instruction_kind) -> bool`
+  (50%-over-target threshold; per-kind soft targets)
+
+17 unit tests in `tests/interview_engine/speaker/test_naturalness.py`.
+Operator query: `scripts/grep_naturalness.sh <session_uuid>` surfaces
+flagged turns from any session envelope.
+
+### TTS — Sarvam bulbul:v3 alignment (P4.3)
+
+- Voice: `shubh` (existing default; locked as Arjun's voice). The v2
+  voices (manoj/arvind/abhilash) referenced in the spec do NOT exist
+  in v3 — discovered during the P4.1 plugin investigation. P4.1
+  `scripts/speak_one_off.py` exposes the actual v3 voice list
+  (`shubh`, `rahul`, `amit`, `aditya`) for future A/B if voice
+  re-selection becomes useful.
+- Pace: `0.95` (slightly slower than 1.0 default — matches Arjun's
+  measured cadence).
+- Temperature: `0.6` (unchanged).
+- No SSML support in Sarvam — pause encoding is punctuation-only
+  (em-dash `—`, comma, ellipsis `…`).
+
+### Verifications still pending (user-driven)
+
+- **P1.5 / P2.10 / P3.6** — listen to a real candidate-mock session;
+  verify Arjun's voice across all turn kinds.
+- **P5.1** — verify `cached_tokens > 0` shows up in audit envelope on
+  the second same-kind call.
+- **P5.3** — verify Sarvam pronounces iPaaS / ERP / API / SQL /
+  JSON / CDN correctly; if not, add deterministic preprocessor
+  (P5.4 conditional).
+
+### Tooling
+
+- `scripts/speak_one_off.py` — standalone Speaker + Sarvam TTS A/B
+  bench. Accepts `--utterance` (literal) or `--speaker-input <json>`,
+  iterates over `--voices`, plays via `aplay`/`afplay`.
+- `scripts/grep_naturalness.sh` — `jq` query wrapping the audit
+  envelope for flagged-turn surfacing.
+
+### Files touched
+
+13 modified + 4 new (~2400 net insertions per `git diff --stat
+worktree-speaker-realism..origin/main`). All test suites green except
+the 3 pre-existing replay tests that require a local envelope file
+not present in fresh checkouts.
