@@ -12,7 +12,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from app.modules.interview_engine.models.claims import ClaimEntry
-from app.modules.interview_engine.models.judge import TurnMetadata
+from app.modules.interview_engine.models.judge import ClarifyKind, TurnMetadata
 from app.modules.interview_runtime.models import TranscriptEntry
 
 
@@ -88,5 +88,25 @@ class SpeakerInput(BaseModel):
             "topic-shift segue ('OK, let's move on to something different') "
             "instead of jumping cold into the next question. False on "
             "every other path (clean advance, first question, etc.)."
+        ),
+    )
+    clarify_kind: ClarifyKind | None = Field(
+        default=None,
+        description=(
+            "Sub-classification of the clarify intent — see judge prompt "
+            "§1.3. Populated by build_speaker_input ONLY when "
+            "instruction_kind == clarify; None for all other kinds. "
+            "Drives PATH dispatch inside speaker/clarify.txt."
+        ),
+    )
+    available_openers: list[str] = Field(
+        default_factory=list,
+        description=(
+            "PersonaSpec.opener_rotation filtered against "
+            "recent_reply_starts for THIS turn. Populated for every kind. "
+            "The Speaker scaffold prefers an opener from this list — the "
+            "system rotation is the master persona, available_openers is "
+            "the per-turn allowed subset that respects the anti-repetition "
+            "rule deterministically."
         ),
     )

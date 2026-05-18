@@ -1,6 +1,6 @@
-from app.modules.interview_engine.models.speaker import InstructionKind
+from app.modules.interview_engine.models.speaker import InstructionKind, SpeakerInput
 from app.modules.interview_engine.models.judge import (
-    AdvancePayload, JudgeOutput, NextAction, ProbePayload, TurnMetadata,
+    AdvancePayload, ClarifyKind, JudgeOutput, NextAction, ProbePayload, TurnMetadata,
     AcknowledgeNoExperiencePayload, RedirectPayload,
 )
 from app.modules.interview_engine.speaker.input_builder import build_speaker_input
@@ -270,7 +270,7 @@ def test_contextual_kinds_keep_recent_turns_and_claims():
     contextual = [
         (InstructionKind.deliver_question, NextAction.advance,
          AdvancePayload(target_question_id="q1")),
-        (InstructionKind.clarify, NextAction.clarify, ClarifyPayload()),
+        (InstructionKind.clarify, NextAction.clarify, ClarifyPayload(clarify_kind="broad_rephrase")),
         (InstructionKind.deliver_probe, NextAction.probe, ProbePayload(probe_id="0")),
     ]
     for kind, action, payload in contextual:
@@ -392,7 +392,7 @@ def test_non_push_back_kinds_have_null_reason_code():
     cases = [
         (InstructionKind.deliver_question, NextAction.advance,
          AdvancePayload(target_question_id="q1")),
-        (InstructionKind.clarify, NextAction.clarify, ClarifyPayload()),
+        (InstructionKind.clarify, NextAction.clarify, ClarifyPayload(clarify_kind="broad_rephrase")),
         (InstructionKind.redirect, NextAction.redirect, RedirectPayload()),
     ]
     for kind, action, payload in cases:
@@ -526,7 +526,7 @@ def test_is_post_cap_advance_threaded_only_for_deliver_question():
     # clarify: flag suppressed.
     s3 = build_speaker_input(
         instruction_kind=InstructionKind.clarify,
-        judge_output=_judge(NextAction.clarify, ClarifyPayload()),
+        judge_output=_judge(NextAction.clarify, ClarifyPayload(clarify_kind="broad_rephrase")),
         active_question=_q(),
         queue=queue,
         claims_pool=CandidateClaimsPool(max_size=50),
@@ -601,7 +601,7 @@ def test_closing_disclosure_signal_ignored_for_non_polite_close_kinds():
 
     s = build_speaker_input(
         instruction_kind=InstructionKind.clarify,
-        judge_output=_judge(NextAction.clarify, ClarifyPayload()),
+        judge_output=_judge(NextAction.clarify, ClarifyPayload(clarify_kind="broad_rephrase")),
         active_question=_q(),
         queue=queue,
         claims_pool=CandidateClaimsPool(max_size=50),
@@ -633,7 +633,7 @@ def test_clarify_after_probe_passes_probe_text_not_main():
 
     s = build_speaker_input(
         instruction_kind=InstructionKind.clarify,
-        judge_output=_judge(NextAction.clarify, ClarifyPayload()),
+        judge_output=_judge(NextAction.clarify, ClarifyPayload(clarify_kind="probe_context")),
         active_question=_q(text="MAIN-QUESTION-TEXT", follow_ups=["PROBE-0-TEXT", "PROBE-1-TEXT"]),
         queue=queue,
         claims_pool=CandidateClaimsPool(max_size=50),
@@ -663,7 +663,7 @@ def test_clarify_without_prior_probe_passes_main_text():
 
     s = build_speaker_input(
         instruction_kind=InstructionKind.clarify,
-        judge_output=_judge(NextAction.clarify, ClarifyPayload()),
+        judge_output=_judge(NextAction.clarify, ClarifyPayload(clarify_kind="broad_rephrase")),
         active_question=_q(text="MAIN-QUESTION-TEXT", follow_ups=["PROBE-0-TEXT"]),
         queue=queue,
         claims_pool=CandidateClaimsPool(max_size=50),
@@ -808,3 +808,28 @@ def test_build_speaker_input_applies_acronym_preprocessor_to_bank_text() -> None
     # Original literal forms gone
     assert " ERP " not in speaker_input.bank_text
     assert " API." not in speaker_input.bank_text
+
+
+# ---------------------------------------------------------------------------
+# Phase 9.4 — clarify_kind + available_openers routing
+# ---------------------------------------------------------------------------
+
+
+def test_speaker_input_accepts_clarify_kind_and_available_openers() -> None:
+    si = SpeakerInput(
+        instruction_kind=InstructionKind.clarify,
+        persona_name="Arjun",
+        clarify_kind=ClarifyKind.concept_explanation,
+        available_openers=["See —", "Right, so —", "Hmm —"],
+    )
+    assert si.clarify_kind == ClarifyKind.concept_explanation
+    assert si.available_openers == ["See —", "Right, so —", "Hmm —"]
+
+
+def test_speaker_input_defaults_clarify_kind_to_none_and_openers_to_empty() -> None:
+    si = SpeakerInput(
+        instruction_kind=InstructionKind.deliver_question,
+        persona_name="Arjun",
+    )
+    assert si.clarify_kind is None
+    assert si.available_openers == []
