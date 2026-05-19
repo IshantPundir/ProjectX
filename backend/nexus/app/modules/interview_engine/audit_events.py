@@ -397,3 +397,22 @@ class StateSnapshotCommittedPayload(BaseModel):
     """
 
     turn_id: str
+
+
+# STT keyterm prompting (Phase 3D.deepgram-keyterm — 2026-05-19)
+class STTKeytermsAppliedPayload(BaseModel):
+    """One-shot record of the keyterm list passed to the STT plugin at session start.
+
+    Emitted once per session by agent.py, right before AgentSession construction.
+    Provider is 'sarvam' (count=0, terms=[]) when sarvam is toggled back via env,
+    or 'deepgram' with the full list. Used for forensic debugging when STT quality
+    regresses on a specific role — pairs with the existing audit envelope's
+    model_versions.stt field.
+
+    See docs/superpowers/specs/2026-05-19-deepgram-keyterm-migration-design.md.
+    """
+
+    provider: Literal["sarvam", "deepgram"]
+    count: int = Field(ge=0)
+    terms: list[str]
+    sources: dict[str, int]

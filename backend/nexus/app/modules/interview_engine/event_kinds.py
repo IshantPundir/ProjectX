@@ -37,6 +37,7 @@ SESSION_TIMER_STARTED = "session.timer_started"
 AUDIO_USER_STATE = "audio.user.state"
 AUDIO_AGENT_STATE = "audio.agent.state"
 AUDIO_STT_TRANSCRIBED = "audio.stt.transcribed"
+AUDIO_STT_KEYTERMS_APPLIED = "audio.stt.keyterms_applied"
 AUDIO_INTERRUPTION_FALSE = "audio.interruption.false"
 AUDIO_OVERLAP = "audio.overlap"
 AUDIO_SPEECH_CREATED = "audio.speech.created"
@@ -146,6 +147,7 @@ ALL_EVENT_KINDS: frozenset[str] = frozenset({
     AUDIO_USER_STATE,
     AUDIO_AGENT_STATE,
     AUDIO_STT_TRANSCRIBED,
+    AUDIO_STT_KEYTERMS_APPLIED,
     AUDIO_INTERRUPTION_FALSE,
     AUDIO_OVERLAP,
     AUDIO_SPEECH_CREATED,
