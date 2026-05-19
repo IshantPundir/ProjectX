@@ -22,7 +22,7 @@ class NextAction(StrEnum):
 class ClarifyKind(StrEnum):
     """Sub-classification of a clarify action — see judge prompt §1.3.
 
-    Five sub-cases of "candidate doesn't understand or needs context":
+    Six sub-cases of "candidate doesn't understand or needs context":
 
     - ``term_definition``     — asked about a specific term ("What is X?")
     - ``concept_explanation`` — engaged with topic, asks WHY a concept
@@ -31,12 +31,19 @@ class ClarifyKind(StrEnum):
                                 (including bare "give me an example")
     - ``broad_rephrase``      — generic confusion, no specific ask
     - ``probe_context``       — confused after a probe was delivered
+    - ``role_context``        — meta-question about the ROLE/JOB itself
+                                ("Tell me about the job again", "What does
+                                this position involve?"). Speaker reads
+                                jd_text + role_summary + job_title +
+                                hiring_company_name to answer briefly,
+                                then re-asks the active bank_text.
     """
     term_definition     = "term_definition"
     concept_explanation = "concept_explanation"
     use_case_anchor     = "use_case_anchor"
     broad_rephrase      = "broad_rephrase"
     probe_context       = "probe_context"
+    role_context        = "role_context"
 
 
 class CoverageQuality(StrEnum):

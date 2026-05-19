@@ -95,6 +95,12 @@ def build_speaker_input(
     recent_reply_starts: list[str] | None = None,
     is_post_cap_advance: bool = False,
     closing_disclosure_signal: str | None = None,
+    # Role context — used only by clarify(role_context). Passed in by the
+    # State Engine from SessionConfig. None for every other kind/sub-kind.
+    role_context_job_title: str | None = None,
+    role_context_hiring_company_name: str | None = None,
+    role_context_role_summary: str | None = None,
+    role_context_jd_text: str | None = None,
 ) -> SpeakerInput:
     """Anti-leak guarantee: NEVER include positive_evidence, red_flags, rubric.
 
@@ -219,6 +225,29 @@ def build_speaker_input(
     ):
         clarify_kind_payload = judge_output.next_action_payload.clarify_kind
 
+    # Role-context fields are populated ONLY for clarify(role_context).
+    # The Speaker prompt's PATH F reads them to answer candidate meta-
+    # questions about the job ("Tell me about the role again") before
+    # re-asking the active bank_text. Stripping them for every other
+    # kind keeps the SpeakerInput payload tight + prevents leak of the
+    # full JD body into non-role-context turns.
+    is_role_context = (
+        instruction_kind == InstructionKind.clarify
+        and clarify_kind_payload == ClarifyKind.role_context
+    )
+    role_context_job_title_payload = (
+        role_context_job_title if is_role_context else None
+    )
+    role_context_hiring_company_payload = (
+        role_context_hiring_company_name if is_role_context else None
+    )
+    role_context_role_summary_payload = (
+        role_context_role_summary if is_role_context else None
+    )
+    role_context_jd_text_payload = (
+        role_context_jd_text if is_role_context else None
+    )
+
     # is_post_cap_advance (Q-2, Phase 9.3): only meaningful on
     # deliver_question (the new question being delivered after a
     # cap-forced advance). Drop on every other path so the Speaker
@@ -252,4 +281,8 @@ def build_speaker_input(
         is_post_cap_advance=post_cap_payload,
         clarify_kind=clarify_kind_payload,
         available_openers=available_openers_payload,
+        job_title=role_context_job_title_payload,
+        hiring_company_name=role_context_hiring_company_payload,
+        role_summary=role_context_role_summary_payload,
+        jd_text=role_context_jd_text_payload,
     )

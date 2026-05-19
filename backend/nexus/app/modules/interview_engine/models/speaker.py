@@ -122,25 +122,42 @@ class SpeakerInput(BaseModel):
             "rule deterministically."
         ),
     )
-    # Populated ONLY when instruction_kind == intro_brief.
-    # None for every other kind. See spec
-    # 2026-05-19-behavioral-layer-and-intro-design.md §2.
+    # Populated for instruction_kind == intro_brief (all five fields) and
+    # for instruction_kind == clarify with clarify_kind == role_context
+    # (job_title, hiring_company_name, role_summary, jd_text — not the
+    # session_duration / question_count, those are intro-only). None for
+    # every other kind. See specs:
+    #   2026-05-19-behavioral-layer-and-intro-design.md §2 (intro_brief)
+    #   2026-05-19 role_context follow-up — clarify path uses these to
+    #   answer candidate meta-questions about the job.
     job_title: str | None = Field(
         default=None,
-        description="The role title (e.g., 'Sr. Integration Engineer'). Intro only.",
+        description=(
+            "The role title (e.g., 'Sr. Integration Engineer'). Populated "
+            "for intro_brief and clarify(role_context)."
+        ),
     )
     hiring_company_name: str | None = Field(
         default=None,
         description=(
             "The HIRING company (e.g., 'Workato'), NOT the ProjectX tenant. "
-            "Intro only."
+            "Populated for intro_brief and clarify(role_context)."
         ),
     )
     role_summary: str | None = Field(
         default=None,
         description=(
             "Pre-authored role summary from signal_snapshot.role_summary. "
-            "Speaker rephrases for natural delivery. Intro only."
+            "Speaker rephrases for natural delivery. Populated for intro_brief "
+            "and clarify(role_context)."
+        ),
+    )
+    jd_text: str | None = Field(
+        default=None,
+        description=(
+            "The enriched JD body (or raw JD as fallback). Populated ONLY for "
+            "clarify(role_context) — the Speaker reads it to answer candidate "
+            "meta-questions about the role ('Tell me about the job again')."
         ),
     )
     session_duration_minutes: int | None = Field(

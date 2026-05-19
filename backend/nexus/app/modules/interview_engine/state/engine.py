@@ -1062,6 +1062,17 @@ class StateEngine:
             recent_reply_starts=recent_starts,
             is_post_cap_advance=is_post_cap_advance,
             closing_disclosure_signal=closing_disclosure_signal,
+            # Role-context payload: passed for every kind, but the
+            # input_builder only stamps them onto SpeakerInput when
+            # clarify_kind == role_context. Strips them everywhere else.
+            role_context_job_title=self._cfg.job_title,
+            role_context_hiring_company_name=getattr(
+                self._cfg, "hiring_company_name", None,
+            ),
+            role_context_role_summary=getattr(
+                self._cfg, "role_summary", None,
+            ),
+            role_context_jd_text=getattr(self._cfg, "jd_text", None),
         )
 
     # Anti-repetition signal: number of recent agent utterances we

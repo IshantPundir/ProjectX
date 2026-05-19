@@ -213,6 +213,18 @@ class SessionConfig(BaseModel):
         ),
     )
     role_summary: str
+    jd_text: str | None = Field(
+        default=None,
+        description=(
+            "The enriched JD body (or raw JD if enrichment never ran). "
+            "Threaded through so the Speaker has full role context for "
+            "answering candidate meta-questions ('Tell me about the role "
+            "again', 'What does this job involve?') — see clarify.txt "
+            "role_context path. Populated from JobPosting.description_enriched, "
+            "falling back to description_raw. Never used to construct the "
+            "intro brief (role_summary is the cleaner field there)."
+        ),
+    )
     seniority_level: str
     company: CompanyContext
     candidate: CandidateContext

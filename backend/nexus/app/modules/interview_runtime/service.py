@@ -194,6 +194,10 @@ async def build_session_config(
         job_title=job.title,
         hiring_company_name=hiring_company_name,
         role_summary=snapshot.role_summary,
+        # Enriched JD when available; raw JD as the fallback. Threaded
+        # through so the Speaker can answer candidate meta-questions
+        # via clarify(role_context). Never used by intro_brief.
+        jd_text=job.description_enriched or job.description_raw,
         seniority_level=snapshot.seniority_level,
         company=CompanyContext(
             about=company_profile.get("about", ""),

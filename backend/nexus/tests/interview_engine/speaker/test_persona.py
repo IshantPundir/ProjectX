@@ -50,7 +50,13 @@ def test_resolve_persona_name_falls_back_to_arjun() -> None:
     assert name == "Arjun"
 
 
-def test_resolve_persona_name_honors_tenant_override() -> None:
+def test_resolve_persona_name_ignores_tenant_override() -> None:
+    """Persona name is locked to PersonaSpec.name; tenant override is ignored.
+
+    Retired the override path on 2026-05-19 after a stale tenant value
+    leaked into a live session. The persona identity (Arjun) is a
+    product-wide constant, not a tenant configurable.
+    """
     class _Tenant:
         engine_agent_name = "Priya"
 
@@ -58,10 +64,11 @@ def test_resolve_persona_name_honors_tenant_override() -> None:
         engine_agent_name = "Ignored"
 
     name = resolve_persona_name(tenant_settings=_Tenant(), settings=_Settings())
-    assert name == "Priya"
+    assert name == "Arjun"
 
 
-def test_resolve_persona_name_falls_back_to_settings_when_tenant_empty() -> None:
+def test_resolve_persona_name_ignores_settings_default() -> None:
+    """Same lock: env-level override is ignored too."""
     class _Tenant:
         engine_agent_name = None
 
@@ -69,7 +76,7 @@ def test_resolve_persona_name_falls_back_to_settings_when_tenant_empty() -> None
         engine_agent_name = "Configured"
 
     name = resolve_persona_name(tenant_settings=_Tenant(), settings=_Settings())
-    assert name == "Configured"
+    assert name == "Arjun"
 
 
 def test_render_preamble_substitutes_name_and_archetype() -> None:

@@ -90,17 +90,19 @@ DEFAULT_PERSONA = PersonaSpec()
 
 
 def resolve_persona_name(*, tenant_settings: Any, settings: Any) -> str:
-    """Resolution order: tenant override → settings default → PersonaSpec.name.
+    """Always return PersonaSpec.name — persona identity is locked in code.
 
-    Tenant override remains the existing `engine_agent_name` field on
-    tenant_settings. Other PersonaSpec fields are locked in code.
+    The historical resolution order (tenant override → settings default →
+    PersonaSpec.name) was retired on 2026-05-19 after a stale tenant override
+    leaked the candidate's first name onto the SpeakerInput. The persona is
+    a product-wide identity (Arjun), not a per-tenant configurable. Tenant
+    branding lives elsewhere (e.g. hiring_company_name); the agent's name
+    is anchored to PersonaSpec and the rendered preamble.
+
+    The function still accepts ``tenant_settings`` and ``settings`` for
+    call-site stability — both are intentionally ignored.
     """
-    tenant_name = getattr(tenant_settings, "engine_agent_name", None)
-    if tenant_name:
-        return tenant_name
-    settings_name = getattr(settings, "engine_agent_name", None)
-    if settings_name:
-        return settings_name
+    del tenant_settings, settings  # explicitly ignored; persona name is locked
     return DEFAULT_PERSONA.name
 
 

@@ -83,6 +83,34 @@ transition; default observation to `partial→partial` not `partial→sufficient
                    passes the probe text as bank_text in this
                    case).
 
+                f. role_context — candidate asks a META-QUESTION
+                   about the JOB or ROLE itself (not the question,
+                   not the business setting of the scenario).
+                   Trigger: "Can you tell me about the job again?",
+                   "What's the role about?", "What does this
+                   position do?", "Remind me what we're interviewing
+                   for?", "Sorry, what was the role again?"
+
+                   Disambiguation vs use_case_anchor:
+                     use_case_anchor asks about the BUSINESS or
+                     OPERATIONAL setting of the SCENARIO ("What kind
+                     of company is this?", "What does the team do?").
+                     role_context asks about the ROLE ITSELF — the
+                     position, what the candidate would be hired to
+                     do. If the candidate uses words like "job",
+                     "role", "position", "interview for" — that's
+                     role_context. If they ask about the company,
+                     the team, the use case, or "what's this in the
+                     org" — that's use_case_anchor.
+
+                   Disambiguation vs redirect:
+                     A candidate asking about the role is engaged,
+                     not off-topic. NEVER classify role_context as
+                     redirect just because the question diverges
+                     from the active bank_text — it's a genuine
+                     meta-question about the interview. The Speaker
+                     will answer briefly and re-ask.
+
                 "Give me an example" disambiguation rule:
                   - Bare ("Can you give me an example?")
                     → use_case_anchor.
