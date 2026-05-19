@@ -142,10 +142,10 @@ ADD COLUMN generation_status_by_kind JSONB NOT NULL DEFAULT '{}';
 -- }
 ```
 
-`bank.status` (the existing single canonical status) remains authoritative. Its value reflects the union:
+`bank.status` (the existing single canonical status) remains authoritative. Its value follows two rules:
 
-- `"reviewing"` if at least one kind reached `reviewing`
-- `"failed"` only if all attempted kinds failed (or if the technical call alone failed and there were no behavioral questions to ship)
+- **Technical is the meat.** If `technical_status == "failed"`, the bank is `failed` regardless of behavioral outcome. A behavioral-only bank does not constitute a complete screening — the candidate would do a 2-3 min background check then run out of questions, producing no technical signal for the recruiter to score on.
+- Otherwise (`technical_status == "reviewing"`), the bank is `reviewing`. Behavioral status (`reviewing` / `failed` / `skipped_no_eligible_signals`) is informational and surfaces only via `generation_status_by_kind` for per-kind retry visibility.
 
 ### Behavioral signal filter
 
@@ -245,13 +245,29 @@ async def _generate_one_bank(db, *, bank, stage, instance, job, snapshot, starte
         technical_status = "failed"
         technical_questions = []
 
-    # Write per-kind status
+    # Write per-kind status (regardless of bank-level outcome — even on
+    # a fail-out we want the recruiter to see which call failed and retry)
     bank.generation_status_by_kind = {
         "behavioral_star": behavioral_status,
         "technical_depth": technical_status,
     }
 
-    # Concatenate with explicit positions
+    # Technical is the meat. If it failed, the bank cannot ship even when
+    # behavioral succeeded — behavioral-only produces a 2-3 min session
+    # with no technical signal. Recruiter retries the technical kind via
+    # the per-kind retry endpoint.
+    if technical_status == "failed":
+        transition_to_failed(
+            bank,
+            error=f"technical_depth generation failed; "
+                  f"behavioral_star status: {behavioral_status}",
+        )
+        return
+
+    # technical_status == "reviewing" — the bank ships even if behavioral
+    # failed or was skipped (intro_brief + technical is a valid screening,
+    # just without the behavioral gate). Concatenate with explicit positions:
+    # behavioral first (if present), technical after.
     validated: list = []
     for i, q in enumerate(behavioral_questions):
         q.position = i
@@ -260,16 +276,6 @@ async def _generate_one_bank(db, *, bank, stage, instance, job, snapshot, starte
         q.position = j
         validated.append(q)
 
-    # Decide bank.status
-    if technical_status == "failed" and behavioral_status != "reviewing":
-        # Nothing usable to ship
-        transition_to_failed(bank, error="all generation calls failed")
-        return
-    if technical_status == "failed" and not validated:
-        transition_to_failed(bank, error="technical call failed, no behavioral to ship")
-        return
-
-    # At least one kind shipped — transition to reviewing
     await write_generated_questions(db, bank=bank, questions=validated, source="ai_generated")
     bank.pipeline_version_at_generation = instance.pipeline_version
     bank.stage_config_snapshot = {"signal_filter": stage.signal_filter, "difficulty": stage.difficulty}
@@ -692,8 +698,8 @@ No other migrations needed — `stage_questions.question_kind` already exists fr
 - `app/modules/question_bank/schemas.py` — add `generation_status_by_kind` to `BankResponse`
 - `app/modules/question_bank/router.py` — add `POST /api/jobs/{job_id}/pipeline/stages/{stage_id}/banks/regenerate-kind` endpoint
 - `app/modules/question_bank/service.py` — helper for per-kind question wipe + regeneration trigger
-- `prompts/v1/question_bank_ai_screening.txt` — minor wording edit (clarify it's now technical-only)
-- `prompts/v1/question_bank_common.txt` — no changes anticipated, verify schema discipline is kind-agnostic
+- `prompts/v1/question_bank_ai_screening.txt` — minor wording edit (clarify it's now technical-only; instruct LLM to emit `question_kind: "technical_depth"` for all questions it returns)
+- `prompts/v1/question_bank_common.txt` — unchanged (already kind-agnostic — describes output schema discipline independent of which kind is being generated)
 - `app/modules/interview_runtime/schemas.py` — add `question_kind` to `QuestionConfig`
 - `app/modules/interview_runtime/service.py` — populate `question_kind` in `build_session_config`
 - `app/modules/interview_engine/models/speaker.py` — add `intro_brief` to `InstructionKind`; add intro fields + `is_post_phase_transition` to `SpeakerInput`
