@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.client import get_openai_client
 from app.ai.config import AIConfig
 from app.ai.prompts import prompt_loader
+from app.ai.schemas import KeytermExtractionOutput
 from app.database import get_tenant_db
 from app.modules.auth import UserContext, get_current_user_roles
 from app.modules.jd import JobPosting, JobPostingSignalSnapshot, require_job_access
@@ -82,6 +83,59 @@ async def _call_llm_draft(prompt: str) -> DraftResponse:
         reasoning_effort=config.question_bank_effort,
         response_model=DraftResponse,
         messages=[{"role": "user", "content": prompt}],
+        max_retries=1,
+    )
+    return result
+
+
+async def extract_bank_keyterms(
+    *,
+    job_title: str,
+    hiring_company_name: str,
+    industry: str,
+    company_about: str,
+    hiring_bar: str,
+    role_summary: str,
+    signals: list[str],
+    questions: list[dict],
+) -> KeytermExtractionOutput:
+    """Extract STT keyterms for one bank via a single nano-class LLM call.
+
+    See spec docs/superpowers/specs/2026-05-19-deepgram-keyterm-migration-design.md.
+    Caller (generate_question_bank_stage, Task 6) is responsible for writing the
+    result to stage_question_banks.extracted_keyterms and for tolerating exceptions
+    (an empty column is acceptable; the engine falls back to candidate-name-only).
+    """
+    system_prompt = prompt_loader.get("question_bank_keyterms")
+
+    signals_bullet_list = "\n".join(f"- {s}" for s in signals)
+    questions_block = "\n\n".join(
+        f"Q{i + 1}: {q.get('text', '')}" for i, q in enumerate(questions)
+    )
+
+    user_message = (
+        f"You are extracting speech-recognition keyterms for a {job_title} interview "
+        f"at {hiring_company_name}.\n\n"
+        f"Company industry: {industry}\n"
+        f"Company about: {company_about}\n"
+        f"Hiring bar: {hiring_bar}\n\n"
+        f"Role summary:\n{role_summary}\n\n"
+        f"Hiring signals (the criteria recruiters care about for this role):\n"
+        f"{signals_bullet_list}\n\n"
+        f"Final question bank for this interview stage:\n{questions_block}\n\n"
+        f"Extract the 20-40 most useful keyterms for Deepgram nova-3 STT recognition. "
+        f"Return them in the order most likely to be spoken during the interview."
+    )
+
+    client = get_openai_client()
+    config = AIConfig()
+    result: KeytermExtractionOutput = await client.chat.completions.create(
+        model=config.question_bank_keyterm_model,
+        response_model=KeytermExtractionOutput,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ],
         max_retries=1,
     )
     return result
