@@ -243,6 +243,7 @@ async def build_session_config(
             for s in (snapshot.signals or [])
         ],
         signal_metadata=_project_signal_metadata(snapshot.signals or []),
+        keyterms=list(bank.extracted_keyterms) if bank.extracted_keyterms is not None else [],
     )
     if not config.signal_metadata:
         # Engine-boundary fence — see EmptySignalMetadataError docstring.
