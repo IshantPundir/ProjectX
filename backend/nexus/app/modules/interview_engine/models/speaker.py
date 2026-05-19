@@ -91,6 +91,17 @@ class SpeakerInput(BaseModel):
             "every other path (clean advance, first question, etc.)."
         ),
     )
+    is_post_phase_transition: bool = Field(
+        default=False,
+        description=(
+            "Set by the orchestrator when the queue advance crosses a "
+            "question_kind boundary (e.g., behavioral_star → technical_depth). "
+            "Triggers a warm-segue branch in deliver_question.txt. "
+            "Precedence: is_post_cap_advance > is_post_phase_transition — "
+            "when both are true, the post-cap framing wins (we don't celebrate "
+            "depth that wasn't there). See spec §4."
+        ),
+    )
     clarify_kind: ClarifyKind | None = Field(
         default=None,
         description=(

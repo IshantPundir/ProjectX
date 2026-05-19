@@ -62,3 +62,28 @@ def test_speaker_input_intro_kind_accepts_minimal_construction():
     )
     assert si.instruction_kind == InstructionKind.intro_brief
     assert si.bank_text is None
+
+
+def test_speaker_input_accepts_is_post_phase_transition():
+    from app.modules.interview_engine.models.speaker import (
+        InstructionKind, SpeakerInput,
+    )
+    si = SpeakerInput(
+        instruction_kind=InstructionKind.deliver_question,
+        persona_name="Arjun",
+        bank_text="Walk me through how you'd design X for real-time use cases.",
+        is_post_phase_transition=True,
+    )
+    assert si.is_post_phase_transition is True
+
+
+def test_is_post_phase_transition_defaults_false():
+    from app.modules.interview_engine.models.speaker import (
+        InstructionKind, SpeakerInput,
+    )
+    si = SpeakerInput(
+        instruction_kind=InstructionKind.deliver_question,
+        persona_name="Arjun",
+        bank_text="A scenario question to evaluate technical depth at length.",
+    )
+    assert si.is_post_phase_transition is False
