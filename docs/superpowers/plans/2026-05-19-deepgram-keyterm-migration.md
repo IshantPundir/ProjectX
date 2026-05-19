@@ -1,28 +1,908 @@
-# Deepgram nova-3 + en-IN keyterm migration — Implementation Plan
+# Deepgram nova-3 + en-IN with LLM-extracted keyterm prompting — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Switch the interview engine's default STT from Sarvam `saaras:v3` to Deepgram `nova-3` (`en-IN`) with deterministic per-session keyterm injection extracted from `SessionConfig`. Sarvam stays as a switchable alternate.
+**Goal:** Switch the interview engine's default STT from Sarvam `saaras:v3` to Deepgram `nova-3` (`en-IN`) with **LLM-extracted per-bank-cached** keyterm prompting. The LLM call runs once per question-bank generation (as the final step of `question_bank/actors.py:generate_question_bank_stage`); the result lives in a new JSONB column on `stage_question_banks`; the engine reads it at session start with zero hot-path LLM latency.
 
-**Architecture:** A pure-functional `extract_keyterms(session_config) -> KeytermExtraction` reads `candidate.name`, `hiring_company_name`, `job_title`, `signals: list[str]`, and `role_summary` from `SessionConfig`. `stt_factory.py` plumbs the result into `build_stt_plugin(keyterms=…)`, which passes the list as `keyterm=…` to `deepgram.STT(...)` when the provider is Deepgram (Sarvam ignores it). A new `audio.stt.keyterms_applied` audit event records the applied list at session start.
+**Architecture:**
+- **Bank-side** (one-time per bank): a new `_extract_bank_keyterms` helper in `question_bank/refine.py` makes one structured LLM call returning `KeytermExtractionOutput { keyterms: list[str] }`. The actor writes the list to `stage_question_banks.extracted_keyterms`.
+- **Engine-side** (every session start): `build_session_config` loads the cached list onto `SessionConfig.keyterms`. The engine's `assemble_keyterms` merger prepends the candidate's first name, dedupes, caps at 50, and hands the list to `deepgram.STT(keyterm=[…])`.
+- **Fallback:** if a bank's `extracted_keyterms` is null (legacy, never regenerated), the engine ships `[candidate.first_name]` only. Deepgram still works, just without brand boost. User has confirmed (2026-05-19) this is acceptable in dev mode — no backfill needed.
 
-**Tech Stack:** Python 3.13, Pydantic v2, LiveKit Agents, `livekit.plugins.deepgram`, pytest. Docker Compose for running tests.
+**Tech Stack:** Python 3.13, Pydantic v2, SQLAlchemy async + asyncpg, Alembic, instructor + OpenAI, LiveKit Agents, `livekit.plugins.deepgram`, pytest. Docker Compose for tests.
 
-**Spec:** `docs/superpowers/specs/2026-05-19-deepgram-keyterm-migration-design.md` (commits `a927a69` … `9cd8fdd`).
+**Spec:** `docs/superpowers/specs/2026-05-19-deepgram-keyterm-migration-design.md` (current head `879b1e5`).
 
-**Out of scope (per spec Non-goals):** `orchestrator.py` continuation watcher (preserved verbatim), EOU/endpointing re-tuning, TTS, VAD, noise cancellation, mid-session keyterm updates, LLM-augmented extraction, Sarvam removal.
+**Out of scope (per spec Non-goals):** `orchestrator.py` continuation watcher (preserved verbatim — must remain functional after this migration); EOU/endpointing re-tuning; TTS; VAD; noise cancellation; mid-session keyterm updates; hybrid regex+LLM; Sarvam removal; backfill of legacy banks.
 
 ---
 
-## Task 1: Register the `audio.stt.keyterms_applied` audit-event kind
+## Phase A — Bank-side keyterm extraction (LLM call at bank generation)
+
+## Task 1: Alembic migration `0029_extracted_keyterms`
+
+**Files:**
+- Create: `backend/nexus/migrations/versions/0029_extracted_keyterms.py`
+
+- [ ] **Step 1: Generate the migration scaffold.**
+
+```bash
+docker compose -f backend/nexus/docker-compose.yml run --rm nexus \
+  alembic revision -m "extracted_keyterms"
+```
+
+Note the generated filename (Alembic will name it something like `0029_xxx_extracted_keyterms.py`). If the prefix isn't `0029`, rename the file to start with `0029_` to match the project's convention (see `backend/nexus/CLAUDE.md` migration log).
+
+- [ ] **Step 2: Fill in the migration body.**
+
+Open the new file. Replace its body with:
+
+```python
+"""extracted_keyterms
+
+Revision ID: 0029_extracted_keyterms
+Revises: 0028_audio_tuning_summary
+Create Date: 2026-05-19
+"""
+from alembic import op
+import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
+
+# revision identifiers, used by Alembic.
+revision = "0029_extracted_keyterms"
+down_revision = "0028_audio_tuning_summary"
+branch_labels = None
+depends_on = None
+
+
+def upgrade() -> None:
+    """Add stage_question_banks.extracted_keyterms (JSONB, nullable).
+
+    Populated by question_bank/actors.py:generate_question_bank_stage as its
+    final step. NULL means "extraction hasn't run for this bank yet" — the
+    engine falls back to candidate-name-only STT boosting. Per spec
+    docs/superpowers/specs/2026-05-19-deepgram-keyterm-migration-design.md,
+    legacy banks are NOT backfilled; recruiter regenerates to populate.
+    """
+    op.add_column(
+        "stage_question_banks",
+        sa.Column("extracted_keyterms", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+    )
+
+
+def downgrade() -> None:
+    op.drop_column("stage_question_banks", "extracted_keyterms")
+```
+
+- [ ] **Step 3: Run the migration up.**
+
+```bash
+docker compose -f backend/nexus/docker-compose.yml run --rm nexus \
+  alembic upgrade head
+```
+
+Expected: clean upgrade, exit 0.
+
+- [ ] **Step 4: Verify the column exists.**
+
+```bash
+docker compose -f backend/nexus/docker-compose.yml run --rm nexus python -c "
+import asyncio
+from sqlalchemy import text
+from app.database import get_bypass_db
+
+async def check():
+    async with get_bypass_db() as db:
+        result = await db.execute(text(\"SELECT column_name, data_type FROM information_schema.columns WHERE table_name='stage_question_banks' AND column_name='extracted_keyterms'\"))
+        rows = result.fetchall()
+        print(rows)
+
+asyncio.run(check())
+"
+```
+
+Expected output: `[('extracted_keyterms', 'jsonb')]`
+
+- [ ] **Step 5: Verify the downgrade works.**
+
+```bash
+docker compose -f backend/nexus/docker-compose.yml run --rm nexus \
+  alembic downgrade -1
+docker compose -f backend/nexus/docker-compose.yml run --rm nexus \
+  alembic upgrade head
+```
+
+Both commands should succeed. Re-run the check from Step 4 to confirm the column re-exists after the re-upgrade.
+
+- [ ] **Step 6: Update `backend/nexus/CLAUDE.md` migration log.**
+
+Find the section that lists migrations (search for `0028_audio_tuning_summary`). Add a one-line entry immediately below:
+
+```
+- `0029_extracted_keyterms` — Adds `stage_question_banks.extracted_keyterms JSONB NULL`. Populated by `question_bank/actors.py:generate_question_bank_stage` after refinement completes; consumed by the engine at session start for Deepgram nova-3 keyterm prompting. Legacy banks not backfilled (regeneration repopulates).
+```
+
+Also update the "current head" line at the top of that section from `0028_audio_tuning_summary` to `0029_extracted_keyterms`.
+
+- [ ] **Step 7: Add the ORM column.**
+
+Open `backend/nexus/app/modules/question_bank/models.py`. Find the `StageQuestionBank` (or similarly named) SQLAlchemy class and the existing columns (`is_stale`, `pipeline_version_at_generation`, `stage_config_snapshot`, etc.). Add immediately after them:
+
+```python
+    extracted_keyterms: Mapped[list[str] | None] = mapped_column(
+        JSONB, nullable=True
+    )
+```
+
+Make sure `JSONB` is imported at the top of the file (e.g., `from sqlalchemy.dialects.postgresql import JSONB` if it isn't already).
+
+- [ ] **Step 8: Smoke-test the ORM.**
+
+```bash
+docker compose -f backend/nexus/docker-compose.yml run --rm nexus python -c "from app.modules.question_bank.models import StageQuestionBankModel; print(StageQuestionBankModel.__table__.columns['extracted_keyterms'])"
+```
+
+Expected: prints a column reference without error.
+
+- [ ] **Step 9: Commit.**
+
+```bash
+git add backend/nexus/migrations/versions/0029_extracted_keyterms.py \
+        backend/nexus/CLAUDE.md \
+        backend/nexus/app/modules/question_bank/models.py
+git commit -m "$(cat <<'EOF'
+feat(migrations): 0029 — stage_question_banks.extracted_keyterms
+
+Lazy-populated JSONB column for the per-bank STT keyterm list. Populated
+by the question_bank actor at bank-generation time and consumed by the
+engine for Deepgram nova-3 keyterm prompting. NULL on legacy banks;
+regenerating the bank populates it.
+EOF
+)"
+```
+
+---
+
+## Task 2: AI schema `KeytermExtractionOutput`
+
+**Files:**
+- Modify: `backend/nexus/app/ai/schemas.py`
+- Modify: `backend/nexus/tests/ai/test_schemas.py` (or create if missing)
+
+- [ ] **Step 1: Write failing tests for the schema.**
+
+Add to `backend/nexus/tests/ai/test_schemas.py` (create the file if it doesn't exist; mirror the imports of any existing test file under `tests/ai/`):
+
+```python
+from __future__ import annotations
+
+import pytest
+from pydantic import ValidationError
+
+from app.ai.schemas import KeytermExtractionOutput
+
+
+class TestKeytermExtractionOutput:
+    def test_valid_input_accepted(self) -> None:
+        out = KeytermExtractionOutput(
+            keyterms=[f"Brand{i}" for i in range(20)]
+        )
+        assert len(out.keyterms) == 20
+
+    def test_too_few_terms_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            KeytermExtractionOutput(keyterms=["Only", "Five", "Brands", "Here", "x"])
+
+    def test_too_many_terms_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            KeytermExtractionOutput(keyterms=[f"X{i}" for i in range(51)])
+
+    def test_empty_string_in_list_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            KeytermExtractionOutput(keyterms=["Valid"] * 9 + [""])
+
+    def test_overly_long_term_rejected(self) -> None:
+        too_long = "x" * 81
+        with pytest.raises(ValidationError):
+            KeytermExtractionOutput(keyterms=["Valid"] * 9 + [too_long])
+```
+
+- [ ] **Step 2: Verify tests fail.**
+
+```bash
+docker compose -f backend/nexus/docker-compose.yml run --rm nexus pytest tests/ai/test_schemas.py::TestKeytermExtractionOutput -v
+```
+
+Expected: `ImportError` on `KeytermExtractionOutput`.
+
+- [ ] **Step 3: Add the schema.**
+
+Open `backend/nexus/app/ai/schemas.py`. At the end of the file, append:
+
+```python
+class KeytermExtractionOutput(BaseModel):
+    """Output schema for the per-bank STT keyterm extraction LLM call.
+
+    Used by question_bank/actors.py:generate_question_bank_stage to populate
+    stage_question_banks.extracted_keyterms. Consumed by the engine at session
+    start to bias Deepgram nova-3 STT toward role-specific vocabulary.
+
+    See docs/superpowers/specs/2026-05-19-deepgram-keyterm-migration-design.md.
+    """
+
+    keyterms: list[str] = Field(min_length=10, max_length=50)
+
+    @model_validator(mode="after")
+    def _validate_each_term(self) -> "KeytermExtractionOutput":
+        for term in self.keyterms:
+            if not term.strip():
+                raise ValueError("keyterms must not contain empty strings")
+            if len(term) > 80:
+                raise ValueError(f"keyterm too long ({len(term)} chars): {term!r}")
+        return self
+```
+
+If `model_validator` and `Field` aren't already imported at the top, add them — `app/ai/schemas.py` already imports several Pydantic primitives, follow that pattern.
+
+- [ ] **Step 4: Verify tests pass.**
+
+```bash
+docker compose -f backend/nexus/docker-compose.yml run --rm nexus pytest tests/ai/test_schemas.py::TestKeytermExtractionOutput -v
+```
+
+Expected: 5 passed.
+
+- [ ] **Step 5: Commit.**
+
+```bash
+git add backend/nexus/app/ai/schemas.py backend/nexus/tests/ai/test_schemas.py
+git commit -m "$(cat <<'EOF'
+feat(ai/schemas): KeytermExtractionOutput — strict 10-50 term Pydantic model
+
+Output schema for the upcoming per-bank STT keyterm extraction LLM call.
+Bounds enforce Deepgram's 20-50 recommended range with safety floor and
+ceiling; per-term validators reject empty strings and entries over 80
+chars.
+EOF
+)"
+```
+
+---
+
+## Task 3: New AIConfig field `question_bank_keyterm_model`
+
+**Files:**
+- Modify: `backend/nexus/app/config.py`
+- Modify: `backend/nexus/app/ai/config.py`
+- Modify: `backend/nexus/.env.example`
+
+- [ ] **Step 1: Add the field to `Settings`.**
+
+Open `backend/nexus/app/config.py`. Find the existing `question_bank_*` fields (search for `question_bank_model` — there should be a line like `question_bank_model: str = "gpt-5.3-...`). Add immediately below:
+
+```python
+    question_bank_keyterm_model: str = "gpt-5.4-nano-2026-03-17"
+```
+
+- [ ] **Step 2: Expose it on `AIConfig`.**
+
+Open `backend/nexus/app/ai/config.py`. Find the existing `question_bank_model` property. Add immediately below:
+
+```python
+    @property
+    def question_bank_keyterm_model(self) -> str:
+        return self._settings.question_bank_keyterm_model
+```
+
+- [ ] **Step 3: Add to `.env.example`.**
+
+Open `backend/nexus/.env.example`. Find the existing `QUESTION_BANK_MODEL=…` line. Add immediately below:
+
+```
+# Fast/cheap model for the per-bank STT keyterm extraction call. Runs
+# once per bank generation; result is cached in
+# stage_question_banks.extracted_keyterms. Default matches the speaker
+# model (nano-class).
+QUESTION_BANK_KEYTERM_MODEL=gpt-5.4-nano-2026-03-17
+```
+
+- [ ] **Step 4: Smoke-check.**
+
+```bash
+docker compose -f backend/nexus/docker-compose.yml run --rm nexus python -c "from app.ai.config import ai_config; print(ai_config.question_bank_keyterm_model)"
+```
+
+Expected output: `gpt-5.4-nano-2026-03-17` (or whatever's in your local `.env`).
+
+- [ ] **Step 5: Commit.**
+
+```bash
+git add backend/nexus/app/config.py backend/nexus/app/ai/config.py backend/nexus/.env.example
+git commit -m "$(cat <<'EOF'
+feat(config): add question_bank_keyterm_model — gpt-5.4-nano-2026-03-17
+
+New AIConfig field for the upcoming per-bank STT keyterm extraction LLM
+call. Defaults to the same nano-class model used by Speaker — fast
+and cheap; this call runs once per bank generation.
+EOF
+)"
+```
+
+---
+
+## Task 4: Versioned prompt `question_bank_keyterms.txt`
+
+**Files:**
+- Create: `backend/nexus/prompts/v1/question_bank_keyterms.txt`
+
+- [ ] **Step 1: Write the prompt.**
+
+Create `backend/nexus/prompts/v1/question_bank_keyterms.txt` with the following content. The prompt-loader convention is `system_prompt` then a `==USER==` separator then `user_template` (verify by looking at any existing v1 prompt file, e.g., `question_bank_common.txt`, and follow its exact separator convention if different):
+
+```
+You extract speech-recognition keyterms for Deepgram STT. The output list
+will boost recognition of role-specific vocabulary during a live spoken
+interview, so the speech-to-text correctly transcribes brand names and
+technical jargon the candidate is likely to say.
+
+INCLUDE in the keyterms:
+- Proper-noun brand / product names: MuleSoft, Salesforce, Kubernetes, PostgreSQL, ServiceNow
+- Multi-word brand names as a single keyterm string: "Dell Boomi", "Apache Kafka", "Amazon Redshift"
+- Acronyms commonly spoken in this role: API, REST, SOAP, ESB, ETL, SQL, JSON, XML, OAuth2, JWT
+- Methodology / pattern names that are spoken jargon: API-led, microservices, event-driven, EIP, DLQ
+- Mixed-case brands: iPaaS, gRPC, mTLS, eBay
+- Digit-bearing identifiers: S3, EC2, Java21, Postgres15
+- Industry-specific abbreviations spoken by senior practitioners in this domain
+
+DO NOT include:
+- Common English words (the, system, platform, experience, candidate)
+- Generic adjectives (scalable, reliable, robust)
+- Words that are unlikely to confuse a speech recognizer (plain English nouns)
+- The candidate's name (added separately at session start)
+- Job-title scaffolding ("Sr.", "Engineer", "Manager" by themselves)
+
+FORMAT REQUIREMENTS:
+- Preserve canonical capitalization for proper nouns: MuleSoft (not mulesoft); Salesforce (not SalesForce)
+- Each entry is distinct — no near-duplicates ("API" + "APIs" → just "API")
+- 20 to 40 entries total (hard maximum 50)
+- Use the candidate-facing canonical name (Kubernetes, not K8s)
+- Each entry must be a real spoken phrase, not generic English
+
+==USER==
+You are extracting speech-recognition keyterms for a {job_title} interview at {hiring_company_name}.
+
+Company industry: {industry}
+Company about: {company_about}
+Hiring bar: {hiring_bar}
+
+Role summary:
+{role_summary}
+
+Hiring signals (the criteria recruiters care about for this role):
+{signals_bullet_list}
+
+Final question bank for this interview stage:
+{questions_block}
+
+Extract the 20-40 most useful keyterms for Deepgram nova-3 STT recognition. Return them in the
+order most likely to be spoken during the interview.
+```
+
+The exact template-variable names (`{job_title}`, `{questions_block}`, etc.) are placeholders consumed by Python's `.format(...)` in the helper from Task 5 — the helper supplies them.
+
+- [ ] **Step 2: Verify prompt_loader picks it up.**
+
+```bash
+docker compose -f backend/nexus/docker-compose.yml run --rm nexus python -c "from app.ai.prompts import prompt_loader; system, user_template = prompt_loader.load_pair('question_bank_common', 'question_bank_keyterms'); print(f'system: {len(system)} chars'); print(f'user_template: {len(user_template)} chars')"
+```
+
+Expected output: both strings non-empty. If `load_pair` raises `FileNotFoundError` or similar, the prompt-loader convention may need a different file path (check `app/ai/prompts.py` for how it composes the path).
+
+- [ ] **Step 3: Commit.**
+
+```bash
+git add backend/nexus/prompts/v1/question_bank_keyterms.txt
+git commit -m "$(cat <<'EOF'
+feat(prompts): question_bank_keyterms — v1 prompt for STT keyterm extraction
+
+System prompt instructs gpt-5.4-nano to extract 20-40 role-specific
+speech-recognition keyterms from the bundle (job title, company profile,
+role summary, signals, question bank). Includes inclusion / exclusion
+criteria, canonical-capitalization rules, and multi-word phrase guidance
+aligned with Deepgram nova-3 keyterm prompting docs.
+EOF
+)"
+```
+
+---
+
+## Task 5: `_extract_bank_keyterms` helper in `refine.py`
+
+**Files:**
+- Modify: `backend/nexus/app/modules/question_bank/refine.py`
+- Create: `backend/nexus/tests/question_bank/test_refine_keyterms.py`
+
+- [ ] **Step 1: Write the failing test.**
+
+Create `backend/nexus/tests/question_bank/test_refine_keyterms.py`:
+
+```python
+"""Tests for the per-bank keyterm extraction LLM helper."""
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from app.ai.schemas import KeytermExtractionOutput
+from app.modules.question_bank.refine import extract_bank_keyterms
+
+
+@pytest.mark.asyncio
+async def test_helper_returns_keyterm_extraction_output() -> None:
+    """The helper builds the user message, calls instructor, returns the model."""
+    mock_response = KeytermExtractionOutput(
+        keyterms=[f"Term{i}" for i in range(15)]
+    )
+
+    fake_client = AsyncMock()
+    fake_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+    with patch(
+        "app.modules.question_bank.refine.get_openai_client",
+        return_value=fake_client,
+    ):
+        result = await extract_bank_keyterms(
+            job_title="Sr. Integration Engineer",
+            hiring_company_name="Workato",
+            industry="SaaS",
+            company_about="Workato is an enterprise automation platform.",
+            hiring_bar="Builders who ship.",
+            role_summary="Lead end-to-end iPaaS delivery on MuleSoft / TIBCO / Boomi.",
+            signals=["5+ years with MuleSoft, TIBCO, or Boomi", "API-led architecture"],
+            questions=[
+                {"text": "How would you design API-led connectivity for order sync?"},
+                {"text": "Walk through your end-to-end MuleSoft deployment."},
+            ],
+            bank_id="bank-1",
+            tenant_id="tenant-1",
+        )
+
+    assert isinstance(result, KeytermExtractionOutput)
+    assert len(result.keyterms) == 15
+    # Confirm instructor was called with the configured model + schema
+    call_kwargs = fake_client.chat.completions.create.await_args.kwargs
+    assert call_kwargs["response_model"] is KeytermExtractionOutput
+
+
+@pytest.mark.asyncio
+async def test_helper_propagates_llm_exception() -> None:
+    """LLM failure surfaces as an exception — caller (actor) catches and logs."""
+    fake_client = AsyncMock()
+    fake_client.chat.completions.create = AsyncMock(
+        side_effect=RuntimeError("simulated LLM failure")
+    )
+
+    with patch(
+        "app.modules.question_bank.refine.get_openai_client",
+        return_value=fake_client,
+    ):
+        with pytest.raises(RuntimeError, match="simulated LLM failure"):
+            await extract_bank_keyterms(
+                job_title="x",
+                hiring_company_name="x",
+                industry="x",
+                company_about="x",
+                hiring_bar="x",
+                role_summary="x",
+                signals=["x"],
+                questions=[{"text": "x"}],
+                bank_id="bank-1",
+                tenant_id="tenant-1",
+            )
+```
+
+- [ ] **Step 2: Verify the test fails.**
+
+```bash
+docker compose -f backend/nexus/docker-compose.yml run --rm nexus pytest tests/question_bank/test_refine_keyterms.py -v
+```
+
+Expected: `ImportError` on `extract_bank_keyterms`.
+
+- [ ] **Step 3: Implement the helper.**
+
+Open `backend/nexus/app/modules/question_bank/refine.py`. Append to the end of the file:
+
+```python
+from app.ai.schemas import KeytermExtractionOutput
+
+
+async def extract_bank_keyterms(
+    *,
+    job_title: str,
+    hiring_company_name: str,
+    industry: str,
+    company_about: str,
+    hiring_bar: str,
+    role_summary: str,
+    signals: list[str],
+    questions: list[dict],
+    bank_id: str,
+    tenant_id: str,
+) -> KeytermExtractionOutput:
+    """Extract STT keyterms for one bank via a single nano-class LLM call.
+
+    See spec docs/superpowers/specs/2026-05-19-deepgram-keyterm-migration-design.md.
+    Caller (generate_question_bank_stage) is expected to write the returned
+    list to stage_question_banks.extracted_keyterms and to tolerate exceptions
+    (an empty column is acceptable; the engine falls back to candidate-name-only).
+    """
+    system_prompt, user_template = prompt_loader.load_pair(
+        "question_bank_common", "question_bank_keyterms",
+    )
+
+    signals_bullet_list = "\n".join(f"- {s}" for s in signals)
+    questions_block = "\n\n".join(
+        f"Q{i+1}: {q.get('text', '')}" for i, q in enumerate(questions)
+    )
+
+    user_message = user_template.format(
+        job_title=job_title,
+        hiring_company_name=hiring_company_name,
+        industry=industry,
+        company_about=company_about,
+        hiring_bar=hiring_bar,
+        role_summary=role_summary,
+        signals_bullet_list=signals_bullet_list,
+        questions_block=questions_block,
+    )
+
+    client = get_openai_client()
+
+    with _tracer.start_as_current_span("openai.chat.completions.create"):
+        set_llm_span_attributes(
+            prompt_name="question_bank_keyterms",
+            prompt_version="v1",
+            tenant_id=tenant_id,
+            bank_id=bank_id,
+        )
+        result: KeytermExtractionOutput = await client.chat.completions.create(
+            model=ai_config.question_bank_keyterm_model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+            response_model=KeytermExtractionOutput,
+        )
+
+    return result
+```
+
+Make sure `_tracer`, `prompt_loader`, `get_openai_client`, `set_llm_span_attributes`, and `ai_config` are already imported at the top of the file (the existing refine helpers use all of these — follow their pattern).
+
+- [ ] **Step 4: Verify both tests pass.**
+
+```bash
+docker compose -f backend/nexus/docker-compose.yml run --rm nexus pytest tests/question_bank/test_refine_keyterms.py -v
+```
+
+Expected: 2 passed.
+
+- [ ] **Step 5: Commit.**
+
+```bash
+git add backend/nexus/app/modules/question_bank/refine.py backend/nexus/tests/question_bank/test_refine_keyterms.py
+git commit -m "$(cat <<'EOF'
+feat(question-bank): extract_bank_keyterms — one LLM call per bank
+
+New refine.py helper makes a single nano-class instructor call returning
+KeytermExtractionOutput. Caller (the generate_question_bank_stage actor,
+Task 6) will write the result to stage_question_banks.extracted_keyterms.
+Mock-based tests cover the happy path and exception propagation.
+EOF
+)"
+```
+
+---
+
+## Task 6: Wire the keyterm helper into `generate_question_bank_stage`
+
+**Files:**
+- Modify: `backend/nexus/app/modules/question_bank/actors.py`
+- Modify: `backend/nexus/tests/question_bank/test_generation_status_by_kind.py` (or new file `tests/question_bank/test_actors_keyterm.py`)
+
+- [ ] **Step 1: Find the actor's final step in `actors.py`.**
+
+Open `backend/nexus/app/modules/question_bank/actors.py`. Find `generate_question_bank_stage` (around line 735 per earlier grep). Locate the point where all per-question refinement has completed and the bank status is about to be transitioned to `confirmed` / `completed`. The new keyterm call must run AFTER all questions are persisted and BEFORE the bank transitions to its terminal status, so the column is populated when downstream consumers see the bank as ready.
+
+- [ ] **Step 2: Add the keyterm extraction step.**
+
+Insert the following block at the identified location (the exact local-variable names will depend on the actor's existing context; the engineer should map `job`, `company_profile`, `snapshot`, `bank`, `final_questions` to the actual names in scope):
+
+```python
+# Final step: extract STT keyterms for Deepgram nova-3 prompting (2026-05-19 spec).
+# Runs ONCE per bank generation; result cached in extracted_keyterms.
+# Failures here are NOT fatal — log and continue (the engine falls back
+# to candidate-name-only STT boosting).
+try:
+    keyterm_output = await extract_bank_keyterms(
+        job_title=job.title,
+        hiring_company_name=(company_profile.org_unit_name or ""),
+        industry=company_profile.industry,
+        company_about=company_profile.about,
+        hiring_bar=company_profile.hiring_bar,
+        role_summary=snapshot.role_summary,
+        signals=[s.value for s in snapshot.signals],
+        questions=[{"text": q.text} for q in final_questions],
+        bank_id=str(bank.id),
+        tenant_id=str(bank.tenant_id),
+    )
+    await db.execute(
+        update(StageQuestionBankModel)
+        .where(StageQuestionBankModel.id == bank.id)
+        .values(extracted_keyterms=keyterm_output.keyterms),
+    )
+    logger.info(
+        "question_bank.keyterm_extraction.complete",
+        bank_id=str(bank.id),
+        count=len(keyterm_output.keyterms),
+    )
+except Exception:
+    logger.exception(
+        "question_bank.keyterm_extraction.failed",
+        bank_id=str(bank.id),
+    )
+    # Do not re-raise — keyterm extraction is best-effort.
+```
+
+Add to the imports at the top of `actors.py` if not already present:
+
+```python
+from app.modules.question_bank.refine import extract_bank_keyterms
+from sqlalchemy import update
+```
+
+- [ ] **Step 3: Write the actor-level test.**
+
+Create `backend/nexus/tests/question_bank/test_actors_keyterm.py`:
+
+```python
+"""Integration test: bank actor writes extracted_keyterms to the DB row."""
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from app.ai.schemas import KeytermExtractionOutput
+
+
+@pytest.mark.asyncio
+async def test_actor_writes_keyterms_to_bank_row(
+    # The exact fixtures depend on the existing test harness for
+    # generate_question_bank_stage — follow tests/question_bank/test_generation_status_by_kind.py
+    # for the right fixture names (db, fully_seeded_bank_id, etc.).
+) -> None:
+    """When extract_bank_keyterms returns a valid output, the actor persists it."""
+    mock_keyterms = KeytermExtractionOutput(
+        keyterms=[f"Brand{i}" for i in range(15)]
+    )
+
+    with patch(
+        "app.modules.question_bank.actors.extract_bank_keyterms",
+        AsyncMock(return_value=mock_keyterms),
+    ):
+        # Run generate_question_bank_stage to completion using existing fixtures.
+        # ... (engineer fills in based on the harness) ...
+        pass
+
+    # Assert the bank row's extracted_keyterms column matches mock_keyterms.keyterms.
+
+
+@pytest.mark.asyncio
+async def test_actor_tolerates_keyterm_extraction_failure() -> None:
+    """LLM failure does NOT crash the actor; the column stays NULL."""
+    with patch(
+        "app.modules.question_bank.actors.extract_bank_keyterms",
+        AsyncMock(side_effect=RuntimeError("simulated")),
+    ):
+        # Run the actor; it should complete successfully (no raise).
+        pass
+    # Assert the bank row's extracted_keyterms is None.
+```
+
+NOTE: this test file has placeholders because the existing fixture conventions for `generate_question_bank_stage` aren't captured here. Engineer fills in by mirroring `tests/question_bank/test_generation_status_by_kind.py`. If that's too much friction, skip this test for v1 and rely on the unit test from Task 5 — the actor integration is verified manually during the end-to-end smoke (Task 14).
+
+- [ ] **Step 4: Run the test suite to confirm no existing regressions.**
+
+```bash
+docker compose -f backend/nexus/docker-compose.yml run --rm nexus pytest tests/question_bank -v -x
+```
+
+Expected: all pre-existing question_bank tests still pass; the new keyterm tests from Task 5 still pass.
+
+- [ ] **Step 5: Commit.**
+
+```bash
+git add backend/nexus/app/modules/question_bank/actors.py \
+        backend/nexus/tests/question_bank/test_actors_keyterm.py
+git commit -m "$(cat <<'EOF'
+feat(question-bank): actor writes extracted_keyterms after refinement
+
+generate_question_bank_stage now appends one final call to
+extract_bank_keyterms and writes the result to
+stage_question_banks.extracted_keyterms before the bank transitions to
+its terminal status. Failures are logged and swallowed — the engine
+falls back to candidate-name-only STT boosting if the column is NULL.
+EOF
+)"
+```
+
+---
+
+## Task 7: Add `SessionConfig.keyterms` field
+
+**Files:**
+- Modify: `backend/nexus/app/modules/interview_runtime/schemas.py`
+
+- [ ] **Step 1: Add the field.**
+
+Open `backend/nexus/app/modules/interview_runtime/schemas.py`. Find the `SessionConfig` class (around line 181). Locate the existing `signal_metadata: list[SignalMetadata]` field. Add immediately after it:
+
+```python
+    keyterms: list[str] = Field(
+        default_factory=list,
+        description=(
+            "STT keyterm-prompting list, extracted at bank-generation time "
+            "(see question_bank/refine.py:extract_bank_keyterms) and cached "
+            "on stage_question_banks.extracted_keyterms. Empty list when the "
+            "bank hasn't had keyterm extraction run yet — the engine then "
+            "falls back to candidate-name-only boosting. See spec "
+            "docs/superpowers/specs/2026-05-19-deepgram-keyterm-migration-design.md."
+        ),
+    )
+```
+
+- [ ] **Step 2: Smoke-check round-trip.**
+
+```bash
+docker compose -f backend/nexus/docker-compose.yml run --rm nexus python -c "
+from app.modules.interview_runtime.schemas import SessionConfig
+sc = SessionConfig.model_construct(keyterms=['MuleSoft', 'TIBCO'])
+print(sc.keyterms)
+"
+```
+
+Expected: `['MuleSoft', 'TIBCO']`.
+
+- [ ] **Step 3: Commit.**
+
+```bash
+git add backend/nexus/app/modules/interview_runtime/schemas.py
+git commit -m "$(cat <<'EOF'
+feat(interview-runtime): SessionConfig.keyterms — STT keyterm cache pass-through
+
+Additive Pydantic field on the SessionConfig wire contract. Populated
+by build_session_config from stage_question_banks.extracted_keyterms;
+consumed by the interview engine for Deepgram nova-3 keyterm prompting.
+Defaults to [] so legacy callers and pre-extraction banks are
+backward-compatible.
+EOF
+)"
+```
+
+---
+
+## Task 8: Wire `build_session_config` to load `extracted_keyterms`
+
+**Files:**
+- Modify: `backend/nexus/app/modules/interview_runtime/service.py`
+- Modify: `backend/nexus/tests/interview_runtime/` (new file or existing)
+
+- [ ] **Step 1: Write the failing test.**
+
+Find the existing test that exercises `build_session_config` (search `tests/interview_runtime/` for `build_session_config`). Append (or create a new file `test_build_session_config_keyterms.py`):
+
+```python
+@pytest.mark.asyncio
+async def test_build_session_config_loads_extracted_keyterms_when_present(
+    db, seeded_session_with_confirmed_bank
+) -> None:
+    """When the bank row has extracted_keyterms set, SessionConfig.keyterms reflects it."""
+    # Pre-set the column on the bank row
+    await db.execute(
+        update(StageQuestionBankModel)
+        .where(StageQuestionBankModel.id == seeded_session_with_confirmed_bank.bank_id)
+        .values(extracted_keyterms=["MuleSoft", "TIBCO", "Boomi"]),
+    )
+    await db.commit()
+
+    sc = await build_session_config(
+        db,
+        session_id=seeded_session_with_confirmed_bank.session_id,
+        tenant_id=seeded_session_with_confirmed_bank.tenant_id,
+    )
+    assert sc.keyterms == ["MuleSoft", "TIBCO", "Boomi"]
+
+
+@pytest.mark.asyncio
+async def test_build_session_config_keyterms_empty_when_column_null(
+    db, seeded_session_with_confirmed_bank
+) -> None:
+    """When extracted_keyterms IS NULL, SessionConfig.keyterms is an empty list."""
+    sc = await build_session_config(
+        db,
+        session_id=seeded_session_with_confirmed_bank.session_id,
+        tenant_id=seeded_session_with_confirmed_bank.tenant_id,
+    )
+    assert sc.keyterms == []
+```
+
+Adapt the fixture name `seeded_session_with_confirmed_bank` to whatever the existing harness in `tests/interview_runtime/` uses. If the test harness is unfamiliar, copy the setup from the closest existing `build_session_config` test in the same directory.
+
+- [ ] **Step 2: Verify the tests fail.**
+
+```bash
+docker compose -f backend/nexus/docker-compose.yml run --rm nexus pytest tests/interview_runtime/test_build_session_config_keyterms.py -v
+```
+
+Expected: `AssertionError: assert [] == ['MuleSoft', 'TIBCO', 'Boomi']` on the first test (because `build_session_config` doesn't yet read the new column).
+
+- [ ] **Step 3: Modify `build_session_config` to read the column.**
+
+Open `backend/nexus/app/modules/interview_runtime/service.py`. Find the section (around lines 123–135 per earlier exploration) that loads the question bank row. Wherever the function returns or constructs `SessionConfig(...)`, add the `keyterms` argument sourced from the bank row:
+
+```python
+keyterms_value: list[str] = []
+if bank.extracted_keyterms is not None:
+    # JSONB → Python list. Stored as list[str]; defensive copy.
+    keyterms_value = list(bank.extracted_keyterms)
+
+# ... (existing SessionConfig construction) ...
+
+return SessionConfig(
+    # ... (existing fields) ...
+    keyterms=keyterms_value,
+)
+```
+
+- [ ] **Step 4: Verify both tests pass.**
+
+```bash
+docker compose -f backend/nexus/docker-compose.yml run --rm nexus pytest tests/interview_runtime/test_build_session_config_keyterms.py -v
+```
+
+Expected: 2 passed.
+
+- [ ] **Step 5: Commit.**
+
+```bash
+git add backend/nexus/app/modules/interview_runtime/service.py \
+        backend/nexus/tests/interview_runtime/test_build_session_config_keyterms.py
+git commit -m "$(cat <<'EOF'
+feat(interview-runtime): propagate extracted_keyterms into SessionConfig
+
+build_session_config now reads stage_question_banks.extracted_keyterms
+and threads it onto SessionConfig.keyterms for the engine to consume.
+NULL column → empty list (engine falls back to candidate-name-only).
+EOF
+)"
+```
+
+---
+
+## Phase B — Engine-side keyterm consumption
+
+## Task 9: Register the `audio.stt.keyterms_applied` audit event
 
 **Files:**
 - Modify: `backend/nexus/app/modules/interview_engine/event_kinds.py`
 - Modify: `backend/nexus/app/modules/interview_engine/audit_events.py`
 
-- [ ] **Step 1: Add the audit-event kind constant.**
+- [ ] **Step 1: Add the event-kind constant.**
 
-Open `backend/nexus/app/modules/interview_engine/event_kinds.py`. Find the line `AUDIO_STT_TRANSCRIBED = "audio.stt.transcribed"`. Add immediately below it:
+In `event_kinds.py`, after `AUDIO_STT_TRANSCRIBED = "audio.stt.transcribed"`, add:
 
 ```python
 AUDIO_STT_KEYTERMS_APPLIED = "audio.stt.keyterms_applied"
@@ -30,79 +910,59 @@ AUDIO_STT_KEYTERMS_APPLIED = "audio.stt.keyterms_applied"
 
 - [ ] **Step 2: Add the payload model.**
 
-Open `backend/nexus/app/modules/interview_engine/audit_events.py`. The file already imports `from pydantic import BaseModel, Field` and `from typing import Any, Literal`. Append at the end of the file:
+Append to `audit_events.py`:
 
 ```python
 # STT keyterm prompting (Phase 3D.deepgram-keyterm — 2026-05-19)
 class STTKeytermsAppliedPayload(BaseModel):
-    """One-shot record of the keyterm list passed to the STT plugin at session start.
+    """One-shot record of the keyterm list passed to the STT plugin at session start."""
 
-    Emitted once per session, right before AgentSession construction.
-    Provider is 'sarvam' (count=0, terms=[]) when Sarvam is toggled back via env,
-    or 'deepgram' with the full list. Used for forensic debugging when STT quality
-    regresses on a specific role — pairs with the existing audit envelope's
-    model_versions.stt field.
-
-    See docs/superpowers/specs/2026-05-19-deepgram-keyterm-migration-design.md.
-    """
     provider: Literal["sarvam", "deepgram"]
     count: int = Field(ge=0)
     terms: list[str]
     sources: dict[str, int]
 ```
 
-- [ ] **Step 3: Smoke-import the new symbols.**
-
-Run from the repo root:
+- [ ] **Step 3: Smoke-import.**
 
 ```bash
-docker compose -f backend/nexus/docker-compose.yml run --rm nexus python -c "from app.modules.interview_engine.event_kinds import AUDIO_STT_KEYTERMS_APPLIED; from app.modules.interview_engine.audit_events import STTKeytermsAppliedPayload; p = STTKeytermsAppliedPayload(provider='deepgram', count=2, terms=['MuleSoft', 'TIBCO'], sources={'signal_proper_nouns': 2}); print(AUDIO_STT_KEYTERMS_APPLIED, p.model_dump())"
+docker compose -f backend/nexus/docker-compose.yml run --rm nexus python -c "from app.modules.interview_engine.event_kinds import AUDIO_STT_KEYTERMS_APPLIED; from app.modules.interview_engine.audit_events import STTKeytermsAppliedPayload; print(AUDIO_STT_KEYTERMS_APPLIED); print(STTKeytermsAppliedPayload(provider='deepgram', count=2, terms=['a','b'], sources={'x': 2}).model_dump())"
 ```
-
-Expected output:
-```
-audio.stt.keyterms_applied {'provider': 'deepgram', 'count': 2, 'terms': ['MuleSoft', 'TIBCO'], 'sources': {'signal_proper_nouns': 2}}
-```
-
-If you see `ImportError` or `ValidationError`, fix before continuing.
 
 - [ ] **Step 4: Commit.**
 
 ```bash
-git add backend/nexus/app/modules/interview_engine/event_kinds.py backend/nexus/app/modules/interview_engine/audit_events.py
+git add backend/nexus/app/modules/interview_engine/event_kinds.py \
+        backend/nexus/app/modules/interview_engine/audit_events.py
 git commit -m "$(cat <<'EOF'
 feat(interview-engine): register audio.stt.keyterms_applied audit event
 
-New event kind + STTKeytermsAppliedPayload Pydantic model. Foundational
-for the upcoming Deepgram nova-3 keyterm migration — emitted once at
-session start with the keyterms passed to the STT plugin.
+Event kind + STTKeytermsAppliedPayload Pydantic model. Emitted once per
+session by agent.py with the keyterms passed to the STT plugin.
 EOF
 )"
 ```
 
 ---
 
-## Task 2: TDD the keyterm extractor — basic cases + skeleton
+## Task 10: Engine merger `assemble_keyterms`
 
 **Files:**
-- Create: `backend/nexus/tests/interview_engine/test_keyterms.py`
 - Create: `backend/nexus/app/modules/interview_engine/keyterms.py`
+- Create: `backend/nexus/tests/interview_engine/test_keyterms.py`
 
-- [ ] **Step 1: Create the test file with helper + first three tests.**
+- [ ] **Step 1: Write the failing tests.**
 
-Create `backend/nexus/tests/interview_engine/test_keyterms.py` with the following content. The tests target the function and dataclass that don't exist yet — that's the whole point of TDD.
+Create `backend/nexus/tests/interview_engine/test_keyterms.py`:
 
 ```python
-"""Unit tests for the deterministic keyterm extractor.
+"""Unit tests for the engine-side keyterm merger.
 
 Reference spec: docs/superpowers/specs/2026-05-19-deepgram-keyterm-migration-design.md
 """
 from __future__ import annotations
 
-from app.modules.interview_engine.keyterms import (
-    KeytermExtraction,
-    extract_keyterms,
-)
+from app.modules.interview_engine.keyterms import KeytermExtraction, assemble_keyterms
 from app.modules.interview_runtime.schemas import (
     CandidateContext,
     CompanyContext,
@@ -114,19 +974,15 @@ from app.modules.interview_runtime.schemas import (
 def _make_session_config(
     *,
     candidate_name: str = "Ishant Pundir",
-    hiring_company_name: str | None = "Workato",
-    job_title: str = "Sr. Integration Engineer",
-    signals: list[str] | None = None,
-    role_summary: str = "",
+    keyterms: list[str] | None = None,
 ) -> SessionConfig:
-    """Build a minimal SessionConfig fixture for keyterm-extractor tests."""
     return SessionConfig(
         session_id="00000000-0000-0000-0000-000000000001",
         job_id="00000000-0000-0000-0000-000000000002",
         candidate_id="00000000-0000-0000-0000-000000000003",
-        job_title=job_title,
-        hiring_company_name=hiring_company_name,
-        role_summary=role_summary,
+        job_title="Sr. Integration Engineer",
+        hiring_company_name="Workato",
+        role_summary="x",
         jd_text=None,
         seniority_level="senior",
         company=CompanyContext(about="x", industry="x", hiring_bar="x"),
@@ -140,64 +996,97 @@ def _make_session_config(
             questions=[],
             advance_behavior="auto_advance",
         ),
-        signals=signals or [],
+        signals=[],
         signal_metadata=[],
+        keyterms=keyterms or [],
     )
 
 
-class TestExtractKeytermsMinimal:
-    def test_returns_keyterm_extraction_dataclass(self) -> None:
-        result = extract_keyterms(_make_session_config())
+class TestAssembleKeyterms:
+    def test_returns_keyterm_extraction(self) -> None:
+        result = assemble_keyterms(_make_session_config())
         assert isinstance(result, KeytermExtraction)
-        assert isinstance(result.terms, list)
-        assert isinstance(result.sources, dict)
 
-    def test_minimum_input_emits_candidate_first_name_and_job_title(self) -> None:
-        result = extract_keyterms(
+    def test_empty_keyterms_falls_back_to_candidate_first_name(self) -> None:
+        result = assemble_keyterms(
+            _make_session_config(candidate_name="Ishant Pundir", keyterms=[]),
+        )
+        assert result.terms == ["Ishant"]
+        assert result.sources == {"candidate_name": 1}
+
+    def test_keyterms_merged_after_candidate_name(self) -> None:
+        result = assemble_keyterms(
             _make_session_config(
-                candidate_name="Ishant Pundir",
-                hiring_company_name=None,
-                signals=[],
-                role_summary="",
+                candidate_name="Ishant",
+                keyterms=["MuleSoft", "TIBCO", "Boomi"],
             )
+        )
+        assert result.terms == ["Ishant", "MuleSoft", "TIBCO", "Boomi"]
+        assert result.sources == {"candidate_name": 1, "bank_cached": 3}
+
+    def test_case_insensitive_dedupe_first_seen_wins(self) -> None:
+        result = assemble_keyterms(
+            _make_session_config(
+                candidate_name="MuleSoft",  # contrived collision
+                keyterms=["mulesoft", "TIBCO"],
+            )
+        )
+        # First-seen "MuleSoft" wins; the second "mulesoft" entry is dropped
+        lowered = [t.lower() for t in result.terms]
+        assert lowered.count("mulesoft") == 1
+        assert "MuleSoft" in result.terms
+        assert "TIBCO" in result.terms
+
+    def test_cap_at_fifty(self) -> None:
+        many = [f"Brand{i}Term" for i in range(100)]
+        result = assemble_keyterms(
+            _make_session_config(candidate_name="Ishant", keyterms=many),
+        )
+        assert len(result.terms) == 50
+        assert result.terms[0] == "Ishant"  # candidate-name survives at the front
+
+    def test_candidate_first_token_only(self) -> None:
+        result = assemble_keyterms(
+            _make_session_config(candidate_name="Ishant Pundir Kumar"),
         )
         assert "Ishant" in result.terms
         assert "Pundir" not in result.terms
-        assert "Sr. Integration Engineer" in result.terms
-        assert result.sources["candidate_name"] == 1
-        assert result.sources["job_title"] == 1
+        assert "Kumar" not in result.terms
 
-    def test_hiring_company_name_included_when_present(self) -> None:
-        result = extract_keyterms(
-            _make_session_config(hiring_company_name="Workato"),
+    def test_empty_candidate_name_handled(self) -> None:
+        result = assemble_keyterms(
+            _make_session_config(
+                candidate_name="",
+                keyterms=["MuleSoft"],
+            )
         )
-        assert "Workato" in result.terms
-        assert result.sources["hiring_company"] == 1
+        # No candidate-name term emitted
+        assert "candidate_name" not in result.sources
+        assert result.terms == ["MuleSoft"]
 ```
 
-- [ ] **Step 2: Run the tests, confirm they fail with ImportError.**
+- [ ] **Step 2: Verify tests fail.**
 
 ```bash
 docker compose -f backend/nexus/docker-compose.yml run --rm nexus pytest tests/interview_engine/test_keyterms.py -v
 ```
 
-Expected: `ModuleNotFoundError: No module named 'app.modules.interview_engine.keyterms'`.
+Expected: `ModuleNotFoundError`.
 
-- [ ] **Step 3: Create the keyterms module with a minimal implementation that passes the first three tests.**
+- [ ] **Step 3: Implement the merger.**
 
 Create `backend/nexus/app/modules/interview_engine/keyterms.py`:
 
 ```python
-"""Deterministic per-session keyterm extractor for Deepgram nova-3.
+"""Engine-side keyterm assembly for Deepgram nova-3 STT.
 
-Reads SessionConfig (already-flattened wire contract; see
-app/modules/interview_runtime/schemas.py:181) and produces a bounded list of
-proper-noun-like terms and signal phrases that bias Deepgram STT toward
-role-specific vocabulary. Zero I/O, zero LiveKit deps, zero asyncpg.
+The heavy lifting (LLM-driven keyterm extraction from the job + question bank
++ company profile) happens upstream in question_bank/refine.py at
+bank-generation time and is cached on stage_question_banks.extracted_keyterms.
 
-Sarvam ignores the output (the STT factory simply does not forward it to the
-Sarvam constructor). Deepgram receives the list as `keyterm=[...]` at
-websocket open — see app/ai/realtime.py:_build_stt_deepgram.
+This module's only job is to merge that cached list with session-specific
+context (the candidate's first name) and produce a final, deduped, capped
+list for deepgram.STT(keyterm=[...]).
 
 Spec: docs/superpowers/specs/2026-05-19-deepgram-keyterm-migration-design.md
 """
@@ -207,237 +1096,18 @@ from dataclasses import dataclass
 
 from app.modules.interview_runtime.schemas import SessionConfig
 
-# Hard cap per Deepgram's "20-50 terms recommended" guidance and 500-token
-# request limit. Order is insertion order — the most important fields
-# (candidate, company, job) are added first so they always survive the cap.
 _KEYTERM_CAP = 50
 
 
 @dataclass(frozen=True)
 class KeytermExtraction:
-    """Result of the extractor — keyterms plus per-source attribution counts."""
+    """Output of assemble_keyterms — final list + per-source attribution counts."""
 
     terms: list[str]
     sources: dict[str, int]
 
 
-def extract_keyterms(session_config: SessionConfig) -> KeytermExtraction:
-    terms: list[str] = []
-    sources: dict[str, int] = {}
-
-    def _add(term: str, source: str) -> None:
-        if term and term not in terms and len(terms) < _KEYTERM_CAP:
-            terms.append(term)
-            sources[source] = sources.get(source, 0) + 1
-
-    # Candidate first name only — last names noisy / collide
-    first_name = session_config.candidate.name.split()[0] if session_config.candidate.name.strip() else ""
-    if first_name:
-        _add(first_name, "candidate_name")
-
-    # Hiring company (e.g., "Workato")
-    if session_config.hiring_company_name:
-        _add(session_config.hiring_company_name, "hiring_company")
-
-    # Job title as-is
-    if session_config.job_title:
-        _add(session_config.job_title, "job_title")
-
-    return KeytermExtraction(terms=terms, sources=sources)
-```
-
-- [ ] **Step 4: Run the tests, confirm all three pass.**
-
-```bash
-docker compose -f backend/nexus/docker-compose.yml run --rm nexus pytest tests/interview_engine/test_keyterms.py -v
-```
-
-Expected: 3 passed.
-
-- [ ] **Step 5: Commit the scaffolding.**
-
-```bash
-git add backend/nexus/tests/interview_engine/test_keyterms.py backend/nexus/app/modules/interview_engine/keyterms.py
-git commit -m "$(cat <<'EOF'
-feat(interview-engine): keyterm extractor scaffold — candidate/company/job
-
-Pure-functional extract_keyterms(SessionConfig) -> KeytermExtraction with
-the three deterministic baseline fields (candidate first name, hiring
-company, job title) wired up and unit-tested. Signal-phrase expansion
-and proper-noun extraction follow in the next task.
-EOF
-)"
-```
-
----
-
-## Task 3: TDD — signal-phrase expansion + proper-noun extraction
-
-**Files:**
-- Modify: `backend/nexus/tests/interview_engine/test_keyterms.py`
-- Modify: `backend/nexus/app/modules/interview_engine/keyterms.py`
-
-- [ ] **Step 1: Add the signal + role_summary tests.**
-
-Append to `backend/nexus/tests/interview_engine/test_keyterms.py`:
-
-```python
-class TestSignalPhraseExpansion:
-    def test_list_style_signal_emits_phrase_and_each_brand_individually(self) -> None:
-        result = extract_keyterms(
-            _make_session_config(
-                signals=["5+ years with MuleSoft, TIBCO, or Dell Boomi"],
-            )
-        )
-        # Full phrase preserved
-        assert "5+ years with MuleSoft, TIBCO, or Dell Boomi" in result.terms
-        # Each brand pulled out as its own term too
-        assert "MuleSoft" in result.terms
-        assert "TIBCO" in result.terms
-        assert "Boomi" in result.terms
-        # Source counts reflect both
-        assert result.sources["signal_phrases"] == 1
-        assert result.sources["signal_proper_nouns"] >= 3
-
-    def test_acronyms_extracted_from_signal_phrases(self) -> None:
-        result = extract_keyterms(
-            _make_session_config(
-                signals=["Hands-on RESTful and SOAP API design over JSON/XML contracts"],
-            )
-        )
-        assert "SOAP" in result.terms
-        assert "API" in result.terms
-        assert "JSON" in result.terms
-        assert "XML" in result.terms
-
-    def test_hyphenated_term_extracted_as_one_token(self) -> None:
-        result = extract_keyterms(
-            _make_session_config(
-                signals=["API-led architecture principles"],
-            )
-        )
-        assert "API-led" in result.terms
-
-    def test_camel_case_brand_extracted(self) -> None:
-        result = extract_keyterms(
-            _make_session_config(
-                signals=["Working with iPaaS platforms"],
-            )
-        )
-        assert "iPaaS" in result.terms
-
-
-class TestRoleSummaryExtraction:
-    def test_role_summary_yields_proper_nouns_only(self) -> None:
-        result = extract_keyterms(
-            _make_session_config(
-                signals=[],
-                role_summary="Delivery on ESB/iPaaS platforms (MuleSoft/TIBCO/Dell Boomi)",
-            )
-        )
-        assert "ESB" in result.terms
-        assert "iPaaS" in result.terms
-        assert "MuleSoft" in result.terms
-        assert "TIBCO" in result.terms
-        assert "Boomi" in result.terms
-        # The role_summary itself is NOT emitted as a phrase
-        assert "Delivery on ESB/iPaaS platforms (MuleSoft/TIBCO/Dell Boomi)" not in result.terms
-        assert result.sources["role_summary_proper_nouns"] >= 5
-```
-
-- [ ] **Step 2: Run the tests, confirm new ones fail.**
-
-```bash
-docker compose -f backend/nexus/docker-compose.yml run --rm nexus pytest tests/interview_engine/test_keyterms.py -v
-```
-
-Expected: the 3 baseline tests still pass; the 5 new tests fail (the keyterms don't include MuleSoft etc. yet).
-
-- [ ] **Step 3: Extend `keyterms.py` with signal expansion + proper-noun extraction.**
-
-Replace the contents of `backend/nexus/app/modules/interview_engine/keyterms.py` with:
-
-```python
-"""Deterministic per-session keyterm extractor for Deepgram nova-3.
-
-Reads SessionConfig (already-flattened wire contract; see
-app/modules/interview_runtime/schemas.py:181) and produces a bounded list of
-proper-noun-like terms and signal phrases that bias Deepgram STT toward
-role-specific vocabulary. Zero I/O, zero LiveKit deps, zero asyncpg.
-
-Sarvam ignores the output (the STT factory simply does not forward it to the
-Sarvam constructor). Deepgram receives the list as `keyterm=[...]` at
-websocket open — see app/ai/realtime.py:_build_stt_deepgram.
-
-Spec: docs/superpowers/specs/2026-05-19-deepgram-keyterm-migration-design.md
-"""
-from __future__ import annotations
-
-import re
-from dataclasses import dataclass
-
-from app.modules.interview_runtime.schemas import SessionConfig
-
-_KEYTERM_CAP = 50
-
-# Token candidates: anything that starts with a letter and runs through
-# letters/digits/hyphens. Stripping surrounding punctuation (parens, commas,
-# slashes, periods) is implicit because the regex won't include them.
-_TOKEN_CANDIDATE_RE = re.compile(r"[A-Za-z][A-Za-z0-9-]*")
-
-# A token qualifies as a "proper noun" keyterm if it matches one of:
-#  - CapitalizedWord(-Word)*       Workato, Dell, API-led-Hyphenated
-#  - ALL_CAPS acronym (>= 2 chars) API, ESB, SOAP
-#  - camelCase (lowercase then Up) iPaaS, eBay
-_PROPER_NOUN_RE = re.compile(
-    r"^("
-    r"[A-Z][a-zA-Z]+(?:-[a-zA-Z]+)+"  # Hyphenated (e.g., "API-led")
-    r"|[A-Z][a-zA-Z]+"                 # Capitalized word (e.g., "MuleSoft")
-    r"|[A-Z]{2,}"                      # ALL_CAPS acronym (e.g., "API")
-    r"|[a-z][A-Z][a-zA-Z]*"            # camelCase (e.g., "iPaaS")
-    r")$"
-)
-
-# Generic capitalized words that appear at sentence starts — emit them and you
-# poison the keyterm budget with noise. Curated for English interview prose.
-_GENERIC_CAPITALIZED: frozenset[str] = frozenset({
-    "The", "This", "That", "These", "Those",
-    "We", "You", "It", "They", "He", "She",
-    "In", "On", "At", "For", "As", "By", "Of", "To", "With", "From", "Into",
-    "And", "Or", "But", "If", "When", "While",
-    "How", "What", "Where", "Why", "Who", "Which",
-    "Their", "Your", "Our",
-    "Build", "Use", "Make",
-})
-
-
-@dataclass(frozen=True)
-class KeytermExtraction:
-    """Result of the extractor — keyterms plus per-source attribution counts."""
-
-    terms: list[str]
-    sources: dict[str, int]
-
-
-def _extract_proper_nouns(text: str) -> list[str]:
-    """Pull proper-noun-looking tokens out of a free-text phrase, in order.
-
-    Duplicates within the text are deduped against the first-seen casing.
-    Generic capitalized sentence-starters are dropped.
-    """
-    seen: dict[str, str] = {}
-    for candidate in _TOKEN_CANDIDATE_RE.findall(text):
-        if candidate in _GENERIC_CAPITALIZED:
-            continue
-        if not _PROPER_NOUN_RE.match(candidate):
-            continue
-        key = candidate.lower()
-        if key not in seen:
-            seen[key] = candidate
-    return list(seen.values())
-
-
-def extract_keyterms(session_config: SessionConfig) -> KeytermExtraction:
+def assemble_keyterms(session_config: SessionConfig) -> KeytermExtraction:
     terms: list[str] = []
     sources: dict[str, int] = {}
 
@@ -446,327 +1116,131 @@ def extract_keyterms(session_config: SessionConfig) -> KeytermExtraction:
             return
         if len(terms) >= _KEYTERM_CAP:
             return
-        # Case-insensitive dedupe — keep first-seen casing
         if any(t.lower() == term.lower() for t in terms):
             return
         terms.append(term)
         sources[source] = sources.get(source, 0) + 1
 
-    # 1. Candidate first name
+    # Candidate first name — the only session-specific term
     if session_config.candidate.name.strip():
-        first_name = session_config.candidate.name.split()[0]
-        _add(first_name, "candidate_name")
+        _add(session_config.candidate.name.split()[0], "candidate_name")
 
-    # 2. Hiring company
-    if session_config.hiring_company_name:
-        _add(session_config.hiring_company_name, "hiring_company")
-
-    # 3. Job title as-is
-    if session_config.job_title:
-        _add(session_config.job_title, "job_title")
-
-    # 4. Each signal phrase: emit the full phrase AND extract proper nouns
-    for phrase in session_config.signals:
-        cleaned = phrase.strip()
-        if cleaned:
-            _add(cleaned, "signal_phrases")
-        for noun in _extract_proper_nouns(phrase):
-            _add(noun, "signal_proper_nouns")
-
-    # 5. Proper nouns from role_summary (NOT the prose itself)
-    if session_config.role_summary:
-        for noun in _extract_proper_nouns(session_config.role_summary):
-            _add(noun, "role_summary_proper_nouns")
+    # Bank-cached terms (LLM-extracted at bank-generation time)
+    for term in session_config.keyterms:
+        _add(term, "bank_cached")
 
     return KeytermExtraction(terms=terms, sources=sources)
 ```
 
-- [ ] **Step 4: Run the tests, confirm all 8 pass.**
+- [ ] **Step 4: Verify all 7 tests pass.**
 
 ```bash
 docker compose -f backend/nexus/docker-compose.yml run --rm nexus pytest tests/interview_engine/test_keyterms.py -v
 ```
 
-Expected: 8 passed.
+Expected: 7 passed.
 
 - [ ] **Step 5: Commit.**
 
 ```bash
-git add backend/nexus/tests/interview_engine/test_keyterms.py backend/nexus/app/modules/interview_engine/keyterms.py
+git add backend/nexus/app/modules/interview_engine/keyterms.py \
+        backend/nexus/tests/interview_engine/test_keyterms.py
 git commit -m "$(cat <<'EOF'
-feat(interview-engine): keyterm extractor — signal-phrase + proper-noun expansion
+feat(interview-engine): assemble_keyterms — merge bank cache + candidate name
 
-Signal phrases like "5+ years with MuleSoft, TIBCO, or Dell Boomi" now
-emit both the full phrase (preserves Deepgram's multi-word boost) and
-each brand individually (MuleSoft, TIBCO, Boomi). Proper-noun regex
-catches ALL_CAPS acronyms (API, ESB, SOAP), CamelCase (MuleSoft, Workato),
-camelCase brands (iPaaS), and hyphenated terms (API-led). role_summary
-contributes proper nouns only — the prose itself is too noisy as a phrase.
+20-line pure function: prepends the candidate's first name to the
+bank-cached keyterm list, dedupes case-insensitively, caps at 50.
+Heavy lifting (LLM extraction) happens upstream in question_bank/refine.
+Empty session_config.keyterms falls back to [candidate.first_name]
+gracefully.
 EOF
 )"
 ```
 
 ---
 
-## Task 4: TDD — dedupe, cap enforcement, generic-capitalized filtering
+## Task 11: Update `stt_factory.py` to plumb the merger through
 
 **Files:**
-- Modify: `backend/nexus/tests/interview_engine/test_keyterms.py`
+- Modify: `backend/nexus/app/modules/interview_engine/stt_factory.py`
 
-- [ ] **Step 1: Add the remaining behavior tests.**
+- [ ] **Step 1: Replace `stt_factory.py` contents.**
 
-Append to `backend/nexus/tests/interview_engine/test_keyterms.py`:
+Replace the entire file with:
 
 ```python
-class TestDedupeAndCap:
-    def test_case_insensitive_dedupe_keeps_first_seen_casing(self) -> None:
-        result = extract_keyterms(
-            _make_session_config(
-                signals=["MuleSoft is great", "mulesoft is also fine"],
-            )
-        )
-        # Both signals mention the brand, but it should appear exactly once
-        # with the FIRST-seen casing preserved.
-        lowercased = [t.lower() for t in result.terms]
-        assert lowercased.count("mulesoft") == 1
-        assert "MuleSoft" in result.terms  # first-seen
-        assert "mulesoft" not in result.terms  # lower-seen is dropped
+"""Per-session STT plugin factory — keyterm assembly seam.
 
-    def test_cap_at_fifty_terms(self) -> None:
-        # Build 200 distinct signal phrases, each containing a unique brand-like
-        # proper noun. Extractor should emit exactly 50 (insertion order).
-        many_signals = [f"Experience with Brand{i}Corp platform" for i in range(200)]
-        result = extract_keyterms(_make_session_config(signals=many_signals))
-        assert len(result.terms) == 50
-        # First-3 baseline fields take 3 slots: candidate, hiring_company, job_title.
-        # The remaining 47 are filled by signals (phrase first, then nouns).
-        assert "Ishant" in result.terms      # first baseline
-        assert "Workato" in result.terms     # second baseline
-        assert "Sr. Integration Engineer" in result.terms  # third baseline
+The factory function returns BOTH the STT plugin and the KeytermExtraction
+so the caller (agent.py) can emit a single `audio.stt.keyterms_applied`
+audit event without re-running the assembler.
+
+Sarvam ignores the keyterms argument (no equivalent feature). The actual
+provider dispatch lives in app/ai/realtime.py.
+
+Spec: docs/superpowers/specs/2026-05-19-deepgram-keyterm-migration-design.md
+"""
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from app.ai.realtime import build_stt_plugin
+from app.modules.interview_engine.keyterms import KeytermExtraction, assemble_keyterms
+from app.modules.interview_runtime.schemas import SessionConfig
+
+if TYPE_CHECKING:
+    from livekit.agents.stt import STT as _BaseSTT
 
 
-class TestGenericCapitalizedFiltering:
-    def test_sentence_starting_capitalized_filler_dropped(self) -> None:
-        result = extract_keyterms(
-            _make_session_config(
-                signals=["The candidate should know about MuleSoft. This is critical."],
-            )
-        )
-        # Generic capitalized sentence-starters NOT in terms
-        assert "The" not in result.terms
-        assert "This" not in result.terms
-        # Real brand IS in terms
-        assert "MuleSoft" in result.terms
-
-    def test_single_letter_and_pure_digit_tokens_dropped(self) -> None:
-        result = extract_keyterms(
-            _make_session_config(
-                signals=["Use B and 5 with MuleSoft for 2024"],
-            )
-        )
-        # Single letters and pure digits never qualify as proper nouns —
-        # the regex requires at least one letter and ALL_CAPS needs >=2 chars.
-        assert "B" not in result.terms
-        assert "5" not in result.terms
-        assert "2024" not in result.terms
-        assert "MuleSoft" in result.terms
+def build_stt_plugin_for_session(
+    *, session_config: SessionConfig,
+) -> tuple["_BaseSTT", KeytermExtraction]:
+    extraction = assemble_keyterms(session_config)
+    return build_stt_plugin(keyterms=extraction.terms), extraction
 ```
 
-- [ ] **Step 2: Run the tests, confirm all 12 pass.**
+- [ ] **Step 2: Smoke-import.**
 
 ```bash
-docker compose -f backend/nexus/docker-compose.yml run --rm nexus pytest tests/interview_engine/test_keyterms.py -v
+docker compose -f backend/nexus/docker-compose.yml run --rm nexus python -c "from app.modules.interview_engine.stt_factory import build_stt_plugin_for_session; print(build_stt_plugin_for_session)"
 ```
-
-Expected: 12 passed. If `test_cap_at_fifty_terms` fails because too many or too few terms, inspect — most likely the cap logic in `_add` interacts incorrectly with the case-insensitive dedupe in a way the implementation already handles correctly; if not, fix the ordering of the `len(terms) >= _KEYTERM_CAP` check vs the dedupe check.
 
 - [ ] **Step 3: Commit.**
 
 ```bash
-git add backend/nexus/tests/interview_engine/test_keyterms.py
+git add backend/nexus/app/modules/interview_engine/stt_factory.py
 git commit -m "$(cat <<'EOF'
-test(interview-engine): keyterm extractor — dedupe, cap, generic-word filtering
+feat(interview-engine): stt_factory wires assemble_keyterms into Deepgram
 
-Verifies case-insensitive dedupe preserves first-seen casing, the 50-term
-cap is enforced order-stably (baseline fields always survive), and generic
-sentence-starting capitalized words (The, This, ...) are filtered.
+The seam now runs the engine-side keyterm merger (candidate name + bank
+cache) and forwards the list to build_stt_plugin, returning both the STT
+plugin and the full KeytermExtraction for the upcoming audit event.
 EOF
 )"
 ```
 
 ---
 
-## Task 5: Snapshot test against a committed `SessionConfig` fixture
-
-**Files:**
-- Create: `backend/nexus/tests/interview_engine/fixtures/session_config_mulesoft_sample.json`
-- Modify: `backend/nexus/tests/interview_engine/test_keyterms.py`
-
-- [ ] **Step 1: Generate a real `SessionConfig` JSON from the sample build_session_config output.**
-
-The raw `tmp/interview_context.json` is a dict, not a `SessionConfig`. We need to project it into the wire-format shape and serialize it. Run from the repo root:
-
-```bash
-docker compose -f backend/nexus/docker-compose.yml run --rm nexus python - <<'PY'
-import json
-from pathlib import Path
-
-raw = json.loads(Path("/app/../tmp/interview_context.json").read_text()) if Path("/app/../tmp/interview_context.json").exists() else json.loads(Path("tmp/interview_context.json").read_text())
-
-# Project the raw build_session_config dict into the SessionConfig wire shape.
-# Mirrors what interview_runtime/service.py would produce at run time.
-projected = {
-    "session_id": "00000000-0000-0000-0000-000000000001",
-    "job_id": raw["job"]["id"],
-    "candidate_id": raw["candidate"]["id"],
-    "job_title": raw["job"]["title"],
-    "hiring_company_name": raw["company_profile"]["org_unit_name"],
-    "role_summary": raw["signal_snapshot"]["role_summary"],
-    "jd_text": raw["job"].get("description_enriched"),
-    "seniority_level": raw["signal_snapshot"]["seniority_level"],
-    "company": {
-        "about": raw["company_profile"]["about"],
-        "industry": raw["company_profile"]["industry"],
-        "company_stage": "",
-        "hiring_bar": raw["company_profile"]["hiring_bar"],
-    },
-    "candidate": {"name": raw["candidate"]["name"]},
-    "stage": {
-        "stage_id": raw["stage"]["id"],
-        "stage_type": raw["stage"]["stage_type"],
-        "name": raw["stage"]["name"],
-        "duration_minutes": raw["stage"]["duration_minutes"],
-        "difficulty": raw["stage"]["difficulty"],
-        "questions": [],
-        "advance_behavior": raw["stage"]["advance_behavior"],
-    },
-    "signals": [s["value"] for s in raw["signal_snapshot"]["signals"]],
-    "signal_metadata": [],
-}
-
-# Validate it round-trips through the real Pydantic model so the test
-# fixture is guaranteed-loadable.
-from app.modules.interview_runtime.schemas import SessionConfig
-sc = SessionConfig.model_validate(projected)
-
-out = Path("backend/nexus/tests/interview_engine/fixtures/session_config_mulesoft_sample.json")
-out.parent.mkdir(parents=True, exist_ok=True)
-out.write_text(sc.model_dump_json(indent=2))
-print("wrote", out)
-PY
-```
-
-Expected: a new file at `backend/nexus/tests/interview_engine/fixtures/session_config_mulesoft_sample.json` containing the validated `SessionConfig` JSON.
-
-- [ ] **Step 2: Add the snapshot test (initially empty `EXPECTED_TERMS` — we'll fill after first run).**
-
-Append to `backend/nexus/tests/interview_engine/test_keyterms.py`:
-
-```python
-import json
-from pathlib import Path
-
-
-_FIXTURE = Path(__file__).parent / "fixtures" / "session_config_mulesoft_sample.json"
-
-
-class TestSnapshotMulesoftSample:
-    """Regression guard against the MuleSoft Sr. Integration Engineer fixture.
-
-    The expected list below was frozen on 2026-05-19 by running the extractor
-    against the fixture and pinning the output. If you intentionally change
-    the extractor's behavior, regenerate this list and commit the diff.
-    """
-
-    EXPECTED_TERMS: list[str] = [
-        # FILL after first run — see Step 4 below.
-    ]
-
-    def test_snapshot_matches(self) -> None:
-        from app.modules.interview_runtime.schemas import SessionConfig
-
-        session_config = SessionConfig.model_validate_json(_FIXTURE.read_text())
-        result = extract_keyterms(session_config)
-        assert result.terms == self.EXPECTED_TERMS, (
-            "Keyterm snapshot drift detected.\n\n"
-            f"  Got     ({len(result.terms)}): {result.terms!r}\n\n"
-            f"  Expected ({len(self.EXPECTED_TERMS)}): {self.EXPECTED_TERMS!r}"
-        )
-```
-
-- [ ] **Step 3: Run the snapshot test to print the current output, then freeze it.**
-
-```bash
-docker compose -f backend/nexus/docker-compose.yml run --rm nexus pytest tests/interview_engine/test_keyterms.py::TestSnapshotMulesoftSample -v
-```
-
-The test will fail with an assertion error printing the actual `result.terms` list. Copy that list verbatim.
-
-- [ ] **Step 4: Paste the frozen list into `EXPECTED_TERMS`.**
-
-Edit `backend/nexus/tests/interview_engine/test_keyterms.py` and replace the `EXPECTED_TERMS: list[str] = [...]` placeholder with the actual list from Step 3. Each term on its own line for diff-readability:
-
-```python
-EXPECTED_TERMS: list[str] = [
-    "Punar",
-    "Workato",
-    "Sr. Integration Engineer",
-    "5+ years hands-on production experience with at least one iPaaS/ESB platform (MuleSoft, TIBCO, or Dell Boomi)",
-    # ... (rest of the list as printed by Step 3)
-]
-```
-
-- [ ] **Step 5: Sanity-check the frozen list before re-running.**
-
-Read it over once. Verify it includes (at minimum) the candidate's first name (`Punar`), the hiring company (`Workato`), the job title (`Sr. Integration Engineer`), and the high-value tech brands (`MuleSoft`, `TIBCO`, `Boomi`, `Salesforce`, `API-led`, `iPaaS`, `ESB`). If any of these are missing, the extractor regex has a bug — debug before freezing.
-
-- [ ] **Step 6: Re-run the snapshot test, confirm it passes.**
-
-```bash
-docker compose -f backend/nexus/docker-compose.yml run --rm nexus pytest tests/interview_engine/test_keyterms.py -v
-```
-
-Expected: 13 passed.
-
-- [ ] **Step 7: Commit.**
-
-```bash
-git add backend/nexus/tests/interview_engine/fixtures/session_config_mulesoft_sample.json backend/nexus/tests/interview_engine/test_keyterms.py
-git commit -m "$(cat <<'EOF'
-test(interview-engine): snapshot regression test for keyterm extractor
-
-Frozen output of extract_keyterms() against a committed SessionConfig
-fixture derived from the MuleSoft Sr. Integration Engineer sample. Future
-extractor changes that move the output are surfaced by this test — the
-engineer can either correct the regression or intentionally re-freeze.
-EOF
-)"
-```
-
----
-
-## Task 6: Wire keyterms through `realtime.py`
+## Task 12: Update `realtime.py` to forward keyterms to Deepgram
 
 **Files:**
 - Modify: `backend/nexus/app/ai/realtime.py`
 
-- [ ] **Step 1: Update `build_stt_plugin` to accept an optional `keyterms` kwarg.**
+- [ ] **Step 1: Update `build_stt_plugin` signature.**
 
-Open `backend/nexus/app/ai/realtime.py`. Find the function at line 39 (`def build_stt_plugin() -> "_BaseSTT":`). Replace the function signature and body:
+Find the function at `app/ai/realtime.py:39`. Replace with:
 
 ```python
 def build_stt_plugin(keyterms: list[str] | None = None) -> "_BaseSTT":
     """Construct the realtime STT plugin selected by AIConfig.
 
-    Provider is chosen by ``AIConfig.interview_stt_provider``
-    (env: ``INTERVIEW_STT_PROVIDER``). Default ``deepgram`` (``nova-3``);
-    ``sarvam`` (``saaras:v3``) is the switchable alternate.
+    Provider chosen by AIConfig.interview_stt_provider. Default 'deepgram'
+    (nova-3); 'sarvam' (saaras:v3) is the switchable alternate.
 
-    ``keyterms`` is the Deepgram nova-3 keyterm-prompting list (20-50
-    role-specific terms, see spec
+    `keyterms` is the Deepgram nova-3 keyterm-prompting list (10-50
+    role-specific terms; see spec
     docs/superpowers/specs/2026-05-19-deepgram-keyterm-migration-design.md).
-    Sarvam ignores the argument (its STT has no equivalent feature).
-    Pass ``None`` (the default) to skip keyterm boosting entirely.
+    Sarvam ignores it (no equivalent feature). Pass None to skip boosting.
     """
     provider = ai_config.interview_stt_provider
     if provider == "sarvam":
@@ -781,17 +1255,11 @@ def build_stt_plugin(keyterms: list[str] | None = None) -> "_BaseSTT":
 
 - [ ] **Step 2: Update `_build_stt_deepgram` to accept and forward the kwarg.**
 
-In the same file, find `def _build_stt_deepgram() -> "_BaseSTT":` (around line 84). Replace its body:
+Replace the existing `_build_stt_deepgram` body:
 
 ```python
 def _build_stt_deepgram(*, keyterms: list[str] | None = None) -> "_BaseSTT":
-    """Deepgram STT (default). Auth via DEEPGRAM_API_KEY env.
-
-    ``keyterms`` is forwarded as the Deepgram ``keyterm`` REST API parameter
-    when non-empty. Nova-3 boosts recognition for each term (and multi-word
-    phrase). The 500-token Deepgram per-request cap is enforced upstream
-    by extract_keyterms (caps at 50 entries).
-    """
+    """Deepgram STT (default). Auth via DEEPGRAM_API_KEY env."""
     from livekit.plugins import deepgram
 
     kwargs: dict[str, object] = {
@@ -811,137 +1279,47 @@ def _build_stt_deepgram(*, keyterms: list[str] | None = None) -> "_BaseSTT":
     return deepgram.STT(**kwargs)
 ```
 
-- [ ] **Step 3: Verify the file still parses.**
+- [ ] **Step 3: Verify the module imports.**
 
 ```bash
 docker compose -f backend/nexus/docker-compose.yml run --rm nexus python -c "from app.ai.realtime import build_stt_plugin; help(build_stt_plugin)"
 ```
-
-Expected: prints the function's docstring without an ImportError.
 
 - [ ] **Step 4: Commit.**
 
 ```bash
 git add backend/nexus/app/ai/realtime.py
 git commit -m "$(cat <<'EOF'
-feat(ai/realtime): forward keyterms to Deepgram STT plugin
+feat(ai/realtime): forward keyterms to deepgram.STT as `keyterm` kwarg
 
-build_stt_plugin gains an optional keyterms list[str]; when the provider
-is Deepgram and keyterms is non-empty, the list is passed as the
-keyterm REST API parameter to deepgram.STT(...). Sarvam ignores it.
-Logs keyterm_count for forensic correlation.
+build_stt_plugin gains an optional keyterms list[str]; when provider is
+deepgram and keyterms is non-empty, the list is passed as the keyterm
+REST API parameter. Sarvam ignores it. Logs keyterm_count for forensics.
 EOF
 )"
 ```
 
 ---
 
-## Task 7: Wire `stt_factory.py` to extract and return both STT and KeytermExtraction
-
-**Files:**
-- Modify: `backend/nexus/app/modules/interview_engine/stt_factory.py`
-
-- [ ] **Step 1: Replace `stt_factory.py` with the new tuple-returning version.**
-
-Open `backend/nexus/app/modules/interview_engine/stt_factory.py`. Replace its entire contents with:
-
-```python
-"""Per-session STT plugin factory — keyterm injection seam.
-
-The factory function returns BOTH the STT plugin and the KeytermExtraction
-so the caller (agent.py) can emit a single ``audio.stt.keyterms_applied``
-audit event without re-running the extractor.
-
-Sarvam ignores the keyterms argument (no equivalent feature); the STT
-factory in app/ai/realtime.py is responsible for the provider dispatch.
-
-Spec: docs/superpowers/specs/2026-05-19-deepgram-keyterm-migration-design.md
-"""
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
-from app.ai.realtime import build_stt_plugin
-from app.modules.interview_engine.keyterms import KeytermExtraction, extract_keyterms
-from app.modules.interview_runtime.schemas import SessionConfig
-
-if TYPE_CHECKING:
-    # Mirrors the lazy-import discipline in app/ai/realtime.py — the LiveKit
-    # plugin packages must NOT be loaded at module import time.
-    from livekit.agents.stt import STT as _BaseSTT
-
-
-def build_stt_plugin_for_session(
-    *, session_config: SessionConfig,
-) -> tuple["_BaseSTT", KeytermExtraction]:
-    """Build the STT plugin for one session AND return the keyterm extraction.
-
-    The caller is expected to emit the
-    ``audio.stt.keyterms_applied`` audit event using the returned
-    ``KeytermExtraction`` before constructing AgentSession.
-    """
-    extraction = extract_keyterms(session_config)
-    return build_stt_plugin(keyterms=extraction.terms), extraction
-```
-
-- [ ] **Step 2: Verify the module imports cleanly.**
-
-```bash
-docker compose -f backend/nexus/docker-compose.yml run --rm nexus python -c "from app.modules.interview_engine.stt_factory import build_stt_plugin_for_session; print(build_stt_plugin_for_session)"
-```
-
-Expected: prints the function repr without ImportError. (We don't call it without a real SessionConfig — that requires LiveKit plugins to be loadable, which is environment-dependent.)
-
-- [ ] **Step 3: Commit.**
-
-```bash
-git add backend/nexus/app/modules/interview_engine/stt_factory.py
-git commit -m "$(cat <<'EOF'
-feat(interview-engine): stt_factory returns (stt, KeytermExtraction) tuple
-
-The seam now runs the keyterm extractor and forwards the list to
-build_stt_plugin, returning both the constructed STT plugin and the full
-KeytermExtraction so agent.py can emit one audit event without
-re-computing the keyterms.
-EOF
-)"
-```
-
----
-
-## Task 8: Wire the audit event in `agent.py`
+## Task 13: Wire the audit event in `agent.py`
 
 **Files:**
 - Modify: `backend/nexus/app/modules/interview_engine/agent.py`
 
-- [ ] **Step 1: Add the new import next to existing imports from interview_engine.**
+- [ ] **Step 1: Add the imports.**
 
-Open `backend/nexus/app/modules/interview_engine/agent.py`. Find the existing line that imports `EventCollector` (around line 89). Near it (or in the same import block from `app.modules.interview_engine.audit_events` and `event_kinds`), add the new symbols. If those modules aren't yet imported in agent.py, find a sensible place near other interview_engine imports and add:
+Open `agent.py`. Near the existing interview_engine imports, add:
 
 ```python
 from app.modules.interview_engine.audit_events import STTKeytermsAppliedPayload
 from app.modules.interview_engine.event_kinds import AUDIO_STT_KEYTERMS_APPLIED
 ```
 
-(If agent.py already imports from those modules, just add the new names to the existing `import ... from ...` block.)
+Also confirm `ai_config` is imported (it's used for `model_versions` already, around line 410, so it should be in scope).
 
-- [ ] **Step 2: Refactor the `AgentSession(stt=...)` call to unpack the tuple and emit the audit event.**
+- [ ] **Step 2: Refactor the `AgentSession` construction.**
 
-Find the block at line 467-485 (approximately) that looks like:
-
-```python
-session = AgentSession(
-    stt=build_stt_plugin_for_session(session_config=session_config),
-    llm=build_llm_plugin(),
-    tts=tts_plugin,
-    vad=build_vad(),
-    turn_handling=TurnHandlingOptions(
-        ...
-    ),
-)
-```
-
-Replace it with:
+Find the line `stt=build_stt_plugin_for_session(session_config=session_config),` (around line 468). Replace the entire `session = AgentSession(...)` block:
 
 ```python
 stt_plugin, keyterm_extraction = build_stt_plugin_for_session(
@@ -963,9 +1341,7 @@ session = AgentSession(
     tts=tts_plugin,
     vad=build_vad(),
     turn_handling=TurnHandlingOptions(
-        # Disabled: the structured agent drives every turn through
-        # Judge → State → Speaker. Framework-level preemption would
-        # only race the orchestrator.
+        turn_detection=build_turn_detector(),
         preemptive_generation={"enabled": False},
         endpointing={
             "mode": settings.engine_endpointing_mode,
@@ -973,58 +1349,52 @@ session = AgentSession(
             "max_delay": settings.engine_endpointing_max_delay,
         },
         interruption=build_interruption_options(),
-        turn_detection=build_turn_detector(),
     ),
 )
 ```
 
-NOTE: The exact structure of `TurnHandlingOptions(...)` must match what was in the file before — copy from the existing code. Only the STT line and the new audit-event emission change. Keep `turn_detection`, `preemptive_generation`, `endpointing`, and `interruption` exactly as they were.
+CRITICAL: copy the `TurnHandlingOptions(...)` argument block VERBATIM from the existing code — preserve `turn_detection`, `preemptive_generation`, `endpointing`, and `interruption` exactly. Only the STT line + the new audit-event emission change. The continuation watcher in `orchestrator.py` is downstream of this; do NOT touch it.
 
-- [ ] **Step 3: Verify `ai_config` is already in scope at this point.**
-
-Search upward from the modification site for `ai_config` — it should already be imported and used to populate `model_versions["llm"]`, `model_versions["stt"]`, etc. (lines ~410-420). If `ai_config` is not in scope at the new emission site, add `from app.ai.config import ai_config` at the top of the file.
-
-- [ ] **Step 4: Verify the module imports cleanly.**
+- [ ] **Step 3: Verify the module imports.**
 
 ```bash
 docker compose -f backend/nexus/docker-compose.yml run --rm nexus python -c "from app.modules.interview_engine import agent"
 ```
 
-Expected: no error.
-
-- [ ] **Step 5: Run the existing engine test suite to confirm no regression.**
+- [ ] **Step 4: Run the full engine test suite.**
 
 ```bash
-docker compose -f backend/nexus/docker-compose.yml run --rm nexus pytest tests/interview_engine -v -x
+docker compose -f backend/nexus/docker-compose.yml run --rm nexus pytest tests/interview_engine -v
 ```
 
-Expected: all existing tests still pass; the new keyterm tests (13 tests added across Tasks 2-5) also pass. If any existing test fails, inspect carefully — most likely the test built its own AgentSession fixture and now needs to receive the tuple shape. Fix the test by changing `stt = build_stt_plugin_for_session(...)` to `stt, _ = build_stt_plugin_for_session(...)`.
+Expected: all pre-existing tests pass + 7 new keyterm-merger tests pass. If any existing test fails because it built `AgentSession(stt=build_stt_plugin_for_session(...))` and now needs the tuple shape, fix it by changing the call to `stt, _ = build_stt_plugin_for_session(...)`.
 
-- [ ] **Step 6: Commit.**
+- [ ] **Step 5: Commit.**
 
 ```bash
 git add backend/nexus/app/modules/interview_engine/agent.py
 git commit -m "$(cat <<'EOF'
 feat(interview-engine): emit audio.stt.keyterms_applied at session start
 
-agent.py now unpacks the (stt, KeytermExtraction) tuple from
-build_stt_plugin_for_session, emits one audit event with the full keyterm
-list + per-source counts, then hands the STT to AgentSession. The
-continuation watcher in orchestrator.py is untouched — only the
-constructor wiring changes.
+agent.py unpacks the (stt, KeytermExtraction) tuple, emits the new audit
+event with the full keyterm list and per-source counts, then hands the
+STT to AgentSession. orchestrator.py and its continuation watcher are
+not touched.
 EOF
 )"
 ```
 
 ---
 
-## Task 9: Flip provider defaults
+## Phase C — Defaults flip + smoke
+
+## Task 14: Flip provider defaults to Deepgram
 
 **Files:**
 - Modify: `backend/nexus/app/config.py`
 - Modify: `backend/nexus/.env.example`
 
-- [ ] **Step 1: Flip the Settings field defaults.**
+- [ ] **Step 1: Flip the `Settings` field defaults.**
 
 Open `backend/nexus/app/config.py`. Find lines 460-462:
 
@@ -1042,11 +1412,11 @@ Replace with:
     interview_stt_language: str = "en-IN"
 ```
 
-Leave `interview_stt_mode` and any other adjacent fields unchanged — `mode` is Sarvam-only and is still readable if someone toggles back via env.
+Leave `interview_stt_mode` unchanged.
 
 - [ ] **Step 2: Flip `.env.example`.**
 
-Open `backend/nexus/.env.example`. Find lines 164-172:
+Find lines 164-172 in `.env.example`:
 
 ```
 # STT — provider-switchable. Default sarvam (saaras:v3, en-IN, code-mix capable).
@@ -1064,31 +1434,28 @@ Replace with:
 
 ```
 # STT — provider-switchable. Default deepgram (nova-3, en-IN, with per-session
-# keyterm prompting derived from SessionConfig — see
+# keyterm prompting — see
 # docs/superpowers/specs/2026-05-19-deepgram-keyterm-migration-design.md).
-# To switch to Sarvam (alternate path, e.g. for code-mix Hindi/English candidates):
-# set INTERVIEW_STT_PROVIDER=sarvam AND INTERVIEW_STT_MODEL=saaras:v3 AND
-# INTERVIEW_STT_LANGUAGE=en-IN AND INTERVIEW_STT_MODE=codemix.
-# Mode applies to Sarvam saaras:v3 only (transcribe | translate | verbatim |
-# translit | codemix). Deepgram ignores INTERVIEW_STT_MODE.
+# Keyterms are LLM-extracted at bank-generation time and cached on
+# stage_question_banks.extracted_keyterms. The engine merges them with the
+# candidate's first name at session start.
+# To switch to Sarvam (alternate, e.g. for code-mix Hindi/English candidates):
+# set INTERVIEW_STT_PROVIDER=sarvam, INTERVIEW_STT_MODEL=saaras:v3,
+# INTERVIEW_STT_LANGUAGE=en-IN, INTERVIEW_STT_MODE=codemix.
+# INTERVIEW_STT_MODE applies to Sarvam only.
 INTERVIEW_STT_PROVIDER=deepgram
 INTERVIEW_STT_MODEL=nova-3
 INTERVIEW_STT_LANGUAGE=en-IN
 INTERVIEW_STT_MODE=transcribe
 ```
 
-- [ ] **Step 3: Smoke-check the new defaults.**
+- [ ] **Step 3: Smoke-check.**
 
 ```bash
 docker compose -f backend/nexus/docker-compose.yml run --rm nexus python -c "from app.config import settings; print(settings.interview_stt_provider, settings.interview_stt_model, settings.interview_stt_language)"
 ```
 
-Expected output:
-```
-deepgram nova-3 en-IN
-```
-
-If your local `.env` file overrides these (it currently does — `INTERVIEW_STT_PROVIDER=sarvam`), the printed values will reflect the override, not the new defaults. That's expected. The smoke check is: does the import work and produce a valid Literal value?
+Expected: `deepgram nova-3 en-IN` (unless your local `.env` overrides).
 
 - [ ] **Step 4: Commit.**
 
@@ -1097,91 +1464,111 @@ git add backend/nexus/app/config.py backend/nexus/.env.example
 git commit -m "$(cat <<'EOF'
 feat(config): flip default STT provider to deepgram/nova-3/en-IN
 
-Sarvam remains as a switchable alternate (toggle via
-INTERVIEW_STT_PROVIDER=sarvam in .env). Deepgram nova-3 with en-IN gains
-the per-session keyterm boost wired in earlier commits, addressing the
-tech-vocab transcription regressions visible in
-engine-events/a0388c8e-...json.
+Sarvam remains as a switchable alternate (INTERVIEW_STT_PROVIDER=sarvam
+in .env). Deepgram nova-3 with en-IN now gains the per-session keyterm
+boost wired in the earlier commits — keyterms LLM-extracted at bank
+generation and cached on stage_question_banks.extracted_keyterms.
 EOF
 )"
 ```
 
 ---
 
-## Task 10: End-to-end startup smoke
+## Task 15: End-to-end smoke
 
 **Files:** None modified. Verification only.
 
-- [ ] **Step 1: Ensure the local `.env` is set for Deepgram.**
+- [ ] **Step 1: Update the local `.env` for Deepgram.**
 
-Inspect `backend/nexus/.env` (NOT `.env.example`). Confirm these lines exist and are set as expected:
+Inspect `backend/nexus/.env`. Confirm:
 
 ```
 DEEPGRAM_API_KEY=<your real key — already present per user>
 INTERVIEW_STT_PROVIDER=deepgram
 INTERVIEW_STT_MODEL=nova-3
 INTERVIEW_STT_LANGUAGE=en-IN
+QUESTION_BANK_KEYTERM_MODEL=gpt-5.4-nano-2026-03-17
 ```
 
-If the local `.env` still has `INTERVIEW_STT_PROVIDER=sarvam`, update it to match. (The `.env.example` defaults will apply to fresh checkouts, but the existing local file overrides them.)
-
-- [ ] **Step 2: Run the full engine test suite once more.**
+- [ ] **Step 2: Run the full test suite once.**
 
 ```bash
-docker compose -f backend/nexus/docker-compose.yml run --rm nexus pytest tests/interview_engine -v
+docker compose -f backend/nexus/docker-compose.yml run --rm nexus pytest -v
 ```
 
-Expected: all pre-existing tests still pass + 13 new keyterm tests pass (3 baseline + 5 signal/role + 4 dedupe/cap/filter + 1 snapshot).
+Expected: all tests pass. Triage any regressions (most likely an existing test that built `AgentSession(stt=build_stt_plugin_for_session(...))` and needs the tuple-unpack fix).
 
-- [ ] **Step 3: Start the stack and inspect the engine boot log for the new audit event setup.**
+- [ ] **Step 3: Regenerate one question bank to populate `extracted_keyterms`.**
+
+Via the recruiter dashboard (or API), trigger regeneration of one existing bank. After completion, inspect the row:
+
+```bash
+docker compose -f backend/nexus/docker-compose.yml run --rm nexus python -c "
+import asyncio
+from sqlalchemy import text
+from app.database import get_bypass_db
+
+async def check():
+    async with get_bypass_db() as db:
+        result = await db.execute(text(\"SELECT id, extracted_keyterms FROM stage_question_banks WHERE extracted_keyterms IS NOT NULL LIMIT 3\"))
+        for row in result.fetchall():
+            print(row.id, row.extracted_keyterms)
+
+asyncio.run(check())
+"
+```
+
+Expected: at least one bank with a list of 20–40 reasonable keyterms. Eyeball the list — does it contain the role's brand names (e.g., `MuleSoft`, `Salesforce`)? If not, the prompt may need iteration — revise `prompts/v1/question_bank_keyterms.txt` and regenerate.
+
+- [ ] **Step 4: Start the stack.**
 
 ```bash
 docker compose -f backend/nexus/docker-compose.yml up -d
-docker compose -f backend/nexus/docker-compose.yml logs nexus | grep -E "ai.realtime.stt.built|stt_keyterms"
+docker compose -f backend/nexus/docker-compose.yml logs nexus | grep -E "ai.realtime.stt.built|stt.keyterms"
 ```
 
-Expected: the engine boots clean (no ImportError). No real audit event will fire until a session actually starts — that's part of the manual smoke test, not this gate.
+Expected: clean boot.
 
-- [ ] **Step 4: Tear down.**
+- [ ] **Step 5: Run one real interview against the live stack.**
+
+This is your responsibility — talk to the agent yourself per the project's documented preference for manual AI-agent testing. In the resulting `engine-events/<session_id>.json`, confirm:
+
+1. `model_versions.stt` reads `deepgram/nova-3`.
+2. Exactly one `audio.stt.keyterms_applied` event is present, near the start.
+3. `payload.terms` contains your first name + 20–40 role-specific keyterms.
+4. `audio.stt.transcribed` events show correct spelling for the bank's brand names (e.g., `MuleSoft`, not `mule soft`).
+5. **Continuation watcher still functional:** if you pause mid-sentence during the session, `turn.aborted_for_continuation` + `turn.stitched_continuation` events should still fire as before. The Phase 3D.deepgram migration must NOT have regressed this — that's the load-bearing assertion from the spec's Non-goals.
+
+- [ ] **Step 6: Tear down.**
 
 ```bash
 docker compose -f backend/nexus/docker-compose.yml down
 ```
 
-- [ ] **Step 5: Manual smoke test (user-driven, not gated here).**
-
-This is the user's responsibility per the project's documented preference for manual-only validation of AI-agent behavior (`feedback_manual_agent_testing.md`). Run one real interview session against the live stack. In the engine-events JSON for that session, confirm:
-
-1. `model_versions.stt` reads `deepgram/nova-3`.
-2. Exactly one `audio.stt.keyterms_applied` event is present.
-3. Its `payload.terms` list contains the candidate's first name, the hiring company, the job title, and 20-40 role-specific terms.
-4. The candidate's actual speech transcripts (`audio.stt.transcribed` events) show correct spelling for the keyterm-listed brands (e.g., "MuleSoft" not "mule soft").
-5. The continuation watcher still fires correctly on long candidate pauses — look for `turn.aborted_for_continuation` and `turn.stitched_continuation` events when the candidate pauses mid-sentence.
-
-If any of these fail, file an issue referencing the spec and the failing session's correlation_id; do not regress to Sarvam from this PR — revert via env toggle.
-
-- [ ] **Step 6 (optional): Tag the commit.**
-
-If the user confirms the manual smoke passes, tag the final commit:
+- [ ] **Step 7 (optional): Tag the commit.**
 
 ```bash
-git tag -a phase-3d-deepgram-keyterm -m "Deepgram nova-3 + en-IN + keyterm migration complete"
+git tag -a phase-3d-deepgram-keyterm-llm -m "Deepgram nova-3 + en-IN + LLM-extracted keyterm prompting complete"
 ```
 
 ---
 
 ## Self-Review Notes
 
-**Spec coverage (each Non-goal + capability traced to a task):**
-- New extractor (spec §1) → Tasks 2, 3, 4, 5
-- stt_factory wiring (spec §2) → Task 7
-- realtime.py kwargs (spec §2) → Task 6
-- agent.py audit-event emission (spec §2, §4) → Task 8
-- Default flip (spec §3) → Task 9
-- Audit event (spec §4) → Tasks 1, 8
-- Tests (spec §5) → Tasks 2, 3, 4, 5
-- Continuation watcher preserved (spec Non-goal) → no task touches `orchestrator.py`; verified in Task 10 Step 5 of manual smoke
+**Spec coverage:**
+- Migration 0029 (spec §1) → Task 1
+- KeytermExtractionOutput schema (spec §2) → Task 2
+- Prompt file (spec §3) → Task 4
+- Bank-actor extension (spec §4) → Tasks 5, 6
+- AIConfig field (spec §5) → Task 3
+- SessionConfig.keyterms (spec §6) → Tasks 7, 8
+- Engine merger (spec §7) → Task 10
+- STT factory + realtime + agent wiring (spec §8) → Tasks 11, 12, 13
+- Defaults flip (spec §9) → Task 14
+- Audit event (spec §10) → Tasks 9, 13
+- Tests (spec §11) → Distributed across all tasks
+- Continuation-watcher preservation (spec Non-goals) → No task modifies `orchestrator.py`; explicitly asserted in Task 13 Step 2 ("do NOT touch") and Task 15 Step 5 (manual verification).
 
-**Placeholder scan:** None. Every step contains actual code, exact commands, and concrete expected output.
+**Placeholder scan:** Task 6 Step 3's actor-integration test has placeholders because it requires the existing question-bank-actor fixture conventions. The engineer can either fill them in by mirroring `tests/question_bank/test_generation_status_by_kind.py`, or skip and rely on the Task 5 unit tests plus the Task 15 manual smoke. This is the only intentional placeholder in the plan.
 
-**Type consistency:** `extract_keyterms` is consistently `(SessionConfig) -> KeytermExtraction`. `build_stt_plugin_for_session` is consistently `(*, session_config) -> tuple[_BaseSTT, KeytermExtraction]`. `build_stt_plugin` is consistently `(keyterms: list[str] | None = None) -> _BaseSTT`. Audit-event constant name (`AUDIO_STT_KEYTERMS_APPLIED`) and payload model (`STTKeytermsAppliedPayload`) match across files.
+**Type consistency:** `assemble_keyterms` is consistently `(SessionConfig) -> KeytermExtraction`. `extract_bank_keyterms` is consistently `(*, …) -> KeytermExtractionOutput`. `build_stt_plugin_for_session` is consistently `(*, session_config) -> tuple[_BaseSTT, KeytermExtraction]`. `build_stt_plugin` is consistently `(keyterms: list[str] | None = None) -> _BaseSTT`. Audit-event constant (`AUDIO_STT_KEYTERMS_APPLIED`) and payload model (`STTKeytermsAppliedPayload`) match across files.
