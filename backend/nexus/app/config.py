@@ -456,11 +456,17 @@ class Settings(BaseSettings):
     interview_reasoning_effort: str = ""
 
     # ───────── STT (realtime) — provider-switchable ─────────
-    # Default ``sarvam`` (saaras:v3, Indian-language tuned). Set
-    # INTERVIEW_STT_PROVIDER=deepgram to roll back to the legacy nova-3 path.
-    # The ``model`` / ``language`` fields are interpreted by the chosen provider's
-    # plugin factory (see app/ai/realtime.py); incompatible values are caught at
-    # plugin construction.
+    # Default ``deepgram`` (nova-3, en-IN) with per-session keyterm
+    # prompting — keyterms are LLM-extracted at bank-generation time and
+    # cached on stage_question_banks.extracted_keyterms (see spec
+    # docs/superpowers/specs/2026-05-19-deepgram-keyterm-migration-design.md).
+    # Switch to Sarvam (alternate) by setting INTERVIEW_STT_PROVIDER=sarvam,
+    # INTERVIEW_STT_MODEL=saaras:v3, INTERVIEW_STT_LANGUAGE=en-IN — Sarvam
+    # is Indian-language tuned (en-IN, hi-IN, code-mix) but its STT
+    # mistranscribes tech vocabulary; only keep it for code-mix candidates.
+    # The ``model`` / ``language`` fields are interpreted by the chosen
+    # provider's plugin factory (see app/ai/realtime.py); incompatible
+    # values are caught at plugin construction.
     interview_stt_provider: Literal["sarvam", "deepgram"] = "deepgram"
     interview_stt_model: str = "nova-3"
     interview_stt_language: str = "en-IN"
