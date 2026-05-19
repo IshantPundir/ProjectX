@@ -278,6 +278,17 @@ class CheckpointWrittenPayload(BaseModel):
     captured_at_ms: int = Field(ge=0)
 
 
+class SessionTimerStartedPayload(BaseModel):
+    """Fired exactly once per session when the first candidate utterance arrives.
+
+    Marks the moment the lifecycle timer began ticking. Before this event,
+    the candidate's stage budget is at full duration_minutes (during intro);
+    after, it counts down normally. See spec 2026-05-19-behavioral-layer-
+    and-intro-design.md §2.
+    """
+    wall_ms: int = Field(ge=0, description="Wall-clock timestamp in ms.")
+
+
 # Frontend
 class FrontendAttributePayload(BaseModel):
     turn_id: str | None

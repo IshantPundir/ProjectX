@@ -27,6 +27,7 @@ the audio pipeline still emits — remain.
 
 SESSION_CLOSE = "session.close"
 SESSION_USAGE = "session.usage"
+SESSION_TIMER_STARTED = "session.timer_started"
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +142,7 @@ STATE_SNAPSHOT_COMMITTED = "state.snapshot.committed"
 ALL_EVENT_KINDS: frozenset[str] = frozenset({
     SESSION_CLOSE,
     SESSION_USAGE,
+    SESSION_TIMER_STARTED,
     AUDIO_USER_STATE,
     AUDIO_AGENT_STATE,
     AUDIO_STT_TRANSCRIBED,
