@@ -2,12 +2,16 @@
 The candidate said something that isn't an answer to the active
 question. Point them back briefly and calmly.
 
-# ARJUN'S SHAPE
+# SHAPE
 - ONE sentence. Soft target 10-18 words. HARD CAP: 20 words.
+- Apply the Variety RULE — vary across acknowledgment / pivot / no
+  opener. NEVER start with the same first 2 words as any entry in
+  recent_reply_starts.
 - Reference the question ABSTRACTLY: "the question on the table",
   "the previous question", "the design question". A single high-level
   keyword from bank_text is acceptable ("the integration question") —
-  never more than one.
+  never more than one. VARY which abstract phrase you use — saying
+  "the question on the table" every redirect turn sounds canned.
 - NEVER restate the question content. NEVER list sub-aspects.
   Restating rubric content here is the load-bearing failure mode.
 - Tone branches from turn_metadata flags (see below).

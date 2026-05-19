@@ -5,8 +5,16 @@ from app.modules.interview_engine.speaker.persona import (
 
 
 def test_default_persona_is_arjun() -> None:
+    """Persona name is 'Arjun'. Note: as of the 2026-05-19 restructure
+    the persona no longer carries an `archetype` (a job title for the
+    agent) — claiming a title we can't verify was retired. The persona
+    is identified by name + behavior bullets only.
+    """
     assert DEFAULT_PERSONA.name == "Arjun"
-    assert "Senior Engineering Manager" in DEFAULT_PERSONA.archetype
+    # The persona MUST NOT carry an archetype field that names a title.
+    assert not hasattr(DEFAULT_PERSONA, "archetype"), (
+        "Archetype field was intentionally removed (no claimed title)."
+    )
 
 
 def test_default_persona_is_frozen() -> None:
@@ -18,9 +26,32 @@ def test_default_persona_is_frozen() -> None:
         DEFAULT_PERSONA.name = "Someone Else"  # type: ignore[misc]
 
 
-def test_opener_rotation_is_tuple_of_at_least_eight() -> None:
-    assert isinstance(DEFAULT_PERSONA.opener_rotation, tuple)
-    assert len(DEFAULT_PERSONA.opener_rotation) >= 8
+def test_behavior_bullets_present_and_concrete() -> None:
+    """The new persona shape: behavior bullets, not an opener rotation.
+
+    Replaces the retired `opener_rotation` tuple. Bullets describe
+    OBSERVABLE behaviors (research-backed — adjectives produce vague
+    output, behavior tics produce reproducible characterization).
+    """
+    assert isinstance(DEFAULT_PERSONA.behavior_bullets, tuple)
+    assert len(DEFAULT_PERSONA.behavior_bullets) >= 6
+    # Spot-check that at least one bullet names a concrete tic
+    text = "\n".join(DEFAULT_PERSONA.behavior_bullets).lower()
+    assert "mm" in text or "right" in text, (
+        "behavior_bullets should name at least one concrete filler"
+    )
+
+
+def test_no_opener_rotation_field() -> None:
+    """The hand-curated opener rotation was retired on 2026-05-19.
+
+    Anti-regression: if anyone re-adds an `opener_rotation` field,
+    they bring back the robotic-repetition bug.
+    """
+    assert not hasattr(DEFAULT_PERSONA, "opener_rotation"), (
+        "opener_rotation was intentionally retired — use the "
+        "Variety RULE in _preamble.txt + recent_reply_starts instead."
+    )
 
 
 def test_vocab_banned_contains_top_llm_tells() -> None:
@@ -79,31 +110,35 @@ def test_resolve_persona_name_ignores_settings_default() -> None:
     assert name == "Arjun"
 
 
-def test_render_preamble_substitutes_name_and_archetype() -> None:
+def test_render_preamble_substitutes_name_and_register() -> None:
     from app.modules.interview_engine.speaker.persona import render_preamble
-    template = "You are {name}, {archetype}. Register: {register}."
+    template = "You are {name}. Register: {register}."
     out = render_preamble(template, DEFAULT_PERSONA)
     assert "Arjun" in out
-    assert "Senior Engineering Manager" in out
     assert "Pronounced Indian English" in out
 
 
-def test_render_preamble_emits_bulleted_lists() -> None:
+def test_render_preamble_emits_behavior_bullets_and_banned_bullets() -> None:
     from app.modules.interview_engine.speaker.persona import render_preamble
     template = (
-        "Openers:\n{opener_rotation_bulleted}\n"
+        "How you talk:\n{behavior_bullets_bulleted}\n"
         "Banned:\n{vocab_banned_bulleted}"
     )
     out = render_preamble(template, DEFAULT_PERSONA)
     # Bulleted form: each line starts with "  - "
-    assert "  - See —" in out
     assert "  - delve" in out
+    # behavior_bullets entries are rendered with the "  - " prefix
+    assert "  - " in out
+    # The "{name}" placeholder inside behavior_bullets entries is
+    # substituted with the actual persona name before bulleting.
+    if any("{name}" in b for b in DEFAULT_PERSONA.behavior_bullets):
+        assert "{name}" not in out
 
 
 def test_render_preamble_deterministic() -> None:
     """Same input → byte-identical output. Critical for prompt caching."""
     from app.modules.interview_engine.speaker.persona import render_preamble
-    template = "{name} {archetype} {opener_rotation_bulleted}"
+    template = "{name} {register} {behavior_bullets_bulleted}"
     first = render_preamble(template, DEFAULT_PERSONA)
     second = render_preamble(template, DEFAULT_PERSONA)
     assert first == second

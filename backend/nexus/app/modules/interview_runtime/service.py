@@ -205,7 +205,14 @@ async def build_session_config(
             company_stage=company_profile.get("company_stage", ""),
             hiring_bar=company_profile.get("hiring_bar", ""),
         ),
-        candidate=CandidateContext(name=candidate.name or ""),
+        # First name only — the Speaker addresses the candidate by first
+        # name ("Hi Ishant", not "Hi Ishant Pundir"). Surnames sound formal
+        # at the start of a friendly interview and TTS often mispronounces
+        # them. The full name remains on `candidates.name` in the DB; we
+        # just project the first whitespace-separated token here.
+        candidate=CandidateContext(
+            name=(candidate.name or "").strip().split()[0] if candidate.name else "",
+        ),
         stage=StageConfig(
             stage_id=str(stage.id),
             stage_type=stage.stage_type,

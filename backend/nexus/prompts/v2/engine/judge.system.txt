@@ -28,10 +28,16 @@ transition; default observation to `partial→partial` not `partial→sufficient
                 be redirect — the validator enforces this.
 
 2. REPEAT    — candidate explicitly asked for a verbatim replay
-                ("Can you repeat that?", "Say it again."). Most repeat
-                intents are handled by the orchestrator pre-filter; you
-                only see them when the pre-filter declined (long
-                utterance or mixed-intent).
+                ("Can you repeat that?", "Say it again.", "Can you
+                please repeat that question again?", "What was the
+                question again?"). Most repeat intents are handled by
+                the orchestrator pre-filter; you only see them when the
+                pre-filter declined (long utterance or mixed-intent).
+
+                **NEVER classify a repeat request as polite_close or
+                end_session.** A candidate asking to hear the question
+                again is ENGAGED and confused, not finished. Emit REPEAT
+                regardless of remaining time or push_back state.
 
 3. CLARIFY   — candidate doesn't understand or needs context to
                 engage. Pick ONE clarify_kind for the
@@ -171,8 +177,33 @@ transition; default observation to `partial→partial` not `partial→sufficient
                 add uncovered-signal evidence) OR time remaining
                 ≤ 60 seconds and current question at least partial.
 
-9. END_SESSION — candidate explicitly said they want to end ("I'm
-                done", "let's stop here").
+9. END_SESSION — candidate explicitly said they want to STOP
+                interviewing. Triggers MUST be unambiguous and
+                first-person:
+                  - "I'm done"
+                  - "Let's stop here"
+                  - "I want to end the interview"
+                  - "I don't want to continue"
+                  - "Please end this"
+
+                **NEVER trigger end_session on:**
+                  - "Thank you" / "Thanks" alone — these are
+                    acknowledgments, NOT disengagement signals. A
+                    candidate often says "thank you" while confused
+                    or after a repeat/clarify. Route to redirect or
+                    repeat instead.
+                  - "OK" / "I see" / "Got it" — passive acknowledgments,
+                    not termination signals.
+                  - Silence or empty utterance — that's an audio /
+                    STT issue, NOT a request to end.
+                  - Frustration that isn't explicit ("This is hard",
+                    "I'm not sure" — these are push_back territory).
+
+                When the candidate's intent is ambiguous, DO NOT emit
+                end_session. Prefer redirect (off-topic) or
+                clarify(broad_rephrase). The cost of mis-firing
+                end_session is high — the session ends and the
+                candidate cannot resume.
 
 
 ==============================================================================
@@ -404,8 +435,21 @@ POLITE_CLOSE
 
 END_SESSION
   Candidate explicitly said they want to end ("I'm done", "let's stop
-  here"). Set initiated_by="candidate_initiated" and
+  here", "I want to end the interview", "I don't want to continue").
+  Set initiated_by="candidate_initiated" and
   turn_metadata.candidate_wants_to_end=true.
+
+  **AMBIGUITY GUARD (load-bearing):**
+    - "Thank you" / "Thanks" alone → NOT end_session. Route to
+      REDIRECT (candidate_social_or_greeting=true) — the candidate
+      is acknowledging, not exiting.
+    - A REPEAT request ("can you repeat that?", "what was the
+      question?") → NEVER end_session. Route to REPEAT.
+    - Silence / empty utterance → audio issue, NOT end_session.
+    - Mild frustration without explicit termination → push_back or
+      acknowledge_no_experience, NOT end_session.
+  The cost of false end_session is high (session terminates, no
+  retry). When in doubt, DO NOT emit it.
 
 ==============================================================================
 §5 OBSERVATIONS — quality grading + fan-out + failure rules

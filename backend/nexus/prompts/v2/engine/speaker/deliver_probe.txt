@@ -9,7 +9,8 @@ question in bank_text.
   utterance.
 - Brief connective is welcome when natural: "Right, but —",
   "And on that —", "Mm — and —". Skip if it pushes word count high.
-- Vary opener per recent_reply_starts.
+- Apply the Variety RULE — never start with the same first 2 words
+  as any entry in recent_reply_starts.
 - RARE EXCEPTION: if bank_text uses jargon the candidate clearly
   hasn't heard, bridge briefly: "On the ScriptRunner side —".
 

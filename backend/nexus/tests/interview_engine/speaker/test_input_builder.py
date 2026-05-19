@@ -811,28 +811,27 @@ def test_build_speaker_input_applies_acronym_preprocessor_to_bank_text() -> None
 
 
 # ---------------------------------------------------------------------------
-# Phase 9.4 — clarify_kind + available_openers routing
+# Phase 9.4 — clarify_kind routing
+# (the legacy `available_openers` field was retired on 2026-05-19; see
+# the anti-regression test near the bottom of this file)
 # ---------------------------------------------------------------------------
 
 
-def test_speaker_input_accepts_clarify_kind_and_available_openers() -> None:
+def test_speaker_input_accepts_clarify_kind() -> None:
     si = SpeakerInput(
         instruction_kind=InstructionKind.clarify,
         persona_name="Arjun",
         clarify_kind=ClarifyKind.concept_explanation,
-        available_openers=["See —", "Right, so —", "Hmm —"],
     )
     assert si.clarify_kind == ClarifyKind.concept_explanation
-    assert si.available_openers == ["See —", "Right, so —", "Hmm —"]
 
 
-def test_speaker_input_defaults_clarify_kind_to_none_and_openers_to_empty() -> None:
+def test_speaker_input_defaults_clarify_kind_to_none() -> None:
     si = SpeakerInput(
         instruction_kind=InstructionKind.deliver_question,
         persona_name="Arjun",
     )
     assert si.clarify_kind is None
-    assert si.available_openers == []
 
 
 # ---------------------------------------------------------------------------
@@ -894,71 +893,23 @@ def test_input_builder_clarify_kind_none_for_non_clarify_kinds() -> None:
     assert si.clarify_kind is None
 
 
-def test_input_builder_populates_available_openers_for_every_kind() -> None:
-    """available_openers is computed via filter_available_openers and
-    populated for every kind, not just clarify. When recent_reply_starts
-    contains entries starting with 'Mm, OK —', that opener is pruned;
-    the other 8 remain.
-    """
-    from app.modules.interview_engine.speaker.persona import DEFAULT_PERSONA
-    recent = ["Mm, OK — kindly", "Mm, OK — let's", "Mm, OK — that's"]
-    # build a minimal clarify payload to avoid construction errors
-    judge_output = JudgeOutput(
-        reasoning="x" * 30,
-        observations=[],
-        candidate_claims=[],
-        next_action=NextAction.clarify,
-        next_action_payload=ClarifyPayload(clarify_kind=ClarifyKind.broad_rephrase),
-        turn_metadata=TurnMetadata(),
-    )
-    for kind in (
-        InstructionKind.deliver_question,
-        InstructionKind.clarify,
-        InstructionKind.push_back,
-        InstructionKind.redirect,
-        InstructionKind.polite_close,
-    ):
-        si = build_speaker_input(
-            instruction_kind=kind,
-            judge_output=judge_output,
-            active_question=None,
-            queue=QuestionQueue.from_initial(questions=[]),
-            claims_pool=CandidateClaimsPool(max_size=50),
-            recent_turns=[],
-            persona_name="Arjun",
-            last_candidate_utterance=None,
-            recent_reply_starts=recent,
-        )
-        assert "Mm, OK —" not in si.available_openers, (
-            f"kind={kind.value}: Mm, OK — should be pruned"
-        )
-        assert len(si.available_openers) == len(DEFAULT_PERSONA.opener_rotation) - 1
-        # Other openers preserved.
-        assert "See —" in si.available_openers
+def test_speaker_input_has_no_available_openers_field() -> None:
+    """Anti-regression: `available_openers` was retired on 2026-05-19.
 
+    The hand-curated rotation produced robotic repetition in production
+    (model anchored on the first opener regardless of the filter, and
+    the slug-comparison filter was a no-op for 2-word openers anyway).
+    Replaced by the Variety RULE in _preamble.txt which reads
+    `recent_reply_starts` directly.
 
-def test_input_builder_available_openers_full_when_recent_empty() -> None:
-    """When recent_reply_starts is empty (e.g., first turn),
-    available_openers equals the full PersonaSpec rotation.
+    If anyone re-adds the field, this test fails — they should be
+    re-reading the 2026-05-19 spec instead.
     """
-    from app.modules.interview_engine.speaker.persona import DEFAULT_PERSONA
-    judge_output = JudgeOutput(
-        reasoning="x" * 30,
-        observations=[],
-        candidate_claims=[],
-        next_action=NextAction.clarify,
-        next_action_payload=ClarifyPayload(clarify_kind=ClarifyKind.broad_rephrase),
-        turn_metadata=TurnMetadata(),
-    )
-    si = build_speaker_input(
-        instruction_kind=InstructionKind.deliver_first_question,
-        judge_output=judge_output,
-        active_question=None,
-        queue=QuestionQueue.from_initial(questions=[]),
-        claims_pool=CandidateClaimsPool(max_size=50),
-        recent_turns=[],
+    si = SpeakerInput(
+        instruction_kind=InstructionKind.deliver_question,
         persona_name="Arjun",
-        last_candidate_utterance=None,
-        recent_reply_starts=[],
     )
-    assert si.available_openers == list(DEFAULT_PERSONA.opener_rotation)
+    assert not hasattr(si, "available_openers"), (
+        "available_openers was intentionally retired; the Variety RULE "
+        "in _preamble.txt reads recent_reply_starts directly."
+    )

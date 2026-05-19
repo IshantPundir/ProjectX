@@ -111,17 +111,13 @@ class SpeakerInput(BaseModel):
             "Drives PATH dispatch inside speaker/clarify.txt."
         ),
     )
-    available_openers: list[str] = Field(
-        default_factory=list,
-        description=(
-            "PersonaSpec.opener_rotation filtered against "
-            "recent_reply_starts for THIS turn. Populated for every kind. "
-            "The Speaker scaffold prefers an opener from this list — the "
-            "system rotation is the master persona, available_openers is "
-            "the per-turn allowed subset that respects the anti-repetition "
-            "rule deterministically."
-        ),
-    )
+    # `available_openers` was retired on 2026-05-19 (Scope C restructure).
+    # The hand-curated rotation produced robotic repetition in production
+    # — the model anchored on the first opener ("See —") regardless of
+    # the filter, and the slug-comparison bug (opener "See —" 2 words vs
+    # actual reply "See — kindly walk" 3 words) meant the filter was a
+    # no-op for short openers anyway. Replaced by an explicit Variety
+    # RULE in the preamble that reads `recent_reply_starts` directly.
     # Populated for instruction_kind == intro_brief (all five fields) and
     # for instruction_kind == clarify with clarify_kind == role_context
     # (job_title, hiring_company_name, role_summary, jd_text — not the

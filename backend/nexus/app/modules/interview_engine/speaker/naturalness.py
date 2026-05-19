@@ -12,26 +12,36 @@ from app.modules.interview_engine.speaker.persona import DEFAULT_PERSONA
 def detect_repeated_opener(
     output: str, recent_reply_starts: list[str],
 ) -> bool:
-    """True iff the first 3 words of ``output`` match the first 3 words
-    of any recent opener.
+    """True iff the first 2 words of ``output`` match the first 2 words
+    of any recent agent reply.
 
-    Anti-repetition signal. Per LiveKit/Vapi: the highest-frequency
-    'sounds AI' tell across turns is the same opener appearing on
-    consecutive turns. 3-word slug comparison (was 4-word) so that
-    'Mm, OK — an' and 'Mm, OK — iPaaS' both register as the same
-    opener — the candidate hears "Mm, OK —" repeat regardless of
-    the divergent 4th word.
+    Anti-repetition signal. Per OpenAI Realtime / LiveKit / Vapi, the
+    highest-frequency "sounds AI" tell across turns is the same opener
+    appearing on consecutive turns. The post-hoc flag drives the
+    `naturalness_flags.repeated_opener` observability bit so we can
+    measure how often the model violates the Variety RULE in
+    _preamble.txt.
 
-    Slug definition delegated to ``speaker.openers.opener_slug`` so the
-    pre-prompt filter (``filter_available_openers``) and this post-hoc
-    detector share one implementation.
+    **Why 2 words, not 3?** The retired ``opener_slug`` helper used a
+    3-word lowercased slug, which silently failed for short openers
+    like "See —" (2 words). The actual heard-by-the-candidate repetition
+    is the FIRST 1-2 words. Comparing 2 lowercased words gives a
+    detector that catches "See —" → "See —" (both slug "see —")
+    AND "Mm, OK —" → "Mm, OK —" (both slug "mm, ok") while still
+    allowing genuine variation. The 2-word check matches the Variety
+    RULE the Speaker prompt enforces.
     """
     if not output or not recent_reply_starts:
         return False
-    from app.modules.interview_engine.speaker.openers import opener_slug
-    output_slug = opener_slug(output)
+
+    def _slug(text: str) -> str:
+        return " ".join(text.strip().split()[:2]).lower()
+
+    output_slug = _slug(output)
+    if not output_slug:
+        return False
     return any(
-        output_slug == opener_slug(start)
+        _slug(start) == output_slug
         for start in recent_reply_starts if start.strip()
     )
 

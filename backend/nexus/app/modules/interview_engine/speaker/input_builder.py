@@ -9,8 +9,7 @@ from app.modules.interview_engine.models.judge import (
 from app.modules.interview_engine.models.speaker import (
     InstructionKind, SpeakerInput,
 )
-from app.modules.interview_engine.speaker.openers import filter_available_openers
-from app.modules.interview_engine.speaker.persona import DEFAULT_PERSONA
+from app.modules.interview_engine.speaker.persona import DEFAULT_PERSONA  # noqa: F401  (re-exported transitively for tests)
 from app.modules.interview_engine.state.claims import CandidateClaimsPool
 from app.modules.interview_engine.state.queue import QuestionQueue
 from app.modules.interview_runtime import (
@@ -206,14 +205,9 @@ def build_speaker_input(
     # against a 2000-token system prompt.
     reply_starts_payload: list[str] = list(recent_reply_starts or [])
 
-    # Per-turn opener pruning. PersonaSpec.opener_rotation is the
-    # master persona; available_openers is the subset valid for THIS
-    # turn (rotation minus recently-used). Populated for every kind —
-    # the rotation is a persona-wide concern, not clarify-specific.
-    available_openers_payload = filter_available_openers(
-        DEFAULT_PERSONA.opener_rotation,
-        reply_starts_payload,
-    )
+    # NOTE: the legacy `available_openers` payload (a per-turn pruned
+    # opener rotation) was retired on 2026-05-19. The Speaker now reads
+    # `recent_reply_starts` directly per the Variety RULE in _preamble.txt.
 
     # clarify_kind propagation. The Judge picks the kind on the
     # ClarifyPayload; we surface it on SpeakerInput so the Speaker
@@ -280,7 +274,6 @@ def build_speaker_input(
         recent_reply_starts=reply_starts_payload,
         is_post_cap_advance=post_cap_payload,
         clarify_kind=clarify_kind_payload,
-        available_openers=available_openers_payload,
         job_title=role_context_job_title_payload,
         hiring_company_name=role_context_hiring_company_payload,
         role_summary=role_context_role_summary_payload,

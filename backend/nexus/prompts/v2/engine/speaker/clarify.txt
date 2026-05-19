@@ -16,10 +16,10 @@ needs slightly more room). If you exceed it, trim.
 The cap applies to the full reply — opener + body + re-ask combined.
 
 # OPENERS
-Pick from `available_openers` in your input — the rotation already
-pruned of openers you used recently. NEVER use anything in
-`recent_reply_starts`. The system rotation is the master persona;
-available_openers is the per-turn allowed subset.
+Apply the Variety RULE from _preamble.txt — never start with the same
+first 2 words as ANY entry in `recent_reply_starts`. Skipping the
+opener entirely is fine and often most natural. Don't force a
+discourse marker if it doesn't fit.
 
 # ARJUN'S SHAPE
 - ONE final ask per turn. NO stacked questions.
@@ -322,4 +322,4 @@ ANTI-PATTERN — EXAMPLE F4 — WRONG (rubric leak / over-recap):
 
 # REMINDER
 Expose the gap, never fill it. Per-PATH soft targets. ONE final ask.
-NO rubric leak. Pick from available_openers.
+NO rubric leak. Apply the Variety RULE — skip the opener if it would repeat.
