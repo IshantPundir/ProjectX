@@ -4,6 +4,7 @@ import { useSessionContext } from '@livekit/components-react'
 import { AgentSessionView_01 } from '@/components/agents-ui/blocks/agent-session-view-01'
 import type { AppConfig } from '@/app-config'
 import type { PreCheckResponse } from '@/lib/api/candidate-session'
+import { AgentUIWithLoader } from '../agent-ui-with-loader'
 import { CompletionScreen } from './CompletionScreen'
 import { DisconnectError } from './DisconnectError'
 import { ProgressBanner } from './ProgressBanner'
@@ -61,7 +62,7 @@ export function ViewController({
   }
 
   return (
-    <>
+    <AgentUIWithLoader>
       <ProgressBanner />
       <AgentSessionView_01
         supportsChatInput={appConfig.supportsChatInput}
@@ -79,6 +80,6 @@ export function ViewController({
         className="fixed inset-0"
       />
       <ReconnectingOverlay onTimeout={() => onError('RECONNECT_FAILED')} />
-    </>
+    </AgentUIWithLoader>
   )
 }
