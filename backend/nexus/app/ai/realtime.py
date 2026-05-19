@@ -36,23 +36,30 @@ if TYPE_CHECKING:
 logger = structlog.get_logger("ai.realtime")
 
 
-def build_stt_plugin() -> "_BaseSTT":
+def build_stt_plugin(keyterms: list[str] | None = None) -> "_BaseSTT":
     """Construct the realtime STT plugin selected by AIConfig.
 
     Provider is chosen by ``AIConfig.interview_stt_provider``
-    (env: ``INTERVIEW_STT_PROVIDER``). Default ``sarvam`` (``saaras:v3``);
-    ``deepgram`` (``nova-3``) is the alternate / rollback path.
+    (env: ``INTERVIEW_STT_PROVIDER``). Default ``deepgram`` (``nova-3``);
+    ``sarvam`` (``saaras:v3``) is the switchable alternate.
 
     Sarvam STT specializes in Indian languages (en-IN, hi-IN, code-mix).
-    Deepgram is retained as a switch-back path. Both providers expose the
-    same ``livekit.agents.stt.STT`` abstract surface, so VAD, turn
-    detection, and adaptive interruption see identical event streams.
+    Both providers expose the same ``livekit.agents.stt.STT`` abstract
+    surface, so VAD, turn detection, and adaptive interruption see
+    identical event streams.
+
+    ``keyterms`` is the Deepgram nova-3 keyterm-prompting list (10-50
+    role-specific terms, LLM-extracted at bank-generation time and
+    cached on stage_question_banks.extracted_keyterms; see spec
+    docs/superpowers/specs/2026-05-19-deepgram-keyterm-migration-design.md).
+    Sarvam ignores the argument (its STT has no equivalent feature).
+    Pass ``None`` (the default) to skip keyterm boosting entirely.
     """
     provider = ai_config.interview_stt_provider
     if provider == "sarvam":
         return _build_stt_sarvam()
     if provider == "deepgram":
-        return _build_stt_deepgram()
+        return _build_stt_deepgram(keyterms=keyterms)
     raise ValueError(
         f"Unknown interview_stt_provider {provider!r}; "
         "expected 'sarvam' or 'deepgram'."
@@ -81,20 +88,31 @@ def _build_stt_sarvam() -> "_BaseSTT":
     )
 
 
-def _build_stt_deepgram() -> "_BaseSTT":
-    """Deepgram STT (rollback / alternate). Auth via DEEPGRAM_API_KEY env."""
+def _build_stt_deepgram(*, keyterms: list[str] | None = None) -> "_BaseSTT":
+    """Deepgram STT (default). Auth via DEEPGRAM_API_KEY env.
+
+    ``keyterms`` is forwarded as the Deepgram ``keyterm`` REST API
+    parameter when non-empty. Nova-3 boosts recognition for each term
+    (and multi-word phrase). The 50-term recommendation is enforced
+    upstream by the LLM extractor (KeytermExtractionOutput.max_length=50).
+    """
     from livekit.plugins import deepgram
+
+    kwargs: dict[str, object] = {
+        "model": ai_config.interview_stt_model,
+        "language": ai_config.interview_stt_language,
+    }
+    if keyterms:
+        kwargs["keyterm"] = keyterms
 
     logger.info(
         "ai.realtime.stt.built",
         provider="deepgram",
         model=ai_config.interview_stt_model,
         language=ai_config.interview_stt_language,
+        keyterm_count=len(keyterms) if keyterms else 0,
     )
-    return deepgram.STT(
-        model=ai_config.interview_stt_model,
-        language=ai_config.interview_stt_language,
-    )
+    return deepgram.STT(**kwargs)
 
 
 def build_llm_plugin() -> "LLM":
