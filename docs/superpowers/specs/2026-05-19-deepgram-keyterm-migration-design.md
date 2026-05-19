@@ -1,272 +1,302 @@
-# Deepgram nova-3 + en-IN keyterm migration
+# Deepgram nova-3 + en-IN with LLM-extracted keyterm prompting
 
-**Status:** Draft for user review · **Date:** 2026-05-19
+**Status:** Draft for user review · **Date:** 2026-05-19 · **Supersedes:** regex-extraction design (commits a927a69…9cd8fdd in the same file)
 
 ## Summary
 
-The interview engine's STT is Sarvam `saaras:v3` (en-IN). Sarvam's TTS quality is acceptable, but the
-STT mistranscribes domain-specific technical vocabulary — brand names ("MuleSoft", "TIBCO", "Boomi",
-"Salesforce"), protocol/architecture terms ("API-led", "iPaaS", "ESB", "JSON Schema"), and candidate
-names — frequently enough to degrade the downstream Judge + State Engine, which see corrupted text
-and either over-clarify, fall back to `clarify`, or fire a validation error. Session
-`engine-events/a0388c8e-…json` shows representative damage: a "Hello" fragment stitched onto a fresh
-utterance triggered a Judge cross-field validation error (`candidate_social_or_greeting=true` +
-`next_action=acknowledge_no_experience`), forcing a fallback `clarify`. The session-level
-`audio.tuning_summary` reports STT transcription delay p95 = 5304ms, end-of-utterance delay p95 =
-5487ms — well above the 200–300ms STT budget documented in `backend/nexus/CLAUDE.md`.
+The interview engine's STT is Sarvam `saaras:v3` (en-IN). Sarvam's TTS quality is acceptable but its
+STT mistranscribes domain-specific technical vocabulary — brand names ("MuleSoft", "TIBCO", "Boomi"),
+protocol/architecture terms ("API-led", "iPaaS", "ESB"), and candidate names — frequently enough to
+degrade the downstream Judge + State Engine. Session `engine-events/a0388c8e-…json` shows
+representative damage and a 5.3s p95 transcription delay — well above the 200–300ms STT budget.
 
-Deepgram `nova-3` supports `en-IN` natively and exposes **Keyterm Prompting** — a per-request list of
-20–50 boostable terms that biases recognition toward role-specific vocabulary. This spec migrates the
-default STT path to `deepgram/nova-3/en-IN` and wires a deterministic per-session keyterm extractor
-that reads from the already-curated `SessionConfig` (`signal_snapshot`, `company_profile`,
-`candidate`, `tenant`, `job`) and passes the resulting list into `deepgram.STT(keyterm=[…])`.
+Deepgram `nova-3` supports `en-IN` natively and exposes **Keyterm Prompting** — a per-request list
+of 20–50 boostable terms that biases recognition toward role-specific vocabulary. This spec migrates
+the default STT path to `deepgram/nova-3/en-IN` and adds an **LLM-extracted, per-bank-cached**
+keyterm list passed into `deepgram.STT(keyterm=[…])` at every session start.
 
-**Why deterministic, not LLM-extracted:** the `signal_snapshot` is already a recruiter-confirmed,
-AI-validated list of canonical signal phrases. ~90% of high-leverage tech vocabulary for a given
-role lives in those phrases. Extracting deterministically (regex + tokenization) costs zero latency
-at session start, is unit-testable, and produces no new LLM failure mode. If empirical results show
-gaps (specific role types where keyterms underperform), the upgrade path is a one-time cached LLM
-augmentation per `(stage_question_bank, pipeline_version)` — not a per-session call.
+**Why LLM extraction, not regex/heuristic:** the diversity of roles (cloud infra `S3 EC2 Lambda`,
+ML `LangGraph PyTorch HuggingFace`, fintech `ACH SWIFT ISO20022`, legacy enterprise `MuleSoft TIBCO
+ServiceNow`, …) makes any fixed token regex brittle. An LLM call against the curated question bank +
+company profile + role summary catches multi-word brands ("Dell Boomi"), digit-bearing identifiers
+("S3"), domain abbreviations ("ESB"), and mixed-case terms ("iPaaS") uniformly without per-domain
+tuning.
 
-**Sarvam stays in the codebase** as a switchable alternate (toggled via `INTERVIEW_STT_PROVIDER=sarvam`)
-so that a Deepgram regression has an in-tree fallback. The Sarvam branch ignores the keyterm
-argument.
+**Why at bank-generation time, not session start:** the question bank already runs an LLM per stage
+(`question_bank/actors.py:generate_question_bank_stage`). Adding one final keyterm-extraction call
+at the end of that actor, writing the result to a new `stage_question_banks.extracted_keyterms`
+JSONB column, gives:
+
+- **Zero session-start latency** — engine reads a cached field; no LLM call in the hot path
+- **No new failure mode for live sessions** — STT plugin construction stays synchronous
+- **Stale-tracking for free** — the bank's existing `is_stale` flag regenerates keyterms whenever the
+  bank regenerates (pipeline edit, signal change, etc.)
+- **Recruiter visibility (future)** — keyterms sit on the bank row, ready for a UI surface
+
+Sarvam stays in the codebase as a switchable alternate (toggle via `INTERVIEW_STT_PROVIDER=sarvam`).
+The Sarvam branch in `realtime.py` ignores the keyterm argument.
 
 ## Non-goals
 
 - **Not removing Sarvam.** Sarvam-specific env knobs (`INTERVIEW_STT_MODE`) stay; the dispatch in
   `realtime.py:build_stt_plugin` stays a two-provider switch.
-- **Not re-tuning endpointing/EOU.** Deepgram's lower transcription latency *should* let
-  `engine_endpointing_max_delay` shrink back from 4.5s toward 3.0s, but that's a separate
-  observation pass after we have real Deepgram session logs.
-- **Not adding mid-session keyterm updates.** Nova-3 takes keyterm at websocket open and does not
-  support runtime reconfiguration (that's a Flux-only feature). One-shot extraction at session
-  start is the only path.
-- **Not adding a hybrid (LLM-augmented) extraction strategy.** Deterministic only for v1.
-- **Not changing TTS.** Sarvam `bulbul:v3` TTS quality is acceptable; out of scope.
-- **Not changing VAD, turn detector, noise cancellation, or adaptive interruption.** Those layers
-  are orthogonal to STT.
+- **Not re-tuning endpointing/EOU.** Separate observation pass after we have real Deepgram logs.
+- **Not adding mid-session keyterm updates.** Nova-3 takes keyterm at websocket open only.
+- **Not changing TTS.** Sarvam `bulbul:v3` quality is acceptable; out of scope.
+- **Not changing VAD, turn detector, noise cancellation, or adaptive interruption.**
 - **Not touching the conversational-continuation watcher.** The pre-Speaker cancellation watcher in
   `orchestrator.py` (fields `continuation_enabled`, `continuation_min_word_count`,
   `continuation_consecutive_abort_cap`, state `_pending_continuation_text`, events
   `turn.aborted_for_continuation` + `turn.stitched_continuation`, spec
   `docs/superpowers/specs/2026-05-17-conversational-continuation-design.md`) is the load-bearing
   defense against EOU mis-firing on long candidate pauses. It is preserved verbatim. None of the
-  files touched by this migration (`keyterms.py`, `stt_factory.py`, `realtime.py`, `config.py`,
-  `.env.example`, `event_kinds.py`, `agent.py`) modify the orchestrator's stitching logic, its
-  config defaults, or its event payload shapes. The continuation watcher should function
-  identically against Deepgram-final transcripts as it does today against Sarvam-final transcripts;
-  it operates on whatever text the STT plugin surfaces.
+  files touched by this migration modify the orchestrator's stitching logic, its config defaults,
+  or its event payload shapes.
+- **Not backfilling existing banks.** Per user confirmation (2026-05-19, dev mode, no real users):
+  legacy banks with `extracted_keyterms IS NULL` are not migrated. The recruiter regenerates banks
+  to populate keyterms. The engine ships an empty/minimal keyterm list (candidate first name only)
+  for any bank whose keyterm extraction hasn't run yet — Deepgram still functions, just without the
+  brand boost.
 
 ## What changes
 
-### 1. New file: `app/modules/interview_engine/keyterms.py`
+### 1. Migration `0029_extracted_keyterms`
 
-A single pure function `extract_keyterms(session_config: SessionConfig) -> KeytermExtraction`,
-where `KeytermExtraction` is a `@dataclass(frozen=True)` exposing `terms: list[str]` and
-`sources: dict[str, int]` (source attribution counts for the audit event). No I/O, no LiveKit
-deps, no asyncpg.
+Add one JSONB column on `stage_question_banks`:
 
-**Field rules** (read against the actual `SessionConfig` Pydantic model in
-`app/modules/interview_runtime/schemas.py:181`, NOT the raw `build_session_config` dict — those
-differ; SessionConfig is the flattened wire contract):
+```sql
+ALTER TABLE stage_question_banks
+  ADD COLUMN extracted_keyterms JSONB NULL;
+```
 
-| Source field on `SessionConfig` | Rule |
-|---|---|
-| `candidate.name` (str) | First whitespace-split token only |
-| `hiring_company_name` (str \| None) | As-is when not None |
-| `job_title` (str) | As-is |
-| Each phrase in `signals` (list[str]) | Two-pass: (a) emit the full phrase as one keyterm, (b) extract proper-noun-looking tokens (CapitalizedWords, ALL_CAPS, hyphenated like "API-led") and emit each individually |
-| `role_summary` (str) | Extract proper-noun tokens only (prose is too noisy as a phrase) |
+- **Nullable** — legacy banks won't be backfilled; null = "extraction hasn't run for this bank yet".
+- **No new RLS policy needed** — the table is already tenant-scoped; the column lives inside the row.
+- **Stale-tracking is free** — when a bank regenerates (`is_stale=true` flow), the actor overwrites
+  this column as its final step.
 
-**Explicitly NOT used:** `company.about / .industry / .hiring_bar` (noisy prose; brand names will
-mostly be present in `signals` already); `jd_text` (long enriched JD body; blows the 50-term cap);
-`stage.questions[].text` (signals carry the same vocab in cleaner form). The ProjectX tenant name
-(e.g. "BinQle" when the tenant is a staffing agency) is deliberately NOT in `SessionConfig` — the
-engine only knows the *hiring* company — so it cannot be included without expanding the wire
-contract, which is out of scope.
+Includes a rollback (`DROP COLUMN`). No data dependency.
 
-**Filtering / normalization (applied at the end):**
-
-- Drop generic English filler against a small stopword list: `the, and, or, with, for, from, into,
-  via, of, on, in, at, to, a, an, is, are, was, were`.
-- Drop single-letter tokens and pure-digit tokens.
-- Strip leading/trailing punctuation (commas, parens, periods) from individual tokens; keep
-  internal punctuation that matters ("API-led", "Sr.").
-- Dedupe **case-insensitively**, keeping the first-seen casing. Order is insertion order.
-- Cap final list at **50** entries (Deepgram recommends 20–50; their hard cap is 500 tokens).
-
-**Proper-noun token extraction regex (precise):**
-
-A token qualifies if it matches at least one of:
-
-- `^[A-Z][a-zA-Z]+(?:-[A-Z][a-zA-Z]+)*$` — CapitalizedWord, optionally Hyphenated-CamelCase
-- `^[A-Z]{2,}$` — ALL_CAPS acronym (≥2 chars)
-- `^[A-Z][a-zA-Z]*-[a-z][a-zA-Z]*$` — Mixed like "API-led"
-- `^[A-Z][a-zA-Z0-9]*\d[a-zA-Z0-9]*$` — Brand-with-digit like "S3", "OAuth2"
-
-Each candidate token is also filtered against the stopword list (so common words that happen to
-start a sentence don't sneak in) and against a small denylist of generic capitalized words that
-appear at sentence starts: `The, This, That, We, You, It, In, On, At, For, As`.
-
-### 2. Wiring: `stt_factory.py`, `realtime.py`, and `agent.py`
-
-`stt_factory.py:build_stt_plugin_for_session` replaces today's pass-through and returns the
-extraction object alongside the STT plugin so the caller can audit-log without re-running the
-extractor:
+### 2. AI schema: `KeytermExtractionOutput` in `app/ai/schemas.py`
 
 ```python
-from app.ai.realtime import build_stt_plugin
-from app.modules.interview_engine.keyterms import KeytermExtraction, extract_keyterms
+class KeytermExtractionOutput(BaseModel):
+    """Output schema for the per-bank keyterm extraction LLM call.
+
+    Used by question_bank/actors.py to populate stage_question_banks.extracted_keyterms.
+    """
+    keyterms: list[str] = Field(min_length=10, max_length=50)
+
+    @model_validator(mode="after")
+    def _validate_each_term(self) -> "KeytermExtractionOutput":
+        for term in self.keyterms:
+            if not term.strip():
+                raise ValueError("keyterms must not contain empty strings")
+            if len(term) > 80:
+                raise ValueError(f"keyterm too long ({len(term)} chars): {term!r}")
+        return self
+```
+
+Strict bounds (10–50 entries) ensure the LLM doesn't return a useless 2-term list or blow past
+Deepgram's 50-term recommendation.
+
+### 3. Prompt: `prompts/v1/question_bank_keyterms.txt`
+
+Single versioned prompt file. System prompt instructs the model to extract 20–40 role-specific
+keyterms from the bundle (job title + company profile + role summary + signal list + every question
+in the bank), preserving capitalization for proper nouns, including multi-word brand names, and
+excluding generic English filler. The user-message template is built in `actors.py` from the same
+context the existing per-question refinement uses, plus the now-final question list.
+
+### 4. Bank-generator actor extension: `app/modules/question_bank/actors.py`
+
+`generate_question_bank_stage` is extended with one final step after all per-question refinement
+completes successfully:
+
+```python
+# Final step: extract STT keyterms from the confirmed question bundle
+keyterm_output = await _extract_bank_keyterms(
+    job=job, company_profile=company_profile, role_summary=role_summary,
+    signals=signals, questions=final_questions,
+)
+await db.execute(
+    update(StageQuestionBankModel)
+    .where(StageQuestionBankModel.id == bank.id)
+    .values(extracted_keyterms=keyterm_output.keyterms),
+)
+```
+
+`_extract_bank_keyterms` is a private helper in `app/modules/question_bank/refine.py` (sibling to
+the existing per-question refine helpers), structured identically: `get_openai_client()` +
+`prompt_loader.load_pair("question_bank_common", "question_bank_keyterms")` +
+`set_llm_span_attributes(...)` + `client.chat.completions.create(response_model=KeytermExtractionOutput, ...)`.
+The actor in `actors.py` calls it once after the per-question refinement loop completes.
+
+**Idempotency:** if the bank regenerates, the keyterm call runs again and overwrites the column.
+
+**Failure mode:** if the keyterm call fails, the actor logs structlog `question_bank.keyterm_extraction.failed`
+with the bank id and continues — the bank itself is still useful without keyterms; the engine will
+fall back to candidate-name-only. This matches the codebase's existing "AI augments, never blocks"
+pattern.
+
+### 5. `AIConfig` gains `question_bank_keyterm_model`
+
+```python
+question_bank_keyterm_model: str = "gpt-5.4-nano-2026-03-17"
+```
+
+Defaults to the same fast/cheap model used by Speaker. Env override:
+`QUESTION_BANK_KEYTERM_MODEL`. Allows future re-tuning without code change.
+
+### 6. `interview_runtime/schemas.py` — new `SessionConfig.keyterms` field
+
+```python
+class SessionConfig(BaseModel):
+    ...
+    keyterms: list[str] = Field(
+        default_factory=list,
+        description=(
+            "STT keyterm-prompting list, extracted at bank-generation time and "
+            "cached on stage_question_banks.extracted_keyterms. Empty list when "
+            "the bank hasn't had keyterm extraction run yet — the engine then "
+            "falls back to candidate-name-only boosting."
+        ),
+    )
+```
+
+`build_session_config` in `interview_runtime/service.py` loads the value from the bank row and sets
+the field. If `extracted_keyterms IS NULL`, the field stays `[]`.
+
+### 7. Engine merger: `app/modules/interview_engine/keyterms.py`
+
+Replaces the deleted regex extractor. A 20-line pure function that combines the bank-cached
+keyterms with session-specific values (the candidate's first name) and returns a
+`KeytermExtraction` dataclass:
+
+```python
+from dataclasses import dataclass
 from app.modules.interview_runtime.schemas import SessionConfig
 
-def build_stt_plugin_for_session(
-    *, session_config: SessionConfig,
-) -> tuple["_BaseSTT", KeytermExtraction]:
-    extraction = extract_keyterms(session_config)
-    return build_stt_plugin(keyterms=extraction.terms), extraction
+_KEYTERM_CAP = 50
+
+@dataclass(frozen=True)
+class KeytermExtraction:
+    terms: list[str]
+    sources: dict[str, int]
+
+def assemble_keyterms(session_config: SessionConfig) -> KeytermExtraction:
+    terms: list[str] = []
+    sources: dict[str, int] = {}
+
+    def _add(term: str, source: str) -> None:
+        if not term or len(terms) >= _KEYTERM_CAP:
+            return
+        if any(t.lower() == term.lower() for t in terms):
+            return
+        terms.append(term)
+        sources[source] = sources.get(source, 0) + 1
+
+    # Candidate first name is the only session-specific term —
+    # everything else is bank-cached
+    if session_config.candidate.name.strip():
+        _add(session_config.candidate.name.split()[0], "candidate_name")
+
+    for term in session_config.keyterms:
+        _add(term, "bank_cached")
+
+    return KeytermExtraction(terms=terms, sources=sources)
 ```
 
-`agent.py` unpacks the tuple, emits the audit event, then passes the STT to `AgentSession`:
+No regex. Insertion order preserves candidate name as keyterm #1 (always survives the cap).
 
-```python
-stt_plugin, keyterm_extraction = build_stt_plugin_for_session(session_config=session_config)
-event_collector.append(
-    kind=AUDIO_STT_KEYTERMS_APPLIED,
-    payload=STTKeytermsAppliedPayload(
-        provider=ai_config.interview_stt_provider,
-        count=len(keyterm_extraction.terms),
-        terms=keyterm_extraction.terms,
-        sources=keyterm_extraction.sources,
-    ).model_dump(mode="json"),
-)
-session = AgentSession(stt=stt_plugin, llm=..., tts=..., ...)
-```
+### 8. STT factory + `realtime.py` + `agent.py` wiring (unchanged from prior spec revision)
 
-`realtime.py:build_stt_plugin` accepts an optional `keyterms: list[str] | None = None`. The
-sarvam branch ignores it (no-op). The deepgram branch passes it as the `keyterm` kwarg (singular —
-matches Deepgram REST API naming) when non-empty.
+`stt_factory.py:build_stt_plugin_for_session(session_config) -> tuple[_BaseSTT, KeytermExtraction]`
+calls `assemble_keyterms(session_config)`, forwards `extraction.terms` to
+`build_stt_plugin(keyterms=…)`, and returns both. `realtime.py:build_stt_plugin` and
+`_build_stt_deepgram` accept the optional `keyterms` kwarg and pass it as the `keyterm` REST API
+parameter to `deepgram.STT(...)` when non-empty. `agent.py` unpacks the tuple, emits the
+`audio.stt.keyterms_applied` audit event, and constructs `AgentSession(stt=stt_plugin, …)`.
 
-```python
-def _build_stt_deepgram(keyterms: list[str] | None = None) -> "_BaseSTT":
-    from livekit.plugins import deepgram
+### 9. Default-flip changes
 
-    kwargs: dict[str, object] = {
-        "model": ai_config.interview_stt_model,
-        "language": ai_config.interview_stt_language,
-    }
-    if keyterms:
-        kwargs["keyterm"] = keyterms
-
-    logger.info(
-        "ai.realtime.stt.built",
-        provider="deepgram",
-        model=ai_config.interview_stt_model,
-        language=ai_config.interview_stt_language,
-        keyterm_count=len(keyterms) if keyterms else 0,
-    )
-    return deepgram.STT(**kwargs)
-```
-
-### 3. Default flip: `AIConfig` and `.env.example`
-
-`app/ai/config.py` field defaults change:
+`AIConfig` (via the underlying `Settings` defaults in `app/config.py`) field defaults change:
 
 | Field | Old default | New default |
 |---|---|---|
 | `interview_stt_provider` | `"sarvam"` | `"deepgram"` |
 | `interview_stt_model` | `"saaras:v3"` | `"nova-3"` |
 | `interview_stt_language` | `"en-IN"` | `"en-IN"` (unchanged) |
-| `interview_stt_mode` | `"transcribe"` | `"transcribe"` (unchanged; sarvam-only, unused with deepgram) |
+| `interview_stt_mode` | `"transcribe"` | `"transcribe"` (unchanged; sarvam-only) |
+| `question_bank_keyterm_model` | (new) | `"gpt-5.4-nano-2026-03-17"` |
 
-`.env.example` mirrors. The comment block above the STT section is updated to note that Sarvam is now
-the alternate/rollback path.
+`.env.example` mirrors. The comment block above the STT section flips: Deepgram is now the default,
+Sarvam is the alternate.
 
-### 4. New audit event: `audio.stt.keyterms_applied`
+### 10. New audit event: `audio.stt.keyterms_applied`
 
-Registered in `app/modules/interview_engine/event_kinds.py`. Emitted from `agent.py` once, after
-`build_stt_plugin_for_session` returns its `(stt, keyterms)` tuple and *before* the `AgentSession(...)`
-constructor call. The provider name comes from `ai_config.interview_stt_provider` so the event is
-truthful when sarvam is toggled back (provider="sarvam", count=0, terms=[]).
-
-**Payload shape:**
+Registered in `event_kinds.py`; payload model `STTKeytermsAppliedPayload` in `audit_events.py`.
+Emitted from `agent.py` once, after `build_stt_plugin_for_session` returns and before
+`AgentSession(...)` construction.
 
 ```json
 {
   "provider": "deepgram",
-  "count": 32,
-  "terms": ["Ishant", "Workato", "Sr. Integration Engineer", "MuleSoft", "TIBCO", "Dell Boomi", "Salesforce", "API-led", "..."],
+  "count": 31,
+  "terms": ["Ishant", "Workato", "MuleSoft", "TIBCO", "Dell Boomi", "S3", "API-led", "..."],
   "sources": {
     "candidate_name": 1,
-    "hiring_company": 1,
-    "job_title": 1,
-    "signal_phrases": 7,
-    "signal_proper_nouns": 18,
-    "role_summary_proper_nouns": 4
+    "bank_cached": 30
   }
 }
 ```
 
-`redaction="full"`. Keyterms are role/company/candidate-name metadata, no resume content, no
-transcripts — same risk class as `model_versions` already emitted.
+`redaction="full"`. No PII risk — these are role/company/candidate-name metadata.
 
-**Why this event is load-bearing:** when STT quality regresses on a specific role, the only way to
-debug is to know *what context the STT saw*. The existing `model_versions.stt` envelope tells you
-which model was used; this event tells you which terms were boosted. Without it, regression
-investigations are blind.
+When `provider="sarvam"` is toggled back: `count=0`, `terms=[]`, `sources={"candidate_name": 1}` —
+the audit event still fires for parity (so a session with sarvam doesn't look like a missing event).
 
-### 5. Tests
+### 11. Tests
 
-New file `backend/nexus/tests/interview_engine/test_keyterms.py`. Pure unit tests against
-hand-built `SessionConfig` fixtures (no DB, no LiveKit, no network). Cases:
+| Coverage area | File | Notes |
+|---|---|---|
+| Migration | `tests/db/test_migration_0029.py` (or piggyback on existing migration tests) | Upgrade adds the column NULL-able; downgrade drops it |
+| Schema validation | `tests/ai/test_schemas.py` (add to existing) | Pydantic bounds: < 10 raises; > 50 raises; empty string in list raises; 80+ char term raises |
+| Prompt-loadable | `tests/ai/test_prompt_loader.py` (add) | `prompt_loader.load_pair("question_bank_common", "question_bank_keyterms")` returns non-empty system + user templates |
+| Bank actor — LLM call mocked | `tests/question_bank/test_actors_keyterm.py` (new) | With instructor mocked to return a known `KeytermExtractionOutput`, asserts the column is populated on the bank row after `generate_question_bank_stage` completes |
+| Bank actor — LLM failure tolerated | same file | Mock raises; actor logs and continues; bank still marked confirmed; column stays NULL |
+| Engine merger | `tests/interview_engine/test_keyterms.py` (new) | Pure unit tests against `assemble_keyterms`: candidate-name-only when `session_config.keyterms` is empty; merging preserves order with candidate first; case-insensitive dedupe; 50-cap with insertion-order guarantee |
+| `build_session_config` | `tests/interview_runtime/test_session_config_keyterms.py` (new) | When `stage_question_banks.extracted_keyterms IS NOT NULL`, the field is propagated; when NULL, defaults to empty list |
+| Audit-event payload | `tests/interview_engine/test_audit_events.py` (add) | `STTKeytermsAppliedPayload` accepts both provider values |
 
-1. **Minimum input** — empty `signals` list, `hiring_company_name=None`, empty `role_summary` →
-   returns at minimum `[candidate_first_name, job_title]`.
-2. **List-style signal expansion** — `signals=["5+ years with MuleSoft, TIBCO, or Dell Boomi"]`
-   produces both the full phrase and each brand name (MuleSoft, TIBCO, Boomi) individually.
-3. **Proper-noun extraction from role_summary** — `role_summary="Delivery on ESB/iPaaS platforms (MuleSoft/TIBCO/Dell Boomi)"`
-   yields "ESB", "iPaaS", and the brand names.
-4. **Case-insensitive dedupe** — input that contains "MuleSoft" and "mulesoft" emits only the
-   first-seen casing.
-5. **Stopword filtering** — single-letter, pure-digit, generic stopword tokens are dropped.
-6. **Candidate name normalization** — `"Ishant Pundir"` → `"Ishant"` only.
-7. **Cap enforcement** — synthetic 200-signal input emits exactly 50 terms; the 50 selected are
-   the first-seen (insertion order preserved).
-8. **Snapshot test** — feeds a committed JSON fixture
-   (`backend/nexus/tests/interview_engine/fixtures/session_config_mulesoft_sample.json`, derived
-   from the canonical `build_session_config` output for the MuleSoft Integration Engineer sample)
-   through and asserts the frozen expected keyterm list. Acts as the canonical fixture-driven
-   regression guard. The transient `tmp/interview_context.json` is NOT used as a test fixture —
-   the test fixture is a committed copy.
-
-No integration / docker-compose test is included in this PR. The manual smoke (real Deepgram call
-against a real session) is intentionally outside the test gate — the user runs one real interview
-and inspects transcripts. This matches the project's documented preference for "manual testing for
-AI agents" (memory: `feedback_manual_agent_testing.md`).
+No integration test against the live Deepgram API — the manual smoke (one real interview) is the
+end-to-end validation, per the project's documented preference (memory
+`feedback_manual_agent_testing.md`).
 
 ## Risks & open questions
 
-1. **Empirical: does `language=en-IN` + `keyterm` work together in nova-3?** Deepgram's blog quote
-   confirms "Keyterm Prompting is available for both monolingual and multilingual transcription
-   using the Nova-3 Models". The LiveKit "Supported configurations" table doesn't explicitly
-   enumerate `en-IN` keyterm pairing, but the plugin source doesn't gate by language. The first
-   real interview after merge is the empirical confirmation. Rollback is one env var.
-2. **Code-mix Hindi-English candidates.** Sarvam's `mode="codemix"` is purpose-built for this; Nova-3
-   monolingual `en-IN` won't handle Hindi insertions cleanly. If a candidate population emerges that
-   needs this, options are (a) switch language to `multi` (paid at multilingual rate; covers Hindi +
-   English) or (b) toggle back to Sarvam for those tenants. Out of scope for this PR.
-3. **Keyterm cap interaction with very long signal lists.** Some roles may produce >50 proper-noun
-   candidates. The first-50 cap is order-stable (insertion order), so the most important fields
-   (candidate name, tenant, company, job title) always make the cut — they're emitted first.
-4. **Audit log size.** The new event adds ~1KB per session to `engine-events/*.json`. Negligible.
+1. **Empirical: does `language=en-IN` + `keyterm` work together in nova-3?** Deepgram's blog says
+   "Keyterm Prompting is available for both monolingual and multilingual transcription using the
+   Nova-3 Models". LiveKit's "Supported configurations" doesn't explicitly enumerate `en-IN`
+   keyterm pairing, but the plugin source doesn't gate by language. Empirically confirmed by the
+   first real interview; rollback is one env var.
+2. **Code-mix Hindi-English candidates.** Out of scope. Toggle back to Sarvam via env if needed.
+3. **LLM call adds ~1s to bank generation.** Negligible compared to existing ~30s bank-generation
+   wall time.
+4. **Bank without keyterms before regeneration.** The engine falls back to candidate-name-only;
+   Deepgram still functions, just without brand boost. User has confirmed (2026-05-19) this is
+   acceptable in dev mode — no backfill needed.
+5. **Prompt quality is now the dominant determinant of keyterm quality.** First-pass prompt will
+   ship; iterate based on session-log inspection. Prompt versioning (v1/, v2/, …) gives a clean
+   roll-back path.
 
 ## Out of scope (explicit YAGNI)
 
-- LLM-extracted or hybrid keyterm strategy.
-- Caching keyterms in `stage_question_banks` (extraction is microseconds — caching adds a migration
-  for no real-world payoff).
+- Hybrid LLM + regex extraction.
+- Caching at a level higher than the bank (e.g., per-job-posting). Per-bank is the natural cache
+  granularity that matches existing stale-tracking.
 - Mid-session keyterm updates (Flux-only, irrelevant to nova-3).
 - Sarvam-branch removal.
 - Re-tuning `engine_endpointing_max_delay` based on Deepgram's lower transcription latency.
 - Adding `language=multi` support / billing toggle.
-- Adding a recruiter-side keyterm override UI.
+- Adding a recruiter-side keyterm override / edit UI.
+- Backfilling `extracted_keyterms` for existing banks (dev-mode acceptable, per user 2026-05-19).
