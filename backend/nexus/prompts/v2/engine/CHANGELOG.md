@@ -1,5 +1,22 @@
 # Engine prompts v2 — changelog
 
+## 2026-05-19 — Post-phase-transition segue (behavioral → technical)
+
+**Speaker (`deliver_question.txt`):**
+- Added POST-PHASE TRANSITION section + 2 exemplars
+- Added PRECEDENCE rule when both is_post_cap_advance and
+  is_post_phase_transition are true (cap takes precedence)
+- New SpeakerInput field consumed: `is_post_phase_transition: bool`
+
+**New Speaker prompt (`intro_brief.txt`):**
+- One-utterance greeting + role brief, fired once per session in
+  `on_enter` before the first question
+- Reads new SpeakerInput fields: `job_title`, `hiring_company_name`,
+  `role_summary`, `session_duration_minutes`, `question_count`
+- Persona-anchored via the shared `_preamble.txt`
+
+Spec: docs/superpowers/specs/2026-05-19-behavioral-layer-and-intro-design.md
+
 ## 2026-05-18 — Intent layer (clarify_kind + opener pruning)
 
 **Judge:**
