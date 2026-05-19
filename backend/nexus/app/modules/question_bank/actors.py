@@ -17,7 +17,7 @@ from uuid import UUID
 import dramatiq
 import orjson
 import structlog
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.sql import text
 
 from app import pubsub
@@ -30,9 +30,14 @@ from opentelemetry.trace import Status, StatusCode
 from app.ai.tracing import set_llm_span_attributes
 from app.database import get_bypass_session
 from app.modules.jd import JobPosting, JobPostingSignalSnapshot
+from app.modules.org_units import (
+    OrganizationalUnit,
+    find_company_profile_in_ancestry,
+)
 from app.modules.pipelines import JobPipelineInstance, JobPipelineStage
 from app.modules.question_bank.models import StageQuestion, StageQuestionBank
 from app.modules.audit import log_event
+from app.modules.question_bank.refine import extract_bank_keyterms
 from app.modules.question_bank.schemas import (
     SingleQuestionOutput,
     StageQuestionBankOutput,
@@ -620,6 +625,55 @@ async def _generate_one_bank(
             "difficulty": stage.difficulty,
         }
         bank.is_stale = False
+
+        # Final step: extract STT keyterms for Deepgram nova-3 prompting
+        # (Phase 3D.deepgram-keyterm, 2026-05-19). Runs ONCE per bank
+        # generation; result cached in stage_question_banks.extracted_keyterms.
+        # Failures here are NOT fatal — log and continue. The engine falls
+        # back to candidate-name-only STT boosting if the column stays NULL.
+        try:
+            company_profile = (
+                await find_company_profile_in_ancestry(db, job.org_unit_id)
+                if job.org_unit_id is not None
+                else None
+            ) or {}
+            org_unit_name = ""
+            if job.org_unit_id is not None:
+                org_unit_row = (
+                    await db.execute(
+                        select(OrganizationalUnit).where(
+                            OrganizationalUnit.id == job.org_unit_id
+                        )
+                    )
+                ).scalar_one_or_none()
+                if org_unit_row is not None:
+                    org_unit_name = org_unit_row.name or ""
+            keyterm_output = await extract_bank_keyterms(
+                job_title=job.title,
+                hiring_company_name=org_unit_name,
+                industry=company_profile.get("industry", "") or "",
+                company_about=company_profile.get("about", "") or "",
+                hiring_bar=company_profile.get("hiring_bar", "") or "",
+                role_summary=snapshot.role_summary or "",
+                signals=[s["value"] for s in snapshot.signals],
+                questions=[{"text": q.text} for q in validated],
+            )
+            await db.execute(
+                update(StageQuestionBank)
+                .where(StageQuestionBank.id == bank.id)
+                .values(extracted_keyterms=keyterm_output.keyterms),
+            )
+            logger.info(
+                "question_bank.keyterm_extraction.complete",
+                bank_id=str(bank.id),
+                count=len(keyterm_output.keyterms),
+            )
+        except Exception:
+            logger.exception(
+                "question_bank.keyterm_extraction.failed",
+                bank_id=str(bank.id),
+            )
+            # Do not re-raise — keyterm extraction is best-effort.
 
         transition_to_reviewing_after_generation(bank, user_id=started_by)
     except Exception as exc:
