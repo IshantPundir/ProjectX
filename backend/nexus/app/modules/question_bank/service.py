@@ -389,6 +389,52 @@ def _validate_budget_against_stage(
         )
 
 
+def _apply_mandatory_correction_in_position_order(
+    *,
+    questions: list[GeneratedQuestion],
+    knockout_values: set[str],
+) -> None:
+    """Auto-correct is_mandatory in position order.
+
+    For each knockout signal, the earliest question (by position) probing
+    it claims the mandatory slot; later questions probing the same
+    knockout are demoted to optional. Mutates `questions` in place.
+
+    This is the post-merge pass for two-call generation — once behavioral
+    and technical questions are concatenated in their final position order,
+    this single pass enforces the "exactly one mandatory probe per knockout"
+    rule across both kinds.
+    """
+    knockouts_covered: set[str] = set()
+    for q in sorted(questions, key=lambda x: x.position):
+        knockouts_in_q = set(q.signal_values) & knockout_values
+        if not knockouts_in_q:
+            # Non-knockout question — leave is_mandatory as-is (trust the LLM)
+            continue
+
+        unclaimed = knockouts_in_q - knockouts_covered
+        if unclaimed:
+            # Earliest question covering these knockouts — must be mandatory
+            if not q.is_mandatory:
+                logger.warning(
+                    "question_bank.upgraded_to_mandatory",
+                    signal_values=q.signal_values,
+                    reason="earliest_knockout_question_must_be_mandatory",
+                )
+                q.is_mandatory = True
+            knockouts_covered.update(unclaimed)
+        else:
+            # All knockouts in this question are already covered by earlier
+            # mandatory questions — demote this one to optional depth probe
+            if q.is_mandatory:
+                logger.info(
+                    "question_bank.demoted_to_optional",
+                    signal_values=q.signal_values,
+                    reason="duplicate_knockout_coverage",
+                )
+                q.is_mandatory = False
+
+
 async def validate_llm_output_against_snapshot(
     db: AsyncSession,
     *,
@@ -397,6 +443,8 @@ async def validate_llm_output_against_snapshot(
     questions: list[GeneratedQuestion],
     stage: JobPipelineStage | None = None,
     optional_budget_margin_min: int = 5,
+    apply_mandatory_correction: bool = True,
+    budget_minutes_override: int | None = None,
 ) -> list[GeneratedQuestion]:
     """Run post-LLM validation checks. Returns the (possibly auto-corrected) list.
 
@@ -437,47 +485,30 @@ async def validate_llm_output_against_snapshot(
                     allowed_types=allowed_types,
                 )
 
-    # Second pass: budget caps. Skipped when stage is not provided (older
-    # tests, or paths that don't have stage in scope).
-    if stage is not None:
+    # Second pass: budget caps. Use budget_minutes_override when the caller
+    # passes a per-kind budget (different from stage.duration_minutes — e.g.,
+    # the behavioral call gets 3 min, the technical call gets stage - behavioral).
+    # Falls back to stage.duration_minutes when override is None.
+    if stage is not None or budget_minutes_override is not None:
+        duration = (
+            budget_minutes_override
+            if budget_minutes_override is not None
+            else stage.duration_minutes
+        )
         _validate_budget_against_stage(
             questions=questions,
-            duration_minutes=stage.duration_minutes,
+            duration_minutes=duration,
             margin_min=optional_budget_margin_min,
         )
 
     # Third pass: mandatory auto-correction in position order.
-    # For each knockout signal, the earliest question probing it claims the
-    # mandatory slot; later questions probing the same knockout are demoted.
-    knockouts_covered: set[str] = set()
-    for q in sorted(questions, key=lambda x: x.position):
-        knockouts_in_q = set(q.signal_values) & knockout_values
-        if not knockouts_in_q:
-            # Non-knockout question — leave is_mandatory as-is (trust the LLM)
-            continue
-
-        unclaimed = knockouts_in_q - knockouts_covered
-        if unclaimed:
-            # Earliest question covering these knockouts — must be mandatory
-            if not q.is_mandatory:
-                logger.warning(
-                    "question_bank.upgraded_to_mandatory",
-                    signal_values=q.signal_values,
-                    reason="earliest_knockout_question_must_be_mandatory",
-                )
-                q.is_mandatory = True
-            knockouts_covered.update(unclaimed)
-        else:
-            # All knockouts in this question are already covered by earlier
-            # mandatory questions — demote this one to optional depth probe
-            if q.is_mandatory:
-                logger.info(
-                    "question_bank.demoted_to_optional",
-                    signal_values=q.signal_values,
-                    reason="duplicate_knockout_coverage",
-                )
-                q.is_mandatory = False
-
+    # Skipped per-call by the two-call bank generator; runs once on the
+    # COMBINED behavioral+technical list after both calls return. See
+    # docs/superpowers/specs/2026-05-19-behavioral-layer-and-intro-design.md §1.
+    if apply_mandatory_correction:
+        _apply_mandatory_correction_in_position_order(
+            questions=questions, knockout_values=knockout_values,
+        )
     return questions
 
 
