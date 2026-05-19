@@ -717,97 +717,11 @@ def test_recent_reply_starts_passed_to_contextual_kinds() -> None:
     assert speaker_input.recent_reply_starts == ["Mm, OK —", "See —"]
 
 
-# ---------------- _preprocess_acronyms ----------------
-
-def test_preprocess_acronyms_replaces_letter_by_letter_forms() -> None:
-    from app.modules.interview_engine.speaker.input_builder import (
-        _preprocess_acronyms,
-    )
-    assert _preprocess_acronyms("the ERP system") == "the E-R-P system"
-    assert _preprocess_acronyms("an API endpoint") == "an A-P-I endpoint"
-    assert _preprocess_acronyms("the SQL query") == "the S-Q-L query"
-
-
-def test_preprocess_acronyms_respects_word_boundaries() -> None:
-    """Embedded substrings must not trigger replacement."""
-    from app.modules.interview_engine.speaker.input_builder import (
-        _preprocess_acronyms,
-    )
-    # 'ERPLY' contains 'ERP' but is a different word
-    assert _preprocess_acronyms("the ERPLY system") == "the ERPLY system"
-    # 'SQLITE' contains 'SQL' as prefix
-    assert _preprocess_acronyms("use SQLITE") == "use SQLITE"
-
-
-def test_preprocess_acronyms_handles_multiple_in_one_string() -> None:
-    from app.modules.interview_engine.speaker.input_builder import (
-        _preprocess_acronyms,
-    )
-    out = _preprocess_acronyms(
-        "Build an ERP integration via API calls over HTTP"
-    )
-    assert out is not None
-    assert "E-R-P" in out
-    assert "A-P-I" in out
-    assert "H-T-T-P" in out
-
-
-def test_preprocess_acronyms_leaves_pronounceable_words_alone() -> None:
-    from app.modules.interview_engine.speaker.input_builder import (
-        _preprocess_acronyms,
-    )
-    # JSON and REST are word-pronounceable; should pass through unchanged
-    text = "Parse the JSON REST response"
-    assert _preprocess_acronyms(text) == text
-
-
-def test_preprocess_acronyms_none_and_empty_pass_through() -> None:
-    from app.modules.interview_engine.speaker.input_builder import (
-        _preprocess_acronyms,
-    )
-    assert _preprocess_acronyms(None) is None
-    assert _preprocess_acronyms("") == ""
-
-
-def test_build_speaker_input_applies_acronym_preprocessor_to_bank_text() -> None:
-    """End-to-end: bank_text containing 'ERP' arrives at the Speaker as
-    'E-R-P' after going through build_speaker_input."""
-    from unittest.mock import MagicMock
-
-    judge_output = JudgeOutput(
-        reasoning="Test-synthesized reasoning string for acronym preprocessor test.",
-        observations=[],
-        candidate_claims=[],
-        next_action=NextAction.advance,
-        next_action_payload=AdvancePayload(target_question_id="q1"),
-        turn_metadata=TurnMetadata(),
-    )
-    queue = MagicMock()
-    queue.active_state.return_value = None
-    claims_pool = MagicMock()
-    claims_pool.snapshot.return_value.entries = []
-
-    speaker_input = build_speaker_input(
-        instruction_kind=InstructionKind.deliver_question,
-        judge_output=judge_output,
-        active_question=MagicMock(
-            text="Walk me through how you'd build an ERP sync via API.",
-        ),
-        queue=queue,
-        claims_pool=claims_pool,
-        recent_turns=[],
-        persona_name="Arjun",
-        last_candidate_utterance="thanks",
-        candidate_name="Punar",
-        recent_reply_starts=[],
-        is_post_cap_advance=False,
-    )
-    assert speaker_input.bank_text is not None
-    assert "E-R-P" in speaker_input.bank_text
-    assert "A-P-I" in speaker_input.bank_text
-    # Original literal forms gone
-    assert " ERP " not in speaker_input.bank_text
-    assert " API." not in speaker_input.bank_text
+# NOTE: tests for `_preprocess_acronyms` were removed on 2026-05-19.
+# The pre-prompt acronym rewriter was retired in favor of principle-based
+# guidance in _preamble.txt's "YOUR TTS AUDIENCE" section, which instructs
+# the LLM to hyphenate letter-by-letter acronyms itself on every mention.
+# No hardcoded list to test.
 
 
 # ---------------------------------------------------------------------------
