@@ -657,6 +657,8 @@ async def _generate_one_bank(
                 role_summary=snapshot.role_summary or "",
                 signals=[s["value"] for s in snapshot.signals],
                 questions=[{"text": q.text} for q in validated],
+                bank_id=str(bank.id),
+                tenant_id=str(bank.tenant_id),
             )
             await db.execute(
                 update(StageQuestionBank)

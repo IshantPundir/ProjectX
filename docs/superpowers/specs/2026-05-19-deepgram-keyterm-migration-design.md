@@ -252,8 +252,13 @@ Emitted from `agent.py` once, after `build_stt_plugin_for_session` returns and b
 
 `redaction="full"`. No PII risk — these are role/company/candidate-name metadata.
 
-When `provider="sarvam"` is toggled back: `count=0`, `terms=[]`, `sources={"candidate_name": 1}` —
-the audit event still fires for parity (so a session with sarvam doesn't look like a missing event).
+When `provider="sarvam"` is toggled back, the audit event still fires for parity (so a session
+with sarvam doesn't look like a missing event). `assemble_keyterms` always runs regardless of
+provider, so the payload typically looks like `count=1`, `terms=["<candidate_first_name>"]`,
+`sources={"candidate_name": 1}` — the keyterm list is still assembled (candidate name only) even
+though Sarvam ignores it. If `session_config.keyterms` is non-empty (e.g. the bank already had
+extraction run before the env was toggled back to Sarvam), those terms will also appear in
+`terms`/`sources["bank_cached"]` — again, Sarvam silently ignores them.
 
 ### 11. Tests
 

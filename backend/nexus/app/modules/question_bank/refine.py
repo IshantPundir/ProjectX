@@ -11,6 +11,7 @@ from uuid import UUID
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
+from opentelemetry import trace
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.client import get_openai_client
 from app.ai.config import AIConfig
 from app.ai.prompts import prompt_loader
+from app.ai.tracing import set_llm_span_attributes
+
+_tracer = trace.get_tracer("nexus.ai.openai")
 from app.ai.schemas import KeytermExtractionOutput
 from app.database import get_tenant_db
 from app.modules.auth import UserContext, get_current_user_roles
@@ -98,6 +102,8 @@ async def extract_bank_keyterms(
     role_summary: str,
     signals: list[str],
     questions: list[dict],
+    bank_id: str | None = None,
+    tenant_id: str | None = None,
 ) -> KeytermExtractionOutput:
     """Extract STT keyterms for one bank via a single nano-class LLM call.
 
@@ -105,6 +111,10 @@ async def extract_bank_keyterms(
     Caller (generate_question_bank_stage, Task 6) is responsible for writing the
     result to stage_question_banks.extracted_keyterms and for tolerating exceptions
     (an empty column is acceptable; the engine falls back to candidate-name-only).
+
+    ``bank_id`` and ``tenant_id`` are forwarded to the OTel span attributes so
+    this call shows up alongside the other question-bank LLM calls in trace
+    inspectors — load-bearing for debugging STT quality regressions later.
     """
     system_prompt = prompt_loader.get("question_bank_keyterms")
 
@@ -129,15 +139,24 @@ async def extract_bank_keyterms(
 
     client = get_openai_client()
     config = AIConfig()
-    result: KeytermExtractionOutput = await client.chat.completions.create(
-        model=config.question_bank_keyterm_model,
-        response_model=KeytermExtractionOutput,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
-        ],
-        max_retries=1,
-    )
+
+    with _tracer.start_as_current_span("openai.chat.completions.create"):
+        set_llm_span_attributes(
+            prompt_name="question_bank_keyterms",
+            prompt_version="v1",
+            tenant_id=tenant_id or "",
+            bank_id=bank_id or "",
+            model=config.question_bank_keyterm_model,
+        )
+        result: KeytermExtractionOutput = await client.chat.completions.create(
+            model=config.question_bank_keyterm_model,
+            response_model=KeytermExtractionOutput,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+            max_retries=1,
+        )
     return result
 
 
