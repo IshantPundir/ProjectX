@@ -102,3 +102,25 @@ class SignalExtractionOutput(BaseModel):
     """
 
     signals: ExtractedSignals
+
+
+class KeytermExtractionOutput(BaseModel):
+    """Output schema for the per-bank STT keyterm extraction LLM call.
+
+    Used by question_bank/actors.py:generate_question_bank_stage to populate
+    stage_question_banks.extracted_keyterms. Consumed by the engine at session
+    start to bias Deepgram nova-3 STT toward role-specific vocabulary.
+
+    See docs/superpowers/specs/2026-05-19-deepgram-keyterm-migration-design.md.
+    """
+
+    keyterms: list[str] = Field(min_length=10, max_length=50)
+
+    @model_validator(mode="after")
+    def _validate_each_term(self) -> "KeytermExtractionOutput":
+        for term in self.keyterms:
+            if not term.strip():
+                raise ValueError("keyterms must not contain empty strings")
+            if len(term) > 80:
+                raise ValueError(f"keyterm too long ({len(term)} chars): {term!r}")
+        return self
