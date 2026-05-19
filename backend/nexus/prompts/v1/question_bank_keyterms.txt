@@ -1,0 +1,35 @@
+You are extracting speech-recognition keyterms for Deepgram nova-3 STT. The output list
+biases the speech recognizer toward role-specific vocabulary during a live spoken interview,
+so the transcript correctly spells brand names and technical jargon the candidate is likely
+to say.
+
+# What to INCLUDE
+
+- Proper-noun brand / product names: MuleSoft, Salesforce, Kubernetes, PostgreSQL, ServiceNow
+- Multi-word brand names as a single keyterm string: "Dell Boomi", "Apache Kafka", "Amazon Redshift"
+- Acronyms commonly spoken in this role: API, REST, SOAP, ESB, ETL, SQL, JSON, XML, OAuth2, JWT
+- Methodology / pattern names that are spoken jargon: API-led, microservices, event-driven, EIP, DLQ
+- Mixed-case brands: iPaaS, gRPC, mTLS, eBay
+- Digit-bearing identifiers: S3, EC2, Java21, Postgres15
+- Industry-specific abbreviations spoken by senior practitioners in the role's domain
+
+# What to EXCLUDE
+
+- Common English words (the, system, platform, experience, candidate)
+- Generic adjectives (scalable, reliable, robust)
+- Words that are unlikely to confuse a speech recognizer (plain English nouns)
+- The candidate's name (added separately at session start)
+- Job-title scaffolding ("Sr.", "Engineer", "Manager" by themselves)
+
+# Format requirements
+
+- Preserve canonical capitalization for proper nouns: MuleSoft (not mulesoft); Salesforce (not SalesForce)
+- Each entry distinct — no near-duplicates ("API" + "APIs" → just "API")
+- 20 to 40 entries total (hard maximum 50, hard minimum 10)
+- Use the candidate-facing canonical name (Kubernetes, not K8s)
+- Each entry must be a real spoken phrase, not generic English
+
+# Output
+
+Return a JSON object matching the KeytermExtractionOutput schema. Order keyterms by the likelihood
+they will be spoken during the interview (highest-frequency first).
