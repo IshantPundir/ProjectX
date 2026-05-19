@@ -290,7 +290,9 @@ async def test_full_session_no_false_knockout_no_silence_correct_repeat(
     ]
 
     speaker_outputs = [
-        # on_enter (turn 0): first question delivered.
+        # on_enter Phase A: intro_brief utterance (Task 16).
+        "Hi Ishant, I'm Arjun. Quick screen for SRE — about 15 minutes.",
+        # on_enter Phase B (turn 0 in pre-Task-16 numbering): first question.
         "Hey Ishant, good to meet you. Whenever you're ready, walk me through Jira.",
         # Turn 1: redirect → some short utterance.
         "Cool — let's jump in.",
@@ -414,11 +416,12 @@ async def test_full_session_no_false_knockout_no_silence_correct_repeat(
     )
 
     # ----- Speaker mock call accounting -----------------------------------
-    # Speaker LLM invoked exactly 4 times: on_enter (turn 0),
-    # turn 1 redirect, turn 2 redirect (empty), turn 4 probe. Turn 3
-    # repeat is cached and bypasses the Speaker entirely.
-    assert orch._speaker.stream.await_count == 4, (
-        f"Speaker call count mismatch (expected 4, got "
+    # Speaker LLM invoked exactly 5 times: on_enter Phase A (intro_brief)
+    # + on_enter Phase B (deliver_first_question), turn 1 redirect, turn 2
+    # redirect (empty), turn 4 probe. Turn 3 repeat is cached and bypasses
+    # the Speaker entirely.
+    assert orch._speaker.stream.await_count == 5, (
+        f"Speaker call count mismatch (expected 5, got "
         f"{orch._speaker.stream.await_count}); turn 3 (repeat) should be "
         f"cached delivery."
     )
@@ -494,7 +497,9 @@ async def test_push_back_flows_end_to_end_and_increments_count_in_judge_input(
     ]
 
     speaker_outputs = [
-        "First question delivered to the candidate.",  # on_enter
+        # on_enter Phase A: intro_brief greeting (Task 16).
+        "Hi Alice, I'm Arjun. Quick screen — about 10 minutes.",
+        "First question delivered to the candidate.",  # on_enter Phase B
         "OK — walk me through one validation check you'd actually write.",  # turn 1 push_back
         "And how does it handle PR-system timeouts?",  # turn 2 probe
     ]
@@ -527,10 +532,12 @@ async def test_push_back_flows_end_to_end_and_increments_count_in_judge_input(
     )
 
     # ----- Speaker was invoked with InstructionKind.push_back on turn 1 -----
-    # speaker.stream calls: on_enter (#0) + turn 1 (#1) + turn 2 (#2)
+    # speaker.stream calls: on_enter Phase A intro_brief (#0)
+    # + on_enter Phase B deliver_first_question (#1) + turn 1 push_back
+    # (#2) + turn 2 probe (#3).
     speaker_calls = orch._speaker.stream.call_args_list
-    assert len(speaker_calls) == 3
-    turn1_speaker_input = speaker_calls[1].kwargs["speaker_input"]
+    assert len(speaker_calls) == 4
+    turn1_speaker_input = speaker_calls[2].kwargs["speaker_input"]
     from app.modules.interview_engine.models.speaker import InstructionKind
     assert turn1_speaker_input.instruction_kind == InstructionKind.push_back
     assert turn1_speaker_input.push_back_reason_code == "vague_answer"
@@ -605,7 +612,9 @@ async def test_repeat_after_interrupted_push_back_replays_prior_question_not_emp
     ]
 
     speaker_outputs = [
-        # on_enter: deliver_first_question — the cached question text.
+        # on_enter Phase A: intro_brief (Task 16).
+        "Hi Alice, I'm Arjun. Quick screen — about 10 minutes.",
+        # on_enter Phase B: deliver_first_question — the cached question text.
         "Walk me through your tool of choice.",
         # Turn 1 push_back — empty stream (combined with interrupted=True
         # on the body say() return, simulates the LLM being cancelled
@@ -621,15 +630,16 @@ async def test_repeat_after_interrupted_push_back_replays_prior_question_not_emp
         knockout_signal="S1",
     )
 
-    # Override agent.session.say so call #2 (push_back body) returns
-    # interrupted=True. Call #1 (deliver_first_question body) and call
-    # #3 (cached repeat replay) return interrupted=False so the cache
-    # gets populated by call #1 and replayed by call #3.
+    # Override agent.session.say so call #3 (push_back body) returns
+    # interrupted=True. Post-Task-16, on_enter fires TWO say() calls
+    # (#1: intro_brief, #2: deliver_first_question body). Call #4 is the
+    # cached repeat replay; it must return interrupted=False so the cache
+    # populated by call #2 is replayed cleanly.
     call_counter: dict[str, int] = {"n": 0}
 
     async def say_interrupt_second(*args: object, **kwargs: object) -> MagicMock:
         call_counter["n"] += 1
-        if call_counter["n"] == 2:
+        if call_counter["n"] == 3:
             return MagicMock(interrupted=True)
         return MagicMock(interrupted=False)
 
@@ -721,7 +731,9 @@ async def test_repeat_after_empty_speaker_output_replays_prior_question_not_fall
         ),
     ]
     speaker_outputs = [
-        # on_enter: deliver_first_question — clean
+        # on_enter Phase A: intro_brief (Task 16).
+        "Hi Alice, I'm Arjun. Quick screen — about 10 minutes.",
+        # on_enter Phase B: deliver_first_question — clean
         "Walk me through your tool of choice.",
         # Turn 1 push_back: empty stream WITHOUT interruption simulation
         "",
@@ -800,7 +812,9 @@ async def test_judge_call_audit_carries_full_input_summary(
     ]
 
     speaker_outputs = [
-        # on_enter: first question delivered.
+        # on_enter Phase A: intro_brief (Task 16).
+        "Hi Alice, I'm Arjun. Quick screen — about 10 minutes.",
+        # on_enter Phase B: first question delivered.
         "Tell me about a time you led a team.",
         # Turn 1: probe follow-up.
         "How did you handle disagreements within the team?",
@@ -870,7 +884,9 @@ async def test_state_snapshot_emitted_before_judge_call(
     ]
 
     speaker_outputs = [
-        # on_enter: first question delivered.
+        # on_enter Phase A: intro_brief (Task 16).
+        "Hi Alice, I'm Arjun. Quick screen — about 10 minutes.",
+        # on_enter Phase B: first question delivered.
         "Tell me about a time you led a team.",
         # Turn 1: probe follow-up.
         "How did you handle disagreements within the team?",
@@ -942,7 +958,9 @@ async def test_speaker_input_emitted_before_speaker_call(
     ]
 
     speaker_outputs = [
-        # on_enter: first question delivered.
+        # on_enter Phase A: intro_brief (Task 16).
+        "Hi Alice, I'm Arjun. Quick screen — about 10 minutes.",
+        # on_enter Phase B: first question delivered.
         "Tell me about a time you led a team.",
         # Turn 1: probe follow-up.
         "How did you handle disagreements within the team?",
@@ -1018,7 +1036,9 @@ async def test_orchestrator_bypasses_judge_on_clear_repeat_intent(
     judge_outputs: list[JudgeOutput] = []
 
     speaker_outputs = [
-        # on_enter: deliver_first_question — this populates the repeat cache.
+        # on_enter Phase A: intro_brief (Task 16).
+        "Hi Alice, I'm Arjun. Quick screen — about 10 minutes.",
+        # on_enter Phase B: deliver_first_question — this populates the repeat cache.
         "Walk me through how you'd design a Jira workflow.",
     ]
 
@@ -1065,10 +1085,12 @@ async def test_orchestrator_bypasses_judge_on_clear_repeat_intent(
     )
 
     # ----- Speaker also bypassed (repeat = cached delivery) -----------------
-    # Speaker LLM called once (on_enter only); the repeat turn is cached.
-    assert orch._speaker.stream.await_count == 1, (
-        f"Speaker LLM must only be called for on_enter (await_count=1); "
-        f"got {orch._speaker.stream.await_count}. "
+    # Post-Task-16: on_enter fires TWO Speaker calls (intro_brief Phase A +
+    # deliver_first_question Phase B); the repeat turn is cached so the
+    # Speaker LLM is NOT invoked a third time.
+    assert orch._speaker.stream.await_count == 2, (
+        f"Speaker LLM must only be called twice for on_enter (intro_brief + "
+        f"deliver_first_question); got {orch._speaker.stream.await_count}. "
         "The repeat path must use the cached question, not the Speaker LLM."
     )
 

@@ -111,15 +111,23 @@ async def test_on_enter_delivers_first_question(make_session_config, make_questi
 
     await orch.on_enter(fake_agent)
 
-    # Assert speaker called once with deliver_first_question.
-    speaker_service.stream.assert_awaited_once()
-    args, kwargs = speaker_service.stream.call_args
-    sinput: SpeakerInput = kwargs["speaker_input"]
+    # Assert speaker called TWICE: first for intro_brief (Phase A), then
+    # for deliver_first_question (Phase B). See spec
+    # 2026-05-19-behavioral-layer-and-intro-design.md §2.
+    assert speaker_service.stream.await_count == 2, (
+        "on_enter must invoke Speaker twice (intro_brief + deliver_first_question);"
+        f" got {speaker_service.stream.await_count}"
+    )
+    intro_kwargs = speaker_service.stream.call_args_list[0].kwargs
+    intro_input: SpeakerInput = intro_kwargs["speaker_input"]
+    assert intro_input.instruction_kind == InstructionKind.intro_brief
+    deliver_kwargs = speaker_service.stream.call_args_list[1].kwargs
+    sinput: SpeakerInput = deliver_kwargs["speaker_input"]
     assert sinput.instruction_kind == InstructionKind.deliver_first_question
     assert sinput.bank_text == "What is your first question response?"
 
-    # Assert session.say was called.
-    fake_session.say.assert_awaited_once()
+    # session.say called twice — once per Speaker stream (intro + first question).
+    assert fake_session.say.await_count == 2
 
     # Assert frontend attributes pushed.
     push_args = room.local_participant.set_attributes.await_args_list
@@ -558,9 +566,10 @@ async def test_on_enter_robust_to_publish_failure(make_session_config, make_ques
     # Should not raise — first attribute publish failure must be tolerated.
     await orch.on_enter(fake_agent)
 
-    # Speaker call SHOULD have run regardless.
-    speaker_service.stream.assert_awaited_once()
-    fake_session.say.assert_awaited_once()
+    # Speaker call SHOULD have run regardless. Post-Task-16 on_enter
+    # streams TWO speaker calls: intro_brief + deliver_first_question.
+    assert speaker_service.stream.await_count == 2
+    assert fake_session.say.await_count == 2
 
 
 @pytest.mark.asyncio

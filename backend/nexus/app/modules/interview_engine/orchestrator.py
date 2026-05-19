@@ -19,7 +19,7 @@ from livekit.agents import StopResponse
 from app.modules.interview_engine.audit_events import (
     FrontendAttributePayload, JudgeSyntheticPayload,
     NaturalnessFlags,
-    SessionTerminalDeliveredPayload,
+    SessionTerminalDeliveredPayload, SessionTimerStartedPayload,
     SpeakerCallPayload, SpeakerOutputPayload,
     StateSnapshotCommittedPayload, StateSnapshotRestoredPayload,
     StateSnapshotTakenPayload,
@@ -29,7 +29,7 @@ from app.modules.interview_engine.audit_events import (
 )
 from app.modules.interview_engine.event_kinds import (
     FRONTEND_ATTRIBUTE_PUBLISHED, JUDGE_SYNTHETIC,
-    SESSION_TERMINAL_DELIVERED,
+    SESSION_TERMINAL_DELIVERED, SESSION_TIMER_STARTED,
     SPEAKER_CALL, SPEAKER_OUTPUT,
     STATE_SNAPSHOT_COMMITTED, STATE_SNAPSHOT_RESTORED, STATE_SNAPSHOT_TAKEN,
     TURN_ABORTED_FOR_CONTINUATION, TURN_COMPLETED, TURN_LOOP_GUARD_FIRED,
@@ -329,7 +329,46 @@ class InterviewOrchestrator:
     # --- LiveKit lifecycle hooks ---
 
     async def on_enter(self, agent: Any) -> None:
-        self._session_started_monotonic = time.monotonic()
+        """Drive the session-start opening.
+
+        Two phases, both pre-state-machine on the candidate side:
+
+        * **Phase A — intro_brief Speaker turn.** A scripted greeting,
+          role context, format, duration, and a hand-off cue. Does NOT
+          touch the State Engine — this is a pre-state-machine turn.
+        * **Phase B — first-question delivery.** Existing flow: synthetic
+          JudgeOutput → State Engine init → deliver_first_question via
+          Speaker.
+
+        The lifecycle timer is intentionally NOT started here. It starts
+        on the first candidate utterance in :meth:`on_user_turn_completed`.
+        See spec 2026-05-19-behavioral-layer-and-intro-design.md §2.
+        """
+        # ── Phase A: intro_brief turn ────────────────────────────────────
+        intro_started_at = time.monotonic()
+        turn_id = str(uuid.uuid4())
+        self._turn_index += 1
+
+        self._append(TURN_STARTED, TurnStartedPayload(
+            turn_id=turn_id, turn_index=self._turn_index,
+            stt_text_raw=None, stt_text_used=None,
+        ).model_dump())
+
+        intro_speaker_input = self._build_intro_speaker_input(turn_id)
+        self._append_speaker_input(
+            turn_id=turn_id, speaker_input=intro_speaker_input,
+        )
+        await self._stream_speaker_and_say(
+            agent=agent, turn_id=turn_id,
+            speaker_input=intro_speaker_input,
+        )
+
+        self._append(TURN_COMPLETED, TurnCompletedPayload(
+            turn_id=turn_id, turn_index=self._turn_index,
+            duration_ms=int((time.monotonic() - intro_started_at) * 1000),
+        ).model_dump())
+
+        # ── Phase B: existing first-question synthesis ──────────────────
         turn_id = str(uuid.uuid4())
         self._turn_index += 1
 
@@ -368,12 +407,21 @@ class InterviewOrchestrator:
 
         # Tick lifecycle elapsed-time so subsequent attribute publishes
         # / Judge inputs see a counted-down ``time_remaining_seconds``.
+        # During intro the timer is paused (``_session_started_monotonic``
+        # is still None and ``_elapsed_ms()`` returns 0); this becomes a
+        # no-op until the first candidate utterance starts the timer.
         self._state.set_time_elapsed(self._elapsed_ms() / 1000.0)
 
         self._append(TURN_COMPLETED, TurnCompletedPayload(
             turn_id=turn_id, turn_index=self._turn_index,
-            duration_ms=int((time.monotonic() - self._session_started_monotonic) * 1000),
+            duration_ms=int((time.monotonic() - intro_started_at) * 1000),
         ).model_dump())
+
+        # NOTE: We deliberately DO NOT set _session_started_monotonic
+        # here. on_user_turn_completed sets it on the first candidate
+        # utterance — the lifecycle timer pauses through intro and
+        # starts the moment the candidate begins to speak. See spec
+        # 2026-05-19-behavioral-layer-and-intro-design.md §2.
 
     async def on_user_turn_completed(
         self, agent: Any, turn_ctx: Any, new_message: Any,
@@ -397,6 +445,21 @@ class InterviewOrchestrator:
         Returns normally on success (commit), raises ``StopResponse``
         on abort (the framework keeps listening for the merged text).
         """
+        # Lifecycle timer starts on the FIRST candidate utterance, not in
+        # on_enter. Through the intro_brief turn (Phase A) and the first
+        # question delivery (Phase B) the timer is paused so the
+        # candidate's full ``duration_minutes`` budget covers actual
+        # interview time, not pre-roll context. See spec
+        # 2026-05-19-behavioral-layer-and-intro-design.md §2.
+        if self._session_started_monotonic is None:
+            self._session_started_monotonic = time.monotonic()
+            self._append(
+                SESSION_TIMER_STARTED,
+                SessionTimerStartedPayload(
+                    wall_ms=int(time.time() * 1000),
+                ).model_dump(),
+            )
+
         # No StopResponse here on the happy path — see
         # StructuredInterviewAgent docstring. Returning normally lets the
         # framework auto-append new_message to chat_ctx, which fires
@@ -1298,6 +1361,43 @@ class InterviewOrchestrator:
                 turn_id=turn_id, level=w.level,
                 code=w.code, details=w.details,
             ).model_dump())
+
+    def _build_intro_speaker_input(self, turn_id: str) -> Any:
+        """Construct the SpeakerInput for the intro_brief turn.
+
+        Pulls candidate name, persona name, job title, hiring company,
+        role summary, duration, and question count from the SessionConfig.
+        Does NOT touch the State Engine — this is a pre-state-machine
+        turn fired once at session start before deliver_first_question.
+
+        Spec: 2026-05-19-behavioral-layer-and-intro-design.md §2.
+        """
+        from app.modules.interview_engine.models.speaker import (
+            InstructionKind, SpeakerInput,
+        )
+        # persona_name is resolved at engine boot via
+        # ``resolve_persona_name`` and lives on the State Engine; falling
+        # back to "Arjun" matches the PersonaSpec default if the engine
+        # state ever fails to expose it (defensive).
+        persona_name = (
+            self._state._persona_name()  # noqa: SLF001
+            if hasattr(self._state, "_persona_name")
+            else "Arjun"
+        )
+        if not persona_name or persona_name == "the interviewer":
+            persona_name = "Arjun"
+        return SpeakerInput(
+            instruction_kind=InstructionKind.intro_brief,
+            persona_name=persona_name,
+            candidate_name=self._cfg.candidate.name,
+            job_title=self._cfg.job_title,
+            hiring_company_name=getattr(
+                self._cfg, "hiring_company_name", None,
+            ),
+            role_summary=getattr(self._cfg, "role_summary", None),
+            session_duration_minutes=self._cfg.stage.duration_minutes,
+            question_count=len(self._cfg.stage.questions),
+        )
 
     async def maybe_checkpoint(self, *, db: Any) -> bool:
         """Write engine_checkpoint if cadence threshold reached. Returns True if written."""
