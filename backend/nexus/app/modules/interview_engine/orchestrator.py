@@ -276,6 +276,11 @@ class InterviewOrchestrator:
         # first turn / after empty/interrupted output.
         self._prior_speaker_output: str | None = None
 
+        # Tracks the question_kind of the prior active question across turns.
+        # Used by _run_turn_body to detect kind transitions and set the
+        # is_post_phase_transition flag on SpeakerInput. See spec §4.
+        self._prev_active_question_kind: str | None = None
+
     # --- Public accessors ---
 
     def lifecycle_snapshot(self) -> Any:
@@ -398,6 +403,19 @@ class InterviewOrchestrator:
                 self._state.lifecycle_snapshot().time_remaining_seconds()
             ),
         )
+
+        # Track the first active question's kind for the post-phase-transition
+        # detection on subsequent turns. The flag does NOT fire on this turn
+        # (no prior kind to differ from), which is correct: the intro_brief
+        # already gave the warm framing.
+        active_idx = self._state.queue_snapshot().active_index
+        if (
+            active_idx is not None
+            and active_idx < len(self._cfg.stage.questions)
+        ):
+            self._prev_active_question_kind = (
+                self._cfg.stage.questions[active_idx].question_kind
+            )
 
         self._append_speaker_input(turn_id=turn_id, speaker_input=decision.speaker_input)
         await self._stream_speaker_and_say(
@@ -823,10 +841,37 @@ class InterviewOrchestrator:
                 final_utterance=cached,
             ).model_dump())
         else:
-            self._append_speaker_input(turn_id=turn_id, speaker_input=decision.speaker_input)
+            speaker_input = decision.speaker_input
+
+            # Detect behavioral_star → technical_depth (or any kind boundary)
+            # and signal it to the Speaker via is_post_phase_transition.
+            # Only meaningful on deliver_question / deliver_first_question —
+            # other kinds (probe, clarify, push_back, redirect, etc.) keep
+            # the same active question, so the kind cannot transition.
+            # See spec §4.
+            if speaker_input.instruction_kind in (
+                InstructionKind.deliver_question,
+                InstructionKind.deliver_first_question,
+            ):
+                active_idx = self._state.queue_snapshot().active_index
+                if (
+                    active_idx is not None
+                    and active_idx < len(self._cfg.stage.questions)
+                ):
+                    current_kind = self._cfg.stage.questions[active_idx].question_kind
+                    if (
+                        self._prev_active_question_kind is not None
+                        and current_kind != self._prev_active_question_kind
+                    ):
+                        speaker_input = speaker_input.model_copy(
+                            update={"is_post_phase_transition": True},
+                        )
+                    self._prev_active_question_kind = current_kind
+
+            self._append_speaker_input(turn_id=turn_id, speaker_input=speaker_input)
             await self._stream_speaker_and_say(
                 agent=agent, turn_id=turn_id,
-                speaker_input=decision.speaker_input,
+                speaker_input=speaker_input,
             )
 
         # Tick lifecycle elapsed-time so the published

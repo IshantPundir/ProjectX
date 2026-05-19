@@ -21,6 +21,7 @@ def make_question():
         text: str = "Tell me about your work on this topic.",
         signal_values: list[str] | None = None,
         follow_ups: list[str] | None = None,
+        question_kind: str = "technical_depth",
     ) -> QuestionConfig:
         return QuestionConfig(
             id=qid, position=position, text=text,
@@ -31,7 +32,7 @@ def make_question():
             red_flags=["x-flag", "y-flag"],
             rubric=QuestionRubric(excellent="ex", meets_bar="mb", below_bar="bb"),
             evaluation_hint="hint hint hint hint hint",
-            question_kind="technical_depth",
+            question_kind=question_kind,
         )
     return _factory
 
