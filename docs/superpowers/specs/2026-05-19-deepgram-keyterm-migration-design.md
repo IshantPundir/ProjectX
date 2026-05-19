@@ -62,8 +62,10 @@ argument.
 
 ### 1. New file: `app/modules/interview_engine/keyterms.py`
 
-A single pure function `extract_keyterms(session_config: SessionConfig) -> list[str]`. No I/O, no
-LiveKit deps, no asyncpg.
+A single pure function `extract_keyterms(session_config: SessionConfig) -> KeytermExtraction`,
+where `KeytermExtraction` is a `@dataclass(frozen=True)` exposing `terms: list[str]` and
+`sources: dict[str, int]` (source attribution counts for the audit event). No I/O, no LiveKit
+deps, no asyncpg.
 
 **Field rules** (read against the actual `SessionConfig` Pydantic model in
 `app/modules/interview_runtime/schemas.py:181`, NOT the raw `build_session_config` dict — those
@@ -109,28 +111,34 @@ appear at sentence starts: `The, This, That, We, You, It, In, On, At, For, As`.
 
 ### 2. Wiring: `stt_factory.py`, `realtime.py`, and `agent.py`
 
-`stt_factory.py:build_stt_plugin_for_session` replaces today's pass-through and returns a tuple
-so the caller can audit-log the keyterms without re-computing them:
+`stt_factory.py:build_stt_plugin_for_session` replaces today's pass-through and returns the
+extraction object alongside the STT plugin so the caller can audit-log without re-running the
+extractor:
 
 ```python
 from app.ai.realtime import build_stt_plugin
-from app.modules.interview_engine.keyterms import extract_keyterms
+from app.modules.interview_engine.keyterms import KeytermExtraction, extract_keyterms
 from app.modules.interview_runtime.schemas import SessionConfig
 
 def build_stt_plugin_for_session(
     *, session_config: SessionConfig,
-) -> tuple["_BaseSTT", list[str]]:
-    keyterms = extract_keyterms(session_config)
-    return build_stt_plugin(keyterms=keyterms), keyterms
+) -> tuple["_BaseSTT", KeytermExtraction]:
+    extraction = extract_keyterms(session_config)
+    return build_stt_plugin(keyterms=extraction.terms), extraction
 ```
 
 `agent.py` unpacks the tuple, emits the audit event, then passes the STT to `AgentSession`:
 
 ```python
-stt_plugin, keyterms = build_stt_plugin_for_session(session_config=session_config)
-emit_audit_event(
-    "audio.stt.keyterms_applied",
-    payload={"provider": ai_config.interview_stt_provider, "count": len(keyterms), "terms": keyterms, "sources": {...}},
+stt_plugin, keyterm_extraction = build_stt_plugin_for_session(session_config=session_config)
+event_collector.append(
+    kind=AUDIO_STT_KEYTERMS_APPLIED,
+    payload=STTKeytermsAppliedPayload(
+        provider=ai_config.interview_stt_provider,
+        count=len(keyterm_extraction.terms),
+        terms=keyterm_extraction.terms,
+        sources=keyterm_extraction.sources,
+    ).model_dump(mode="json"),
 )
 session = AgentSession(stt=stt_plugin, llm=..., tts=..., ...)
 ```
