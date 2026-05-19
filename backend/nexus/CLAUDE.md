@@ -14,7 +14,7 @@
 - **Framework:** FastAPI (async throughout)
 - **DB driver:** asyncpg (direct PostgreSQL connection — NOT PostgREST)
 - **ORM:** SQLAlchemy async (asyncpg driver)
-- **Schema management:** Supabase SQL for the initial cut + Supabase-managed objects (auth hook, `supabase_auth_admin` grants); Alembic for every incremental change after that. `migrations/versions/` currently has 28 revisions; head is `0028_audio_tuning_summary`.
+- **Schema management:** Supabase SQL for the initial cut + Supabase-managed objects (auth hook, `supabase_auth_admin` grants); Alembic for every incremental change after that. `migrations/versions/` currently has 28 revisions; head is `0041_extracted_keyterms`.
 - **Task queue:** Dramatiq + Redis. Used for JD extraction/re-enrichment and question-bank generation. Notification dispatch still runs via FastAPI `BackgroundTasks` (short, non-retryable).
 - **Containerisation:** Docker + Docker Compose
 - **Hosting MVP:** Railway
@@ -157,7 +157,7 @@ backend/nexus/
 │       ├── jd_reenrichment.txt      ← Call 2 — re-enrichment after signal edits
 │       ├── question_bank_common.txt ← Shared system prompt for question bank calls
 │       └── question_bank_<stage_type>.txt ← Per-stage-type system prompts
-├── migrations/                  ← Alembic — 28 revisions; head is `0028_audio_tuning_summary`
+├── migrations/                  ← Alembic — 28 revisions; head is `0041_extracted_keyterms`
 │   └── versions/
 ├── tests/
 │   └── conftest.py              ← AsyncClient fixture
@@ -518,7 +518,7 @@ Every environment must set BOTH settings explicitly. The localhost defaults are 
 ## Database Migrations
 
 ### Current State
-The initial schema (6 tables, first-cut RLS policies, system role seeds, and the Supabase auth hook) lives in `backend/supabase/migrations/20260405000000_initial_schema.sql`. Every incremental change since Phase 2A has been an Alembic migration in `migrations/versions/`. Current head: `0028_audio_tuning_summary`.
+The initial schema (6 tables, first-cut RLS policies, system role seeds, and the Supabase auth hook) lives in `backend/supabase/migrations/20260405000000_initial_schema.sql`. Every incremental change since Phase 2A has been an Alembic migration in `migrations/versions/`. Current head: `0041_extracted_keyterms`.
 
 Migrations so far:
 - `0001_phase_2b_columns` — signal editing + version columns
@@ -549,6 +549,7 @@ Migrations so far:
 - `0026_question_kind_column` — Adds `stage_questions.question_kind` (TEXT NOT NULL DEFAULT `'technical_depth'`, CHECK in `('technical_depth','behavioral_star','compliance_binary','open_culture')`). Bank-generator emits the field on every question.
 - `0027_tenant_settings` — Adds `tenant_settings` table (PK = `tenant_id`, FK→`clients` ON DELETE CASCADE, two columns: `engine_knockout_policy` enum (`'record_only' | 'close_polite'`, default `'record_only'`) + `engine_agent_name` nullable TEXT) and `sessions.knockout_failures JSONB NOT NULL DEFAULT '[]'`. Lazy-default read pattern: `get_tenant_settings` returns schema defaults when the tenant has no row.
 - `0028_audio_tuning_summary` — Adds `sessions.audio_tuning_summary JSONB NULL`. Per-session snapshot of NC model + enhancement level + interruption mode + browser-side getUserMedia hints, used for empirical tuning and audit.
+- `0041_extracted_keyterms` — Adds `stage_question_banks.extracted_keyterms JSONB NULL`. Populated by `question_bank/actors.py:generate_question_bank_stage` after refinement completes; consumed by the engine at session start for Deepgram nova-3 keyterm prompting. Legacy banks not backfilled (regeneration repopulates).
 
 ### Going Forward
 - Future schema changes should use Alembic migrations in `migrations/versions/`.
