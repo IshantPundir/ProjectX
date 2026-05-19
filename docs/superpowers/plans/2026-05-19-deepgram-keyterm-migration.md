@@ -141,7 +141,7 @@ Make sure `JSONB` is imported at the top of the file (e.g., `from sqlalchemy.dia
 - [ ] **Step 8: Smoke-test the ORM.**
 
 ```bash
-docker compose -f backend/nexus/docker-compose.yml run --rm nexus python -c "from app.modules.question_bank.models import StageQuestionBankModel; print(StageQuestionBankModel.__table__.columns['extracted_keyterms'])"
+docker compose -f backend/nexus/docker-compose.yml run --rm nexus python -c "from app.modules.question_bank.models import StageQuestionBank; print(StageQuestionBank.__table__.columns['extracted_keyterms'])"
 ```
 
 Expected: prints a column reference without error.
@@ -641,8 +641,8 @@ try:
         tenant_id=str(bank.tenant_id),
     )
     await db.execute(
-        update(StageQuestionBankModel)
-        .where(StageQuestionBankModel.id == bank.id)
+        update(StageQuestionBank)
+        .where(StageQuestionBank.id == bank.id)
         .values(extracted_keyterms=keyterm_output.keyterms),
     )
     logger.info(
@@ -814,8 +814,8 @@ async def test_build_session_config_loads_extracted_keyterms_when_present(
     """When the bank row has extracted_keyterms set, SessionConfig.keyterms reflects it."""
     # Pre-set the column on the bank row
     await db.execute(
-        update(StageQuestionBankModel)
-        .where(StageQuestionBankModel.id == seeded_session_with_confirmed_bank.bank_id)
+        update(StageQuestionBank)
+        .where(StageQuestionBank.id == seeded_session_with_confirmed_bank.bank_id)
         .values(extracted_keyterms=["MuleSoft", "TIBCO", "Boomi"]),
     )
     await db.commit()
