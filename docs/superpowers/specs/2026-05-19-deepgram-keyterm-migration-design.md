@@ -65,17 +65,24 @@ argument.
 A single pure function `extract_keyterms(session_config: SessionConfig) -> list[str]`. No I/O, no
 LiveKit deps, no asyncpg.
 
-**Field rules:**
+**Field rules** (read against the actual `SessionConfig` Pydantic model in
+`app/modules/interview_runtime/schemas.py:181`, NOT the raw `build_session_config` dict — those
+differ; SessionConfig is the flattened wire contract):
 
-| Source | Rule |
+| Source field on `SessionConfig` | Rule |
 |---|---|
-| `candidate.name` | First whitespace-split token only |
-| `tenant.name` | As-is |
-| `company_profile.org_unit_name` | As-is (when present) |
-| `org_unit_ancestry[].name` | All entries, deduped against the above |
-| `job.title` | As-is |
-| `signal_snapshot.signals[].value` (each phrase) | Two-pass: (a) emit the full phrase as one keyterm, (b) extract proper-noun-looking tokens (CapitalizedWords, ALL_CAPS, hyphenated like "API-led") and emit each individually |
-| `signal_snapshot.role_summary` | Extract proper-noun tokens only (prose is too noisy as a phrase) |
+| `candidate.name` (str) | First whitespace-split token only |
+| `hiring_company_name` (str \| None) | As-is when not None |
+| `job_title` (str) | As-is |
+| Each phrase in `signals` (list[str]) | Two-pass: (a) emit the full phrase as one keyterm, (b) extract proper-noun-looking tokens (CapitalizedWords, ALL_CAPS, hyphenated like "API-led") and emit each individually |
+| `role_summary` (str) | Extract proper-noun tokens only (prose is too noisy as a phrase) |
+
+**Explicitly NOT used:** `company.about / .industry / .hiring_bar` (noisy prose; brand names will
+mostly be present in `signals` already); `jd_text` (long enriched JD body; blows the 50-term cap);
+`stage.questions[].text` (signals carry the same vocab in cleaner form). The ProjectX tenant name
+(e.g. "BinQle" when the tenant is a staffing agency) is deliberately NOT in `SessionConfig` — the
+engine only knows the *hiring* company — so it cannot be included without expanding the wire
+contract, which is out of scope.
 
 **Filtering / normalization (applied at the end):**
 
@@ -180,14 +187,14 @@ truthful when sarvam is toggled back (provider="sarvam", count=0, terms=[]).
 {
   "provider": "deepgram",
   "count": 32,
-  "terms": ["Ishant", "BinQle", "Workato", "MuleSoft", "TIBCO", "Dell Boomi", "Salesforce", "API-led", "..."],
+  "terms": ["Ishant", "Workato", "Sr. Integration Engineer", "MuleSoft", "TIBCO", "Dell Boomi", "Salesforce", "API-led", "..."],
   "sources": {
     "candidate_name": 1,
-    "tenant": 1,
-    "org_units": 2,
+    "hiring_company": 1,
     "job_title": 1,
     "signal_phrases": 7,
-    "proper_nouns": 20
+    "signal_proper_nouns": 18,
+    "role_summary_proper_nouns": 4
   }
 }
 ```
@@ -205,11 +212,11 @@ investigations are blind.
 New file `backend/nexus/tests/interview_engine/test_keyterms.py`. Pure unit tests against
 hand-built `SessionConfig` fixtures (no DB, no LiveKit, no network). Cases:
 
-1. **Minimum input** — empty `signal_snapshot.signals`, no company profile → returns at minimum
-   `[candidate_first_name, tenant_name, job_title]`.
-2. **List-style signal expansion** — signal value "MuleSoft, TIBCO, or Dell Boomi" produces both
-   the full phrase and each brand name individually.
-3. **Proper-noun extraction from role_summary** — role_summary containing "ESB/iPaaS (MuleSoft/TIBCO/Dell Boomi)"
+1. **Minimum input** — empty `signals` list, `hiring_company_name=None`, empty `role_summary` →
+   returns at minimum `[candidate_first_name, job_title]`.
+2. **List-style signal expansion** — `signals=["5+ years with MuleSoft, TIBCO, or Dell Boomi"]`
+   produces both the full phrase and each brand name (MuleSoft, TIBCO, Boomi) individually.
+3. **Proper-noun extraction from role_summary** — `role_summary="Delivery on ESB/iPaaS platforms (MuleSoft/TIBCO/Dell Boomi)"`
    yields "ESB", "iPaaS", and the brand names.
 4. **Case-insensitive dedupe** — input that contains "MuleSoft" and "mulesoft" emits only the
    first-seen casing.
