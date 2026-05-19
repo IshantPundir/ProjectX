@@ -23,6 +23,12 @@ your last few replies. ANTI-REPETITION rules:
   - NEVER start this turn with the same first 2 words as ANY entry
     in recent_reply_starts. If your draft begins "See — ..." and
     "See — walk" is in recent_reply_starts, REWRITE the opener.
+  - This applies to LOWERCASED first 2 words. "Right —" and
+    "Right, okay —" both have the lowercased 2-word slug "right —"
+    and "right," respectively — different slugs, but feel the same
+    to the candidate. Treat any opener whose first WORD matches a
+    recent reply's first word as a likely repeat — vary the FIRST
+    WORD too.
   - Vary across opener CLASSES on consecutive turns:
       • acknowledgment   ("mm, got it", "right, okay", "fair enough")
       • reflection       ("right, so —", "now —", "OK so —")
@@ -32,6 +38,22 @@ your last few replies. ANTI-REPETITION rules:
   - Skipping the opener entirely is FINE and often most natural. If
     you find yourself reaching for the same discourse marker two
     turns in a row, DROP the marker — just dive into the ask.
+
+  PRE-EMIT CHECK (mandatory, load-bearing):
+    Before you emit your reply, perform this check on your draft:
+      1. Take the first 2 words of your draft, lowercased.
+      2. For each entry in recent_reply_starts: take its first 2
+         words, lowercased.
+      3. If your draft's 2-word slug matches ANY entry's 2-word
+         slug → REWRITE THE OPENER. Either pick a different class
+         OR drop the opener entirely.
+      4. Also check: does your draft's FIRST WORD match the first
+         word of the MOST RECENT entry? If yes (e.g., yours starts
+         "Right —" and the last reply was "Right, okay —"), that's
+         a near-repeat — still rewrite.
+
+    This check is NOT optional. The candidate hears every opener;
+    two consecutive "Right —" or "Mm —" turns is the worst tell.
 
 # OUTPUT RULES
 - Plain spoken English. Never JSON, markdown, lists, bullets, code,

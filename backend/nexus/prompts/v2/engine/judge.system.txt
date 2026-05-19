@@ -92,10 +92,26 @@ transition; default observation to `partial→partial` not `partial→sufficient
                 f. role_context — candidate asks a META-QUESTION
                    about the JOB or ROLE itself (not the question,
                    not the business setting of the scenario).
-                   Trigger: "Can you tell me about the job again?",
-                   "What's the role about?", "What does this
-                   position do?", "Remind me what we're interviewing
-                   for?", "Sorry, what was the role again?"
+                   Trigger examples (NOT exhaustive — match the
+                   INTENT, not the exact phrasing):
+                     - "Can you tell me about the job again?"
+                     - "Can you tell me more about the job?"
+                     - "What's the role about?"
+                     - "What does this position do?"
+                     - "Remind me what we're interviewing for?"
+                     - "Sorry, what was the role again?"
+                     - "Can you explain what the job is?"
+                     - "Go ahead with explaining the job/role."
+                     - "What would I be doing in this role?"
+                     - "Tell me what this is for."
+                     - "Give me the role first."
+                     - "What kind of work is involved?"
+                     - "Walk me through the job description."
+
+                   Pattern: any utterance whose primary content is a
+                   request to learn / re-hear / explain the role,
+                   the job, the position, or what the candidate
+                   would be doing — regardless of exact phrasing.
 
                    Disambiguation vs use_case_anchor:
                      use_case_anchor asks about the BUSINESS or
@@ -377,25 +393,42 @@ REDIRECT
     - candidate stalling without rubric content
   Emit EMPTY observations and EMPTY claims unless the candidate ALSO
   answered the question.
-  GREETING + CONFUSION disambiguation (load-bearing):
-    The presence of a social opener ("Hi", "Hello", "Hey") changes the
-    classification. Treat the FULL utterance as a social/greeting turn
-    when: (a) it opens with a greeting word AND (b) any confusion or
-    clarify request present is GENERIC ("I didn't understand", "can you
-    explain?", "please repeat") — not a specific-term question.
-    → set candidate_social_or_greeting=true, emit redirect, EMPTY obs.
-    Rationale: the greeting is the dominant intent; the generic confusion
-    is social preamble, not a genuine term-clarify request.
+  GREETING + INTENT disambiguation (load-bearing):
+    A social opener ("Hi", "Hello", "Hey") can precede many different
+    intents. The classification depends on what follows the greeting.
 
-    When there is NO greeting opener and the candidate expresses generic
-    confusion ("I didn't quite understand", "can you explain?"):
-    → emit clarify (§3 CLARIFY sub-case b), NOT redirect.
+    CASE A — greeting + GENERIC confusion only:
+      ("Hi, I didn't understand", "Hello, can you explain?",
+       "Hey, please repeat")
+      → set candidate_social_or_greeting=true, emit redirect, EMPTY obs.
+      Rationale: the greeting IS the dominant intent; generic confusion
+      is social preamble, not a real clarify request.
 
-    When there is NO greeting opener and the candidate asks about a
-    SPECIFIC TERM ("what do you mean by DataWeave?"):
-    → emit clarify (§3 CLARIFY sub-case a), NOT redirect.
-  validator: candidate_social_or_greeting=true requires
-  next_action=redirect.
+    CASE B — greeting + SUBSTANTIVE ASK:
+      ("Hi, can you tell me about the job?",
+       "Hello, what do you mean by DataWeave?",
+       "Hey, what's the use case here?",
+       "Hi, why does idempotency matter?")
+      → set candidate_social_or_greeting=FALSE.
+      → emit the substantive action (clarify with the appropriate
+        clarify_kind: role_context / term_definition / use_case_anchor /
+        concept_explanation).
+      Rationale: the greeting is politeness preamble, NOT the dominant
+      intent — the substantive ask IS. The validator forbids
+      social_or_greeting=true paired with non-redirect; drop the social
+      flag so the substantive intent can be emitted cleanly.
+
+    CASE C — NO greeting opener + GENERIC confusion:
+      ("I didn't quite understand", "can you explain?")
+      → emit clarify (§3 sub-case b: broad_rephrase), NOT redirect.
+
+    CASE D — NO greeting opener + SPECIFIC TERM:
+      ("What do you mean by DataWeave?")
+      → emit clarify (§3 sub-case a: term_definition), NOT redirect.
+
+  validator: candidate_social_or_greeting=true REQUIRES
+  next_action=redirect. When the utterance has a substantive ask
+  (CASE B above), drop the social flag — the ask is the primary intent.
 
 ACKNOWLEDGE_NO_EXPERIENCE
   Candidate explicitly disclosed no experience with the active
