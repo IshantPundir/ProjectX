@@ -81,6 +81,11 @@ OPTIONAL_BUDGET_MARGIN_MIN = 5
 # structurally infeasible).
 MAX_BUDGET_RETRIES = 1
 
+# Behavioral-call mandatory budget cap (minutes). The behavioral phase
+# verifies knockout-signal claims; it should not eat technical scenario
+# time. Constant for v1; could become per-stage configurable later.
+BEHAVIORAL_BUDGET_MIN = 3
+
 # Stage types that support AI question-bank generation. The values are
 # the technical_depth prompt names (existing behavior). Keys are kept as
 # bare stage_type strings so existing filter code (`s.stage_type in
@@ -274,6 +279,186 @@ def _build_user_message(
 # Core generation function (shared by the stage and pipeline actors)
 # ---------------------------------------------------------------------------
 
+async def _generate_questions_for_kind(
+    db,
+    *,
+    bank: StageQuestionBank,
+    stage: JobPipelineStage,
+    instance: JobPipelineInstance,
+    job: JobPosting,
+    snapshot: JobPostingSignalSnapshot,
+    kind: str,                                   # "behavioral_star" | "technical_depth"
+    eligible_signals: list[dict],
+    budget_minutes: int,
+    prompt_name: str,
+) -> list:
+    """Run ONE LLM call for ONE question_kind, with retry-on-budget-violation.
+
+    Returns the validated list of GeneratedQuestion objects from the LLM
+    output. Caller is responsible for concatenating and writing.
+
+    Skips mandatory auto-correction (caller runs it once on the combined
+    list of all kinds via `_apply_mandatory_correction_in_position_order`).
+    """
+    ctx = await build_question_context(db, job=job, instance=instance, stage=stage)
+    system_prompt = prompt_loader.load_pair("question_bank_common", prompt_name)
+
+    # Project the eligible_signals into the user message format used by
+    # _build_user_message. The existing builder takes the FULL snapshot,
+    # but for per-kind calls we want the LLM to see only the eligible set
+    # for THIS kind. Simplest approach: temporarily swap snapshot.signals,
+    # call the builder, restore.
+    original_signals = snapshot.signals
+    snapshot.signals = eligible_signals
+    try:
+        user_message = _build_user_message(
+            job=job,
+            snapshot=snapshot,
+            company_profile=ctx.company_profile,
+            stage=stage,
+            pipeline_stages=ctx.pipeline_stages,
+            prior_stages_questions=ctx.prior_stages_questions,
+        )
+    finally:
+        snapshot.signals = original_signals
+
+    client = get_openai_client()
+    allowed_types = stage.signal_filter.get("include_types", [])
+
+    base_messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_message},
+    ]
+    feedback_history: list[dict] = []
+    validated: list = []
+
+    for attempt in range(MAX_BUDGET_RETRIES + 1):
+        messages = list(base_messages) + feedback_history
+
+        logger.info(
+            "question_bank.llm_call.start",
+            bank_id=str(bank.id),
+            stage_id=str(stage.id),
+            stage_type=stage.stage_type,
+            kind=kind,
+            model=ai_config.question_bank_model,
+            reasoning_effort=ai_config.question_bank_effort,
+            system_prompt_chars=len(system_prompt),
+            user_message_chars=len(user_message),
+            attempt=attempt + 1,
+            feedback_messages=len(feedback_history),
+            budget_minutes=budget_minutes,
+        )
+        call_started_at = time.monotonic()
+        with _tracer.start_as_current_span("openai.chat.completions.create"):
+            set_llm_span_attributes(
+                prompt_name=prompt_name,
+                prompt_version=bank.prompt_version,
+                tenant_id=str(bank.tenant_id),
+                bank_id=str(bank.id),
+                stage_id=str(stage.id),
+                stage_type=stage.stage_type,
+                job_posting_id=str(job.id),
+                model=ai_config.question_bank_model,
+                reasoning_effort=ai_config.question_bank_effort,
+                budget_attempt=attempt + 1,
+                question_kind=kind,
+            )
+            try:
+                result: StageQuestionBankOutput = await client.chat.completions.create(
+                    model=ai_config.question_bank_model,
+                    reasoning_effort=ai_config.question_bank_effort,
+                    response_model=StageQuestionBankOutput,
+                    messages=messages,
+                    max_retries=1,
+                    metadata={
+                        "bank_id": str(bank.id),
+                        "stage_id": str(stage.id),
+                        "stage_type": stage.stage_type,
+                        "tenant_id": str(bank.tenant_id),
+                        "job_posting_id": str(job.id),
+                        "prompt_version": bank.prompt_version,
+                        "budget_attempt": str(attempt + 1),
+                        "question_kind": kind,
+                    },
+                )
+            except Exception as llm_exc:
+                _span = trace.get_current_span()
+                _span.record_exception(llm_exc)
+                _span.set_status(Status(StatusCode.ERROR, type(llm_exc).__name__))
+                duration_sec = time.monotonic() - call_started_at
+                logger.error(
+                    "question_bank.llm_call.failed",
+                    bank_id=str(bank.id),
+                    stage_id=str(stage.id),
+                    stage_type=stage.stage_type,
+                    kind=kind,
+                    duration_sec=round(duration_sec, 2),
+                    error_type=type(llm_exc).__name__,
+                    error_message=str(llm_exc)[:500],
+                    attempt=attempt + 1,
+                    exc_info=True,
+                )
+                raise
+
+        duration_sec = time.monotonic() - call_started_at
+        logger.info(
+            "question_bank.llm_call.complete",
+            bank_id=str(bank.id),
+            stage_id=str(stage.id),
+            kind=kind,
+            duration_sec=round(duration_sec, 2),
+            question_count=len(result.questions),
+            attempt=attempt + 1,
+        )
+
+        try:
+            validated = await validate_llm_output_against_snapshot(
+                db,
+                snapshot=snapshot,                          # full snapshot for signal validation
+                allowed_types=allowed_types,
+                questions=result.questions,
+                stage=stage,
+                optional_budget_margin_min=OPTIONAL_BUDGET_MARGIN_MIN,
+                apply_mandatory_correction=False,            # post-merge pass handles this
+                budget_minutes_override=budget_minutes,      # per-kind budget cap
+            )
+            break
+        except BudgetExceededError as budget_exc:
+            if attempt >= MAX_BUDGET_RETRIES:
+                logger.warning(
+                    "question_bank.budget_violation_unrecovered",
+                    bank_id=str(bank.id),
+                    kind=kind,
+                    observed_minutes=budget_exc.observed_minutes,
+                    cap_minutes=budget_exc.cap_minutes,
+                    attempts=attempt + 1,
+                )
+                raise
+            logger.warning(
+                "question_bank.budget_violation_retry",
+                bank_id=str(bank.id),
+                kind=kind,
+                observed_minutes=budget_exc.observed_minutes,
+                cap_minutes=budget_exc.cap_minutes,
+                attempt=attempt + 1,
+            )
+            feedback_history.append({
+                "role": "assistant",
+                "content": orjson.dumps(result.model_dump()).decode("utf-8"),
+            })
+            feedback_history.append({
+                "role": "user",
+                "content": (
+                    f"Your previous output violated the {kind} budget contract. "
+                    f"{budget_exc} Regenerate with the cap respected. "
+                    f"Do NOT pad shallow questions."
+                ),
+            })
+
+    return validated
+
+
 async def _generate_one_bank(
     db,
     *,
@@ -288,191 +473,147 @@ async def _generate_one_bank(
     On success → transitions to reviewing. On error → transitions to failed.
     Caller must commit or rollback.
 
+    Two-call architecture (2026-05-19): generates behavioral_star questions
+    first (knockout-only, capped at BEHAVIORAL_BUDGET_MIN), then
+    technical_depth questions with the remaining stage budget. Concatenates,
+    runs the post-merge mandatory auto-correction, and writes the combined
+    list. Behavioral is skipped when no eligible signals exist or the
+    stage type has no behavioral prompt mapping — in that case the bank
+    runs as a single technical_depth call (preserving legacy behavior for
+    phone_screen stages).
+
     Tracing:
-      Each per-attempt OpenAI call is wrapped in an explicit
+      Each per-kind LLM call is wrapped in an explicit
       ``with _tracer.start_as_current_span("openai.chat.completions.create")``
-      block. set_llm_span_attributes() inside that block adds bank_id,
-      stage_id, tenant_id, model/effort, prompt name+version, and the
-      per-attempt budget_attempt counter so spans are searchable per-bank
-      in any OTel-compatible observability backend. Exceptions are tagged
-      with StatusCode.ERROR before the re-raise.
+      block via `_generate_questions_for_kind`. The span attributes include
+      bank_id, stage_id, tenant_id, model/effort, prompt name+version,
+      budget_attempt, and question_kind so spans are searchable per-call
+      in any OTel-compatible observability backend.
     """
     try:
-        ctx = await build_question_context(db, job=job, instance=instance, stage=stage)
-
-        type_prompt = STAGE_TYPE_TO_PROMPT.get(stage.stage_type)
-        if type_prompt is None:
-            raise RuntimeError(f"No prompt file mapped for stage_type={stage.stage_type}")
-
-        system_prompt = prompt_loader.load_pair("question_bank_common", type_prompt)
-        user_message = _build_user_message(
-            job=job,
-            snapshot=snapshot,
-            company_profile=ctx.company_profile,
-            stage=stage,
-            pipeline_stages=ctx.pipeline_stages,
-            prior_stages_questions=ctx.prior_stages_questions,
-        )
-
-        client = get_openai_client()
-        allowed_types = stage.signal_filter.get("include_types", [])
-
-        # LLM call + service-level validation, with one retry on budget
-        # violation. `instructor`'s own max_retries handles schema-level
-        # errors (Pydantic ValidationError); our budget caps are evaluated
-        # AFTER instructor returns a parsed model, so we manage that retry
-        # loop explicitly here. On budget violation, the offending stats
-        # are appended to the conversation as a user follow-up so the LLM
-        # has the violation in its context for the regeneration.
-        base_messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
-        ]
-        feedback_history: list[dict] = []
-        validated: list = []
-
-        for attempt in range(MAX_BUDGET_RETRIES + 1):
-            messages = list(base_messages) + feedback_history
-
-            logger.info(
-                "question_bank.llm_call.start",
-                bank_id=str(bank.id),
-                stage_id=str(stage.id),
-                stage_type=stage.stage_type,
-                model=ai_config.question_bank_model,
-                reasoning_effort=ai_config.question_bank_effort,
-                system_prompt_chars=len(system_prompt),
-                user_message_chars=len(user_message),
-                attempt=attempt + 1,
-                feedback_messages=len(feedback_history),
-            )
-            call_started_at = time.monotonic()
-            with _tracer.start_as_current_span("openai.chat.completions.create"):
-                # Attach OTel span attributes for prompt metadata. Inside the
-                # with-block so they tag THIS span (the helper uses
-                # trace.get_current_span()). budget_attempt is per-iteration.
-                set_llm_span_attributes(
-                    prompt_name=f"question_bank_{stage.stage_type}",
-                    prompt_version=bank.prompt_version,
-                    tenant_id=str(bank.tenant_id),
-                    bank_id=str(bank.id),
-                    stage_id=str(stage.id),
-                    stage_type=stage.stage_type,
-                    job_posting_id=str(job.id),
-                    model=ai_config.question_bank_model,
-                    reasoning_effort=ai_config.question_bank_effort,
-                    budget_attempt=attempt + 1,
-                )
-                try:
-                    result: StageQuestionBankOutput = await client.chat.completions.create(
-                        model=ai_config.question_bank_model,
-                        reasoning_effort=ai_config.question_bank_effort,
-                        response_model=StageQuestionBankOutput,
-                        messages=messages,
-                        max_retries=1,
-                        metadata={
-                            "bank_id": str(bank.id),
-                            "stage_id": str(stage.id),
-                            "stage_type": stage.stage_type,
-                            "tenant_id": str(bank.tenant_id),
-                            "job_posting_id": str(job.id),
-                            "prompt_version": bank.prompt_version,
-                            # OpenAI's chat.completions `metadata` requires
-                            # every value to be a string (max 16 keys,
-                            # ≤512 chars each). Cast the int at the
-                            # boundary so the call doesn't 400.
-                            "budget_attempt": str(attempt + 1),
-                        },
-                    )
-                except Exception as llm_exc:
-                    # Tag the active span with error status so failed LLM calls
-                    # render as errors in OTel backends (the auto-instrumentor
-                    # we replaced did this automatically).
-                    _span = trace.get_current_span()
-                    _span.record_exception(llm_exc)
-                    _span.set_status(Status(StatusCode.ERROR, type(llm_exc).__name__))
-                    duration_sec = time.monotonic() - call_started_at
-                    logger.error(
-                        "question_bank.llm_call.failed",
-                        bank_id=str(bank.id),
-                        stage_id=str(stage.id),
-                        stage_type=stage.stage_type,
-                        duration_sec=round(duration_sec, 2),
-                        error_type=type(llm_exc).__name__,
-                        error_message=str(llm_exc)[:500],
-                        attempt=attempt + 1,
-                        exc_info=True,
-                    )
-                    raise
-
-            duration_sec = time.monotonic() - call_started_at
-            logger.info(
-                "question_bank.llm_call.complete",
-                bank_id=str(bank.id),
-                stage_id=str(stage.id),
-                stage_type=stage.stage_type,
-                duration_sec=round(duration_sec, 2),
-                question_count=len(result.questions),
-                attempt=attempt + 1,
+        eligible_behavioral_signals = _filter_behavioral_eligible(snapshot.signals)
+        behavioral_prompt = STAGE_TYPE_TO_BEHAVIORAL_PROMPT.get(stage.stage_type)
+        technical_prompt = STAGE_TYPE_TO_PROMPT.get(stage.stage_type)
+        if technical_prompt is None:
+            raise RuntimeError(
+                f"No technical prompt mapped for stage_type={stage.stage_type}"
             )
 
+        # ---- Behavioral call (skipped when no eligible signals or no prompt) ----
+        behavioral_questions: list = []
+        behavioral_status: str
+        if not eligible_behavioral_signals or behavioral_prompt is None:
+            behavioral_status = "skipped_no_eligible_signals"
+            logger.info(
+                "question_bank.behavioral_skipped",
+                bank_id=str(bank.id),
+                stage_type=stage.stage_type,
+                reason=(
+                    "no_eligible_signals"
+                    if not eligible_behavioral_signals
+                    else "no_behavioral_prompt_for_stage_type"
+                ),
+            )
+        else:
             try:
-                validated = await validate_llm_output_against_snapshot(
+                behavioral_questions = await _generate_questions_for_kind(
                     db,
-                    snapshot=snapshot,
-                    allowed_types=allowed_types,
-                    questions=result.questions,
+                    bank=bank,
                     stage=stage,
-                    optional_budget_margin_min=OPTIONAL_BUDGET_MARGIN_MIN,
+                    instance=instance,
+                    job=job,
+                    snapshot=snapshot,
+                    kind="behavioral_star",
+                    eligible_signals=eligible_behavioral_signals,
+                    budget_minutes=BEHAVIORAL_BUDGET_MIN,
+                    prompt_name=behavioral_prompt,
                 )
-                break  # ok — validation passed
-            except BudgetExceededError as budget_exc:
-                if attempt >= MAX_BUDGET_RETRIES:
-                    logger.warning(
-                        "question_bank.budget_violation_unrecovered",
-                        bank_id=str(bank.id),
-                        stage_id=str(stage.id),
-                        kind=budget_exc.kind,
-                        observed_minutes=budget_exc.observed_minutes,
-                        cap_minutes=budget_exc.cap_minutes,
-                        attempts=attempt + 1,
-                    )
-                    raise
-                logger.warning(
-                    "question_bank.budget_violation_retry",
+                behavioral_status = "reviewing"
+            except Exception as bh_exc:
+                logger.error(
+                    "question_bank.behavioral_call_failed",
                     bank_id=str(bank.id),
-                    stage_id=str(stage.id),
-                    kind=budget_exc.kind,
-                    observed_minutes=budget_exc.observed_minutes,
-                    cap_minutes=budget_exc.cap_minutes,
-                    attempt=attempt + 1,
+                    error=str(bh_exc)[:500],
+                    exc_info=True,
                 )
-                # Append the violation to the conversation. The retry call
-                # sees the original system prompt + user message + the
-                # offending output (as a model_dump JSON) + a corrective
-                # user message naming the exact cap and the observed total.
-                # No PII leaves the worker — only IDs and minute counts.
-                feedback_history.append({
-                    "role": "assistant",
-                    "content": orjson.dumps(result.model_dump()).decode("utf-8"),
-                })
-                feedback_history.append({
-                    "role": "user",
-                    "content": (
-                        f"Your previous output violated the budget contract. "
-                        f"{budget_exc} "
-                        f"Regenerate the full StageQuestionBankOutput with the "
-                        f"caps respected. Do NOT pad shallow questions to fill "
-                        f"the buffer — under-using budget is acceptable."
-                    ),
-                })
+                behavioral_status = "failed"
+                behavioral_questions = []
 
-        # Write questions to the DB (wipes prior AI-sourced, keeps recruiter-sourced)
-        await write_generated_questions(
-            db, bank=bank, questions=validated, source="ai_generated"
+        behavioral_total = sum(
+            float(q.estimated_minutes) for q in behavioral_questions
         )
 
-        # Stamp generation-time config snapshot and clear staleness (§11.5).
+        # ---- Technical call (always runs; budget shrunk by behavioral total) ----
+        technical_mandatory_cap = max(
+            1, int(stage.duration_minutes - behavioral_total)
+        )
+        technical_exception: Exception | None = None
+        try:
+            technical_questions = await _generate_questions_for_kind(
+                db,
+                bank=bank,
+                stage=stage,
+                instance=instance,
+                job=job,
+                snapshot=snapshot,
+                kind="technical_depth",
+                eligible_signals=snapshot.signals,            # full set
+                budget_minutes=technical_mandatory_cap,
+                prompt_name=technical_prompt,
+            )
+            technical_status = "reviewing"
+        except Exception as tc_exc:
+            logger.error(
+                "question_bank.technical_call_failed",
+                bank_id=str(bank.id),
+                error=str(tc_exc)[:500],
+                exc_info=True,
+            )
+            technical_status = "failed"
+            technical_questions = []
+            technical_exception = tc_exc
+
+        # ---- Persist per-kind status ----
+        bank.generation_status_by_kind = {
+            "behavioral_star": behavioral_status,
+            "technical_depth": technical_status,
+        }
+
+        # ---- Fail-out when technical did not produce ----
+        # Re-raise the original exception (preserves the existing contract:
+        # callers — `_run_stage_generation`, `_run_one_pipeline_stage_in_session`
+        # — catch the exception type, and tests assert specific exception
+        # types like SignalValueNotInSnapshotError / BudgetExceededError
+        # propagate out).
+        if technical_status == "failed":
+            assert technical_exception is not None
+            raise technical_exception
+
+        # ---- Concatenate + position + post-merge mandatory correction ----
+        validated: list = []
+        for i, q in enumerate(behavioral_questions):
+            q.position = i
+            validated.append(q)
+        for j, q in enumerate(
+            technical_questions, start=len(behavioral_questions),
+        ):
+            q.position = j
+            validated.append(q)
+
+        from app.modules.question_bank.service import (
+            _apply_mandatory_correction_in_position_order,
+        )
+        knockout_values = {
+            s["value"] for s in snapshot.signals if s.get("knockout", False)
+        }
+        _apply_mandatory_correction_in_position_order(
+            questions=validated, knockout_values=knockout_values,
+        )
+
+        # ---- Write to DB + stamp generation-time metadata ----
+        await write_generated_questions(
+            db, bank=bank, questions=validated, source="ai_generated",
+        )
         bank.pipeline_version_at_generation = instance.pipeline_version
         bank.stage_config_snapshot = {
             "signal_filter": stage.signal_filter,
@@ -480,7 +621,6 @@ async def _generate_one_bank(
         }
         bank.is_stale = False
 
-        # Transition bank → reviewing
         transition_to_reviewing_after_generation(bank, user_id=started_by)
     except Exception as exc:
         logger.error(
