@@ -1145,24 +1145,34 @@ class InterviewOrchestrator:
         except Exception as exc:
             from app.modules.interview_engine.event_kinds import SPEAKER_ERROR
             from app.modules.interview_engine.audit_events import SpeakerErrorPayload
+            # For the intro turn, the generic "sorry — could you say that
+            # again?" recovery line is nonsensical (the candidate hasn't
+            # said anything yet). Substitute the persona-voiced intro
+            # fallback so the candidate hears a real greeting even on the
+            # exception path. All other instruction kinds keep the generic
+            # recovery text.
+            if speaker_input.instruction_kind == InstructionKind.intro_brief:
+                recovery_text = self._compose_intro_brief_fallback()
+            else:
+                recovery_text = self._RECOVERY_TEXT
             self._append(SPEAKER_ERROR, SpeakerErrorPayload(
                 turn_id=turn_id, model="speaker",
                 error_class=type(exc).__name__,
                 error_message=str(exc)[:500],
-                recovery_utterance=self._RECOVERY_TEXT,
+                recovery_utterance=recovery_text,
             ).model_dump())
             await agent.session.say(
-                self._RECOVERY_TEXT,
+                recovery_text,
                 allow_interruptions=True, add_to_chat_ctx=False,
             )
-            # Cache intentionally NOT updated — _RECOVERY_TEXT is a
-            # generic apology, not the question.
+            # Cache intentionally NOT updated — recovery_text is a
+            # generic apology / hard-coded greeting, not the question.
             self._state.register_agent_utterance(
-                turn_id=turn_id, text=self._RECOVERY_TEXT,
+                turn_id=turn_id, text=recovery_text,
                 instruction_kind=speaker_input.instruction_kind,
             )
             return _SpeakerStreamOutcome(
-                final_text=self._RECOVERY_TEXT,
+                final_text=recovery_text,
                 interrupted=False,
             )
 
@@ -1219,7 +1229,14 @@ class InterviewOrchestrator:
         """
         from app.modules.interview_engine.event_kinds import SPEAKER_OUTPUT_EMPTY
         from app.modules.interview_engine.audit_events import SpeakerOutputEmptyPayload
-        fallback = self._compose_empty_output_fallback(speaker_input)
+        if speaker_input.instruction_kind == InstructionKind.intro_brief:
+            # The generic empty-output fallback is incoherent as a greeting
+            # ("Mm — could you take it from the top?"). For the intro turn,
+            # use the persona-voiced hard-coded intro fallback instead so
+            # the candidate hears a real opening line on the failure path.
+            fallback = self._compose_intro_brief_fallback()
+        else:
+            fallback = self._compose_empty_output_fallback(speaker_input)
         await agent.session.say(
             fallback, allow_interruptions=True, add_to_chat_ctx=True,
         )
@@ -1258,6 +1275,36 @@ class InterviewOrchestrator:
                 bank_text=speaker_input.bank_text,
             )
         return DEFAULT_PERSONA.fallback_empty_output_no_bank
+
+    def _compose_intro_brief_fallback(self) -> str:
+        """Hard-coded persona-voiced intro fallback when the Speaker LLM
+        fails or returns nothing for the intro_brief turn.
+
+        The generic PersonaSpec.fallback_empty_output ("Mm — could you take
+        it from the top?") doesn't make sense as an opening line. This
+        produces something coherent so the candidate hears a real greeting
+        even on the failure path.
+
+        Persona name is resolved via the same helper used by
+        :meth:`_build_intro_speaker_input` (Task 16). The State Engine owns
+        the override slot; ``"the interviewer"`` is the engine sentinel for
+        the unresolved case and gets re-mapped to the PersonaSpec default.
+        """
+        candidate_name = (self._cfg.candidate.name or "there").strip() or "there"
+        raw_persona = (
+            self._state._persona_name()  # noqa: SLF001
+            if hasattr(self._state, "_persona_name")
+            else None
+        )
+        persona_name = (
+            raw_persona
+            if raw_persona and raw_persona != "the interviewer"
+            else "Arjun"
+        )
+        return (
+            f"Hi {candidate_name} — I'm {persona_name}. Got a few questions "
+            f"for you about your background and experience. Right, let's begin."
+        )
 
     async def _publish_attributes(
         self, *, turn_id: str | None,

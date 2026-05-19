@@ -75,9 +75,21 @@ def orchestrator_factory(make_session_config, make_question):
     always returns the same handle; the Judge is wired up but should
     not be called by the tests in this file (which only exercise
     on_enter + on_user_turn_completed top-of-body timer init).
+
+    Optional kwargs (used by Task 17 failure-path tests):
+      * ``speaker_empty_output_for_intro=True`` — the mocked Speaker stream
+        returns an empty-text handle for the ``intro_brief`` call. Other
+        calls return the normal canned handle.
+      * ``speaker_raises_for_intro=True`` — the mocked Speaker stream
+        raises ``RuntimeError`` for the ``intro_brief`` call. Other
+        calls return the normal canned handle.
     """
 
-    def _make() -> tuple[InterviewOrchestrator, Any]:
+    def _make(
+        *,
+        speaker_empty_output_for_intro: bool = False,
+        speaker_raises_for_intro: bool = False,
+    ) -> tuple[InterviewOrchestrator, Any]:
         cfg = make_session_config(
             questions=[
                 make_question(
@@ -89,7 +101,19 @@ def orchestrator_factory(make_session_config, make_question):
         )
 
         speaker = MagicMock()
-        speaker.stream = AsyncMock(return_value=_FakeSpeakerHandle("ok."))
+        if speaker_empty_output_for_intro or speaker_raises_for_intro:
+            async def _stream_side_effect(
+                *, turn_id, speaker_input, correlation_id, tenant_id,
+            ):
+                if speaker_input.instruction_kind == InstructionKind.intro_brief:
+                    if speaker_raises_for_intro:
+                        raise RuntimeError("simulated speaker failure for intro")
+                    # empty-output path
+                    return _FakeSpeakerHandle("")
+                return _FakeSpeakerHandle("ok.")
+            speaker.stream = AsyncMock(side_effect=_stream_side_effect)
+        else:
+            speaker.stream = AsyncMock(return_value=_FakeSpeakerHandle("ok."))
 
         judge = MagicMock()
         judge.call = AsyncMock()  # not invoked by these tests
@@ -313,3 +337,38 @@ async def test_session_timer_started_fires_exactly_once(orchestrator_factory):
         f"session.timer_started must fire exactly once per session; "
         f"got {len(timer_events)} after 3 candidate utterances."
     )
+
+
+@pytest.mark.asyncio
+async def test_intro_brief_empty_output_uses_intro_fallback(orchestrator_factory):
+    """When the Speaker LLM streams nothing for intro_brief, the hard-coded
+    intro fallback is used (not the generic 'take it from the top')."""
+    orch, agent = orchestrator_factory(speaker_empty_output_for_intro=True)
+    await orch.on_enter(agent)
+
+    # Find the fallback played for the intro turn
+    empty_events = [
+        e for e in orch._collector.events if e.kind == "speaker.output.empty"
+    ]
+    assert len(empty_events) == 1
+    fallback = empty_events[0].payload["fallback_text"]
+    # The intro fallback contains the persona's name and a greeting
+    assert "Arjun" in fallback or "there" in fallback
+    # Not the generic empty-output strings
+    assert "take it from the top" not in fallback
+
+
+@pytest.mark.asyncio
+async def test_intro_brief_exception_uses_intro_fallback(orchestrator_factory):
+    """When the Speaker LLM raises during intro_brief, the intro fallback
+    fires (not the generic RECOVERY_TEXT 'sorry — could you say that again')."""
+    orch, agent = orchestrator_factory(speaker_raises_for_intro=True)
+    await orch.on_enter(agent)
+
+    error_events = [
+        e for e in orch._collector.events if e.kind == "speaker.error"
+    ]
+    assert len(error_events) == 1
+    recovery = error_events[0].payload["recovery_utterance"]
+    assert "could you say that again" not in recovery
+    assert ("Arjun" in recovery) or ("there" in recovery)
