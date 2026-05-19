@@ -60,6 +60,17 @@ class StageQuestionBank(Base):
     stage_config_snapshot: Mapped[dict | None] = mapped_column(
         JSONB, nullable=True
     )
+    generation_status_by_kind: Mapped[dict] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+        doc=(
+            "Per-question-kind generation status. Shape: "
+            "{'behavioral_star': status, 'technical_depth': status}. "
+            "See spec 2026-05-19-behavioral-layer-and-intro-design.md §1."
+        ),
+    )
     is_stale: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )

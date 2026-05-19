@@ -224,6 +224,13 @@ class BankResponse(BaseModel):
     prompt_version: str
     generation_error: str | None
     coverage_notes: str | None
+    generation_status_by_kind: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Per-question-kind generation status. Empty dict for legacy banks "
+            "(generated before 2026-05-19) or banks not yet generated."
+        ),
+    )
     generated_at: datetime | None
     generated_by: UUID | None
     confirmed_at: datetime | None
