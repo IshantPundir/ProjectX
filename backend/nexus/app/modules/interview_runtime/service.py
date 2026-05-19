@@ -31,7 +31,10 @@ from app.modules.jd import (
     JobPostingSignalSnapshot,
     default_evaluation_method,
 )
-from app.modules.org_units import find_company_profile_in_ancestry
+from app.modules.org_units import (
+    find_company_profile_in_ancestry,
+    get_org_unit_ancestry,
+)
 from app.modules.pipelines import JobPipelineStage
 from app.modules.question_bank import StageQuestion, StageQuestionBank
 from app.modules.session import Session as SessionRow
@@ -173,11 +176,23 @@ async def build_session_config(
             f"job {job.id} ancestry has no company_profile"
         )
 
+    # The closest org_unit to the job is the hiring company. For agency
+    # tenants the parent (depth 1) is the tenant; for in-house tenants
+    # both are the same legal entity. Either way, the closest unit is
+    # what the candidate is interviewing FOR. Used by the intro_brief
+    # Speaker turn — see spec §2 "Schema additions" (hiring company name
+    # is NOT the ProjectX tenant name).
+    org_unit_ancestry = await get_org_unit_ancestry(db, job.org_unit_id)
+    hiring_company_name: str | None = None
+    if org_unit_ancestry:
+        hiring_company_name = org_unit_ancestry[0].name
+
     config = SessionConfig(
         session_id=str(session_id),
         job_id=str(job.id),
         candidate_id=str(assignment.candidate_id),
         job_title=job.title,
+        hiring_company_name=hiring_company_name,
         role_summary=snapshot.role_summary,
         seniority_level=snapshot.seniority_level,
         company=CompanyContext(

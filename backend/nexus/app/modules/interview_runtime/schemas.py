@@ -203,6 +203,15 @@ class SessionConfig(BaseModel):
         ),
     )
     job_title: str
+    hiring_company_name: str | None = Field(
+        default=None,
+        description=(
+            "The HIRING company (e.g., 'Workato'), NOT the ProjectX tenant "
+            "(e.g., 'BinQle' if the tenant is a staffing agency). Populated "
+            "from the closest org_unit to the job (depth 0 in ancestry). "
+            "Used by the intro_brief Speaker turn."
+        ),
+    )
     role_summary: str
     seniority_level: str
     company: CompanyContext
