@@ -461,8 +461,8 @@ class Settings(BaseSettings):
     # The ``model`` / ``language`` fields are interpreted by the chosen provider's
     # plugin factory (see app/ai/realtime.py); incompatible values are caught at
     # plugin construction.
-    interview_stt_provider: Literal["sarvam", "deepgram"] = "sarvam"
-    interview_stt_model: str = "saaras:v3"
+    interview_stt_provider: Literal["sarvam", "deepgram"] = "deepgram"
+    interview_stt_model: str = "nova-3"
     interview_stt_language: str = "en-IN"
     # Sarvam-only knob; ignored when interview_stt_provider="deepgram".
     # Allowed values for ``saaras:v3``: transcribe, translate, verbatim, translit, codemix.
