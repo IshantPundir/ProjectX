@@ -243,6 +243,17 @@ class SessionConfig(BaseModel):
             "ignore it; the structured agent (Phase B+) reads it."
         ),
     )
+    keyterms: list[str] = Field(
+        default_factory=list,
+        description=(
+            "STT keyterm-prompting list, extracted at bank-generation time "
+            "(see question_bank/refine.py:extract_bank_keyterms) and cached "
+            "on stage_question_banks.extracted_keyterms. Empty list when the "
+            "bank hasn't had keyterm extraction run yet — the engine then "
+            "falls back to candidate-name-only boosting. See spec "
+            "docs/superpowers/specs/2026-05-19-deepgram-keyterm-migration-design.md."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
