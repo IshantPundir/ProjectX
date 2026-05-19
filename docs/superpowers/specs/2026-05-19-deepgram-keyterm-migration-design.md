@@ -46,6 +46,17 @@ argument.
 - **Not changing TTS.** Sarvam `bulbul:v3` TTS quality is acceptable; out of scope.
 - **Not changing VAD, turn detector, noise cancellation, or adaptive interruption.** Those layers
   are orthogonal to STT.
+- **Not touching the conversational-continuation watcher.** The pre-Speaker cancellation watcher in
+  `orchestrator.py` (fields `continuation_enabled`, `continuation_min_word_count`,
+  `continuation_consecutive_abort_cap`, state `_pending_continuation_text`, events
+  `turn.aborted_for_continuation` + `turn.stitched_continuation`, spec
+  `docs/superpowers/specs/2026-05-17-conversational-continuation-design.md`) is the load-bearing
+  defense against EOU mis-firing on long candidate pauses. It is preserved verbatim. None of the
+  files touched by this migration (`keyterms.py`, `stt_factory.py`, `realtime.py`, `config.py`,
+  `.env.example`, `event_kinds.py`, `agent.py`) modify the orchestrator's stitching logic, its
+  config defaults, or its event payload shapes. The continuation watcher should function
+  identically against Deepgram-final transcripts as it does today against Sarvam-final transcripts;
+  it operates on whatever text the STT plugin surfaces.
 
 ## What changes
 
