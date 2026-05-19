@@ -84,7 +84,16 @@ class QuestionConfig(BaseModel):
         "behavioral_star",
         "compliance_binary",
         "open_culture",
-    ] = "technical_depth"
+    ] = Field(
+        default="technical_depth",
+        description=(
+            "Which question kind this is. Engine reads this in exactly one "
+            "place (orchestrator's post-phase-transition detection). "
+            "Default 'technical_depth' for backward compat with legacy banks. "
+            "The 4th value `open_culture` is a forward-compat slot — the "
+            "current bank generator never emits it (see `question_bank.schemas`)."
+        ),
+    )
 
 
 class CompanyContext(BaseModel):
