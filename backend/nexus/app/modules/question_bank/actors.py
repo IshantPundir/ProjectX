@@ -103,6 +103,23 @@ _load_pipeline_context = _load_pipeline_stages
 _load_prior_stages_questions = _load_prior_stage_questions
 
 
+def _filter_behavioral_eligible(signals: list[dict]) -> list[dict]:
+    """Return knockout signals voice-verifiable in the behavioral phase.
+
+    The behavioral phase verifies claims (years, platforms, employer scope)
+    via open-ended questions. We restrict to `experience` and `behavioral`
+    signal types — credentials (degrees, certs) are pre-filtered by ATS,
+    and competency signals are depth-flavored (technical phase territory).
+
+    See docs/superpowers/specs/2026-05-19-behavioral-layer-and-intro-design.md §1.
+    """
+    return [
+        s for s in signals
+        if s.get("knockout") is True
+        and s.get("type") in ("experience", "behavioral")
+    ]
+
+
 def _build_user_message(
     *,
     job: JobPosting,
