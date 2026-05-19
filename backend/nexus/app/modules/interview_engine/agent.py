@@ -85,6 +85,8 @@ from app.ai.realtime import (
 )
 from app.config import settings
 from app.database import get_bypass_session
+from app.modules.interview_engine.audit_events import STTKeytermsAppliedPayload
+from app.modules.interview_engine.event_kinds import AUDIO_STT_KEYTERMS_APPLIED
 from app.modules.interview_engine.event_log import (
     EventCollector,
     EventLogSink,
@@ -464,8 +466,22 @@ async def _run_entrypoint(
         instructions="(see Speaker prompt — agent has no top-level instructions)",
     )
 
+    stt_plugin, keyterm_extraction = build_stt_plugin_for_session(
+        session_config=session_config,
+    )
+    event_collector.append(
+        kind=AUDIO_STT_KEYTERMS_APPLIED,
+        payload=STTKeytermsAppliedPayload(
+            provider=ai_config.interview_stt_provider,
+            count=len(keyterm_extraction.terms),
+            terms=keyterm_extraction.terms,
+            sources=keyterm_extraction.sources,
+        ).model_dump(mode="json"),
+        wall_ms=int(time.time() * 1000),
+    )
+
     session = AgentSession(
-        stt=build_stt_plugin_for_session(session_config=session_config),
+        stt=stt_plugin,
         llm=build_llm_plugin(),
         tts=tts_plugin,
         vad=build_vad(),
