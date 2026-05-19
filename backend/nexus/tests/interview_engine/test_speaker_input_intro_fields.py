@@ -1,0 +1,39 @@
+"""Verifies the intro_brief InstructionKind and new SpeakerInput fields."""
+from app.modules.interview_engine.models.speaker import (
+    InstructionKind,
+    SpeakerInput,
+)
+
+
+def test_intro_brief_kind_exists():
+    assert InstructionKind.intro_brief == "intro_brief"
+
+
+def test_speaker_input_accepts_intro_fields():
+    si = SpeakerInput(
+        instruction_kind=InstructionKind.intro_brief,
+        persona_name="Arjun",
+        candidate_name="Punar",
+        job_title="Sr. Integration Engineer",
+        hiring_company_name="Workato",
+        role_summary="Lead end-to-end delivery of enterprise integrations.",
+        session_duration_minutes=15,
+        question_count=5,
+    )
+    assert si.instruction_kind == InstructionKind.intro_brief
+    assert si.hiring_company_name == "Workato"
+    assert si.session_duration_minutes == 15
+    assert si.question_count == 5
+
+
+def test_intro_fields_default_none_for_other_kinds():
+    si = SpeakerInput(
+        instruction_kind=InstructionKind.deliver_question,
+        persona_name="Arjun",
+        bank_text="A scenario question",
+    )
+    assert si.job_title is None
+    assert si.hiring_company_name is None
+    assert si.role_summary is None
+    assert si.session_duration_minutes is None
+    assert si.question_count is None

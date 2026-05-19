@@ -5,6 +5,7 @@ from app.modules.interview_runtime.schemas import TranscriptEntry
 
 def test_instruction_kind_values():
     expected = {
+        "intro_brief",
         "deliver_first_question",
         "deliver_question",
         "deliver_probe",

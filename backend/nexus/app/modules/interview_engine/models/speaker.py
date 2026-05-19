@@ -17,6 +17,7 @@ from app.modules.interview_runtime.models import TranscriptEntry
 
 
 class InstructionKind(StrEnum):
+    intro_brief = "intro_brief"  # fires once per session, before the first question
     deliver_first_question = "deliver_first_question"
     deliver_question = "deliver_question"
     deliver_probe = "deliver_probe"
@@ -109,4 +110,33 @@ class SpeakerInput(BaseModel):
             "the per-turn allowed subset that respects the anti-repetition "
             "rule deterministically."
         ),
+    )
+    # Populated ONLY when instruction_kind == intro_brief.
+    # None for every other kind. See spec
+    # 2026-05-19-behavioral-layer-and-intro-design.md §2.
+    job_title: str | None = Field(
+        default=None,
+        description="The role title (e.g., 'Sr. Integration Engineer'). Intro only.",
+    )
+    hiring_company_name: str | None = Field(
+        default=None,
+        description=(
+            "The HIRING company (e.g., 'Workato'), NOT the ProjectX tenant. "
+            "Intro only."
+        ),
+    )
+    role_summary: str | None = Field(
+        default=None,
+        description=(
+            "Pre-authored role summary from signal_snapshot.role_summary. "
+            "Speaker rephrases for natural delivery. Intro only."
+        ),
+    )
+    session_duration_minutes: int | None = Field(
+        default=None,
+        description="Stage duration in minutes (e.g., 15). Intro only.",
+    )
+    question_count: int | None = Field(
+        default=None,
+        description="Total questions in the bank (behavioral + technical). Intro only.",
     )
