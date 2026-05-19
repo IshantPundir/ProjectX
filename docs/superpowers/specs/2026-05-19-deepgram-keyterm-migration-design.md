@@ -60,7 +60,7 @@ The Sarvam branch in `realtime.py` ignores the keyterm argument.
 
 ## What changes
 
-### 1. Migration `0029_extracted_keyterms`
+### 1. Migration `0041_extracted_keyterms`
 
 Add one JSONB column on `stage_question_banks`:
 

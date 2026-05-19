@@ -19,10 +19,12 @@
 
 ## Phase A — Bank-side keyterm extraction (LLM call at bank generation)
 
-## Task 1: Alembic migration `0029_extracted_keyterms`
+## Task 1: Alembic migration `0041_extracted_keyterms`
 
 **Files:**
-- Create: `backend/nexus/migrations/versions/0029_extracted_keyterms.py`
+- Create: `backend/nexus/migrations/versions/0041_extracted_keyterms.py`
+
+> **NOTE (2026-05-19):** The current migration head on disk is `0040` (revision `"0040"`), not `0028` as referenced in the stale `backend/nexus/CLAUDE.md` log. The naming convention shifted to short numeric revision IDs (e.g. `"0029"`, `"0040"`) starting at 0029. This task targets `0041` accordingly.
 
 - [ ] **Step 1: Generate the migration scaffold.**
 
@@ -40,8 +42,8 @@ Open the new file. Replace its body with:
 ```python
 """extracted_keyterms
 
-Revision ID: 0029_extracted_keyterms
-Revises: 0028_audio_tuning_summary
+Revision ID: 0041
+Revises: 0040
 Create Date: 2026-05-19
 """
 from alembic import op
@@ -49,8 +51,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision = "0029_extracted_keyterms"
-down_revision = "0028_audio_tuning_summary"
+revision = "0041"
+down_revision = "0040"
 branch_labels = None
 depends_on = None
 
@@ -116,13 +118,13 @@ Both commands should succeed. Re-run the check from Step 4 to confirm the column
 
 - [ ] **Step 6: Update `backend/nexus/CLAUDE.md` migration log.**
 
-Find the section that lists migrations (search for `0028_audio_tuning_summary`). Add a one-line entry immediately below:
+Find the migration log section. Add a one-line entry at the appropriate point (the log is stale — it currently ends at `0028_audio_tuning_summary` but there are 12 newer migrations on disk through `0040`; this task only documents the new `0041` entry and bumps the head line, NOT the missing 0029–0040 doc gap — that's a separate cleanup):
 
 ```
-- `0029_extracted_keyterms` — Adds `stage_question_banks.extracted_keyterms JSONB NULL`. Populated by `question_bank/actors.py:generate_question_bank_stage` after refinement completes; consumed by the engine at session start for Deepgram nova-3 keyterm prompting. Legacy banks not backfilled (regeneration repopulates).
+- `0041_extracted_keyterms` — Adds `stage_question_banks.extracted_keyterms JSONB NULL`. Populated by `question_bank/actors.py:generate_question_bank_stage` after refinement completes; consumed by the engine at session start for Deepgram nova-3 keyterm prompting. Legacy banks not backfilled (regeneration repopulates).
 ```
 
-Also update the "current head" line at the top of that section from `0028_audio_tuning_summary` to `0029_extracted_keyterms`.
+Also update the "current head" line at the top of that section to read `0041_extracted_keyterms` (was `0028_audio_tuning_summary`).
 
 - [ ] **Step 7: Add the ORM column.**
 
@@ -147,7 +149,7 @@ Expected: prints a column reference without error.
 - [ ] **Step 9: Commit.**
 
 ```bash
-git add backend/nexus/migrations/versions/0029_extracted_keyterms.py \
+git add backend/nexus/migrations/versions/0041_extracted_keyterms.py \
         backend/nexus/CLAUDE.md \
         backend/nexus/app/modules/question_bank/models.py
 git commit -m "$(cat <<'EOF'
