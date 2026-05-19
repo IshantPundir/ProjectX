@@ -569,6 +569,33 @@ async def write_generated_questions(
     await db.flush()
 
 
+async def wipe_ai_questions_of_kind(
+    db: AsyncSession, *, bank: StageQuestionBank, kind: str,
+) -> int:
+    """Delete AI-sourced questions of one kind from a bank. Recruiter rows preserved.
+
+    Returns count of rows deleted. Re-packs remaining positions to 0..N-1.
+    Used by the per-kind retry path. Does NOT call auto_revert_on_edit;
+    the caller's transition_to_generating handles state.
+    """
+    deleted_result = await db.execute(
+        delete(StageQuestion).where(
+            StageQuestion.bank_id == bank.id,
+            StageQuestion.source.in_(["ai_generated", "ai_regenerated"]),
+            StageQuestion.question_kind == kind,
+        )
+    )
+    deleted_count = deleted_result.rowcount or 0
+    await db.flush()
+
+    # Re-pack remaining questions
+    remaining = await get_bank_questions(db, bank.id)
+    for i, q in enumerate(remaining):
+        q.position = i
+    await db.flush()
+    return deleted_count
+
+
 async def replace_question_in_place(
     db: AsyncSession,
     *,
@@ -858,6 +885,7 @@ __all__ = [
     "validate_mandatory_fits_session",
     "validate_llm_output_against_snapshot",
     "write_generated_questions",
+    "wipe_ai_questions_of_kind",
     "replace_question_in_place",
     "create_recruiter_question",
     "update_question",

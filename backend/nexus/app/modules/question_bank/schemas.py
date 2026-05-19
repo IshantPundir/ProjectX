@@ -192,6 +192,17 @@ class RegenerateQuestionBody(BaseModel):
     )
 
 
+class RegenerateKindBody(BaseModel):
+    """POST /banks/regenerate-kind — re-run one kind's LLM call.
+
+    Wipes ai_generated/ai_regenerated questions of the targeted kind
+    (recruiter-edited rows preserved), re-runs that kind's generation,
+    writes results back, updates generation_status_by_kind[kind].
+    """
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["behavioral_star", "technical_depth"]
+
+
 # ---------------------------------------------------------------------------
 # API response shapes
 # ---------------------------------------------------------------------------

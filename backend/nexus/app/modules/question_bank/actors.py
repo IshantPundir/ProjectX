@@ -1357,3 +1357,226 @@ async def regenerate_question(
             },
             correlation_id=correlation_id or str(UUID(question_id)),
         )
+
+
+# ---------------------------------------------------------------------------
+# Actor: per-kind regenerate (behavioral_star OR technical_depth alone)
+# ---------------------------------------------------------------------------
+
+@dramatiq.actor(
+    max_retries=2,
+    min_backoff=2_000,
+    max_backoff=60_000,
+    queue_name="question_bank_generation",
+)
+async def regenerate_kind_actor(
+    bank_id: str,
+    tenant_id: str,
+    started_by: str,
+    kind: str,
+    correlation_id: str = "",
+) -> None:
+    """Re-run one kind's generation call on an existing bank.
+
+    Pre-conditions enforced by the router: bank.status == 'generating',
+    bank's existing AI questions of the targeted kind already wiped.
+    """
+    bank_uuid = UUID(bank_id)
+    tenant_uuid = UUID(tenant_id)
+    started_by_uuid = UUID(started_by)
+    effective_corr = correlation_id or f"actor-regenerate-kind-{bank_id}"
+
+    publish_args: tuple[UUID, UUID, str] | None = None
+    async with get_bypass_session() as db:
+        safe_tenant_id = str(tenant_uuid)
+        await db.execute(text(f"SET LOCAL app.current_tenant = '{safe_tenant_id}'"))
+
+        bank = (
+            await db.execute(
+                select(StageQuestionBank).where(StageQuestionBank.id == bank_uuid)
+            )
+        ).scalar_one_or_none()
+        if bank is None:
+            logger.error("question_bank.bank_missing", bank_id=str(bank_uuid))
+            return
+
+        stage = (
+            await db.execute(
+                select(JobPipelineStage).where(JobPipelineStage.id == bank.stage_id)
+            )
+        ).scalar_one()
+        instance = (
+            await db.execute(
+                select(JobPipelineInstance).where(
+                    JobPipelineInstance.id == stage.instance_id
+                )
+            )
+        ).scalar_one()
+        job = (
+            await db.execute(
+                select(JobPosting).where(JobPosting.id == bank.job_posting_id)
+            )
+        ).scalar_one()
+        snapshot = (
+            await db.execute(
+                select(JobPostingSignalSnapshot).where(
+                    JobPostingSignalSnapshot.id == bank.signal_snapshot_id
+                )
+            )
+        ).scalar_one()
+
+        job_id = job.id
+        stage_id = stage.id
+
+        try:
+            # Select prompt + eligible signals + budget per kind
+            if kind == "behavioral_star":
+                prompt_name = STAGE_TYPE_TO_BEHAVIORAL_PROMPT.get(stage.stage_type)
+                eligible = _filter_behavioral_eligible(snapshot.signals)
+                budget = BEHAVIORAL_BUDGET_MIN
+                if prompt_name is None or not eligible:
+                    # Nothing to regenerate — record skipped and exit clean
+                    bank.generation_status_by_kind = {
+                        **(bank.generation_status_by_kind or {}),
+                        kind: "skipped_no_eligible_signals",
+                    }
+                    transition_to_reviewing_after_generation(
+                        bank, user_id=started_by_uuid,
+                    )
+                    await db.commit()
+                    publish_args = (job_id, stage_id, "reviewing")
+                    return
+            elif kind == "technical_depth":
+                prompt_name = STAGE_TYPE_TO_PROMPT.get(stage.stage_type)
+                eligible = snapshot.signals
+                # Reduce by the OTHER kind's persisted total minutes
+                other_q = (
+                    await db.execute(
+                        select(StageQuestion).where(
+                            StageQuestion.bank_id == bank.id,
+                            StageQuestion.question_kind == "behavioral_star",
+                        )
+                    )
+                ).scalars().all()
+                other_total = sum(float(q.estimated_minutes) for q in other_q)
+                budget = max(1, int(stage.duration_minutes - other_total))
+            else:
+                raise RuntimeError(f"Unknown kind: {kind!r}")
+
+            new_questions = await _generate_questions_for_kind(
+                db,
+                bank=bank,
+                stage=stage,
+                instance=instance,
+                job=job,
+                snapshot=snapshot,
+                kind=kind,
+                eligible_signals=eligible,
+                budget_minutes=budget,
+                prompt_name=prompt_name,
+            )
+
+            # Merge: keep existing questions of the OTHER kind (and recruiter
+            # rows of any kind), append the regenerated ones, re-pack
+            # positions, run post-merge correction. write_generated_questions
+            # handles AI-question replacement + position re-pack.
+            await write_generated_questions(
+                db, bank=bank, questions=new_questions, source="ai_generated",
+            )
+
+            # Re-fetch combined list for post-merge correction
+            combined = await get_bank_questions(db, bank.id)
+            from app.modules.question_bank.service import (
+                _apply_mandatory_correction_in_position_order,
+            )
+            from app.modules.question_bank.schemas import (
+                GeneratedQuestion,
+                QuestionRubric,
+            )
+            # Project ORM rows into GeneratedQuestion shape for the helper
+            projected = [
+                GeneratedQuestion(
+                    position=q.position,
+                    text=q.text,
+                    signal_values=list(q.signal_values),
+                    estimated_minutes=q.estimated_minutes,
+                    is_mandatory=q.is_mandatory,
+                    follow_ups=list(q.follow_ups),
+                    positive_evidence=list(q.positive_evidence),
+                    red_flags=list(q.red_flags),
+                    rubric=QuestionRubric(**q.rubric),
+                    evaluation_hint=q.evaluation_hint,
+                    question_kind=q.question_kind,
+                )
+                for q in combined
+            ]
+            knockout_values = {
+                s["value"] for s in snapshot.signals if s.get("knockout", False)
+            }
+            _apply_mandatory_correction_in_position_order(
+                questions=projected, knockout_values=knockout_values,
+            )
+            # Apply corrections back to ORM rows
+            by_position = {p.position: p for p in projected}
+            for row in combined:
+                if row.position in by_position:
+                    row.is_mandatory = by_position[row.position].is_mandatory
+            await db.flush()
+
+            # Update per-kind status
+            bank.generation_status_by_kind = {
+                **(bank.generation_status_by_kind or {}),
+                kind: "reviewing",
+            }
+            bank.pipeline_version_at_generation = instance.pipeline_version
+            bank.stage_config_snapshot = {
+                "signal_filter": stage.signal_filter,
+                "difficulty": stage.difficulty,
+            }
+            bank.is_stale = False
+
+            transition_to_reviewing_after_generation(bank, user_id=started_by_uuid)
+            await log_event(
+                db,
+                tenant_id=tenant_uuid,
+                actor_id=started_by_uuid,
+                actor_email=None,
+                action="question_bank.kind_regenerated",
+                resource="stage_question_bank",
+                resource_id=bank.id,
+                payload={"kind": kind},
+            )
+            await db.commit()
+            publish_args = (job_id, stage_id, "reviewing")
+        except Exception as exc:
+            logger.error(
+                "question_bank.regenerate_kind_failed",
+                bank_id=bank_id,
+                kind=kind,
+                error=str(exc)[:500],
+                exc_info=True,
+            )
+            bank.generation_status_by_kind = {
+                **(bank.generation_status_by_kind or {}),
+                kind: "failed",
+            }
+            transition_to_failed(
+                bank, error=f"{kind} regenerate failed: {str(exc)[:200]}"
+            )
+            await db.commit()
+            publish_args = (job_id, stage_id, "failed")
+
+    if publish_args is not None:
+        job_id_pub, stage_id_pub, new_status_pub = publish_args
+        await pubsub.publish(
+            pubsub.job_channel(job_id_pub),
+            pubsub.Events.BANK_STATUS_CHANGED,
+            {
+                "job_id": str(job_id_pub),
+                "bank_id": bank_id,
+                "stage_id": str(stage_id_pub),
+                "new_status": new_status_pub,
+                "source": "actor",
+            },
+            correlation_id=effective_corr,
+        )
