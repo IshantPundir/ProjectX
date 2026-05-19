@@ -739,42 +739,6 @@ def test_preprocess_acronyms_respects_word_boundaries() -> None:
     assert _preprocess_acronyms("use SQLITE") == "use SQLITE"
 
 
-def test_preprocess_acronyms_compound_camelcase_replacements() -> None:
-    """Compound camelCase acronyms (SaaS, iPaaS, PaaS) are replaced with
-    pronounceable phonetic forms so Sarvam doesn't fragment them.
-
-    Diagnostic: session 5b966895 + user report 2026-05-19 — Sarvam reads
-    "SaaS" as "Saa S", "iPaaS" as "IPA AS". The camelCase form is the
-    trigger; the phonetic spelling ("sass" / "i-pass") reads as a
-    natural English word.
-    """
-    from app.modules.interview_engine.speaker.input_builder import (
-        _preprocess_acronyms,
-    )
-    assert _preprocess_acronyms("a SaaS company") == "a sass company"
-    assert _preprocess_acronyms("an iPaaS platform") == "an i-pass platform"
-    assert _preprocess_acronyms("PaaS or IaaS") == "pass or I-A-A-S"
-    assert _preprocess_acronyms("DevOps team") == "dev ops team"
-    assert _preprocess_acronyms("DevSecOps practice") == "dev sec ops practice"
-    assert _preprocess_acronyms("MLOps pipeline") == "M-L ops pipeline"
-    assert _preprocess_acronyms("a NoSQL store") == "a no sequel store"
-
-
-def test_preprocess_acronyms_case_sensitive_for_compound_forms() -> None:
-    """Compound replacements (SaaS, iPaaS, ...) are case-sensitive — they
-    only match the canonical camelCase form. All-caps 'SAAS' or
-    lowercase 'saas' fall through unchanged (Sarvam handles those
-    differently, and we don't want to clobber correct spellings).
-    """
-    from app.modules.interview_engine.speaker.input_builder import (
-        _preprocess_acronyms,
-    )
-    # All-caps fall-through
-    assert _preprocess_acronyms("a SAAS company") == "a SAAS company"
-    # Lowercase fall-through
-    assert _preprocess_acronyms("a saas platform") == "a saas platform"
-
-
 def test_preprocess_acronyms_handles_multiple_in_one_string() -> None:
     from app.modules.interview_engine.speaker.input_builder import (
         _preprocess_acronyms,

@@ -31,17 +31,7 @@ from app.modules.interview_runtime import (
 # Order matters: longer acronyms first, to avoid prefix shadowing (e.g.
 # "REST" shouldn't trigger on a substring of "RESTART"). All matches use
 # \\b word boundaries so embedded substrings ("ERPLY") don't get rewritten.
-#
-# COMPOUND camelCase ACRONYMS (SaaS, iPaaS, etc.) — Sarvam fragments these
-# into multiple words ("SaaS" → "Saa S", "iPaaS" → "IPA AS"). Replace with
-# the pronounceable phonetic spelling ("sass" / "i-pass") which Sarvam
-# reads as a normal English word. The replacement is matched
-# case-sensitively (with re.IGNORECASE off) so we ONLY hit the camelCase
-# form, NOT the all-caps "SAAS" which Sarvam would happily letter-spell.
-# Diagnostic: session 5b966895 + user report 2026-05-19 — Sarvam reads
-# "SaaS" / "iPaaS" badly; the camelCase mixed-case form is the trigger.
 _ACRONYM_REPLACEMENTS: tuple[tuple[str, str], ...] = (
-    # Letter-by-letter spell-outs (Sarvam fragments these by default)
     ("HTTP", "H-T-T-P"),
     ("HTML", "H-T-M-L"),
     ("JSON", "JSON"),    # word-pronounceable; keep as-is (no replacement)
@@ -52,26 +42,6 @@ _ACRONYM_REPLACEMENTS: tuple[tuple[str, str], ...] = (
     ("URL", "U-R-L"),
     ("CDN", "C-D-N"),
     ("AI", "A-I"),
-    # Compound camelCase acronyms — replace with pronounceable phonetic form.
-    # The capitalization matters: "SaaS" matches, "SAAS" does not (Sarvam
-    # handles all-caps differently). Choices below are sourced from Sarvam
-    # community findings + industry pronunciation conventions.
-    #
-    # Pattern: 1-letter acronym prefix (i, I) is preserved as a hyphenated
-    # letter ("i-pass") so Sarvam letter-spells it as "eye". Multi-letter
-    # internals get respelled to a recognizable English word ("pass" /
-    # "sass" / "sequel"). DevOps-family terms use space-separated forms
-    # since they're commonly pronounced as two words.
-    ("SaaS", "sass"),
-    ("iPaaS", "i-pass"),       # → "eye pass"
-    ("PaaS", "pass"),
-    ("IaaS", "I-A-A-S"),       # 4-letter; safer as full letter spell-out
-    ("NoSQL", "no sequel"),    # industry pronunciation
-    ("GraphQL", "graph Q-L"),
-    ("DevOps", "dev ops"),
-    ("DevSecOps", "dev sec ops"),  # must come before any DevOps substring match
-    ("MLOps", "M-L ops"),
-    ("FinOps", "fin ops"),
 )
 
 

@@ -831,16 +831,9 @@ class InterviewOrchestrator:
         if decision.speaker_input.instruction_kind == InstructionKind.repeat:
             from app.modules.interview_engine.event_kinds import SPEAKER_CACHED
             from app.modules.interview_engine.audit_events import SpeakerCachedPayload
-            from app.modules.interview_engine.speaker.tts_normalizer import (
-                normalize_for_tts,
-            )
             cached = decision.cached_utterance or ""
-            # Cached utterance stores the RAW LLM output (with contractions);
-            # apply the TTS normalizer here so the replay is pronounced
-            # correctly. The audit / cache slot keeps the raw form.
             await agent.session.say(
-                normalize_for_tts(cached),
-                allow_interruptions=True, add_to_chat_ctx=False,
+                cached, allow_interruptions=True, add_to_chat_ctx=False,
             )
             self._append(SPEAKER_CACHED, SpeakerCachedPayload(
                 turn_id=turn_id, instruction_kind="repeat",
@@ -1034,12 +1027,8 @@ class InterviewOrchestrator:
         # be shutting down (drain in flight), so guard the call — we
         # still want the audit event for forensic completeness.
         try:
-            from app.modules.interview_engine.speaker.tts_normalizer import (
-                normalize_for_tts,
-            )
             await agent.session.say(
-                normalize_for_tts(message),
-                allow_interruptions=False, add_to_chat_ctx=True,
+                message, allow_interruptions=False, add_to_chat_ctx=True,
             )
         except Exception as exc:  # noqa: BLE001
             structlog.get_logger().warning(
@@ -1102,15 +1091,7 @@ class InterviewOrchestrator:
                 correlation_id=self._correlation_id,
                 tenant_id=self._tenant_id,
             )
-            # TTS-friendly stream normalizer: expands contractions and
-            # respells camelCase acronyms before tokens reach Sarvam's TTS.
-            # The wrapper buffers one trailing partial word per chunk
-            # so contractions aren't split across emit boundaries.
-            # See speaker/tts_normalizer.py for the replacement tables.
-            from app.modules.interview_engine.speaker.tts_normalizer import (
-                normalize_for_tts_stream,
-            )
-            stream = normalize_for_tts_stream(handle.stream())
+            stream = handle.stream()
             speech_handle = await agent.session.say(
                 stream, allow_interruptions=True, add_to_chat_ctx=True,
             )
@@ -1225,11 +1206,8 @@ class InterviewOrchestrator:
                 error_message=str(exc)[:500],
                 recovery_utterance=recovery_text,
             ).model_dump())
-            from app.modules.interview_engine.speaker.tts_normalizer import (
-                normalize_for_tts as _normalize_for_tts,
-            )
             await agent.session.say(
-                _normalize_for_tts(recovery_text),
+                recovery_text,
                 allow_interruptions=True, add_to_chat_ctx=False,
             )
             # Cache intentionally NOT updated — recovery_text is a
@@ -1304,12 +1282,8 @@ class InterviewOrchestrator:
             fallback = self._compose_intro_brief_fallback()
         else:
             fallback = self._compose_empty_output_fallback(speaker_input)
-        from app.modules.interview_engine.speaker.tts_normalizer import (
-            normalize_for_tts as _normalize_for_tts,
-        )
         await agent.session.say(
-            _normalize_for_tts(fallback),
-            allow_interruptions=True, add_to_chat_ctx=True,
+            fallback, allow_interruptions=True, add_to_chat_ctx=True,
         )
         self._append(SPEAKER_OUTPUT_EMPTY, SpeakerOutputEmptyPayload(
             turn_id=turn_id,

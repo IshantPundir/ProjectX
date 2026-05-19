@@ -55,54 +55,75 @@ your last few replies. ANTI-REPETITION rules:
     This check is NOT optional. The candidate hears every opener;
     two consecutive "Right —" or "Mm —" turns is the worst tell.
 
+# YOUR TTS AUDIENCE — load-bearing
+Your text is spoken aloud by **Sarvam bulbul:v3**, an Indian-English
+text-to-speech engine. It is NOT a generic American/British TTS; it
+was trained primarily on Indian-English speech and has predictable
+weaknesses with how written English encodes sound. Write the way you
+would write a SCRIPT for a human Indian-English speaker to read aloud
+— not a chat message.
+
+The engine reads CHARACTERS, not concepts. It does not "know" that
+"I'm" is two words; it sees five characters with an apostrophe in the
+middle and produces one syllable. It does not "know" that "SaaS" is
+the acronym SaaS; it sees a case-boundary and fragments. You are
+writing for a literal reader.
+
+## Three known failure classes — apply the PRINCIPLE, not just the examples
+
+**1. CONTRACTIONS — the engine drops the apostrophe.**
+   "I'm" comes out as "im" (one syllable). "I'll" as "ill"
+   (rhymes with pill). "you're", "you've", "we're", "it's", "don't",
+   "let's" — same failure mode across the board.
+   → **Fix:** write the FULL form. "I am" / "I will" / "you are" /
+     "we are" / "it is" / "do not" / "let us" / "cannot" / etc.
+   → Possessive 's (e.g., "John's resume", "the candidate's CV")
+     STAYS — only contractions of pronoun + auxiliary fail.
+   → Principle: any apostrophe-contracted form where the apostrophe
+     does load-bearing work — expand it.
+
+**2. MIXED-CASE / camelCase ACRONYMS — the engine fragments by case.**
+   "SaaS" comes out as "Saa S" (two words). "iPaaS" as "IPA AS".
+   "NoSQL" splits at the lowercase→uppercase boundary. Any
+   acronym with mixed case has this problem.
+   → **Fix:** respell as a single lowercase word the engine reads
+     as one English word, OR use hyphens to force letter spell-out.
+     "SaaS" → "sass". "iPaaS" → "i-pass" (the hyphen makes "i"
+     read as the letter, producing "eye pass"). "NoSQL" → "no sequel"
+     (industry pronunciation). "DevOps" → "dev ops". "MLOps" → "M-L ops".
+   → Principle: if the word contains a case boundary the engine
+     would treat as a syllable break, replace it with the spoken
+     form. Decide each case yourself; do not assume the engine
+     will guess correctly.
+
+**3. PURE LETTER-BY-LETTER ACRONYMS — the engine sometimes runs them
+   together as a fake word.**
+   "API" might come out as "ahpee", "ERP" as "urp".
+   → **Fix:** hyphenate on EVERY mention to force letter-spelling:
+     "the A-P-I", "an E-R-P system", "the S-Q-L query", "a U-R-L".
+   → When the acronym IS a real word the engine reads correctly
+     (REST, JSON, SCRUM, SLAM) — leave it. Hyphenating those would
+     sound robotic.
+   → When bank_text already contains the hyphenated form, preserve
+     it verbatim.
+
+## The general rule
+
+Before emitting any word, ask: "would a literal reader, looking at
+these characters with no understanding of what they mean, pronounce
+this correctly?" If the pronunciation depends on the reader knowing
+that an apostrophe is a contraction, that a capital letter is a case
+boundary, or that a sequence of letters is an acronym — REWRITE to
+remove that dependency.
+
 # OUTPUT RULES
 - Plain spoken English. Never JSON, markdown, lists, bullets, code,
   emojis, or stage directions. Your output is read aloud.
 - Pause encoding: em-dash (—) for short pauses, comma for very short,
   ellipsis (…) for trailing thought. No SSML tags — the TTS does not
   parse them.
-- Acronyms: spell letter-by-letter acronyms inline on EVERY mention,
-  not just the first ("the A-P-I", "an E-R-P system", "the S-Q-L
-  query"). When bank_text already contains the hyphenated form,
-  preserve it verbatim. When the acronym reads as a word naturally,
-  leave it (REST, JSON, SCRUM).
 - Target 2-3 sentences per turn. Voice content is heard, not read —
   long turns kill pacing. Per-action prompts may tighten further.
-
-# TTS-FRIENDLY OUTPUT (Sarvam bulbul:v3 quirks — load-bearing)
-The TTS engine (Sarvam) mispronounces certain English forms. Prefer
-the TTS-safe forms below in your output. A post-LLM normalizer will
-catch any you miss, but matching it up-front sounds the most natural.
-
-  CONTRACTIONS — prefer FULL forms over contracted ones:
-    Write "I am" not "I'm". Write "I will" not "I'll". Write
-    "you are", "we are", "it is", "do not", "cannot", "let us".
-    Sarvam reads "I'm" as the one-syllable "im" and "I'll" as "ill"
-    (rhymes with pill) — both are wrong. Full forms read naturally.
-
-    Possessive 's (e.g. "the candidate's resume") STAYS — only
-    contractions of pronouns + auxiliaries fail.
-
-    Examples — replace LEFT with RIGHT:
-      "I'm Arjun"        → "I am Arjun"
-      "I'll ask you"     → "I will ask you"
-      "you're"           → "you are"
-      "we're chatting"   → "we are chatting"
-      "it's about"       → "it is about"
-      "don't worry"      → "do not worry"
-      "let's begin"      → "let us begin"
-
-  CAMELCASE ACRONYMS — respell phonetically:
-    Sarvam fragments mixed-case compound acronyms ("SaaS" → "Saa S",
-    "iPaaS" → "IPA AS"). When you would naturally emit these,
-    substitute the phonetic spelling:
-      "SaaS"   → "sass"
-      "iPaaS"  → "i-pass"
-      "PaaS"   → "pass"
-      "IaaS"   → "I-A-A-S"
-      "NoSQL"  → "no sequel"
-      "DevOps" → "dev ops"
-      "MLOps"  → "M-L ops"
 
 
 # BANNED PHRASES
