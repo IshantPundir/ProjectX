@@ -68,3 +68,20 @@ def test_filter_mixed():
         "8+ years integration",
         "Customer-facing",
     }
+
+
+def test_behavioral_prompt_map_has_ai_screening():
+    """The behavioral prompt map covers ai_screening at minimum."""
+    from app.modules.question_bank.actors import STAGE_TYPE_TO_BEHAVIORAL_PROMPT
+    assert "ai_screening" in STAGE_TYPE_TO_BEHAVIORAL_PROMPT
+    assert (
+        STAGE_TYPE_TO_BEHAVIORAL_PROMPT["ai_screening"]
+        == "question_bank_ai_screening_behavioral"
+    )
+
+
+def test_technical_prompt_map_unchanged():
+    """Existing technical_depth map is untouched (regression guard)."""
+    from app.modules.question_bank.actors import STAGE_TYPE_TO_PROMPT
+    assert STAGE_TYPE_TO_PROMPT["ai_screening"] == "question_bank_ai_screening"
+    assert STAGE_TYPE_TO_PROMPT["phone_screen"] == "question_bank_phone_screen"

@@ -81,7 +81,10 @@ OPTIONAL_BUDGET_MARGIN_MIN = 5
 # structurally infeasible).
 MAX_BUDGET_RETRIES = 1
 
-# Stage types that support AI question-bank generation.
+# Stage types that support AI question-bank generation. The values are
+# the technical_depth prompt names (existing behavior). Keys are kept as
+# bare stage_type strings so existing filter code (`s.stage_type in
+# STAGE_TYPE_TO_PROMPT`) continues to work without changes.
 #
 # `human_interview` and `take_home` are intentionally excluded — those
 # stage types remain valid in the pipeline schema (and in candidate
@@ -95,6 +98,14 @@ MAX_BUDGET_RETRIES = 1
 STAGE_TYPE_TO_PROMPT = {
     "phone_screen":    "question_bank_phone_screen",
     "ai_screening":    "question_bank_ai_screening",
+}
+
+# Per-stage-type behavioral_star prompt names. Stages NOT in this map
+# generate technical_depth only — the behavioral call is skipped for
+# those stage types (today: phone_screen has no behavioral prompt yet).
+# See docs/superpowers/specs/2026-05-19-behavioral-layer-and-intro-design.md.
+STAGE_TYPE_TO_BEHAVIORAL_PROMPT = {
+    "ai_screening":    "question_bank_ai_screening_behavioral",
 }
 
 # Backward-compatible aliases so existing tests (which import these names
