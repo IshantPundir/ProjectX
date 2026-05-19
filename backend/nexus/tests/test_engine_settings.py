@@ -97,7 +97,9 @@ def test_settings_have_sarvam_fields():
     """
     fields = Settings.model_fields
     assert fields["sarvam_api_key"].default == ""
-    assert fields["interview_stt_provider"].default == "sarvam"
+    # STT default flipped to "deepgram" on 2026-05-19 (see spec
+    # docs/superpowers/specs/2026-05-19-deepgram-keyterm-migration-design.md).
+    # Sarvam-specific fields stay for the switchable-alternate path.
     assert fields["interview_stt_mode"].default == "transcribe"
     assert fields["interview_tts_pace"].default == 1.0
     assert fields["interview_tts_temperature"].default == 0.6
@@ -129,17 +131,26 @@ def test_aiconfig_exposes_sarvam_fields(monkeypatch):
     assert cfg.interview_tts_temperature == 0.4
 
 
-def test_settings_default_to_sarvam_values():
-    """In-code defaults select the Sarvam pipeline so a no-.env-override boot works.
+def test_settings_default_to_deepgram_stt_sarvam_tts():
+    """Default STT is Deepgram nova-3 (2026-05-19); TTS stays Sarvam bulbul:v3.
+
+    Migration: docs/superpowers/specs/2026-05-19-deepgram-keyterm-migration-design.md.
+    STT was flipped because Sarvam mistranscribed tech vocabulary; Deepgram
+    nova-3 pairs with per-bank LLM-extracted keyterm prompting cached on
+    stage_question_banks.extracted_keyterms. TTS quality was fine, so Sarvam
+    bulbul:v3 remains the TTS default.
 
     Uses model_fields introspection so local-dev .env values can't interfere
-    with the assertion (consistent with test_settings_have_sarvam_fields).
+    with the assertion.
     """
     fields = Settings.model_fields
-    assert fields["interview_stt_provider"].default == "sarvam"
-    assert fields["interview_stt_model"].default == "saaras:v3"
+    # STT — flipped to Deepgram on 2026-05-19
+    assert fields["interview_stt_provider"].default == "deepgram"
+    assert fields["interview_stt_model"].default == "nova-3"
     assert fields["interview_stt_language"].default == "en-IN"
+    # Sarvam-only mode kept; only consulted when toggled back via env
     assert fields["interview_stt_mode"].default == "transcribe"
+    # TTS — unchanged
     assert fields["interview_tts_provider"].default == "sarvam"
     assert fields["interview_tts_model"].default == "bulbul:v3"
     assert fields["interview_tts_voice"].default == "shubh"

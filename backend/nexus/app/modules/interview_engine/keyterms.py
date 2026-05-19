@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.modules.interview_runtime.schemas import SessionConfig
+from app.modules.interview_runtime import SessionConfig
 
 _KEYTERM_CAP = 50
 

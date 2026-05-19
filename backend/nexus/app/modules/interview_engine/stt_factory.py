@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from app.ai.realtime import build_stt_plugin
 from app.modules.interview_engine.keyterms import KeytermExtraction, assemble_keyterms
-from app.modules.interview_runtime.schemas import SessionConfig
+from app.modules.interview_runtime import SessionConfig
 
 if TYPE_CHECKING:
     # Mirror the lazy-import discipline in app/ai/realtime.py — the LiveKit
