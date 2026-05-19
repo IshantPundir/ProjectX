@@ -69,6 +69,10 @@ class AIConfig:
         return self._settings.openai_question_bank_effort
 
     @property
+    def question_bank_keyterm_model(self) -> str:
+        return self._settings.openai_question_bank_keyterm_model
+
+    @property
     def request_timeout_seconds(self) -> float:
         return self._settings.openai_request_timeout_seconds
 

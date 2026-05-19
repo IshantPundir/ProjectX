@@ -220,6 +220,10 @@ class Settings(BaseSettings):
     openai_reenrichment_effort: str = "medium"
     openai_question_bank_model: str = "gpt-5"
     openai_question_bank_effort: str = "medium"
+    # Fast/cheap model for the per-bank STT keyterm extraction LLM call (one
+    # call per bank generation; result cached on stage_question_banks.extracted_keyterms).
+    # See docs/superpowers/specs/2026-05-19-deepgram-keyterm-migration-design.md.
+    openai_question_bank_keyterm_model: str = "gpt-5.4-nano-2026-03-17"
 
     # OpenAI request tuning
     openai_request_timeout_seconds: float = 240.0
