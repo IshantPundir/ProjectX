@@ -33,12 +33,11 @@ def test_transition_rejects_illegal_moves():
 def test_advance_on_pre_check_load_is_monotonic():
     # Only created → pre_check
     assert advance_on_pre_check_load(SessionState.CREATED) == SessionState.PRE_CHECK
-    # Any later state: no-op
-    for s in (
-        SessionState.PRE_CHECK, SessionState.CONSENTED,
-        SessionState.ACTIVE, SessionState.COMPLETED, SessionState.CANCELLED,
-    ):
-        assert advance_on_pre_check_load(s) == s
+    # Any other state (incl. error/terminated) is a no-op — iterate the whole
+    # enum so a future state can't silently slip past this invariant.
+    for s in SessionState:
+        if s != SessionState.CREATED:
+            assert advance_on_pre_check_load(s) == s
 
 
 def test_active_to_terminated_is_legal():

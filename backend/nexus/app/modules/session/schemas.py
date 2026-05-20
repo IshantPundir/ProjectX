@@ -99,8 +99,8 @@ class ProctoringConfig(BaseModel):
     proctoring listeners at all."""
     model_config = ConfigDict(extra="forbid")
     enabled: bool
-    soft_violation_limit: int
-    fullscreen_grace_seconds: int
+    soft_violation_limit: int = Field(ge=1, le=20)
+    fullscreen_grace_seconds: int = Field(ge=3, le=60)
 
 
 class ProctoringEventRequest(BaseModel):
@@ -110,6 +110,7 @@ class ProctoringEventRequest(BaseModel):
 
 
 class ProctoringEventResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     terminated: bool
     violation_count: int
     soft_violation_count: int
