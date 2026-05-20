@@ -191,7 +191,8 @@ class QuestionQueue:
         """Bump push_back_count on the active question. Returns the new value.
 
         The State Engine reads the returned value to decide whether to honor
-        the next push_back (cap=2) — see ``StateEngine._handle_push_back``.
+        the next push_back (capped per difficulty: easy 1 / medium 2 /
+        hard 3) — see ``StateEngine._push_back_cap``.
         """
         active = self.active_state()
         if active is None:
@@ -269,6 +270,23 @@ class QuestionQueue:
         return (
             active.quality_observations.get("concrete", 0) > 0
             or active.quality_observations.get("strong", 0) > 0
+        )
+
+    def active_has_quality_at_least_strong(self) -> bool:
+        """True iff the active question has >=1 'strong' observation."""
+        active = self.active_state()
+        if active is None:
+            return False
+        return active.quality_observations.get("strong", 0) > 0
+
+    def active_concrete_or_strong_count(self) -> int:
+        """Count of 'concrete' + 'strong' observations on the active question."""
+        active = self.active_state()
+        if active is None:
+            return 0
+        return (
+            active.quality_observations.get("concrete", 0)
+            + active.quality_observations.get("strong", 0)
         )
 
     def complete_active(self, *, at_turn: int) -> None:

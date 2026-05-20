@@ -395,8 +395,9 @@ class StateEngine:
         # 5. Resolve next action with self-healing.
         action = judge_output.next_action
         # Q-2 (Phase 9.3) — track whether the resulting deliver_question
-        # is the consequence of a cap-forced advance (push_back hit cap=2
-        # and downgraded). The Speaker scaffold uses this to add a soft
+        # is the consequence of a cap-forced advance (push_back hit the
+        # per-difficulty cap [easy 1 / medium 2 / hard 3] and downgraded).
+        # The Speaker scaffold uses this to add a soft
         # topic-shift segue instead of jumping cold into the next question.
         is_post_cap_advance: bool = False
         # A2 (Option A) — set True when acknowledge_no_experience (or a
@@ -426,6 +427,11 @@ class StateEngine:
                 self._queue.active_push_back_count()
                 if self._queue.active_state() is not None else 0
             )
+            # Capture the cap for the question the candidate is LEAVING,
+            # BEFORE advance_to mutates the active question. After the
+            # mutation _push_back_cap() would resolve _active_difficulty()
+            # against the NEW active question — the wrong one.
+            prior_push_back_cap = self._push_back_cap()
             # Quality gate (Phase 9.2): downgrade `advance` to `push_back`
             # when no observation on the active question has reached
             # `concrete` or `strong`. The Judge prompt §4.5 instructs the
@@ -435,8 +441,8 @@ class StateEngine:
             # cap is already reached (avoid infinite downgrade loops).
             quality_downgrade = (
                 self._queue.active_state() is not None
-                and not self._queue.active_has_quality_at_least_concrete()
-                and self._queue.active_push_back_count() < 2
+                and not self._advance_quality_met()
+                and self._queue.active_push_back_count() < self._push_back_cap()
             )
             if quality_downgrade:
                 warnings.append(ValidationWarning(
@@ -475,7 +481,7 @@ class StateEngine:
                     # the push_back branch below). Mirrors the existing
                     # is_post_cap_advance=True at the SE-downgrade site
                     # for consistency in Speaker behavior.
-                    if prior_push_back_count >= 2:
+                    if prior_push_back_count >= prior_push_back_cap:
                         is_post_cap_advance = True
                 except QueueError as exc:
                     warnings.append(ValidationWarning(
@@ -681,7 +687,8 @@ class StateEngine:
                 # the ``push_back_cap_reached`` warning. This breaks loops on
                 # candidates who genuinely cannot give specifics.
                 current_count = self._queue.active_push_back_count()
-                if current_count >= 2 and self._queue.active_state() is not None:
+                cap = self._push_back_cap()
+                if current_count >= cap and self._queue.active_state() is not None:
                     warnings.append(ValidationWarning(
                         code="push_back_cap_reached",
                         level="warning",
@@ -690,7 +697,7 @@ class StateEngine:
                             "push_back_count": current_count,
                             "downgraded_to": "advance",
                             "reason": (
-                                "Push_back cap (2) already reached on this "
+                                f"Push_back cap ({cap}) already reached on this "
                                 "question; downgrading to advance to avoid "
                                 "loops. Some candidates genuinely cannot give "
                                 "concrete specifics — accept the partial "
@@ -923,6 +930,36 @@ class StateEngine:
         )
 
     # --- Helpers ---
+
+    def _active_difficulty(self) -> str:
+        """Difficulty of the active question; 'medium' when unknown."""
+        qid = self._queue.active_question_id()
+        if qid is None:
+            return "medium"
+        q_cfg = next((q for q in self._cfg.stage.questions if q.id == qid), None)
+        return getattr(q_cfg, "difficulty", None) or "medium"
+
+    def _push_back_cap(self) -> int:
+        """Per-difficulty push-back cap: easy=1, medium=2, hard=3."""
+        return {"easy": 1, "medium": 2, "hard": 3}.get(self._active_difficulty(), 2)
+
+    def _advance_quality_met(self) -> bool:
+        """Whether the active question's observations clear the advance gate
+        for its difficulty.
+
+          easy   : always True (engaged answer advances; gate OFF)
+          medium : >=1 concrete or strong
+          hard   : >=1 strong OR >=2 concrete
+        """
+        difficulty = self._active_difficulty()
+        if difficulty == "easy":
+            return True
+        if difficulty == "hard":
+            return (
+                self._queue.active_has_quality_at_least_strong()
+                or self._queue.active_concrete_or_strong_count() >= 2
+            )
+        return self._queue.active_has_quality_at_least_concrete()
 
     def _first_or_continuing_instruction(self) -> InstructionKind:
         """deliver_first_question on the very first advance; deliver_question after."""
