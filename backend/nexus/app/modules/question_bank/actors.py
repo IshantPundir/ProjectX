@@ -618,6 +618,7 @@ async def _generate_one_bank(
         # ---- Write to DB + stamp generation-time metadata ----
         await write_generated_questions(
             db, bank=bank, questions=validated, source="ai_generated",
+            stage_difficulty=stage.difficulty,
         )
         bank.pipeline_version_at_generation = instance.pipeline_version
         bank.stage_config_snapshot = {
@@ -1538,6 +1539,7 @@ async def regenerate_kind_actor(
             # handles AI-question replacement + position re-pack.
             await write_generated_questions(
                 db, bank=bank, questions=new_questions, source="ai_generated",
+                stage_difficulty=stage.difficulty,
             )
 
             # Re-fetch combined list for post-merge correction

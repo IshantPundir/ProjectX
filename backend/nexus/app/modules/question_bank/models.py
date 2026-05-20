@@ -99,6 +99,10 @@ class StageQuestion(Base):
             "'compliance_binary', 'open_culture')",
             name="stage_questions_question_kind_check",
         ),
+        CheckConstraint(
+            "difficulty IS NULL OR difficulty IN ('easy', 'medium', 'hard')",
+            name="stage_questions_difficulty_check",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -134,6 +138,7 @@ class StageQuestion(Base):
     question_kind: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=sql_text("'technical_depth'")
     )
+    difficulty: Mapped[str | None] = mapped_column(Text, nullable=True)
     edited_by_recruiter: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=sql_text("false")
     )

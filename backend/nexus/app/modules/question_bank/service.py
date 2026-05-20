@@ -522,6 +522,7 @@ async def write_generated_questions(
     bank: StageQuestionBank,
     questions: list[GeneratedQuestion],
     source: str = "ai_generated",
+    stage_difficulty: str | None = None,
 ) -> None:
     """Delete existing AI-sourced questions, keep recruiter-sourced ones,
     write the new generated questions. Called by the generate actors.
@@ -558,6 +559,7 @@ async def write_generated_questions(
                 rubric=incoming.rubric.model_dump(),
                 evaluation_hint=incoming.evaluation_hint,
                 question_kind=incoming.question_kind,
+                difficulty=stage_difficulty,
             )
         )
     await db.flush()
