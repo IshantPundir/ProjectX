@@ -2,8 +2,14 @@
 
 import type { ReactNode } from 'react'
 
-import { Aura } from '@/components/agents-ui/aura'
+import dynamic from 'next/dynamic'
 import { WizardStepper, type WizardStepKey } from './WizardStepper'
+
+// Lazy so the WebGL aura shader stays out of the light pre-join bundle.
+const Aura = dynamic(() => import('@/components/agents-ui/aura').then((m) => m.Aura), {
+  ssr: false,
+  loading: () => <span aria-hidden className="aura-mark block size-[180px]" />,
+})
 
 interface WizardFrameProps {
   companyName: string

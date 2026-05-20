@@ -12,14 +12,14 @@ const messages = [m('1', false, 'Welcome — introduce yourself.'), m('2', true,
 
 describe('InterviewSessionPanel', () => {
   it('is minimized by default: shows the title pill but not the transcript bubbles', () => {
-    render(<InterviewSessionPanel messages={messages} agentState="listening" />)
+    render(<InterviewSessionPanel messages={messages} />)
     expect(screen.getByText('Interview Session')).toBeInTheDocument()
     expect(screen.queryByText('I am John.')).not.toBeInTheDocument()
   })
 
   it('expands to show the conversation when the toggle is clicked', async () => {
     const user = userEvent.setup()
-    render(<InterviewSessionPanel messages={messages} agentState="listening" />)
+    render(<InterviewSessionPanel messages={messages} />)
     await user.click(screen.getByRole('button', { name: /open transcript/i }))
     expect(screen.getByText('Welcome — introduce yourself.')).toBeInTheDocument()
     expect(screen.getByText('I am John.')).toBeInTheDocument()
@@ -27,7 +27,7 @@ describe('InterviewSessionPanel', () => {
 
   it('collapses again when the minimize button is clicked', async () => {
     const user = userEvent.setup()
-    render(<InterviewSessionPanel messages={messages} agentState="listening" />)
+    render(<InterviewSessionPanel messages={messages} />)
     await user.click(screen.getByRole('button', { name: /open transcript/i }))
     await user.click(screen.getByRole('button', { name: /minimize transcript/i }))
     expect(screen.queryByText('I am John.')).not.toBeInTheDocument()

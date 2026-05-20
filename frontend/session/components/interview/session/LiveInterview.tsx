@@ -57,7 +57,6 @@ export function LiveInterview({ companyName, jobTitle, logo, accent, onEnd }: Li
 
       <InterviewSessionPanel
         messages={rawMessages}
-        agentState={state}
         className="absolute right-4 top-16 z-30 max-h-[70vh] w-[min(360px,86vw)]"
       />
     </div>

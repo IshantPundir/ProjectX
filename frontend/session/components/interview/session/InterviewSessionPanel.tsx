@@ -2,7 +2,6 @@
 
 import { useState } from 'react'
 import { Minus } from 'lucide-react'
-import type { AgentState } from '@livekit/components-react'
 
 import { cn } from '@/lib/utils'
 import { toTurns, type RawMessage } from './transcript-model'
@@ -18,11 +17,9 @@ function LivePill() {
 
 export function InterviewSessionPanel({
   messages,
-  agentState,
   className,
 }: {
   messages: RawMessage[]
-  agentState?: AgentState
   className?: string
 }) {
   const [open, setOpen] = useState(false)
