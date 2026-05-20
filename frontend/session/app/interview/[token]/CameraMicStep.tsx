@@ -150,8 +150,8 @@ export function CameraMicStep({ onPass }: Props) {
         </div>
         {status === 'ready' && noisy && (
           <p
-            className="mt-3 text-[13px] text-amber-700"
-            style={{ lineHeight: 1.6 }}
+            className="mt-3 text-[13px]"
+            style={{ lineHeight: 1.6, color: 'var(--px-caution)' }}
             role="status"
           >
             Your environment sounds noisy. The interview will still work,
