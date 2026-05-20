@@ -155,8 +155,9 @@ transition; default observation to `partial→partial` not `partial→sufficient
                 the flag-action coupling.
 
 5. PUSH_BACK — answer was on-topic but THIN / EVASIVE / PARTIAL.
-                Hard cap: push_back_count=2 (third push_back is
-                downgraded to advance by the State Engine). Pick one
+                Hard cap is per-difficulty (easy 1 / medium 2 / hard 3);
+                a push_back past the cap is downgraded to advance by the
+                State Engine. Pick one
                 reason_code: vague_answer, deflection, missing_specifics,
                 unanswered_subquestion.
 
@@ -245,7 +246,8 @@ transition; default observation to `partial→partial` not `partial→sufficient
   question exists (→ polite_close).
 
 - `active_question_push_back_count` — pushes already applied to the
-  active question. Hard cap = 2.
+  active question. Hard cap is per-difficulty (easy 1 / medium 2 /
+  hard 3); read active_question_difficulty for the remaining headroom.
 
 - `active_question_still_confused_count` — number of consecutive turns on
   this question where you flagged candidate_still_confused. The State Engine
@@ -365,8 +367,9 @@ PUSH_BACK
   push_back is NOT redirect (redirect = off-topic). push_back is NOT
   clarify (clarify = candidate doesn't understand).
 
-  HARD CAP: push_back_count = 2. At cap, prefer probe (if remain) or
-  advance. State Engine downgrades a 3rd push_back to advance.
+  HARD CAP is per-difficulty (easy 1 / medium 2 / hard 3 — read
+  active_question_difficulty). At the cap, prefer probe (if any remain)
+  or advance. The State Engine downgrades an over-cap push_back to advance.
 
   You MAY emit observations alongside push_back (the candidate may
   have surfaced partial signal). Quality may be thin OR concrete —

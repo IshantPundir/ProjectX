@@ -188,9 +188,10 @@ class PushBackPayload(BaseModel):
     Fired when the candidate's answer is on-topic but thin, evasive, or
     partial. NOT a redirect (candidate engaged) and NOT a clarify
     (candidate understands). The State Engine increments
-    ``QuestionState.push_back_count``; once count >= 2 the engine
-    downgrades to ``advance`` to prevent loops on candidates who
-    genuinely cannot give specifics.
+    ``QuestionState.push_back_count``; once count reaches the
+    per-difficulty cap (easy 1 / medium 2 / hard 3 — see
+    ``StateEngine._push_back_cap``) the engine downgrades to ``advance``
+    to prevent loops on candidates who genuinely cannot give specifics.
     """
     kind: Literal["push_back"] = "push_back"
     reason_code: Literal[

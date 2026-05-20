@@ -29,10 +29,11 @@ class QuestionState(BaseModel):
         default=0,
         description=(
             "Number of push_back actions the State Engine has applied to "
-            "this question. Hard-capped at 2: the engine downgrades a 3rd "
-            "incoming push_back to advance to prevent loops on candidates "
-            "who genuinely cannot give specifics. Surfaced to the Judge "
-            "via JudgeInputPayload.active_question_push_back_count."
+            "this question. Hard-capped per difficulty (easy 1 / medium 2 "
+            "/ hard 3): the engine downgrades an over-cap push_back to "
+            "advance to prevent loops on candidates who genuinely cannot "
+            "give specifics. Surfaced to the Judge via "
+            "JudgeInputPayload.active_question_push_back_count."
         ),
     )
     still_confused_count: int = Field(

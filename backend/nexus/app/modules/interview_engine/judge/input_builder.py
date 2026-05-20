@@ -115,10 +115,10 @@ class JudgeInputPayload(BaseModel):
         ge=0,
         description=(
             "Number of push_back actions already applied to the active "
-            "question. Hard cap = 2 enforced server-side (a 3rd incoming "
-            "push_back is downgraded to advance). The Judge prompt §3 "
-            "push_back entry instructs: when this is 2, prefer probe "
-            "(if probes remain) or advance — do NOT emit push_back again."
+            "question. Hard cap is per-difficulty (easy 1 / medium 2 / "
+            "hard 3) enforced server-side; an over-cap push_back is "
+            "downgraded to advance. At the cap, prefer probe (if probes "
+            "remain) or advance — do NOT emit push_back again."
         ),
     )
     active_question_still_confused_count: int = Field(

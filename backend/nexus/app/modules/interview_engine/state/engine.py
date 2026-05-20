@@ -679,8 +679,8 @@ class StateEngine:
                 # Phase 9.2 push_back: candidate engaged but answer was thin
                 # / evasive / partial. No queue mutation, no probe
                 # consumption, no ledger gating. The State Engine increments
-                # the per-question push_back_count and enforces the cap=2
-                # invariant.
+                # the per-question push_back_count and enforces the
+                # per-difficulty cap (easy 1 / medium 2 / hard 3).
                 #
                 # Cap behavior: a 3rd incoming push_back is downgraded to
                 # advance (or polite_close if no mandatory remains) and emits
