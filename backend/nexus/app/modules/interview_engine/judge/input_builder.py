@@ -118,12 +118,10 @@ class JudgeInputPayload(BaseModel):
             "Consecutive turns on the active question where the Judge set "
             "turn_metadata.candidate_still_confused=true (generic confusion "
             "/ cannot engage). Resets to 0 on any other turn or on advance. "
-            "The State Engine escalates to acknowledge-and-advance once this "
-            "reaches 2 (i.e. on the 3rd consecutive confusion). The Judge "
-            "prompt uses this field to inform escalation decisions — when "
-            "this is >= 2 AND the active signal is experience/credential "
-            "class, prefer acknowledge_no_experience over clarify to avoid "
-            "looping on a candidate who genuinely cannot engage."
+            "The State Engine acknowledges and moves on automatically once "
+            "this reaches 2 — the Judge does NOT decide that escalation; it "
+            "keeps emitting clarify + candidate_still_confused and the engine "
+            "owns the cap."
         ),
     )
     active_question_remaining_probes: dict[str, str] = Field(
