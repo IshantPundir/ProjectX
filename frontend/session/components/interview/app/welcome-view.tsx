@@ -11,6 +11,7 @@ interface Props {
   mode: 'start' | 'rejoin'
   onStartCall: () => void
   isPending?: boolean
+  proctored?: boolean
 }
 
 export function WelcomeView({
@@ -21,6 +22,7 @@ export function WelcomeView({
   mode,
   onStartCall,
   isPending = false,
+  proctored = false,
 }: Props) {
   const heading = mode === 'rejoin' ? 'Rejoin your interview' : "You're ready to begin"
   const body =
@@ -37,6 +39,19 @@ export function WelcomeView({
         <Aura state="listening" audioTrack={undefined} size="xl" className="mb-6" />
         <h1 className="font-serif text-3xl text-px-fg">{heading}</h1>
         <p className="mt-3 text-sm text-px-fg-3">{body}</p>
+        {proctored && (
+          <div className="px-glass mt-6 rounded-xl px-5 py-4 text-left">
+            <p className="text-xs font-semibold uppercase tracking-wider text-px-fg-2">
+              This interview is monitored
+            </p>
+            <ul className="mt-2 space-y-1 text-xs text-px-fg-3">
+              <li>• Stay in fullscreen for the whole interview.</li>
+              <li>• Don&apos;t switch tabs or leave this window.</li>
+              <li>• Keyboard use and developer tools are detected.</li>
+              <li>• Repeated or serious violations will end your interview.</li>
+            </ul>
+          </div>
+        )}
         <Button
           size="lg"
           onClick={onStartCall}

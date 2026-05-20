@@ -12,8 +12,10 @@ import {
   candidateSessionApi,
   type CandidateSessionError,
   type PreCheckResponse,
+  type ProctoringConfig,
 } from '@/lib/api/candidate-session'
 import { toAudioCaptureOptions } from '@/lib/api/audio-hints'
+import type { ProctoringTermination } from '../proctoring/violation-kinds'
 
 import { useSessionOutcome } from './hooks/use-session-outcome'
 import { useSessionStateFallback } from './hooks/use-session-state-fallback'
@@ -43,6 +45,9 @@ export function App({ appConfig, token, preCheck, mode }: Props) {
   const [errorCode, setErrorCode] = useState<string | null>(null)
   const [isStartPending, setIsStartPending] = useState(false)
   const credsRef = useRef<{ serverUrl: string; participantToken: string } | null>(null)
+  const [proctoring, setProctoring] = useState<ProctoringConfig | null>(null)
+  const [proctoringReason, setProctoringReason] = useState<string | null>(null)
+  const proctoringTerminatedRef = useRef(false)
 
   // A single Room instance for the lifetime of this component. audioCaptureDefaults
   // is not set here — it's populated inside the async TokenSource callback below,
@@ -51,6 +56,7 @@ export function App({ appConfig, token, preCheck, mode }: Props) {
   const room = useMemo(() => new Room(), [])
 
   const setError = useCallback((code: string) => {
+    if (proctoringTerminatedRef.current) return
     setErrorCode(code)
     setOutcome('error')
   }, [])
@@ -87,6 +93,7 @@ export function App({ appConfig, token, preCheck, mode }: Props) {
             },
           )
 
+          setProctoring(creds.proctoring ?? null)
           credsRef.current = {
             serverUrl: creds.livekit_url,
             participantToken: creds.livekit_token,
@@ -117,13 +124,25 @@ export function App({ appConfig, token, preCheck, mode }: Props) {
 
   const session = useSession(tokenSource, { room })
 
-  const onCompleted = useCallback(() => setOutcome('completed'), [])
+  const onCompleted = useCallback(() => {
+    if (proctoringTerminatedRef.current) return
+    setOutcome('completed')
+  }, [])
+
+  const onProctoringTerminated = useCallback((reason: ProctoringTermination) => {
+    proctoringTerminatedRef.current = true
+    setProctoringReason(reason)
+    setOutcome('proctoring_terminated')
+  }, [setProctoringReason])
 
   const onStart = useCallback(() => {
+    if (preCheck.proctoring_enabled && document.fullscreenElement == null) {
+      void document.documentElement.requestFullscreen?.().catch(() => {})
+    }
     void session.start().catch(() => {
       // Already routed in TokenSource.custom; nothing else to do here.
     })
-  }, [session])
+  }, [session, preCheck.proctoring_enabled])
 
   return (
     <AgentSessionProvider session={session}>
@@ -145,6 +164,10 @@ export function App({ appConfig, token, preCheck, mode }: Props) {
           isStartPending={isStartPending}
           onStart={onStart}
           onError={setError}
+          token={token}
+          proctoring={proctoring}
+          proctoringReason={proctoringReason}
+          onProctoringTerminated={onProctoringTerminated}
         />
       </OutcomePrecedenceController>
       <StartAudioButton label="Start audio" />
