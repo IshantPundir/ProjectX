@@ -17,8 +17,6 @@ export interface LiquidAuraProps {
   audioTrack?: LocalAudioTrack | RemoteAudioTrack | TrackReferenceOrPlaceholder
   /** Hero (full size) or mark (small avatar / minimized). */
   size?: 'hero' | 'mark'
-  /** Optional accent override (defaults to the theme's --px-accent). */
-  color?: `#${string}`
   className?: string
 }
 
@@ -37,7 +35,6 @@ export function LiquidAura({
   state = 'connecting',
   audioTrack,
   size = 'hero',
-  color,
   className,
 }: LiquidAuraProps) {
   // One band = overall loudness. loPass/hiPass mirror the bar visualizer.
@@ -49,10 +46,7 @@ export function LiquidAura({
     return Math.min(1, raw)
   }, [bands])
 
-  const style = {
-    '--amp': String(amp),
-    ...(color ? { color } : {}),
-  } as CSSProperties
+  const style = { '--amp': String(amp) } as CSSProperties
 
   return (
     <div

@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 // Mock the LiveKit hook so the component renders without a real room.
 const multibandMock = vi.fn(() => [0.6])
 vi.mock('@livekit/components-react', () => ({
-  useMultibandTrackVolume: (...args: unknown[]) => multibandMock(...(args as [])),
+  useMultibandTrackVolume: () => multibandMock(),
 }))
 
 import { LiquidAura } from '@/components/agents-ui/liquid-aura'
