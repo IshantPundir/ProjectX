@@ -16,6 +16,7 @@ Routers exported:
 """
 from __future__ import annotations
 
+import uuid
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
@@ -26,12 +27,14 @@ from app.database import get_tenant_db
 from app.modules.auth import UserContext, get_current_user_roles
 from app.modules.candidates import Candidate, CandidateJobAssignment
 from app.modules.notifications import render_template, send_email
-from app.modules.session.models import Session as SessionRow
 from app.modules.session import service as session_service
+from app.modules.session.models import Session as SessionRow
 from app.modules.session.schemas import (
     CandidateSessionStateResponse,
     ConsentRequest,
     PreCheckResponse,
+    ProctoringEventRequest,
+    ProctoringEventResult,
     SessionDetailResponse,
     SessionListPage,
     StartSessionResponse,
@@ -242,6 +245,37 @@ async def get_candidate_session_state_endpoint(
         # sees the same 404 as a never-existed session.
         raise HTTPException(status_code=404, detail="session_not_found")
     return CandidateSessionStateResponse.model_validate(row)
+
+
+@candidate_session_router.post(
+    "/proctoring/event",
+    response_model=ProctoringEventResult,
+)
+async def post_proctoring_event_endpoint(
+    request: Request,
+    token: str,  # consumed by middleware — declared so FastAPI routes correctly
+    body: ProctoringEventRequest,
+    db: AsyncSession = Depends(get_tenant_db),
+) -> ProctoringEventResult:
+    """Record one proctoring violation; backend decides termination.
+
+    Auth: candidate JWT in path (already verified by AuthMiddleware; an
+    already-`used_at` token still authenticates — only unknown/superseded
+    JTIs are rejected, same as /rejoin and /state). Tenant-scoped via the
+    verified token's claims. No PII recorded — only kind/severity/timestamps.
+
+    Rate limit (declared; not yet enforced — see /rejoin note): 60/min per
+    token, 120/min per IP.
+    """
+    payload = request.state.candidate_token_payload
+    return await session_service.record_proctoring_event(
+        db,
+        session_id=payload.session_id,
+        tenant_id=payload.tenant_id,
+        kind=body.kind,
+        occurred_at=body.occurred_at,
+        correlation_id=str(uuid.uuid4()),
+    )
 
 
 # --- Recruiter-side read endpoints ------------------------------------------
