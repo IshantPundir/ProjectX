@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, UTC
 from typing import Literal
 from uuid import UUID
 
+import structlog
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -66,6 +67,8 @@ from app.modules.session.schemas import (
 from app.modules.session.state_machine import advance_on_pre_check_load, transition
 from app.modules.tenant_settings import get_tenant_settings
 
+
+log = structlog.get_logger("session.service")
 
 OTP_RATE_LIMIT_SECONDS = 60
 OTP_LIFETIME_SECONDS = 600  # 10 minutes
@@ -241,6 +244,7 @@ async def get_pre_check_context(
         otp_verified_at=sess.otp_verified_at,
         otp_issued_at=sess.otp_issued_at,
         proctoring_enabled=proctoring.enabled,
+        proctoring_outcome=sess.proctoring_outcome,
     )
 
 
@@ -832,8 +836,26 @@ async def record_proctoring_event(
         sess.state_changed_at = datetime.now(UTC)
         await db.flush()
         if sess.livekit_room_name:
-            with contextlib.suppress(Exception):
+            # DeleteRoom forcibly disconnects every participant (candidate +
+            # agent). It's a backstop: the candidate's own CLIENT_INITIATED
+            # disconnect already auto-closes the agent session + room (LiveKit
+            # default close_on_disconnect). Log the outcome so a genuine
+            # failure is visible instead of silently swallowed.
+            try:
                 await cancel_room(sess.livekit_room_name)
+                log.info(
+                    "session.proctoring.room_cancelled",
+                    session_id=str(sess.id),
+                    room=sess.livekit_room_name,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning(
+                    "session.proctoring.room_cancel_failed",
+                    session_id=str(sess.id),
+                    room=sess.livekit_room_name,
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                )
         await log_event(
             db,
             tenant_id=tenant_id,

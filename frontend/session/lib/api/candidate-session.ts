@@ -32,6 +32,9 @@ export interface PreCheckResponse {
   otp_verified_at: string | null
   otp_issued_at: string | null
   proctoring_enabled: boolean
+  // Terminating reason when state === 'terminated' (violation kind or
+  // 'soft_threshold_exceeded'); null otherwise.
+  proctoring_outcome: string | null
 }
 
 export interface ConsentBody {

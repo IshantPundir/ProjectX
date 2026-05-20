@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic'
 
 import { APP_CONFIG_DEFAULTS, type AppConfig } from '@/app-config'
 import { CompletionScreen } from '@/components/interview/app/CompletionScreen'
+import { ProctoringEndedScreen } from '@/components/interview/app/ProctoringEndedScreen'
 import { useCandidateSession } from '@/lib/hooks/use-candidate-session'
 
 import { CameraMicStep } from './CameraMicStep'
@@ -94,6 +95,12 @@ export function WizardShell({ token }: { token: string }) {
   // Already completed → terminal screen, no rejoin button.
   if (data.state === 'completed') {
     return <CompletionScreen />
+  }
+
+  // Ended by proctoring policy → terminal screen (NOT the cam/mic step).
+  // The token is consumed, so /start would 409; show why it ended instead.
+  if (data.state === 'terminated') {
+    return <ProctoringEndedScreen reason={data.proctoring_outcome} />
   }
 
   // Active session → rejoin path. Bypasses cam-mic + consent (already passed).

@@ -42,6 +42,10 @@ class PreCheckResponse(BaseModel):
     # the 60s [Send code] cooldown after a page reload.
     otp_issued_at: datetime | None
     proctoring_enabled: bool
+    # The terminating reason when state == 'terminated' (a violation kind or
+    # 'soft_threshold_exceeded'); null otherwise. Lets a reloaded wizard show
+    # the candidate why their interview ended instead of the cam/mic step.
+    proctoring_outcome: str | None = None
 
 
 class ConsentRequest(BaseModel):

@@ -71,6 +71,7 @@ const PRE_CHECK: PreCheckResponse = {
   otp_verified_at: null,
   otp_issued_at: null,
   proctoring_enabled: false,
+  proctoring_outcome: null,
 }
 
 describe('App', () => {

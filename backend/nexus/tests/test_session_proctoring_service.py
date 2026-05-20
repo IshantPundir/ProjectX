@@ -202,6 +202,47 @@ async def test_wrong_tenant_raises_session_not_found(db: AsyncSession, monkeypat
 
 
 @pytest.mark.asyncio
+async def test_termination_survives_cancel_room_failure(db: AsyncSession, monkeypatch):
+    """If DeleteRoom raises, the session is still marked terminated.
+
+    cancel_room is a best-effort backstop (the candidate's own disconnect
+    already closes the agent). A failure must be logged, not propagated.
+    """
+    monkeypatch.setattr(
+        session_service, "cancel_room", AsyncMock(side_effect=RuntimeError("LK down"))
+    )
+    sess, tenant_id = await make_active_session(db, uuid.uuid4())
+
+    result = await session_service.record_proctoring_event(
+        db,
+        session_id=sess.id,
+        tenant_id=tenant_id,
+        kind="devtools",
+        occurred_at=datetime.now(UTC),
+        correlation_id="cid-cancel-fail",
+    )
+
+    assert result.terminated is True
+    await db.refresh(sess)
+    assert sess.state == SessionState.TERMINATED.value
+    assert sess.proctoring_outcome == "devtools"
+
+
+@pytest.mark.asyncio
+async def test_pre_check_exposes_proctoring_outcome_for_terminated_session(db: AsyncSession):
+    """A terminated session's /pre-check carries the proctoring_outcome so a
+    reloaded wizard can show the ended screen instead of the cam/mic step."""
+    sess, _tenant_id = await seed_minimal_session(db, state="terminated")
+    sess.proctoring_outcome = "tab_switch"
+    await db.flush()
+
+    resp = await session_service.get_pre_check_context(db, session_id=sess.id)
+
+    assert resp.state.value == "terminated"
+    assert resp.proctoring_outcome == "tab_switch"
+
+
+@pytest.mark.asyncio
 async def test_build_proctoring_config_uses_lazy_defaults(db: AsyncSession):
     """A tenant with no tenant_settings row → schema defaults (enabled, 3, 10)."""
     cfg = await session_service._build_proctoring_config(db, uuid.uuid4())
