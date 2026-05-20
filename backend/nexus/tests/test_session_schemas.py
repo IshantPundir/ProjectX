@@ -39,7 +39,7 @@ def test_session_state_enum_values():
     assert set(SessionState) == {
         SessionState.CREATED, SessionState.PRE_CHECK, SessionState.CONSENTED,
         SessionState.ACTIVE, SessionState.COMPLETED,
-        SessionState.CANCELLED, SessionState.ERROR,
+        SessionState.CANCELLED, SessionState.ERROR, SessionState.TERMINATED,
     }
 
 
@@ -54,7 +54,10 @@ def test_pre_check_response_round_trips():
         state=SessionState.PRE_CHECK,
         otp_required=True,
         otp_verified_at=None,
+        otp_issued_at=None,
+        proctoring_enabled=True,
     )
     dumped = resp.model_dump(mode="json")
     assert dumped["otp_required"] is True
     assert dumped["state"] == "pre_check"
+    assert dumped["proctoring_enabled"] is True
