@@ -233,6 +233,7 @@ async def build_session_config(
                     rubric=QuestionRubric.model_validate(q.rubric),
                     evaluation_hint=q.evaluation_hint,
                     question_kind=q.question_kind,
+                    difficulty=(q.difficulty or stage.difficulty),
                 )
                 for q in questions
             ],

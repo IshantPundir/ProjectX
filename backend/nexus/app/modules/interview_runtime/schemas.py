@@ -94,6 +94,15 @@ class QuestionConfig(BaseModel):
             "current bank generator never emits it (see `question_bank.schemas`)."
         ),
     )
+    difficulty: StageDifficulty = Field(
+        default="medium",
+        description=(
+            "Per-question difficulty. Falls back to the stage difficulty in "
+            "build_session_config when the DB column is NULL. Drives the "
+            "engine's advance quality-gate, push-back cap, and Speaker tone. "
+            "Default 'medium' keeps back-compat for any caller that omits it."
+        ),
+    )
 
 
 class CompanyContext(BaseModel):
