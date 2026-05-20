@@ -3,6 +3,7 @@ import { Inter, Fraunces, JetBrains_Mono } from "next/font/google";
 import type { CSSProperties, ReactNode } from "react";
 
 import { AnimatedBackground } from "@/components/agents-ui/animated-background";
+import { DevtoolsShield } from "@/components/DevtoolsShield";
 import { InterviewProviders } from "@/components/interview/providers";
 
 import "./globals.css";
@@ -77,6 +78,9 @@ export default function RootLayout({
             <AnimatedBackground />
             {children}
           </div>
+          {/* Site-wide devtools deterrent — blocks open-shortcuts/right-click on
+              every page and covers the page if devtools is detected open. */}
+          <DevtoolsShield />
         </InterviewProviders>
       </body>
     </html>

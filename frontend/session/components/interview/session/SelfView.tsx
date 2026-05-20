@@ -19,7 +19,7 @@ export function SelfView({ className }: { className?: string }) {
   return (
     <div
       className={cn(
-        'relative aspect-[4/3] w-[clamp(96px,18vw,176px)] overflow-hidden rounded-xl border border-px-hairline-strong bg-px-surface-2 shadow-[var(--px-shadow-md)]',
+        'relative aspect-[4/3] w-[clamp(128px,22vw,240px)] overflow-hidden rounded-xl border border-px-hairline-strong bg-px-surface-2 shadow-[var(--px-shadow-md)]',
         className,
       )}
     >

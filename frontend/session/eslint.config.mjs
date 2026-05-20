@@ -20,11 +20,13 @@ const eslintConfig = defineConfig([
     // comments survive without noise — and a future engineer who enables those
     // rules globally won't accidentally strip the disable:
     //   - use-agent-grace-timeout.ts: react-hooks/exhaustive-deps (timer-reset bug)
-    //   - use-devtools-guard.ts: no-debugger (the `debugger` statement is the
-    //     load-bearing devtools-detection trap, not stray debug code)
+    //   - use-devtools-guard.ts + DevtoolsShield.tsx: no-debugger (the
+    //     `debugger` statement is the load-bearing devtools-detection trap,
+    //     not stray debug code)
     files: [
       '**/use-agent-grace-timeout.ts',
       '**/use-devtools-guard.ts',
+      '**/DevtoolsShield.tsx',
     ],
     linterOptions: {
       reportUnusedDisableDirectives: 'off',
