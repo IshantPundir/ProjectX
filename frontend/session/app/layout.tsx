@@ -68,7 +68,7 @@ export default function RootLayout({
             style={
               {
                 // --px-accent default; per-tenant override applied closer to the surface later.
-                "--px-accent": "#0E6F63",
+                "--px-accent": "#8B5CF6",
                 background: "var(--px-app-base)",
                 color: "var(--px-fg)",
               } as CSSProperties

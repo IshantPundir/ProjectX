@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
-import { Loader2 } from 'lucide-react'
+
+import { Aura } from '@/components/agents-ui/aura'
 
 interface IntroLoaderProps {
   /**
@@ -29,14 +30,12 @@ export function IntroLoader({ onShown }: IntroLoaderProps) {
     <div
       role="status"
       aria-live="polite"
-      className="flex h-full w-full flex-col items-center justify-center gap-6 bg-background"
+      className="px-cine-bg flex min-h-screen w-full flex-col items-center justify-center gap-8"
     >
-      <Loader2 className="h-12 w-12 animate-spin text-primary" />
-      <div className="flex flex-col items-center gap-2 text-center">
-        <p className="text-lg font-medium">Preparing your interviewer…</p>
-        <p className="text-sm text-muted-foreground">
-          This usually takes just a few seconds.
-        </p>
+      <Aura state="connecting" audioTrack={undefined} size="xl" />
+      <div className="flex flex-col items-center gap-1.5 text-center">
+        <p className="font-serif text-xl text-px-fg">Preparing your interviewer…</p>
+        <p className="text-sm text-px-fg-3">This usually takes just a few seconds.</p>
       </div>
     </div>
   )

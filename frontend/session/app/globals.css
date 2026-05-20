@@ -377,14 +377,14 @@
   --px-fg-4: #8A93A3;
   --px-fg-5: #BAC1CD;
 
-  /* Accent — teal (overridable per tenant) */
-  --px-accent:        #0E6F63;
-  --px-accent-2:      #0A564D;
-  --px-accent-soft:   #4FA99C;
-  --px-accent-bright: #7FE6D6;
-  --px-accent-glow:   rgba(14, 111, 99, 0.22);
-  --px-accent-tint:   rgba(14, 111, 99, 0.10);
-  --px-accent-line:   rgba(14, 111, 99, 0.22);
+  /* Accent — violet (overridable per tenant) */
+  --px-accent:        #8B5CF6;
+  --px-accent-2:      #7C3AED;
+  --px-accent-soft:   #A78BFA;
+  --px-accent-bright: #C4B5FD;
+  --px-accent-glow:   rgba(139, 92, 246, 0.22);
+  --px-accent-tint:   rgba(139, 92, 246, 0.10);
+  --px-accent-line:   rgba(139, 92, 246, 0.22);
 
   /* App base wash (.px-cine-bg is transparent so the animated bg shows through) */
   --px-app-base: linear-gradient(160deg, #F6F8FD 0%, #EEF1F8 100%);

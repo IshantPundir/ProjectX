@@ -36,7 +36,7 @@ export function WizardStepper({
               className={cn(
                 'grid size-[18px] place-items-center rounded-full text-[10px] font-semibold',
                 done && 'bg-px-accent text-white',
-                active && 'bg-px-accent-soft text-[#04211d]',
+                active && 'bg-px-accent text-white',
                 !done && !active && 'bg-px-surface-3 text-px-fg-4',
               )}
             >

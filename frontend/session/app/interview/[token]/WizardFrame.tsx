@@ -8,7 +8,7 @@ import { WizardStepper, type WizardStepKey } from './WizardStepper'
 // Lazy so the WebGL aura shader stays out of the light pre-join bundle.
 const Aura = dynamic(() => import('@/components/agents-ui/aura').then((m) => m.Aura), {
   ssr: false,
-  loading: () => <span aria-hidden className="aura-mark block size-[180px]" />,
+  loading: () => <span aria-hidden className="aura-mark block size-[224px] self-start" />,
 })
 
 interface WizardFrameProps {
@@ -51,7 +51,7 @@ export function WizardFrame({
         {/* Left pane — reassurance (desktop only) */}
         <aside className="relative hidden flex-col justify-center gap-7 px-12 py-10 lg:flex">
           <Brand companyName={companyName} jobTitle={jobTitle} />
-          <Aura state="listening" audioTrack={undefined} size="md" />
+          <Aura state="listening" audioTrack={undefined} size="lg" className="self-start" />
           <div>
             <h1 className="font-serif text-[34px] font-medium leading-[1.1] text-px-fg">
               Meet your<br />interviewer

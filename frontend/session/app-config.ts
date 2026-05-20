@@ -38,7 +38,7 @@ export const APP_CONFIG_DEFAULTS: AppConfig = {
   isPreConnectBufferEnabled: true,
   logo: '/projectx-logo.svg',
   startButtonText: 'Start interview',
-  accent: '#0E6F63',
+  accent: '#8B5CF6',
   audioVisualizerType: 'aura',
   audioVisualizerColorShift: 2,
   agentName: undefined,
