@@ -70,11 +70,11 @@ The redesign is layered into the existing structure:
 
 > **End-interview outcome wiring (existing path only — no backend change).** Investigated 2026-05-20: a button press cannot produce `candidate_ended` today — that outcome is only ever set when the Judge decides to end on a candidate utterance (`end_session` / `candidate_initiated`, `state/engine.py`). The agent registers **no RPC methods, no data-message handler, and no HTTP end endpoint**. So the End button uses the only mechanism that exists:
 >
-> 1. On confirm, the UI sets a local **intentional-end** flag, then disconnects the room (`useSessionContext().end` → `room.disconnect()`).
-> 2. The engine's existing `participant_disconnected` handler (`agent.py`) records `session_outcome = candidate_disconnected` **and** persists the full `SessionResult` (transcript, questions asked/skipped, probes) via `record_session_result` — so the recruiter record is complete and correct.
-> 3. The frontend's outcome watcher (`components/interview/app/app.tsx`) routes an **intentional** end straight to the **Completion** screen — even though no `session_outcome` attribute arrives before the local disconnect (today a null-outcome disconnect would otherwise fall through to the error/disconnect path). This is the one wiring fix this redesign must get right.
+> 1. On confirm, the UI disconnects the room (`session.end()` → `room.disconnect()`).
+> 2. **The existing `OutcomeWatcher` already routes this correctly.** In `components/interview/app/app.tsx:240–267`, when no engine outcome has been published (`lastOutcome === null`), the `RoomEvent.Disconnected` handler maps `DisconnectReason.CLIENT_INITIATED` (proto value `1`) → `onCompleted()` → the Completion screen. **No new flag or state is needed** — the redesign preserves this branch and adds a regression test that locks it in.
+> 3. Server-side, the engine's `participant_disconnected` handler (`agent.py`) records `session_outcome = candidate_disconnected` **and** `record_session_result` persists the full `SessionResult` (transcript, questions asked/skipped, probes) independently — so the recruiter record stays complete and correct.
 >
-> Net: the recorded label is `candidate_disconnected` (not `candidate_ended`), the server-side result is fully persisted, and the candidate sees a graceful completion. A true `candidate_ended` label would require a small engine-side end-signal handler — explicitly **out of scope** (see below).
+> Net: the candidate sees a graceful completion (via the existing CLIENT_INITIATED branch), the recorded label is `candidate_disconnected` (not `candidate_ended`), and the server-side result is fully persisted. A true `candidate_ended` label would require a small engine-side end-signal handler — explicitly **out of scope** (see below).
 
 ---
 
@@ -143,7 +143,7 @@ The aura is the candidate's primary feedback that the system is alive and whose 
 
 ## End & terminal states
 
-- **End interview → confirmation modal** (glass): *"End the interview? You won't be able to rejoin."* — Cancel (default) / End. On confirm: set the intentional-end flag, then disconnect the room. The outcome watcher must route this intentional end to the **Completion** screen (never the disconnect/error screen), since the engine records `candidate_disconnected` + the full `SessionResult` server-side independently (see the End-interview wiring note above).
+- **End interview → confirmation modal** (glass): *"End the interview? You won't be able to rejoin."* — Cancel (default) / End. On confirm: disconnect the room via the session/room API. The existing `OutcomeWatcher` `CLIENT_INITIATED → onCompleted` branch (`app.tsx`) already routes this to the **Completion** screen — preserve it and lock it with a regression test (see the End-interview wiring note above). The engine records `candidate_disconnected` + the full `SessionResult` server-side independently.
 - **Completion screen** — warm, positive, Fraunces headline ("Thanks — your interview's complete"), what-happens-next line. One screen handles `completed`, `candidate_ended`, `candidate_disconnected`, `time_expired`, `knockout_closed` with non-alarming copy for all.
 - **Reconnecting overlay** — calm "Reconnecting…", aura dimmed, no scary red. Backed by the existing state-fallback poll.
 - **Error screen** — graceful, jargon-free, support note. Handles `session_outcome=error` and pre-join token errors (invalid/expired/superseded/used). Never renders the token.
@@ -179,7 +179,7 @@ A self-contained `LiquidAura` component — the one piece worth real craft.
 **Live session** (`components/interview/`)
 - New `components/interview/session/` tree: `LiveInterview`, `AuraStage`, `InterviewSessionPanel`, `SelfView`, `SessionTopBar`, `ProgressChip`, `SpokenCaption`, `EndInterviewDialog`.
 - Rework `app/view-controller.tsx` to route Welcome→Live→Completion/Error and mount the new session view.
-- `app/app.tsx` — add the **intentional-end** flag to the outcome watcher so an End-button disconnect routes to the Completion screen (the one End-wiring fix; see note above).
+- `app/app.tsx` — **preserve** the `OutcomeWatcher` `CLIENT_INITIATED → onCompleted` branch (no new flag needed) and add a regression test locking it in (see End-wiring note above).
 - Restyle `CompletionScreen`, `SessionErrorScreen`, `DisconnectError`, `ReconnectingOverlay`. Retire/replace `ProgressBanner`, `WelcomeView`, and the `blocks/agent-session-view-01` tile layout + `agent-control-bar` for the candidate path.
 
 **Aura**
