@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 KnockoutPolicy = Literal["record_only", "close_polite"]
@@ -31,6 +31,9 @@ class TenantSettings(BaseModel):
     tenant_id: UUID
     engine_knockout_policy: KnockoutPolicy = "close_polite"
     engine_agent_name: str | None = None
+    proctoring_enabled: bool = True
+    proctoring_soft_violation_limit: int = Field(default=3, ge=1, le=20)
+    proctoring_fullscreen_grace_seconds: int = Field(default=10, ge=3, le=60)
 
     @field_validator("engine_agent_name")
     @classmethod

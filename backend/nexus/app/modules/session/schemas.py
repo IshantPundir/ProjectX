@@ -22,6 +22,7 @@ class SessionState(StrEnum):
     COMPLETED = "completed"
     CANCELLED = "cancelled"
     ERROR = "error"
+    TERMINATED = "terminated"
 
 
 class PreCheckResponse(BaseModel):
@@ -40,6 +41,7 @@ class PreCheckResponse(BaseModel):
     # Timestamp of the most recent OTP issuance. Frontend uses this to restore
     # the 60s [Send code] cooldown after a page reload.
     otp_issued_at: datetime | None
+    proctoring_enabled: bool
 
 
 class ConsentRequest(BaseModel):
@@ -81,6 +83,39 @@ class AudioProcessingHints(BaseModel):
     auto_gain_control: bool
 
 
+ProctoringKind = Literal[
+    "tab_switch",
+    "focus_loss",
+    "fullscreen_abandoned",
+    "devtools",
+    "fullscreen_exit",
+    "keyboard",
+]
+
+
+class ProctoringConfig(BaseModel):
+    """Per-tenant proctoring policy delivered to the candidate frontend
+    on /start and /rejoin. enabled=False means the frontend mounts no
+    proctoring listeners at all."""
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool
+    soft_violation_limit: int
+    fullscreen_grace_seconds: int
+
+
+class ProctoringEventRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: ProctoringKind
+    occurred_at: datetime
+
+
+class ProctoringEventResult(BaseModel):
+    terminated: bool
+    violation_count: int
+    soft_violation_count: int
+    already_terminal: bool = False
+
+
 class StartSessionResponse(BaseModel):
     """200 OK shape after /start successfully provisions LiveKit + dispatches agent."""
     model_config = ConfigDict(from_attributes=True)
@@ -89,6 +124,7 @@ class StartSessionResponse(BaseModel):
     room_name: str
     session_id: UUID
     audio_processing_hints: AudioProcessingHints
+    proctoring: ProctoringConfig
 
 
 class SessionDetailResponse(BaseModel):

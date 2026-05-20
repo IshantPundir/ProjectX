@@ -39,3 +39,21 @@ def test_advance_on_pre_check_load_is_monotonic():
         SessionState.ACTIVE, SessionState.COMPLETED, SessionState.CANCELLED,
     ):
         assert advance_on_pre_check_load(s) == s
+
+
+def test_active_to_terminated_is_legal():
+    assert transition(SessionState.ACTIVE, SessionState.TERMINATED) == SessionState.TERMINATED
+
+
+def test_active_to_completed_still_legal():
+    assert transition(SessionState.ACTIVE, SessionState.COMPLETED) == SessionState.COMPLETED
+
+
+def test_terminated_is_terminal():
+    with pytest.raises(InvalidSessionStateError):
+        transition(SessionState.TERMINATED, SessionState.COMPLETED)
+
+
+def test_consented_cannot_jump_to_terminated():
+    with pytest.raises(InvalidSessionStateError):
+        transition(SessionState.CONSENTED, SessionState.TERMINATED)

@@ -75,6 +75,13 @@ class Session(Base):
     agent_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     result_status: Mapped[str | None] = mapped_column(Text)
     error_code: Mapped[str | None] = mapped_column(Text)
+    proctoring_violations: Mapped[list[dict]] = mapped_column(
+        JSONB, nullable=False, server_default=sql_text("'[]'::jsonb")
+    )
+    proctoring_outcome: Mapped[str | None] = mapped_column(Text)
+    proctoring_violation_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=sql_text("0")
+    )
     created_by: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )

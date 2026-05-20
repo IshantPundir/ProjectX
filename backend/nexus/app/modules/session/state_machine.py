@@ -4,10 +4,11 @@ Legal transitions (directed graph):
     created      → pre_check, cancelled
     pre_check    → consented, cancelled
     consented    → active, cancelled
-    active       → completed, error
+    active       → completed, error, terminated
     completed    → (terminal)
     cancelled    → (terminal)
     error        → (terminal)
+    terminated   → (terminal)
 
 `advance_on_pre_check_load` is the helper for GET /pre-check's state-mutation
 contract: it advances created → pre_check and is a no-op from any other state.
@@ -22,10 +23,15 @@ _LEGAL_TRANSITIONS: dict[SessionState, set[SessionState]] = {
     SessionState.CREATED: {SessionState.PRE_CHECK, SessionState.CANCELLED},
     SessionState.PRE_CHECK: {SessionState.CONSENTED, SessionState.CANCELLED},
     SessionState.CONSENTED: {SessionState.ACTIVE, SessionState.CANCELLED},
-    SessionState.ACTIVE: {SessionState.COMPLETED, SessionState.ERROR},
+    SessionState.ACTIVE: {
+        SessionState.COMPLETED,
+        SessionState.ERROR,
+        SessionState.TERMINATED,
+    },
     SessionState.COMPLETED: set(),
     SessionState.CANCELLED: set(),
     SessionState.ERROR: set(),
+    SessionState.TERMINATED: set(),
 }
 
 

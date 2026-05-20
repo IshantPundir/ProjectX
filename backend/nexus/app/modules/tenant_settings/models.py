@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, ForeignKey, text
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Integer, text
 from sqlalchemy.dialects.postgresql import TIMESTAMP, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -35,6 +35,15 @@ class TenantSettingsModel(Base):
         nullable=False, server_default=text("'close_polite'")
     )
     engine_agent_name: Mapped[str | None] = mapped_column(nullable=True)
+    proctoring_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
+    proctoring_soft_violation_limit: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("3")
+    )
+    proctoring_fullscreen_grace_seconds: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("10")
+    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")
     )
