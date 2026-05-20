@@ -1,13 +1,12 @@
 'use client'
 
 import { useSessionContext } from '@livekit/components-react'
-import { AgentSessionView_01 } from '@/components/agents-ui/blocks/agent-session-view-01'
 import type { AppConfig } from '@/app-config'
 import type { PreCheckResponse } from '@/lib/api/candidate-session'
 import { AgentUIWithLoader } from '../agent-ui-with-loader'
+import { LiveInterview } from '../session/LiveInterview'
 import { CompletionScreen } from './CompletionScreen'
 import { DisconnectError } from './DisconnectError'
-import { ProgressBanner } from './ProgressBanner'
 import { ReconnectingOverlay } from './ReconnectingOverlay'
 import { WelcomeView } from './welcome-view'
 import { useAgentGraceTimeout } from './hooks/use-agent-grace-timeout'
@@ -35,7 +34,7 @@ export function ViewController({
   onStart,
   onError,
 }: Props) {
-  const ctx = useSessionContext() as unknown as { isConnected?: boolean }
+  const ctx = useSessionContext() as unknown as { isConnected?: boolean; end?: () => void }
   const isConnected = !!ctx?.isConnected
 
   // 30s no-show timer — fires only after the agent has had a chance to join.
@@ -63,21 +62,12 @@ export function ViewController({
 
   return (
     <AgentUIWithLoader>
-      <ProgressBanner />
-      <AgentSessionView_01
-        supportsChatInput={appConfig.supportsChatInput}
-        supportsVideoInput={appConfig.supportsVideoInput}
-        supportsScreenShare={appConfig.supportsScreenShare}
-        isPreConnectBufferEnabled={appConfig.isPreConnectBufferEnabled}
-        audioVisualizerType={appConfig.audioVisualizerType}
-        audioVisualizerColor={appConfig.audioVisualizerColor}
-        audioVisualizerBarCount={appConfig.audioVisualizerBarCount}
-        audioVisualizerGridRowCount={appConfig.audioVisualizerGridRowCount}
-        audioVisualizerGridColumnCount={appConfig.audioVisualizerGridColumnCount}
-        audioVisualizerRadialBarCount={appConfig.audioVisualizerRadialBarCount}
-        audioVisualizerRadialRadius={appConfig.audioVisualizerRadialRadius}
-        audioVisualizerWaveLineWidth={appConfig.audioVisualizerWaveLineWidth}
-        className="fixed inset-0"
+      <LiveInterview
+        companyName={appConfig.companyName}
+        jobTitle={preCheck.job_title}
+        logo={appConfig.logo}
+        accent={appConfig.accent}
+        onEnd={() => ctx.end?.()}
       />
       <ReconnectingOverlay onTimeout={() => onError('RECONNECT_FAILED')} />
     </AgentUIWithLoader>
