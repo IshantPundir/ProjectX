@@ -470,6 +470,12 @@ class StateEngine:
         # and downgraded). The Speaker scaffold uses this to add a soft
         # topic-shift segue instead of jumping cold into the next question.
         is_post_cap_advance: bool = False
+        # A2 (Option A) — set True when acknowledge_no_experience (or a
+        # later promotion path) acknowledges the candidate bowing out AND
+        # advances to the next question in the SAME turn. Threaded to the
+        # deliver_question Speaker scaffold so it opens with a warm "fair
+        # enough, let me try something different" before the next question.
+        is_post_acknowledge: bool = False
         # Q-3 (Phase 9.3) — when polite_close fires due to a knockout
         # policy override, populate this with the failed signal so the
         # Speaker scaffold can acknowledge the no-experience disclosure
@@ -620,7 +626,30 @@ class StateEngine:
                 ))
                 instruction = InstructionKind.clarify
             else:
-                instruction = InstructionKind.acknowledge_no_experience
+                # Option A: acknowledge AND advance in one turn.
+                failed_payload = judge_output.next_action_payload
+                assert isinstance(failed_payload, AcknowledgeNoExperiencePayload)
+                # Reverse-rule carve-out: if the candidate already PROVED this
+                # signal (coverage was `sufficient` at the START of this turn)
+                # and now disclaims it, do NOT route through Option A. The later
+                # disclaimer contradicts proven evidence; the step-6 reverse-rule
+                # guard keeps the session open on the strength of that proof.
+                # Advancing/closing here would pre-empt that guard and discard a
+                # proven knockout signal. Keep the legacy non-advancing
+                # acknowledgment so step 6 can swallow any override.
+                pre = pre_turn_signal_snapshots.get(failed_payload.failed_signal_value)
+                already_sufficient = (
+                    pre is not None and pre.coverage == CoverageState.sufficient
+                )
+                if already_sufficient:
+                    instruction = InstructionKind.acknowledge_no_experience
+                else:
+                    instruction, is_post_acknowledge, closing_disclosure_signal = (
+                        self._acknowledge_and_advance(
+                            failed_signal_value=failed_payload.failed_signal_value,
+                            elapsed_ms=elapsed_ms, turn_id=turn_id, warnings=warnings,
+                        )
+                    )
 
         elif action == NextAction.redirect:
             # The collapsed redirect action. Tone selection happens in the
@@ -956,6 +985,7 @@ class StateEngine:
             judge_output=judge_output,
             candidate_utterance_text=candidate_utterance_text,
             is_post_cap_advance=is_post_cap_advance,
+            is_post_acknowledge=is_post_acknowledge,
             closing_disclosure_signal=closing_disclosure_signal,
         )
         return StateEngineDecision(
@@ -990,6 +1020,82 @@ class StateEngine:
         except QueueError:
             return InstructionKind.polite_close
         return self._first_or_continuing_instruction()
+
+    def _acknowledge_and_advance(
+        self,
+        *,
+        failed_signal_value: str,
+        elapsed_ms: int,
+        turn_id: str,
+        warnings: list[ValidationWarning],
+    ) -> tuple[InstructionKind, bool, str | None]:
+        """Option A: acknowledge the candidate bowing out AND move on in one turn.
+
+        1. Record a synthetic ->failed observation on failed_signal_value
+           ONLY if it is not already failed. Record a KnockoutFailure ONLY
+           when this helper actually applied that synthetic failure: when the
+           Judge already emitted the ->failed obs this turn, process_judge_output
+           steps 1/1a already applied + recorded it, so recording again would
+           double-count.
+        2. Advance to the next pending question -> deliver_question with
+           is_post_acknowledge=True; OR polite_close (with the disclosure
+           signal) when no pending question remains.
+
+        Returns (instruction_kind, is_post_acknowledge, closing_disclosure_signal).
+        """
+        current = self._ledger.snapshot().snapshots.get(failed_signal_value)
+        current_state = current.coverage if current is not None else CoverageState.none
+        synthetic_applied = False
+        if current_state != CoverageState.failed:
+            transition = (
+                CoverageTransition.partial_to_failed
+                if current_state == CoverageState.partial
+                else CoverageTransition.none_to_failed
+            )
+            try:
+                self._ledger.apply_observation(
+                    Observation(
+                        signal_value=failed_signal_value,
+                        anchor_id=-1,
+                        evidence_quote="[acknowledge_and_advance: synthetic failure]",
+                        coverage_transition=transition,
+                    ),
+                    turn_id=turn_id, recorded_at_ms=elapsed_ms,
+                )
+                synthetic_applied = True
+            except IllegalCoverageTransition:
+                pass
+        # Record a KnockoutFailure ONLY when we synthesized the failure here.
+        # If the Judge supplied the ->failed obs, process_judge_output step 1a
+        # already recorded it (and appended to knockout_failures_this_turn);
+        # recording again would double-count.
+        if synthetic_applied and failed_signal_value in self._knockout_signals:
+            self._lifecycle.record_knockout(KnockoutFailure(
+                question_id=self._queue.active_question_id() or "",
+                reason=f"acknowledge_and_advance on {failed_signal_value!r}"[:200],
+                signal_values=[failed_signal_value],
+                occurred_at_ms=elapsed_ms,
+            ))
+        next_pending = self.next_pending_question()
+        if next_pending is None:
+            self._lifecycle.set_last_outcome(
+                SessionOutcome.knockout_closed
+                if self._lifecycle.snapshot().has_knockout()
+                else SessionOutcome.completed
+            )
+            if self._lifecycle.snapshot().state.value == "active":
+                self._lifecycle.transition_to_closing()
+            return InstructionKind.polite_close, False, failed_signal_value
+        next_id, _is_mandatory = next_pending
+        try:
+            self._queue.advance_to(next_id, at_turn=self._turn_count)
+        except QueueError as exc:
+            warnings.append(ValidationWarning(
+                code="acknowledge_advance_failed",
+                details={"target": next_id, "reason": str(exc)},
+            ))
+            return InstructionKind.polite_close, False, failed_signal_value
+        return self._first_or_continuing_instruction(), True, None
 
     def _fallback_to_first_unused_probe(
         self, warnings: list[ValidationWarning]
@@ -1033,6 +1139,7 @@ class StateEngine:
         judge_output: JudgeOutput,
         candidate_utterance_text: str | None,
         is_post_cap_advance: bool = False,
+        is_post_acknowledge: bool = False,
         closing_disclosure_signal: str | None = None,
     ) -> SpeakerInput:
         """Build SpeakerInput with anti-leak guarantee — no rubric content ever."""
@@ -1061,6 +1168,7 @@ class StateEngine:
             candidate_name=self._cfg.candidate.name,
             recent_reply_starts=recent_starts,
             is_post_cap_advance=is_post_cap_advance,
+            is_post_acknowledge=is_post_acknowledge,
             closing_disclosure_signal=closing_disclosure_signal,
             # Role-context payload: passed for every kind, but the
             # input_builder only stamps them onto SpeakerInput when

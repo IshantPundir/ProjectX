@@ -145,8 +145,14 @@ def test_no_experience_disclosure_marks_signal_failed():
     decision = eng.process_judge_output(
         turn_id="t-1", judge_output=j, candidate_utterance_text="never used", elapsed_ms=2000,
     )
-    assert decision.speaker_input.instruction_kind == InstructionKind.acknowledge_no_experience
-    assert decision.speaker_input.failed_signal_value == "S1"
+    # Option A: acking q1's S1 (non-knockout) advances to the next pending
+    # question (q2) in the same turn rather than resolving to a standalone
+    # acknowledge_no_experience instruction.
+    assert decision.speaker_input.instruction_kind == InstructionKind.deliver_question
+    assert decision.speaker_input.is_post_acknowledge is True
+    # Intent preserved: the disclosure still marks S1 failed in the ledger.
+    assert eng.ledger_snapshot().snapshots["S1"].coverage.value == "failed"
+    assert eng.queue_snapshot().active_index == 1
 
 
 def test_repeat_action_uses_cached_utterance():
@@ -395,10 +401,19 @@ def test_close_polite_policy_overrides_action_on_knockout(make_session_config, m
 
 
 def test_record_only_policy_does_not_close_on_knockout(make_session_config, make_question):
-    """Layer 1+2: policy=record_only records but does NOT override action."""
+    """Layer 1+2: policy=record_only records but does NOT close mid-interview.
+
+    Two questions so the intent (record_only keeps the session going) is
+    testable: under Option A a single-question ack would close because there
+    is nothing to advance to, conflating record-only policy with session
+    completion. With a pending q2, the ack records the knockout and advances.
+    """
     cfg = make_session_config(
-        questions=[make_question(qid="q1", text="What is your first question response?")],
-        signals=["S_KO"],
+        questions=[
+            make_question(qid="q1", text="What is your first question response?", signal_values=["S_KO"]),
+            make_question(qid="q2", position=1, text="And what about this second area of work?", signal_values=["S2"]),
+        ],
+        signals=["S_KO", "S2"],
         knockout_signal="S_KO",
     )
     eng = StateEngine(
@@ -427,9 +442,9 @@ def test_record_only_policy_does_not_close_on_knockout(make_session_config, make
     )
     # KnockoutFailure recorded:
     assert len(eng.lifecycle_snapshot().knockout_failures) == 1
-    # But action NOT overridden:
-    assert decision.speaker_input.instruction_kind == InstructionKind.acknowledge_no_experience
-    # Lifecycle still active.
+    # Action NOT overridden to close — Option A advances to the next question.
+    assert decision.speaker_input.instruction_kind == InstructionKind.deliver_question
+    # Lifecycle still active (it advanced rather than closing).
     assert eng.lifecycle_snapshot().state.value == "active"
 
 
@@ -593,10 +608,18 @@ def test_redirect_action_maps_to_redirect_instruction_kind():
 
 
 def test_non_knockout_signal_failure_does_not_record_knockout(make_session_config, make_question):
-    """Failure on a non-knockout signal: NO KnockoutFailure recorded."""
+    """Failure on a non-knockout signal: NO KnockoutFailure recorded.
+
+    Two non-knockout questions so the ack advances (Option A) rather than
+    closing on a single-question session; the intent — no knockout recorded
+    for a non-knockout signal — is unchanged.
+    """
     cfg = make_session_config(
-        questions=[make_question(qid="q1", text="What is your first question response?")],
-        signals=["S_PLAIN"],
+        questions=[
+            make_question(qid="q1", text="What is your first question response?", signal_values=["S_PLAIN"]),
+            make_question(qid="q2", position=1, text="And what about this second area of work?", signal_values=["S2"]),
+        ],
+        signals=["S_PLAIN", "S2"],
         knockout_signal=None,  # NO knockout signal
     )
     eng = StateEngine(
@@ -625,8 +648,8 @@ def test_non_knockout_signal_failure_does_not_record_knockout(make_session_confi
     )
     # No KnockoutFailure for non-knockout signal.
     assert len(eng.lifecycle_snapshot().knockout_failures) == 0
-    # Action NOT overridden.
-    assert decision.speaker_input.instruction_kind == InstructionKind.acknowledge_no_experience
+    # Option A: the ack advances to the next pending question.
+    assert decision.speaker_input.instruction_kind == InstructionKind.deliver_question
 
 
 def test_drift_guard_drops_failure_obs_when_action_is_clarify(
@@ -924,7 +947,11 @@ def test_acknowledge_with_real_failure_obs_does_not_downgrade(
 
     codes = [w.code for w in decision.validation_warnings]
     assert "acknowledge_without_failure_obs" not in codes
-    assert decision.speaker_input.instruction_kind == InstructionKind.acknowledge_no_experience
+    # Intent: a valid →failed obs does NOT trip the inverse-coupling guard (no
+    # downgrade to clarify). Under Option A this single-question ack closes
+    # (nothing left to advance to) rather than resolving to a standalone
+    # acknowledge_no_experience instruction.
+    assert decision.speaker_input.instruction_kind == InstructionKind.polite_close
     assert len(eng.ledger_snapshot().entries) == 1
 
 
