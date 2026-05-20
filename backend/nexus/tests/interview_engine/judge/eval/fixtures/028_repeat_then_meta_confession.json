@@ -1,9 +1,9 @@
 {
   "id": "028_repeat_then_meta_confession",
-  "description": "After hearing the question repeated multiple times, candidate explicitly says they don't know. 'What is an ERP? I don't know.' Consecutive dont-know count is high. Should acknowledge_no_experience. From session 7970e91c turn 622.",
+  "description": "After repeats, candidate is generically confused — 'What is an ERP? I don't know.' Under the still_confused contract the Judge keeps clarifying and flags candidate_still_confused; the State Engine (still_confused_count already 2) owns the escalation to acknowledge-and-advance — the Judge no longer self-escalates on the count. From session 7970e91c turn 622.",
   "tags": [
-    "acknowledge_no_experience",
-    "consecutive_dont_know",
+    "clarify",
+    "still_confused",
     "real_session"
   ],
   "judge_input": {
@@ -73,14 +73,18 @@
     "time_remaining_seconds": 1100
   },
   "expected": {
-    "next_action": "acknowledge_no_experience",
+    "next_action": "clarify",
     "turn_metadata": {
-      "candidate_disclosed_no_experience": true
+      "candidate_still_confused": true
     },
+    "forbidden_actions": [
+      "acknowledge_no_experience",
+      "polite_close"
+    ],
     "observations_min_count": 0,
+    "observations_max_count": 0,
     "expected_reasoning_substrings": [
-      "don't know",
-      "experience"
+      "clarify"
     ]
   },
   "source": "session_7970e91c_turn622",

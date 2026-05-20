@@ -64,6 +64,9 @@
   },
   "expected": {
     "next_action": "clarify",
+    "turn_metadata": {
+      "candidate_still_confused": true
+    },
     "forbidden_actions": [
       "redirect",
       "push_back",
