@@ -5,7 +5,6 @@ The firewall: never calls an LLM; pure deterministic Python.
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from typing import ClassVar, Literal
 
@@ -40,62 +39,6 @@ from app.modules.interview_runtime import (
     KnockoutFailure, QuestionConfig, SessionConfig, SignalMetadata,
     TranscriptEntry,
 )
-
-
-# Phase 9.4 — matches "I don't know" intent variants at the head of a
-# short utterance. Used by StateEngine to bump
-# QuestionState.still_confused_count. Permissive on what follows
-# the "I don't know" head (variants like "I don't know how to answer",
-# "I don't know what to say", "I'm not sure how to respond"), but
-# bounded by an overall length cap (60 chars) so a long substantive
-# answer that happens to start with "I don't know but..." does NOT
-# match.
-_DONT_KNOW_HEAD_REGEX: re.Pattern[str] = re.compile(
-    r"^\s*("
-    r"i\s*don'?t\s*know"
-    r"|i'?m\s*not\s*sure"
-    r"|i\s*have\s*no\s*idea"
-    r"|no\s*idea"
-    r"|don'?t\s*know"
-    r")\b",
-    re.IGNORECASE,
-)
-# Conjunction that signals the candidate is qualifying / continuing
-# with a real answer ("I don't know off the top of my head, BUT I would
-# look at..."). When the utterance contains one of these AFTER the
-# I-don't-know head, treat as a substantive answer (no count bump).
-_QUALIFYING_CONJUNCTIONS: re.Pattern[str] = re.compile(
-    r"\b(but|however|though|although|that said|i would|i'?d|i'?ll|let me|let's)\b",
-    re.IGNORECASE,
-)
-# Hard cap on total stripped length. A real "I don't know" utterance is
-# almost always under this; longer utterances are answers that happen
-# to start with "I don't know".
-_DONT_KNOW_MAX_LEN: int = 60
-
-
-def _is_dont_know_utterance(text: str | None) -> bool:
-    """True iff the candidate's utterance is an "I don't know" variant.
-
-    Three guards keep this conservative and avoid false-positives on
-    substantive answers that happen to contain a "don't know" head:
-
-      1. Must START with one of the I-don't-know head phrases.
-      2. Total stripped length <= 60 chars (real I-don't-know is short).
-      3. Must NOT contain a qualifying conjunction (but/however/I would
-         /let me) anywhere — those mean the candidate is qualifying or
-         continuing with a real answer.
-    """
-    if not text:
-        return False
-    stripped = text.strip()
-    if not stripped or len(stripped) > _DONT_KNOW_MAX_LEN:
-        return False
-    if not _DONT_KNOW_HEAD_REGEX.match(stripped):
-        return False
-    if _QUALIFYING_CONJUNCTIONS.search(stripped):
-        return False
-    return True
 
 
 def _maybe_promote_meta_confession(
@@ -449,20 +392,6 @@ class StateEngine:
         if self._queue.active_state() is not None and candidate_utterance_text:
             self._queue.increment_active_turn(elapsed_ms=elapsed_ms)
 
-        # 4a. Phase 9.4 — track consecutive "I don't know" utterances on
-        # the active question. This count is surfaced to the Judge via
-        # JudgeInputPayload.active_question_still_confused_count
-        # so the Judge can escalate to acknowledge_no_experience after
-        # the first I-don't-know on an experience-class signal instead
-        # of looping on clarify (the death-spiral pattern from session
-        # f665498d turns 14-18). The streak resets on any non-I-don't-
-        # know utterance.
-        if self._queue.active_state() is not None and candidate_utterance_text:
-            if _is_dont_know_utterance(candidate_utterance_text):
-                self._queue.increment_active_still_confused_count()
-            else:
-                self._queue.reset_active_still_confused_count()
-
         # 5. Resolve next action with self-healing.
         action = judge_output.next_action
         # Q-2 (Phase 9.3) — track whether the resulting deliver_question
@@ -568,7 +497,38 @@ class StateEngine:
                 instruction = self._fallback_to_first_unused_probe(warnings)
 
         elif action == NextAction.clarify:
-            instruction = InstructionKind.clarify
+            still_confused = judge_output.turn_metadata.candidate_still_confused
+            active_state = self._queue.active_state()
+            prior_confused = active_state.still_confused_count if active_state else 0
+            # Escalation: candidate has been generically confused on this
+            # question twice already; the 3rd confusion (>= 2 prior) routes to
+            # acknowledge-and-advance instead of a 3rd clarify (kills the
+            # death-spiral). Two clarify attempts is the configured budget.
+            if still_confused and prior_confused >= 2 and active_state is not None:
+                warnings.append(ValidationWarning(
+                    code="still_confused_cap_reached",
+                    level="warning",
+                    details={
+                        "active_question_id": self._queue.active_question_id(),
+                        "still_confused_count": prior_confused,
+                        "escalated_to": "acknowledge_and_advance",
+                        "reason": (
+                            "Candidate generically confused on this question "
+                            "after 2 clarify attempts; acknowledging and moving "
+                            "on rather than clarifying a 3rd time."
+                        ),
+                    },
+                ))
+                primary = self._primary_signal_value(active_state.question_id)
+                instruction, is_post_acknowledge, closing_disclosure_signal = (
+                    self._acknowledge_and_advance(
+                        failed_signal_value=primary, elapsed_ms=elapsed_ms,
+                        turn_id=turn_id, warnings=warnings,
+                        knockout_failures_this_turn=knockout_failures_this_turn,
+                    )
+                )
+            else:
+                instruction = InstructionKind.clarify
 
         elif action == NextAction.repeat:
             instruction, cached, source_turn = self._resolve_repeat(warnings)
@@ -934,6 +894,20 @@ class StateEngine:
                 if self._lifecycle.snapshot().state.value == "active":
                     self._lifecycle.transition_to_closing()
 
+        # Track consecutive still-confused turns on the active question.
+        # Driven by the Judge flag (LLM classification), not a regex. Reset on
+        # any turn that is not a still-confused clarify, and naturally reset
+        # when the question advances (the new active question starts at 0).
+        if self._queue.active_state() is not None:
+            if (
+                action == NextAction.clarify
+                and judge_output.turn_metadata.candidate_still_confused
+                and instruction == InstructionKind.clarify
+            ):
+                self._queue.increment_active_still_confused_count()
+            else:
+                self._queue.reset_active_still_confused_count()
+
         speaker_input = self._build_speaker_input(
             instruction_kind=instruction,
             judge_output=judge_output,
@@ -1066,6 +1040,21 @@ class StateEngine:
             ))
             return InstructionKind.polite_close, False, failed_signal_value
         return self._first_or_continuing_instruction(), True, None
+
+    def _primary_signal_value(self, question_id: str) -> str:
+        """Highest-weight signal among the question's signal_values.
+
+        Falls back to the first signal_value, or empty string if none. Used by
+        the still-confused escalation to pick which signal to mark failed."""
+        q_cfg = next(
+            (q for q in self._cfg.stage.questions if q.id == question_id), None,
+        )
+        if q_cfg is None or not q_cfg.signal_values:
+            return ""
+        meta = [m for m in self._cfg.signal_metadata if m.value in q_cfg.signal_values]
+        if not meta:
+            return q_cfg.signal_values[0]
+        return max(meta, key=lambda s: s.weight).value
 
     def _fallback_to_first_unused_probe(
         self, warnings: list[ValidationWarning]
