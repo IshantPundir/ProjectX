@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Minus } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
@@ -24,6 +24,14 @@ export function InterviewSessionPanel({
 }) {
   const [open, setOpen] = useState(false)
   const turns = toTurns(messages)
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  // Auto-scroll the transcript to the latest line when opened or a new turn arrives.
+  useEffect(() => {
+    if (open && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    }
+  }, [open, turns.length])
 
   if (!open) {
     return (
@@ -61,7 +69,7 @@ export function InterviewSessionPanel({
           <Minus className="size-3.5" />
         </button>
       </header>
-      <div className="flex flex-1 flex-col gap-2 overflow-y-auto px-3 py-3">
+      <div ref={scrollRef} className="px-scroll flex flex-1 flex-col gap-2 overflow-y-auto px-3 py-3">
         {turns.map((t) => (
           <div key={t.id} className={cn('flex', t.who === 'you' && 'justify-end')}>
             <div

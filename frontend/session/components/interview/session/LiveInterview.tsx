@@ -30,17 +30,18 @@ export function LiveInterview({ companyName, jobTitle, logo, accent, onEnd }: Li
 
   const rawMessages = messages as unknown as RawMessage[]
 
-  // Staggered entrance: each section fades in on mount, so the session "reveals"
-  // after the loader hands off. Opacity-only so it never fights the absolute /
-  // translate positioning of the layers. Frozen under prefers-reduced-motion.
+  // Dramatic staggered entrance: the session "reveals" on mount (after the loader
+  // hands off) — the aura springs into place first, then the chrome cascades in.
+  // Animates opacity + y/scale only (never x), so it never fights the layout's
+  // -translate-x-1/2 centering. Frozen under prefers-reduced-motion.
   const reduce = useReducedMotion()
-  const reveal = (delay: number) =>
+  const enter = (delay: number, from: { y?: number; scale?: number }) =>
     reduce
       ? {}
       : {
-          initial: { opacity: 0 },
-          animate: { opacity: 1 },
-          transition: { duration: 0.5, delay, ease: 'easeOut' as const },
+          initial: { opacity: 0, ...from },
+          animate: { opacity: 1, y: 0, scale: 1 },
+          transition: { type: 'spring' as const, stiffness: 180, damping: 20, delay },
         }
 
   return (
@@ -48,29 +49,39 @@ export function LiveInterview({ companyName, jobTitle, logo, accent, onEnd }: Li
       className="px-cine-bg fixed inset-0 overflow-hidden"
       style={accent ? ({ ['--px-accent' as string]: accent } as React.CSSProperties) : undefined}
     >
-      <motion.div className="absolute inset-0 z-0 grid place-items-center" {...reveal(0)}>
+      {/* Aura — hero entrance (springs up to scale first) */}
+      <motion.div className="absolute inset-0 z-0 grid place-items-center" {...enter(0, { scale: 0.6 })}>
         <AuraStage state={state} audioTrack={audioTrack} />
       </motion.div>
 
-      <motion.div className="absolute inset-x-0 top-0 z-30 px-4 py-3" {...reveal(0.12)}>
+      {/* Top bar — drops in */}
+      <motion.div className="absolute inset-x-0 top-0 z-30 px-4 py-3" {...enter(0.28, { y: -32 })}>
         <SessionTopBar companyName={companyName} jobTitle={jobTitle} logo={logo} onEnd={onEnd} />
       </motion.div>
 
-      <motion.div className="absolute left-1/2 top-16 z-20 w-fit -translate-x-1/2" {...reveal(0.24)}>
-        <ProgressChip />
-      </motion.div>
+      {/* Progress chip — drops from the top (centered) */}
+      <div className="absolute left-1/2 top-16 z-20 w-fit -translate-x-1/2">
+        <motion.div {...enter(0.46, { y: -20 })}>
+          <ProgressChip />
+        </motion.div>
+      </div>
 
-      <motion.div className="absolute right-4 top-16 z-30" {...reveal(0.3)}>
+      {/* Interview Session panel — rises in from the bottom-right */}
+      <motion.div className="absolute bottom-5 right-4 z-30" {...enter(0.56, { y: 28, scale: 0.96 })}>
         <InterviewSessionPanel messages={rawMessages} className="max-h-[70vh] w-[min(360px,86vw)]" />
       </motion.div>
 
-      <motion.div className="absolute bottom-5 left-4 z-20 w-fit" {...reveal(0.36)}>
+      {/* Self-view — rises in from the bottom-left */}
+      <motion.div className="absolute bottom-5 left-4 z-20 w-fit" {...enter(0.62, { y: 28, scale: 0.9 })}>
         <SelfView />
       </motion.div>
 
-      <motion.div className="absolute bottom-6 left-1/2 z-20 w-fit -translate-x-1/2" {...reveal(0.42)}>
-        <SpokenCaption messages={rawMessages} />
-      </motion.div>
+      {/* Spoken caption — rises in (centered) */}
+      <div className="absolute bottom-6 left-1/2 z-20 w-fit -translate-x-1/2">
+        <motion.div {...enter(0.7, { y: 28 })}>
+          <SpokenCaption messages={rawMessages} />
+        </motion.div>
+      </div>
     </div>
   )
 }

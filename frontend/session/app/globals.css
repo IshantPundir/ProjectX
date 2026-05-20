@@ -1109,6 +1109,21 @@ select.px-input::-ms-expand { display: none; }
   box-shadow: 0 0 10px rgba(80, 140, 220, 0.35);
 }
 
+/* Themed thin scrollbar (accent thumb, transparent track) */
+.px-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--px-accent-soft) transparent;
+}
+.px-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.px-scroll::-webkit-scrollbar-track { background: transparent; }
+.px-scroll::-webkit-scrollbar-thumb {
+  background: var(--px-accent-soft);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.px-scroll::-webkit-scrollbar-thumb:hover { background: var(--px-accent); }
+
 /* Animated ambient background (component renders .px-bg-blob spans) */
 .px-bg-blob {
   position: absolute;

@@ -47,9 +47,9 @@ export function WizardFrame({
       className="px-cine-bg min-h-screen"
       style={accent ? ({ ['--px-accent' as string]: accent } as React.CSSProperties) : undefined}
     >
-      <div className="grid min-h-screen lg:grid-cols-2">
+      <div className="mx-auto grid min-h-screen max-w-5xl items-center gap-12 px-6 lg:grid-cols-2">
         {/* Left pane — reassurance (desktop only) */}
-        <aside className="relative hidden flex-col justify-center gap-7 px-12 py-10 lg:flex">
+        <aside className="relative hidden flex-col justify-center gap-7 py-10 lg:flex">
           <Brand companyName={companyName} jobTitle={jobTitle} />
           <Aura state="listening" audioTrack={undefined} size="lg" className="self-start" />
           <div>
@@ -64,7 +64,7 @@ export function WizardFrame({
         </aside>
 
         {/* Right pane — the task */}
-        <main className="flex items-center justify-center px-5 py-10 sm:px-8">
+        <main className="flex items-center justify-center py-10">
           <div className="w-full max-w-md">
             {/* Mobile header (left-pane condensed) */}
             <div className="mb-6 flex flex-col gap-4 lg:hidden">
