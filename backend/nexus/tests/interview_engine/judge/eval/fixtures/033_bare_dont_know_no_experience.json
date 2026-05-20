@@ -1,0 +1,84 @@
+{
+  "id": "033_bare_dont_know_no_experience",
+  "description": "Candidate gives a bare 'I don't know' on a signal-bearing question — no clarification ask, no qualifier, no prior substantive answer. Judge must acknowledge_no_experience (fail the signal + move on), not clarify or push_back.",
+  "tags": [
+    "acknowledge_no_experience",
+    "bare_inability",
+    "synthesized"
+  ],
+  "judge_input": {
+    "active_question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a",
+    "active_question_text": "Using your primary iPaaS (MuleSoft, TIBCO, or Boomi), how would you implement a near-real-time order sync from Salesforce to an on-prem ERP?",
+    "active_question_positive_evidence": [
+      "Names specific platform components and connectors",
+      "Describes auth and secure connectivity",
+      "Explains JSON/XML mapping with schema validation",
+      "Details reliability controls: retry with backoff, idempotency keys"
+    ],
+    "active_question_red_flags": [
+      "Tool-agnostic answer with no concrete platform components",
+      "No clear plan for idempotency/retries"
+    ],
+    "active_question_rubric": {
+      "excellent": "Concrete iPaaS components, secure on-prem access, reliability controls.",
+      "meets_bar": "Platform references and basic reliability controls.",
+      "below_bar": "Generic, theoretical, no concrete tools."
+    },
+    "active_question_evaluation_hint": "Verify platform-specific depth and reliability controls.",
+    "active_question_signal_metadata": [
+      {
+        "value": "5+ years hands-on production experience with at least one iPaaS/ESB platform (MuleSoft, TIBCO, or Dell Boomi)",
+        "type": "experience",
+        "knockout": false,
+        "priority": "required"
+      }
+    ],
+    "next_pending_question_id": "606b1bcb-9205-4509-96d0-468326b73c5d",
+    "next_pending_question_is_mandatory": true,
+    "active_question_push_back_count": 0,
+    "active_question_still_confused_count": 0,
+    "active_question_remaining_probes": {
+      "0": "How would you handle retries and idempotency?",
+      "1": "What connectivity approach would you use to reach on-prem?"
+    },
+    "signal_coverage": {
+      "5+ years hands-on production experience with at least one iPaaS/ESB platform (MuleSoft, TIBCO, or Dell Boomi)": {
+        "signal_value": "5+ years hands-on production experience with at least one iPaaS/ESB platform (MuleSoft, TIBCO, or Dell Boomi)",
+        "coverage": "none",
+        "anchors_hit": [],
+        "last_observation_seq": null
+      }
+    },
+    "candidate_claims": [],
+    "recent_turns": [
+      {
+        "role": "agent",
+        "text": "Using your primary iPaaS, walk me through a near-real-time Salesforce to on-prem ERP order sync.",
+        "timestamp_ms": 0,
+        "question_id": "31d13fc0-71b5-418f-beed-9041d4d1a87a"
+      }
+    ],
+    "candidate_utterance": "I don't know.",
+    "time_remaining_seconds": 1180
+  },
+  "expected": {
+    "next_action": "acknowledge_no_experience",
+    "forbidden_actions": [
+      "clarify",
+      "push_back"
+    ],
+    "turn_metadata": {
+      "candidate_disclosed_no_experience": true
+    },
+    "observations_min_count": 1,
+    "expected_signals_subset": [
+      "5+ years hands-on production experience with at least one iPaaS/ESB platform (MuleSoft, TIBCO, or Dell Boomi)"
+    ],
+    "expected_reasoning_substrings": [
+      "acknowledge"
+    ]
+  },
+  "source": "synthesized",
+  "labeled_by": "ishant",
+  "labeled_at": "2026-05-20"
+}
