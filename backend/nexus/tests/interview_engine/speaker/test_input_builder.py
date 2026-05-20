@@ -827,3 +827,58 @@ def test_speaker_input_has_no_available_openers_field() -> None:
         "available_openers was intentionally retired; the Variety RULE "
         "in _preamble.txt reads recent_reply_starts directly."
     )
+
+
+# ---------------------------------------------------------------------------
+# Task A1 — is_post_acknowledge flag routing
+# ---------------------------------------------------------------------------
+
+
+def _advance_judge_output() -> JudgeOutput:
+    return JudgeOutput(
+        reasoning="Test fixture: advancing after the candidate disclosed no experience.",
+        observations=[],
+        candidate_claims=[],
+        next_action=NextAction.advance,
+        next_action_payload=AdvancePayload(target_question_id="q2"),
+        turn_metadata=TurnMetadata(),
+    )
+
+
+def _queue_with_active() -> QuestionQueue:
+    q = QuestionQueue.from_initial(questions=[
+        {"question_id": "q1", "is_mandatory": True, "follow_ups": [], "signal_values": ["s1"]},
+        {"question_id": "q2", "is_mandatory": True, "follow_ups": [], "signal_values": ["s2"]},
+    ])
+    q.advance_to("q2", at_turn=1)
+    return q
+
+
+def test_is_post_acknowledge_set_on_deliver_question():
+    si = build_speaker_input(
+        instruction_kind=InstructionKind.deliver_question,
+        judge_output=_advance_judge_output(),
+        active_question=None,
+        queue=_queue_with_active(),
+        claims_pool=CandidateClaimsPool(max_size=50),
+        recent_turns=[],
+        persona_name="Arjun",
+        last_candidate_utterance="I don't know how to do that.",
+        is_post_acknowledge=True,
+    )
+    assert si.is_post_acknowledge is True
+
+
+def test_is_post_acknowledge_dropped_on_non_deliver_question():
+    si = build_speaker_input(
+        instruction_kind=InstructionKind.clarify,
+        judge_output=_advance_judge_output(),
+        active_question=None,
+        queue=_queue_with_active(),
+        claims_pool=CandidateClaimsPool(max_size=50),
+        recent_turns=[],
+        persona_name="Arjun",
+        last_candidate_utterance="huh?",
+        is_post_acknowledge=True,
+    )
+    assert si.is_post_acknowledge is False

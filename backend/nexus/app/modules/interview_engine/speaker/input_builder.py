@@ -43,6 +43,7 @@ def build_speaker_input(
     candidate_name: str | None = None,
     recent_reply_starts: list[str] | None = None,
     is_post_cap_advance: bool = False,
+    is_post_acknowledge: bool = False,
     closing_disclosure_signal: str | None = None,
     # Role context — used only by clarify(role_context). Passed in by the
     # State Engine from SessionConfig. None for every other kind/sub-kind.
@@ -202,6 +203,14 @@ def build_speaker_input(
         and instruction_kind == InstructionKind.deliver_question
     )
 
+    # is_post_acknowledge mirrors is_post_cap_advance: only meaningful on
+    # deliver_question (the next question delivered right after the candidate
+    # bowed out of the previous one). Dropped on every other kind.
+    post_acknowledge_payload = (
+        is_post_acknowledge
+        and instruction_kind == InstructionKind.deliver_question
+    )
+
     # NOTE: pre-prompt acronym rewriting (E-R-P / A-P-I / S-Q-L) was
     # removed on 2026-05-19. The Speaker preamble's "YOUR TTS AUDIENCE"
     # section now instructs the LLM to hyphenate letter-by-letter acronyms
@@ -221,6 +230,7 @@ def build_speaker_input(
         push_back_reason_code=push_back_reason_code,
         recent_reply_starts=reply_starts_payload,
         is_post_cap_advance=post_cap_payload,
+        is_post_acknowledge=post_acknowledge_payload,
         clarify_kind=clarify_kind_payload,
         job_title=role_context_job_title_payload,
         hiring_company_name=role_context_hiring_company_payload,

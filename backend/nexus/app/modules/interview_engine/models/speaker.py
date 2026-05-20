@@ -97,9 +97,23 @@ class SpeakerInput(BaseModel):
             "Set by the orchestrator when the queue advance crosses a "
             "question_kind boundary (e.g., behavioral_star → technical_depth). "
             "Triggers a warm-segue branch in deliver_question.txt. "
-            "Precedence: is_post_cap_advance > is_post_phase_transition — "
-            "when both are true, the post-cap framing wins (we don't celebrate "
-            "depth that wasn't there). See spec §4."
+            "Precedence: is_post_acknowledge > is_post_cap_advance > "
+            "is_post_phase_transition — the highest-precedence flag's opener "
+            "wins (we don't celebrate depth that wasn't there). See spec §4."
+        ),
+    )
+    is_post_acknowledge: bool = Field(
+        default=False,
+        description=(
+            "True when this deliver_question fires immediately after the "
+            "candidate explicitly disclosed no experience / admitted they "
+            "cannot answer (acknowledge_no_experience, meta_confession "
+            "promotion, or the still-confused cap). The deliver_question "
+            "scaffold opens with a warm 'fair enough, let me try something "
+            "different' acknowledgment, then delivers the next question in "
+            "the SAME turn (Option A — no separate acknowledge turn). "
+            "Precedence: is_post_acknowledge > is_post_cap_advance > "
+            "is_post_phase_transition. False on every other path."
         ),
     )
     clarify_kind: ClarifyKind | None = Field(
