@@ -30,6 +30,7 @@ export interface PreCheckResponse {
   otp_required: boolean
   otp_verified_at: string | null
   otp_issued_at: string | null
+  proctoring_enabled: boolean
 }
 
 export interface ConsentBody {
@@ -47,12 +48,39 @@ export interface AudioProcessingHints {
   auto_gain_control: boolean
 }
 
+export type ProctoringKind =
+  | 'tab_switch'
+  | 'focus_loss'
+  | 'fullscreen_abandoned'
+  | 'devtools'
+  | 'fullscreen_exit'
+  | 'keyboard'
+
+export interface ProctoringConfig {
+  enabled: boolean
+  soft_violation_limit: number
+  fullscreen_grace_seconds: number
+}
+
+export interface ProctoringEventBody {
+  kind: ProctoringKind
+  occurred_at: string // ISO-8601
+}
+
+export interface ProctoringEventResult {
+  terminated: boolean
+  violation_count: number
+  soft_violation_count: number
+  already_terminal?: boolean
+}
+
 export interface StartSessionResponse {
   livekit_url: string
   livekit_token: string
   room_name: string
   session_id: string
   audio_processing_hints: AudioProcessingHints
+  proctoring: ProctoringConfig
 }
 
 export interface CandidateSessionState {
@@ -147,5 +175,16 @@ export const candidateSessionApi = {
     _call<CandidateSessionState>(
       'GET',
       `/api/candidate-session/${token}/state`,
+    ),
+  /**
+   * Report a single proctoring violation. Backend is authoritative on the
+   * escalation threshold and termination; the response says whether the
+   * session was ended. Carries no PII — only the violation kind + timestamp.
+   */
+  proctoringEvent: (token: string, body: ProctoringEventBody) =>
+    _call<ProctoringEventResult>(
+      'POST',
+      `/api/candidate-session/${token}/proctoring/event`,
+      body,
     ),
 }

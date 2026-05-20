@@ -70,6 +70,7 @@ const PRE_CHECK: PreCheckResponse = {
   otp_required: false,
   otp_verified_at: null,
   otp_issued_at: null,
+  proctoring_enabled: false,
 }
 
 describe('App', () => {

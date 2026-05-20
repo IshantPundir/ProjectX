@@ -43,3 +43,30 @@ describe('candidateSessionApi error handling', () => {
     }
   })
 })
+
+describe('candidateSessionApi.proctoringEvent', () => {
+  it('POSTs the violation and returns the parsed result', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({ terminated: false, violation_count: 1, soft_violation_count: 1 }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await candidateSessionApi.proctoringEvent('tok', {
+      kind: 'keyboard',
+      occurred_at: '2026-05-21T00:00:00.000Z',
+    })
+
+    expect(res.terminated).toBe(false)
+    expect(res.violation_count).toBe(1)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toContain('/api/candidate-session/tok/proctoring/event')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(init.body as string)).toEqual({
+      kind: 'keyboard',
+      occurred_at: '2026-05-21T00:00:00.000Z',
+    })
+  })
+})
