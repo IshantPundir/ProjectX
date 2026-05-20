@@ -40,5 +40,6 @@ export const APP_CONFIG_DEFAULTS: AppConfig = {
   startButtonText: 'Start interview',
   accent: '#0E6F63',
   audioVisualizerType: 'aura',
+  audioVisualizerColorShift: 2,
   agentName: undefined,
 }

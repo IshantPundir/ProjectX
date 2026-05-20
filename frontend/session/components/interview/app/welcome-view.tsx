@@ -1,7 +1,7 @@
 'use client'
 
 import { Button } from '@/components/ui/button'
-import { LiquidAura } from '@/components/agents-ui/liquid-aura'
+import { Aura } from '@/components/agents-ui/aura'
 
 interface Props {
   companyName: string
@@ -34,7 +34,7 @@ export function WelcomeView({
   return (
     <section className="px-cine-bg grid min-h-screen place-items-center p-6">
       <div className="flex max-w-md flex-col items-center text-center">
-        <LiquidAura state="listening" audioTrack={undefined} size="hero" className="mb-6 size-[200px]" />
+        <Aura state="listening" audioTrack={undefined} size="xl" className="mb-6" />
         <h1 className="font-serif text-3xl text-px-fg">{heading}</h1>
         <p className="mt-3 text-sm text-px-fg-3">{body}</p>
         <Button

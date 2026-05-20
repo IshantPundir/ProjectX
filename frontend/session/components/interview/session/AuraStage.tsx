@@ -5,7 +5,7 @@ import type { LocalAudioTrack, RemoteAudioTrack } from 'livekit-client'
 import type { TrackReferenceOrPlaceholder } from '@livekit/components-react'
 
 import { cn } from '@/lib/utils'
-import { LiquidAura } from '@/components/agents-ui/liquid-aura'
+import { Aura } from '@/components/agents-ui/aura'
 
 const STATE_LABEL: Partial<Record<AgentState, string>> = {
   listening: 'Listening…',
@@ -25,7 +25,7 @@ export function AuraStage({
   const label = state ? STATE_LABEL[state] : undefined
   return (
     <div className={cn('flex flex-col items-center justify-center gap-4', className)}>
-      <LiquidAura state={state} audioTrack={audioTrack} size="hero" />
+      <Aura state={state} audioTrack={audioTrack} size="xl" />
       {label && <p className="text-xs tracking-wide text-px-accent-soft">{label}</p>}
     </div>
   )

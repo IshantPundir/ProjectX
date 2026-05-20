@@ -2,7 +2,7 @@
 
 import type { ReactNode } from 'react'
 
-import { LiquidAura } from '@/components/agents-ui/liquid-aura'
+import { Aura } from '@/components/agents-ui/aura'
 import { WizardStepper, type WizardStepKey } from './WizardStepper'
 
 interface WizardFrameProps {
@@ -45,7 +45,7 @@ export function WizardFrame({
         {/* Left pane — reassurance (desktop only) */}
         <aside className="relative hidden flex-col justify-center gap-7 px-12 py-10 lg:flex">
           <Brand companyName={companyName} jobTitle={jobTitle} />
-          <LiquidAura state="listening" audioTrack={undefined} size="hero" className="size-[120px]" />
+          <Aura state="listening" audioTrack={undefined} size="md" />
           <div>
             <h1 className="font-serif text-[34px] font-medium leading-[1.1] text-px-fg">
               Meet your<br />interviewer

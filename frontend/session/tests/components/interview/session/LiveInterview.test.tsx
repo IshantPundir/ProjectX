@@ -15,6 +15,9 @@ vi.mock('@livekit/components-react', () => ({
 vi.mock('@/components/interview/app/hooks/use-stage-progress', () => ({
   useStageProgress: () => ({ currentQuestion: 1, totalQuestions: 8, timeRemainingSeconds: 750 }),
 }))
+vi.mock('@/components/agents-ui/agent-audio-visualizer-aura', () => ({
+  AgentAudioVisualizerAura: () => <div role="img" aria-label="AI interviewer" data-testid="stock-aura" />,
+}))
 
 import { LiveInterview } from '@/components/interview/session/LiveInterview'
 

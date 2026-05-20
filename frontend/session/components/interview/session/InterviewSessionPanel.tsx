@@ -5,7 +5,6 @@ import { Minus } from 'lucide-react'
 import type { AgentState } from '@livekit/components-react'
 
 import { cn } from '@/lib/utils'
-import { LiquidAura } from '@/components/agents-ui/liquid-aura'
 import { toTurns, type RawMessage } from './transcript-model'
 
 function LivePill() {
@@ -40,9 +39,7 @@ export function InterviewSessionPanel({
           className,
         )}
       >
-        <span aria-hidden="true">
-          <LiquidAura state={agentState} audioTrack={undefined} size="mark" />
-        </span>
+        <span aria-hidden className="aura-mark block size-[22px]" />
         <span className="font-serif text-sm italic">Interview Session</span>
         <LivePill />
       </button>
@@ -55,9 +52,7 @@ export function InterviewSessionPanel({
       className={cn('px-glass flex flex-col overflow-hidden rounded-2xl', className)}
     >
       <header className="flex items-center gap-2 border-b border-px-hairline px-3 py-2.5">
-        <span aria-hidden="true">
-          <LiquidAura state={agentState} audioTrack={undefined} size="mark" />
-        </span>
+        <span aria-hidden className="aura-mark block size-[22px]" />
         <span className="font-serif text-sm italic text-px-fg">Interview Session</span>
         <LivePill />
         <button

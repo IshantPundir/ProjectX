@@ -51,6 +51,9 @@ vi.mock('@/components/agents-ui/agent-session-provider', () => ({
 vi.mock('@/components/agents-ui/start-audio-button', () => ({
   StartAudioButton: () => null,
 }))
+vi.mock('@/components/agents-ui/agent-audio-visualizer-aura', () => ({
+  AgentAudioVisualizerAura: () => <div role="img" aria-label="AI interviewer" data-testid="stock-aura" />,
+}))
 
 import { App } from '@/components/interview/app/app'
 import { APP_CONFIG_DEFAULTS } from '@/app-config'
