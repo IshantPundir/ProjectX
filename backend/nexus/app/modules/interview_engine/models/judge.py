@@ -126,6 +126,15 @@ class TurnMetadata(BaseModel):
     # State Engine deterministically promotes to acknowledge_no_experience
     # when conditions warrant (mandatory + push_back_count >= 1 + no path).
     candidate_meta_confession: bool = False
+    # Candidate is GENERICALLY confused / not understanding the question —
+    # the broad_rephrase-style "I still don't get it" pattern, distinct from
+    # an engaged specific clarify (term_definition / use_case_anchor /
+    # role_context). Set true when the candidate signals they cannot engage
+    # with the question as posed and we have likely already tried to help.
+    # The State Engine counts consecutive still-confused turns on a question
+    # and escalates to acknowledge-and-advance after 2 attempts. Replaces the
+    # retired _DONT_KNOW regex.
+    candidate_still_confused: bool = False
 
 
 class AdvancePayload(BaseModel):
@@ -332,5 +341,22 @@ class JudgeOutput(BaseModel):
                 f"got {self.next_action.value!r}. If the candidate also has another "
                 f"intent (e.g. asked a question), set social_or_greeting=false and "
                 f"pick the primary intent."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_still_confused_action_alignment(self) -> "JudgeOutput":
+        """candidate_still_confused only makes sense paired with clarify.
+
+        If the candidate is too confused to engage, the coherent action is to
+        clarify (and the State Engine decides when to stop and move on). Any
+        other action paired with the flag is the model misclassifying; reject
+        so JudgeService falls back rather than confusing the stuck-counter."""
+        if not self.turn_metadata.candidate_still_confused:
+            return self
+        if self.next_action != NextAction.clarify:
+            raise ValueError(
+                f"candidate_still_confused=true requires next_action=clarify; "
+                f"got {self.next_action.value!r}."
             )
         return self
