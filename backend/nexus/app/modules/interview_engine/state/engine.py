@@ -648,6 +648,7 @@ class StateEngine:
                         self._acknowledge_and_advance(
                             failed_signal_value=failed_payload.failed_signal_value,
                             elapsed_ms=elapsed_ms, turn_id=turn_id, warnings=warnings,
+                            knockout_failures_this_turn=knockout_failures_this_turn,
                         )
                     )
 
@@ -832,72 +833,25 @@ class StateEngine:
             )
             if meta_warn is not None:
                 warnings.append(meta_warn)
-                failed_signal_value = str(
-                    meta_warn.details["failed_signal_value"]
-                )
-                # Override judge_output in-place so _build_speaker_input
-                # and the knockout_policy block see the promoted action.
+                failed_signal_value = str(meta_warn.details["failed_signal_value"])
+                # Override judge_output in-place so _build_speaker_input and the
+                # knockout_policy block see the promoted action.
                 judge_output.next_action = NextAction.acknowledge_no_experience
-                judge_output.next_action_payload = (
-                    AcknowledgeNoExperiencePayload(
+                judge_output.next_action_payload = AcknowledgeNoExperiencePayload(
+                    failed_signal_value=failed_signal_value,
+                )
+                # Option A: the helper applies the synthetic ->failed obs to the
+                # ledger, records + surfaces the KnockoutFailure (if knockout),
+                # and advances to the next question (or polite_close if none).
+                # The previously-inline synthetic-obs + knockout logic now lives
+                # entirely in _acknowledge_and_advance.
+                instruction, is_post_acknowledge, closing_disclosure_signal = (
+                    self._acknowledge_and_advance(
                         failed_signal_value=failed_signal_value,
+                        elapsed_ms=elapsed_ms, turn_id=turn_id, warnings=warnings,
+                        knockout_failures_this_turn=knockout_failures_this_turn,
                     )
                 )
-                # Apply a synthetic →failed observation to the ledger so the
-                # failed-signal state is consistent when _build_speaker_input
-                # and downstream consumers (Speaker scaffold, post-session
-                # report) inspect applied_observations. The original Judge
-                # action was push_back — the acknowledge_no_experience dispatch
-                # branch was never entered — so this is the only path that
-                # records the ledger failure.
-                current_coverage = (
-                    self._ledger.snapshot()
-                    .snapshots.get(failed_signal_value)
-                )
-                if current_coverage is not None:
-                    current_state = current_coverage.coverage
-                else:
-                    current_state = CoverageState.none
-                transition = (
-                    CoverageTransition.partial_to_failed
-                    if current_state == CoverageState.partial
-                    else CoverageTransition.none_to_failed
-                )
-                synthetic_obs = Observation(
-                    signal_value=failed_signal_value,
-                    anchor_id=-1,
-                    evidence_quote="[meta_confession_knockout: synthetic failure]",
-                    coverage_transition=transition,
-                )
-                try:
-                    self._ledger.apply_observation(
-                        synthetic_obs,
-                        turn_id=turn_id,
-                        recorded_at_ms=elapsed_ms,
-                    )
-                    applied_observations.append(synthetic_obs)
-                except IllegalCoverageTransition:
-                    # Signal is already →failed (e.g. Judge applied its own
-                    # failed obs earlier this turn). The ledger is already in
-                    # the correct state; just ensure applied_observations
-                    # reflects the failure for downstream consistency.
-                    applied_observations.append(synthetic_obs)
-                # Record a KnockoutFailure if the primary signal is a
-                # knockout signal (so knockout_policy fires for close_polite).
-                if failed_signal_value in self._knockout_signals:
-                    meta_failure = KnockoutFailure(
-                        question_id=active_q_cfg_for_meta.id,
-                        reason=(
-                            f"meta_confession_knockout: candidate admitted "
-                            f"they cannot answer on {failed_signal_value!r}"
-                        )[:200],
-                        signal_values=[failed_signal_value],
-                        occurred_at_ms=elapsed_ms,
-                    )
-                    self._lifecycle.record_knockout(meta_failure)
-                    knockout_failures_this_turn.append(meta_failure)
-                # Override the instruction.
-                instruction = InstructionKind.acknowledge_no_experience
 
         # 6. Policy override: knockout recorded this turn AND policy is
         # close_polite → force polite_close regardless of the Judge's
@@ -1028,6 +982,7 @@ class StateEngine:
         elapsed_ms: int,
         turn_id: str,
         warnings: list[ValidationWarning],
+        knockout_failures_this_turn: list[KnockoutFailure],
     ) -> tuple[InstructionKind, bool, str | None]:
         """Option A: acknowledge the candidate bowing out AND move on in one turn.
 
@@ -1036,7 +991,11 @@ class StateEngine:
            when this helper actually applied that synthetic failure: when the
            Judge already emitted the ->failed obs this turn, process_judge_output
            steps 1/1a already applied + recorded it, so recording again would
-           double-count.
+           double-count. When the helper does synthesize the failure, it also
+           appends the KnockoutFailure to knockout_failures_this_turn so the
+           step-6 close_polite override sees it (step 1a only appends
+           Judge-emitted failures, which the meta/stuck promotion paths never
+           produce).
         2. Advance to the next pending question -> deliver_question with
            is_post_acknowledge=True; OR polite_close (with the disclosure
            signal) when no pending question remains.
@@ -1067,15 +1026,19 @@ class StateEngine:
                 pass
         # Record a KnockoutFailure ONLY when we synthesized the failure here.
         # If the Judge supplied the ->failed obs, process_judge_output step 1a
-        # already recorded it (and appended to knockout_failures_this_turn);
-        # recording again would double-count.
+        # already recorded + appended it; recording again would double-count.
         if synthetic_applied and failed_signal_value in self._knockout_signals:
-            self._lifecycle.record_knockout(KnockoutFailure(
+            failure = KnockoutFailure(
                 question_id=self._queue.active_question_id() or "",
                 reason=f"acknowledge_and_advance on {failed_signal_value!r}"[:200],
                 signal_values=[failed_signal_value],
                 occurred_at_ms=elapsed_ms,
-            ))
+            )
+            self._lifecycle.record_knockout(failure)
+            # Surface to this turn's local list so the step-6 knockout_policy
+            # override sees a meta/stuck-promoted failure (step 1a only appends
+            # Judge-emitted failures, which the meta/stuck paths never produce).
+            knockout_failures_this_turn.append(failure)
         next_pending = self.next_pending_question()
         if next_pending is None:
             self._lifecycle.set_last_outcome(
@@ -1087,6 +1050,13 @@ class StateEngine:
                 self._lifecycle.transition_to_closing()
             return InstructionKind.polite_close, False, failed_signal_value
         next_id, _is_mandatory = next_pending
+        # NOTE: under close_polite + knockout + a pending-next question, this
+        # advance happens BEFORE step 6 may override the instruction to
+        # polite_close. That leaves the next question marked asked-but-
+        # undelivered — a known questions_asked report-rollup over-count. It is
+        # inert while the reporting module is stubbed and should be reconciled
+        # when reporting is built. Do NOT change the advance behavior to "fix"
+        # it here; the advance is load-bearing for the non-overridden paths.
         try:
             self._queue.advance_to(next_id, at_turn=self._turn_count)
         except QueueError as exc:

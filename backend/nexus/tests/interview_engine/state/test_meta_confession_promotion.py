@@ -352,10 +352,11 @@ def test_promotion_emits_audit_event_with_meta_confession_knockout_code():
 
     Assertion targets:
       - exactly one audit event with code='meta_confession_knockout'
-      - the decision has instruction_kind == acknowledge_no_experience
-        (or polite_close if the engine chains knockout_policy for the
-        non-knockout fixture — but we use knockout=False so it stays
-        acknowledge_no_experience)
+      - the decision has instruction_kind == polite_close. This fixture has a
+        single question, so under Option A the meta promotion acknowledges +
+        advances, finds no pending question, and closes politely. (knockout is
+        False here, so knockout_policy does NOT fire — the close comes purely
+        from the queue being exhausted after the one-turn advance.)
     """
     cfg = _make_session_config_for_meta(has_probes=False, knockout=False)
     eng = StateEngine(
@@ -418,14 +419,10 @@ def test_promotion_emits_audit_event_with_meta_confession_knockout_code():
     assert "meta_confession" in meta_warn.details["reason"]
     assert meta_warn.details["failed_signal_value"] == "primary"
 
-    # Instruction should be acknowledge_no_experience (non-knockout signal,
-    # so knockout_policy does not fire).
-    assert decision.speaker_input.instruction_kind in (
-        InstructionKind.acknowledge_no_experience,
-        InstructionKind.polite_close,  # allowed if close_polite + knockout
-    )
-    # For non-knockout signal, we specifically expect acknowledge_no_experience.
-    assert decision.speaker_input.instruction_kind == InstructionKind.acknowledge_no_experience
+    # Instruction should be polite_close (non-knockout signal, so knockout_policy
+    # does not fire). Under Option A the single-question meta promotion advances
+    # then finds no pending question, so it closes politely after acknowledging.
+    assert decision.speaker_input.instruction_kind == InstructionKind.polite_close
 
 
 def test_promotion_chains_through_knockout_policy_for_knockout_signal():
@@ -482,6 +479,74 @@ def test_promotion_chains_through_knockout_policy_for_knockout_signal():
     # With knockout + close_polite, final instruction must be polite_close.
     assert decision.speaker_input.instruction_kind == InstructionKind.polite_close
     assert eng.lifecycle_snapshot().state.value == "closing"
+
+
+def test_meta_confession_promotion_advances_queue_in_one_turn():
+    """After promotion, the State Engine delivers the NEXT question with
+    is_post_acknowledge (Option A) instead of staying on the same question."""
+    from app.modules.interview_engine.state.engine import StateEngine, StateEngineConfig
+    from app.modules.interview_runtime.schemas import (
+        CandidateContext, CompanyContext, QuestionConfig, QuestionRubric,
+        SessionConfig, SignalMetadata, StageConfig,
+    )
+    from app.modules.interview_engine.models.judge import (
+        JudgeOutput, NextAction, Observation, PushBackPayload, TurnMetadata,
+        CoverageTransition, CoverageQuality,
+    )
+    from app.modules.interview_engine.models.speaker import InstructionKind
+
+    def _q(qid, sig, pos, mandatory):
+        return QuestionConfig(
+            id=qid, position=pos, text="A question about the active topic here.",
+            signal_values=[sig], estimated_minutes=2.0, is_mandatory=mandatory,
+            follow_ups=[], positive_evidence=["a", "b", "c"], red_flags=["x", "y"],
+            rubric=QuestionRubric(excellent="x"*20, meets_bar="y"*20, below_bar="z"*20),
+            evaluation_hint="Look for specifics here.", question_kind="technical_depth",
+        )
+
+    cfg = SessionConfig(
+        session_id="s", job_id="j", candidate_id="c", job_title="Eng",
+        role_summary="r", seniority_level="mid",
+        company=CompanyContext(about="a", industry="i", hiring_bar="h"),
+        candidate=CandidateContext(name="Ishant"),
+        stage=StageConfig(stage_id="st", stage_type="ai_screening", name="S",
+                          duration_minutes=15, difficulty="medium",
+                          questions=[_q("q1", "sig_a", 0, True), _q("q2", "sig_b", 1, True)]),
+        signals=["sig_a", "sig_b"],
+        signal_metadata=[
+            SignalMetadata(value="sig_a", type="competency", priority="required",
+                           weight=3, knockout=False, stage="screen", evaluation_method="verbal_response"),
+            SignalMetadata(value="sig_b", type="competency", priority="required",
+                           weight=3, knockout=False, stage="screen", evaluation_method="verbal_response"),
+        ],
+    )
+    eng = StateEngine(session_config=cfg, config=StateEngineConfig(knockout_policy="record_only"))
+    eng.process_judge_output(turn_id="t0", judge_output=eng.initialize_for_session_start(),
+                             candidate_utterance_text=None, elapsed_ms=0)
+    # Give q1 one push_back so promotion's push_back_count>=1 guard is satisfied,
+    # and exhaust probes (q1 has none) — coverage stays uncovered.
+    pb = JudgeOutput(
+        reasoning="Candidate engaged but the answer was thin; pushing for specifics.",
+        observations=[Observation(signal_value="sig_a", anchor_id=0, evidence_quote="I would log.",
+                                  coverage_transition=CoverageTransition.none_to_partial,
+                                  quality=CoverageQuality.thin)],
+        candidate_claims=[], next_action=NextAction.push_back,
+        next_action_payload=PushBackPayload(reason_code="missing_specifics"),
+        turn_metadata=TurnMetadata())
+    eng.process_judge_output(turn_id="t1", judge_output=pb,
+                             candidate_utterance_text="I would log.", elapsed_ms=1000)
+    # Now meta_confession.
+    mc = JudgeOutput(
+        reasoning="Candidate admits they cannot answer THIS question after engaging earlier.",
+        observations=[], candidate_claims=[], next_action=NextAction.push_back,
+        next_action_payload=PushBackPayload(reason_code="missing_specifics"),
+        turn_metadata=TurnMetadata(candidate_meta_confession=True))
+    decision = eng.process_judge_output(turn_id="t2", judge_output=mc,
+                                        candidate_utterance_text="I don't know how to answer this.",
+                                        elapsed_ms=2000)
+    assert decision.speaker_input.instruction_kind == InstructionKind.deliver_question
+    assert decision.speaker_input.is_post_acknowledge is True
+    assert eng.queue_snapshot().active_index == 1
 
 
 # ---------------------------------------------------------------------------
