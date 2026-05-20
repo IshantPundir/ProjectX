@@ -1100,3 +1100,105 @@ select.px-input::-ms-expand { display: none; }
     background: none;
   }
 }
+
+/* ───────────────────────── Cinematic glass (dark-cinematic theme) ───────────────────────── */
+
+.px-cine-bg {
+  background: var(--px-cine-backdrop);
+}
+
+.px-glass {
+  background: var(--px-glass-bg);
+  border: 1px solid var(--px-glass-border);
+  -webkit-backdrop-filter: blur(var(--px-glass-blur));
+  backdrop-filter: blur(var(--px-glass-blur));
+  box-shadow: var(--px-glass-shadow);
+}
+.px-glass-strong { background: var(--px-glass-bg-strong); }
+
+/* Glass pill — used by progress chip, Live pill, control chips */
+.px-glass-pill {
+  background: var(--px-glass-bg);
+  border: 1px solid var(--px-glass-border);
+  -webkit-backdrop-filter: blur(var(--px-glass-blur));
+  backdrop-filter: blur(var(--px-glass-blur));
+  border-radius: 999px;
+}
+
+/* ───────────────────────── Liquid aurora visualizer ───────────────────────── */
+
+.liquid-aura {
+  --amp: 0;                       /* 0..1 audio amplitude, set inline by the component */
+  position: relative;
+  display: grid;
+  place-items: center;
+  color: var(--px-accent);        /* tenant accent flows in here */
+  pointer-events: none;
+}
+.liquid-aura__glow,
+.liquid-aura__body,
+.liquid-aura__sheen { position: absolute; border-radius: 50%; }
+
+.liquid-aura__glow {
+  inset: -22%;
+  background: radial-gradient(circle,
+    color-mix(in srgb, var(--px-accent-soft) 55%, transparent),
+    transparent 62%);
+  filter: blur(26px);
+  opacity: calc(0.55 + var(--amp) * 0.45);
+  animation: liquid-aura-breathe 5s var(--px-ease) infinite;
+}
+.liquid-aura__body {
+  inset: 12%;
+  filter: blur(8px);
+  transform: scale(calc(1 + var(--amp) * 0.10));
+  animation: liquid-aura-morph 8s var(--px-ease) infinite;
+}
+.liquid-aura__body::before {
+  content: "";
+  position: absolute; inset: 0; border-radius: inherit;
+  background: conic-gradient(from 0deg,
+    var(--px-accent),
+    var(--px-accent-soft),
+    var(--px-accent-bright),
+    var(--px-accent-soft),
+    var(--px-accent));
+  animation: liquid-aura-spin 9s linear infinite;
+}
+.liquid-aura__sheen {
+  inset: 26%;
+  background: radial-gradient(circle at 38% 32%, rgba(255,255,255,0.5), transparent 46%);
+  filter: blur(4px);
+  mix-blend-mode: screen;
+  animation: liquid-aura-breathe 4s var(--px-ease) infinite;
+}
+
+/* State modulation (data-lk-state mirrors the LiveKit AgentState) */
+.liquid-aura[data-lk-state="thinking"] .liquid-aura__body::before { animation-duration: 4.5s; }
+.liquid-aura[data-lk-state="thinking"] .liquid-aura__glow { opacity: calc(0.4 + var(--amp) * 0.3); }
+.liquid-aura[data-lk-state="listening"] .liquid-aura__body::before { animation-duration: 12s; }
+.liquid-aura[data-lk-state="speaking"] .liquid-aura__glow { opacity: calc(0.7 + var(--amp) * 0.3); }
+.liquid-aura[data-lk-state="connecting"] .liquid-aura__glow,
+.liquid-aura[data-lk-state="initializing"] .liquid-aura__glow { opacity: 0.35; }
+
+@keyframes liquid-aura-spin { to { transform: rotate(360deg); } }
+@keyframes liquid-aura-breathe {
+  0%, 100% { transform: scale(0.93); }
+  50%      { transform: scale(1.07); }
+}
+@keyframes liquid-aura-morph {
+  0%, 100% { border-radius: 50% 50% 50% 50% / 55% 55% 45% 45%; }
+  33%      { border-radius: 58% 42% 55% 45% / 45% 55% 45% 55%; }
+  66%      { border-radius: 45% 55% 48% 52% / 52% 44% 56% 48%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .liquid-aura__glow,
+  .liquid-aura__body,
+  .liquid-aura__body::before,
+  .liquid-aura__sheen {
+    animation: none !important;
+    transform: none !important;
+  }
+  .liquid-aura__glow { opacity: 0.5; }
+}
