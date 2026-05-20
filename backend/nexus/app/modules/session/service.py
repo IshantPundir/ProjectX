@@ -51,16 +51,20 @@ from app.modules.session.livekit import (
     mint_candidate_lk_token,
 )
 from app.modules.session.otp import generate_code, hash_code, verify_code
+from app.modules.session.error_codes import ErrorCode
+from app.modules.session.proctoring import classify_severity, decide_termination
 from app.modules.session.schemas import (
     AudioProcessingHints,
     PreCheckResponse,
+    ProctoringConfig,
+    ProctoringEventResult,
     SessionDetailResponse,
     SessionListPage,
     SessionState,
     StartSessionResponse,
 )
-from app.modules.session.error_codes import ErrorCode
 from app.modules.session.state_machine import advance_on_pre_check_load, transition
+from app.modules.tenant_settings import get_tenant_settings
 
 
 OTP_RATE_LIMIT_SECONDS = 60
@@ -81,6 +85,17 @@ def _compute_audio_processing_hints() -> AudioProcessingHints:
         noise_suppression=False,
         echo_cancellation=True,
         auto_gain_control=True,
+    )
+
+
+async def _build_proctoring_config(
+    db: AsyncSession, tenant_id: UUID
+) -> ProctoringConfig:
+    settings_ = await get_tenant_settings(db, tenant_id)
+    return ProctoringConfig(
+        enabled=settings_.proctoring_enabled,
+        soft_violation_limit=settings_.proctoring_soft_violation_limit,
+        fullscreen_grace_seconds=settings_.proctoring_fullscreen_grace_seconds,
     )
 
 
@@ -212,6 +227,8 @@ async def get_pre_check_context(
     company_profile = await find_company_profile_in_ancestry(db, job.org_unit_id)
     company_name = (company_profile or {}).get("name") or ""
 
+    proctoring = await _build_proctoring_config(db, sess.tenant_id)
+
     return PreCheckResponse(
         session_id=sess.id,
         company_name=company_name,
@@ -223,6 +240,7 @@ async def get_pre_check_context(
         otp_required=sess.otp_required,
         otp_verified_at=sess.otp_verified_at,
         otp_issued_at=sess.otp_issued_at,
+        proctoring_enabled=proctoring.enabled,
     )
 
 
@@ -526,12 +544,15 @@ async def start_session(
         payload={"jti": str(jti), "ip": ip_address},
     )
 
+    proctoring = await _build_proctoring_config(db, sess.tenant_id)
+
     return StartSessionResponse(
         livekit_url=settings.livekit_public_url or settings.livekit_url,
         livekit_token=candidate_lk_token,
         room_name=room_name,
         session_id=sess.id,
         audio_processing_hints=_compute_audio_processing_hints(),
+        proctoring=proctoring,
     )
 
 
@@ -595,12 +616,15 @@ async def rejoin_session(
         payload={},
     )
 
+    proctoring = await _build_proctoring_config(db, session.tenant_id)
+
     return StartSessionResponse(
         livekit_url=settings.livekit_public_url or settings.livekit_url,
         livekit_token=new_lk_token,
         room_name=session.livekit_room_name,
         session_id=session.id,
         audio_processing_hints=_compute_audio_processing_hints(),
+        proctoring=proctoring,
     )
 
 
@@ -744,3 +768,107 @@ async def transition_to_error(
         },
     )
     return True
+
+
+async def record_proctoring_event(
+    db: AsyncSession,
+    *,
+    session_id: UUID,
+    tenant_id: UUID,
+    kind: str,
+    occurred_at: datetime,
+    correlation_id: str,
+) -> ProctoringEventResult:
+    """Record one proctoring violation and decide termination (authoritative).
+
+    * Loads the session for id + tenant_id (cross-tenant → 404, same opacity
+      as /state).
+    * If the session is not 'active', returns an idempotent terminal success
+      (a violation arriving after the session already ended is a no-op).
+    * Appends {kind, severity, occurred_at} to sessions.proctoring_violations.
+    * Terminal on a hard kind OR when cumulative soft count > the tenant's
+      proctoring_soft_violation_limit. On termination: stamp proctoring_outcome,
+      transition active → terminated, best-effort cancel_room, audit.
+    """
+    sess = (
+        await db.execute(
+            select(Session).where(Session.id == session_id, Session.tenant_id == tenant_id)
+        )
+    ).scalar_one_or_none()
+    if sess is None:
+        raise SessionNotFoundError()
+
+    existing = list(sess.proctoring_violations or [])
+
+    if sess.state != SessionState.ACTIVE.value:
+        soft = sum(1 for v in existing if v.get("severity") == "soft")
+        return ProctoringEventResult(
+            terminated=True,
+            violation_count=len(existing),
+            soft_violation_count=soft,
+            already_terminal=True,
+        )
+
+    severity = classify_severity(kind)
+    violations = existing + [
+        {"kind": kind, "severity": severity, "occurred_at": occurred_at.isoformat()}
+    ]
+    soft_count = sum(1 for v in violations if v.get("severity") == "soft")
+
+    tenant_settings = await get_tenant_settings(db, tenant_id)
+    terminal, outcome = decide_termination(
+        kind=kind,
+        soft_count_including_new=soft_count,
+        soft_limit=tenant_settings.proctoring_soft_violation_limit,
+    )
+
+    # Reassigning a new list marks the JSONB attribute dirty for the flush.
+    sess.proctoring_violations = violations
+    sess.proctoring_violation_count = len(violations)
+
+    if terminal:
+        sess.proctoring_outcome = outcome
+        sess.state = transition(SessionState.ACTIVE, SessionState.TERMINATED).value
+        sess.state_changed_at = datetime.now(UTC)
+        await db.flush()
+        if sess.livekit_room_name:
+            with contextlib.suppress(Exception):
+                await cancel_room(sess.livekit_room_name)
+        await log_event(
+            db,
+            tenant_id=tenant_id,
+            actor_id=None,
+            actor_email=None,
+            action="session.proctoring_terminated",
+            resource="session",
+            resource_id=sess.id,
+            payload={
+                "proctoring_outcome": outcome,
+                "kind": kind,
+                "violation_count": len(violations),
+                "correlation_id": correlation_id,
+            },
+        )
+    else:
+        await db.flush()
+        await log_event(
+            db,
+            tenant_id=tenant_id,
+            actor_id=None,
+            actor_email=None,
+            action="session.proctoring_violation",
+            resource="session",
+            resource_id=sess.id,
+            payload={
+                "kind": kind,
+                "severity": severity,
+                "violation_count": len(violations),
+                "correlation_id": correlation_id,
+            },
+        )
+
+    return ProctoringEventResult(
+        terminated=terminal,
+        violation_count=len(violations),
+        soft_violation_count=soft_count,
+    )
