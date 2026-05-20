@@ -40,14 +40,11 @@ export function ReconnectingOverlay({ onTimeout, timeoutMs = 30_000 }: Props) {
   if (!isReconnecting) return null
 
   return (
-    <div
-      role="alert"
-      className="fixed inset-0 z-50 grid place-items-center bg-black/40 backdrop-blur-sm"
-    >
-      <div className="rounded-xl bg-white p-8 text-center shadow-lg">
-        <div className="mx-auto mb-3 size-8 animate-spin rounded-full border-4 border-zinc-300 border-t-zinc-900" />
-        <p className="text-sm font-medium text-zinc-900">Reconnecting…</p>
-        <p className="mt-1 text-xs text-zinc-500">Please don&apos;t close this tab.</p>
+    <div role="alert" className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-sm">
+      <div className="px-glass-strong rounded-2xl px-8 py-7 text-center">
+        <div className="mx-auto mb-3 size-8 animate-spin rounded-full border-4 border-px-hairline border-t-px-accent-soft motion-reduce:animate-none" />
+        <p className="text-sm font-medium text-px-fg">Reconnecting…</p>
+        <p className="mt-1 text-xs text-px-fg-4">Please don&apos;t close this tab.</p>
       </div>
     </div>
   )

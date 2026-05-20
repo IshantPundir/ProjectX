@@ -7,7 +7,7 @@ describe('CompletionScreen', () => {
   it('renders the thank-you copy and contains no navigation links', () => {
     const { container } = render(<CompletionScreen />)
     expect(
-      screen.getByText(/Thanks for completing your interview/i),
+      screen.getByText(/Thanks — your interview/i),
     ).toBeInTheDocument()
     expect(container.querySelectorAll('a')).toHaveLength(0)
   })

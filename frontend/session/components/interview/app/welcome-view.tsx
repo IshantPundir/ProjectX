@@ -1,6 +1,7 @@
 'use client'
 
 import { Button } from '@/components/ui/button'
+import { LiquidAura } from '@/components/agents-ui/liquid-aura'
 
 interface Props {
   companyName: string
@@ -21,27 +22,21 @@ export function WelcomeView({
   onStartCall,
   isPending = false,
 }: Props) {
-  const heading =
-    mode === 'rejoin' ? 'Rejoin your interview' : "You're ready to begin"
-
+  const heading = mode === 'rejoin' ? 'Rejoin your interview' : "You're ready to begin"
   const body =
     mode === 'rejoin'
       ? 'You were disconnected. Click rejoin to continue where you left off.'
       : `${companyName} · ${jobTitle} · ${durationMinutes} minutes`
-
   const buttonLabel = isPending
-    ? mode === 'rejoin'
-      ? 'Rejoining…'
-      : 'Starting…'
-    : mode === 'rejoin'
-      ? 'Rejoin interview'
-      : startButtonText
+    ? mode === 'rejoin' ? 'Rejoining…' : 'Starting…'
+    : mode === 'rejoin' ? 'Rejoin interview' : startButtonText
 
   return (
-    <section className="grid min-h-screen place-items-center bg-background p-6">
-      <div className="max-w-md text-center">
-        <h1 className="text-3xl font-semibold text-foreground">{heading}</h1>
-        <p className="mt-3 text-sm text-muted-foreground">{body}</p>
+    <section className="px-cine-bg grid min-h-screen place-items-center p-6">
+      <div className="flex max-w-md flex-col items-center text-center">
+        <LiquidAura state="listening" audioTrack={undefined} size="hero" className="mb-6 size-[200px]" />
+        <h1 className="font-serif text-3xl text-px-fg">{heading}</h1>
+        <p className="mt-3 text-sm text-px-fg-3">{body}</p>
         <Button
           size="lg"
           onClick={onStartCall}

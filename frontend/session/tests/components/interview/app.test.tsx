@@ -31,6 +31,7 @@ vi.mock('@livekit/components-react', () => ({
   }),
   useRemoteParticipants: () => [],
   useChat: () => ({ chatMessages: [], send: vi.fn() }),
+  useMultibandTrackVolume: () => [0],
   SessionProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   RoomAudioRenderer: () => null,
 }))
