@@ -21,7 +21,7 @@ afterEach(() => {
 const cfg = { enabled: true, soft_violation_limit: 3, fullscreen_grace_seconds: 10 }
 
 describe('ProctoringGuard composition', () => {
-  it('a hard violation (tab switch) terminates the session', async () => {
+  it('a hard violation (tab switch) terminates the session', () => {
     vi.useFakeTimers()
     vi.spyOn(candidateSessionApi, 'proctoringEvent').mockResolvedValue({
       terminated: true, violation_count: 1, soft_violation_count: 0,

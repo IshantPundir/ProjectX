@@ -56,6 +56,8 @@ export function App({ appConfig, token, preCheck, mode }: Props) {
   const room = useMemo(() => new Room(), [])
 
   const setError = useCallback((code: string) => {
+    // Proctoring already routed the terminal outcome; ignore the racing
+    // RoomEvent.Disconnected that our own ctx.end() triggers.
     if (proctoringTerminatedRef.current) return
     setErrorCode(code)
     setOutcome('error')
@@ -125,6 +127,8 @@ export function App({ appConfig, token, preCheck, mode }: Props) {
   const session = useSession(tokenSource, { room })
 
   const onCompleted = useCallback(() => {
+    // Same guard as setError: a proctoring termination disconnects the room,
+    // which OutcomeWatcher would otherwise map (CLIENT_INITIATED) to 'completed'.
     if (proctoringTerminatedRef.current) return
     setOutcome('completed')
   }, [])

@@ -44,11 +44,11 @@ export function WelcomeView({
             <p className="text-xs font-semibold uppercase tracking-wider text-px-fg-2">
               This interview is monitored
             </p>
-            <ul className="mt-2 space-y-1 text-xs text-px-fg-3">
-              <li>• Stay in fullscreen for the whole interview.</li>
-              <li>• Don&apos;t switch tabs or leave this window.</li>
-              <li>• Keyboard use and developer tools are detected.</li>
-              <li>• Repeated or serious violations will end your interview.</li>
+            <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-px-fg-3">
+              <li>Stay in fullscreen for the whole interview.</li>
+              <li>Don&apos;t switch tabs or leave this window.</li>
+              <li>Keyboard use and developer tools are detected.</li>
+              <li>Repeated or serious violations will end your interview.</li>
             </ul>
           </div>
         )}
