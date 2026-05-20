@@ -162,8 +162,10 @@ endpoints; enforcement lands when the rate-limit middleware ships).
 **Backend-authoritative termination.** The backend — not the client — decides
 when a session is terminated. On receiving a hard violation event
 (`tab_switch`, `focus_loss`, `fullscreen_abandoned`, `devtools`) or when a
-soft-violation threshold is exceeded (default 3 strikes for `keyboard` and
-`fullscreen_exit`), the backend transitions the session `active → terminated`,
+soft-violation threshold is exceeded (`keyboard` / `fullscreen_exit`; the
+cumulative soft count must *exceed* the limit, so at the default limit of 3 the
+session ends on the 4th soft violation), the backend transitions the session
+`active → terminated`,
 stamps `proctoring_outcome`, and issues a best-effort LiveKit room cancellation.
 The candidate cannot prevent termination by suppressing subsequent calls after
 the first hard-violation POST is received.
