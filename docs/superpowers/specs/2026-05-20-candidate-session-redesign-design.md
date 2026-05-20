@@ -28,6 +28,20 @@ The sections below describe the original dark direction; read them as the layout
 
 ---
 
+## ⚠️ Revision 2026-05-20c — Light-theme polish (accent + squish + loader/reveal)
+
+Three post-merge tweaks after live review of Revision b (validated with the user via mockups: violet accent picked over indigo/ocean):
+
+1. **Accent → violet.** Replace the teal `--px-accent` family (a leftover from the old palette; reads off on the light theme) with violet in the `cool-light` block (and `layout.tsx` injection + `app-config.accent`): `--px-accent: #8B5CF6`, `--px-accent-2: #7C3AED`, `--px-accent-soft: #A78BFA`, `--px-accent-bright: #C4B5FD`, `--px-accent-glow: rgba(139,92,246,0.22)`, `--px-accent-tint: rgba(139,92,246,0.10)`, `--px-accent-line: rgba(139,92,246,0.22)`. White text on the full accent stays legible. The multi-hue aura is unaffected. Also flip the `WizardStepper` active step from `bg-px-accent-soft text-[#04211d]` → `bg-px-accent text-white` (matches the approved mockup; removes the stray hardcoded hex).
+
+2. **Fix the squished wizard aura.** The stock aura root is `aspect-square h-[112px]`; in `WizardFrame`'s `<aside>` (a flex column with default `align-items: stretch`) it stretches to the full pane width → a flat ribbon. Fix: render the wizard aura with `self-start` (so it sizes to its square) and bump to `size="lg"` (~224px). Live + welcome auras use `place-items-center`/`items-center` and are unaffected.
+
+3. **Aura loader + staggered reveal.** Replace `IntroLoader`'s spinner with the **Aura centered** (`size="xl"`, idle/connecting state) + a calm "Preparing your interviewer…" line, on the light glass background. When `AgentUIWithLoader`'s `hasSpoken` flips, the live session **reveals with a staggered entrance** (the live components in `LiveInterview` animate in on mount via `motion`: top bar drops in, aura settles, panel slides from the right, self-view + caption fade up — ~0.6s total). Honor `prefers-reduced-motion` (instant, no motion) using the existing `usePrefersReducedMotion` hook or `motion`'s reduced-motion handling. The `IntroLoader` lives inside the lazy live `App` chunk, so importing `Aura` there is fine (no pre-join bundle impact). The 15s no-show timeout + the `hasSpoken` gate logic in `AgentUIWithLoader` are unchanged.
+
+Everything else from Revision b stands.
+
+---
+
 ## Summary
 
 Complete visual + UX redesign of the candidate-facing interview surface. The current surface uses a warm-light "px" editorial theme; this replaces the candidate experience with a **dark cinematic glass** language built around a single hero element: a **bespoke "Liquid aurora" audio-reactive visualizer** that represents the AI interviewer's presence.
