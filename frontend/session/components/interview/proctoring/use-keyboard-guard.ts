@@ -19,6 +19,7 @@ export function useKeyboardGuard({ armed, onViolation }: GuardArgs): void {
   const lastFired = useRef(0)
   useEffect(() => {
     if (!armed) return
+    lastFired.current = 0 // reset the debounce window on (re-)arm
     const onKey = (e: KeyboardEvent) => {
       // Block save/print/find + the devtools-open shortcuts (the open is also
       // caught hard by useDevtoolsGuard; the keypress is recorded as soft).

@@ -14,14 +14,17 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
   ]),
   {
-    // The grace-timeout hook carries an intentional eslint-disable-next-line for
-    // react-hooks/exhaustive-deps. The rule is not enabled project-wide today
-    // (Next.js preset omits it), so the directive would be flagged as "unused".
-    // Suppress that meta-warning for this file so the protective comment survives
-    // without noise — and a future engineer who enables exhaustive-deps globally
-    // won't accidentally remove the disable and re-introduce the timer-reset bug.
+    // These files carry intentional eslint-disable-next-line directives for rules
+    // the Next.js preset does not enable project-wide, so each directive would be
+    // flagged as "unused". Suppress that meta-warning per-file so the protective
+    // comments survive without noise — and a future engineer who enables those
+    // rules globally won't accidentally strip the disable:
+    //   - use-agent-grace-timeout.ts: react-hooks/exhaustive-deps (timer-reset bug)
+    //   - use-devtools-guard.ts: no-debugger (the `debugger` statement is the
+    //     load-bearing devtools-detection trap, not stray debug code)
     files: [
       '**/use-agent-grace-timeout.ts',
+      '**/use-devtools-guard.ts',
     ],
     linterOptions: {
       reportUnusedDisableDirectives: 'off',
