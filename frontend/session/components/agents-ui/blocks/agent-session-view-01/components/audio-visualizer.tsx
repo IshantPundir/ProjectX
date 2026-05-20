@@ -5,13 +5,12 @@ import { useVoiceAssistant } from '@livekit/components-react';
 import { motion, type MotionProps } from 'motion/react';
 import { cn } from '@/lib/utils';
 
-import { AgentAudioVisualizerAura } from '@/components/agents-ui/agent-audio-visualizer-aura';
+import { LiquidAura } from '@/components/agents-ui/liquid-aura';
 import { AgentAudioVisualizerBar } from '@/components/agents-ui/agent-audio-visualizer-bar';
 import { AgentAudioVisualizerGrid } from '@/components/agents-ui/agent-audio-visualizer-grid';
 import { AgentAudioVisualizerRadial } from '@/components/agents-ui/agent-audio-visualizer-radial';
 import { AgentAudioVisualizerWave } from '@/components/agents-ui/agent-audio-visualizer-wave';
 
-const MotionAgentAudioVisualizerAura = motion.create(AgentAudioVisualizerAura);
 const MotionAgentAudioVisualizerBar = motion.create(AgentAudioVisualizerBar);
 const MotionAgentAudioVisualizerGrid = motion.create(AgentAudioVisualizerGrid);
 const MotionAgentAudioVisualizerRadial = motion.create(AgentAudioVisualizerRadial);
@@ -50,13 +49,11 @@ export function AudioVisualizer({
   switch (audioVisualizerType) {
     case 'aura': {
       return (
-        <MotionAgentAudioVisualizerAura
+        <LiquidAura
           state={state}
           audioTrack={audioTrack}
-          color={audioVisualizerColor}
-          colorShift={audioVisualizerColorShift}
-          className={cn('size-[300px] md:size-[450px]', className)}
-          {...props}
+          size="hero"
+          className={className}
         />
       );
     }

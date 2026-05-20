@@ -39,6 +39,6 @@ export const APP_CONFIG_DEFAULTS: AppConfig = {
   logo: '/projectx-logo.svg',
   startButtonText: 'Start interview',
   accent: '#0E6F63',
-  audioVisualizerType: 'bar',
+  audioVisualizerType: 'aura',
   agentName: undefined,
 }

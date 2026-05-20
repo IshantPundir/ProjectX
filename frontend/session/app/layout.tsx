@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Inter, Fraunces, JetBrains_Mono } from "next/font/google";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
 import { InterviewProviders } from "@/components/interview/providers";
 
@@ -46,7 +46,7 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${inter.variable} ${fraunces.variable} ${jetbrainsMono.variable} h-full antialiased`}
-      data-px-theme="warm-light"
+      data-px-theme="dark-cinematic"
       data-px-density="comfortable"
     >
       {/*
@@ -64,10 +64,14 @@ export default function RootLayout({
         <InterviewProviders>
           <div
             className="min-h-screen w-full"
-            style={{
-              background: "var(--px-bg)",
-              color: "var(--px-fg)",
-            }}
+            style={
+              {
+                // --px-accent default; per-tenant override applied closer to the surface later.
+                "--px-accent": "#0E6F63",
+                background: "var(--px-bg)",
+                color: "var(--px-fg)",
+              } as CSSProperties
+            }
           >
             {children}
           </div>
