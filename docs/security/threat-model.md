@@ -125,3 +125,99 @@ Trust boundaries touched:
 
 No PII enters logs (per the redactor table in the spec). Adapter `httpx` client
 strips `Authorization` and request/response bodies from logs.
+
+---
+
+## Candidate proctoring (2026-05-21)
+
+> **Spec reference:** `docs/superpowers/specs/2026-05-21-candidate-session-proctoring-design.md`
+
+Proctoring introduces a new candidate-facing write endpoint and a client-side
+detection layer. Both add trust-boundary surface that must be understood
+accurately — the feature is a deterrent and evidence-recorder, not a
+detection guarantee.
+
+### New surface: `POST /api/candidate-session/{token}/proctoring/event`
+
+**Auth.** The candidate JWT is carried in the URL path token segment and
+verified by the existing `AuthMiddleware`. The token's `used_at` flag is
+**not** checked here — the same property that `/state` and `/rejoin` rely on:
+only unknown or superseded JTIs are rejected. An active-session token already
+consumed by `/start` is therefore valid for proctoring calls, as intended.
+
+**Tenant scope.** The session is loaded filtered by both `id` and `tenant_id`
+from the verified token claims. A cross-tenant token produces a 404 — the
+same opacity as `/state` (no existence leak).
+
+**Data recorded.** Only the violation `kind`, `severity`, timestamps,
+`session_id`, and a `correlation_id` are stored — in
+`sessions.proctoring_violations` (JSONB append) and in the audit log. The
+candidate JWT bearer value never appears in any stored field. No PII fields
+are accepted or persisted by this endpoint.
+
+**Rate limits.** Declared as 60 requests/min per token and 120 requests/min
+per IP. Not yet enforced by middleware (consistent with other candidate-session
+endpoints; enforcement lands when the rate-limit middleware ships).
+
+**Backend-authoritative termination.** The backend — not the client — decides
+when a session is terminated. On receiving a hard violation event
+(`tab_switch`, `focus_loss`, `fullscreen_abandoned`, `devtools`) or when a
+soft-violation threshold is exceeded (default 3 strikes for `keyboard` and
+`fullscreen_exit`), the backend transitions the session `active → terminated`,
+stamps `proctoring_outcome`, and issues a best-effort LiveKit room cancellation.
+The candidate cannot prevent termination by suppressing subsequent calls after
+the first hard-violation POST is received.
+
+### Trust boundaries
+
+| Boundary | Element | STRIDE | Mitigation |
+|---|---|---|---|
+| Candidate browser → `/proctoring/event` | Client-side listeners emit violation events; the POST payload includes `kind`, `severity`, and timestamps. | T (spoofed or suppressed events — client controls the browser) | Backend is authoritative: it evaluates and terminates. Suppressed events cannot prevent already-received hard violations from acting. False negatives (suppression) are an accepted residual (see limitations below). |
+| Proctoring JSONB → recruiter review | `sessions.proctoring_violations` surfaces in the evaluation report. | I (false positive may mislead recruiter) | Every termination is recorded with its specific reason + timestamp. Recruiters are expected to treat a `devtools` flag as a signal to review, not as a conviction. Borderline-candidate invariant (human-review required) applies regardless of proctoring outcome. |
+| `proctoring_outcome` → session state machine | A proctoring termination sets `state = 'terminated'` atomically in the same UPDATE that stamps `proctoring_outcome`. | T (replay / double-termination) | The UPDATE filters on `state = 'active'`; a second call after state transitions is a silent no-op, not a duplicate audit row — same atomicity pattern as `record_session_result`. |
+| Devtools detection (client-side timing trap + size-delta) | `debugger` statement timing and `window.outerWidth - window.innerWidth` delta. | S (detection evasion) | Opening DevTools before navigation, disabling breakpoints in one click, or attaching a remote debugger evades both checks. Size-delta false positives (OS zoom, browser translate/password panels) are mitigated by capturing a baseline delta at arm time and preferring the `debugger` trap result where available. |
+
+### What proctoring deters (common cases)
+
+- Reflexive tab-switching or window-switching during the session.
+- Pressing F12 or right-clicking while the session is active.
+- A DevTools panel that is docked or already open at session start (caught by
+  the size-delta baseline arm and the `debugger` timing trap).
+- Minimising or leaving fullscreen without recovering.
+
+### Honest limitations — what proctoring cannot stop
+
+These must not be overstated in recruiter-facing UX copy:
+
+1. **Tampered client.** The candidate controls their browser. They can patch
+   out the event listeners, intercept and drop the `proctoringEvent` POST, or
+   never invoke the client-side code at all. The system optimises for the
+   un-tampered common case and records only what the backend actually receives.
+
+2. **DevTools evasion.** Opening DevTools before navigating to the session URL,
+   disabling all breakpoints (defeats the `debugger` timing trap in one click),
+   or attaching a remote debugger over Chrome DevTools Protocol bypasses
+   browser-side detection entirely. The `debugger` trap is a soft signal, not
+   a hard guarantee.
+
+3. **Second device / off-screen resources.** No browser API can observe a
+   second monitor, a phone, or printed notes placed beside the screen. These
+   are fully out of band.
+
+4. **Size-delta false positives.** OS-level accessibility zoom, a pinned
+   browser translate panel, a password-manager overlay, or a snap-docked
+   window can produce a size delta that resembles a docked DevTools pane. The
+   baseline-delta approach and preference for the `debugger` trap result reduce
+   this; they do not eliminate it. Every `devtools` termination carries its
+   triggering reason and timestamp so a recruiter can assess whether the flag
+   was plausible.
+
+### Conclusion
+
+Candidate proctoring is a deterrent layer and an evidence-recorder. It raises
+the cost of casual cheating, documents what the backend observed, and feeds
+into the recruiter review workflow. It is not a guarantee of integrity.
+Recruiter-facing UI copy must reflect this: proctoring flags are inputs to a
+human decision, not final verdicts. The borderline-candidate invariant (no
+auto-advancement or auto-rejection without human sign-off) remains in force
+regardless of proctoring outcome.
