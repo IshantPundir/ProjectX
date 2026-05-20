@@ -359,6 +359,123 @@
   --sidebar-ring: var(--px-accent);
 }
 
+[data-px-theme="dark-cinematic"] {
+  /* Surfaces — deep cinematic near-black */
+  --px-bg:        #07090d;
+  --px-bg-2:      #0d1117;
+  --px-surface:   #141a22;
+  --px-surface-2: #1a2330;
+  --px-surface-3: #232d3a;
+  --px-hairline:        rgba(255, 255, 255, 0.10);
+  --px-hairline-strong: rgba(255, 255, 255, 0.18);
+  --px-divider:         rgba(255, 255, 255, 0.06);
+
+  /* Ink — light on dark */
+  --px-fg:   #ECEAE4;
+  --px-fg-2: #C2BFB7;
+  --px-fg-3: #9A978F;
+  --px-fg-4: #6E6B64;
+  --px-fg-5: #4A4842;
+
+  /* Accent — teal (--px-accent is overridden per-tenant at runtime by layout.tsx) */
+  --px-accent:        #0E6F63;
+  --px-accent-2:      #0A564D;
+  --px-accent-soft:   #4FA99C;
+  --px-accent-bright: #7FE6D6;
+  --px-accent-glow:   rgba(79, 169, 156, 0.30);
+  --px-accent-tint:   rgba(79, 169, 156, 0.12);
+  --px-accent-line:   rgba(79, 169, 156, 0.24);
+
+  /* Cinematic backdrop (radial, glow centered behind the aura) */
+  --px-cine-backdrop: radial-gradient(120% 100% at 50% 36%, #18212e 0%, #0d1117 56%, #07090d 100%);
+
+  /* Glass surfaces (restrained — accents over the backdrop, not glass-everywhere) */
+  --px-glass-bg:        rgba(16, 21, 28, 0.55);
+  --px-glass-bg-strong: rgba(14, 18, 24, 0.62);
+  --px-glass-border:    rgba(255, 255, 255, 0.10);
+  --px-glass-blur:      18px;
+  --px-glass-shadow:    0 12px 40px rgba(0, 0, 0, 0.45);
+
+  /* Semantic — hues kept, alphas tuned for dark */
+  --px-ai:       #5AA0E6;
+  --px-ai-bg:    rgba(90, 160, 230, 0.12);
+  --px-ai-line:  rgba(90, 160, 230, 0.26);
+
+  --px-caution:     #E0A35A;
+  --px-caution-bg:  rgba(224, 163, 90, 0.12);
+  --px-caution-line:rgba(224, 163, 90, 0.26);
+
+  --px-ok:       #34C778;
+  --px-ok-bg:    rgba(52, 199, 120, 0.13);
+  --px-ok-line:  rgba(52, 199, 120, 0.28);
+
+  --px-danger:      #FF5A5A;
+  --px-danger-bg:   rgba(255, 90, 90, 0.12);
+  --px-danger-line: rgba(255, 90, 90, 0.26);
+
+  --px-human:      #B388D9;
+  --px-human-bg:   rgba(179, 136, 217, 0.12);
+  --px-human-line: rgba(179, 136, 217, 0.26);
+
+  /* Density rhythm (comfortable default) */
+  --px-row-h: 34px;
+  --px-row-py: 10px;
+  --px-group-gap: 14px;
+  --px-topbar-h: 48px;
+
+  /* Radii (px) */
+  --px-r-xs: 4px;
+  --px-r-sm: 6px;
+  --px-r-md: 8px;
+  --px-r-lg: 10px;
+  --px-r-xl: 14px;
+
+  /* Shadows — deep on dark */
+  --px-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.40);
+  --px-shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45), 0 2px 4px rgba(0, 0, 0, 0.30);
+  --px-shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.60), 0 6px 16px rgba(0, 0, 0, 0.40);
+
+  /* Motion */
+  --px-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --px-d1: 120ms;
+  --px-d2: 200ms;
+  --px-d3: 320ms;
+
+  /* ─── shadcn semantic tokens mapped to the dark palette ─── */
+  --background: var(--px-bg);
+  --foreground: var(--px-fg);
+  --card: var(--px-surface);
+  --card-foreground: var(--px-fg);
+  --popover: var(--px-surface);
+  --popover-foreground: var(--px-fg);
+  --primary: var(--px-accent);
+  --primary-foreground: #FFFFFF;
+  --secondary: var(--px-surface-2);
+  --secondary-foreground: var(--px-fg-2);
+  --muted: var(--px-bg-2);
+  --muted-foreground: var(--px-fg-3);
+  --accent: var(--px-surface-2);
+  --accent-foreground: var(--px-fg);
+  --destructive: var(--px-danger);
+  --border: var(--px-hairline);
+  --input: var(--px-surface-3);
+  --ring: var(--px-accent);
+  --chart-1: var(--px-accent);
+  --chart-2: var(--px-ai);
+  --chart-3: var(--px-caution);
+  --chart-4: var(--px-human);
+  --chart-5: var(--px-accent-soft);
+  --radius: 0.5rem;
+  --sidebar: var(--px-bg-2);
+  --sidebar-foreground: var(--px-fg);
+  --sidebar-primary: var(--px-accent);
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: var(--px-surface-2);
+  --sidebar-accent-foreground: var(--px-fg);
+  --sidebar-border: var(--px-hairline);
+  --sidebar-ring: var(--px-accent);
+}
+
 /* Density modifiers */
 [data-px-density="compact"]     { --px-row-h: 28px; --px-row-py: 6px;  --px-group-gap: 10px; }
 [data-px-density="comfortable"] { --px-row-h: 34px; --px-row-py: 10px; --px-group-gap: 14px; }
