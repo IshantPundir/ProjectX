@@ -682,7 +682,6 @@ def test_recent_reply_starts_passed_to_contextual_kinds() -> None:
     deliver_probe / clarify). Phrase variation is the highest-frequency
     AI-tell across turns; contextual kinds fire most often and benefit
     most from anti-repetition."""
-    from unittest.mock import MagicMock
     from app.modules.interview_engine.models.judge import (
         AdvancePayload, JudgeOutput, NextAction, TurnMetadata,
     )
@@ -695,15 +694,13 @@ def test_recent_reply_starts_passed_to_contextual_kinds() -> None:
         next_action_payload=AdvancePayload(target_question_id="q1"),
         turn_metadata=TurnMetadata(),
     )
-    queue = MagicMock()
-    queue.active_state.return_value = None
-    claims_pool = MagicMock()
-    claims_pool.snapshot.return_value.entries = []
+    queue = _queue_with_active()
+    claims_pool = CandidateClaimsPool(max_size=50)
 
     speaker_input = build_speaker_input(
         instruction_kind=InstructionKind.deliver_question,
         judge_output=judge_output,
-        active_question=MagicMock(text="some bank text"),
+        active_question=_q(text="some bank text"),
         queue=queue,
         claims_pool=claims_pool,
         recent_turns=[],
@@ -882,3 +879,42 @@ def test_is_post_acknowledge_dropped_on_non_deliver_question():
         is_post_acknowledge=True,
     )
     assert si.is_post_acknowledge is False
+
+
+# ---------------------------------------------------------------------------
+# Task B5 — difficulty threaded into SpeakerInput
+# ---------------------------------------------------------------------------
+
+
+def test_speaker_input_carries_difficulty():
+    from app.modules.interview_runtime.schemas import QuestionConfig, QuestionRubric
+    q = QuestionConfig(
+        id="q1", position=0, text="A question about the topic, walk me through it.",
+        signal_values=["s1"], estimated_minutes=2.0, is_mandatory=True, follow_ups=[],
+        positive_evidence=["a", "b", "c"], red_flags=["x", "y"],
+        rubric=QuestionRubric(excellent="x"*20, meets_bar="y"*20, below_bar="z"*20),
+        evaluation_hint="Look for specifics.", question_kind="technical_depth",
+        difficulty="easy",
+    )
+    si = build_speaker_input(
+        instruction_kind=InstructionKind.deliver_question,
+        judge_output=_advance_judge_output(),
+        active_question=q,
+        queue=_queue_with_active(),
+        claims_pool=CandidateClaimsPool(max_size=50),
+        recent_turns=[], persona_name="Arjun",
+        last_candidate_utterance="...",
+    )
+    assert si.difficulty == "easy"
+
+    # Negative case: active_question=None → difficulty is None.
+    si_none = build_speaker_input(
+        instruction_kind=InstructionKind.deliver_question,
+        judge_output=_advance_judge_output(),
+        active_question=None,
+        queue=_queue_with_active(),
+        claims_pool=CandidateClaimsPool(max_size=50),
+        recent_turns=[], persona_name="Arjun",
+        last_candidate_utterance="...",
+    )
+    assert si_none.difficulty is None

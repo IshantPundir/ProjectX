@@ -125,6 +125,15 @@ class SpeakerInput(BaseModel):
             "Drives PATH dispatch inside speaker/clarify.txt."
         ),
     )
+    difficulty: Literal["easy", "medium", "hard"] | None = Field(
+        default=None,
+        description=(
+            "Active question difficulty. Modulates Speaker tone per the "
+            "DIFFICULTY section in _preamble.txt: 'easy' = warmer, more "
+            "scaffolding in framing; 'hard' = crisp, expects rigor. None "
+            "falls back to neutral tone."
+        ),
+    )
     # `available_openers` was retired on 2026-05-19 (Scope C restructure).
     # The hand-curated rotation produced robotic repetition in production
     # — the model anchored on the first opener ("See —") regardless of

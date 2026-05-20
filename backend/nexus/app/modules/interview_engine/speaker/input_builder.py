@@ -236,4 +236,5 @@ def build_speaker_input(
         hiring_company_name=role_context_hiring_company_payload,
         role_summary=role_context_role_summary_payload,
         jd_text=role_context_jd_text_payload,
+        difficulty=(active_question.difficulty if active_question else None),
     )
