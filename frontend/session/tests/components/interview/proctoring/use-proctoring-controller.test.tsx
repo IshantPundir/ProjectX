@@ -1,0 +1,58 @@
+import { act, renderHook, waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import { candidateSessionApi } from '@/lib/api/candidate-session'
+import { useProctoringController } from '@/components/interview/proctoring/use-proctoring-controller'
+
+vi.mock('@livekit/components-react', () => ({
+  useSessionContext: () => ({ end: vi.fn() }),
+}))
+vi.mock('sonner', () => ({ toast: { warning: vi.fn(), error: vi.fn() } }))
+
+afterEach(() => vi.restoreAllMocks())
+
+const cfg = { enabled: true, soft_violation_limit: 3, fullscreen_grace_seconds: 10 }
+
+describe('useProctoringController', () => {
+  it('hard violation ends locally even if the POST rejects (fail-safe)', async () => {
+    vi.spyOn(candidateSessionApi, 'proctoringEvent').mockRejectedValue(new Error('offline'))
+    const onTerminated = vi.fn()
+    const { result } = renderHook(() =>
+      useProctoringController({ token: 't', config: cfg, onTerminated }),
+    )
+    await act(async () => {
+      await result.current.report('devtools')
+    })
+    expect(onTerminated).toHaveBeenCalledWith('devtools')
+  })
+
+  it('soft violation terminates only when backend says terminated', async () => {
+    const spy = vi
+      .spyOn(candidateSessionApi, 'proctoringEvent')
+      .mockResolvedValue({ terminated: true, violation_count: 4, soft_violation_count: 4 })
+    const onTerminated = vi.fn()
+    const { result } = renderHook(() =>
+      useProctoringController({ token: 't', config: cfg, onTerminated }),
+    )
+    await act(async () => {
+      await result.current.report('keyboard')
+    })
+    expect(spy).toHaveBeenCalled()
+    await waitFor(() => expect(onTerminated).toHaveBeenCalledWith('soft_threshold_exceeded'))
+  })
+
+  it('terminates only once', async () => {
+    vi.spyOn(candidateSessionApi, 'proctoringEvent').mockResolvedValue({
+      terminated: true, violation_count: 1, soft_violation_count: 0,
+    })
+    const onTerminated = vi.fn()
+    const { result } = renderHook(() =>
+      useProctoringController({ token: 't', config: cfg, onTerminated }),
+    )
+    await act(async () => {
+      await result.current.report('tab_switch')
+      await result.current.report('focus_loss')
+    })
+    expect(onTerminated).toHaveBeenCalledTimes(1)
+  })
+})
