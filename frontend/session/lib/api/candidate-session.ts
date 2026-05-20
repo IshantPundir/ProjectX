@@ -18,6 +18,7 @@ export type SessionState =
   | 'completed'
   | 'cancelled'
   | 'error'
+  | 'terminated' // proctoring policy ended the session mid-interview
 
 export interface PreCheckResponse {
   session_id: string

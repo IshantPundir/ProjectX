@@ -194,3 +194,41 @@ async def test_wrong_tenant_raises_session_not_found(db: AsyncSession, monkeypat
             occurred_at=datetime.now(UTC),
             correlation_id="cid-cross-tenant",
         )
+
+
+# ---------------------------------------------------------------------------
+# _build_proctoring_config — the block embedded into /start, /rejoin, /pre-check
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_build_proctoring_config_uses_lazy_defaults(db: AsyncSession):
+    """A tenant with no tenant_settings row → schema defaults (enabled, 3, 10)."""
+    cfg = await session_service._build_proctoring_config(db, uuid.uuid4())
+    assert cfg.enabled is True
+    assert cfg.soft_violation_limit == 3
+    assert cfg.fullscreen_grace_seconds == 10
+
+
+@pytest.mark.asyncio
+async def test_build_proctoring_config_reads_tenant_row(db: AsyncSession):
+    """A tenant_settings row's proctoring columns flow into the config block."""
+    from app.modules.tenant_settings.models import TenantSettingsModel
+
+    # seed_minimal_session creates a real client (tenant) the FK can reference.
+    _sess, tenant_id = await seed_minimal_session(db, state="active")
+    db.add(
+        TenantSettingsModel(
+            tenant_id=tenant_id,
+            engine_knockout_policy="close_polite",
+            proctoring_enabled=False,
+            proctoring_soft_violation_limit=5,
+            proctoring_fullscreen_grace_seconds=20,
+        )
+    )
+    await db.flush()
+
+    cfg = await session_service._build_proctoring_config(db, tenant_id)
+    assert cfg.enabled is False
+    assert cfg.soft_violation_limit == 5
+    assert cfg.fullscreen_grace_seconds == 20

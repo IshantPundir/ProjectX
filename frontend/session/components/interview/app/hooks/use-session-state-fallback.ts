@@ -6,7 +6,7 @@ import { candidateSessionApi } from '@/lib/api/candidate-session'
 import type { CandidateSessionState } from '@/lib/api/candidate-session'
 
 const POLL_INTERVAL_MS = 5000
-const TERMINAL_STATES = new Set(['error', 'completed', 'cancelled'])
+const TERMINAL_STATES = new Set(['error', 'completed', 'cancelled', 'terminated'])
 
 /**
  * Polls `/api/candidate-session/{token}/state` every 5s while enabled.
