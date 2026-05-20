@@ -51,7 +51,6 @@ export default defineConfig({
         ...coverageConfigDefaults.exclude,
         '**/components/ui/**',
         '**/components/agents-ui/**',
-        '**/components/ai-elements/**',
       ],
     },
   },

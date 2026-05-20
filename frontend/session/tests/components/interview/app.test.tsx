@@ -52,10 +52,6 @@ vi.mock('@/components/agents-ui/start-audio-button', () => ({
   StartAudioButton: () => null,
 }))
 
-vi.mock('@/components/agents-ui/blocks/agent-session-view-01', () => ({
-  AgentSessionView_01: () => <div data-testid="session-view" />,
-}))
-
 import { App } from '@/components/interview/app/app'
 import { APP_CONFIG_DEFAULTS } from '@/app-config'
 import type { PreCheckResponse } from '@/lib/api/candidate-session'
