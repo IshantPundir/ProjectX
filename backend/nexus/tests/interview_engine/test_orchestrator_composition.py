@@ -855,6 +855,125 @@ async def test_judge_call_audit_carries_full_input_summary(
 
 
 # ---------------------------------------------------------------------------
+# A10 — still_confused_count threaded from queue into judge input
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_still_confused_count_threads_into_judge_input(
+    make_session_config, make_question,
+) -> None:
+    """Composition guard: orchestrator reads still_confused_count from the
+    queue snapshot and passes the correct value into build_judge_input as
+    active_question_still_confused_count, which lands in the judge.call
+    audit event's input_summary.
+
+    Gap: after the rename consecutive_dont_know_count → still_confused_count,
+    the old test that loosely covered this was deleted. The count LOGIC is
+    tested in test_still_confused_escalation.py; build_judge_input emitting
+    the field is tested in test_input_builder.py. But no test asserted that
+    the ORCHESTRATOR reads the right field and passes the right VALUE into
+    the Judge. A regression in that read would be silent.
+
+    Session layout:
+      Turn 0 (on_enter): deliver_first_question — count starts at 0.
+      Turn 1 (confused clarify): Judge emits clarify/broad_rephrase with
+          candidate_still_confused=True → State Engine increments
+          still_confused_count to 1 at the END of turn 1.
+      Turn 2 (probe): the judge.call event for this turn carries the input
+          the Judge saw at the START of turn 2, which must include
+          active_question_still_confused_count=1.
+
+    Asserts: there are exactly 2 judge.call events; the SECOND one has
+    input_summary['active_question_still_confused_count'] == 1.
+    """
+    from app.modules.interview_engine.models.judge import ClarifyKind, ClarifyPayload
+    from app.modules.interview_engine.event_kinds import JUDGE_CALL
+
+    judge_outputs = [
+        # Turn 1: candidate is generically confused → clarify/broad_rephrase.
+        # candidate_still_confused=True causes the State Engine to increment
+        # still_confused_count to 1 at the end of this turn.
+        JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
+            observations=[],
+            candidate_claims=[],
+            next_action=NextAction.clarify,
+            next_action_payload=ClarifyPayload(clarify_kind=ClarifyKind.broad_rephrase),
+            turn_metadata=TurnMetadata(candidate_still_confused=True),
+        ),
+        # Turn 2: candidate gives a substantive answer → probe.
+        # The Judge input for this turn must carry still_confused_count=1.
+        JudgeOutput(
+            reasoning="Test-synthesized reasoning string for unit test fixture.",
+            observations=[],
+            candidate_claims=[],
+            next_action=NextAction.probe,
+            next_action_payload=ProbePayload(probe_id="0"),
+            turn_metadata=TurnMetadata(),
+        ),
+    ]
+
+    speaker_outputs = [
+        # on_enter Phase A: intro_brief.
+        "Hi Alice, I'm Arjun. Quick screen — about 10 minutes.",
+        # on_enter Phase B: deliver_first_question.
+        "Walk me through how you'd design a Jira workflow.",
+        # Turn 1: clarify rephrase utterance.
+        "Sure — let me put the question another way.",
+        # Turn 2: probe follow-up.
+        "And how would you handle permission escalations?",
+    ]
+
+    orch, agent = _build_orch(
+        make_session_config=make_session_config,
+        make_question=make_question,
+        scripted_judge_outputs=judge_outputs,
+        scripted_speaker_outputs=speaker_outputs,
+        knockout_signal="jira_admin",
+    )
+
+    await orch.on_enter(agent)
+    # Turn 1: generic confusion → increment still_confused_count to 1.
+    await orch.on_user_turn_completed(
+        agent, MagicMock(),
+        _msg("Sorry, I'm not sure what you're asking."),
+    )
+    # Turn 2: substantive answer — Judge input must see still_confused_count=1.
+    await orch.on_user_turn_completed(
+        agent, MagicMock(),
+        _msg("I'd model permissions as workflow conditions on the transitions."),
+    )
+
+    judge_call_events = [
+        e for e in orch._collector.events if e.kind == JUDGE_CALL
+    ]
+    assert len(judge_call_events) == 2, (
+        f"Expected exactly 2 judge.call events (one per candidate turn); "
+        f"got {len(judge_call_events)}."
+    )
+
+    # The SECOND judge.call event is the one for turn 2. Its input_summary
+    # must carry active_question_still_confused_count=1, reflecting turn 1's
+    # increment. The first event (turn 1) must carry 0 (count not yet
+    # incremented at call time for that turn).
+    turn1_summary = judge_call_events[0].payload["input_summary"]
+    assert turn1_summary["active_question_still_confused_count"] == 0, (
+        "Turn 1 judge.call must see still_confused_count=0 (count not yet "
+        f"incremented at call time); got "
+        f"{turn1_summary['active_question_still_confused_count']!r}."
+    )
+
+    turn2_summary = judge_call_events[1].payload["input_summary"]
+    assert turn2_summary["active_question_still_confused_count"] == 1, (
+        "Turn 2 judge.call must see still_confused_count=1 — the orchestrator "
+        "must read still_confused_count from the queue snapshot and thread it "
+        "into build_judge_input(active_question_still_confused_count=...). "
+        f"Got {turn2_summary['active_question_still_confused_count']!r}."
+    )
+
+
+# ---------------------------------------------------------------------------
 # Task 5 — state.snapshot emitted before judge.call
 # ---------------------------------------------------------------------------
 
