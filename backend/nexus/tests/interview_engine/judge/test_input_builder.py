@@ -190,6 +190,7 @@ def test_judge_input_field_order_stable_first_dynamic_last():
         "active_question_red_flags",
         "active_question_rubric",
         "active_question_evaluation_hint",
+        "active_question_difficulty",
         "active_question_signal_metadata",
         "next_pending_question_id",
         "next_pending_question_is_mandatory",
@@ -299,3 +300,35 @@ def test_active_signal_meta_accepts_valid_types():
     for t in ("experience", "credential", "competency", "behavioral"):
         m = ActiveSignalMeta(value="x", type=t, knockout=False, priority="required")
         assert m.type == t
+
+
+def test_judge_input_carries_active_question_difficulty():
+    q = QuestionConfig(
+        id="q1", position=0, text="A question about the topic, walk me through it.",
+        signal_values=["s1"], estimated_minutes=2.0, is_mandatory=True, follow_ups=[],
+        positive_evidence=["a", "b", "c"], red_flags=["x", "y"],
+        rubric=QuestionRubric(excellent="x"*20, meets_bar="y"*20, below_bar="z"*20),
+        evaluation_hint="Look for specifics.", question_kind="technical_depth",
+        difficulty="hard",
+    )
+    payload = build_judge_input(
+        active_question=q,
+        ledger_snapshot=SignalLedgerSnapshot(entries=[], snapshots={}, next_seq=1),
+        queue_snapshot=QuestionQueueSnapshot(),
+        claims_snapshot=ClaimsPoolSnapshot(),
+        recent_turns=[], candidate_utterance="...", time_remaining_seconds=600,
+        next_pending_question=None,
+    )
+    assert payload.active_question_difficulty == "hard"
+
+
+def test_judge_input_difficulty_none_when_no_active_question():
+    payload = build_judge_input(
+        active_question=None,
+        ledger_snapshot=SignalLedgerSnapshot(entries=[], snapshots={}, next_seq=1),
+        queue_snapshot=QuestionQueueSnapshot(),
+        claims_snapshot=ClaimsPoolSnapshot(),
+        recent_turns=[], candidate_utterance="...", time_remaining_seconds=600,
+        next_pending_question=None,
+    )
+    assert payload.active_question_difficulty is None

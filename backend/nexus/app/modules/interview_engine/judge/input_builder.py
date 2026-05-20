@@ -71,6 +71,16 @@ class JudgeInputPayload(BaseModel):
     active_question_red_flags: list[str] = Field(default_factory=list)
     active_question_rubric: dict[str, str] = Field(default_factory=dict)
     active_question_evaluation_hint: str | None = None
+    active_question_difficulty: Literal["easy", "medium", "hard"] | None = Field(
+        default=None,
+        description=(
+            "Difficulty of the active question. Calibrates grading strictness: "
+            "on 'easy', accept an engaged answer even if thin; on 'hard', "
+            "demand concrete depth (tradeoffs/numbers) before advancing. The "
+            "State Engine enforces the advance gate and push-back cap "
+            "deterministically; this is grading guidance for the Judge."
+        ),
+    )
     active_question_signal_metadata: list[ActiveSignalMeta] = Field(
         default_factory=list,
         description=(
@@ -209,6 +219,9 @@ def build_judge_input(
         ),
         active_question_evaluation_hint=(
             active_question.evaluation_hint if active_question else None
+        ),
+        active_question_difficulty=(
+            active_question.difficulty if active_question else None
         ),
         active_question_signal_metadata=list(active_signal_metadata or []),
         next_pending_question_id=next_id,
