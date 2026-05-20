@@ -359,89 +359,65 @@
   --sidebar-ring: var(--px-accent);
 }
 
-[data-px-theme="dark-cinematic"] {
-  /* Surfaces — deep cinematic near-black */
-  --px-bg:        #07090d;
-  --px-bg-2:      #0d1117;
-  --px-surface:   #141a22;
-  --px-surface-2: #1a2330;
-  --px-surface-3: #232d3a;
-  --px-hairline:        rgba(255, 255, 255, 0.10);
-  --px-hairline-strong: rgba(255, 255, 255, 0.18);
-  --px-divider:         rgba(255, 255, 255, 0.06);
+[data-px-theme="cool-light"] {
+  /* Surfaces — soft cool white */
+  --px-bg:        #F4F6FB;
+  --px-bg-2:      #EBEEF6;
+  --px-surface:   #FFFFFF;
+  --px-surface-2: #F2F4FA;
+  --px-surface-3: #E2E7F1;
+  --px-hairline:        rgba(38, 50, 76, 0.12);
+  --px-hairline-strong: rgba(38, 50, 76, 0.20);
+  --px-divider:         rgba(38, 50, 76, 0.07);
 
-  /* Ink — light on dark */
-  --px-fg:   #ECEAE4;
-  --px-fg-2: #C2BFB7;
-  --px-fg-3: #9A978F;
-  --px-fg-4: #6E6B64;
-  --px-fg-5: #4A4842;
+  /* Ink — cool slate */
+  --px-fg:   #1F2733;
+  --px-fg-2: #3D4654;
+  --px-fg-3: #5B6573;
+  --px-fg-4: #8A93A3;
+  --px-fg-5: #BAC1CD;
 
-  /* Accent — teal (--px-accent is overridden per-tenant at runtime by layout.tsx) */
+  /* Accent — teal (overridable per tenant) */
   --px-accent:        #0E6F63;
   --px-accent-2:      #0A564D;
   --px-accent-soft:   #4FA99C;
   --px-accent-bright: #7FE6D6;
-  --px-accent-glow:   rgba(79, 169, 156, 0.30);
-  --px-accent-tint:   rgba(79, 169, 156, 0.12);
-  --px-accent-line:   rgba(79, 169, 156, 0.24);
+  --px-accent-glow:   rgba(14, 111, 99, 0.22);
+  --px-accent-tint:   rgba(14, 111, 99, 0.10);
+  --px-accent-line:   rgba(14, 111, 99, 0.22);
 
-  /* Cinematic backdrop (radial, glow centered behind the aura) */
-  --px-cine-backdrop: radial-gradient(120% 100% at 50% 36%, #18212e 0%, #0d1117 56%, #07090d 100%);
+  /* App base wash (.px-cine-bg is transparent so the animated bg shows through) */
+  --px-app-base: linear-gradient(160deg, #F6F8FD 0%, #EEF1F8 100%);
 
-  /* Glass surfaces (restrained — accents over the backdrop, not glass-everywhere) */
-  --px-glass-bg:        rgba(16, 21, 28, 0.55);
-  --px-glass-bg-strong: rgba(14, 18, 24, 0.62);
-  --px-glass-border:    rgba(255, 255, 255, 0.10);
-  --px-glass-blur:      18px;
-  --px-glass-shadow:    0 12px 40px rgba(0, 0, 0, 0.45);
+  /* Glass — prominent frosted white */
+  --px-glass-bg:        rgba(255, 255, 255, 0.45);
+  --px-glass-bg-strong: rgba(255, 255, 255, 0.62);
+  --px-glass-border:    rgba(255, 255, 255, 0.65);
+  --px-glass-blur:      22px;
+  --px-glass-shadow:    0 8px 30px rgba(40, 50, 70, 0.12);
 
-  /* Semantic — hues kept, alphas tuned for dark */
-  --px-ai:       #5AA0E6;
-  --px-ai-bg:    rgba(90, 160, 230, 0.12);
-  --px-ai-line:  rgba(90, 160, 230, 0.26);
+  /* Semantic — tuned for light */
+  --px-ai:       #2B6CB8; --px-ai-bg: rgba(43,108,184,0.10); --px-ai-line: rgba(43,108,184,0.22);
+  --px-caution:  #B5740F; --px-caution-bg: rgba(181,116,15,0.10); --px-caution-line: rgba(181,116,15,0.24);
+  --px-ok:       #0A8F5B; --px-ok-bg: rgba(10,143,91,0.10); --px-ok-line: rgba(10,143,91,0.26);
+  --px-danger:   #C0362B; --px-danger-bg: rgba(192,54,43,0.10); --px-danger-line: rgba(192,54,43,0.24);
+  --px-human:    #6D4FB8; --px-human-bg: rgba(109,79,184,0.10); --px-human-line: rgba(109,79,184,0.22);
 
-  --px-caution:     #E0A35A;
-  --px-caution-bg:  rgba(224, 163, 90, 0.12);
-  --px-caution-line:rgba(224, 163, 90, 0.26);
+  /* Density rhythm */
+  --px-row-h: 34px; --px-row-py: 10px; --px-group-gap: 14px; --px-topbar-h: 48px;
 
-  --px-ok:       #34C778;
-  --px-ok-bg:    rgba(52, 199, 120, 0.13);
-  --px-ok-line:  rgba(52, 199, 120, 0.28);
+  /* Radii */
+  --px-r-xs: 4px; --px-r-sm: 6px; --px-r-md: 8px; --px-r-lg: 10px; --px-r-xl: 14px;
 
-  --px-danger:      #FF5A5A;
-  --px-danger-bg:   rgba(255, 90, 90, 0.12);
-  --px-danger-line: rgba(255, 90, 90, 0.26);
-
-  --px-human:      #B388D9;
-  --px-human-bg:   rgba(179, 136, 217, 0.12);
-  --px-human-line: rgba(179, 136, 217, 0.26);
-
-  /* Density rhythm (comfortable default) */
-  --px-row-h: 34px;
-  --px-row-py: 10px;
-  --px-group-gap: 14px;
-  --px-topbar-h: 48px;
-
-  /* Radii (px) */
-  --px-r-xs: 4px;
-  --px-r-sm: 6px;
-  --px-r-md: 8px;
-  --px-r-lg: 10px;
-  --px-r-xl: 14px;
-
-  /* Shadows — deep on dark */
-  --px-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.40);
-  --px-shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45), 0 2px 4px rgba(0, 0, 0, 0.30);
-  --px-shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.60), 0 6px 16px rgba(0, 0, 0, 0.40);
+  /* Shadows */
+  --px-shadow-sm: 0 1px 2px rgba(40, 50, 70, 0.06);
+  --px-shadow-md: 0 8px 24px rgba(40, 50, 70, 0.10), 0 2px 4px rgba(40, 50, 70, 0.06);
+  --px-shadow-lg: 0 24px 60px rgba(40, 50, 70, 0.16), 0 6px 16px rgba(40, 50, 70, 0.08);
 
   /* Motion */
-  --px-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
-  --px-d1: 120ms;
-  --px-d2: 200ms;
-  --px-d3: 320ms;
+  --px-ease: cubic-bezier(0.2, 0.7, 0.2, 1); --px-d1: 120ms; --px-d2: 200ms; --px-d3: 320ms;
 
-  /* ─── shadcn semantic tokens mapped to the dark palette ─── */
+  /* ─── shadcn semantic tokens ─── */
   --background: var(--px-bg);
   --foreground: var(--px-fg);
   --card: var(--px-surface);
@@ -1101,104 +1077,50 @@ select.px-input::-ms-expand { display: none; }
   }
 }
 
-/* ───────────────────────── Cinematic glass (dark-cinematic theme) ───────────────────────── */
 
-.px-cine-bg {
-  background: var(--px-cine-backdrop);
-}
+/* ───────────────────────── Light glass + ambient background ───────────────────────── */
+
+/* .px-cine-bg is transparent: the animated background (mounted in layout) shows through. */
+.px-cine-bg { background: transparent; }
+.px-app-base { background: var(--px-app-base); }
 
 .px-glass {
   background: var(--px-glass-bg);
   border: 1px solid var(--px-glass-border);
-  -webkit-backdrop-filter: blur(var(--px-glass-blur));
-  backdrop-filter: blur(var(--px-glass-blur));
-  box-shadow: var(--px-glass-shadow);
+  -webkit-backdrop-filter: blur(var(--px-glass-blur)) saturate(1.4);
+  backdrop-filter: blur(var(--px-glass-blur)) saturate(1.4);
+  box-shadow: var(--px-glass-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.7);
 }
 .px-glass-strong { background: var(--px-glass-bg-strong); }
 
-/* Glass pill — used by progress chip, Live pill, control chips */
 .px-glass-pill {
   background: var(--px-glass-bg);
   border: 1px solid var(--px-glass-border);
-  -webkit-backdrop-filter: blur(var(--px-glass-blur));
-  backdrop-filter: blur(var(--px-glass-blur));
+  -webkit-backdrop-filter: blur(var(--px-glass-blur)) saturate(1.4);
+  backdrop-filter: blur(var(--px-glass-blur)) saturate(1.4);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
   border-radius: 999px;
 }
 
-/* ───────────────────────── Liquid aurora visualizer ───────────────────────── */
-
-.liquid-aura {
-  --amp: 0;                       /* 0..1 audio amplitude, set inline by the component */
-  position: relative;
-  display: grid;
-  place-items: center;
-  color: var(--px-accent);        /* tenant accent flows in here */
-  pointer-events: none;
-}
-.liquid-aura__glow,
-.liquid-aura__body,
-.liquid-aura__sheen { position: absolute; border-radius: 50%; }
-
-.liquid-aura__glow {
-  inset: -22%;
-  background: radial-gradient(circle,
-    color-mix(in srgb, var(--px-accent-soft) 55%, transparent),
-    transparent 62%);
-  filter: blur(26px);
-  opacity: calc(0.55 + var(--amp) * 0.45);
-  animation: liquid-aura-breathe 5s var(--px-ease) infinite;
-}
-.liquid-aura__body {
-  inset: 12%;
-  filter: blur(8px);
-  transform: scale(calc(1 + var(--amp) * 0.10));
-  animation: liquid-aura-morph 8s var(--px-ease) infinite;
-}
-.liquid-aura__body::before {
-  content: "";
-  position: absolute; inset: 0; border-radius: inherit;
-  background: conic-gradient(from 0deg,
-    var(--px-accent),
-    var(--px-accent-soft),
-    var(--px-accent-bright),
-    var(--px-accent-soft),
-    var(--px-accent));
-  animation: liquid-aura-spin 9s linear infinite;
-}
-.liquid-aura__sheen {
-  inset: 26%;
-  background: radial-gradient(circle at 38% 32%, rgba(255,255,255,0.5), transparent 46%);
-  filter: blur(4px);
-  mix-blend-mode: screen;
-  animation: liquid-aura-breathe 4s var(--px-ease) infinite;
+/* Multi-hue gradient mark — panel avatars + the reduced-motion aura fallback */
+.aura-mark {
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, #2fd0bb, #3aa7ff, #8a7bff, #ff7bd5, #ffb86b, #6fe6a8, #2fd0bb);
+  box-shadow: 0 0 10px rgba(80, 140, 220, 0.35);
 }
 
-/* State modulation (data-lk-state mirrors the LiveKit AgentState) */
-.liquid-aura[data-lk-state="thinking"] .liquid-aura__body::before { animation-duration: 4.5s; }
-.liquid-aura[data-lk-state="thinking"] .liquid-aura__glow { opacity: calc(0.4 + var(--amp) * 0.3); }
-.liquid-aura[data-lk-state="listening"] .liquid-aura__body::before { animation-duration: 12s; }
-.liquid-aura[data-lk-state="speaking"] .liquid-aura__glow { opacity: calc(0.7 + var(--amp) * 0.3); }
-.liquid-aura[data-lk-state="connecting"] .liquid-aura__glow,
-.liquid-aura[data-lk-state="initializing"] .liquid-aura__glow { opacity: 0.35; }
-
-@keyframes liquid-aura-spin { to { transform: rotate(360deg); } }
-@keyframes liquid-aura-breathe {
-  0%, 100% { transform: scale(0.93); }
-  50%      { transform: scale(1.07); }
+/* Animated ambient background (component renders .px-bg-blob spans) */
+.px-bg-blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(48px);
+  opacity: 0.55;
+  animation: px-drift 17s ease-in-out infinite alternate;
 }
-@keyframes liquid-aura-morph {
-  0%, 100% { border-radius: 50% 50% 50% 50% / 55% 55% 45% 45%; }
-  33%      { border-radius: 58% 42% 55% 45% / 45% 55% 45% 55%; }
-  66%      { border-radius: 45% 55% 48% 52% / 52% 44% 56% 48%; }
+@keyframes px-drift {
+  from { transform: translate(0, 0) scale(1); }
+  to   { transform: translate(5%, 4%) scale(1.15); }
 }
-
 @media (prefers-reduced-motion: reduce) {
-  .liquid-aura__glow,
-  .liquid-aura__body,
-  .liquid-aura__body::before,
-  .liquid-aura__sheen {
-    animation: none !important;
-    transform: none !important;
-  }
-  .liquid-aura__glow { opacity: 0.5; }
+  .px-bg-blob { animation: none; }
 }

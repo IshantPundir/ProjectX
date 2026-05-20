@@ -46,7 +46,7 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${inter.variable} ${fraunces.variable} ${jetbrainsMono.variable} h-full antialiased`}
-      data-px-theme="dark-cinematic"
+      data-px-theme="cool-light"
       data-px-density="comfortable"
     >
       {/*
@@ -68,7 +68,7 @@ export default function RootLayout({
               {
                 // --px-accent default; per-tenant override applied closer to the surface later.
                 "--px-accent": "#0E6F63",
-                background: "var(--px-bg)",
+                background: "var(--px-app-base)",
                 color: "var(--px-fg)",
               } as CSSProperties
             }
