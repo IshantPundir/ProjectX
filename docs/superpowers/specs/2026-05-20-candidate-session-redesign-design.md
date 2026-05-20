@@ -8,6 +8,26 @@
 
 ---
 
+## ⚠️ Revision 2026-05-20b — Light glassmorphism (supersedes the dark direction)
+
+The "dark cinematic glass" + bespoke "Liquid aurora" direction below was built and merged, then **reversed after live review**: the dark blue-teal palette read as "generic AI" and felt intimidating to candidates, and the user prefers LiveKit's stock visualizer over the custom one. The redesign is being **re-skinned** — **layout, components, wiring, voice-only/no-toggle invariant, End-interview wiring, the minimized "Interview Session" panel, the split two-pane wizard, terminal screens, per-tenant accent, frontend-only scope, and all constraints below are UNCHANGED.** Only the visual skin + the visualizer change. Validated with the user via a new mockup (cool-light palette picked over warm-light).
+
+**What changes (everything else in this doc still applies):**
+
+| Aspect | Was (dark) | Now (Revision b) |
+|---|---|---|
+| Theme | `dark-cinematic` (near-black + teal glow) | **`cool-light`** — soft white/lavender; light text; prominent **frosted-white glass** (stronger blur, visible edges + inner highlight) |
+| Background | static radial backdrop | **animated ambient background** — large soft-blurred color blobs drifting slowly behind the glass; **frozen under `prefers-reduced-motion`** |
+| Hero visualizer | bespoke CSS `LiquidAura` | **LiveKit stock `AgentAudioVisualizerAura`** (WebGL shader, restored from git: also `react-shader-toy.tsx` + `hooks/agents-ui/use-agent-audio-visualizer-aura.ts`) with **`colorShift: 2`**, `themeMode="light"`, `color` from `app-config` (default left multi-hue/cyan). |
+| Small avatar mark (panel header) | `LiquidAura size="mark"` | a lightweight **CSS multi-hue gradient circle** — NOT a second WebGL canvas (perf). Only the hero renders the stock shader; at most one shader on screen at a time. |
+| Glass prominence | restrained | **more prominent** — `rgba(255,255,255,~.45)` + `blur(22px) saturate` + visible white border + inner top highlight + soft warm/cool shadow. |
+
+**Implementation deltas (vs. the merged dark build):** rewrite the theme block to `cool-light` light tokens + beef up `.px-glass*`; add a reduced-motion-safe `AnimatedBackground` component mounted behind the live surface and the wizard frame; restore the three stock-aura files from git history (deleted in commit `85bebdc`); replace `LiquidAura` usage in `AuraStage`, `WelcomeView`, and `WizardFrame` with the stock aura (hero sizes) and the CSS gradient mark in `InterviewSessionPanel`; set `audioVisualizerColorShift: 2` (+ a chosen `color`) in `app-config`; switch `layout.tsx` to the light theme attribute and pass `themeMode="light"`; **delete `LiquidAura` + its test**; update the aura/theme tests accordingly. The stock shader must degrade gracefully under `prefers-reduced-motion` (static frame / paused) and remain lazy-loaded so the pre-join bundle stays light.
+
+The sections below describe the original dark direction; read them as the layout/behavior contract with the visual skin replaced per the table above.
+
+---
+
 ## Summary
 
 Complete visual + UX redesign of the candidate-facing interview surface. The current surface uses a warm-light "px" editorial theme; this replaces the candidate experience with a **dark cinematic glass** language built around a single hero element: a **bespoke "Liquid aurora" audio-reactive visualizer** that represents the AI interviewer's presence.
