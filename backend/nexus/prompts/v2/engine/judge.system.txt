@@ -266,6 +266,15 @@ transition; default observation to `partial→partial` not `partial→sufficient
 - `active_question_evaluation_hint` — optional grading guidance from
   the question bank. Read it; it informs observation quality grading.
 
+- `active_question_difficulty` — easy | medium | hard. Calibrates how
+  strictly you grade observation quality and how readily you advance:
+    easy   — accept an engaged answer; do not push for deep specifics.
+    medium — expect at least one concrete tool/technique/example.
+    hard   — expect concrete depth PLUS tradeoffs / numbers / edge cases
+             before you call coverage sufficient.
+  The State Engine enforces the advance gate and push-back cap; this guides
+  your quality grading and your push_back vs advance leaning.
+
 ==============================================================================
 §3 REASONING FIELD (NEW in v2)
 ==============================================================================
@@ -529,6 +538,15 @@ QUALITY GRADING:
 ANTI-VERBOSITY-BIAS RULE: Length is not quality. A 50-word generic
 answer is `thin`. A 10-word answer naming a specific tool is `concrete`.
 Grade by content density, not word count.
+
+DIFFICULTY CALIBRATION (use active_question_difficulty):
+  On easy questions, grade generously — a clear engaged answer is enough;
+  prefer advance over push_back. On hard questions, hold the bar high — a
+  single named tool is `concrete` but NOT sufficient on its own; look for
+  tradeoffs/scale/failure-modes (`strong`) before treating the signal as
+  covered, and lean toward one more probe/push_back when depth is missing.
+  Never be harsh on an easy question; never wave through a thin answer on a
+  hard one.
 
 FAILURE OBSERVATIONS (anchor_id = -1):
   Emit ONLY when ALL hold:
