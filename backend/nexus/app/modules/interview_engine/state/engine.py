@@ -44,7 +44,7 @@ from app.modules.interview_runtime import (
 
 # Phase 9.4 — matches "I don't know" intent variants at the head of a
 # short utterance. Used by StateEngine to bump
-# QuestionState.consecutive_dont_know_count. Permissive on what follows
+# QuestionState.still_confused_count. Permissive on what follows
 # the "I don't know" head (variants like "I don't know how to answer",
 # "I don't know what to say", "I'm not sure how to respond"), but
 # bounded by an overall length cap (60 chars) so a long substantive
@@ -451,7 +451,7 @@ class StateEngine:
 
         # 4a. Phase 9.4 — track consecutive "I don't know" utterances on
         # the active question. This count is surfaced to the Judge via
-        # JudgeInputPayload.active_question_consecutive_dont_know_count
+        # JudgeInputPayload.active_question_still_confused_count
         # so the Judge can escalate to acknowledge_no_experience after
         # the first I-don't-know on an experience-class signal instead
         # of looping on clarify (the death-spiral pattern from session
@@ -459,9 +459,9 @@ class StateEngine:
         # know utterance.
         if self._queue.active_state() is not None and candidate_utterance_text:
             if _is_dont_know_utterance(candidate_utterance_text):
-                self._queue.increment_active_dont_know_count()
+                self._queue.increment_active_still_confused_count()
             else:
-                self._queue.reset_active_dont_know_count()
+                self._queue.reset_active_still_confused_count()
 
         # 5. Resolve next action with self-healing.
         action = judge_output.next_action

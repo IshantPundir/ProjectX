@@ -131,7 +131,7 @@ def test_judge_prompt_documents_dont_know_count_input_field():
     so it can escalate to acknowledge_no_experience after first
     'I don't know' on an experience signal."""
     body = _loader.get("engine/judge.system")
-    assert "active_question_consecutive_dont_know_count" in body
+    assert "active_question_still_confused_count" in body
     # The escalation rule must be documented.
     body_lower = body.lower()
     assert (

@@ -145,7 +145,7 @@ transition; default observation to `partial→partial` not `partial→sufficient
 
                 Never use clarify for greetings (redirect) or for
                 hint-fishing (redirect). The
-                consecutive_dont_know_count >= 1 escalation still
+                still_confused_count >= 1 escalation still
                 applies regardless of clarify_kind — at that
                 count, emit acknowledge_no_experience.
 
@@ -251,7 +251,7 @@ transition; default observation to `partial→partial` not `partial→sufficient
 - `active_question_push_back_count` — pushes already applied to the
   active question. Hard cap = 2.
 
-- `active_question_consecutive_dont_know_count` — consecutive "I
+- `active_question_still_confused_count` — consecutive "I
   don't know" / "I'm not sure" candidate utterances on this question
   (resets on any substantive answer). When >= 1, do NOT emit clarify
   again — emit acknowledge_no_experience per §4.
@@ -339,7 +339,7 @@ CLARIFY
   In ALL cases the Speaker handles the response — it dispatches on
   clarify_kind in clarify.txt (5 PATH sections). The Judge picks
   the kind from the candidate's utterance shape per §1.3 above.
-  Hard rule: if active_question_consecutive_dont_know_count >= 1,
+  Hard rule: if active_question_still_confused_count >= 1,
   do NOT emit clarify again regardless of kind — escalate to
   ACKNOWLEDGE_NO_EXPERIENCE.
 
@@ -442,7 +442,7 @@ ACKNOWLEDGE_NO_EXPERIENCE
   is the candidate's verbatim no-experience statement).
 
   CONSECUTIVE-DON'T-KNOW ESCALATION (load-bearing):
-    When active_question_consecutive_dont_know_count >= 1, the
+    When active_question_still_confused_count >= 1, the
     candidate already said "I don't know" on this question once and
     we already gave them a clarify. If they say it AGAIN, emit
     acknowledge_no_experience — do NOT clarify a second time. The
@@ -450,7 +450,7 @@ ACKNOWLEDGE_NO_EXPERIENCE
     don't know → ...) is the worst UX failure mode in this product.
 
   FIRST "I don't know" disambiguation (uses signal_metadata.type):
-    If consecutive_dont_know_count == 0 AND candidate said "I don't
+    If still_confused_count == 0 AND candidate said "I don't
     know" / "I'm not sure" for the first time:
       - If active signal type ∈ {experience, credential} AND
         utterance short (≤ 10 words, no follow-on substance):

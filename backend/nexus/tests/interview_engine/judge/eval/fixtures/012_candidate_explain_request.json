@@ -34,7 +34,7 @@
     "next_pending_question_id": null,
     "next_pending_question_is_mandatory": null,
     "active_question_push_back_count": 0,
-    "active_question_consecutive_dont_know_count": 0,
+    "active_question_still_confused_count": 0,
     "active_question_remaining_probes": {
       "0": "What evidence and environment data would you gather in week 1?"
     },

@@ -39,7 +39,7 @@
     "next_pending_question_id": null,
     "next_pending_question_is_mandatory": null,
     "active_question_push_back_count": 1,
-    "active_question_consecutive_dont_know_count": 0,
+    "active_question_still_confused_count": 0,
     "active_question_remaining_probes": {},
     "signal_coverage": {
       "8+ years overall experience in enterprise integration design and implementation": {

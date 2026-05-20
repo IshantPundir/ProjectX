@@ -1484,7 +1484,7 @@ def test_recent_reply_starts_empty_at_session_start():
 
 
 # ---------------------------------------------------------------------------
-# Phase 9.4 — Fix #2: consecutive_dont_know_count + I-don't-know detection
+# Phase 9.4 — Fix #2: still_confused_count + I-don't-know detection
 # ---------------------------------------------------------------------------
 
 
@@ -1525,7 +1525,7 @@ def test_dont_know_regex_does_not_match_substantive_answers():
 
 
 def test_dont_know_count_increments_on_match():
-    """State Engine bumps consecutive_dont_know_count on each matching
+    """State Engine bumps still_confused_count on each matching
     utterance against the active question. Reset on substantive answer."""
     eng = _engine()
     _activate_q1(eng)
@@ -1537,7 +1537,7 @@ def test_dont_know_count_increments_on_match():
             candidate_utterance_text=utt, elapsed_ms=1000 + i * 1000,
         )
         snap = eng.queue_snapshot()
-        assert snap.questions[0].consecutive_dont_know_count == i + 1, (
+        assert snap.questions[0].still_confused_count == i + 1, (
             f"After utterance {i+1} the count must be {i+1}"
         )
 
@@ -1553,7 +1553,7 @@ def test_dont_know_count_resets_on_substantive_answer():
             judge_output=_judge_push_back("vague_answer"),
             candidate_utterance_text=utt, elapsed_ms=1000 + i * 1000,
         )
-    assert eng.queue_snapshot().questions[0].consecutive_dont_know_count == 2
+    assert eng.queue_snapshot().questions[0].still_confused_count == 2
 
     # Substantive answer.
     eng.process_judge_output(
@@ -1562,11 +1562,11 @@ def test_dont_know_count_resets_on_substantive_answer():
         candidate_utterance_text="I would write a validator that checks PR status.",
         elapsed_ms=4000,
     )
-    assert eng.queue_snapshot().questions[0].consecutive_dont_know_count == 0
+    assert eng.queue_snapshot().questions[0].still_confused_count == 0
 
 
 def test_dont_know_count_threaded_into_orchestrator_judge_input():
-    """The orchestrator reads consecutive_dont_know_count off the active
+    """The orchestrator reads still_confused_count off the active
     QuestionState and passes it to build_judge_input — without this, the
     Judge prompt's escalation rule has no signal to fire on."""
     # This is exercised via the orchestrator's on_user_turn_completed path,
@@ -1582,7 +1582,7 @@ def test_dont_know_count_threaded_into_orchestrator_judge_input():
     snap = eng.queue_snapshot()
     assert snap.active_index == 0
     # Orchestrator reads exactly this field for the Judge input.
-    assert snap.questions[snap.active_index].consecutive_dont_know_count == 1
+    assert snap.questions[snap.active_index].still_confused_count == 1
 
 
 # ---------------------------------------------------------------------------

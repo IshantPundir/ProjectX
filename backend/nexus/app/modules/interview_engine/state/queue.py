@@ -208,35 +208,36 @@ class QuestionQueue:
             return 0
         return active.push_back_count
 
-    def increment_active_dont_know_count(self) -> int:
-        """Bump consecutive_dont_know_count on the active question. Returns
-        the new value. Phase 9.4 — drives the Judge prompt's 'escalate
-        to acknowledge_no_experience after first I-don't-know on an
-        experience signal' rule. Returns 0 silently when there is no
-        active question (defensive — should not happen in normal flow)."""
+    def increment_active_still_confused_count(self) -> int:
+        """Bump still_confused_count on the active question. Returns
+        the new value. Drives the Judge prompt's escalation rule when the
+        candidate signals generic confusion / cannot engage
+        (candidate_still_confused=true on TurnMetadata). Returns 0
+        silently when there is no active question (defensive — should not
+        happen in normal flow)."""
         active = self.active_state()
         if active is None:
             return 0
-        active.consecutive_dont_know_count += 1
-        return active.consecutive_dont_know_count
+        active.still_confused_count += 1
+        return active.still_confused_count
 
-    def reset_active_dont_know_count(self) -> None:
-        """Reset consecutive_dont_know_count on the active question to 0.
-        Called when the candidate gives any non-'I don't know' utterance
-        on the active question (the streak is broken). No-op when there
-        is no active question."""
+    def reset_active_still_confused_count(self) -> None:
+        """Reset still_confused_count on the active question to 0.
+        Called when the candidate gives any turn where
+        candidate_still_confused is not set (the streak is broken).
+        No-op when there is no active question."""
         active = self.active_state()
         if active is None:
             return
-        active.consecutive_dont_know_count = 0
+        active.still_confused_count = 0
 
-    def active_dont_know_count(self) -> int:
-        """Read consecutive_dont_know_count on the active question. Returns
+    def active_still_confused_count(self) -> int:
+        """Read still_confused_count on the active question. Returns
         0 if no active question (matches Judge prompt default)."""
         active = self.active_state()
         if active is None:
             return 0
-        return active.consecutive_dont_know_count
+        return active.still_confused_count
 
     def record_quality_observation(self, *, quality: str) -> None:
         """Increment ``quality_observations[quality]`` on the active question.

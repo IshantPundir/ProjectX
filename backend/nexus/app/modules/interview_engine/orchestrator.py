@@ -783,8 +783,8 @@ class InterviewOrchestrator:
             if queue.active_index is not None
             else 0
         )
-        active_dont_know_count = (
-            queue.questions[queue.active_index].consecutive_dont_know_count
+        active_still_confused_count = (
+            queue.questions[queue.active_index].still_confused_count
             if queue.active_index is not None
             else 0
         )
@@ -798,7 +798,7 @@ class InterviewOrchestrator:
             active_signal_metadata=active_signal_meta,
             active_remaining_probes=remaining_probes_dict,
             active_question_push_back_count=active_push_back_count,
-            active_question_consecutive_dont_know_count=active_dont_know_count,
+            active_question_still_confused_count=active_still_confused_count,
         )
 
         # v2: orchestrator pre-filter for `repeat` intent. Bypasses the Judge

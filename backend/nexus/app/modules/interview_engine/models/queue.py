@@ -35,19 +35,16 @@ class QuestionState(BaseModel):
             "via JudgeInputPayload.active_question_push_back_count."
         ),
     )
-    consecutive_dont_know_count: int = Field(
+    still_confused_count: int = Field(
         ge=0,
         default=0,
         description=(
-            "Number of consecutive candidate utterances on this question "
-            "that match the 'I don't know' family (regex in "
-            "state/engine.py::_DONT_KNOW_PATTERNS). Reset to 0 when the "
-            "candidate gives any other utterance OR when the question "
-            "advances. Surfaced to the Judge via "
-            "JudgeInputPayload.active_question_consecutive_dont_know_count "
-            "so the Judge can escalate to acknowledge_no_experience after "
-            "the first 'I don't know' on an experience-class signal "
-            "instead of looping on clarify."
+            "Consecutive turns on this question where the Judge set "
+            "turn_metadata.candidate_still_confused=true (generic confusion "
+            "/ cannot engage). Reset to 0 on any other turn or on advance. "
+            "The State Engine escalates to acknowledge-and-advance once this "
+            "reaches 2 (i.e. on the 3rd consecutive confusion). Surfaced to "
+            "the Judge via JudgeInputPayload.active_question_still_confused_count."
         ),
     )
     quality_observations: dict[str, int] = Field(

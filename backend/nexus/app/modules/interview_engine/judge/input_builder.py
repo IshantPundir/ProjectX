@@ -111,18 +111,19 @@ class JudgeInputPayload(BaseModel):
             "(if probes remain) or advance — do NOT emit push_back again."
         ),
     )
-    active_question_consecutive_dont_know_count: int = Field(
+    active_question_still_confused_count: int = Field(
         default=0,
         ge=0,
         description=(
-            "Consecutive 'I don't know' / 'I'm not sure' / 'no idea' "
-            "candidate utterances on the active question (resets on any "
-            "substantive answer or question advance). The Judge prompt §3 "
-            "acknowledge_no_experience entry instructs: when this is >= 1 "
-            "AND the active signal is experience/credential class, prefer "
-            "acknowledge_no_experience over clarify — the candidate has "
-            "signaled they cannot answer; further clarify will loop "
-            "(observed in session f665498d turns 14-18)."
+            "Consecutive turns on the active question where the Judge set "
+            "turn_metadata.candidate_still_confused=true (generic confusion "
+            "/ cannot engage). Resets to 0 on any other turn or on advance. "
+            "The State Engine escalates to acknowledge-and-advance once this "
+            "reaches 2 (i.e. on the 3rd consecutive confusion). The Judge "
+            "prompt uses this field to inform escalation decisions — when "
+            "this is >= 2 AND the active signal is experience/credential "
+            "class, prefer acknowledge_no_experience over clarify to avoid "
+            "looping on a candidate who genuinely cannot engage."
         ),
     )
     active_question_remaining_probes: dict[str, str] = Field(
@@ -173,7 +174,7 @@ def build_judge_input(
     active_signal_metadata: list[ActiveSignalMeta] | None = None,
     active_remaining_probes: dict[str, str] | None = None,
     active_question_push_back_count: int = 0,
-    active_question_consecutive_dont_know_count: int = 0,
+    active_question_still_confused_count: int = 0,
 ) -> JudgeInputPayload:
     """Project the State Engine's full snapshots into the slim JudgeInputPayload.
 
@@ -215,7 +216,7 @@ def build_judge_input(
         next_pending_question_id=next_id,
         next_pending_question_is_mandatory=next_is_mandatory,
         active_question_push_back_count=active_question_push_back_count,
-        active_question_consecutive_dont_know_count=active_question_consecutive_dont_know_count,
+        active_question_still_confused_count=active_question_still_confused_count,
         active_question_remaining_probes=dict(active_remaining_probes or {}),
         signal_coverage=dict(ledger_snapshot.snapshots),
         candidate_claims=list(claims_snapshot.entries),

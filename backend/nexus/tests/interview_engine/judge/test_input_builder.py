@@ -194,7 +194,7 @@ def test_judge_input_field_order_stable_first_dynamic_last():
         "next_pending_question_id",
         "next_pending_question_is_mandatory",
         "active_question_push_back_count",
-        "active_question_consecutive_dont_know_count",
+        "active_question_still_confused_count",
         "active_question_remaining_probes",
         "signal_coverage",
         "candidate_claims",

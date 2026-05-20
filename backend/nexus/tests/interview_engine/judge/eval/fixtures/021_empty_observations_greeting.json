@@ -37,7 +37,7 @@
     "next_pending_question_id": "606b1bcb-9205-4509-96d0-468326b73c5d",
     "next_pending_question_is_mandatory": true,
     "active_question_push_back_count": 0,
-    "active_question_consecutive_dont_know_count": 0,
+    "active_question_still_confused_count": 0,
     "active_question_remaining_probes": {
       "0": "How would you handle retries and idempotency to avoid duplicate orders during transient failures?",
       "1": "What connectivity approach would you use to reach on-prem (e.g., agent/VPN/reverse proxy), and how would you secure it?",
