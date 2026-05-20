@@ -1413,7 +1413,7 @@ class InterviewOrchestrator:
         BEFORE process_judge_output mutates it.
 
         Lets replay tools reconstruct any turn's input state to the State
-        Engine: the queue (active question, push_back/dont_know counts,
+        Engine: the queue (active question, push_back/still_confused counts,
         probes_remaining_ids), the ledger (per-signal coverage), the
         claims pool, and the lifecycle (state, knockout_failures, time
         remaining).

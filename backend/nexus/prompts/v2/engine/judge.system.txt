@@ -144,10 +144,7 @@ transition; default observation to `partial→partial` not `partial→sufficient
                     (rubric fishing — §1 REDIRECT).
 
                 Never use clarify for greetings (redirect) or for
-                hint-fishing (redirect). The
-                still_confused_count >= 1 escalation still
-                applies regardless of clarify_kind — at that
-                count, emit acknowledge_no_experience.
+                hint-fishing (redirect).
 
 4. ACKNOWLEDGE_NO_EXPERIENCE — candidate EXPLICITLY disclosed no
                 experience with the active signal ("I've never used X",
@@ -232,8 +229,7 @@ transition; default observation to `partial→partial` not `partial→sufficient
 
 - `active_question_signal_metadata` — per-signal records: `value`,
   `type` (experience|credential|competency|behavioral), `knockout`
-  (bool), `priority` (required|preferred). `type` informs the first
-  I-don't-know disambiguation (see §4 acknowledge_no_experience).
+  (bool), `priority` (required|preferred).
 
 - `active_question_remaining_probes` — probe_id → probe text. Probes
   already consumed are NOT in this map. When emitting `probe`,
@@ -251,10 +247,10 @@ transition; default observation to `partial→partial` not `partial→sufficient
 - `active_question_push_back_count` — pushes already applied to the
   active question. Hard cap = 2.
 
-- `active_question_still_confused_count` — consecutive "I
-  don't know" / "I'm not sure" candidate utterances on this question
-  (resets on any substantive answer). When >= 1, do NOT emit clarify
-  again — emit acknowledge_no_experience per §4.
+- `active_question_still_confused_count` — number of consecutive turns on
+  this question where you flagged candidate_still_confused. The State Engine
+  acknowledges and moves on automatically once this reaches 2; you do NOT
+  decide that escalation.
 
 - `signal_coverage` — current coverage state per signal_value (none /
   partial / sufficient / failed).
@@ -339,9 +335,15 @@ CLARIFY
   In ALL cases the Speaker handles the response — it dispatches on
   clarify_kind in clarify.txt (5 PATH sections). The Judge picks
   the kind from the candidate's utterance shape per §1.3 above.
-  Hard rule: if active_question_still_confused_count >= 1,
-  do NOT emit clarify again regardless of kind — escalate to
-  ACKNOWLEDGE_NO_EXPERIENCE.
+  SET turn_metadata.candidate_still_confused = true WHEN the candidate's
+  confusion is GENERIC and they cannot engage with the question as posed
+  ("I don't understand", "I still don't get it", "I didn't quite follow")
+  — typically clarify_kind = broad_rephrase or probe_context. Do NOT set it
+  for ENGAGED, specific clarifies (term_definition, use_case_anchor,
+  role_context, concept_explanation) — those are productive questions, not
+  stuckness. The flag only pairs with next_action = clarify (validator-enforced).
+  The State Engine counts consecutive still-confused turns and, after 2,
+  acknowledges and moves the candidate to the next question for you.
 
 PUSH_BACK
   Last answer was on-topic but THIN, EVASIVE, or PARTIAL. The candidate
@@ -440,24 +442,6 @@ ACKNOWLEDGE_NO_EXPERIENCE
   candidate_disclosed_knockout=true if the signal is knockout=true.
   Emit a failure Observation per §5 (anchor_id = -1, evidence_quote
   is the candidate's verbatim no-experience statement).
-
-  CONSECUTIVE-DON'T-KNOW ESCALATION (load-bearing):
-    When active_question_still_confused_count >= 1, the
-    candidate already said "I don't know" on this question once and
-    we already gave them a clarify. If they say it AGAIN, emit
-    acknowledge_no_experience — do NOT clarify a second time. The
-    death-spiral pattern (clarify → I don't know → clarify → I
-    don't know → ...) is the worst UX failure mode in this product.
-
-  FIRST "I don't know" disambiguation (uses signal_metadata.type):
-    If still_confused_count == 0 AND candidate said "I don't
-    know" / "I'm not sure" for the first time:
-      - If active signal type ∈ {experience, credential} AND
-        utterance short (≤ 10 words, no follow-on substance):
-          → prefer acknowledge_no_experience.
-      - If active signal type ∈ {competency, behavioral}:
-          → clarify is acceptable on FIRST occurrence ONLY.
-    When in doubt: clarify once, then escalate per the rule above.
 
 POLITE_CLOSE
   Emit when:

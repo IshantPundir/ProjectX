@@ -126,22 +126,25 @@ def test_judge_prompt_forbids_empty_target_on_advance():
     assert "empty" in body and "target_question_id" in body
 
 
-def test_judge_prompt_documents_dont_know_count_input_field():
-    """Phase 9.4 Fix #2 — Judge must know about the new input field
-    so it can escalate to acknowledge_no_experience after first
-    'I don't know' on an experience signal."""
+def test_judge_prompt_documents_still_confused_count_input_field():
+    """A8 — Judge must know about the active_question_still_confused_count
+    input field and the new contract: Judge sets candidate_still_confused,
+    State Engine owns the 2-attempt cap and escalation (not the Judge).
+    The old 'death-spiral' / CONSECUTIVE-DON'T-KNOW escalation language
+    is deleted in A8 because it conflicted with the validator rule that
+    candidate_still_confused is only valid with next_action=clarify."""
     body = _loader.get("engine/judge.system")
     assert "active_question_still_confused_count" in body
-    # The escalation rule must be documented.
+    # The new flag rule must be documented — Judge sets the flag, engine counts.
     body_lower = body.lower()
-    assert (
-        "consecutive-i-dont-know escalation" in body_lower
-        or "consecutive i-don't-know escalation" in body_lower
-        or "death-spiral" in body_lower
-        or "consecutive" in body_lower
-    )
-    # Acknowledge action must be the explicit escape hatch.
+    assert "candidate_still_confused" in body_lower
+    assert "state engine" in body_lower  # engine owns the escalation
+    # Acknowledge action must still be documented (explicit no-experience trigger).
     assert "acknowledge_no_experience" in body
+    # The old Judge-owned escalation rules must be GONE.
+    assert "death-spiral" not in body_lower
+    assert "consecutive-don't-know escalation" not in body_lower
+    assert "still_confused_count >= 1" not in body
 
 
 def test_judge_prompt_repeat_trigger_lists_repeat_and_again_keywords():
