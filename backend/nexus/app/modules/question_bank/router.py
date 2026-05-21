@@ -248,6 +248,9 @@ def _question_to_response(q: StageQuestion) -> QuestionResponse:
         rubric=QuestionRubric(**q.rubric),
         evaluation_hint=q.evaluation_hint,
         edited_by_recruiter=q.edited_by_recruiter,
+        question_kind=q.question_kind,
+        primary_signal=q.primary_signal,
+        difficulty=q.difficulty,
         created_at=q.created_at,
         updated_at=q.updated_at,
     )

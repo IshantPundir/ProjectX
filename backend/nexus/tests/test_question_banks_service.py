@@ -223,12 +223,15 @@ def _make_generated_question(
     signal_values: list[str] | None = None,
     estimated_minutes: float = 5.0,
     is_mandatory: bool = False,
-    question_kind: str = "technical_depth",
+    question_kind: str = "technical_scenario",
+    primary_signal: str | None = None,
 ) -> GeneratedQuestion:
+    _signal_values = signal_values or ["Python"]
     return GeneratedQuestion(
         position=position,
         text=text,
-        signal_values=signal_values or ["Python"],
+        primary_signal=primary_signal or _signal_values[0],
+        signal_values=_signal_values,
         estimated_minutes=estimated_minutes,
         is_mandatory=is_mandatory,
         follow_ups=["What tools did you use?"],
@@ -1116,11 +1119,11 @@ async def test_write_generated_questions_persists_question_kind(db):
         ),
         _make_generated_question(
             position=1, signal_values=["Conflict resolution"],
-            question_kind="behavioral_star",
+            question_kind="behavioral",
         ),
         _make_generated_question(
             position=2, signal_values=["Python"],
-            question_kind="technical_depth",
+            question_kind="technical_scenario",
         ),
     ]
     await write_generated_questions(
@@ -1129,8 +1132,8 @@ async def test_write_generated_questions_persists_question_kind(db):
     persisted = await get_bank_questions(db, bank.id)
     by_signal = {p.signal_values[0]: p for p in persisted}
     assert by_signal["UK shift"].question_kind == "compliance_binary"
-    assert by_signal["Conflict resolution"].question_kind == "behavioral_star"
-    assert by_signal["Python"].question_kind == "technical_depth"
+    assert by_signal["Conflict resolution"].question_kind == "behavioral"
+    assert by_signal["Python"].question_kind == "technical_scenario"
 
 
 @pytest.mark.asyncio
@@ -1148,19 +1151,19 @@ async def test_replace_question_in_place_updates_question_kind(db):
     _instance, stage = await _make_pipeline_and_stage(db, job=job)
     bank = await ensure_bank_exists(db, stage=stage, job=job)
 
-    # Seed with a technical_depth question
+    # Seed with a technical_scenario question
     await write_generated_questions(
         db, bank=bank,
         questions=[
             _make_generated_question(
                 position=0, signal_values=["Python"],
-                question_kind="technical_depth",
+                question_kind="technical_scenario",
             ),
         ],
         source="ai_generated",
     )
     seeded = (await get_bank_questions(db, bank.id))[0]
-    assert seeded.question_kind == "technical_depth"
+    assert seeded.question_kind == "technical_scenario"
 
     # Regen with a compliance_binary
     new_data = _make_generated_question(
@@ -1195,7 +1198,7 @@ async def test_create_recruiter_question_lands_with_default_kind(db):
         text="What testing tools have you used in production?",
         signal_values=["Python"],
     )
-    # The Python-level attribute reads back as 'technical_depth' WITHOUT
+    # The Python-level attribute reads back as 'technical_scenario' WITHOUT
     # needing a session refresh — the explicit kwarg in service.py
     # establishes that.
-    assert question.question_kind == "technical_depth"
+    assert question.question_kind == "technical_scenario"

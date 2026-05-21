@@ -539,6 +539,7 @@ async def test_regenerate_question_actor_publishes_event(
     regen_question = GeneratedQuestion(
         position=0,
         text="A brand-new Python question about async programming in production.",
+        primary_signal="Python",
         signal_values=["Python"],
         estimated_minutes=5.0,
         is_mandatory=False,
@@ -555,7 +556,7 @@ async def test_regenerate_question_actor_publishes_event(
             below_bar="Only tutorial-level async knowledge with no production use.",
         ),
         evaluation_hint="Strong answer names specific async patterns used in production.",
-        question_kind="technical_depth",
+        question_kind="technical_scenario",
     )
     llm_output = SingleQuestionOutput(
         question=regen_question,

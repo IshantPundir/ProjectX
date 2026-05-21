@@ -25,6 +25,7 @@ def _valid_generated_question(**overrides) -> dict:
     base = dict(
         position=0,
         text="Walk me through a production incident you handled.",
+        primary_signal="Incident response",
         signal_values=["Incident response"],
         estimated_minutes=5.0,
         is_mandatory=False,
@@ -37,7 +38,7 @@ def _valid_generated_question(**overrides) -> dict:
         red_flags=["No specific tools", "Blames team"],
         rubric=_valid_rubric(),
         evaluation_hint="Strong answer names tools, describes structured approach.",
-        question_kind="technical_depth",
+        question_kind="technical_scenario",
     )
     base.update(overrides)
     return base
@@ -105,17 +106,16 @@ def test_generated_question_requires_question_kind():
 
 
 @pytest.mark.parametrize(
-    "kind", ["technical_depth", "behavioral_star", "compliance_binary"]
+    "kind", ["experience_check", "behavioral", "technical_scenario", "compliance_binary"]
 )
 def test_generated_question_accepts_each_generator_kind(kind):
-    """All 3 generator-allowed kinds parse cleanly."""
+    """All 4 generator-allowed kinds parse cleanly."""
     q = GeneratedQuestion(**_valid_generated_question(question_kind=kind))
     assert q.question_kind == kind
 
 
 def test_generated_question_rejects_open_culture():
-    """`open_culture` is reserved for the engine-side Literal only — the
-    generator must not emit it. instructor enforces this on every LLM call."""
+    """`open_culture` is not a valid kind in the new taxonomy."""
     with pytest.raises(ValidationError):
         GeneratedQuestion(**_valid_generated_question(question_kind="open_culture"))
 
@@ -124,3 +124,43 @@ def test_generated_question_rejects_unknown_kind():
     """Any out-of-Literal value is rejected."""
     with pytest.raises(ValidationError):
         GeneratedQuestion(**_valid_generated_question(question_kind="not_a_kind"))
+
+
+def test_generated_question_new_kind_and_primary_signal():
+    from app.modules.question_bank.schemas import GeneratedQuestion, QuestionRubric
+
+    q = GeneratedQuestion(
+        position=0,
+        text="Walk me through a REST connector you built — how did you handle auth?",
+        primary_signal="rest_api_integration",
+        signal_values=["rest_api_integration", "auth_flows"],
+        estimated_minutes=3.0,
+        is_mandatory=True,
+        follow_ups=["How did you handle pagination?", "What about retries on 5xx?"],
+        positive_evidence=["names a real auth scheme", "describes token refresh", "mentions error handling"],
+        red_flags=["vague 'just used the SDK'", "no error handling"],
+        rubric=QuestionRubric(
+            excellent="Names scheme, refresh, and failure handling concretely.",
+            meets_bar="Describes the auth scheme and basic error handling.",
+            below_bar="Cannot describe how auth worked at all.",
+        ),
+        evaluation_hint="Looking for hands-on connector ownership, not SDK hand-waving.",
+        question_kind="technical_scenario",
+    )
+    assert q.primary_signal == "rest_api_integration"
+    assert q.question_kind == "technical_scenario"
+
+
+def test_generated_question_rejects_old_kind():
+    import pytest
+    from pydantic import ValidationError
+    from app.modules.question_bank.schemas import GeneratedQuestion, QuestionRubric
+
+    with pytest.raises(ValidationError):
+        GeneratedQuestion(
+            position=0, text="x" * 20, primary_signal="s", signal_values=["s"],
+            estimated_minutes=1.0, is_mandatory=False, follow_ups=[],
+            positive_evidence=["a", "b", "c"], red_flags=["x", "y"],
+            rubric=QuestionRubric(excellent="a" * 20, meets_bar="b" * 20, below_bar="c" * 20),
+            evaluation_hint="e" * 10, question_kind="technical_depth",  # old → rejected
+        )

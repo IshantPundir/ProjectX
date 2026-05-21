@@ -8,10 +8,11 @@ from app.modules.question_bank.service import (
 from app.modules.question_bank.schemas import GeneratedQuestion, QuestionRubric
 
 
-def _q(position, is_mandatory, signal_values, kind="technical_depth"):
+def _q(position, is_mandatory, signal_values, kind="technical_scenario"):
     return GeneratedQuestion(
         position=position,
         text="Walk through your approach to X in detail to test something.",
+        primary_signal=signal_values[0],
         signal_values=signal_values,
         estimated_minutes=2.0,
         is_mandatory=is_mandatory,
@@ -44,8 +45,8 @@ def test_mandatory_correction_helper_promotes_earliest_knockout_to_mandatory():
 def test_mandatory_correction_helper_demotes_duplicate_knockout_coverage():
     """Second question probing already-claimed knockout is demoted to optional."""
     questions = [
-        _q(0, is_mandatory=True, signal_values=["sig_a"], kind="behavioral_star"),
-        _q(1, is_mandatory=True, signal_values=["sig_a"], kind="technical_depth"),
+        _q(0, is_mandatory=True, signal_values=["sig_a"], kind="behavioral"),
+        _q(1, is_mandatory=True, signal_values=["sig_a"], kind="technical_scenario"),
     ]
     knockouts = {"sig_a"}
     _apply_mandatory_correction_in_position_order(

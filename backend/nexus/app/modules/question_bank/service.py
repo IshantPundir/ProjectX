@@ -675,7 +675,7 @@ async def create_recruiter_question(
         red_flags=list(body.red_flags),
         rubric=body.rubric.model_dump(),
         evaluation_hint=body.evaluation_hint,
-        question_kind="technical_depth",  # CreateQuestionBody intentionally has no kind field
+        question_kind="technical_scenario",  # CreateQuestionBody intentionally has no kind field
         edited_by_recruiter=False,
     )
     db.add(question)

@@ -55,7 +55,21 @@ class GeneratedQuestion(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     position: int = Field(..., ge=0)
-    text: str = Field(..., min_length=10, max_length=500)
+    text: str = Field(
+        ..., min_length=10, max_length=240,
+        description=(
+            "SHORT, single-focus, SPOKEN lead question (~200 chars). One ask — no "
+            "'and… and…'. Depth lives in follow_ups, asked one at a time."
+        ),
+    )
+    primary_signal: str = Field(
+        ..., min_length=1,
+        description=(
+            "The SINGLE signal value this lead question opens. Must be one of "
+            "signal_values. Makes thread-satisfaction crisp; signal_values stays "
+            "the broader set the thread can cover."
+        ),
+    )
     signal_values: list[str] = Field(
         ..., min_length=1, max_length=3,
         description=(
@@ -71,16 +85,23 @@ class GeneratedQuestion(BaseModel):
     rubric: QuestionRubric
     evaluation_hint: str = Field(..., min_length=10, max_length=200)
     question_kind: Literal[
-        "technical_depth",
-        "behavioral_star",
+        "experience_check",
+        "behavioral",
+        "technical_scenario",
         "compliance_binary",
     ] = Field(
         ...,
         description=(
-            "Which task subclass the engine routes this question to. See "
-            "the common prompt §6 for selection rules. The 4th engine-side "
-            "value `open_culture` is intentionally NOT in this Literal — "
-            "it is a forward-compat slot the generator never emits."
+            "Refined spoken taxonomy: experience_check (claim verification) · "
+            "behavioral (true STAR) · technical_scenario (verbal design/depth) · "
+            "compliance_binary (hard yes/no gate)."
+        ),
+    )
+    difficulty: Literal["easy", "medium", "hard"] | None = Field(
+        default=None,
+        description=(
+            "Per-question difficulty the GENERATOR sets (drives the brain's grading "
+            "strictness). None falls back to the stage difficulty at persistence."
         ),
     )
 
@@ -132,7 +153,7 @@ class CreateQuestionBody(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    text: str = Field(..., min_length=10, max_length=500)
+    text: str = Field(..., min_length=10, max_length=240)
     signal_values: list[str] = Field(..., min_length=1, max_length=3)
     estimated_minutes: float = Field(..., gt=0, le=15)
     is_mandatory: bool = False
@@ -149,7 +170,7 @@ class UpdateQuestionBody(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    text: str | None = Field(default=None, min_length=10, max_length=500)
+    text: str | None = Field(default=None, min_length=10, max_length=240)
     signal_values: list[str] | None = Field(default=None, min_length=1, max_length=3)
     estimated_minutes: float | None = Field(default=None, gt=0, le=15)
     is_mandatory: bool | None = None
@@ -222,6 +243,9 @@ class QuestionResponse(BaseModel):
     rubric: QuestionRubric
     evaluation_hint: str
     edited_by_recruiter: bool
+    question_kind: str
+    primary_signal: str | None = None
+    difficulty: str | None = None
     created_at: datetime
     updated_at: datetime
 

@@ -209,6 +209,7 @@ def _mock_llm_output(
             GeneratedQuestion(
                 position=i,
                 text=f"Tell me about your experience with {v} in production systems.",
+                primary_signal=v,
                 signal_values=[v],
                 estimated_minutes=estimated_minutes,
                 is_mandatory=is_mandatory,
@@ -228,7 +229,7 @@ def _mock_llm_output(
                     below_bar=f"Only tutorial or POC {v} exposure with no real use.",
                 ),
                 evaluation_hint=f"Strong = production {v} usage with specific incidents.",
-                question_kind="technical_depth",
+                question_kind="technical_scenario",
             )
             for i, v in enumerate(signal_values)
         ],
@@ -250,11 +251,13 @@ def _build_question(
     signal_values: list[str],
     is_mandatory: bool = False,
     estimated_minutes: float = 5.0,
-    question_kind: str = "technical_depth",
+    question_kind: str = "technical_scenario",
+    primary_signal: str | None = None,
 ) -> GeneratedQuestion:
     return GeneratedQuestion(
         position=position,
         text=text,
+        primary_signal=primary_signal or signal_values[0],
         signal_values=signal_values,
         estimated_minutes=estimated_minutes,
         is_mandatory=is_mandatory,
