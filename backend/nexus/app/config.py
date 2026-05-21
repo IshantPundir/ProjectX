@@ -224,6 +224,8 @@ class Settings(BaseSettings):
     # call per bank generation; result cached on stage_question_banks.extracted_keyterms).
     # See docs/superpowers/specs/2026-05-19-deepgram-keyterm-migration-design.md.
     openai_question_bank_keyterm_model: str = "gpt-5.4-nano-2026-03-17"
+    # Bank-gen prompts: spoken-question rewrite lives in prompts/v2 (engine-v2 M2).
+    question_bank_prompt_version: str = "v2"
 
     # OpenAI request tuning
     openai_request_timeout_seconds: float = 240.0

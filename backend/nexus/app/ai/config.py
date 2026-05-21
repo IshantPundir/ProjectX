@@ -73,6 +73,10 @@ class AIConfig:
         return self._settings.openai_question_bank_keyterm_model
 
     @property
+    def question_bank_prompt_version(self) -> str:
+        return self._settings.question_bank_prompt_version
+
+    @property
     def request_timeout_seconds(self) -> float:
         return self._settings.openai_request_timeout_seconds
 
