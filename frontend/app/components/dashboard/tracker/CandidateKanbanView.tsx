@@ -60,9 +60,10 @@ export default function CandidateKanbanView({ jobId }: Props) {
   >({
     mutationFn: async ({ assignmentId }) => {
       const token = await getFreshSupabaseToken()
+      // OTP is resolved server-side from the stage's persisted
+      // otp_required_default — do not override it here.
       return schedulerApi.sendInvite(token, {
         assignment_id: assignmentId,
-        otp_required: true,
       })
     },
     onSuccess: (_, { candidateId }) => {
@@ -143,8 +144,9 @@ export default function CandidateKanbanView({ jobId }: Props) {
             toast.error(err.message || 'Failed to move candidate')
           },
           onSuccess: () => {
-            // Auto-send the OTP-gated invite when a candidate enters the AI
-            // Screening stage. Guard on `latest_session_state == null` so we
+            // Auto-send the invite when a candidate enters the AI Screening
+            // stage (OTP requirement resolved server-side from the stage's
+            // otp_required_default). Guard on `latest_session_state == null` so we
             // don't supersede an already-issued invite or interrupt a session
             // in flight if the recruiter happens to drop them back into the
             // stage. (This is a frontend-only guard for now — a backend hook
@@ -163,7 +165,13 @@ export default function CandidateKanbanView({ jobId }: Props) {
                 },
                 {
                   onSuccess: () => {
-                    toast.success('Invite sent (OTP enabled)')
+                    const otpOn =
+                      pipeline.data?.stages.find(
+                        (s) => s.id === overData.stageId,
+                      )?.otp_required ?? false
+                    toast.success(
+                      otpOn ? 'Invite sent (OTP required)' : 'Invite sent',
+                    )
                   },
                   onError: (err) => {
                     toast.error(
@@ -225,17 +233,20 @@ export default function CandidateKanbanView({ jobId }: Props) {
         role="list"
         aria-label="Candidate kanban board"
       >
-        {data.stages.map((stage) => (
-          <CandidateKanbanColumn
-            key={stage.stage_id}
-            stage={stage}
-            jobId={jobId}
-            stageType={
-              pipeline.data?.stages.find((s) => s.id === stage.stage_id)
-                ?.stage_type
-            }
-          />
-        ))}
+        {data.stages.map((stage) => {
+          const pstage = pipeline.data?.stages.find(
+            (s) => s.id === stage.stage_id,
+          )
+          return (
+            <CandidateKanbanColumn
+              key={stage.stage_id}
+              stage={stage}
+              jobId={jobId}
+              stageType={pstage?.stage_type}
+              otpRequired={pstage?.otp_required ?? false}
+            />
+          )
+        })}
       </div>
       {/* Portaled by @dnd-kit to document.body — escapes every ancestor
           overflow:auto/hidden so the dragging card stays visible across

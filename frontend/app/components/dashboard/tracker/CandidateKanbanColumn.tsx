@@ -2,9 +2,11 @@
 
 import { useEffect, useState } from 'react'
 import { useDroppable } from '@dnd-kit/core'
+import { toast } from 'sonner'
 
 import type { KanbanColumn } from '@/lib/api/candidates'
 import type { StageType } from '@/lib/api/pipelines'
+import { useSetStageOtp } from '@/lib/hooks/use-set-stage-otp'
 
 import CandidateKanbanCard from './CandidateKanbanCard'
 import {
@@ -19,12 +21,16 @@ interface Props {
    *  pipeline is still loading or if the stage doesn't have a matching
    *  pipeline-stage row (shouldn't happen in practice). */
   stageType: StageType | undefined
+  /** Stage's persisted otp_required_default (from the pipeline lookup in the
+   *  parent). Undefined while the pipeline is still loading. */
+  otpRequired?: boolean
 }
 
 export default function CandidateKanbanColumn({
   stage,
   jobId,
   stageType,
+  otpRequired,
 }: Props) {
   const { setNodeRef, isOver } = useDroppable({
     id: stage.stage_id,
@@ -64,6 +70,13 @@ export default function CandidateKanbanColumn({
         </span>
         {stageType === 'ai_screening' && (
           <AutoInviteToggle jobId={jobId} stageId={stage.stage_id} />
+        )}
+        {stageType === 'ai_screening' && (
+          <OtpRequiredToggle
+            jobId={jobId}
+            stageId={stage.stage_id}
+            initial={otpRequired ?? false}
+          />
         )}
       </header>
 
@@ -116,7 +129,7 @@ function AutoInviteToggle({
     <label
       className="ml-auto inline-flex cursor-pointer items-center gap-1.5"
       style={{ color: 'var(--px-fg-3)' }}
-      title="When enabled, candidates dropped into this stage are auto-emailed an OTP-gated invite link."
+      title="When enabled, candidates dropped into this stage are auto-emailed an invite link (OTP requirement follows the OTP toggle)."
     >
       <input
         type="checkbox"
@@ -128,6 +141,66 @@ function AutoInviteToggle({
       />
       <span className="text-[10px] font-medium uppercase" style={{ letterSpacing: '0.4px' }}>
         Auto-invite
+      </span>
+    </label>
+  )
+}
+
+/**
+ * Column-header checkbox that persists this stage's OTP requirement to the
+ * backend (job_pipeline_stages.otp_required_default). Unlike Auto-invite
+ * (browser-local), OTP is a security control, so it is server-persisted and
+ * shared across recruiters. Optimistic: flips immediately, reverts + toasts on
+ * error. `initial` comes from pipeline data; we re-sync when it changes (the
+ * mutation writes the fresh instance into the cache on success).
+ */
+export function OtpRequiredToggle({
+  jobId,
+  stageId,
+  initial,
+}: {
+  jobId: string
+  stageId: string
+  initial: boolean
+}) {
+  const [enabled, setEnabled] = useState(initial)
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setEnabled(initial)
+  }, [initial])
+
+  const setOtp = useSetStageOtp(jobId)
+
+  function handleChange(next: boolean) {
+    setEnabled(next) // optimistic
+    setOtp.mutate(
+      { stageId, otpRequired: next },
+      {
+        onError: (err) => {
+          setEnabled(!next) // revert
+          toast.error(err.message || 'Failed to update OTP setting')
+        },
+      },
+    )
+  }
+
+  return (
+    <label
+      className="inline-flex cursor-pointer items-center gap-1.5"
+      style={{ color: 'var(--px-fg-3)' }}
+      title="When enabled, candidates must verify a one-time code before the interview starts."
+    >
+      <input
+        type="checkbox"
+        checked={enabled}
+        disabled={setOtp.isPending}
+        onChange={(e) => handleChange(e.target.checked)}
+        aria-label="Require OTP verification for this stage"
+        className="cursor-pointer"
+        style={{ width: 12, height: 12, accentColor: 'var(--px-accent)' }}
+      />
+      <span className="text-[10px] font-medium uppercase" style={{ letterSpacing: '0.4px' }}>
+        OTP
       </span>
     </label>
   )

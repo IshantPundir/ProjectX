@@ -430,4 +430,19 @@ export const pipelinesApi = {
       `/api/jobs/${jobId}/pipeline/stages/${stageId}/unpause`,
       { method: 'POST', token },
     ),
+
+  setStageOtpRequired: (
+    token: string,
+    jobId: string,
+    stageId: string,
+    otpRequired: boolean,
+  ): Promise<JobPipelineInstance> =>
+    apiFetch<JobPipelineInstance>(
+      `/api/jobs/${jobId}/pipeline/stages/${stageId}/otp-required`,
+      {
+        method: 'PATCH',
+        token,
+        body: JSON.stringify({ otp_required: otpRequired }),
+      },
+    ),
 }

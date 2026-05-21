@@ -153,8 +153,9 @@ function CardBody({ card, interactive }: Props & { interactive: boolean }) {
 
 /**
  * Kebab (⋮) menu rendered in each card's top-right. Currently houses
- * a single "Resend invite (with OTP)" action — future card-level
- * actions belong here too. The `Trigger` stops pointer propagation so
+ * a single "Resend invite" action (OTP requirement is resolved server-side
+ * from the stage default) — future card-level actions belong here too.
+ * The `Trigger` stops pointer propagation so
  * @dnd-kit's drag listeners don't fire when the recruiter aims for
  * the menu.
  */
@@ -162,11 +163,13 @@ function KanbanCardMenu({ card }: { card: KanbanCandidateCard }) {
   const sendInvite = useSendInvite(card.candidate_id)
 
   function handleResend() {
+    // OTP is resolved server-side from the stage's persisted
+    // otp_required_default — do not override it here.
     sendInvite.mutate(
-      { assignment_id: card.assignment_id, otp_required: true },
+      { assignment_id: card.assignment_id },
       {
         onSuccess: () => {
-          toast.success('Invite re-sent (OTP enabled)')
+          toast.success('Invite re-sent')
         },
         onError: (err) => {
           toast.error(err.message || 'Failed to resend invite')
@@ -211,7 +214,7 @@ function KanbanCardMenu({ card }: { card: KanbanCandidateCard }) {
             disabled={sendInvite.isPending}
             className="flex cursor-pointer items-center gap-2 rounded px-2.5 py-1.5 text-[12px] outline-none transition-colors data-[highlighted]:bg-zinc-100 data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50"
           >
-            {sendInvite.isPending ? 'Sending…' : 'Resend invite (with OTP)'}
+            {sendInvite.isPending ? 'Sending…' : 'Resend invite'}
           </DropdownMenu.Item>
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
