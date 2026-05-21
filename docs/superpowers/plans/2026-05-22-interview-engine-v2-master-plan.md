@@ -226,13 +226,26 @@ throwaway jobs only). So CMI-1 forces no M1 code change; it is M5 Task 1.
 under new strings, no crash) and the bank pipeline (`question_bank/{models,schemas,actors,service}.py` +
 the DB CHECK in `0026` + the two-call generator keyed on `behavioral_star`/`technical_depth`).
 
-**Decision (M2):** switch the Literal + DB CHECK + generator outright to
-`experience_check | behavioral | technical_scenario | compliance_binary`. **No old∪new union.** Banks are
-regenerated. v1's phase-detection becoming a no-op under new strings is acceptable (dev fallback).
+**Decision (M2) — VALIDATE-ON-WRITE, RELAX-ON-READ (refined 2026-05-22 during M2 planning):**
+Switch the taxonomy **cleanly at the write boundary** to
+`experience_check | behavioral | technical_scenario | compliance_binary` —
+the `GeneratedQuestion` generator model + the `stage_questions.question_kind` DB CHECK both move to the
+new 4 values (**no old∪new union**). Updating the bank-generation tests that construct `GeneratedQuestion`
+with old strings is expected, in-scope M2 work.
+**RELAX the shared READ projection:** `interview_runtime.QuestionConfig.question_kind` becomes a plain
+`str` (a read-only mirror of an already-CHECK-constrained column) — **NOT a union**; enforcement lives
+entirely at the write side. This is what reconciles the apparent three-way conflict (scope "switch the
+Literal" vs CMI-2 "no union" vs §3 "v1 tests stay green"): the *taxonomy* switches cleanly at write, while
+the *read* projection stays loose during v1 coexistence so the reference-only v1 suite
+(`tests/interview_engine/*` + `sample_session_config.json`, which read `QuestionConfig` with old strings)
+stays a TRUE untouched backstop — a backstop you had to rewrite no longer catches regressions. Verified:
+NO v1 engine test constructs `GeneratedQuestion` directly, so the write-side switch touches zero v1 engine
+tests. Tighten `QuestionConfig.question_kind` to the new Literal at M6 when v1 is retired, if desired.
 **Caveat (verified):** adding a new-only CHECK **re-validates existing rows by default** → old-kind
-`stage_questions` rows would block the `ALTER`. The `0045` migration must therefore clear existing
-`stage_questions` (regeneration repopulates) **or** add the CHECK `NOT VALID`. M2's plan picks one
-(default: delete rows + regenerate, since no data must survive).
+`stage_questions` rows would block the `ALTER`. The `0045` migration therefore clears existing
+`stage_questions` (regeneration repopulates); paired downgrade restores the original CHECK. Tests build
+their schema from `Base.metadata.create_all`, so the ORM CheckConstraint switch means any test that INSERTs
+`stage_questions` must use the new taxonomy strings (in-scope M2 work).
 
 ### CMI-3 [HIGH] — latency is co-equal but ungated → add an instrumented measurement gate
 **Verified:** the old engine computes per-session latency percentiles in
