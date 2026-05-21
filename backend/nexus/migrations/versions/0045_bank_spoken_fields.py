@@ -1,7 +1,7 @@
 """bank spoken-question fields: primary_signal + question_kind taxonomy switch
 
-Revision ID: 0045_bank_spoken_fields
-Revises: 0044_interview_engine_version
+Revision ID: 0045
+Revises: 0044
 Create Date: 2026-05-22
 
 Interview-engine-v2 M2. Adds stage_questions.primary_signal (nullable) and switches
@@ -15,7 +15,7 @@ table). Rollback restores the original CHECK + drops primary_signal.
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0045_bank_spoken_fields"
+revision = "0045"
 down_revision = "0044"
 branch_labels = None
 depends_on = None
