@@ -407,6 +407,32 @@ class Settings(BaseSettings):
     engine_judge_prompt_version: str = "v2"
     engine_speaker_prompt_version: str = "v2"
 
+    # --- Interview engine v2 (two-plane) — selection + model map ---
+    # Selection: per-job override (job_postings.interview_engine_version) falls
+    # back to this global default. 'v1' keeps every session on the legacy engine.
+    interview_engine_default_version: Literal["v1", "v2"] = "v1"
+
+    # Brain (Control Plane) — GPT-5.4, low reasoning_effort + a reasoning field
+    # (design doc 10). Reasoning model => 'low' is the intended default; callers
+    # still gate on `if ai_config.engine_brain_effort:` per the effort contract,
+    # so overriding the model to a chat variant + clearing the effort is safe.
+    engine_brain_model: str = "gpt-5.4-2026-03-05"
+    engine_brain_effort: str = "low"
+
+    # Mouth (Conversation Plane) — GPT-5.4 Mini, latency-first, no reasoning effort.
+    engine_mouth_model: str = "gpt-5.4-mini-2026-03-17"
+    engine_mouth_effort: str = ""
+
+    # New v3 engine prompt family (rewritten from scratch — brain + per-act mouth).
+    engine_brain_prompt_version: str = "v3"
+    engine_mouth_prompt_version: str = "v3"
+
+    # Explicit OpenAI prompt_cache_key per surface for stable cache routing
+    # (design §11: stable-prefix -> dynamic-suffix). Bump the suffix on a
+    # prompt change to avoid cross-version cache pollution.
+    engine_brain_prompt_cache_key: str = "brain:v1"
+    engine_mouth_prompt_cache_key: str = "mouth:v1"
+
     # Canned terminal message override. None = use PersonaSpec.fallback_session_ended
     # (Arjun-voiced default with {comma_name} that omits the comma when no name is
     # present). Set to a literal string to override for a specific tenant / env.
