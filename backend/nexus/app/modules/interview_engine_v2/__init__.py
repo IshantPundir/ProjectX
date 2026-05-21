@@ -13,7 +13,7 @@ artifacts never loads livekit into the nexus/FastAPI process.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.modules.interview_engine_v2.audit import TurnDecisionRecord
 from app.modules.interview_engine_v2.controller import DirectiveController
@@ -22,6 +22,10 @@ from app.modules.interview_engine_v2.directive import (
     DirectiveAct,
     DirectiveTone,
 )
+from app.modules.interview_engine_v2.selection import should_run_v2
+
+if TYPE_CHECKING:  # static-only; never imported at runtime (keeps livekit out of nexus)
+    from app.modules.interview_engine_v2.agent import run as run  # noqa: F401
 
 __all__ = [
     "Directive",
@@ -29,6 +33,7 @@ __all__ = [
     "DirectiveTone",
     "DirectiveController",
     "TurnDecisionRecord",
+    "should_run_v2",
     "run",
 ]
 

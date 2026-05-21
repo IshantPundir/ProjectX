@@ -307,6 +307,25 @@ async def _run_entrypoint(
         job_title=session_config.job_title,
     )
 
+    # --- Interview Engine v2 cutover branch (additive; v1 path below unchanged) ---
+    # The new engine owns its own connect/turn-loop, so we branch before the legacy
+    # ctx.connect(). Selection resolved in build_session_config
+    # (job.interview_engine_version or the global default). Default 'v1' => fall through.
+    # Imported through the v2 public API: should_run_v2 is pure; `run` resolves lazily
+    # (PEP-562 __getattr__) so livekit loads only when v2 actually runs.
+    from app.modules.interview_engine_v2 import run as run_v2, should_run_v2
+
+    if should_run_v2(session_config):
+        log.info("engine.v2.selected")
+        await run_v2(
+            ctx,
+            session_config,
+            tenant_id=tenant_uuid,
+            correlation_id=correlation_id,
+        )
+        return
+    # --- end v2 branch ---
+
     # Bug 2 fix: connect to the room and wait for the candidate BEFORE
     # constructing the orchestrator / starting the session. Without this,
     # `session.start` fires `on_enter` while `room.local_participant` is
