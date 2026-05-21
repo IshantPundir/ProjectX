@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = structlog.get_logger("interview_runtime")
 
+from app.ai.config import AIConfig
 from app.modules.audit import log_event
 from app.modules.candidates import Candidate, CandidateJobAssignment
 from app.modules.jd import (
@@ -187,6 +188,14 @@ async def build_session_config(
     if org_unit_ancestry:
         hiring_company_name = org_unit_ancestry[0].name
 
+    # v2 cutover selector: per-job override falls back to the global default.
+    # Construct a fresh AIConfig() so a monkeypatched env is honored in tests
+    # (the module-level singleton caches the boot-time Settings).
+    resolved_engine_version = (
+        job.interview_engine_version
+        or AIConfig().interview_engine_default_version
+    )
+
     config = SessionConfig(
         session_id=str(session_id),
         job_id=str(job.id),
@@ -245,6 +254,7 @@ async def build_session_config(
         ],
         signal_metadata=_project_signal_metadata(snapshot.signals or []),
         keyterms=list(bank.extracted_keyterms) if bank.extracted_keyterms is not None else [],
+        interview_engine_version=resolved_engine_version,
     )
     if not config.signal_metadata:
         # Engine-boundary fence — see EmptySignalMetadataError docstring.
@@ -274,6 +284,7 @@ async def build_session_config(
         signals_total=len(config.signals),
         signal_metadata_total=len(config.signal_metadata),
         snapshot_version=snapshot.version,
+        interview_engine_version=resolved_engine_version,
     )
     return config
 
