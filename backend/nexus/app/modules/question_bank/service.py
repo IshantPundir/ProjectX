@@ -436,6 +436,46 @@ def _apply_mandatory_correction_in_position_order(
                 q.is_mandatory = False
 
 
+def validate_streamed_question(
+    question: GeneratedQuestion,
+    *,
+    snapshot_signals: list[dict],
+    snapshot_id,
+    allowed_types: list[str],
+) -> None:
+    """Validate ONE streamed/regenerated question. Raises on a hallucinated signal
+    or a bad primary_signal.
+
+    Takes PRIMITIVES (snapshot_signals + snapshot_id + allowed_types) rather than an
+    ORM snapshot so the streaming caller can validate each question AFTER closing its
+    short read session (decision D6 — no session is held across the LLM stream).
+
+    Checks:
+      - every signal_value must exist in snapshot_signals and be an allowed type
+      - primary_signal must be one of signal_values — this is the ONLY place that
+        invariant is enforced (decision D5; GeneratedQuestion carries no validator).
+
+    The streaming caller SKIPS a question that raises here; budget reconciliation and
+    mandatory auto-correction are post-stream passes, not per-question.
+    """
+    snapshot_by_value = {s["value"]: s for s in snapshot_signals}
+    for value in question.signal_values:
+        if value not in snapshot_by_value:
+            raise SignalValueNotInSnapshotError(
+                signal_value=value, snapshot_id=snapshot_id
+            )
+        if snapshot_by_value[value]["type"] not in allowed_types:
+            raise SignalTypeNotAllowedError(
+                signal_value=value,
+                signal_type=snapshot_by_value[value]["type"],
+                allowed_types=allowed_types,
+            )
+    if question.primary_signal not in question.signal_values:
+        raise SignalValueNotInSnapshotError(
+            signal_value=question.primary_signal, snapshot_id=snapshot_id
+        )
+
+
 async def validate_llm_output_against_snapshot(
     db: AsyncSession,
     *,
@@ -977,6 +1017,7 @@ __all__ = [
     "validate_knockout_coverage",
     "validate_mandatory_fits_session",
     "validate_llm_output_against_snapshot",
+    "validate_streamed_question",
     "write_generated_questions",
     "wipe_ai_questions_of_kind",
     "persist_one_question",

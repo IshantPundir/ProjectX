@@ -1341,3 +1341,93 @@ async def test_wipe_ai_questions_of_phase(bypass_db, seeded_bank_with_mixed_kind
     assert deleted >= 1
     remaining = {r.question_kind for r in await get_bank_questions(bypass_db, bank.id)}
     assert remaining == {"technical_scenario"}
+
+
+# ---------------------------------------------------------------------------
+# Task 9 — validate_streamed_question (engine-v2 M2 streaming validation)
+# ---------------------------------------------------------------------------
+
+
+_STREAM_SIGNALS = [
+    {"value": "Apigee", "type": "competency"},
+    {"value": "Teamwork", "type": "behavioral"},
+]
+_STREAM_SNAPSHOT_ID = uuid4()
+
+
+def _stream_question(
+    *, primary_signal: str, signal_values: list[str],
+) -> GeneratedQuestion:
+    return GeneratedQuestion(
+        position=0,
+        text="Tell me about your production experience here in detail.",
+        primary_signal=primary_signal,
+        signal_values=signal_values,
+        estimated_minutes=4.0,
+        is_mandatory=True,
+        follow_ups=["What specifically did you own?"],
+        positive_evidence=[
+            "Names specific tooling clearly",
+            "Describes production usage in detail",
+            "Mentions metrics or incidents handled",
+        ],
+        red_flags=["Cannot describe specifics", "Tutorial-level only"],
+        rubric=_valid_rubric(),
+        evaluation_hint="Strong = production usage with specific incidents.",
+        question_kind="technical_scenario",
+    )
+
+
+def test_validate_streamed_question_valid_passes():
+    from app.modules.question_bank.service import validate_streamed_question
+
+    q = _stream_question(primary_signal="Apigee", signal_values=["Apigee"])
+    # No exception means it passed.
+    validate_streamed_question(
+        q,
+        snapshot_signals=_STREAM_SIGNALS,
+        snapshot_id=_STREAM_SNAPSHOT_ID,
+        allowed_types=["competency", "experience"],
+    )
+
+
+def test_validate_streamed_question_hallucinated_signal_raises():
+    from app.modules.question_bank.service import validate_streamed_question
+
+    q = _stream_question(primary_signal="Ghost", signal_values=["Ghost"])
+    with pytest.raises(SignalValueNotInSnapshotError):
+        validate_streamed_question(
+            q,
+            snapshot_signals=_STREAM_SIGNALS,
+            snapshot_id=_STREAM_SNAPSHOT_ID,
+            allowed_types=["competency", "experience"],
+        )
+
+
+def test_validate_streamed_question_type_not_allowed_raises():
+    from app.modules.question_bank.service import validate_streamed_question
+
+    # "Teamwork" exists but is type=behavioral, not in allowed_types.
+    q = _stream_question(primary_signal="Teamwork", signal_values=["Teamwork"])
+    with pytest.raises(SignalTypeNotAllowedError):
+        validate_streamed_question(
+            q,
+            snapshot_signals=_STREAM_SIGNALS,
+            snapshot_id=_STREAM_SNAPSHOT_ID,
+            allowed_types=["competency", "experience"],
+        )
+
+
+def test_validate_streamed_question_primary_not_in_signal_values_raises():
+    from app.modules.question_bank.service import validate_streamed_question
+
+    # primary_signal "Teamwork" is a real snapshot signal, but it is NOT in
+    # signal_values (["Apigee"]) — the primary-in-values invariant (D5).
+    q = _stream_question(primary_signal="Teamwork", signal_values=["Apigee"])
+    with pytest.raises(SignalValueNotInSnapshotError):
+        validate_streamed_question(
+            q,
+            snapshot_signals=_STREAM_SIGNALS,
+            snapshot_id=_STREAM_SNAPSHOT_ID,
+            allowed_types=["competency", "experience", "behavioral"],
+        )

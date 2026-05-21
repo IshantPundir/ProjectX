@@ -16,8 +16,8 @@ machine, and DB hold up when chained together.
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import pytest
@@ -41,7 +41,6 @@ from app.modules.question_bank.actors import _generate_one_bank
 from app.modules.question_bank.schemas import (
     GeneratedQuestion,
     QuestionRubric,
-    StageQuestionBankOutput,
     UpdateQuestionBody,
 )
 from app.modules.question_bank.service import (
@@ -192,51 +191,73 @@ async def _make_pipeline_and_stage(
     return instance, stage
 
 
-def _mock_llm_output(
+def _stream_questions(
     signal_values: list[str],
     *,
     is_mandatory: bool = True,
     estimated_minutes: float = 5.0,
-) -> StageQuestionBankOutput:
-    return StageQuestionBankOutput(
-        questions=[
-            GeneratedQuestion(
-                position=i,
-                text=f"Tell me about your experience with {v} in production systems.",
-                primary_signal=v,
-                signal_values=[v],
-                estimated_minutes=estimated_minutes,
-                is_mandatory=is_mandatory,
-                follow_ups=[f"What specifically did you use {v} for?"],
-                positive_evidence=[
-                    f"Names specific {v} tooling clearly",
-                    "Describes production usage in detail",
-                    "Mentions metrics or incidents handled",
-                ],
-                red_flags=[
-                    f"Cannot describe {v} specifics or details",
-                    "Only tutorial-level experience",
-                ],
-                rubric=QuestionRubric(
-                    excellent=f"Strong {v} experience with production incidents handled.",
-                    meets_bar=f"Basic {v} experience with one production deployment.",
-                    below_bar=f"Only tutorial or POC {v} exposure with no real use.",
-                ),
-                evaluation_hint=f"Strong = production {v} usage with specific incidents.",
-                question_kind="technical_scenario",
-            )
-            for i, v in enumerate(signal_values)
-        ],
+) -> list[GeneratedQuestion]:
+    return [
+        GeneratedQuestion(
+            position=i,
+            text=f"Tell me about your experience with {v} in production systems.",
+            primary_signal=v,
+            signal_values=[v],
+            estimated_minutes=estimated_minutes,
+            is_mandatory=is_mandatory,
+            follow_ups=[f"What specifically did you use {v} for?"],
+            positive_evidence=[
+                f"Names specific {v} tooling clearly",
+                "Describes production usage in detail",
+                "Mentions metrics or incidents handled",
+            ],
+            red_flags=[
+                f"Cannot describe {v} specifics or details",
+                "Only tutorial-level experience",
+            ],
+            rubric=QuestionRubric(
+                excellent=f"Strong {v} experience with production incidents handled.",
+                meets_bar=f"Basic {v} experience with one production deployment.",
+                below_bar=f"Only tutorial or POC {v} exposure with no real use.",
+            ),
+            evaluation_hint=f"Strong = production {v} usage with specific incidents.",
+            question_kind="technical_scenario",
+        )
+        for i, v in enumerate(signal_values)
+    ]
+
+
+def _patch_session(monkeypatch, db) -> None:
+    """Funnel `get_bypass_session()` to the shared test `db`; commit→flush so the
+    inner short-session 'commits' are visible without touching the fixture's outer txn.
+    """
+
+    @asynccontextmanager
+    async def _fake_session():
+        original_commit = db.commit
+        db.commit = db.flush  # type: ignore[method-assign]
+        try:
+            yield db
+        finally:
+            db.commit = original_commit  # type: ignore[method-assign]
+
+    monkeypatch.setattr(
+        "app.modules.question_bank.actors.get_bypass_session", _fake_session
     )
 
 
-def _patch_llm(monkeypatch, output: StageQuestionBankOutput) -> None:
-    fake_client = MagicMock()
-    fake_create = AsyncMock(return_value=output)
-    fake_client.chat.completions.create = fake_create
+def _patch_stream(monkeypatch, items: list[GeneratedQuestion]):
+    """Patch `_create_question_iterable` to stream `items` (reused for every call)."""
+
+    def _fake_iterable(**_kwargs):
+        async def _gen():
+            for q in items:
+                yield q
+
+        return _gen()
+
     monkeypatch.setattr(
-        "app.modules.question_bank.actors.get_openai_client",
-        lambda: fake_client,
+        "app.modules.question_bank.actors._create_question_iterable", _fake_iterable
     )
 
 
@@ -273,21 +294,18 @@ async def test_full_flow_create_confirm_generate_edit_confirm(
     transition_to_generating(bank)
     await db.flush()
 
-    _patch_llm(
+    _patch_session(monkeypatch, db)
+    _patch_stream(
         monkeypatch,
-        _mock_llm_output(
+        _stream_questions(
             ["Python", "Apigee", "Kubernetes", "PostgreSQL"],
             is_mandatory=True,
             estimated_minutes=5.0,
         ),
     )
     await _generate_one_bank(
-        db,
-        bank=bank,
-        stage=stage,
-        instance=instance,
-        job=job,
-        snapshot=snapshot,
+        bank_id=bank.id,
+        tenant_id=tenant.id,
         started_by=user.id,
     )
     await db.flush()
@@ -348,17 +366,14 @@ async def test_cascade_delete_on_stage_removal(
     transition_to_generating(bank)
     await db.flush()
 
-    _patch_llm(
+    _patch_session(monkeypatch, db)
+    _patch_stream(
         monkeypatch,
-        _mock_llm_output(["Python"], is_mandatory=False),
+        _stream_questions(["Python"], is_mandatory=False),
     )
     await _generate_one_bank(
-        db,
-        bank=bank,
-        stage=stage,
-        instance=instance,
-        job=job,
-        snapshot=snapshot,
+        bank_id=bank.id,
+        tenant_id=tenant.id,
         started_by=user.id,
     )
     await db.flush()

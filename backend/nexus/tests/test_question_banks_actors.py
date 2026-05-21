@@ -1,24 +1,24 @@
-"""Dramatiq actor tests for question_bank — mocked LLM client.
+"""Dramatiq actor tests for question_bank — mocked LLM client (streaming).
 
 Tests exercise the inner `_generate_one_bank` helper directly (not the
 decorated actor wrapper). This avoids needing a real Dramatiq broker while
-still exercising the full prompt assembly + LLM call + post-validation +
-DB write path.
+still exercising the full prompt assembly + per-question streaming + per-question
+persist/publish + reconcile path.
 
-The OpenAI client is patched via `app.modules.question_bank.actors.get_openai_client`
-to return a MagicMock whose `chat.completions.create` is an AsyncMock that
-yields a pre-built `StageQuestionBankOutput`. This is the same pattern used
-in tests/test_jd_actor.py.
+Streaming model (engine-v2 M2): the LLM seam is `_create_question_iterable`, which
+returns an async iterator of `GeneratedQuestion`. Tests monkeypatch it to return a
+scripted async iterator. `_generate_one_bank` and `_generate_questions_for_kind` open
+their OWN short sessions via `get_bypass_session()`; tests monkeypatch that to yield
+the shared test `db` (which is the pattern already used by the pipeline tests).
 """
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import sqlalchemy
-from sqlalchemy import select
 from uuid import UUID
 
 from app.modules.jd.models import (
@@ -29,27 +29,19 @@ from app.modules.pipelines.models import (
     JobPipelineInstance,
     JobPipelineStage,
 )
-from app.modules.question_bank.models import (
-    StageQuestion,
-    StageQuestionBank,
-)
 from app.modules.question_bank.actors import (
     _build_user_message,
     _generate_one_bank,
+    _generate_questions_for_kind,
     _load_pipeline_context,
     _load_prior_stages_questions,
     _run_pipeline_generation,
     _run_stage_generation,
 )
 from app import pubsub
-from app.modules.question_bank.errors import (
-    SignalTypeNotAllowedError,
-    SignalValueNotInSnapshotError,
-)
 from app.modules.question_bank.schemas import (
     GeneratedQuestion,
     QuestionRubric,
-    StageQuestionBankOutput,
 )
 from app.modules.question_bank.service import (
     create_recruiter_question,
@@ -197,51 +189,42 @@ async def _make_pipeline_and_stage(
     return instance, stage
 
 
-def _mock_llm_output(
+def _stream_questions(
     signal_values: list[str],
     *,
     is_mandatory: bool = True,
     estimated_minutes: float = 5.0,
-) -> StageQuestionBankOutput:
-    """Build a canned LLM response that passes all validations."""
-    return StageQuestionBankOutput(
-        questions=[
-            GeneratedQuestion(
-                position=i,
-                text=f"Tell me about your experience with {v} in production systems.",
-                primary_signal=v,
-                signal_values=[v],
-                estimated_minutes=estimated_minutes,
-                is_mandatory=is_mandatory,
-                follow_ups=[f"What specifically did you use {v} for?"],
-                positive_evidence=[
-                    f"Names specific {v} tooling clearly",
-                    "Describes production usage in detail",
-                    "Mentions metrics or incidents handled",
-                ],
-                red_flags=[
-                    f"Cannot describe {v} specifics or details",
-                    "Only tutorial-level experience",
-                ],
-                rubric=QuestionRubric(
-                    excellent=f"Strong {v} experience with production incidents handled.",
-                    meets_bar=f"Basic {v} experience with one production deployment.",
-                    below_bar=f"Only tutorial or POC {v} exposure with no real use.",
-                ),
-                evaluation_hint=f"Strong = production {v} usage with specific incidents.",
-                question_kind="technical_scenario",
-            )
-            for i, v in enumerate(signal_values)
-        ],
-    )
-
-
-def _mock_llm_output_with_questions(
-    questions: list[GeneratedQuestion],
-) -> StageQuestionBankOutput:
-    return StageQuestionBankOutput(
-        questions=questions,
-    )
+    question_kind: str = "technical_scenario",
+) -> list[GeneratedQuestion]:
+    """Build a list of GeneratedQuestion (one per signal value) for streaming."""
+    return [
+        GeneratedQuestion(
+            position=i,
+            text=f"Tell me about your experience with {v} in production systems.",
+            primary_signal=v,
+            signal_values=[v],
+            estimated_minutes=estimated_minutes,
+            is_mandatory=is_mandatory,
+            follow_ups=[f"What specifically did you use {v} for?"],
+            positive_evidence=[
+                f"Names specific {v} tooling clearly",
+                "Describes production usage in detail",
+                "Mentions metrics or incidents handled",
+            ],
+            red_flags=[
+                f"Cannot describe {v} specifics or details",
+                "Only tutorial-level experience",
+            ],
+            rubric=QuestionRubric(
+                excellent=f"Strong {v} experience with production incidents handled.",
+                meets_bar=f"Basic {v} experience with one production deployment.",
+                below_bar=f"Only tutorial or POC {v} exposure with no real use.",
+            ),
+            evaluation_hint=f"Strong = production {v} usage with specific incidents.",
+            question_kind=question_kind,
+        )
+        for i, v in enumerate(signal_values)
+    ]
 
 
 def _build_question(
@@ -278,16 +261,73 @@ def _build_question(
     )
 
 
-def _patch_llm(monkeypatch, output: StageQuestionBankOutput) -> AsyncMock:
-    """Patch get_openai_client to return a mock that yields `output`."""
-    fake_client = MagicMock()
-    fake_create = AsyncMock(return_value=output)
-    fake_client.chat.completions.create = fake_create
+def _patch_session(monkeypatch, db) -> None:
+    """Make `get_bypass_session()` yield the shared test `db`.
+
+    The streaming actor opens its OWN short sessions (decision D6); in tests we
+    funnel them all to the single per-test `db`. `db.commit()` is redirected to
+    `db.flush()` so the inner "commits" are visible across the simulated session
+    boundaries (they're the same session object) WITHOUT committing the fixture's
+    outer transaction — preserving per-test rollback isolation.
+    """
+
+    @asynccontextmanager
+    async def _fake_session():
+        original_commit = db.commit
+        db.commit = db.flush  # type: ignore[method-assign]
+        try:
+            yield db
+        finally:
+            db.commit = original_commit  # type: ignore[method-assign]
+
     monkeypatch.setattr(
-        "app.modules.question_bank.actors.get_openai_client",
-        lambda: fake_client,
+        "app.modules.question_bank.actors.get_bypass_session", _fake_session
     )
-    return fake_create
+
+
+def _patch_stream(monkeypatch, *outputs: list[GeneratedQuestion]):
+    """Patch `_create_question_iterable` to return scripted async iterators.
+
+    Each successive call (behavioral phase, then technical phase) pops the next
+    list from `outputs`. A single list is reused for every call when only one is
+    given. Returns a list capturing each call's kwargs so tests can inspect the
+    `messages`/chaining passed to the iterable.
+    """
+    calls: list[dict] = []
+    queue = list(outputs)
+
+    def _fake_iterable(**kwargs):
+        calls.append(kwargs)
+        if queue:
+            items = queue.pop(0) if len(outputs) > 1 else outputs[0]
+        else:
+            items = outputs[-1] if outputs else []
+
+        async def _gen():
+            for q in items:
+                yield q
+
+        return _gen()
+
+    monkeypatch.setattr(
+        "app.modules.question_bank.actors._create_question_iterable", _fake_iterable
+    )
+    return calls
+
+
+def _patch_stream_raises(monkeypatch, exc: Exception):
+    """Patch `_create_question_iterable` to raise `exc` while iterating."""
+
+    def _fake_iterable(**_kwargs):
+        async def _gen():
+            raise exc
+            yield  # pragma: no cover
+
+        return _gen()
+
+    monkeypatch.setattr(
+        "app.modules.question_bank.actors._create_question_iterable", _fake_iterable
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -308,15 +348,12 @@ async def test_generate_stage_success_writes_questions_and_sets_reviewing(
     transition_to_generating(bank)
     await db.flush()
 
-    _patch_llm(monkeypatch, _mock_llm_output(["Apigee"]))
+    _patch_session(monkeypatch, db)
+    _patch_stream(monkeypatch, _stream_questions(["Apigee"]))
 
     await _generate_one_bank(
-        db,
-        bank=bank,
-        stage=stage,
-        instance=instance,
-        job=job,
-        snapshot=snapshot,
+        bank_id=bank.id,
+        tenant_id=tenant.id,
         started_by=user.id,
     )
 
@@ -331,14 +368,17 @@ async def test_generate_stage_success_writes_questions_and_sets_reviewing(
 
 
 # ---------------------------------------------------------------------------
-# 2. Reject hallucinated signal_value → bank transitions to failed
+# 2. Hallucinated signal_value → that question is SKIPPED (not fatal)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_generate_stage_rejects_hallucinated_signal_value(
+async def test_generate_stage_skips_hallucinated_signal_value(
     db, monkeypatch
 ):
+    """Streaming semantics (D5): a question with a hallucinated signal is SKIPPED,
+    not fatal. The bank still transitions to reviewing; the bad question is dropped.
+    """
     tenant, user, unit = await _setup_tenant_user_unit(db)
     job, snapshot = await _make_job_with_signals(
         db, tenant.id, unit.id, user.id, signals=[_signal(value="Apigee")],
@@ -348,23 +388,23 @@ async def test_generate_stage_rejects_hallucinated_signal_value(
     transition_to_generating(bank)
     await db.flush()
 
-    # LLM returns a signal value not in the snapshot
-    _patch_llm(monkeypatch, _mock_llm_output(["Hallucinated"]))
+    _patch_session(monkeypatch, db)
+    # Stream a valid question + a hallucinated one; only the valid one persists.
+    _patch_stream(
+        monkeypatch,
+        _stream_questions(["Apigee"]) + _stream_questions(["Hallucinated"]),
+    )
 
-    with pytest.raises(SignalValueNotInSnapshotError):
-        await _generate_one_bank(
-            db,
-            bank=bank,
-            stage=stage,
-            instance=instance,
-            job=job,
-            snapshot=snapshot,
-            started_by=user.id,
-        )
+    await _generate_one_bank(
+        bank_id=bank.id,
+        tenant_id=tenant.id,
+        started_by=user.id,
+    )
 
-    assert bank.status == "failed"
-    assert bank.generation_error is not None
-    assert "Hallucinated" in bank.generation_error
+    assert bank.status == "reviewing"
+    questions = await get_bank_questions(db, bank.id)
+    assert len(questions) == 1
+    assert questions[0].signal_values == ["Apigee"]
 
 
 # ---------------------------------------------------------------------------
@@ -386,19 +426,17 @@ async def test_generate_stage_auto_corrects_knockout_without_mandatory(
     transition_to_generating(bank)
     await db.flush()
 
-    # LLM forgets to mark mandatory for a knockout signal
-    _patch_llm(
+    _patch_session(monkeypatch, db)
+    # LLM forgets to mark mandatory for a knockout signal; post-stream
+    # mandatory auto-correction must flip it.
+    _patch_stream(
         monkeypatch,
-        _mock_llm_output(["Apigee"], is_mandatory=False),
+        _stream_questions(["Apigee"], is_mandatory=False),
     )
 
     await _generate_one_bank(
-        db,
-        bank=bank,
-        stage=stage,
-        instance=instance,
-        job=job,
-        snapshot=snapshot,
+        bank_id=bank.id,
+        tenant_id=tenant.id,
         started_by=user.id,
     )
 
@@ -410,19 +448,23 @@ async def test_generate_stage_auto_corrects_knockout_without_mandatory(
 
 
 # ---------------------------------------------------------------------------
-# 4. Reject signal type outside include_types → failed
+# 4. Signal type outside include_types → that question is SKIPPED
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_generate_stage_rejects_signal_outside_include_types(
+async def test_generate_stage_skips_signal_outside_include_types(
     db, monkeypatch
 ):
+    """A streamed question probing a disallowed signal type is SKIPPED (D5)."""
     tenant, user, unit = await _setup_tenant_user_unit(db)
     # Snapshot has a behavioral signal
     job, snapshot = await _make_job_with_signals(
         db, tenant.id, unit.id, user.id,
-        signals=[_signal(value="Teamwork", signal_type="behavioral")],
+        signals=[
+            _signal(value="Teamwork", signal_type="behavioral"),
+            _signal(value="Apigee", signal_type="competency"),
+        ],
     )
     # Stage only allows competency/experience/credential
     instance, stage = await _make_pipeline_and_stage(
@@ -434,21 +476,23 @@ async def test_generate_stage_rejects_signal_outside_include_types(
     transition_to_generating(bank)
     await db.flush()
 
-    _patch_llm(monkeypatch, _mock_llm_output(["Teamwork"]))
+    _patch_session(monkeypatch, db)
+    # One disallowed (behavioral) + one allowed (competency); only the allowed persists.
+    _patch_stream(
+        monkeypatch,
+        _stream_questions(["Teamwork"]) + _stream_questions(["Apigee"]),
+    )
 
-    with pytest.raises(SignalTypeNotAllowedError):
-        await _generate_one_bank(
-            db,
-            bank=bank,
-            stage=stage,
-            instance=instance,
-            job=job,
-            snapshot=snapshot,
-            started_by=user.id,
-        )
+    await _generate_one_bank(
+        bank_id=bank.id,
+        tenant_id=tenant.id,
+        started_by=user.id,
+    )
 
-    assert bank.status == "failed"
-    assert "Teamwork" in (bank.generation_error or "")
+    assert bank.status == "reviewing"
+    questions = await get_bank_questions(db, bank.id)
+    assert len(questions) == 1
+    assert questions[0].signal_values == ["Apigee"]
 
 
 # ---------------------------------------------------------------------------
@@ -489,29 +533,25 @@ async def test_generate_pipeline_sequentially_sees_prior_stages(
         source="ai_generated",
     )
 
-    # Now generate stage 2, using captured LLM call to inspect the user message
+    # Now generate stage 2, using captured stream call to inspect the user message
     bank2 = await ensure_bank_exists(db, stage=stage2, job=job)
     transition_to_generating(bank2)
     await db.flush()
 
-    fake_create = _patch_llm(monkeypatch, _mock_llm_output(["Python"]))
+    _patch_session(monkeypatch, db)
+    calls = _patch_stream(monkeypatch, _stream_questions(["Python"]))
 
     await _generate_one_bank(
-        db,
-        bank=bank2,
-        stage=stage2,
-        instance=instance,
-        job=job,
-        snapshot=snapshot,
+        bank_id=bank2.id,
+        tenant_id=tenant.id,
         started_by=user.id,
     )
     assert bank2.status == "reviewing"
 
-    # Inspect the captured user message
-    call_kwargs = fake_create.await_args.kwargs
-    messages = call_kwargs["messages"]
-    user_msg = messages[1]["content"]
-    # Stage 1 question should appear under "Already generated questions"
+    # Inspect the captured user message (technical phase — Python is non-knockout
+    # so the behavioral phase is skipped; there is exactly one stream call).
+    user_msg = calls[-1]["messages"][1]["content"]
+    # Stage 1 question should appear under the pipeline-context section
     assert "Walk me through your most recent Python production deploy" in user_msg
     assert "Already generated questions" in user_msg
 
@@ -535,26 +575,26 @@ async def test_generate_pipeline_continues_on_stage_failure(db, monkeypatch):
         instance=instance,
     )
 
-    # Stage 1 succeeds, stage 2 fails (hallucinated signal)
+    _patch_session(monkeypatch, db)
+
+    # Stage 1 succeeds
     bank1 = await ensure_bank_exists(db, stage=stage1, job=job)
     transition_to_generating(bank1)
     await db.flush()
-    _patch_llm(monkeypatch, _mock_llm_output(["Python"]))
+    _patch_stream(monkeypatch, _stream_questions(["Python"]))
     await _generate_one_bank(
-        db, bank=bank1, stage=stage1, instance=instance, job=job,
-        snapshot=snapshot, started_by=user.id,
+        bank_id=bank1.id, tenant_id=tenant.id, started_by=user.id,
     )
     assert bank1.status == "reviewing"
 
-    # Now stage 2 fails
+    # Now stage 2 fails (the stream itself raises — a genuine generation failure)
     bank2 = await ensure_bank_exists(db, stage=stage2, job=job)
     transition_to_generating(bank2)
     await db.flush()
-    _patch_llm(monkeypatch, _mock_llm_output(["Hallucinated"]))
-    with pytest.raises(SignalValueNotInSnapshotError):
+    _patch_stream_raises(monkeypatch, RuntimeError("LLM stream blew up"))
+    with pytest.raises(RuntimeError, match="LLM stream blew up"):
         await _generate_one_bank(
-            db, bank=bank2, stage=stage2, instance=instance, job=job,
-            snapshot=snapshot, started_by=user.id,
+            bank_id=bank2.id, tenant_id=tenant.id, started_by=user.id,
         )
     assert bank2.status == "failed"
 
@@ -569,10 +609,9 @@ async def test_generate_pipeline_continues_on_stage_failure(db, monkeypatch):
     bank3 = await ensure_bank_exists(db, stage=stage3, job=job)
     transition_to_generating(bank3)
     await db.flush()
-    _patch_llm(monkeypatch, _mock_llm_output(["Python"]))
+    _patch_stream(monkeypatch, _stream_questions(["Python"]))
     await _generate_one_bank(
-        db, bank=bank3, stage=stage3, instance=instance, job=job,
-        snapshot=snapshot, started_by=user.id,
+        bank_id=bank3.id, tenant_id=tenant.id, started_by=user.id,
     )
     assert bank3.status == "reviewing"
 
@@ -781,24 +820,25 @@ async def test_generate_stage_failed_output_retained_on_retry(db, monkeypatch):
     transition_to_generating(bank)
     await db.flush()
 
-    # First attempt fails
-    _patch_llm(monkeypatch, _mock_llm_output(["Hallucinated"]))
-    with pytest.raises(SignalValueNotInSnapshotError):
+    _patch_session(monkeypatch, db)
+
+    # First attempt: the stream raises → D7 wipe + transition to failed.
+    _patch_stream_raises(monkeypatch, RuntimeError("LLM stream blew up"))
+    with pytest.raises(RuntimeError, match="LLM stream blew up"):
         await _generate_one_bank(
-            db, bank=bank, stage=stage, instance=instance, job=job,
-            snapshot=snapshot, started_by=user.id,
+            bank_id=bank.id, tenant_id=tenant.id, started_by=user.id,
         )
     assert bank.status == "failed"
     assert bank.generation_error is not None
+    assert await get_bank_questions(db, bank.id) == []  # D7: failed bank shows zero
 
     # Retry: failed → generating → success
     transition_to_generating(bank)
     assert bank.generation_error is None  # cleared on transition
     await db.flush()
-    _patch_llm(monkeypatch, _mock_llm_output(["Python"]))
+    _patch_stream(monkeypatch, _stream_questions(["Python"]))
     await _generate_one_bank(
-        db, bank=bank, stage=stage, instance=instance, job=job,
-        snapshot=snapshot, started_by=user.id,
+        bank_id=bank.id, tenant_id=tenant.id, started_by=user.id,
     )
     assert bank.status == "reviewing"
     assert bank.generation_error is None
@@ -936,7 +976,8 @@ async def test_run_stage_generation_returns_reviewing_on_success(db, monkeypatch
     transition_to_generating(bank)
     await db.flush()
 
-    _patch_llm(monkeypatch, _mock_llm_output(["Apigee"]))
+    _patch_session(monkeypatch, db)
+    _patch_stream(monkeypatch, _stream_questions(["Apigee"]))
 
     result = await _run_stage_generation(
         db,
@@ -954,12 +995,12 @@ async def test_run_stage_generation_returns_reviewing_on_success(db, monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_run_stage_generation_returns_failed_on_validation_error(db, monkeypatch):
-    """Permanent error (hallucinated signal) → returns (job_id, stage_id, 'failed').
+async def test_run_stage_generation_returns_failed_on_stream_error(db, monkeypatch):
+    """A genuine generation failure (the stream raises) → (job_id, stage_id, 'failed').
 
     The bank must be in 'failed' status so the wrapping actor commits the
-    terminal state and publishes the failure event. _generate_one_bank's
-    own try/except is what guarantees the transition before re-raising.
+    terminal state and publishes the failure event. `_generate_one_bank`'s
+    failure path wipes all AI questions and transitions to failed before re-raising.
     """
     tenant, user, unit = await _setup_tenant_user_unit(db)
     job, _snapshot = await _make_job_with_signals(
@@ -970,7 +1011,8 @@ async def test_run_stage_generation_returns_failed_on_validation_error(db, monke
     transition_to_generating(bank)
     await db.flush()
 
-    _patch_llm(monkeypatch, _mock_llm_output(["Hallucinated"]))
+    _patch_session(monkeypatch, db)
+    _patch_stream_raises(monkeypatch, RuntimeError("LLM stream blew up"))
 
     result = await _run_stage_generation(
         db,
@@ -999,8 +1041,6 @@ async def test_run_pipeline_generation_publishes_per_stage_and_completion(
     observability standard: every session/request flows end-to-end with
     one ID through the entire pipeline).
     """
-    from contextlib import asynccontextmanager
-
     tenant, user, unit = await _setup_tenant_user_unit(db)
     job, _snapshot = await _make_job_with_signals(
         db, tenant.id, unit.id, user.id, signals=[_signal(value="Python")],
@@ -1018,14 +1058,8 @@ async def test_run_pipeline_generation_publishes_per_stage_and_completion(
     transition_to_generating(bank1)
     await db.flush()
 
-    _patch_llm(monkeypatch, _mock_llm_output(["Python"]))
-
-    @asynccontextmanager
-    async def _fake_session():
-        yield db
-    monkeypatch.setattr(
-        "app.modules.question_bank.actors.get_bypass_session", _fake_session
-    )
+    _patch_session(monkeypatch, db)
+    _patch_stream(monkeypatch, _stream_questions(["Python"]))
 
     corr_id = "corr-pipeline-happy-path"
     await _run_pipeline_generation(
@@ -1081,8 +1115,6 @@ async def test_run_pipeline_generation_publishes_failed_status_on_stage_error(
     event reflects the mixed succeeded/failed counts, and every envelope
     carries the supplied correlation_id.
     """
-    from contextlib import asynccontextmanager
-
     tenant, user, unit = await _setup_tenant_user_unit(db)
     job, _snapshot = await _make_job_with_signals(
         db, tenant.id, unit.id, user.id, signals=[_signal(value="Python")],
@@ -1098,27 +1130,30 @@ async def test_run_pipeline_generation_publishes_failed_status_on_stage_error(
     transition_to_generating(bank1)
     await db.flush()
 
-    # Stage 1 returns a valid signal; stage 2 hallucinates.
+    _patch_session(monkeypatch, db)
+
+    # Stage 1 (phone_screen, technical-only) streams cleanly; stage 2
+    # (ai_screening; "Python" is non-knockout so behavioral is skipped → technical
+    # only) raises mid-stream — a genuine generation failure.
     call_count = {"n": 0}
-    valid_output = _mock_llm_output(["Python"])
-    bad_output = _mock_llm_output(["Hallucinated"])
+    good = _stream_questions(["Python"])
 
-    fake_client = MagicMock()
-
-    async def _flaky_create(**_kwargs):
+    def _fake_iterable(**_kwargs):
         call_count["n"] += 1
-        return valid_output if call_count["n"] == 1 else bad_output
-    fake_client.chat.completions.create = AsyncMock(side_effect=_flaky_create)
-    monkeypatch.setattr(
-        "app.modules.question_bank.actors.get_openai_client",
-        lambda: fake_client,
-    )
+        first = call_count["n"] == 1
 
-    @asynccontextmanager
-    async def _fake_session():
-        yield db
+        async def _gen():
+            if first:
+                for q in good:
+                    yield q
+            else:
+                raise RuntimeError("LLM stream blew up on stage 2")
+                yield  # pragma: no cover
+
+        return _gen()
+
     monkeypatch.setattr(
-        "app.modules.question_bank.actors.get_bypass_session", _fake_session
+        "app.modules.question_bank.actors._create_question_iterable", _fake_iterable
     )
 
     corr_id = "corr-pipeline-mixed"
@@ -1167,7 +1202,8 @@ async def test_run_stage_generation_reraises_when_bank_not_terminal(db, monkeypa
     transition_to_generating(bank)
     await db.flush()
 
-    _patch_llm(monkeypatch, _mock_llm_output(["Apigee"]))
+    _patch_session(monkeypatch, db)
+    _patch_stream(monkeypatch, _stream_questions(["Apigee"]))
 
     async def _boom(*_args, **_kwargs):
         raise RuntimeError("simulated audit log outage")
@@ -1372,137 +1408,167 @@ async def test_validator_skips_budget_check_when_stage_omitted(db):
     assert len(validated) == 1
 
 
-@pytest.mark.asyncio
-async def test_generate_one_bank_retries_on_budget_violation_then_succeeds(
-    db, monkeypatch
-):
-    """First LLM call returns over-budget output → second call returns valid output.
+# NOTE: the two budget-retry tests
+# (test_generate_one_bank_retries_on_budget_violation_then_succeeds /
+# test_generate_one_bank_fails_after_repeated_budget_violations) were deleted in the
+# engine-v2 M2 streaming rewrite. Decision D2 made budget SOFT GUIDANCE — there is no
+# retry loop and no BudgetExceededError on the generation path; a runaway is bounded
+# only by STREAM_QUESTION_CEILING and over-budget logs a soft warning. The two direct
+# `_validate_budget_against_stage` raise tests above are KEPT (the function still
+# exists, just unused by the gen path).
 
-    Verifies the retry-with-feedback loop: the actor catches the budget
-    violation, appends the offending output + a corrective user message
-    to the conversation, calls the LLM again, and persists the second
-    result. The bank must end up in 'reviewing', not 'failed'.
-    """
+
+# ---------------------------------------------------------------------------
+# Streaming generation core (engine-v2 M2) — Task 9/10 dedicated tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_generate_questions_for_kind_persists_and_publishes_each(
+    db, monkeypatch, capture_publishes,
+):
+    """`_generate_questions_for_kind` persists each streamed question AND emits one
+    `bank.question_added` per persisted question."""
     tenant, user, unit = await _setup_tenant_user_unit(db)
     job, snapshot = await _make_job_with_signals(
         db, tenant.id, unit.id, user.id,
-        signals=[_signal(value="A"), _signal(value="B")],
+        signals=[_signal(value="Python"), _signal(value="Kafka")],
     )
-    instance, stage = await _make_pipeline_and_stage(
-        db, job=job, duration_minutes=15,
+    _instance, stage = await _make_pipeline_and_stage(
+        db, job=job, stage_type="ai_screening",
     )
     bank = await ensure_bank_exists(db, stage=stage, job=job)
     transition_to_generating(bank)
     await db.flush()
 
-    # First call: over-budget mandatory (3 × 8 min = 24 > 15)
-    bad_output = StageQuestionBankOutput(
-        questions=[
-            _build_question(
-                position=i, text=f"Mandatory {v}", signal_values=[v],
-                is_mandatory=True, estimated_minutes=8.0,
-            )
-            for i, v in enumerate(("A", "B", "A"))
+    _patch_session(monkeypatch, db)
+    _patch_stream(monkeypatch, _stream_questions(["Python", "Kafka"]))
+
+    persisted = await _generate_questions_for_kind(
+        bank_id=bank.id,
+        tenant_id=tenant.id,
+        job_id=job.id,
+        stage_id=stage.id,
+        snapshot_id=snapshot.id,
+        phase="technical",
+        eligible_signals=list(snapshot.signals),
+        budget_minutes=20,
+        prompt_name="question_bank_ai_screening",
+        start_position=0,
+        prior_phase_questions=[],
+    )
+
+    assert len(persisted) == 2
+    rows = await get_bank_questions(db, bank.id)
+    assert len(rows) == 2
+    added = [
+        p for p in capture_publishes
+        if p.event == pubsub.Events.BANK_QUESTION_ADDED
+    ]
+    assert len(added) == 2
+    for p in added:
+        assert p.payload["phase"] == "technical"
+        assert p.payload["bank_id"] == str(bank.id)
+        assert p.payload["source"] == "actor"
+
+
+@pytest.mark.asyncio
+async def test_generate_questions_for_kind_respects_ceiling(db, monkeypatch):
+    """The runaway ceiling (STREAM_QUESTION_CEILING) stops persistence even if the
+    stream keeps yielding."""
+    from app.modules.question_bank.actors import STREAM_QUESTION_CEILING
+
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    job, snapshot = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id, signals=[_signal(value="Python")],
+    )
+    _instance, stage = await _make_pipeline_and_stage(
+        db, job=job, stage_type="ai_screening",
+    )
+    bank = await ensure_bank_exists(db, stage=stage, job=job)
+    transition_to_generating(bank)
+    await db.flush()
+
+    _patch_session(monkeypatch, db)
+    # Yield twice the ceiling — only STREAM_QUESTION_CEILING should persist.
+    runaway = _stream_questions(["Python"]) * (STREAM_QUESTION_CEILING * 2)
+    _patch_stream(monkeypatch, runaway)
+
+    persisted = await _generate_questions_for_kind(
+        bank_id=bank.id,
+        tenant_id=tenant.id,
+        job_id=job.id,
+        stage_id=stage.id,
+        snapshot_id=snapshot.id,
+        phase="technical",
+        eligible_signals=list(snapshot.signals),
+        budget_minutes=20,
+        prompt_name="question_bank_ai_screening",
+        start_position=0,
+        prior_phase_questions=[],
+    )
+    assert len(persisted) == STREAM_QUESTION_CEILING
+
+
+@pytest.mark.asyncio
+async def test_generate_one_bank_chains_behavioral_into_technical(db, monkeypatch):
+    """`_generate_one_bank` runs behavioral then technical; the behavioral questions
+    are chained into the technical phase's prompt; generation_status_by_kind uses the
+    new {behavioral,technical} labels; the bank transitions to reviewing."""
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    # A knockout experience signal is behavioral-eligible; a competency signal is not.
+    job, snapshot = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id,
+        signals=[
+            _signal(value="5y Kubernetes", signal_type="experience", knockout=True),
+            _signal(value="System Design", signal_type="competency"),
         ],
     )
-    # Second call: within budget
-    good_output = _mock_llm_output(["A", "B"], estimated_minutes=4.0)
-
-    call_count = {"n": 0}
-
-    async def _flaky_create(**_kwargs):
-        call_count["n"] += 1
-        return bad_output if call_count["n"] == 1 else good_output
-
-    fake_client = MagicMock()
-    fake_client.chat.completions.create = AsyncMock(side_effect=_flaky_create)
-    monkeypatch.setattr(
-        "app.modules.question_bank.actors.get_openai_client",
-        lambda: fake_client,
+    _instance, stage = await _make_pipeline_and_stage(
+        db, job=job, stage_type="ai_screening", duration_minutes=30,
     )
+    bank = await ensure_bank_exists(db, stage=stage, job=job)
+    transition_to_generating(bank)
+    await db.flush()
+
+    _patch_session(monkeypatch, db)
+    # Call 1 = behavioral phase (experience_check), call 2 = technical phase.
+    behavioral_q = _stream_questions(
+        ["5y Kubernetes"], estimated_minutes=2.0, question_kind="experience_check",
+    )
+    technical_q = _stream_questions(["System Design"], estimated_minutes=5.0)
+    calls = _patch_stream(monkeypatch, behavioral_q, technical_q)
 
     await _generate_one_bank(
-        db,
-        bank=bank,
-        stage=stage,
-        instance=instance,
-        job=job,
-        snapshot=snapshot,
+        bank_id=bank.id,
+        tenant_id=tenant.id,
         started_by=user.id,
     )
 
-    assert call_count["n"] == 2, "actor must retry exactly once on budget violation"
     assert bank.status == "reviewing"
-    questions = await get_bank_questions(db, bank.id)
-    # The good output's signals are A and B at 4 min each — second call wins.
-    mandatory_total = sum(q.estimated_minutes for q in questions if q.is_mandatory)
-    assert mandatory_total <= stage.duration_minutes
+    assert bank.generation_status_by_kind == {
+        "behavioral": "reviewing",
+        "technical": "reviewing",
+    }
 
-
-@pytest.mark.asyncio
-async def test_generate_one_bank_fails_after_repeated_budget_violations(
-    db, monkeypatch
-):
-    """If the LLM produces over-budget output on EVERY attempt, the bank fails.
-
-    With MAX_BUDGET_RETRIES=1, the actor calls the LLM at most twice. If
-    both outputs violate the budget, the second BudgetExceededError
-    propagates → outer except → bank.status='failed' with the violation
-    in the error message.
-    """
-    tenant, user, unit = await _setup_tenant_user_unit(db)
-    job, snapshot = await _make_job_with_signals(
-        db, tenant.id, unit.id, user.id,
-        signals=[_signal(value="A"), _signal(value="B")],
+    # Two stream calls: behavioral first, technical second.
+    assert len(calls) == 2
+    technical_user_msg = calls[1]["messages"][1]["content"]
+    # The behavioral question must be chained under the exact heading the v2
+    # technical prompt references.
+    assert (
+        "ALREADY-GENERATED BEHAVIORAL QUESTIONS — DO NOT OVERLAP"
+        in technical_user_msg
     )
-    instance, stage = await _make_pipeline_and_stage(
-        db, job=job, duration_minutes=15,
-    )
-    bank = await ensure_bank_exists(db, stage=stage, job=job)
-    transition_to_generating(bank)
-    await db.flush()
+    assert behavioral_q[0].text in technical_user_msg
 
-    # Both calls return the same over-budget output.
-    over_budget = StageQuestionBankOutput(
-        questions=[
-            _build_question(
-                position=i, text=f"Mandatory {v}", signal_values=[v],
-                is_mandatory=True, estimated_minutes=10.0,
-            )
-            for i, v in enumerate(("A", "B"))
-        ],
-    )
-
-    call_count = {"n": 0}
-
-    async def _always_overbudget(**_kwargs):
-        call_count["n"] += 1
-        return over_budget
-
-    fake_client = MagicMock()
-    fake_client.chat.completions.create = AsyncMock(side_effect=_always_overbudget)
-    monkeypatch.setattr(
-        "app.modules.question_bank.actors.get_openai_client",
-        lambda: fake_client,
-    )
-
-    from app.modules.question_bank.errors import BudgetExceededError
-    with pytest.raises(BudgetExceededError):
-        await _generate_one_bank(
-            db,
-            bank=bank,
-            stage=stage,
-            instance=instance,
-            job=job,
-            snapshot=snapshot,
-            started_by=user.id,
-        )
-
-    # Two LLM calls (initial + 1 retry, MAX_BUDGET_RETRIES=1).
-    assert call_count["n"] == 2
-    assert bank.status == "failed"
-    assert bank.generation_error is not None
-    assert "Budget violation" in bank.generation_error
+    rows = await get_bank_questions(db, bank.id)
+    kinds = {r.question_kind for r in rows}
+    assert kinds == {"experience_check", "technical_scenario"}
+    # Behavioral question persisted first (position 0), technical after it.
+    by_pos = sorted(rows, key=lambda r: r.position)
+    assert by_pos[0].question_kind == "experience_check"
+    assert by_pos[1].question_kind == "technical_scenario"
 
 
 @pytest.mark.asyncio
