@@ -399,7 +399,8 @@ docker compose run --rm nexus alembic upgrade head
 docker compose run --rm nexus alembic downgrade -1
 docker compose run --rm nexus alembic upgrade head
 ```
-Expected: all three succeed; `docker compose run --rm nexus alembic current` shows `0045_bank_spoken_fields`.
+Expected: all three succeed; `docker compose run --rm nexus alembic current` shows `0045` (revision id is the
+short-numeric repo convention; the FILE is named `0045_bank_spoken_fields.py`).
 
 - [ ] **Step 6: Run the ORM test**
 
@@ -1881,7 +1882,7 @@ docker compose run --rm nexus alembic upgrade head
 docker compose run --rm nexus alembic downgrade -1
 docker compose run --rm nexus alembic upgrade head
 ```
-Expected: clean; head `0045_bank_spoken_fields`.
+Expected: clean; `alembic current` shows `0045` (head).
 
 - [ ] **Step 2: question_bank + interview_runtime suites green**
 
