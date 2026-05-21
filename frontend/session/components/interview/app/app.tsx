@@ -289,6 +289,12 @@ export function OutcomeWatcher({
 
       const reasonName = reasonToName(reason)
       if (reasonName === 'CLIENT_INITIATED') return onCompleted()
+      // The agent deletes the room when it ends the interview
+      // (delete_room_on_close), so the candidate is force-disconnected with
+      // ROOM_DELETED after the closing line plays. Treat that as a normal
+      // completion — a genuine engine error is still surfaced by the /state
+      // poll's error precedence in OutcomePrecedenceController.
+      if (reasonName === 'ROOM_DELETED') return onCompleted()
       if (reasonName === 'DUPLICATE_IDENTITY') return onError('DUPLICATE_SESSION')
       onError('UNEXPECTED_DISCONNECT')
     }
@@ -308,13 +314,15 @@ export function OutcomeWatcher({
  * and fall back to UNKNOWN for everything else.
  */
 function reasonToName(reason?: DisconnectReason): string {
-  // DisconnectReason: CLIENT_INITIATED=1, DUPLICATE_IDENTITY=2, ...
+  // DisconnectReason: CLIENT_INITIATED=1, DUPLICATE_IDENTITY=2, ROOM_DELETED=5, ...
   // Reading the numeric values directly avoids importing the enum at runtime.
   switch (reason) {
     case 1:
       return 'CLIENT_INITIATED'
     case 2:
       return 'DUPLICATE_IDENTITY'
+    case 5:
+      return 'ROOM_DELETED'
     default:
       return 'UNKNOWN'
   }

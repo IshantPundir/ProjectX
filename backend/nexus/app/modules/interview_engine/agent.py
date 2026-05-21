@@ -526,6 +526,12 @@ async def _run_entrypoint(
             audio_input=room_io.AudioInputOptions(
                 noise_cancellation=nc_filter,
             ),
+            # When the agent ends the interview, delete the room so the
+            # candidate is disconnected immediately (DisconnectReason.ROOM_DELETED)
+            # rather than being left alone in the room until they manually exit.
+            # The deletion happens at session-end (after drain), so the closing
+            # line plays fully before the candidate is removed.
+            delete_room_on_close=True,
         ),
     )
 

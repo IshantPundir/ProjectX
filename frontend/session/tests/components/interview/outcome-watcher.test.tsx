@@ -108,6 +108,14 @@ describe('OutcomeWatcher', () => {
     expect(onError).not.toHaveBeenCalled()
   })
 
+  it('routes ROOM_DELETED to onCompleted (agent ended interview + deleted room)', () => {
+    setOutcome(null)
+    mount()
+    room.emit(RoomEvent.Disconnected, 5) // DisconnectReason.ROOM_DELETED = 5
+    expect(onCompleted).toHaveBeenCalledTimes(1)
+    expect(onError).not.toHaveBeenCalled()
+  })
+
   it('falls through to DUPLICATE_IDENTITY to onError(DUPLICATE_SESSION)', () => {
     setOutcome(null)
     mount()
