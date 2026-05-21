@@ -91,6 +91,18 @@ MAX_BUDGET_RETRIES = 1
 # time. Constant for v1; could become per-stage configurable later.
 BEHAVIORAL_BUDGET_MIN = 3
 
+# Inline runaway ceiling per streamed generation call (decision D2) — a safety stop,
+# NOT a time-budget cap. Only fires on a pathological runaway.
+STREAM_QUESTION_CEILING = 12
+
+# Generation phase ↔ allowed question_kind partition (decision D3). Each phase's
+# rewritten prompt may emit only its phase's kinds; wipe/count/section-grouping use
+# this map so the per-phase regen + UI sections survive the taxonomy switch.
+PHASE_QUESTION_KINDS: dict[str, set[str]] = {
+    "behavioral": {"experience_check", "behavioral", "compliance_binary"},
+    "technical": {"technical_scenario"},
+}
+
 # Stage types that support AI question-bank generation. The values are
 # the technical_depth prompt names (existing behavior). Keys are kept as
 # bare stage_type strings so existing filter code (`s.stage_type in

@@ -43,6 +43,7 @@ logger = structlog.get_logger(__name__)
 
 class Events:
     """Canonical event-name strings. Compare against these, never raw strings."""
+    BANK_QUESTION_ADDED = "bank.question_added"
     BANK_QUESTION_UPDATED = "bank.question_updated"
     BANK_STATUS_CHANGED = "bank.status_changed"
     PIPELINE_GENERATION_COMPLETE = "pipeline.generation_complete"
