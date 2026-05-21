@@ -95,8 +95,8 @@ class StageQuestion(Base):
     __tablename__ = "stage_questions"
     __table_args__ = (
         CheckConstraint(
-            "question_kind IN ('technical_depth', 'behavioral_star', "
-            "'compliance_binary', 'open_culture')",
+            "question_kind IN ('experience_check', 'behavioral', "
+            "'technical_scenario', 'compliance_binary')",
             name="stage_questions_question_kind_check",
         ),
         CheckConstraint(
@@ -136,9 +136,19 @@ class StageQuestion(Base):
     rubric: Mapped[dict] = mapped_column(JSONB, nullable=False)
     evaluation_hint: Mapped[str] = mapped_column(Text, nullable=False)
     question_kind: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default=sql_text("'technical_depth'")
+        Text, nullable=False, server_default=sql_text("'technical_scenario'")
     )
     difficulty: Mapped[str | None] = mapped_column(Text, nullable=True)
+    primary_signal: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        doc=(
+            "The single signal value the lead question opens — makes thread-"
+            "satisfaction crisp (thread done when primary_signal is covered). "
+            "Must be a member of signal_values. NULL only for legacy/hand rows "
+            "predating the spoken-question redesign; the generator always sets it."
+        ),
+    )
     edited_by_recruiter: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=sql_text("false")
     )

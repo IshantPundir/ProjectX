@@ -144,23 +144,33 @@ async def _seed_bank_and_question_kwargs(db) -> tuple[StageQuestionBank, dict]:
 
 
 @pytest.mark.asyncio
-async def test_question_kind_default_is_technical_depth(db):
-    """Inserting a StageQuestion without question_kind reads back as 'technical_depth'."""
+async def test_question_kind_default_is_technical_scenario(db):
+    """Inserting a StageQuestion without question_kind reads back as 'technical_scenario'.
+
+    Updated in migration 0045: default was 'technical_depth' (pre-spoken-question
+    redesign); now 'technical_scenario' matches the new spoken-question taxonomy.
+    """
     _bank, base_kwargs = await _seed_bank_and_question_kwargs(db)
     question = StageQuestion(**base_kwargs)
     db.add(question)
     await db.flush()
     await db.refresh(question)
-    assert question.question_kind == "technical_depth"
+    assert question.question_kind == "technical_scenario"
 
 
 @pytest.mark.parametrize(
     "kind",
-    ["technical_depth", "behavioral_star", "compliance_binary", "open_culture"],
+    ["experience_check", "behavioral", "technical_scenario", "compliance_binary"],
 )
 @pytest.mark.asyncio
 async def test_question_kind_accepts_each_allowlist_value(db, kind):
-    """All 4 engine-side Literal values round-trip through the DB column."""
+    """All 4 spoken-taxonomy Literal values round-trip through the DB column.
+
+    Updated in migration 0045: old taxonomy was
+    ('technical_depth', 'behavioral_star', 'compliance_binary', 'open_culture');
+    new spoken taxonomy is
+    ('experience_check', 'behavioral', 'technical_scenario', 'compliance_binary').
+    """
     _bank, base_kwargs = await _seed_bank_and_question_kwargs(db)
     question = StageQuestion(**base_kwargs, question_kind=kind)
     db.add(question)
