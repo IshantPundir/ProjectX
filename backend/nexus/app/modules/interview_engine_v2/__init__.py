@@ -1,0 +1,41 @@
+"""Interview Engine v2 — two-plane hybrid (brain + mouth + Directive).
+
+Ground-up rewrite of the decision/conversation core (see
+docs/superpowers/plans/2026-05-22-interview-engine-v2-master-plan.md). Built as a
+parallel module; the legacy `interview_engine` package is reference-only and
+untouched. Selection is via SessionConfig.interview_engine_version + the guarded
+branch in interview_engine/agent.py.
+
+Pure artifacts (no livekit) are exported eagerly. `run` (the LiveKit entrypoint,
+which pulls livekit) is exported lazily via __getattr__ so importing the pure
+artifacts never loads livekit into the nexus/FastAPI process.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from app.modules.interview_engine_v2.audit import TurnDecisionRecord
+from app.modules.interview_engine_v2.controller import DirectiveController
+from app.modules.interview_engine_v2.directive import (
+    Directive,
+    DirectiveAct,
+    DirectiveTone,
+)
+
+__all__ = [
+    "Directive",
+    "DirectiveAct",
+    "DirectiveTone",
+    "DirectiveController",
+    "TurnDecisionRecord",
+    "run",
+]
+
+
+def __getattr__(name: str) -> Any:  # PEP 562 — lazy livekit-bearing export
+    if name == "run":
+        from app.modules.interview_engine_v2.agent import run
+
+        return run
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
