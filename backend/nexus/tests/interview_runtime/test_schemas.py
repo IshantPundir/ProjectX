@@ -69,11 +69,18 @@ def _make_question(**overrides):
 
 
 class TestQuestionKindField:
-    def test_question_kind_defaults_to_technical_depth(self) -> None:
+    def test_question_kind_defaults_to_technical_scenario(self) -> None:
+        """Default is the new-taxonomy default (technical_scenario) post M2."""
         q = _make_question()
+        assert q.question_kind == "technical_scenario"
+
+    def test_question_kind_accepts_legacy_technical_depth(self) -> None:
+        """Relaxed str: legacy kind accepted for v1 coexistence (D1)."""
+        q = _make_question(question_kind="technical_depth")
         assert q.question_kind == "technical_depth"
 
     def test_question_kind_accepts_behavioral_star(self) -> None:
+        """Relaxed str: legacy kind accepted for v1 coexistence (D1)."""
         q = _make_question(question_kind="behavioral_star")
         assert q.question_kind == "behavioral_star"
 
@@ -81,13 +88,16 @@ class TestQuestionKindField:
         q = _make_question(question_kind="compliance_binary")
         assert q.question_kind == "compliance_binary"
 
-    def test_question_kind_accepts_open_culture(self) -> None:
-        q = _make_question(question_kind="open_culture")
-        assert q.question_kind == "open_culture"
+    def test_question_kind_accepts_new_taxonomy_values(self) -> None:
+        """New taxonomy values accepted: behavioral, experience_check, technical_scenario."""
+        for kind in ("behavioral", "experience_check", "technical_scenario"):
+            q = _make_question(question_kind=kind)
+            assert q.question_kind == kind
 
-    def test_question_kind_rejects_unknown_value(self) -> None:
-        with pytest.raises(ValueError):
-            _make_question(question_kind="not_a_real_kind")  # type: ignore[arg-type]
+    def test_question_kind_accepts_any_string(self) -> None:
+        """Relaxed str: any string accepted — enforcement is at DB CHECK + GeneratedQuestion."""
+        q = _make_question(question_kind="future_unknown_kind")
+        assert q.question_kind == "future_unknown_kind"
 
 
 class TestCompanyContextFreeText:
@@ -181,3 +191,34 @@ def test_session_config_engine_version_accepts_v2(minimal_session_config_kwargs)
 
     cfg = SessionConfig(**{**minimal_session_config_kwargs, "interview_engine_version": "v2"})
     assert cfg.interview_engine_version == "v2"
+
+
+def test_question_config_question_kind_accepts_any_str():
+    """Read projection is a relaxed str during v1 coexistence (D1) — old AND new
+    strings both validate; enforcement lives at the DB CHECK + GeneratedQuestion."""
+    from app.modules.interview_runtime.schemas import QuestionConfig, QuestionRubric
+
+    base = dict(
+        id="q1", position=0, text="x" * 12, signal_values=["s"], estimated_minutes=1.0,
+        is_mandatory=False, follow_ups=[], positive_evidence=["a", "b", "c"],
+        red_flags=["x", "y"],
+        rubric=QuestionRubric(excellent="e", meets_bar="m", below_bar="b"),
+        evaluation_hint="hint text ok",
+    )
+    assert QuestionConfig(**base, question_kind="technical_depth").question_kind == "technical_depth"
+    assert QuestionConfig(**base, question_kind="technical_scenario").question_kind == "technical_scenario"
+
+
+def test_question_config_primary_signal_optional():
+    from app.modules.interview_runtime.schemas import QuestionConfig, QuestionRubric
+
+    cfg = QuestionConfig(
+        id="q1", position=0, text="x" * 12, signal_values=["s"], estimated_minutes=1.0,
+        is_mandatory=False, follow_ups=[], positive_evidence=["a", "b", "c"],
+        red_flags=["x", "y"],
+        rubric=QuestionRubric(excellent="e", meets_bar="m", below_bar="b"),
+        evaluation_hint="hint text ok", question_kind="behavioral", primary_signal="s",
+    )
+    assert cfg.primary_signal == "s"
+    cfg2 = cfg.model_copy(update={"primary_signal": None})
+    assert cfg2.primary_signal is None

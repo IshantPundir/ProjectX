@@ -77,7 +77,7 @@ def test_question_config_accepts_explicit_difficulty():
         signal_values=["s1"], estimated_minutes=2.0, is_mandatory=True, follow_ups=[],
         positive_evidence=["a", "b", "c"], red_flags=["x", "y"],
         rubric={"excellent": "x"*20, "meets_bar": "y"*20, "below_bar": "z"*20},
-        evaluation_hint="Look for specifics here.", question_kind="technical_depth",
+        evaluation_hint="Look for specifics here.", question_kind="technical_scenario",
         difficulty="hard",
     )
     assert q.difficulty == "hard"
@@ -89,7 +89,7 @@ def test_question_config_difficulty_defaults_to_medium_when_omitted():
         signal_values=["s1"], estimated_minutes=2.0, is_mandatory=True, follow_ups=[],
         positive_evidence=["a", "b", "c"], red_flags=["x", "y"],
         rubric={"excellent": "x"*20, "meets_bar": "y"*20, "below_bar": "z"*20},
-        evaluation_hint="Look for specifics here.", question_kind="technical_depth",
+        evaluation_hint="Look for specifics here.", question_kind="technical_scenario",
     )
     assert q.difficulty == "medium"
 
@@ -191,7 +191,7 @@ async def test_build_session_config_difficulty_falls_back_to_stage(db):
         signal_values=["Python"],
         estimated_minutes=2.0,
         is_mandatory=True,
-        question_kind="technical_depth",
+        question_kind="technical_scenario",
         source="ai_generated",
         follow_ups=[],
         positive_evidence=["a", "b", "c"],

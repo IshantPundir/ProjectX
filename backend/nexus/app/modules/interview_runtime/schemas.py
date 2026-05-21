@@ -79,19 +79,26 @@ class QuestionConfig(BaseModel):
     red_flags: list[str] = Field(min_length=2, max_length=3)
     rubric: QuestionRubric
     evaluation_hint: str = Field(min_length=10, max_length=200)
-    question_kind: Literal[
-        "technical_depth",
-        "behavioral_star",
-        "compliance_binary",
-        "open_culture",
-    ] = Field(
-        default="technical_depth",
+    question_kind: str = Field(
+        default="technical_scenario",
         description=(
-            "Which question kind this is. Engine reads this in exactly one "
-            "place (orchestrator's post-phase-transition detection). "
-            "Default 'technical_depth' for backward compat with legacy banks. "
-            "The 4th value `open_culture` is a forward-compat slot — the "
-            "current bank generator never emits it (see `question_bank.schemas`)."
+            "RELAXED READ PROJECTION (interview-engine-v2 M2, decision D1). The "
+            "canonical taxonomy (experience_check | behavioral | technical_scenario "
+            "| compliance_binary) is enforced at the WRITE boundary — the "
+            "GeneratedQuestion generator model + the stage_questions.question_kind DB "
+            "CHECK. This field is intentionally an unconstrained `str` (NOT a union) "
+            "during v1 coexistence so the reference-only v1 engine suite + "
+            "sample_session_config.json (which read QuestionConfig with the legacy "
+            "strings 'behavioral_star'/'technical_depth') stay a TRUE untouched "
+            "regression backstop. Tighten to the new Literal at M6 when v1 is retired."
+        ),
+    )
+    primary_signal: str | None = Field(
+        default=None,
+        description=(
+            "The single signal value the lead question opens (the v2 brain's crisp "
+            "thread-satisfaction key). Projected from stage_questions.primary_signal; "
+            "None for legacy/hand rows. signal_values stays the broader coverable set."
         ),
     )
     difficulty: StageDifficulty = Field(

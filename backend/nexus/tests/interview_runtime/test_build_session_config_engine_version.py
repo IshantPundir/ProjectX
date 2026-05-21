@@ -160,7 +160,7 @@ async def _seed_session_graph(db) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
         signal_values=["Python"],
         estimated_minutes=2.0,
         is_mandatory=True,
-        question_kind="technical_depth",
+        question_kind="technical_scenario",
         source="ai_generated",
         follow_ups=[],
         positive_evidence=["a", "b", "c"],

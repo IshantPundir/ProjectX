@@ -38,8 +38,8 @@ _VALID_PROFILE = {
 async def test_build_session_config_reads_question_kind(db):
     """build_session_config plumbs each StageQuestion's question_kind into
     the corresponding QuestionConfig.question_kind. Tests with a mix of
-    default-kind and non-default-kind rows so the read path is exercised
-    for every Literal value the engine cares about."""
+    new-taxonomy kinds so the read path is exercised for every value the
+    engine cares about (compliance_binary, behavioral, technical_scenario)."""
     # ---- tenant + user + company org_unit (with company_profile) ----
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
@@ -155,13 +155,13 @@ async def test_build_session_config_reads_question_kind(db):
     q1 = StageQuestion(
         position=1, text="Tell me about a time you handled a tough peer conflict.",
         signal_values=["Conflict resolution"], estimated_minutes=4.0, is_mandatory=False,
-        question_kind="behavioral_star",
+        question_kind="behavioral",
         **base_q,
     )
     q2 = StageQuestion(
         position=2, text="Walk me through your last Python production debug.",
         signal_values=["Python"], estimated_minutes=4.0, is_mandatory=False,
-        question_kind="technical_depth",
+        question_kind="technical_scenario",
         **base_q,
     )
     db.add_all([q0, q1, q2])
@@ -204,5 +204,5 @@ async def test_build_session_config_reads_question_kind(db):
 
     kinds_by_position = {q.position: q.question_kind for q in config.stage.questions}
     assert kinds_by_position[0] == "compliance_binary"
-    assert kinds_by_position[1] == "behavioral_star"
-    assert kinds_by_position[2] == "technical_depth"
+    assert kinds_by_position[1] == "behavioral"
+    assert kinds_by_position[2] == "technical_scenario"
