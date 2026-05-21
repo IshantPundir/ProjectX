@@ -10,6 +10,7 @@ log_event so EEOC audits can trace who did what when.
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, UTC
 from typing import Any
 from uuid import UUID
@@ -559,6 +560,7 @@ async def write_generated_questions(
                 rubric=incoming.rubric.model_dump(),
                 evaluation_hint=incoming.evaluation_hint,
                 question_kind=incoming.question_kind,
+                primary_signal=incoming.primary_signal,
                 difficulty=stage_difficulty,
             )
         )
@@ -598,6 +600,93 @@ async def wipe_ai_questions_of_kind(
     return deleted_count
 
 
+async def persist_one_question(
+    db: AsyncSession,
+    *,
+    bank: StageQuestionBank,
+    question: GeneratedQuestion,
+    source: str,
+    position: int,
+    stage_difficulty: str | None,
+) -> uuid.UUID:
+    """Insert ONE generated question and return its id.
+
+    Streaming-path primitive (engine-v2 M2): the actor calls this per question so it
+    can commit + publish BANK_QUESTION_ADDED incrementally. Position is assigned by
+    the caller in stream order; a final re-pack happens once the stream completes.
+    Per-question difficulty falls back to the stage difficulty when the generator
+    leaves it null.
+    """
+    row = StageQuestion(
+        tenant_id=bank.tenant_id,
+        bank_id=bank.id,
+        position=position,
+        source=source,
+        text=question.text,
+        signal_values=list(question.signal_values),
+        estimated_minutes=question.estimated_minutes,
+        is_mandatory=question.is_mandatory,
+        follow_ups=list(question.follow_ups),
+        positive_evidence=list(question.positive_evidence),
+        red_flags=list(question.red_flags),
+        rubric=question.rubric.model_dump(),
+        evaluation_hint=question.evaluation_hint,
+        question_kind=question.question_kind,
+        primary_signal=question.primary_signal,
+        difficulty=question.difficulty or stage_difficulty,
+    )
+    db.add(row)
+    await db.flush()
+    return row.id
+
+
+async def wipe_ai_questions(db: AsyncSession, *, bank: StageQuestionBank) -> int:
+    """Delete ALL AI-sourced questions for a bank (recruiter rows preserved); re-pack.
+
+    Standalone version of the delete that write_generated_questions does inline. Used by
+    the streaming path: Phase A wipe-at-start (clean regenerate) and the failure-path
+    wipe (so a failed bank shows zero, not a confusing partial set). Returns count deleted.
+    """
+    deleted = await db.execute(
+        delete(StageQuestion).where(
+            StageQuestion.bank_id == bank.id,
+            StageQuestion.source.in_(["ai_generated", "ai_regenerated"]),
+        )
+    )
+    await db.flush()
+    remaining = await get_bank_questions(db, bank.id)
+    for i, q in enumerate(remaining):
+        q.position = i
+    await db.flush()
+    return deleted.rowcount or 0
+
+
+async def wipe_ai_questions_of_phase(
+    db: AsyncSession, *, bank: StageQuestionBank, phase: str,
+) -> int:
+    """Delete AI-sourced questions whose question_kind belongs to `phase`. Recruiter rows
+    preserved. Re-packs remaining positions. Phase→kinds partition lives in
+    actors.PHASE_QUESTION_KINDS (imported inside the function to avoid the actors↔service
+    import cycle)."""
+    from app.modules.question_bank.actors import PHASE_QUESTION_KINDS
+
+    kinds = PHASE_QUESTION_KINDS[phase]
+    deleted_result = await db.execute(
+        delete(StageQuestion).where(
+            StageQuestion.bank_id == bank.id,
+            StageQuestion.source.in_(["ai_generated", "ai_regenerated"]),
+            StageQuestion.question_kind.in_(kinds),
+        )
+    )
+    deleted_count = deleted_result.rowcount or 0
+    await db.flush()
+    remaining = await get_bank_questions(db, bank.id)
+    for i, q in enumerate(remaining):
+        q.position = i
+    await db.flush()
+    return deleted_count
+
+
 async def replace_question_in_place(
     db: AsyncSession,
     *,
@@ -615,6 +704,8 @@ async def replace_question_in_place(
     question.rubric = new_data.rubric.model_dump()
     question.evaluation_hint = new_data.evaluation_hint
     question.question_kind = new_data.question_kind
+    question.primary_signal = new_data.primary_signal
+    question.difficulty = new_data.difficulty or question.difficulty
     question.source = "ai_regenerated"
     question.edited_by_recruiter = False
     question.updated_at = _now_utc()
@@ -888,6 +979,9 @@ __all__ = [
     "validate_llm_output_against_snapshot",
     "write_generated_questions",
     "wipe_ai_questions_of_kind",
+    "persist_one_question",
+    "wipe_ai_questions",
+    "wipe_ai_questions_of_phase",
     "replace_question_in_place",
     "create_recruiter_question",
     "update_question",

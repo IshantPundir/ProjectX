@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
+import pytest_asyncio
 import sqlalchemy
 from sqlalchemy import select
 
@@ -1202,3 +1203,141 @@ async def test_create_recruiter_question_lands_with_default_kind(db):
     # needing a session refresh — the explicit kwarg in service.py
     # establishes that.
     assert question.question_kind == "technical_scenario"
+
+
+# ---------------------------------------------------------------------------
+# Fixtures for streaming write primitive tests (Task 7)
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def bypass_db(db):
+    """Alias: the existing `db` fixture already provides a bypass-RLS session
+    (test DB runs with DB_RUNTIME_ROLE unset, so all queries skip policy checks).
+    Named `bypass_db` to match the streaming-actor contract the new helpers
+    will be called under in production."""
+    return db
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def seeded_bank(bypass_db):
+    """An empty StageQuestionBank row for use in streaming write primitive tests."""
+    tenant, user, unit = await _setup_tenant_user_unit(bypass_db)
+    job, _snapshot = await _make_job_with_signals(
+        bypass_db, tenant.id, unit.id, user.id,
+        signals=[
+            _signal(value="incident_response", signal_type="competency"),
+            _signal(value="system_design", signal_type="competency"),
+        ],
+    )
+    _instance, stage = await _make_pipeline_and_stage(bypass_db, job=job)
+    bank = await ensure_bank_exists(bypass_db, stage=stage, job=job)
+    return bank
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def seeded_bank_with_mixed_kinds(bypass_db):
+    """A StageQuestionBank with a few pre-seeded AI questions of mixed kinds.
+
+    Contains at least one behavioral-phase question ('behavioral') and at
+    least one technical-phase question ('technical_scenario') so the
+    wipe_ai_questions_of_phase test can verify selective deletion.
+    """
+    tenant, user, unit = await _setup_tenant_user_unit(bypass_db)
+    job, _snapshot = await _make_job_with_signals(
+        bypass_db, tenant.id, unit.id, user.id,
+        signals=[
+            _signal(value="incident_response", signal_type="competency"),
+            _signal(value="system_design", signal_type="competency"),
+        ],
+    )
+    _instance, stage = await _make_pipeline_and_stage(bypass_db, job=job)
+    bank = await ensure_bank_exists(bypass_db, stage=stage, job=job)
+
+    rubric = _valid_rubric().model_dump()
+
+    # One behavioral-phase question
+    bypass_db.add(StageQuestion(
+        tenant_id=bank.tenant_id,
+        bank_id=bank.id,
+        position=0,
+        source="ai_generated",
+        text="Tell me about a time you resolved a critical incident under pressure.",
+        signal_values=["incident_response"],
+        primary_signal="incident_response",
+        estimated_minutes=3.0,
+        is_mandatory=True,
+        follow_ups=["What did you change after?"],
+        positive_evidence=["names the failure", "describes the fix"],
+        red_flags=["blames others"],
+        rubric=rubric,
+        evaluation_hint="ownership of a real incident",
+        question_kind="behavioral",
+        difficulty="medium",
+    ))
+
+    # One technical-phase question
+    bypass_db.add(StageQuestion(
+        tenant_id=bank.tenant_id,
+        bank_id=bank.id,
+        position=1,
+        source="ai_generated",
+        text="Walk me through designing a distributed cache for this system.",
+        signal_values=["system_design"],
+        primary_signal="system_design",
+        estimated_minutes=5.0,
+        is_mandatory=False,
+        follow_ups=["What consistency model would you choose?"],
+        positive_evidence=["mentions trade-offs", "discusses replication"],
+        red_flags=["no concrete detail"],
+        rubric=rubric,
+        evaluation_hint="depth of system design thinking",
+        question_kind="technical_scenario",
+        difficulty="hard",
+    ))
+
+    await bypass_db.flush()
+    return bank
+
+
+# ---------------------------------------------------------------------------
+# Task 7 — streaming write primitives
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_persist_one_question_appends_at_next_position(bypass_db, seeded_bank):
+    from app.modules.question_bank.schemas import GeneratedQuestion, QuestionRubric
+    from app.modules.question_bank.service import persist_one_question, get_bank_questions
+
+    bank = seeded_bank
+    q = GeneratedQuestion(
+        position=0, text="Tell me about a deploy that went wrong.",
+        primary_signal="incident_response", signal_values=["incident_response"],
+        estimated_minutes=2.0, is_mandatory=True, follow_ups=["What did you change after?"],
+        positive_evidence=["names the failure", "describes the fix", "owns the mistake"],
+        red_flags=["blames others", "no concrete detail"],
+        rubric=QuestionRubric(excellent="a" * 20, meets_bar="b" * 20, below_bar="c" * 20),
+        evaluation_hint="ownership of a real incident", question_kind="behavioral",
+    )
+    new_id = await persist_one_question(
+        bypass_db, bank=bank, question=q, source="ai_generated", position=0,
+        stage_difficulty="medium",
+    )
+    rows = await get_bank_questions(bypass_db, bank.id)
+    assert len(rows) == 1
+    assert str(rows[0].id) == str(new_id)
+    assert rows[0].primary_signal == "incident_response"
+    assert rows[0].question_kind == "behavioral"
+    assert rows[0].difficulty == "medium"
+
+
+@pytest.mark.asyncio
+async def test_wipe_ai_questions_of_phase(bypass_db, seeded_bank_with_mixed_kinds):
+    from app.modules.question_bank.service import wipe_ai_questions_of_phase, get_bank_questions
+
+    bank = seeded_bank_with_mixed_kinds
+    deleted = await wipe_ai_questions_of_phase(bypass_db, bank=bank, phase="behavioral")
+    assert deleted >= 1
+    remaining = {r.question_kind for r in await get_bank_questions(bypass_db, bank.id)}
+    assert remaining == {"technical_scenario"}
