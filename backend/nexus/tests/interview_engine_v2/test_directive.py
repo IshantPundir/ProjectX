@@ -54,3 +54,15 @@ def test_composed_act_allows_null_say():
     d = Directive(id="d-6", turn_ref="t-1", act=DirectiveAct.HOLD,
                   say=None, compose_hint="warm 'take your time', short")
     assert d.say is None
+
+
+def test_close_happy_path():
+    d = Directive(id="d-close", turn_ref="t-9", act=DirectiveAct.CLOSE,
+                  compose_hint="thank warmly; recruiter will be in touch", is_terminal=True)
+    assert d.is_terminal is True
+    assert d.act is DirectiveAct.CLOSE
+
+
+def test_ask_rejects_whitespace_only_say():
+    with pytest.raises(ValidationError):
+        Directive(id="d-ws", turn_ref="t-1", act=DirectiveAct.ASK, say="   ")

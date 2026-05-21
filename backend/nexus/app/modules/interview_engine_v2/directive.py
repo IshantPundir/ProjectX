@@ -39,6 +39,33 @@ class DirectiveTone(str, Enum):
 # Acts whose `say` is the VERBATIM bank text — the brain selects, never rewrites.
 _SAY_REQUIRED: frozenset[DirectiveAct] = frozenset({DirectiveAct.ASK, DirectiveAct.PROBE})
 
+# Structural no-leak backstop (DESIGN-SPEC §6/§12, doc 11). Plain lowercased
+# substring matching — NOT intent classification, so the no-regex rule does not
+# apply. The real guarantee is that the mouth holds no rubric; this catches a
+# brain-authoring bug where evaluation text leaks into speakable fields. Keep the
+# list tight to avoid false positives on natural speech.
+FORBIDDEN_RUBRIC_TOKENS: tuple[str, ...] = (
+    "positive_evidence",
+    "red_flag",
+    "red flag",
+    "red flags",
+    "rubric",
+    "meets_bar",
+    "meets bar",
+    "below_bar",
+    "below bar",
+    "evaluation_hint",
+    "signal_value",
+    "we're looking for",
+    "we are looking for",
+    "what i'm listening for",
+    "what we're scoring",
+)
+
+
+class RubricLeakError(ValueError):
+    """A Directive's speakable text smelled like rubric/evaluation criteria."""
+
 
 class Directive(BaseModel):
     """A single brain->mouth instruction. See DESIGN-SPEC §7 / doc 11."""
@@ -83,4 +110,11 @@ class Directive(BaseModel):
             raise ValueError("CLOSE directive must have is_terminal=True")
         if self.is_terminal and self.act is not DirectiveAct.CLOSE:
             raise ValueError("is_terminal=True is only valid on a CLOSE directive")
+        haystack = " ".join(p for p in (self.say, self.compose_hint) if p).lower()
+        for token in FORBIDDEN_RUBRIC_TOKENS:
+            if token in haystack:
+                raise RubricLeakError(
+                    f"Directive {self.id} carries rubric-smelling text "
+                    f"(token={token!r}); only speakable text may cross to the mouth"
+                )
         return self
