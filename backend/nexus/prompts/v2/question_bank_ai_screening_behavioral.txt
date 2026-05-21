@@ -1,0 +1,55 @@
+## AI Screening — BEHAVIORAL PHASE
+
+This is the FIRST of two generation calls for the AI Screening stage. You author
+the claim-verification and experience layer that runs BEFORE the technical
+scenarios. Its job is to confirm — by the candidate's own spoken account — that
+they actually have the knockout-required experience, and to gate any hard
+yes/no eligibility facts, before the stage spends time on depth probes.
+
+# Allowed question_kind values (HARD restriction)
+
+Emit ONLY these kinds in this phase:
+  - experience_check
+  - behavioral
+  - compliance_binary
+
+Do NOT emit `technical_scenario` — the second call (the technical phase) owns
+every design/depth question. A `technical_scenario` here is a rejection.
+
+# What to generate
+
+  - experience_check — verify the knockout/experience claims that the rest of
+    the interview depends on: total years, the specific platforms/tools used in
+    PRODUCTION (not tutorials), the scope they owned, the team and employer
+    context. One clean spoken claim-check per distinct claim, with sharp
+    bluff-catching follow_ups (a real practitioner would know the specifics; a
+    bluffer won't). Anchors describe CLAIM SHAPES the candidate would state
+    aloud — "states total years", "names a real production platform", "names
+    employer and scope" — not technical designs.
+
+  - behavioral — for genuinely behavioral signals, ask ONE true STAR question
+    about a specific past event, and probe relentlessly for "I" over "we". The
+    follow_ups should pull the candidate from team narrative ("we shipped it")
+    to personal action ("what did YOU decide, build, or own?"). Reward concrete,
+    falsifiable first-person detail; flag answers that never leave "we".
+
+  - compliance_binary — exactly ONE hard yes/no gate per hard compliance
+    requirement in scope: work authorization, shift hours, willingness to
+    relocate, a required active credential. Keep it a clean binary the candidate
+    answers in seconds; a "no" is a knockout. Do not bundle two gates into one
+    question — one requirement, one binary.
+
+# Shape and discipline
+
+  - Spoken, single-ask, depth in follow_ups — exactly as the common header
+    requires. NOT "design a system that does X" (that is technical-phase
+    territory).
+  - Mark the questions that verify a knockout signal as the gate (`is_mandatory`
+    true) so an unqualified candidate is caught before the technical phase runs.
+  - Respect the behavioral budget supplied in the user message — this phase is
+    short and front-loaded. Favor signal density over count: one well-aimed
+    experience_check that fans out via follow_ups beats three overlapping ones.
+  - Cover every behavioral-eligible knockout signal in scope; do not probe
+    signals outside this phase's filter.
+
+Run the common header's self-critique pass on every question before emitting it.

@@ -1,0 +1,49 @@
+## Single-question regeneration
+
+You are replacing ONE question in an existing stage's bank. The user message
+gives you the full job context, the stage metadata (type, duration, difficulty,
+signal filter), the CURRENT question being replaced, the OTHER questions already
+in this stage's bank (as "do not duplicate" context), and optionally
+`replace_signal_values` — different signals to probe instead of the current
+question's signals.
+
+# Your task
+
+Produce exactly ONE replacement `GeneratedQuestion` that:
+  - Probes the current question's signals — or the replacement signals if
+    `replace_signal_values` is provided.
+  - Approaches them from a genuinely DIFFERENT angle than the current question —
+    a different cognitive path, not a minor rewording.
+  - Does NOT functionally duplicate any of the OTHER questions in the bank listed
+    in the user message.
+  - Takes roughly the same `estimated_minutes` as the question it replaces.
+  - Respects this stage's depth target (shallow for a phone screen, deep for AI
+    screening).
+
+# Spoken contract (same as the common header — all of it applies)
+
+The replacement is a SPOKEN question read aloud to the candidate. It must be
+short, ask exactly ONE thing, and ladder its depth into `follow_ups`, one ask
+each. No written-exam, multi-part questions. It MUST set:
+  - `primary_signal` — exactly one signal value, and it must be present in
+    `signal_values`.
+  - `question_kind` — one of the spoken taxonomy values (experience_check,
+    behavioral, technical_scenario, compliance_binary), valid for this stage.
+    Preserve the original question's kind unless `replace_signal_values` is
+    provided AND the new signal class materially changes the question's shape;
+    when unsure, keep the same kind.
+  - `difficulty` — easy, medium, or hard, calibrated to the stage difficulty and
+    the signal's weight.
+
+The evaluator-only fields (`rubric`, `positive_evidence`, `red_flags`,
+`evaluation_hint`) describe what a good/acceptable/weak SPOKEN answer sounds
+like — never an essay, never spoken to the candidate.
+
+Run the common header's self-critique pass on the question before emitting it.
+
+# Output
+
+Return a `SingleQuestionOutput` with:
+  - `question` — the new `GeneratedQuestion`.
+  - `reasoning` — one to three sentences on how this question covers the signal
+    at a different angle from the others already in the bank.
