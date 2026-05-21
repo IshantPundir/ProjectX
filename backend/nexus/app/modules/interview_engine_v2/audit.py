@@ -17,7 +17,9 @@ class TurnDecisionRecord(BaseModel):
     """One brain decision, logged alongside (not inside) the Directive it produced."""
 
     turn_ref: str = Field(min_length=1)
-    candidate_quote: str = Field(description="The candidate utterance graded this turn (quoted DATA).")
+    candidate_quote: str = Field(
+        description="The candidate utterance graded this turn (quoted DATA).",
+    )
     attributed_signals: list[str] = Field(
         default_factory=list, description="Signal value(s) the answer was credited to."
     )
@@ -28,7 +30,10 @@ class TurnDecisionRecord(BaseModel):
         default_factory=dict,
         description="signal_value -> new coverage state (none/partial/sufficient/failed).",
     )
-    move: str = Field(min_length=1, description="The chosen move (probe/advance/clarify/knockout/...).")
+    move: str = Field(
+        min_length=1,
+        description="The chosen move (probe/advance/clarify/knockout/...).",
+    )
     reasoning: str = Field(description="The brain's autoregressive reasoning for this decision.")
     policy_checks: list[str] = Field(
         default_factory=list, description="Deterministic gates that passed/fired this turn."

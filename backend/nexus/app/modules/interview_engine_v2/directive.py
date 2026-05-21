@@ -6,12 +6,12 @@ Option C staging/supersession. Design: DESIGN-SPEC §7 + doc 11.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field, model_validator
 
 
-class DirectiveAct(str, Enum):
+class DirectiveAct(StrEnum):
     """Closed interviewer move-set. The mouth has no behavior outside this enum."""
 
     INTRO = "INTRO"            # greeting + AI disclosure + format + hand-off
@@ -29,7 +29,7 @@ class DirectiveAct(str, Enum):
     CLOSE = "CLOSE"           # warm close + next steps (terminal)
 
 
-class DirectiveTone(str, Enum):
+class DirectiveTone(StrEnum):
     WARM = "WARM"
     NEUTRAL = "NEUTRAL"
     ENCOURAGING = "ENCOURAGING"
@@ -103,7 +103,7 @@ class Directive(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _validate_act_invariants(self) -> "Directive":
+    def _validate_act_invariants(self) -> Directive:
         if self.act in _SAY_REQUIRED and not (self.say and self.say.strip()):
             raise ValueError(f"act {self.act.value} requires non-empty `say` (verbatim bank text)")
         if self.act is DirectiveAct.CLOSE and not self.is_terminal:
