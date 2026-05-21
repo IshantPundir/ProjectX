@@ -31,6 +31,7 @@ from app.modules.pipelines.errors import (
     JobNotInConfirmedStateError,
     NoSourceTemplateError,
     PipelineAlreadyExistsError,
+    StageOtpNotApplicableError,
     StagePauseForbiddenError,
     StarterKeyNotFoundError,
 )
@@ -1213,6 +1214,40 @@ async def unpause_stage(
         stage_id=str(stage.id),
         stage_type=stage.stage_type,
         pipeline_version=instance.pipeline_version,
+    )
+    return stage
+
+
+# OTP is OPTIONAL only for these stage types (FORBIDDEN elsewhere — see
+# schemas._FIELD_RULES_BY_TYPE).
+_OTP_ALLOWED_TYPES: frozenset[str] = frozenset(
+    {"phone_screen", "ai_screening", "human_interview"}
+)
+
+
+async def set_stage_otp_required(
+    db: AsyncSession,
+    *,
+    stage: JobPipelineStage,
+    otp_required: bool,
+) -> JobPipelineStage:
+    """Set otp_required_default on a stage.
+
+    Forbidden for intake/debrief/take_home (raises StageOtpNotApplicableError).
+    Idempotent. Does NOT bump pipeline_version or touch bank staleness — OTP is
+    an invite-time gate, orthogonal to question-bank content.
+    """
+    if stage.stage_type not in _OTP_ALLOWED_TYPES:
+        raise StageOtpNotApplicableError(stage.stage_type)
+    if stage.otp_required_default == otp_required:
+        return stage  # idempotent
+    stage.otp_required_default = otp_required
+    await db.flush()
+    logger.info(
+        "pipelines.stage_otp_required_set",
+        stage_id=str(stage.id),
+        stage_type=stage.stage_type,
+        otp_required=otp_required,
     )
     return stage
 

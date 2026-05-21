@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_tenant_db
+from app.modules.audit import log_event
 from app.modules.auth import UserContext, get_current_user_roles
 from app.modules.jd import transition as jd_transition
 from app.modules.org_units import get_org_unit_ancestry
@@ -42,6 +43,7 @@ from app.modules.pipelines.errors import (
     JobNotInConfirmedStateError,
     NoSourceTemplateError,
     PipelineAlreadyExistsError,
+    StageOtpNotApplicableError,
     StagePauseForbiddenError,
     StarterKeyNotFoundError,
 )
@@ -59,6 +61,7 @@ from app.modules.pipelines.schemas import (
     PipelineTemplateResponse,
     SaveAsTemplateRequest,
     SignalFilter,
+    StageOtpRequiredRequest,
     StageParticipantResponse,
     StarterTemplate,
     UpdateJobPipelineRequest,
@@ -81,6 +84,7 @@ from app.modules.pipelines.service import (
     pause_stage,
     reset_job_pipeline_to_source,
     save_job_pipeline_as_template,
+    set_stage_otp_required,
     set_template_as_default,
     stage_to_dict,
     swap_job_pipeline,
@@ -134,6 +138,10 @@ def _stage_row_to_response(
         pass_criteria=row.pass_criteria,  # type: ignore[arg-type]
         advance_behavior=row.advance_behavior,  # type: ignore[arg-type]
         sla_days=row.sla_days,
+        # otp_required_default exists only on JobPipelineStage (instance rows),
+        # not PipelineTemplateStage — getattr keeps template serialization safe,
+        # mirroring the paused_at handling below.
+        otp_required=getattr(row, "otp_required_default", None),
         paused_at=getattr(row, "paused_at", None),
         participants=[
             StageParticipantResponse(**p) for p in (participants or [])
@@ -703,6 +711,57 @@ async def unpause_stage_endpoint(
         raise HTTPException(404, detail="No pipeline for this job")
     stage = await get_stage_in_instance(db, instance=instance, stage_id=stage_id)
     await unpause_stage(db, instance=instance, stage=stage)
+    result = await get_job_pipeline_with_stages(db, job_id)
+    if result is None:
+        raise HTTPException(500, detail="Reload failed")
+    new_instance, stages, source_template, participants_by_stage = result
+    return _instance_to_response(new_instance, stages, source_template, participants_by_stage)
+
+
+@router.patch(
+    "/api/jobs/{job_id}/pipeline/stages/{stage_id}/otp-required",
+    response_model=JobPipelineInstanceResponse,
+)
+async def set_stage_otp_required_endpoint(
+    job_id: UUID,
+    stage_id: UUID,
+    body: StageOtpRequiredRequest,
+    db: AsyncSession = Depends(get_tenant_db),
+    user: UserContext = Depends(get_current_user_roles),
+) -> JobPipelineInstanceResponse:
+    """Set whether candidates must pass an OTP gate for this stage.
+
+    Persists job_pipeline_stages.otp_required_default. send_invite reads this as
+    the default when the invite body omits otp_required. Allowed only for
+    phone_screen / ai_screening / human_interview (422 otherwise). Does not bump
+    pipeline_version.
+    """
+    _job, instance = await require_instance_access(db, job_id, user, "manage")
+    if instance is None:
+        raise HTTPException(404, detail="No pipeline for this job")
+    stage = await get_stage_in_instance(db, instance=instance, stage_id=stage_id)
+    try:
+        await set_stage_otp_required(db, stage=stage, otp_required=body.otp_required)
+    except StageOtpNotApplicableError as e:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "otp_not_applicable",
+                "message": (
+                    f"OTP is not configurable for stage type '{e.stage_type}'."
+                ),
+            },
+        )
+    await log_event(
+        db,
+        tenant_id=instance.tenant_id,
+        actor_id=user.user.id,
+        actor_email=user.user.email,
+        action="pipeline.stage_otp_required_set",
+        resource="pipeline_stage",
+        resource_id=stage_id,
+        payload={"otp_required": body.otp_required, "job_id": str(job_id)},
+    )
     result = await get_job_pipeline_with_stages(db, job_id)
     if result is None:
         raise HTTPException(500, detail="Reload failed")

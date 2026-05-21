@@ -108,6 +108,26 @@ async def test_send_invite_honors_otp_override(db):
 
 
 @pytest.mark.asyncio
+async def test_send_invite_inherits_stage_otp_default_true(db):
+    """With otp_required omitted, the session inherits the stage default (True).
+
+    This is the contract the tracker auto-invite/resend paths rely on: they no
+    longer send otp_required, so the persisted stage default is authoritative.
+    """
+    tenant, user, _stage, _cand, assignment = await _seed(db, otp_default=True)
+    ctx = _make_ctx(user)
+    req = InviteCreateRequest(assignment_id=assignment.id)  # no override
+
+    with patch("app.modules.scheduler.service.send_email", new=AsyncMock()):
+        resp = await service.send_invite(db, req, ctx)
+
+    sess = (await db.execute(
+        select(Session).where(Session.id == resp.session_id)
+    )).scalar_one()
+    assert sess.otp_required is True
+
+
+@pytest.mark.asyncio
 async def test_send_invite_rejects_non_ai_screening_stage(db):
     from app.modules.scheduler.errors import InvalidStageTypeForInviteError
     tenant, user, _stage, _cand, assignment = await _seed(db, stage_type="human_interview")

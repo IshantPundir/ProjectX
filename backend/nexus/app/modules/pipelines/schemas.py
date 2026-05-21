@@ -287,6 +287,13 @@ class PipelineStageResponse(PipelineStageBase):
     participants: list[StageParticipantResponse] = Field(default_factory=list)
 
 
+class StageOtpRequiredRequest(BaseModel):
+    """Body for PATCH /pipeline/stages/{id}/otp-required."""
+
+    model_config = ConfigDict(extra="forbid")
+    otp_required: bool
+
+
 # --- Template schemas ---
 
 

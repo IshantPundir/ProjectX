@@ -55,3 +55,11 @@ class StagePauseForbiddenError(Exception):
     def __init__(self, stage_type: str) -> None:
         self.stage_type = stage_type
         super().__init__(f"Cannot pause stage of type '{stage_type}'")
+
+
+class StageOtpNotApplicableError(Exception):
+    """Raised when setting otp_required on a stage type that forbids it."""
+
+    def __init__(self, stage_type: str) -> None:
+        self.stage_type = stage_type
+        super().__init__(f"OTP is not configurable for stage type '{stage_type}'")
