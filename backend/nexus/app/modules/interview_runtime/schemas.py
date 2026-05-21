@@ -263,6 +263,16 @@ class SessionConfig(BaseModel):
             "docs/superpowers/specs/2026-05-19-deepgram-keyterm-migration-design.md."
         ),
     )
+    interview_engine_version: Literal["v1", "v2"] = Field(
+        default="v1",
+        description=(
+            "Which engine core runs this session. Resolved in build_session_config "
+            "as `job.interview_engine_version or ai_config.interview_engine_default_version`. "
+            "The engine entrypoint (interview_engine/agent.py) branches on this: "
+            "'v1' = legacy orchestrator, 'v2' = interview_engine_v2. Default 'v1' so "
+            "any caller that omits it (or a pre-migration job row) stays on the legacy path."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

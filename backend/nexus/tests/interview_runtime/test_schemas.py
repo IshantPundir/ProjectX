@@ -5,10 +5,45 @@ from __future__ import annotations
 import pytest
 
 from app.modules.interview_runtime.schemas import (
+    CandidateContext,
     CompanyContext,
     QuestionConfig,
     QuestionRubric,
+    StageConfig,
 )
+
+
+@pytest.fixture
+def minimal_session_config_kwargs() -> dict:
+    """Smallest valid kwargs dict for constructing a SessionConfig.
+
+    Built from the required-field surface of SessionConfig (no defaults)
+    in ``app/modules/interview_runtime/schemas.py``.  ``stage.questions``
+    is intentionally empty — the field allows an empty list and unit tests
+    for the version field do not need actual questions.
+    """
+    return dict(
+        session_id="session-abc123",
+        job_id="job-uuid-0001",
+        candidate_id="cand-uuid-0001",
+        job_title="Software Engineer",
+        role_summary="Backend Python engineer for a B2B SaaS platform.",
+        seniority_level="mid",
+        company=CompanyContext(
+            about="B2B SaaS serving Fortune 500 retail clients.",
+            industry="Technology",
+            hiring_bar="Senior engineers who own outcomes end to end.",
+        ),
+        candidate=CandidateContext(name="Riya"),
+        stage=StageConfig(
+            stage_id="stage-uuid-0001",
+            stage_type="ai_screening",
+            name="AI Screen",
+            duration_minutes=30,
+            difficulty="medium",
+            questions=[],
+        ),
+    )
 
 
 def _make_question(**overrides):
@@ -132,3 +167,17 @@ class TestSignalMetadataType:
                 evaluation_method="verbal_response",
             )
             assert sm.type == t
+
+
+def test_session_config_engine_version_defaults_v1(minimal_session_config_kwargs):
+    from app.modules.interview_runtime.schemas import SessionConfig
+
+    cfg = SessionConfig(**minimal_session_config_kwargs)
+    assert cfg.interview_engine_version == "v1"
+
+
+def test_session_config_engine_version_accepts_v2(minimal_session_config_kwargs):
+    from app.modules.interview_runtime.schemas import SessionConfig
+
+    cfg = SessionConfig(**{**minimal_session_config_kwargs, "interview_engine_version": "v2"})
+    assert cfg.interview_engine_version == "v2"
