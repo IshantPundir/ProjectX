@@ -1518,6 +1518,10 @@ async def run(
         agent=agent, room=ctx.room,
         room_options=room_io.RoomOptions(
             audio_input=room_io.AudioInputOptions(noise_cancellation=nc_filter),
+            # Match v1: delete the room when the session actually closes (candidate
+            # hang-up / unresponsive close / end-of-script) so the candidate is
+            # disconnected cleanly rather than left alone.
+            delete_room_on_close=True,
         ),
     )
 
@@ -1550,11 +1554,23 @@ async def run(
         # CMI-3: the talk-test reads these numbers from the engine logs.
         log.info("engine.v2.audio_tuning_summary", **summary)
 
-    try:
-        await ctx.room.local_participant.set_attributes({"session_outcome": "completed"})
-    except Exception:  # noqa: BLE001
-        log.warning("engine.v2.session_outcome.publish_failed", exc_info=True)
+    # Do NOT publish session_outcome here. run() returns right after session.start()
+    # (same as v1 _run_entrypoint) and the AgentSession keeps the conversation alive
+    # on its own. Publishing session_outcome='completed' at this point (an M1 one-shot
+    # leftover) tells the candidate frontend the interview is over the instant Q1
+    # finishes → the candidate disconnects after one question. The real outcome +
+    # record_session_result land with the brain in M5; for the M3 floor-control
+    # talk-test the session ends on candidate hang-up or the unresponsive-ladder
+    # aclose (delete_room_on_close cleans up the room).
 ```
+
+> **Bug found in talk-test (2026-05-22), fixed:** the original draft of this task ended `run()` with an
+> unconditional `set_attributes({"session_outcome": "completed"})` (copied from the M1 proof-of-life,
+> which legitimately said one line and ended). In M3 that ended the interview the instant Q1 finished —
+> the candidate frontend read `session_outcome` and disconnected (`CLIENT_INITIATED` in the engine log).
+> Root cause via systematic-debugging: v1's entrypoint *also* returns after `session.start()` (the session
+> stays alive), and v1 publishes the outcome **only** from its close path with the real outcome. Fix:
+> drop the premature publish + add `delete_room_on_close=True`.
 
 > **Notes for the implementer — R3 verification (verify against the installed livekit version; do not
 > guess; the Task 9 talk-test is the gate, per fix #4):**
