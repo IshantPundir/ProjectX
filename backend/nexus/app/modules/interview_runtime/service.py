@@ -171,6 +171,11 @@ async def build_session_config(
         )
     ).scalars().all()
 
+    if not questions:
+        raise QuestionBankNotReadyError(
+            f"bank {bank.id} is confirmed but has no questions — needs (re)generation"
+        )
+
     company_profile = await find_company_profile_in_ancestry(db, job.org_unit_id)
     if company_profile is None:
         raise CompanyProfileMissingError(
