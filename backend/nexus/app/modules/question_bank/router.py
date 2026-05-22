@@ -272,6 +272,7 @@ def _bank_to_response(
         prompt_version=bank.prompt_version,
         generation_error=bank.generation_error,
         coverage_notes=bank.coverage_notes,
+        generation_status_by_kind=bank.generation_status_by_kind,
         generated_at=bank.generated_at,
         generated_by=bank.generated_by,
         confirmed_at=bank.confirmed_at,

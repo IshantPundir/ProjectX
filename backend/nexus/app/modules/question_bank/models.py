@@ -66,8 +66,10 @@ class StageQuestionBank(Base):
         default=dict,
         server_default=text("'{}'::jsonb"),
         doc=(
-            "Per-question-kind generation status. Shape: "
-            "{'behavioral_star': status, 'technical_depth': status}. "
+            "Per-generation-phase status. Shape: "
+            "{'behavioral': status, 'technical': status} (engine-v2 M2 phase labels; "
+            "the per-question question_kind taxonomy is a separate concept — see "
+            "actors.PHASE_QUESTION_KINDS). "
             "See spec 2026-05-19-behavioral-layer-and-intro-design.md §1."
         ),
     )
