@@ -694,6 +694,38 @@ async def _generate(case: BankGenCase) -> list[GeneratedQuestion]:
     return questions
 
 
+async def _generate_behavioral(case: BankGenCase) -> list[GeneratedQuestion]:
+    """Generate the BEHAVIORAL phase for one case via the real LLM.
+
+    Mirrors `_generate`, but loads the behavioral-phase prompt pair
+    (`question_bank_common` + `question_bank_ai_screening_behavioral`) so the
+    eligible signals are evaluated against the behavioral-phase instructions
+    (experience_check / behavioral / compliance_binary kinds only).
+    """
+    loader = PromptLoader(version=ai_config.question_bank_prompt_version)
+    system_prompt = loader.load_pair(
+        "question_bank_common", "question_bank_ai_screening_behavioral"
+    )
+
+    client = get_openai_client()
+    call_kwargs: dict[str, Any] = dict(
+        model=ai_config.question_bank_model,
+        response_model=GeneratedQuestion,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": _build_user_message(case)},
+        ],
+        max_retries=1,
+    )
+    if ai_config.question_bank_effort:
+        call_kwargs["reasoning_effort"] = ai_config.question_bank_effort
+
+    questions: list[GeneratedQuestion] = [
+        q async for q in client.chat.completions.create_iterable(**call_kwargs)
+    ]
+    return questions
+
+
 # ---------------------------------------------------------------------------
 # Helper: simple token-overlap heuristic for the no-duplicate test
 # ---------------------------------------------------------------------------
@@ -981,3 +1013,76 @@ async def test_or_requirement_not_collapsed_to_single_option(case: BankGenCase) 
         assert len(named) != 1 or any(w in t for w in CHOICE_WORDS), (
             f"[{case.id}] OR-requirement collapsed to a single language: {q.text!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Test 8 — behavioral phase produces a true STAR question for behavioral signals
+# ---------------------------------------------------------------------------
+
+# A behavioral-phase case whose eligible signals include behavioral-TYPE required
+# signals (collaboration / documentation / mentoring) alongside one experience
+# knockout. The broadened `_filter_behavioral_eligible` now feeds these into the
+# behavioral phase, and the behavioral prompt MUST emit ≥1 true STAR `behavioral`
+# question for them (not just experience_check claim-checks). Mirrors the real
+# defect where a JD's behavioral-type signals were never probed.
+_BEHAVIORAL_STAR_CASE = BankGenCase(
+    id="behavioral_phase_star_coverage",
+    role_title="Senior Integration Engineer",
+    seniority="senior",
+    company_profile={
+        "about": "Enterprise iPaaS team building integrations for Fortune 500 clients.",
+        "industry": "Technology",
+        "hiring_bar": "high",
+    },
+    signals=[
+        _mk_signal(
+            "4+ years integration engineering",
+            sig_type="experience",
+            weight=3,
+            knockout=True,
+        ),
+        _mk_signal(
+            "Cross-functional collaboration with product and support",
+            sig_type="behavioral",
+            priority="required",
+            weight=3,
+        ),
+        _mk_signal(
+            "Technical documentation ownership",
+            sig_type="behavioral",
+            priority="required",
+            weight=2,
+        ),
+        _mk_signal(
+            "Mentoring and technical guidance of junior engineers",
+            sig_type="behavioral",
+            priority="required",
+            weight=2,
+        ),
+    ],
+    # The behavioral phase reads the behavioral prompt; the stage_type value here is
+    # used only for the user-message budget block rendering.
+    stage_type="ai_screening_behavioral",
+    stage_duration=20,
+    stage_difficulty="hard",
+)
+
+
+async def test_behavioral_phase_produces_a_star_question() -> None:
+    """When behavioral-TYPE signals are present, the behavioral phase must emit at
+    least one true STAR `behavioral` question (the regression this fix targets:
+    behavioral-type signals were never probed, producing zero behavioral kinds)."""
+    questions = await _generate_behavioral(_BEHAVIORAL_STAR_CASE)
+    assert questions, "behavioral phase returned zero questions"
+
+    kinds = [q.question_kind for q in questions]
+    assert "behavioral" in kinds, (
+        "behavioral phase produced no true STAR `behavioral` question despite "
+        f"behavioral-type signals being present; kinds={kinds}"
+    )
+
+    # Phase-kind constraint: the behavioral phase emits ONLY its allowed kinds —
+    # never a technical_scenario (that is the technical phase's territory).
+    assert "technical_scenario" not in kinds, (
+        f"behavioral phase leaked a technical_scenario kind; kinds={kinds}"
+    )

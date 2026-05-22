@@ -82,10 +82,14 @@ _bank_prompt_loader = PromptLoader(version=ai_config.question_bank_prompt_versio
 # Prompt assembly helpers
 # ---------------------------------------------------------------------------
 
-# Behavioral-call mandatory budget cap (minutes). The behavioral phase
-# verifies knockout-signal claims; it should not eat technical scenario
-# time. Constant for v1; could become per-stage configurable later.
-BEHAVIORAL_BUDGET_MIN = 3
+# Behavioral-call budget guidance (minutes). SOFT guidance only — decision D2 made
+# the budget soft (prompt guidance + a STREAM_QUESTION_CEILING runaway stop, NO hard
+# cap). Sized to fit the knockout claim-checks PLUS at least one true STAR behavioral
+# question. The technical phase budget = stage duration − behavioral total, so this
+# value slightly favors behavioral breadth — intended; the recruiter raises stage
+# duration when they want more technical room. Could become per-stage configurable
+# later.
+BEHAVIORAL_BUDGET_MIN = 6
 
 # Inline runaway ceiling per streamed generation call (decision D2) — a safety stop,
 # NOT a time-budget cap. Only fires on a pathological runaway.
@@ -133,20 +137,31 @@ _load_prior_stages_questions = _load_prior_stage_questions
 
 
 def _filter_behavioral_eligible(signals: list[dict]) -> list[dict]:
-    """Return knockout signals voice-verifiable in the behavioral phase.
+    """Signals the behavioral phase covers:
+      - knockout experience/behavioral CLAIMS to verify (years, platform, scope), AND
+      - behavioral-TYPE required signals that warrant a true STAR question
+        (collaboration, documentation, mentoring, communication, etc.).
+    Competency/credential signals stay in the technical phase / ATS pre-filter.
+    Deduped by value, order-preserving.
 
-    The behavioral phase verifies claims (years, platforms, employer scope)
-    via open-ended questions. We restrict to `experience` and `behavioral`
-    signal types — credentials (degrees, certs) are pre-filtered by ATS,
-    and competency signals are depth-flavored (technical phase territory).
-
-    See docs/superpowers/specs/2026-05-19-behavioral-layer-and-intro-design.md §1.
+    See docs/superpowers/specs/2026-05-19-behavioral-layer-and-intro-design.md §1
+    (broadened for engine-v2 M2 so behavioral-type signals get true STAR coverage,
+    not just knockout claim-checks).
     """
-    return [
-        s for s in signals
-        if s.get("knockout") is True
-        and s.get("type") in ("experience", "behavioral")
-    ]
+    out: list[dict] = []
+    seen: set = set()
+    for s in signals:
+        v = s.get("value")
+        is_knockout_claim = (
+            s.get("knockout") is True and s.get("type") in ("experience", "behavioral")
+        )
+        is_behavioral_star = (
+            s.get("type") == "behavioral" and s.get("priority") == "required"
+        )
+        if (is_knockout_claim or is_behavioral_star) and v not in seen:
+            out.append(s)
+            seen.add(v)
+    return out
 
 
 def _build_user_message(

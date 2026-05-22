@@ -33,6 +33,16 @@ every design/depth question. A `technical_scenario` here is a rejection.
     to personal action ("what did YOU decide, build, or own?"). Reward concrete,
     falsifiable first-person detail; flag answers that never leave "we".
 
+    When the eligible signals include behavioral-TYPE signals (e.g.
+    cross-functional collaboration, documentation, mentoring/technical guidance,
+    communication), you MUST produce at least one true STAR `behavioral` question
+    for them — ask about a SPECIFIC past situation ("Tell me about a time
+    you…", "Describe a situation where…"), and write follow_ups that probe what
+    the candidate PERSONALLY did and decided ("I", not "we"). Verifying knockout
+    experience/compliance claims (`experience_check`/`compliance_binary`) is still
+    required, but do not let claim-checks crowd out behavioral STAR coverage —
+    both must be present when behavioral signals exist.
+
   - compliance_binary — exactly ONE hard yes/no gate per hard compliance
     requirement in scope: work authorization, shift hours, willingness to
     relocate, a required active credential. Keep it a clean binary the candidate
