@@ -356,6 +356,10 @@ async def run(
         agent=agent, room=ctx.room,
         room_options=room_io.RoomOptions(
             audio_input=room_io.AudioInputOptions(noise_cancellation=nc_filter),
+            # Match v1: when the session actually closes (candidate hangs up,
+            # unresponsive close, or end-of-script), delete the room so the
+            # candidate is disconnected cleanly instead of left alone.
+            delete_room_on_close=True,
         ),
     )
 
@@ -391,7 +395,12 @@ async def run(
         # CMI-3: the talk-test reads these numbers from the engine logs.
         log.info("engine.v2.audio_tuning_summary", **summary)
 
-    try:
-        await ctx.room.local_participant.set_attributes({"session_outcome": "completed"})
-    except Exception:  # noqa: BLE001
-        log.warning("engine.v2.session_outcome.publish_failed", exc_info=True)
+    # NOTE: do NOT publish session_outcome here. run() returns right after
+    # session.start() (same as v1 _run_entrypoint) and the AgentSession keeps the
+    # conversation alive on its own — the candidate answers, on_user_turn_completed
+    # delivers the next question, etc. Publishing session_outcome='completed' at
+    # this point (an M1 one-shot leftover) told the frontend the interview was over
+    # the instant Q1 finished, so the candidate disconnected after one question.
+    # The real outcome + record_session_result land with the brain in M5; for the
+    # M3 floor-control talk-test the session ends on candidate hang-up or the
+    # unresponsive-ladder aclose (delete_room_on_close cleans up the room).
