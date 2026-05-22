@@ -15,6 +15,8 @@ Assertions:
   4. Compliance-knockout cases produce ≥1 compliance_binary question.
   5. Adversarial multi-part-tempting case: lead questions are single-focus.
   6. Underspecified-role case: signal_values never contain hallucinated strings.
+  7. One-of / OR-requirement case: no question collapses a multi-option
+     requirement (e.g. "Java, Python, or Ruby") to a single option.
 """
 
 from __future__ import annotations
@@ -54,6 +56,7 @@ class BankGenCase:
     adversarial_multi_part: bool = False
     adversarial_compliance_knockout: bool = False
     adversarial_no_hallucination: bool = False
+    adversarial_or_requirement: bool = False
     # For chaining test: if set, this case is the "technical" call and
     # `chained_behavioral_ids` lists the leads from a prior behavioral pass.
     prior_behavioral_questions: list[str] | None = None
@@ -520,6 +523,34 @@ CASES: list[BankGenCase] = [
         stage_difficulty="medium",
         adversarial_compliance_knockout=True,
     ),
+    # ---- CASE 22: ADVERSARIAL — one-of / OR language knockout ----
+    # Mirrors the real Workato defect: a "Java, Python, or Ruby" knockout that
+    # the generator collapsed to a single language (Ruby), falsely failing a
+    # candidate proficient in Java or Python. The generator must NOT name a
+    # single language without framing it as the candidate's choice.
+    BankGenCase(
+        id="adversarial_or_language_knockout",
+        role_title="Workato Integration Engineer",
+        seniority="mid",
+        company_profile={
+            "about": "Enterprise iPaaS team building Workato recipes at scale.",
+            "industry": "Technology",
+            "hiring_bar": "high",
+        },
+        signals=[
+            _mk_signal(
+                "Proficiency in at least one programming language: Java, Python, or Ruby",
+                weight=3,
+                knockout=True,
+            ),
+            _mk_signal("Workato recipe development", sig_type="experience", weight=3),
+            _mk_signal("REST API integration", weight=2),
+        ],
+        stage_type="ai_screening_behavioral",
+        stage_duration=20,
+        stage_difficulty="hard",
+        adversarial_or_requirement=True,
+    ),
 ]
 
 # Map case id → case for lookup
@@ -901,3 +932,52 @@ async def test_no_hallucinated_signal_values(case: BankGenCase) -> None:
                 f"provided snapshot {provided_signal_values!r}. "
                 f"Question text: {q.text!r}"
             )
+
+
+# ---------------------------------------------------------------------------
+# Test 7 — one-of / OR-requirement is never collapsed to a single option
+# ---------------------------------------------------------------------------
+
+_OR_REQUIREMENT_CASES = [c for c in CASES if c.adversarial_or_requirement]
+_OR_REQUIREMENT_CASE_IDS = [c.id for c in _OR_REQUIREMENT_CASES]
+
+# Words that signal the question is leaving the option up to the candidate
+# rather than hard-coding one. If a question names exactly one language but
+# also contains one of these, it's framing the choice as the candidate's.
+CHOICE_WORDS = (
+    "which",
+    "whichever",
+    "your language",
+    "either",
+    "one of",
+    "you're strongest",
+    "you are strongest",
+)
+
+
+@pytest.mark.parametrize(
+    "case", _OR_REQUIREMENT_CASES, ids=_OR_REQUIREMENT_CASE_IDS
+)
+async def test_or_requirement_not_collapsed_to_single_option(case: BankGenCase) -> None:
+    """A one-of / OR knockout must not be collapsed to a single option.
+
+    Mirrors the Workato defect: a "Java, Python, or Ruby" knockout that the
+    generator collapsed to Ruby, falsely failing a Python/Java expert. A
+    candidate satisfies the requirement with ANY ONE option, so a question that
+    hard-codes one language grades against the wrong one.
+
+    CRUDE HEURISTIC (pending an LLM-grader, consistent with the file's other
+    placeholder notes): for each generated question, if its text names exactly
+    ONE of {java, python, ruby} and does NOT frame it as the candidate's choice
+    (via a CHOICE_WORDS marker), that's an OR-collapse → fail. Naming zero or
+    all three is fine; naming one is only fine when the candidate gets to pick.
+    """
+    questions = await _generate(case)
+    assert questions, f"[{case.id}] generator returned zero questions"
+
+    for q in questions:
+        t = q.text.lower()
+        named = [lang for lang in ("java", "python", "ruby") if lang in t]
+        assert len(named) != 1 or any(w in t for w in CHOICE_WORDS), (
+            f"[{case.id}] OR-requirement collapsed to a single language: {q.text!r}"
+        )

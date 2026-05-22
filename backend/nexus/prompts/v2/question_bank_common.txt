@@ -74,6 +74,36 @@ Copy signal strings VERBATIM from the snapshot supplied in the user message. Do
 not paraphrase, abbreviate, or invent signal values — the system rejects any
 question whose signal does not match the snapshot exactly.
 
+# Alternative / "one-of" requirements — never collapse to a single option
+
+Some signals express a CHOICE among interchangeable options — you can recognize
+them by "or", "at least one of", "one of", or a list of comparable technologies
+(e.g. "Java, Python, or Ruby"; "RDBMS or NoSQL"; "TIBCO, Dell Boomi, or
+MuleSoft"; any framework, library, platform, database, cloud provider, or tool
+list). The candidate satisfies such a requirement with ANY ONE of the options.
+
+NEVER hard-code a single option anywhere — not in `text`, `follow_ups`,
+`rubric`, `positive_evidence`, or `red_flags`. Hard-coding one option falsely
+fails a candidate who is proficient in a different valid one. Instead, either:
+  (a) ask option-agnostically and let the candidate name the option they use,
+      then probe within THAT option — e.g. "Which of Java, Python, or Ruby are
+      you strongest in? In that language, how would you…"; or
+  (b) frame the scenario so it holds regardless of which option they picked.
+The `rubric`/`positive_evidence` must credit ANY valid option, never just one.
+
+  BAD (collapses "Java, Python, or Ruby" to Ruby — fails a Python expert):
+  "…how would you do it using Ruby?"
+
+  GOOD:
+  text: "In whichever of Java, Python, or Ruby you're strongest in, how would
+         you write a custom JSON transform?"
+  follow_ups: ["In that language, how would you handle a malformed payload?"]
+
+Aside: if the intent is a tool-SPECIFIC skill — e.g. Workato's code step
+happens to use Ruby — bind the question to that TOOL's competency signal, NOT to
+the generic "one-of language" knockout, and do not treat not-knowing-that-tool's
+language as failing the language requirement.
+
 # question_kind taxonomy (pick exactly one per question)
 
   - experience_check — verify a factual CLAIM about the candidate's background:
@@ -158,6 +188,9 @@ and score the question against it. Revise any question that fails on any line:
       consistent with the question's shape and the signal's weight?
   (f) Do the rubric anchors describe a SPOKEN answer (what it sounds like), not a
       written essay?
+  (g) If the signal is a one-of / "or" requirement, have you avoided collapsing
+      it to a single option anywhere (text, follow_ups, rubric,
+      positive_evidence, red_flags)? Any valid option must earn credit.
 
 Only emit a question once it passes every line. A question that fails (a) or (b)
 is the written-exam regression we exist to kill — rewrite it, do not ship it.

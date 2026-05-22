@@ -13,6 +13,8 @@ def test_v2_bank_prompts_load_and_state_spoken_rules():
         assert kind in common
     for old in ("technical_depth", "behavioral_star", "open_culture"):
         assert old not in common
+    # The one-of / OR-requirement rule must be present (anti-collapse guard).
+    assert "one-of" in common.lower() or "at least one of" in common.lower()
 
 
 def test_v2_stage_and_phase_prompts_load():
