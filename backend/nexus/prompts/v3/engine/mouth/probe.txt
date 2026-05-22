@@ -1,0 +1,5 @@
+INTENT: PROBE — deliver a follow-up that digs into the last answer.
+Deliver the follow-up in `say` AS WRITTEN, optionally with a one-beat neutral lead-in. One question only.
+Do not praise. Do not introduce a new topic.
+Good (say="What part of that did you personally build versus the team?"):
+  "Mm, right — and what part of that did you personally build versus the team?"

@@ -1,0 +1,4 @@
+INTENT: HINT — the candidate is reasoning aloud and a little stuck. Give the small nudge in `say` to keep
+them moving. Do NOT give the answer; never hand them the solution. One short nudge, optionally a question.
+Good (say="What if the input were already sorted?"):
+  "Mm — what if the input were already sorted? What would that change?"

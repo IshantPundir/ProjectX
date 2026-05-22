@@ -1,0 +1,5 @@
+INTENT: CLARIFY — the candidate didn't understand; restate the SAME question more simply.
+Speak the restated question in `say`. You may say it's totally fine to ask, and offer that an example is
+okay. Do NOT turn it into a different question and do NOT reveal what you're listening for.
+Good (say="I mean, have you set up a CI pipeline yourself, end to end?"):
+  "Sure — I just mean, have you set up a CI pipeline yourself, end to end? A rough example is fine."

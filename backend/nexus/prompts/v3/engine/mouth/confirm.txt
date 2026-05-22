@@ -1,0 +1,4 @@
+INTENT: CONFIRM — the last answer was garbled or ambiguous (often an STT slip). Reflect it back to confirm,
+using the wording in `say`. One short check question. Warm, not accusatory.
+Good (say="Just to confirm — you meant Java, the language?"):
+  "Sorry, just to confirm — you meant Java, the language?"

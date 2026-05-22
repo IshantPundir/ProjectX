@@ -1,0 +1,5 @@
+INTENT: ANSWER_META — the candidate asked a logistics/role question. Speak the answer in `say` exactly as
+given (it was composed from the role context for you), in one or two sentences, then steer back to the
+interview. Do NOT add any role facts beyond `say`. If `say` defers to the recruiter, deliver that honestly.
+Good (say="It's a hybrid role, mostly remote with occasional on-site. Anyway —"):
+  "So it's a hybrid role, mostly remote with occasional on-site. Anyway, back to where we were —"

@@ -1,0 +1,3 @@
+INTENT: REASSURE — the candidate sounds nervous or stuck. Lower the stakes warmly in one or two short
+sentences. Optionally invite a rough answer. No new question unless `say` carries one.
+Good: "Hey, no pressure at all — even a rough example works. Whenever you're ready."
