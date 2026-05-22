@@ -33,6 +33,32 @@ def extract_ms(events: list[dict[str, Any]], field: str) -> list[int]:
     return out
 
 
+def summarize_perceived_latency(events: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    """Aggregate per-turn ChatMessage.metrics (the working 1.5.9 latency signal — CMI-3).
+
+    Reads `turn.latency.assistant` (llm_node_ttft / tts_node_ttfb / e2e_latency) and
+    `turn.latency.user` (end_of_turn_delay) events recorded by the agent. The headline
+    CMI-3 number is `perceived_response_ms` = llm_node_ttft + tts_node_ttfb per turn.
+    """
+    asst = [e for e in events if e.get("kind") == "turn.latency.assistant"]
+    user = [e for e in events if e.get("kind") == "turn.latency.user"]
+
+    perceived: list[int] = []
+    for e in asst:
+        p = e.get("payload") or {}
+        ttft, ttfb = p.get("llm_node_ttft"), p.get("tts_node_ttfb")
+        if isinstance(ttft, (int, float)) and isinstance(ttfb, (int, float)) and ttft > 0 and ttfb > 0:
+            perceived.append(int((ttft + ttfb) * 1000))
+
+    return {
+        "perceived_response_ms": percentile_stats(perceived),
+        "llm_ttft_ms": percentile_stats(extract_ms(asst, "llm_node_ttft")),
+        "tts_ttfb_ms": percentile_stats(extract_ms(asst, "tts_node_ttfb")),
+        "e2e_latency_ms": percentile_stats(extract_ms(asst, "e2e_latency")),
+        "eou_delay_ms": percentile_stats(extract_ms(user, "end_of_turn_delay")),
+    }
+
+
 def compute_audio_summary(
     *, events: list[dict[str, Any]], config_snapshot: dict[str, object],
 ) -> dict[str, object]:
@@ -47,5 +73,6 @@ def compute_audio_summary(
             "llm_ttft_ms": percentile_stats(extract_ms(llm, "ttft")),
             "tts_ttfb_ms": percentile_stats(extract_ms(tts, "ttfb")),
         },
+        "perceived": summarize_perceived_latency(events),   # CMI-3 mouth half (working signal)
         "config": dict(config_snapshot),
     }
