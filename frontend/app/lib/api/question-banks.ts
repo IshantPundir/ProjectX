@@ -17,6 +17,14 @@ export type QuestionRubric = {
   below_bar: string
 }
 
+export type QuestionKind =
+  | 'experience_check'
+  | 'behavioral'
+  | 'technical_scenario'
+  | 'compliance_binary'
+
+export type QuestionDifficulty = 'easy' | 'medium' | 'hard'
+
 export type QuestionResponse = {
   id: string
   bank_id: string
@@ -32,6 +40,9 @@ export type QuestionResponse = {
   rubric: QuestionRubric
   evaluation_hint: string
   edited_by_recruiter: boolean
+  question_kind: QuestionKind
+  primary_signal: string | null
+  difficulty: QuestionDifficulty | null
   created_at: string
   updated_at: string
 }
@@ -52,6 +63,7 @@ export type BankResponse = {
   question_count: number
   total_minutes: number
   is_stale: boolean
+  generation_status_by_kind: Record<string, string>
   created_at: string
   updated_at: string
 }

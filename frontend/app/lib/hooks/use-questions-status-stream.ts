@@ -102,7 +102,8 @@ export function useQuestionsStatusStream(
               const currentStageId = selectedStageIdRef.current
               if (
                 (ev.event === 'bank.status_changed' ||
-                  ev.event === 'bank.question_updated') &&
+                  ev.event === 'bank.question_updated' ||
+                  ev.event === 'bank.question_added') &&
                 currentStageId
               ) {
                 void queryClient.invalidateQueries({
