@@ -436,13 +436,6 @@ def _apply_mandatory_correction_in_position_order(
                 q.is_mandatory = False
 
 
-def order_mandatory_first(questions: list) -> list:
-    """Stable order: is_mandatory (knockout) questions first, preserving each group's
-    existing relative position order. Used so the bank's stored positions show knockouts
-    first (recruiter-UI clarity; build_session_config already asks mandatory-first at runtime)."""
-    return sorted(questions, key=lambda q: (not q.is_mandatory, q.position))
-
-
 def validate_streamed_question(
     question: GeneratedQuestion,
     *,
@@ -1025,7 +1018,6 @@ __all__ = [
     "validate_mandatory_fits_session",
     "validate_llm_output_against_snapshot",
     "validate_streamed_question",
-    "order_mandatory_first",
     "write_generated_questions",
     "wipe_ai_questions_of_kind",
     "persist_one_question",
