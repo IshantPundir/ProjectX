@@ -327,13 +327,26 @@ class Settings(BaseSettings):
     # --- Interview engine v2 (two-plane) — EOU / turn-taking knobs ---
     # Isolated from the v1 engine_endpointing_* / interview_turn_detector_*
     # knobs so retuning v2 on talk-tests never changes v1 behavior (master §3
-    # "M3 must not break v1"). Defaults intentionally match v1's current values;
-    # the Indian-ESL/Hinglish recalibration is decided by the M3 talk-test
-    # (master §7 R1), not guessed in code.
-    engine_v2_turn_detector_unlikely_threshold: float | None = 0.5
+    # "M3 must not break v1").
+    #
+    # unlikely_threshold = None => use the MultilingualModel's DOCUMENTED DEFAULT
+    # (the docs say the detector "has no configuration"; English true-positive
+    # rate 99.3% — it commits a complete answer fast and waits on an unfinished
+    # one). Talk-test 2026-05-22 (R1): v1's Phase-5 override of 0.5 ("more patient
+    # EOU") made the detector treat COMPLETE answers as unfinished — it waited the
+    # full max_delay on every turn, which both lagged complete answers AND fired a
+    # spurious hold-space cue on them. Reverting v2 to the model default restores
+    # discrimination so the hold-space cue lands only on genuinely-unfinished turns.
+    engine_v2_turn_detector_unlikely_threshold: float | None = None
     engine_v2_endpointing_mode: Literal["fixed", "dynamic"] = "dynamic"
     engine_v2_endpointing_min_delay: float = 0.8
-    engine_v2_endpointing_max_delay: float = 4.5
+    # max_delay 10.0 (was v1's 4.5): with the model-default detector restoring
+    # discrimination, complete answers commit fast (~1-2s, well under the ceiling),
+    # so a high ceiling only buys patience for genuine mid-answer think-pauses.
+    # Talk-test 2026-05-22 honored real 7-8.5s think-pauses under this ceiling that
+    # 4.5s was cutting off. (quality-before-latency; EOU is off the perceived-latency
+    # critical path per CMI-3.)
+    engine_v2_endpointing_max_delay: float = 10.0
 
     # Hold-space: one warm cue on a long MID-ANSWER pause (candidate is
     # formulating, turn-detector has not fired EOU). Never on a complete answer

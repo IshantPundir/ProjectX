@@ -147,6 +147,17 @@ class _CannedBankAgent(Agent):
             backchannel = is_backchannel(
                 text, min_words=settings.engine_v2_backchannel_min_words)
 
+            # EOU latency signal: how long the candidate had been silent (in
+            # 'listening') before the turn-detector committed this turn — the real
+            # per-turn end-of-utterance delay. `metrics_collected` eou_metrics is
+            # dead in LiveKit 1.5.9 (emits nothing), so this is the CMI-3 EOU
+            # source: recorded to the envelope + logged once per turn. (Folding it
+            # into the v2 audio summary's latency block is an M4/M6 follow-up.)
+            _now = time.monotonic()
+            _last_listen = self._state.get("last_listening_at")
+            pause_before_commit_ms = (int((_now - _last_listen) * 1000)
+                                      if isinstance(_last_listen, (int, float)) else None)
+
             # A real response resets the unresponsive ladder (no-response count -> 0).
             if should_yield(word_count=word_count, is_backchannel=backchannel):
                 self._ladder.on_candidate_responded()
@@ -163,9 +174,13 @@ class _CannedBankAgent(Agent):
             self._collector.record(
                 "turn.captured",
                 {"word_count": word_count, "is_backchannel": backchannel,
-                 "resumption_label": label.value},
+                 "resumption_label": label.value,
+                 "pause_before_commit_ms": pause_before_commit_ms},
                 t_ms=self._t_ms(), wall_ms=_now_ms(),
             )
+            log.info("engine.v2.turn_committed", word_count=word_count,
+                     pause_before_commit_ms=pause_before_commit_ms,
+                     resumption_label=label.value)
 
             # Deliver the next canned bank line, then re-arm the ladder for the NEW
             # question via _pose_question (resets started_answering + the pacer too).
@@ -263,6 +278,7 @@ async def run(
     state: dict[str, object] = {
         "started_answering": False, "responding": False,
         "closing": False, "silence_task": None,
+        "last_listening_at": None,   # monotonic ts of last speaking->listening (EOU signal)
     }
 
     def _pose_question(at_s: float) -> None:
@@ -283,6 +299,8 @@ async def run(
                     # Mid-answer think-pause -> at most one hold-space cue.
                     if pacer.cue_due(now_s=now):
                         pacer.mark_cued()
+                        log.info("engine.v2.holdspace",
+                                 t_ms=int((now - started_at) * 1000))
                         state["responding"] = True
                         try:
                             await session.say(settings.engine_v2_hold_space_message,
@@ -337,6 +355,9 @@ async def run(
             # pre-answer silence belongs to the ladder, not the pacer (fix #1).
             if state["started_answering"]:
                 pacer.on_pause_started(at_s=now)
+            # Track the pause start so on_user_turn_completed can report the EOU
+            # delay (pause_before_commit_ms) — the CMI-3 EOU signal.
+            state["last_listening_at"] = now
         collector.record("audio.user.state",
                          {"old_state": ev.old_state, "new_state": ev.new_state},
                          t_ms=int((now - started_at) * 1000), wall_ms=_now_ms())

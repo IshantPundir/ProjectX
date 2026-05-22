@@ -36,11 +36,13 @@ def test_model_overrides(monkeypatch):
 
 def test_engine_v2_eou_defaults():
     cfg = AIConfig()
-    # EOU / endpointing — v2 starts at v1's current values (isolated knobs).
-    assert cfg.engine_v2_turn_detector_unlikely_threshold == 0.5
+    # EOU / endpointing — recalibrated on the M3 talk-test (2026-05-22, R1):
+    # None => MultilingualModel documented default (restores complete-vs-incomplete
+    # discrimination); max_delay 10.0 gives genuine mid-answer think-pauses room.
+    assert cfg.engine_v2_turn_detector_unlikely_threshold is None
     assert cfg.engine_v2_endpointing_mode == "dynamic"
     assert cfg.engine_v2_endpointing_min_delay == 0.8
-    assert cfg.engine_v2_endpointing_max_delay == 4.5
+    assert cfg.engine_v2_endpointing_max_delay == 10.0
     # Hold-space (mid-answer think pause).
     assert cfg.engine_v2_hold_space_enabled is True
     assert cfg.engine_v2_hold_space_delay_s == 2.5
