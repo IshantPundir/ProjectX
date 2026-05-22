@@ -40,6 +40,9 @@ def build_mouth_messages(
     last_question: str | None,
 ) -> list[dict[str, str]]:
     """Assemble the [persona | act | dynamic-suffix] message list for one mouth turn."""
+    # For REPEAT, directive.say is None by convention; effective_say substitutes last_question.
+    # The rendered `say:` field always receives the resolved text (so repeat.txt's "provided in
+    # `say`" is accurate from the LLM's view, even though directive.say itself is None).
     say = effective_say(directive, last_question=last_question)
 
     lines: list[str] = []

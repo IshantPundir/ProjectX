@@ -74,3 +74,23 @@ def test_tone_is_surfaced_in_dynamic_suffix():
         directive=_ask(tone=DirectiveTone.WARM), persona_preamble=_PERSONA, act_block=_ACT_BLOCK,
         candidate_utterance=None, last_question=None)
     assert "WARM" in msgs[2]["content"]
+
+
+def test_no_candidate_block_when_whitespace_only_utterance():
+    # STT can emit whitespace-only strings after noise-gating; they must NOT open a CANDIDATE block.
+    msgs = build_mouth_messages(
+        directive=_ask(), persona_preamble=_PERSONA, act_block=_ACT_BLOCK,
+        candidate_utterance="   ", last_question=None,
+    )
+    assert "CANDIDATE SAID:" not in msgs[2]["content"]
+
+
+def test_repeat_fallback_when_no_cached_question():
+    # First-turn REPEAT with nothing cached yields the explicit fallback, never None.
+    msgs = build_mouth_messages(
+        directive=Directive(id="d-5", turn_ref="t-1", act=DirectiveAct.REPEAT, say=None),
+        persona_preamble=_PERSONA, act_block="REPEAT BLOCK",
+        candidate_utterance="can you repeat that?",
+        last_question=None,
+    )
+    assert "(no previous question to repeat)" in msgs[2]["content"]
