@@ -273,9 +273,9 @@ async def run(
 
     async def _silence_watch() -> None:
         """Tick the pacer (mid-answer) OR the ladder (pre-answer) while silent."""
-        try:
-            while not state["closing"]:
-                await asyncio.sleep(0.5)
+        while not state["closing"]:
+            await asyncio.sleep(0.5)
+            try:
                 if state["responding"] or state["closing"]:
                     continue                      # fix #2: don't speak over the agent
                 now = time.monotonic()
@@ -318,8 +318,13 @@ async def run(
                         await session.aclose()
                 finally:
                     state["responding"] = False
-        except asyncio.CancelledError:
-            pass
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                # One bad tick (e.g. a transient TTS/network failure on say())
+                # must not kill the behavioral layer for the rest of the session.
+                log.warning("engine.v2.silence_watch.tick_failed", exc_info=True)
+                state["responding"] = False
 
     @session.on("user_state_changed")
     def _on_user_state(ev: UserStateChangedEvent) -> None:
@@ -369,6 +374,9 @@ async def run(
     @session.on("close")
     def _on_close(_ev: object) -> None:
         state["closing"] = True
+        task = state.get("silence_task")
+        if isinstance(task, asyncio.Task):
+            task.cancel()
         env = collector.envelope()
         summary = compute_audio_summary(
             events=[e.model_dump(mode="json") for e in env.events],
