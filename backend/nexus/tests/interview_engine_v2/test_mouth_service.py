@@ -74,3 +74,24 @@ async def test_prerender_reflex_variants_uses_llm_when_available(monkeypatch):
     )
     assert "No rush at all." in variants.hold_space
     assert variants.still_there == ["You still with me?"]
+
+
+def test_say_none_question_bearing_act_does_not_corrupt_repeat_cache():
+    plane = _plane()
+    # Prime the cache with a real ASK question.
+    plane.build_turn_messages(
+        Directive(id="d-1", turn_ref="t-1", act=DirectiveAct.ASK, say="What did you build?"),
+        candidate_utterance=None,
+    )
+    # ACK_ADVANCE is question-bearing but its say is optional; say=None must NOT overwrite the cache.
+    plane.build_turn_messages(
+        Directive(id="d-2", turn_ref="t-2", act=DirectiveAct.ACK_ADVANCE, say=None),
+        candidate_utterance="ok",
+    )
+    # REPEAT should still replay the original ASK question, not a None/fallback.
+    msgs = plane.build_turn_messages(
+        Directive(id="d-3", turn_ref="t-3", act=DirectiveAct.REPEAT, say=None),
+        candidate_utterance="say that again?",
+    )
+    assert "What did you build?" in msgs[2]["content"]
+    assert "(no previous question to repeat)" not in msgs[2]["content"]

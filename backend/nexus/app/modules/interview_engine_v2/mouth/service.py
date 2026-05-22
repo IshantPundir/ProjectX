@@ -100,15 +100,23 @@ class ConversationPlane:
             )
 
     async def _call_reflex_llm(self) -> ReflexCueVariants:
-        """One instructor structured call on engine_mouth_model (off the critical path)."""
+        """One instructor structured call on engine_mouth_model (off the critical path).
+
+        The persona template is the sole guide; the seed strings passed to
+        prerender_reflex_variants are NOT forwarded here — they are used only as the
+        fallback when this call fails.
+        """
         from app.ai.client import get_openai_client
 
         client = get_openai_client()
         prompt = self._loader.get("engine/mouth/reflex_cues").format(
             persona_name=self._persona_name, job_title=self._job_title,
         )
-        return await client.chat.completions.create(
-            model=ai_config.engine_mouth_model,
-            response_model=ReflexCueVariants,
-            messages=[{"role": "system", "content": prompt}],
-        )
+        create_kwargs: dict[str, object] = {
+            "model": ai_config.engine_mouth_model,
+            "response_model": ReflexCueVariants,
+            "messages": [{"role": "system", "content": prompt}],
+        }
+        if ai_config.engine_mouth_effort:
+            create_kwargs["reasoning_effort"] = ai_config.engine_mouth_effort
+        return await client.chat.completions.create(**create_kwargs)
