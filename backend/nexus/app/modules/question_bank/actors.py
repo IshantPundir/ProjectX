@@ -22,7 +22,7 @@ from sqlalchemy.sql import text
 from app import pubsub
 from app.ai.client import get_openai_client
 from app.ai.config import ai_config
-from app.ai.prompts import PromptLoader, prompt_loader
+from app.ai.prompts import PromptLoader
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
@@ -53,10 +53,9 @@ from app.modules.question_bank.service import (
     transition_to_failed,
     transition_to_generating,
     transition_to_reviewing_after_generation,
-    validate_llm_output_against_snapshot,
     validate_streamed_question,
     wipe_ai_questions,
-    write_generated_questions,
+    wipe_ai_questions_of_phase,
 )
 from app.modules.question_bank.context import (
     QuestionContext,
@@ -73,31 +72,15 @@ _tracer = trace.get_tracer("nexus.ai.openai")
 # the rewritten per-phase prompts from `prompts/v{N}/`, where N is the env-driven
 # `question_bank_prompt_version` (AIConfig is the single source of truth — never
 # hardcode the version). Mirrors the per-prompt-family loader pattern in
-# interview_engine/agent.py. The module-level `prompt_loader` (v1) stays the loader
-# for the regenerate-one + keyterm + draft/refine paths until those migrate.
+# interview_engine/agent.py. Both the streaming generation path AND the
+# regenerate-one path now read through this loader so regenerated questions carry
+# primary_signal + difficulty + a new-taxonomy question_kind.
 _bank_prompt_loader = PromptLoader(version=ai_config.question_bank_prompt_version)
 
 
 # ---------------------------------------------------------------------------
 # Prompt assembly helpers
 # ---------------------------------------------------------------------------
-
-# Optional-question buffer added on top of the stage's session duration.
-# `mandatory_total ≤ duration_minutes` (HARD CAP).
-# `mandatory_total + optional_total ≤ duration_minutes + OPTIONAL_BUDGET_MARGIN_MIN`
-# (HARD CAP — gives the screening AI 1–2 fallback probes if the candidate
-# moves through mandatory faster than estimated).
-OPTIONAL_BUDGET_MARGIN_MIN = 5
-
-# How many additional LLM calls we make if the first one violates the
-# budget contract. The first call is attempt 1; with MAX_BUDGET_RETRIES=1
-# we make at most 2 LLM calls per generation. Each retry adds the
-# previous output + a corrective user message to the conversation so the
-# LLM has the violation in its context. After this many retries with
-# violations, the bank transitions to 'failed' and the recruiter retries
-# (e.g. by extending the stage duration if the configuration is
-# structurally infeasible).
-MAX_BUDGET_RETRIES = 1
 
 # Behavioral-call mandatory budget cap (minutes). The behavioral phase
 # verifies knockout-signal claims; it should not eat technical scenario
@@ -731,7 +714,6 @@ async def _generate_one_bank(
             {
                 "text": q.text,
                 "signal_values": q.signal_values,
-                "primary_signal": q.primary_signal,
             }
             for q in behavioral_questions
         ]
@@ -1360,8 +1342,11 @@ async def _regenerate_one_question(
     bootstrap). Matches the jd/actors.py inner-coroutine pattern (e.g.,
     `_run_reenrichment`).
     """
-    # Build prompt: common header + regenerate_one + rich user context
-    system_prompt = prompt_loader.load_pair(
+    # Build prompt: common header + regenerate_one + rich user context. Use the v2
+    # loader (the same one the streaming gen path uses) so the regenerated question
+    # carries primary_signal + difficulty + a new-taxonomy question_kind — NOT the
+    # module-level v1 `prompt_loader`.
+    system_prompt = _bank_prompt_loader.load_pair(
         "question_bank_common", "question_bank_regenerate_one"
     )
 
@@ -1483,13 +1468,16 @@ async def _regenerate_one_question(
         reasoning_chars=len(result.reasoning),
     )
 
-    # Post-validate the one question against the snapshot
+    # Post-validate the one question against the snapshot. validate_streamed_question
+    # additionally enforces the D5 invariant that primary_signal ∈ signal_values —
+    # without it a regen could set primary_signal to a value outside the snapshot.
+    # The session is live here, so passing snapshot.signals as a primitive is fine.
     allowed_types = stage.signal_filter.get("include_types", [])
-    await validate_llm_output_against_snapshot(
-        db,
-        snapshot=snapshot,
+    validate_streamed_question(
+        result.question,
+        snapshot_signals=snapshot.signals,
+        snapshot_id=snapshot.id,
         allowed_types=allowed_types,
-        questions=[result.question],
     )
 
     await replace_question_in_place(
@@ -1607,7 +1595,7 @@ async def regenerate_question(
 
 
 # ---------------------------------------------------------------------------
-# Actor: per-kind regenerate (behavioral_star OR technical_depth alone)
+# Actor: per-phase regenerate (behavioral OR technical phase alone)
 # ---------------------------------------------------------------------------
 
 @dramatiq.actor(
@@ -1623,20 +1611,43 @@ async def regenerate_kind_actor(
     kind: str,
     correlation_id: str = "",
 ) -> None:
-    """Re-run one kind's generation call on an existing bank.
+    """Re-stream ONE phase's generation on an existing bank (engine-v2 M2, D6).
 
-    Pre-conditions enforced by the router: bank.status == 'generating',
-    bank's existing AI questions of the targeted kind already wiped.
+    `kind` is a PHASE label — one of ``"behavioral"`` / ``"technical"`` (decision
+    D3). Pre-conditions enforced by the router: bank.status == 'generating' and
+    this phase's existing AI questions already wiped (`wipe_ai_questions_of_phase`).
+
+    Mirrors `_generate_one_bank`'s session discipline but for a single phase — NO
+    `get_bypass_session()` is held across the multi-second LLM stream:
+
+      A (short session) — load rows; resolve this phase's prompt + eligible signals
+        + budget; (idempotently re-)wipe this phase; compute the start_position from
+        the surviving rows; capture the OTHER phase's persisted questions as the
+        chaining payload (technical phase only); capture primitives; commit; close.
+      B (no held session) — `_generate_questions_for_kind` streams + persists +
+        publishes BANK_QUESTION_ADDED per question in its own short sessions.
+      C (short session) — reconcile: set generation_status_by_kind[phase]='reviewing'
+        (merged with the other phase's existing key), run mandatory auto-correction
+        over ALL questions, re-pack positions, stamp generation-time metadata,
+        transition to 'reviewing', commit.
+
+    Failure path mirrors `_generate_one_bank`'s contract — but because this actor
+    publishes its own status event (rather than re-raising to a wrapper that does),
+    it SWALLOWS the exception, sets generation_status_by_kind[phase]='failed',
+    transitions to 'failed' in a short session, and publishes BANK_STATUS_CHANGED
+    'failed' (so the SSE fast path delivers the terminal state).
     """
     bank_uuid = UUID(bank_id)
     tenant_uuid = UUID(tenant_id)
     started_by_uuid = UUID(started_by)
+    phase = kind
     effective_corr = correlation_id or f"actor-regenerate-kind-{bank_id}"
 
     publish_args: tuple[UUID, UUID, str] | None = None
+
+    # ---- Phase A: load + resolve phase config + capture primitives ----
     async with get_bypass_session() as db:
-        safe_tenant_id = str(tenant_uuid)
-        await db.execute(text(f"SET LOCAL app.current_tenant = '{safe_tenant_id}'"))
+        await db.execute(text(f"SET LOCAL app.current_tenant = '{tenant_uuid}'"))
 
         bank = (
             await db.execute(
@@ -1674,115 +1685,157 @@ async def regenerate_kind_actor(
 
         job_id = job.id
         stage_id = stage.id
+        snapshot_id = snapshot.id
+        snapshot_signals = list(snapshot.signals)
+        stage_duration = stage.duration_minutes
+        pipeline_version = instance.pipeline_version
+        stage_config_snapshot = {
+            "signal_filter": stage.signal_filter,
+            "difficulty": stage.difficulty,
+        }
 
-        try:
-            # Select prompt + eligible signals + budget per kind
-            if kind == "behavioral_star":
-                prompt_name = STAGE_TYPE_TO_BEHAVIORAL_PROMPT.get(stage.stage_type)
-                eligible = _filter_behavioral_eligible(snapshot.signals)
-                budget = BEHAVIORAL_BUDGET_MIN
-                if prompt_name is None or not eligible:
-                    # Nothing to regenerate — record skipped and exit clean
-                    bank.generation_status_by_kind = {
-                        **(bank.generation_status_by_kind or {}),
-                        kind: "skipped_no_eligible_signals",
-                    }
-                    transition_to_reviewing_after_generation(
-                        bank, user_id=started_by_uuid,
-                    )
-                    await db.commit()
-                    publish_args = (job_id, stage_id, "reviewing")
-                    return
-            elif kind == "technical_depth":
-                prompt_name = STAGE_TYPE_TO_PROMPT.get(stage.stage_type)
-                eligible = snapshot.signals
-                # Reduce by the OTHER kind's persisted total minutes
-                other_q = (
-                    await db.execute(
-                        select(StageQuestion).where(
-                            StageQuestion.bank_id == bank.id,
-                            StageQuestion.question_kind == "behavioral_star",
-                        )
-                    )
-                ).scalars().all()
-                other_total = sum(float(q.estimated_minutes) for q in other_q)
-                budget = max(1, int(stage.duration_minutes - other_total))
-            else:
-                raise RuntimeError(f"Unknown kind: {kind!r}")
+        if phase == "behavioral":
+            prompt_name = STAGE_TYPE_TO_BEHAVIORAL_PROMPT.get(stage.stage_type)
+            eligible = _filter_behavioral_eligible(snapshot_signals)
+            budget = BEHAVIORAL_BUDGET_MIN
+            if prompt_name is None or not eligible:
+                # Nothing to regenerate — record skipped and exit clean (preserves
+                # the original skip semantics; the router already wiped this phase).
+                bank.generation_status_by_kind = {
+                    **(bank.generation_status_by_kind or {}),
+                    "behavioral": "skipped_no_eligible_signals",
+                }
+                transition_to_reviewing_after_generation(
+                    bank, user_id=started_by_uuid,
+                )
+                await db.commit()
+                await pubsub.publish(
+                    pubsub.job_channel(job_id),
+                    pubsub.Events.BANK_STATUS_CHANGED,
+                    {
+                        "job_id": str(job_id),
+                        "bank_id": bank_id,
+                        "stage_id": str(stage_id),
+                        "new_status": "reviewing",
+                        "source": "actor",
+                    },
+                    correlation_id=effective_corr,
+                )
+                return
+            prior_phase_questions: list[dict] = []
+        elif phase == "technical":
+            prompt_name = STAGE_TYPE_TO_PROMPT.get(stage.stage_type)
+            eligible = snapshot_signals  # full set
+            if prompt_name is None:
+                raise RuntimeError(
+                    f"No technical prompt mapped for stage_type={stage.stage_type}"
+                )
+        else:
+            raise RuntimeError(f"Unknown phase: {phase!r}")
 
-            new_questions = await _generate_questions_for_kind(
-                db,
-                bank=bank,
-                stage=stage,
-                instance=instance,
-                job=job,
-                snapshot=snapshot,
-                kind=kind,
-                eligible_signals=eligible,
-                budget_minutes=budget,
-                prompt_name=prompt_name,
+        # Idempotent re-wipe of THIS phase's AI rows (the router already wiped them
+        # before dispatch; this is a defensive no-op on a clean re-run).
+        await wipe_ai_questions_of_phase(db, bank=bank, phase=phase)
+
+        # Surviving rows = the OTHER phase's AI questions + all recruiter rows.
+        surviving = await get_bank_questions(db, bank_uuid)
+        start_position = len(surviving)
+
+        if phase == "technical":
+            # Chain the surviving behavioral questions in for non-overlap. The
+            # builder's chaining block only reads `text` + `signal_values`.
+            behavioral_kinds = PHASE_QUESTION_KINDS["behavioral"]
+            prior_phase_questions = [
+                {"text": r.text, "signal_values": list(r.signal_values)}
+                for r in surviving
+                if r.question_kind in behavioral_kinds
+            ]
+            # Budget = stage duration minus the OTHER (behavioral) phase's persisted
+            # total minutes. Under the new taxonomy that phase is the set of
+            # behavioral kinds in PHASE_QUESTION_KINDS — NOT a single kind string.
+            other_total = sum(
+                float(r.estimated_minutes)
+                for r in surviving
+                if r.question_kind in behavioral_kinds
             )
+            budget = max(1, int(stage_duration - other_total))
 
-            # Merge: keep existing questions of the OTHER kind (and recruiter
-            # rows of any kind), append the regenerated ones, re-pack
-            # positions, run post-merge correction. write_generated_questions
-            # handles AI-question replacement + position re-pack.
-            await write_generated_questions(
-                db, bank=bank, questions=new_questions, source="ai_generated",
-                stage_difficulty=stage.difficulty,
-            )
+        await db.commit()
+    # ---- Phase A session CLOSED; the stream owns its own sessions ----
 
-            # Re-fetch combined list for post-merge correction
-            combined = await get_bank_questions(db, bank.id)
+    try:
+        # ---- Phase B: stream this phase (NO held session) ----
+        await _generate_questions_for_kind(
+            bank_id=bank_uuid,
+            tenant_id=tenant_uuid,
+            job_id=job_id,
+            stage_id=stage_id,
+            snapshot_id=snapshot_id,
+            phase=phase,
+            eligible_signals=eligible,
+            budget_minutes=budget,
+            prompt_name=prompt_name,
+            start_position=start_position,
+            prior_phase_questions=prior_phase_questions,
+            correlation_id=effective_corr,
+        )
+
+        # ---- Phase C: reconcile + transition (short session) ----
+        async with get_bypass_session() as db:
+            await db.execute(text(f"SET LOCAL app.current_tenant = '{tenant_uuid}'"))
+            bank = (
+                await db.execute(
+                    select(StageQuestionBank).where(StageQuestionBank.id == bank_uuid)
+                )
+            ).scalar_one()
+            rows = await get_bank_questions(db, bank_uuid)
+
+            bank.generation_status_by_kind = {
+                **(bank.generation_status_by_kind or {}),
+                phase: "reviewing",
+            }
+
+            from app.modules.question_bank.schemas import QuestionRubric
             from app.modules.question_bank.service import (
                 _apply_mandatory_correction_in_position_order,
             )
-            from app.modules.question_bank.schemas import (
-                GeneratedQuestion,
-                QuestionRubric,
-            )
-            # Project ORM rows into GeneratedQuestion shape for the helper
+
             projected = [
                 GeneratedQuestion(
-                    position=q.position,
-                    text=q.text,
-                    signal_values=list(q.signal_values),
-                    estimated_minutes=q.estimated_minutes,
-                    is_mandatory=q.is_mandatory,
-                    follow_ups=list(q.follow_ups),
-                    positive_evidence=list(q.positive_evidence),
-                    red_flags=list(q.red_flags),
-                    rubric=QuestionRubric(**q.rubric),
-                    evaluation_hint=q.evaluation_hint,
-                    question_kind=q.question_kind,
+                    position=r.position,
+                    text=r.text,
+                    primary_signal=r.primary_signal,
+                    signal_values=list(r.signal_values),
+                    estimated_minutes=r.estimated_minutes,
+                    is_mandatory=r.is_mandatory,
+                    follow_ups=list(r.follow_ups),
+                    positive_evidence=list(r.positive_evidence),
+                    red_flags=list(r.red_flags),
+                    rubric=QuestionRubric(**r.rubric),
+                    evaluation_hint=r.evaluation_hint,
+                    question_kind=r.question_kind,
                 )
-                for q in combined
+                for r in rows
             ]
             knockout_values = {
-                s["value"] for s in snapshot.signals if s.get("knockout", False)
+                s["value"] for s in snapshot_signals if s.get("knockout", False)
             }
             _apply_mandatory_correction_in_position_order(
                 questions=projected, knockout_values=knockout_values,
             )
-            # Apply corrections back to ORM rows
             by_position = {p.position: p for p in projected}
-            for row in combined:
+            for row in rows:
                 if row.position in by_position:
                     row.is_mandatory = by_position[row.position].is_mandatory
+            # Re-pack positions 0..N-1 in current order.
+            for i, row in enumerate(rows):
+                row.position = i
             await db.flush()
 
-            # Update per-kind status
-            bank.generation_status_by_kind = {
-                **(bank.generation_status_by_kind or {}),
-                kind: "reviewing",
-            }
-            bank.pipeline_version_at_generation = instance.pipeline_version
-            bank.stage_config_snapshot = {
-                "signal_filter": stage.signal_filter,
-                "difficulty": stage.difficulty,
-            }
+            bank.prompt_version = ai_config.question_bank_prompt_version
+            bank.pipeline_version_at_generation = pipeline_version
+            bank.stage_config_snapshot = stage_config_snapshot
             bank.is_stale = False
-
             transition_to_reviewing_after_generation(bank, user_id=started_by_uuid)
             await log_event(
                 db,
@@ -1791,28 +1844,36 @@ async def regenerate_kind_actor(
                 actor_email=None,
                 action="question_bank.kind_regenerated",
                 resource="stage_question_bank",
-                resource_id=bank.id,
-                payload={"kind": kind},
+                resource_id=bank_uuid,
+                payload={"phase": phase},
             )
             await db.commit()
-            publish_args = (job_id, stage_id, "reviewing")
-        except Exception as exc:
-            logger.error(
-                "question_bank.regenerate_kind_failed",
-                bank_id=bank_id,
-                kind=kind,
-                error=str(exc)[:500],
-                exc_info=True,
-            )
-            bank.generation_status_by_kind = {
-                **(bank.generation_status_by_kind or {}),
-                kind: "failed",
+        publish_args = (job_id, stage_id, "reviewing")
+    except Exception as exc:
+        # ---- Failure path: failed status + transition in a short session ----
+        logger.error(
+            "question_bank.regenerate_kind_failed",
+            bank_id=bank_id,
+            phase=phase,
+            error=str(exc)[:500],
+            exc_info=True,
+        )
+        async with get_bypass_session() as fdb:
+            await fdb.execute(text(f"SET LOCAL app.current_tenant = '{tenant_uuid}'"))
+            fbank = (
+                await fdb.execute(
+                    select(StageQuestionBank).where(StageQuestionBank.id == bank_uuid)
+                )
+            ).scalar_one()
+            fbank.generation_status_by_kind = {
+                **(fbank.generation_status_by_kind or {}),
+                phase: "failed",
             }
             transition_to_failed(
-                bank, error=f"{kind} regenerate failed: {str(exc)[:200]}"
+                fbank, error=f"{phase} regenerate failed: {str(exc)[:200]}"
             )
-            await db.commit()
-            publish_args = (job_id, stage_id, "failed")
+            await fdb.commit()
+        publish_args = (job_id, stage_id, "failed")
 
     if publish_args is not None:
         job_id_pub, stage_id_pub, new_status_pub = publish_args

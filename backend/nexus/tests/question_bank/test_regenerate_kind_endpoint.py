@@ -35,10 +35,10 @@ def _stub_regenerate_kind_send(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_regenerate_kind_endpoint_accepts_behavioral_star(
+async def test_regenerate_kind_endpoint_accepts_behavioral(
     db: AsyncSession, monkeypatch,
 ):
-    """POST with kind=behavioral_star returns 202 and dispatches the actor."""
+    """POST with kind=behavioral returns 202 and dispatches the actor."""
     _stub_actor_sends(monkeypatch)
     _stub_regenerate_kind_send(monkeypatch)
     setup = await _build_full_setup(db, bank_status="reviewing")
@@ -50,7 +50,7 @@ async def test_regenerate_kind_endpoint_accepts_behavioral_star(
             resp = await ac.post(
                 f"/api/jobs/{setup['job'].id}/pipeline/stages/"
                 f"{setup['stage'].id}/banks/regenerate-kind",
-                json={"kind": "behavioral_star"},
+                json={"kind": "behavioral"},
                 headers=headers,
             )
     finally:
@@ -66,11 +66,16 @@ async def test_regenerate_kind_endpoint_accepts_behavioral_star(
     assert setup["bank"].status == "generating"
 
 
+@pytest.mark.parametrize("bad_kind", ["behavioral_star", "technical_depth", "garbage"])
 @pytest.mark.asyncio
 async def test_regenerate_kind_endpoint_rejects_invalid_kind(
-    db: AsyncSession, monkeypatch,
+    db: AsyncSession, monkeypatch, bad_kind: str,
 ):
-    """Invalid kind values are rejected at the Pydantic Literal layer."""
+    """Invalid kind values are rejected at the Pydantic Literal layer.
+
+    The OLD taxonomy labels (`behavioral_star` / `technical_depth`) must now be
+    rejected — the body only accepts the engine-v2 phase labels.
+    """
     _stub_actor_sends(monkeypatch)
     _stub_regenerate_kind_send(monkeypatch)
     setup = await _build_full_setup(db, bank_status="reviewing")
@@ -82,7 +87,7 @@ async def test_regenerate_kind_endpoint_rejects_invalid_kind(
             resp = await ac.post(
                 f"/api/jobs/{setup['job'].id}/pipeline/stages/"
                 f"{setup['stage'].id}/banks/regenerate-kind",
-                json={"kind": "compliance_binary"},
+                json={"kind": bad_kind},
                 headers=headers,
             )
     finally:
@@ -115,7 +120,7 @@ async def test_regenerate_kind_endpoint_404_when_no_bank(
             resp = await ac.post(
                 f"/api/jobs/{job.id}/pipeline/stages/{stage.id}"
                 f"/banks/regenerate-kind",
-                json={"kind": "behavioral_star"},
+                json={"kind": "behavioral"},
                 headers=headers,
             )
     finally:
@@ -140,7 +145,7 @@ async def test_regenerate_kind_endpoint_404_for_unknown_stage(
             resp = await ac.post(
                 f"/api/jobs/{setup['job'].id}/pipeline/stages/{uuid.uuid4()}"
                 f"/banks/regenerate-kind",
-                json={"kind": "behavioral_star"},
+                json={"kind": "behavioral"},
                 headers=headers,
             )
     finally:

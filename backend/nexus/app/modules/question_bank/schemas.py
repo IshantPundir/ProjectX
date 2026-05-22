@@ -214,14 +214,18 @@ class RegenerateQuestionBody(BaseModel):
 
 
 class RegenerateKindBody(BaseModel):
-    """POST /banks/regenerate-kind — re-run one kind's LLM call.
+    """POST /banks/regenerate-kind — re-run one PHASE's streaming generation.
 
-    Wipes ai_generated/ai_regenerated questions of the targeted kind
-    (recruiter-edited rows preserved), re-runs that kind's generation,
-    writes results back, updates generation_status_by_kind[kind].
+    Wipes ai_generated/ai_regenerated questions belonging to the targeted phase
+    (recruiter-edited rows preserved), re-streams that phase's generation, writes
+    the results back, updates generation_status_by_kind[phase].
+
+    `kind` is one of the engine-v2 phase labels (decision D3) — NOT the
+    per-question taxonomy. The phase→question_kind partition lives in
+    `actors.PHASE_QUESTION_KINDS`.
     """
     model_config = ConfigDict(extra="forbid")
-    kind: Literal["behavioral_star", "technical_depth"]
+    kind: Literal["behavioral", "technical"]
 
 
 # ---------------------------------------------------------------------------

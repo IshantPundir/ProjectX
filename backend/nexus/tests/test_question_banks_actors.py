@@ -1587,3 +1587,364 @@ async def test_generate_stage_disallowed_for_human_interview(db):
     assert "ai_screening" in STAGE_TYPE_TO_PROMPT
     assert "human_interview" not in STAGE_TYPE_TO_PROMPT
     assert "take_home" not in STAGE_TYPE_TO_PROMPT
+
+
+# ---------------------------------------------------------------------------
+# Per-phase regenerate (regenerate_kind_actor) — engine-v2 M2 streaming port
+# ---------------------------------------------------------------------------
+
+
+def _regen_kind_body():
+    """The raw coroutine body of the dramatiq actor.
+
+    `regenerate_kind_actor.fn` is wrapped by dramatiq's AsyncIO middleware (which
+    runs the coroutine on its own background loop); `.fn.__wrapped__` is the
+    underlying async function, awaitable directly inside pytest's event loop.
+    """
+    from app.modules.question_bank.actors import regenerate_kind_actor
+
+    return regenerate_kind_actor.fn.__wrapped__
+
+
+async def _seed_committed_bank_with_phase_questions(db, monkeypatch):
+    """Seed a bank with one persisted behavioral question + one technical question.
+
+    Returns (tenant, user, job, instance, stage, bank). The bank is left at
+    status='generating' (the router pre-marks it before dispatch). The two
+    questions stand in for an already-generated two-phase bank so a regen of one
+    phase can be observed to replace ONLY that phase.
+    """
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    job, snapshot = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id,
+        signals=[
+            _signal(value="5y Kubernetes", signal_type="experience", knockout=True),
+            _signal(value="System Design", signal_type="competency"),
+        ],
+    )
+    instance, stage = await _make_pipeline_and_stage(
+        db, job=job, stage_type="ai_screening", duration_minutes=30,
+    )
+    bank = await ensure_bank_exists(db, stage=stage, job=job)
+
+    # One behavioral (experience_check) + one technical (technical_scenario).
+    await write_generated_questions(
+        db,
+        bank=bank,
+        questions=[
+            _build_question(
+                position=0,
+                text="Walk me through your hands-on Kubernetes operations.",
+                signal_values=["5y Kubernetes"],
+                question_kind="experience_check",
+                estimated_minutes=2.0,
+            ),
+            _build_question(
+                position=1,
+                text="Design a multi-region failover for a stateful service.",
+                signal_values=["System Design"],
+                question_kind="technical_scenario",
+                estimated_minutes=5.0,
+            ),
+        ],
+        source="ai_generated",
+        stage_difficulty=stage.difficulty,
+    )
+    bank.generation_status_by_kind = {
+        "behavioral": "reviewing",
+        "technical": "reviewing",
+    }
+    transition_to_generating(bank)
+    await db.flush()
+    return tenant, user, job, instance, stage, bank
+
+
+@pytest.mark.asyncio
+async def test_regenerate_kind_actor_replaces_technical_preserves_behavioral(
+    db, monkeypatch, capture_publishes,
+):
+    """A technical-phase regen replaces ONLY the technical questions, preserves the
+    behavioral question, sets generation_status_by_kind['technical']='reviewing', and
+    lands the bank back in 'reviewing'."""
+    tenant, user, job, instance, stage, bank = (
+        await _seed_committed_bank_with_phase_questions(db, monkeypatch)
+    )
+    original_behavioral_text = (
+        "Walk me through your hands-on Kubernetes operations."
+    )
+
+    _patch_session(monkeypatch, db)
+    # The technical re-stream yields a NEW technical question.
+    new_technical = _stream_questions(
+        ["System Design"], estimated_minutes=6.0, question_kind="technical_scenario",
+    )
+    new_technical[0].text = "A brand-new technical scenario after regeneration."
+    calls = _patch_stream(monkeypatch, new_technical)
+
+    await _regen_kind_body()(
+        str(bank.id), str(tenant.id), str(user.id), "technical",
+    )
+
+    rows = await get_bank_questions(db, bank.id)
+    texts = {r.text for r in rows}
+    kinds_by_text = {r.text: r.question_kind for r in rows}
+
+    # Behavioral question preserved; technical replaced.
+    assert original_behavioral_text in texts
+    assert "A brand-new technical scenario after regeneration." in texts
+    assert "Design a multi-region failover for a stateful service." not in texts
+    assert kinds_by_text[original_behavioral_text] == "experience_check"
+
+    await db.refresh(bank)
+    assert bank.status == "reviewing"
+    assert bank.generation_status_by_kind["technical"] == "reviewing"
+    # The other phase's status key is untouched.
+    assert bank.generation_status_by_kind["behavioral"] == "reviewing"
+
+    # The behavioral question is chained into the technical phase's prompt for
+    # non-overlap, and the budget is sized off the surviving behavioral minutes.
+    assert len(calls) == 1
+    technical_user_msg = calls[0]["messages"][1]["content"]
+    assert "ALREADY-GENERATED BEHAVIORAL QUESTIONS — DO NOT OVERLAP" in technical_user_msg
+    assert original_behavioral_text in technical_user_msg
+
+    # A terminal BANK_STATUS_CHANGED 'reviewing' was published.
+    status_events = [
+        p for p in capture_publishes
+        if p.event == pubsub.Events.BANK_STATUS_CHANGED
+    ]
+    assert any(p.payload["new_status"] == "reviewing" for p in status_events)
+
+
+@pytest.mark.asyncio
+async def test_regenerate_kind_actor_replaces_behavioral_preserves_technical(
+    db, monkeypatch, capture_publishes,
+):
+    """A behavioral-phase regen replaces ONLY the behavioral questions and preserves
+    the technical question; prior_phase_questions is empty for a behavioral regen."""
+    tenant, user, job, instance, stage, bank = (
+        await _seed_committed_bank_with_phase_questions(db, monkeypatch)
+    )
+    original_technical_text = (
+        "Design a multi-region failover for a stateful service."
+    )
+
+    _patch_session(monkeypatch, db)
+    new_behavioral = _stream_questions(
+        ["5y Kubernetes"], estimated_minutes=2.0, question_kind="experience_check",
+    )
+    new_behavioral[0].text = "A regenerated behavioral experience-check question."
+    calls = _patch_stream(monkeypatch, new_behavioral)
+
+    await _regen_kind_body()(
+        str(bank.id), str(tenant.id), str(user.id), "behavioral",
+    )
+
+    rows = await get_bank_questions(db, bank.id)
+    texts = {r.text for r in rows}
+    assert original_technical_text in texts
+    assert "A regenerated behavioral experience-check question." in texts
+    assert "Walk me through your hands-on Kubernetes operations." not in texts
+
+    await db.refresh(bank)
+    assert bank.status == "reviewing"
+    assert bank.generation_status_by_kind["behavioral"] == "reviewing"
+    assert bank.generation_status_by_kind["technical"] == "reviewing"
+
+    # A behavioral regen chains NOTHING in (prior_phase_questions == []).
+    assert len(calls) == 1
+    behavioral_user_msg = calls[0]["messages"][1]["content"]
+    assert "ALREADY-GENERATED BEHAVIORAL QUESTIONS" not in behavioral_user_msg
+
+
+@pytest.mark.asyncio
+async def test_regenerate_kind_actor_behavioral_skips_when_no_eligible(
+    db, monkeypatch, capture_publishes,
+):
+    """A behavioral regen on a stage with no behavioral-eligible signals records
+    'skipped_no_eligible_signals' and transitions straight to reviewing."""
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    # Only a competency signal — NOT behavioral-eligible (needs knockout + exp/behav).
+    job, snapshot = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id,
+        signals=[_signal(value="System Design", signal_type="competency")],
+    )
+    instance, stage = await _make_pipeline_and_stage(
+        db, job=job, stage_type="ai_screening", duration_minutes=30,
+    )
+    bank = await ensure_bank_exists(db, stage=stage, job=job)
+    transition_to_generating(bank)
+    await db.flush()
+
+    _patch_session(monkeypatch, db)
+    # No stream should be consumed — but patch defensively so a stray call fails loud.
+    _patch_stream(monkeypatch, [])
+
+    await _regen_kind_body()(
+        str(bank.id), str(tenant.id), str(user.id), "behavioral",
+    )
+
+    await db.refresh(bank)
+    assert bank.status == "reviewing"
+    assert (
+        bank.generation_status_by_kind["behavioral"]
+        == "skipped_no_eligible_signals"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Single-question regenerate (_regenerate_one_question) — v2 loader + primary_signal
+# ---------------------------------------------------------------------------
+
+
+class _FakeCompletions:
+    def __init__(self, result):
+        self._result = result
+
+    async def create(self, **_kwargs):
+        return self._result
+
+
+class _FakeChat:
+    def __init__(self, result):
+        self.completions = _FakeCompletions(result)
+
+
+class _FakeClient:
+    def __init__(self, result):
+        self.chat = _FakeChat(result)
+
+
+def _patch_single_regen_client(monkeypatch, single_output) -> None:
+    """Make _regenerate_one_question's get_openai_client() return a fake whose
+    chat.completions.create returns the scripted SingleQuestionOutput."""
+    monkeypatch.setattr(
+        "app.modules.question_bank.actors.get_openai_client",
+        lambda: _FakeClient(single_output),
+    )
+
+
+@pytest.mark.asyncio
+async def test_regenerate_one_question_succeeds_under_v2_loader(db, monkeypatch):
+    """_regenerate_one_question loads the v2 prompt pair and replaces the row in
+    place (UUID preserved, source flips to ai_regenerated, primary_signal copied)."""
+    from app.modules.question_bank.actors import _regenerate_one_question
+    from app.modules.question_bank.schemas import SingleQuestionOutput
+
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    job, snapshot = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id, signals=[_signal(value="Python")],
+    )
+    _instance, stage = await _make_pipeline_and_stage(db, job=job)
+    bank = await ensure_bank_exists(db, stage=stage, job=job)
+    bank.status = "reviewing"
+    await db.flush()
+    await write_generated_questions(
+        db,
+        bank=bank,
+        questions=[
+            _build_question(
+                position=0,
+                text="The original Python question to be regenerated.",
+                signal_values=["Python"],
+            )
+        ],
+        source="ai_generated",
+        stage_difficulty=stage.difficulty,
+    )
+    questions = await get_bank_questions(db, bank.id)
+    original_id = questions[0].id
+
+    new_q = _build_question(
+        position=0,
+        text="A freshly regenerated Python question with new angle.",
+        signal_values=["Python"],
+        primary_signal="Python",
+    )
+    _patch_single_regen_client(
+        monkeypatch,
+        SingleQuestionOutput(
+            question=new_q,
+            reasoning="This re-angles the Python signal toward production depth.",
+        ),
+    )
+
+    await _regenerate_one_question(
+        db,
+        question=questions[0],
+        bank=bank,
+        stage=stage,
+        job=job,
+        snapshot=snapshot,
+        replace_signal_values=None,
+    )
+
+    refreshed = await get_bank_questions(db, bank.id)
+    assert len(refreshed) == 1
+    assert refreshed[0].id == original_id  # UUID preserved
+    assert refreshed[0].source == "ai_regenerated"
+    assert refreshed[0].text == "A freshly regenerated Python question with new angle."
+    assert refreshed[0].primary_signal == "Python"
+
+
+@pytest.mark.asyncio
+async def test_regenerate_one_question_rejects_primary_signal_not_in_values(
+    db, monkeypatch,
+):
+    """A regen whose primary_signal ∉ signal_values raises (D5 invariant enforced by
+    validate_streamed_question — without it the bad primary_signal would persist)."""
+    from app.modules.question_bank.actors import _regenerate_one_question
+    from app.modules.question_bank.errors import SignalValueNotInSnapshotError
+    from app.modules.question_bank.schemas import SingleQuestionOutput
+
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    job, snapshot = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id, signals=[_signal(value="Python")],
+    )
+    _instance, stage = await _make_pipeline_and_stage(db, job=job)
+    bank = await ensure_bank_exists(db, stage=stage, job=job)
+    bank.status = "reviewing"
+    await db.flush()
+    await write_generated_questions(
+        db,
+        bank=bank,
+        questions=[
+            _build_question(
+                position=0,
+                text="The original Python question to be regenerated.",
+                signal_values=["Python"],
+            )
+        ],
+        source="ai_generated",
+        stage_difficulty=stage.difficulty,
+    )
+    questions = await get_bank_questions(db, bank.id)
+
+    # Build a question whose primary_signal is NOT one of its signal_values.
+    # GeneratedQuestion has no validator for this (decision D5), so this is a
+    # constructible-but-invalid output the LLM could plausibly emit.
+    bad_q = _build_question(
+        position=0,
+        text="A regenerated question with a mismatched primary signal.",
+        signal_values=["Python"],
+    )
+    bad_q.primary_signal = "Golang"  # not in signal_values nor snapshot
+
+    _patch_single_regen_client(
+        monkeypatch,
+        SingleQuestionOutput(
+            question=bad_q,
+            reasoning="Reasoning that should never reach a successful persist.",
+        ),
+    )
+
+    with pytest.raises(SignalValueNotInSnapshotError):
+        await _regenerate_one_question(
+            db,
+            question=questions[0],
+            bank=bank,
+            stage=stage,
+            job=job,
+            snapshot=snapshot,
+            replace_signal_values=None,
+        )

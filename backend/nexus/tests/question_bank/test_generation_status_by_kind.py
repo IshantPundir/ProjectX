@@ -7,8 +7,8 @@ from app.modules.question_bank.schemas import BankResponse
 def test_bank_response_accepts_generation_status_by_kind():
     """Pydantic schema accepts the new field and round-trips correctly."""
     payload = {
-        "behavioral_star": "reviewing",
-        "technical_depth": "reviewing",
+        "behavioral": "reviewing",
+        "technical": "reviewing",
     }
     # Minimal valid BankResponse — match the existing required-field set
     response = BankResponse(

@@ -59,7 +59,7 @@ from app.modules.question_bank.service import (
     reorder_questions,
     transition_to_generating,
     update_question,
-    wipe_ai_questions_of_kind,
+    wipe_ai_questions_of_phase,
 )
 from app.modules.question_bank.sse import stream_question_bank_status
 from app.modules.question_bank.state_machine import transition_to_failed
@@ -601,7 +601,7 @@ async def regenerate_kind(
     except BankAlreadyGeneratingError as exc:
         raise HTTPException(409, detail=str(exc))
     bank.generated_by = user.user.id
-    await wipe_ai_questions_of_kind(db, bank=bank, kind=body.kind)
+    await wipe_ai_questions_of_phase(db, bank=bank, phase=body.kind)
 
     # Capture IDs BEFORE commit — post-commit attribute access is unsafe
     # under RLS on the request session (mirrors the pattern used in
