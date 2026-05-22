@@ -781,6 +781,7 @@ async def _generate_one_bank(
             from app.modules.question_bank.schemas import QuestionRubric
             from app.modules.question_bank.service import (
                 _apply_mandatory_correction_in_position_order,
+                order_mandatory_first,
             )
 
             projected = [
@@ -810,7 +811,11 @@ async def _generate_one_bank(
             for row in rows:
                 if row.position in by_position:
                     row.is_mandatory = by_position[row.position].is_mandatory
-            # Re-pack positions 0..N-1 in current order.
+            # Reorder so mandatory (knockout) questions get the lowest stored
+            # positions — recruiter-UI clarity, matching build_session_config's
+            # runtime mandatory-first ask order. Stable within each group.
+            rows = order_mandatory_first(rows)
+            # Re-pack positions 0..N-1 in the new order.
             for i, row in enumerate(rows):
                 row.position = i
             await db.flush()
@@ -1813,6 +1818,7 @@ async def regenerate_kind_actor(
             from app.modules.question_bank.schemas import QuestionRubric
             from app.modules.question_bank.service import (
                 _apply_mandatory_correction_in_position_order,
+                order_mandatory_first,
             )
 
             projected = [
@@ -1842,7 +1848,11 @@ async def regenerate_kind_actor(
             for row in rows:
                 if row.position in by_position:
                     row.is_mandatory = by_position[row.position].is_mandatory
-            # Re-pack positions 0..N-1 in current order.
+            # Reorder so mandatory (knockout) questions get the lowest stored
+            # positions — recruiter-UI clarity, matching build_session_config's
+            # runtime mandatory-first ask order. Stable within each group.
+            rows = order_mandatory_first(rows)
+            # Re-pack positions 0..N-1 in the new order.
             for i, row in enumerate(rows):
                 row.position = i
             await db.flush()

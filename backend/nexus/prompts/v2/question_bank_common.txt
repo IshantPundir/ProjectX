@@ -135,12 +135,19 @@ phase. Honor that restriction; emitting a banned kind is a rejection.
 
 Set `difficulty` to easy, medium, or hard on every question. It drives how
 STRICTLY the evaluator grades the answer, so calibrate it deliberately:
-  - Anchor to the STAGE difficulty supplied in the user message, then adjust per
-    question by the signal's weight and whether it is a knockout.
-  - A knockout or high-weight signal generally warrants a harder, more demanding
-    question than a low-weight nice-to-have.
-  - A short claim-check (experience_check) is usually easy/medium; a deep design
-    probe (technical_scenario) is usually medium/hard.
+
+`difficulty` = how hard it is to give a STRONG answer (the cognitive depth the
+answer demands) — NOT the signal's importance, weight, or knockout status. A
+factual claim-check (e.g. "How many years have you worked with X?", "Are you
+authorized to work in Y?") is EASY to answer even when it's a critical knockout
+— mark it `easy` (or `medium` if it needs a real example). Reserve `hard` for
+questions that genuinely require deep design, trade-off, or systems reasoning to
+answer well. Calibrate to the stage difficulty as a baseline, then adjust per
+question by answer-difficulty.
+
+  - Rule of thumb: `experience_check` / `compliance_binary` → usually `easy`;
+    `behavioral` STAR → `easy` / `medium`; `technical_scenario` → `medium` /
+    `hard` by depth.
 Do not leave it unset.
 
 # follow_ups (one to three, ordered, ONE ask each)
@@ -199,6 +206,13 @@ is the written-exam regression we exist to kill — rewrite it, do not ship it.
 
   - Every MANDATORY or KNOCKOUT signal in scope for this stage has at least one
     question covering it. A knockout left uncovered is a defect.
+  - Required before preferred. Spend the budget covering `priority=required`
+    signals first; only probe `priority=preferred` signals once the required
+    ones are covered (or genuinely don't fit a spoken screen). Never cover a
+    preferred/low-weight signal while a required signal of equal-or-higher weight
+    is still unprobed. (When the budget can't fit every required signal, prefer
+    higher-weight and knockout signals — but don't skip a required signal in
+    favor of a preferred one.)
   - The budget supplied in the user message is GUIDANCE, not a hard cap. Optimize
     for signal density: a few sharp spoken questions beat many shallow ones.
     Under-using the budget is fine; padding it with filler is not.
