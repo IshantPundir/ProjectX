@@ -233,7 +233,12 @@ def _build_tts_cartesia() -> "_BaseTTS":
     )
 
 
-def build_turn_detector() -> "TurnDetectionMode":
+_USE_AICONFIG_THRESHOLD = object()  # module-level sentinel
+
+
+def build_turn_detector(
+    unlikely_threshold: "float | None | object" = _USE_AICONFIG_THRESHOLD,
+) -> "TurnDetectionMode":
     """Construct the LiveKit multilingual turn-detector model.
 
     `MultilingualModel` accepts an `unlikely_threshold: float | None`
@@ -247,13 +252,20 @@ def build_turn_detector() -> "TurnDetectionMode":
     (env: `INTERVIEW_TURN_DETECTOR_UNLIKELY_THRESHOLD`). Phase 5 (2026-05-12)
     sets the default to 0.5 for the Sarvam + MultilingualModel path. Override
     only when you have real session data to tune against.
+
+    `unlikely_threshold`: omit (sentinel) to read
+    `AIConfig.interview_turn_detector_unlikely_threshold` — the v1 path, byte-for-far
+    unchanged. Pass an explicit float (or None for the model default) to override —
+    the v2 engine passes `AIConfig.engine_v2_turn_detector_unlikely_threshold` so it
+    tunes EOU independently of v1.
     """
     from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
-    threshold = ai_config.interview_turn_detector_unlikely_threshold
-    if threshold is None:
+    if unlikely_threshold is _USE_AICONFIG_THRESHOLD:
+        unlikely_threshold = ai_config.interview_turn_detector_unlikely_threshold
+    if unlikely_threshold is None:
         return MultilingualModel()
-    return MultilingualModel(unlikely_threshold=threshold)
+    return MultilingualModel(unlikely_threshold=unlikely_threshold)
 
 
 def build_interruption_options() -> dict[str, object]:
