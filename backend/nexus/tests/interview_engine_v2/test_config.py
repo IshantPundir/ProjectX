@@ -44,13 +44,13 @@ def test_engine_v2_eou_defaults():
     # Hold-space (mid-answer think pause).
     assert cfg.engine_v2_hold_space_enabled is True
     assert cfg.engine_v2_hold_space_delay_s == 2.5
-    assert cfg.engine_v2_hold_space_message  # non-empty warm cue
+    assert cfg.engine_v2_hold_space_message == "Take your time."
     # Unresponsive ladder.
     assert cfg.engine_v2_unresponsive_prompt_1_s == 7.0
     assert cfg.engine_v2_unresponsive_prompt_2_s == 15.0
     assert cfg.engine_v2_unresponsive_max_no_responses == 2
-    assert cfg.engine_v2_unresponsive_message_1
-    assert cfg.engine_v2_unresponsive_message_2
+    assert cfg.engine_v2_unresponsive_message_1 == "Whenever you're ready."
+    assert cfg.engine_v2_unresponsive_message_2 == "Are you still there?"
     # Backchannel gate (mirrors the LiveKit interruption min_words).
     assert cfg.engine_v2_backchannel_min_words == 2
 
