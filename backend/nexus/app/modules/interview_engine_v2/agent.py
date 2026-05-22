@@ -270,9 +270,9 @@ class _MouthAgent(Agent):
                 yield chunk
         finally:
             self._state["responding"] = False
-        # After a non-terminal delivery, re-arm the ladder for the next candidate turn
-        # (M3 armed after every non-terminal line; pre-answer silence -> ladder).
-        if not directive.is_terminal:
+        # Arm the ladder only after a real question is on the floor — never after INTRO
+        # (the greeting is not a posed question; arming there could fire a cue over Q1).
+        if not directive.is_terminal and directive.act is not DirectiveAct.INTRO:
             self._pose_question(time.monotonic())
         # NOTE: do NOT aclose() inside llm_node — awaiting it mid-pipeline can truncate the
         # CLOSE line's TTS, and prematurely ending the session bit us in M3. CLOSE just
@@ -331,6 +331,8 @@ async def run(
     # --- legacy session metrics (kept; tts still flows here). CMI-3 authoritative source is below. ---
     @session.on("metrics_collected")
     def _on_metrics(ev: MetricsCollectedEvent) -> None:
+        # NOTE: in LK 1.5.9 this session-level event yields TTS audio.metrics only — NOT
+        # llm/eou latency. The CMI-3 latency source is the conversation_item_added handler.
         m = ev.metrics
         try:
             payload = m.model_dump(exclude={"timestamp", "metadata"})
