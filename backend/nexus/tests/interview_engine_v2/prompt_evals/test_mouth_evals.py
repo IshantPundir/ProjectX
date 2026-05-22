@@ -64,7 +64,8 @@ async def test_ack_advance_is_not_sycophantic():
     out = (await _voice(Directive(id="d3", turn_ref="t1", act=DirectiveAct.ACK_ADVANCE,
                                   say="Now, how would you debug a failing nightly sync?"),
                         candidate="I rebuilt our whole billing pipeline single-handedly.")).lower()
-    for gush in ("great answer", "amazing", "excellent", "perfect", "impressive", "wonderful"):
+    for gush in ("great answer", "great job", "amazing", "excellent", "perfect", "impressive",
+                 "wonderful", "fantastic", "brilliant", "outstanding", "well done", "good answer"):
         assert gush not in out
 
 
