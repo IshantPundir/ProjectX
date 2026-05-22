@@ -65,3 +65,14 @@ def test_engine_v2_eou_env_override(monkeypatch):
     assert cfg.engine_v2_turn_detector_unlikely_threshold == 0.35
     assert cfg.engine_v2_endpointing_max_delay == 5.0
     assert cfg.engine_v2_hold_space_delay_s == 3.0
+
+
+def test_engine_mouth_persona_name_default():
+    cfg = AIConfig()
+    assert cfg.engine_mouth_persona_name == "Arjun"
+
+
+def test_engine_mouth_persona_name_env_override(monkeypatch):
+    monkeypatch.setenv("ENGINE_MOUTH_PERSONA_NAME", "Priya")
+    cfg = AIConfig()
+    assert cfg.engine_mouth_persona_name == "Priya"

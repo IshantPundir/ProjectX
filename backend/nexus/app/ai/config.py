@@ -200,6 +200,10 @@ class AIConfig:
     def engine_mouth_prompt_cache_key(self) -> str:
         return self._settings.engine_mouth_prompt_cache_key
 
+    @property
+    def engine_mouth_persona_name(self) -> str:
+        return self._settings.engine_mouth_persona_name
+
     # --- Interview engine v2 — EOU / turn-taking ---
     @property
     def engine_v2_turn_detector_unlikely_threshold(self) -> float | None:

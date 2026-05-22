@@ -481,6 +481,12 @@ class Settings(BaseSettings):
     engine_brain_prompt_cache_key: str = "brain:v1"
     engine_mouth_prompt_cache_key: str = "mouth:v1"
 
+    # v2 mouth persona display name. The design persona is "Arjun"; kept a
+    # dedicated v2 knob so v1's shared engine_agent_name ("Sam") is untouched.
+    # Rendered once per session into the (otherwise byte-stable) persona preamble.
+    # Blank -> the mouth falls back to engine_agent_name.
+    engine_mouth_persona_name: str = "Arjun"
+
     # Canned terminal message override. None = use PersonaSpec.fallback_session_ended
     # (Arjun-voiced default with {comma_name} that omits the comma when no name is
     # present). Set to a literal string to override for a specific tenant / env.
