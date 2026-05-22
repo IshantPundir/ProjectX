@@ -140,6 +140,35 @@ def build_llm_plugin() -> "LLM":
     return openai.LLM(**kwargs)
 
 
+def build_mouth_llm_plugin() -> "LLM":
+    """Construct the realtime OpenAI LLM plugin for the v2 *mouth* (Conversation Plane).
+
+    Reads `AIConfig.engine_mouth_model` + `engine_mouth_prompt_cache_key` (R6 — explicit,
+    stable cache routing for the byte-stable persona prefix). `reasoning_effort` is
+    forwarded ONLY when `engine_mouth_effort` is non-empty (same contract as
+    `build_llm_plugin`: non-reasoning chat models reject the param with HTTP 400, which
+    would kill every mouth turn). Kept separate from `build_llm_plugin` (v1 reads
+    `interview_llm_model` and sends no cache key) so the v1 path stays byte-identical.
+    """
+    from livekit.plugins import openai
+
+    kwargs: dict[str, object] = {
+        "model": ai_config.engine_mouth_model,
+        "prompt_cache_key": ai_config.engine_mouth_prompt_cache_key,
+    }
+    if ai_config.engine_mouth_effort:
+        kwargs["reasoning_effort"] = ai_config.engine_mouth_effort
+
+    logger.info(
+        "ai.realtime.mouth_llm.built",
+        provider="openai",
+        model=ai_config.engine_mouth_model,
+        prompt_cache_key=ai_config.engine_mouth_prompt_cache_key,
+        reasoning_effort=ai_config.engine_mouth_effort or None,
+    )
+    return openai.LLM(**kwargs)
+
+
 def build_tts_plugin() -> "_BaseTTS":
     """Construct the realtime TTS plugin selected by AIConfig.
 
