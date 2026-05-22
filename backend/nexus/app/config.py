@@ -324,6 +324,39 @@ class Settings(BaseSettings):
     engine_endpointing_min_delay: float = 0.8
     engine_endpointing_max_delay: float = 4.5
 
+    # --- Interview engine v2 (two-plane) — EOU / turn-taking knobs ---
+    # Isolated from the v1 engine_endpointing_* / interview_turn_detector_*
+    # knobs so retuning v2 on talk-tests never changes v1 behavior (master §3
+    # "M3 must not break v1"). Defaults intentionally match v1's current values;
+    # the Indian-ESL/Hinglish recalibration is decided by the M3 talk-test
+    # (master §7 R1), not guessed in code.
+    engine_v2_turn_detector_unlikely_threshold: float | None = 0.5
+    engine_v2_endpointing_mode: Literal["fixed", "dynamic"] = "dynamic"
+    engine_v2_endpointing_min_delay: float = 0.8
+    engine_v2_endpointing_max_delay: float = 4.5
+
+    # Hold-space: one warm cue on a long MID-ANSWER pause (candidate is
+    # formulating, turn-detector has not fired EOU). Never on a complete answer
+    # (doc 08 "resolved"). Realtime reflex — NOT a brain directive. M4's mouth
+    # may later re-voice this in persona; the trigger stays in the turn layer.
+    engine_v2_hold_space_enabled: bool = True
+    engine_v2_hold_space_delay_s: float = 2.5
+    engine_v2_hold_space_message: str = "Take your time."
+
+    # Unresponsive ladder: candidate not responding to a posed question.
+    # ~7s -> gentle nudge; ~15s -> "still there?"; after N no-responses ->
+    # close as candidate_unresponsive (doc 08 "resolved": ~6-8s / ~15s / 2).
+    engine_v2_unresponsive_prompt_1_s: float = 7.0
+    engine_v2_unresponsive_prompt_2_s: float = 15.0
+    engine_v2_unresponsive_max_no_responses: int = 2
+    engine_v2_unresponsive_message_1: str = "Whenever you're ready."
+    engine_v2_unresponsive_message_2: str = "Are you still there?"
+
+    # Backchannel gate: an utterance with fewer than this many words, OR made
+    # entirely of backchannel tokens, is treated as engagement (AI keeps the
+    # floor), not a turn grab. Mirrors the LiveKit interruption min_words=2.
+    engine_v2_backchannel_min_words: int = 2
+
     # Conversational continuation — pre-Speaker cancellation watcher.
     # See docs/superpowers/specs/2026-05-17-conversational-continuation-design.md
     #
