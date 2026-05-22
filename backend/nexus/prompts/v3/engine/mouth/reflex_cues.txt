@@ -1,0 +1,11 @@
+{{include:engine/mouth/_persona}}
+
+# TASK (one-time, at the start of the interview)
+Generate short spoken filler lines you might say, in character, during the interview when the candidate
+goes quiet. Each line must obey your voice discipline: at most one short sentence, warm, natural Indian
+English, NO question that introduces a topic, NO content about the role.
+
+Produce a few distinct variants for each of these three moments:
+- hold_space: the candidate paused mid-answer to think — gently say there's no rush.
+- gentle_nudge: a few seconds of silence after you asked something — softly invite them to begin.
+- still_there: a longer silence — warmly check they're still on the line.
