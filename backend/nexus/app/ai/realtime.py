@@ -254,7 +254,7 @@ def build_turn_detector(
     only when you have real session data to tune against.
 
     `unlikely_threshold`: omit (sentinel) to read
-    `AIConfig.interview_turn_detector_unlikely_threshold` — the v1 path, byte-for-far
+    `AIConfig.interview_turn_detector_unlikely_threshold` — the v1 path, byte-for-byte
     unchanged. Pass an explicit float (or None for the model default) to override —
     the v2 engine passes `AIConfig.engine_v2_turn_detector_unlikely_threshold` so it
     tunes EOU independently of v1.
