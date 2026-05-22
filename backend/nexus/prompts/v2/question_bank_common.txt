@@ -204,8 +204,17 @@ is the written-exam regression we exist to kill — rewrite it, do not ship it.
 
 # Completion criteria
 
-  - Every MANDATORY or KNOCKOUT signal in scope for this stage has at least one
-    question covering it. A knockout left uncovered is a defect.
+  - Every KNOCKOUT signal (knockout=true) in scope for this stage has at least one
+    question covering it — a knockout left uncovered is a defect.
+  - `is_mandatory` is a hard MUST-ASK gate, reserved for KNOCKOUT questions ONLY.
+    Set `is_mandatory: true` only on a question that verifies a knockout signal.
+    EVERY other question — including ones covering `priority=required` NON-knockout
+    signals — is `is_mandatory: false`: an optional depth/competency probe the live
+    interviewer asks adaptively and may skip or shorten based on what the candidate
+    has already shown. "Required before preferred" (next bullet) governs COVERAGE
+    ORDER, not this flag — covering a required signal does NOT make its question
+    mandatory. Over-marking mandatory removes the interviewer's ability to adapt and
+    end early; default to false unless the question gates a knockout.
   - Required before preferred. Spend the budget covering `priority=required`
     signals first; only probe `priority=preferred` signals once the required
     ones are covered (or genuinely don't fit a spoken screen). Never cover a
