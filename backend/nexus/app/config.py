@@ -370,6 +370,11 @@ class Settings(BaseSettings):
     # floor), not a turn grab. Mirrors the LiveKit interruption min_words=2.
     engine_v2_backchannel_min_words: int = 2
 
+    # M4 directive-injection talk-test scenario. "" = the default canned flow
+    # (INTRO -> ASK -> ACK_ADVANCE per turn -> CLOSE). "supersession" stages a
+    # speculative PROBE then a superseding ACK_ADVANCE for the CMI-4 live test.
+    engine_v2_mouth_scenario: str = ""
+
     # Conversational continuation — pre-Speaker cancellation watcher.
     # See docs/superpowers/specs/2026-05-17-conversational-continuation-design.md
     #
