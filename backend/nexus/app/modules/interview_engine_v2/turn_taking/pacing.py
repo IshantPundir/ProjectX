@@ -6,7 +6,14 @@ HoldSpacePacer off a silence timer to decide when to speak ONE warm "take your
 time" cue on a long mid-answer pause. The turn-detector + endpointing decide
 when the answer is actually COMPLETE; the pacer only fires while the turn is
 still open (candidate formulating), so it never lands on a complete answer
-(DESIGN-SPEC §3, doc 08 "resolved").
+(DESIGN-SPEC §3, doc 08 "resolved", M5 decision E).
+
+Incompleteness gate (M5 R3): LiveKit's MultilingualModel does NOT expose a
+mid-pause "incomplete/extending" signal or EOU probability. The gate is
+enforced in agent.py via the delay-above-commit-latency proxy: the cue delay
+is set above the worst-case complete-answer commit latency so a complete turn
+always fires on_user_turn_completed (setting state["responding"]=True) before
+the pacer elapses. Only a detector-held-open incomplete pause reaches the cue.
 """
 
 from __future__ import annotations

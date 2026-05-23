@@ -347,16 +347,28 @@ class Settings(BaseSettings):
     # critical path per CMI-3.)
     engine_v2_endpointing_max_delay: float = 10.0
 
-    # Hold-space: a warm cue on a MID-ANSWER pause (candidate formulating).
-    # DISABLED by default (2026-05-23 talk-test): a blind 2.5s timer can't tell
-    # "still thinking" from "done", so it fired "take your time" over genuine
-    # think-pauses and trailing pauses of complete answers — read as an
-    # interruption. The turn-detector already waits patiently (max_delay), and
-    # M5's brain will own "take your time" semantically via the HOLD directive
-    # (issued at a turn boundary only when it judges the candidate is stuck).
-    # Re-enable + tune the delay here if a dumb mid-pause reflex is wanted.
-    engine_v2_hold_space_enabled: bool = False
-    engine_v2_hold_space_delay_s: float = 2.5
+    # Mid-pause patience cue: a warm "take your time" on a genuine mid-thought
+    # pause (R1, the #1 UX risk for Indian candidates). RE-ENABLED in M5
+    # (decision E) after M4 disabled the blind timer. Now GATED on
+    # incompleteness (agent.py): fires only while the turn is still open and
+    # the turn-detector is holding it as incomplete — never on a complete
+    # answer's trailing pause.
+    #
+    # Gating mechanism (R3): the LiveKit turn-detector (MultilingualModel
+    # 1.5.9) does NOT expose a mid-pause "incomplete/extending" signal or EOU
+    # probability. We use the delay-above-commit-latency proxy: this delay is
+    # set ABOVE the worst-case complete-answer commit latency observed on
+    # talk-tests (~1-2s), so a complete answer always commits first
+    # (on_user_turn_completed fires → state["responding"]=True mutes the
+    # timer); only a detector-held-open incomplete pause survives to fire.
+    # Honest v1 caveat: text-only detection makes "never on a complete answer"
+    # best-effort; perfect needs the v2 audio-prosody model. Tune on Task 10
+    # talk-test.
+    engine_v2_hold_space_enabled: bool = True
+    # Delay before the cue. Keep ABOVE the worst-case complete-answer commit
+    # latency (talk-test) so a complete answer always commits first; only a
+    # held-open incomplete pause reaches the cue.
+    engine_v2_hold_space_delay_s: float = 3.0
     engine_v2_hold_space_message: str = "Take your time."
 
     # Unresponsive ladder: candidate not responding to a posed question.

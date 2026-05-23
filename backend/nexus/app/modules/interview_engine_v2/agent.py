@@ -520,6 +520,20 @@ async def run(
                     continue
                 now = time.monotonic()
                 if state["started_answering"]:
+                    # Incompleteness gate (M5 decision E / R3): LiveKit's
+                    # MultilingualModel does NOT expose a mid-pause "still-
+                    # extending" signal, so we use the delay-above-commit-
+                    # latency proxy. A COMPLETE answer commits via
+                    # on_user_turn_completed which sets state["responding"]=True
+                    # (typically within ~1-2s); that mutes this branch before
+                    # the cue delay (3.0s) elapses. Only a detector-held-open
+                    # INCOMPLETE pause — which the turn-detector holds up to
+                    # engine_v2_endpointing_max_delay (10s) — survives here.
+                    # The brain's HOLD directive (Task 6, fires at a committed
+                    # turn boundary) is a separate, complementary path.
+                    # v1 caveat: "never on a complete answer" is best-effort
+                    # with text-only detection; perfect needs the v2 audio
+                    # model. Validate on Task 10 talk-test.
                     if pacer.cue_due(now_s=now):
                         pacer.mark_cued()
                         log.info("engine.v2.holdspace",
