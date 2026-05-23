@@ -198,7 +198,8 @@ class _MouthAgent(Agent):
     async def on_user_turn_completed(
         self, turn_ctx: ChatContext, new_message: ChatMessage,
     ) -> None:
-        # Hold the floor against the silence timer while we process this turn boundary.
+        # Mute the silence timer from turn-commit through the upcoming reply. agent_state
+        # ('listening' after the reply's TTS playout) is what clears `responding` again.
         self._state["responding"] = True
         try:
             text = new_message.text_content or ""
@@ -207,7 +208,6 @@ class _MouthAgent(Agent):
             backchannel = is_backchannel(
                 text, min_words=settings.engine_v2_backchannel_min_words)
 
-            # EOU latency signal (carry-forward): silence before the turn-detector committed.
             _now = time.monotonic()
             _last_listen = self._state.get("last_listening_at")
             pause_before_commit_ms = (int((_now - _last_listen) * 1000)
@@ -229,55 +229,52 @@ class _MouthAgent(Agent):
                      pause_before_commit_ms=pause_before_commit_ms,
                      resumption_label=label.value)
 
-            # Advance the script + stage the next directive(s) for THIS turn boundary.
             self._turn_seq += 1
             turn_ref = f"t-{self._turn_seq}"
             self._current_turn_ref = turn_ref
             if self._script.scenario == "supersession":
                 spec, real = self._script.supersession_pair(turn_ref=turn_ref)
-                self._controller.stage(spec)          # speculative pre-stage
-                self._controller.stage(real)          # superseder (discards spec)
+                self._controller.stage(spec)
+                self._controller.stage(real)
             else:
                 nxt = self._script.next_after_turn(turn_ref=turn_ref)
                 if nxt is not None:
                     self._controller.stage(nxt)
                 else:
                     raise StopResponse()               # script exhausted -> nothing to say
-        finally:
+        except BaseException:
+            # On StopResponse (exhausted) or any error there is no reply coming, so the
+            # agent won't reach 'listening' to clear the flag — clear it here.
             self._state["responding"] = False
-        # Happy path: do NOT raise StopResponse — the pipeline calls llm_node, which voices
-        # controller.current_for_turn(self._current_turn_ref).
+            raise
+        # Happy path: leave responding=True; agent_state 'listening' clears it post-playout.
 
     async def llm_node(self, chat_ctx, tools, model_settings):
         directive = self._controller.current_for_turn(self._current_turn_ref)
         if directive is None:
             raise StopResponse()                       # nothing current (stale/discarded)
-        self._state["responding"] = True               # block the silence timer during delivery
-        try:
-            self._controller.mark_delivered(directive.id)
-            self._collector.record("directive.delivered",
-                {"id": directive.id, "act": directive.act.value, "turn_ref": directive.turn_ref,
-                 "speculative": directive.speculative}, t_ms=self._t_ms(), wall_ms=_now_ms())
-            messages = self._mouth.build_turn_messages(
-                directive, candidate_utterance=self._last_candidate_text)
-            self._last_candidate_text = None           # consumed; not carried to the next turn
-            ctx = ChatContext.empty()
-            for m in messages:
-                ctx.add_message(role=m["role"], content=m["content"])
-            if directive.is_terminal:
-                self._state["closing"] = True
-            async for chunk in Agent.default.llm_node(self, ctx, tools, model_settings):
-                yield chunk
-        finally:
-            self._state["responding"] = False
-        # Arm the ladder only after a real question is on the floor — never after INTRO
-        # (the greeting is not a posed question; arming there could fire a cue over Q1).
+        self._state["responding"] = True               # cleared by agent_state once playout ends
+        self._controller.mark_delivered(directive.id)
+        self._collector.record("directive.delivered",
+            {"id": directive.id, "act": directive.act.value, "turn_ref": directive.turn_ref,
+             "speculative": directive.speculative}, t_ms=self._t_ms(), wall_ms=_now_ms())
+        messages = self._mouth.build_turn_messages(
+            directive, candidate_utterance=self._last_candidate_text)
+        self._last_candidate_text = None               # consumed; not carried to the next turn
+        ctx = ChatContext.empty()
+        for m in messages:
+            ctx.add_message(role=m["role"], content=m["content"])
+        if directive.is_terminal:
+            self._state["closing"] = True
+        # Defer arming the unresponsive ladder until the agent actually FINISHES speaking
+        # this question (agent_state -> 'listening'), so the candidate gets the full patience
+        # window AFTER hearing it. INTRO is not a posed question; CLOSE is terminal.
         if not directive.is_terminal and directive.act is not DirectiveAct.INTRO:
-            self._pose_question(time.monotonic())
-        # NOTE: do NOT aclose() inside llm_node — awaiting it mid-pipeline can truncate the
-        # CLOSE line's TTS, and prematurely ending the session bit us in M3. CLOSE just
-        # delivers; the session ends on candidate hang-up (delete_room_on_close). Clean
-        # post-CLOSE termination + record_session_result is M5 (CMI-1).
+            self._state["pending_arm"] = True
+        async for chunk in Agent.default.llm_node(self, ctx, tools, model_settings):
+            yield chunk
+        # NOTE: no _pose_question / aclose here. The ladder is armed by the agent_state
+        # 'listening' handler (after TTS playout); termination is M5 (CMI-1).
 
 
 async def run(
@@ -374,6 +371,7 @@ async def run(
         "started_answering": False, "responding": False,
         "closing": False, "silence_task": None,
         "last_listening_at": None, "reflex": None, "reflex_task": None,
+        "pending_arm": False,
     }
 
     mouth = ConversationPlane(
@@ -464,6 +462,21 @@ async def run(
         collector.record("audio.user.state",
                          {"old_state": ev.old_state, "new_state": ev.new_state},
                          t_ms=int((now - started_at) * 1000), wall_ms=_now_ms())
+
+    @session.on("agent_state_changed")
+    def _on_agent_state(ev: object) -> None:
+        ns = str(getattr(ev, "new_state", ""))
+        if ns in ("thinking", "speaking"):
+            state["responding"] = True
+        elif ns in ("listening", "idle"):
+            state["responding"] = False
+            # The agent just finished speaking. If that was a posed question, arm the
+            # unresponsive ladder NOW (patient window starts after the candidate hears it).
+            if ns == "listening" and state.get("pending_arm"):
+                state["pending_arm"] = False
+                log.info("engine.v2.ladder_armed",
+                         t_ms=int((time.monotonic() - started_at) * 1000))
+                _pose_question(time.monotonic())
 
     agent = _MouthAgent(controller=controller, mouth=mouth, script=script, collector=collector,
                         ladder=ladder, started_at=started_at, state=state,
