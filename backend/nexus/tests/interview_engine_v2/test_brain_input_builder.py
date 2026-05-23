@@ -150,3 +150,12 @@ def test_transcript_window_is_bounded():
                                 candidate_utterance="latest", max_transcript_turns=6)
     suffix = msgs[1]["content"]
     assert "turn 49" in suffix and "turn 10" not in suffix   # only the last 6 turns kept
+
+
+def test_build_messages_shows_active_probe_count():
+    cfg = _config()
+    prefix = render_stable_prefix(system_prompt=SYSTEM, config=cfg)
+    msgs = build_brain_messages(
+        stable_prefix=prefix, transcript_window=[], coverage_summary="python=partial",
+        active_question=_question(), candidate_utterance="hi", active_probe_count=2)
+    assert "PROBES SO FAR ON THIS QUESTION: 2" in msgs[1]["content"]

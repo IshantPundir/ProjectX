@@ -152,6 +152,7 @@ class ControlPlane:
             active_question=self._questions.get(aqid),
             candidate_utterance=candidate_utterance,
             asked_question_ids=sorted(self._asked_ids),   # repeat-guard (brain side)
+            active_probe_count=(self._coverage.probe_count(aqid) if aqid else 0),
         )
         timeout = (
             budget_ms if budget_ms is not None else ai_config.engine_brain_total_budget_ms

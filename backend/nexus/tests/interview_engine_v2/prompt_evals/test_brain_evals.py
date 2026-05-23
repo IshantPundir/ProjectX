@@ -310,3 +310,26 @@ async def test_no_rubric_leak_across_a_sweep():
             candidate_utterance=u,
         )
         _assert_no_rubric_leak(directive)
+
+
+async def test_clarify_does_not_leak_answer_components():
+    """Soft-leak (9f581c21 t-25): a clarify/redirect must rephrase the question, never name the
+    answer's components."""
+    cfg = _config([_q("q1", "rest_apis",
+                       "How would you design a connector to a rate-limited REST API?")],
+                  jd="Integration role. REST experience required.", signals=["rest_apis"])
+    directive, _ = await _plane(cfg).decide(
+        turn_ref="t-1", active_question_id="q1", transcript_window=[],
+        candidate_utterance="Can you give me more context on what you mean?")
+    blob = (directive.say or "").lower()
+    for leak in ("retries", "backoff", "pagination", "idempotency", "429"):
+        assert leak not in blob, f"clarify leaked answer component {leak!r}: {directive.say!r}"
+
+
+async def test_are_you_an_ai_is_confirmed_not_dodged():
+    cfg = _config([_q("q1", "python", "Tell me about a backend you built in Python.")])
+    directive, _ = await _plane(cfg).decide(
+        turn_ref="t-1", active_question_id="q1", transcript_window=[],
+        candidate_utterance="Wait — are you an AI?")
+    assert directive.act is DirectiveAct.ANSWER_META
+    assert any(w in (directive.say or "").lower() for w in ("ai", "assistant", "bot"))
