@@ -55,6 +55,7 @@ from app.ai.realtime import (
     build_vad,
 )
 from app.config import settings
+from app.database import get_bypass_session
 from app.modules.interview_engine_v2.audio_metrics import compute_audio_summary
 from app.modules.interview_engine_v2.brain import ControlPlane
 from app.modules.interview_engine_v2.brain.service import build_speculative_directive
@@ -62,7 +63,9 @@ from app.modules.interview_engine_v2.controller import DirectiveController
 from app.modules.interview_engine_v2.coverage import CoverageTracker
 from app.modules.interview_engine_v2.directive import Directive, DirectiveAct, DirectiveTone
 from app.modules.interview_engine_v2.event_log.collector import EventCollector
+from app.modules.interview_engine_v2.event_log.sink import LocalFileSink
 from app.modules.interview_engine_v2.mouth.service import ConversationPlane
+from app.modules.interview_engine_v2.result_builder import build_v2_session_result
 from app.modules.interview_engine_v2.turn_taking.eou import (
     EouConfig,
     LadderAction,
@@ -79,13 +82,8 @@ from app.modules.interview_engine_v2.turn_taking.pacing import (
     HoldSpacePacer,
     build_endpointing_options,
 )
-from app.database import get_bypass_session
-from app.modules.interview_engine_v2.event_log.sink import LocalFileSink
-from app.modules.interview_engine_v2.result_builder import build_v2_session_result
 from app.modules.interview_runtime import (
-    KnockoutFailure,
     SessionConfig,
-    SessionResult,  # noqa: F401 — imported so callers can resolve the type from this module
     TranscriptEntry,
     record_session_result,
 )
@@ -556,6 +554,7 @@ async def run(
                         await session.say(
                             _reflex("still_there", settings.engine_v2_unresponsive_message_2),
                             add_to_chat_ctx=False)
+                        state["close_initiated"] = True
                         await session.aclose()
                 finally:
                     state["responding"] = False
