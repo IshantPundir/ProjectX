@@ -15,7 +15,9 @@ def test_default_version_env_override(monkeypatch):
 
 def test_brain_and_mouth_model_map():
     cfg = AIConfig()
-    assert cfg.engine_brain_model.startswith("gpt-5.4")
+    # gpt-5 (not gpt-5.4-*): gpt-5.4 rejects reasoning_effort + function-tools on
+    # /v1/chat/completions; gpt-5 supports it (verified live 2026-05-24).
+    assert cfg.engine_brain_model.startswith("gpt-5")
     assert cfg.engine_brain_effort == "low"          # reasoning-first, low effort by design
     assert cfg.engine_mouth_model.startswith("gpt-5.4-mini")
     assert cfg.engine_mouth_effort == ""             # latency-first; no reasoning effort sent
