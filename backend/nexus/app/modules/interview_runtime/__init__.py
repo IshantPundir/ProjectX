@@ -10,6 +10,17 @@ from app.modules.interview_runtime.errors import (
     CompanyProfileMissingError,
     QuestionBankNotReadyError,
 )
+from app.modules.interview_runtime.results import (
+    ClaimEntry,
+    ClaimsPoolSnapshot,
+    CoverageState,
+    LedgerEntry,
+    QuestionQueueSnapshot,
+    QuestionState,
+    QuestionStatus,
+    SignalLedgerSnapshot,
+    SignalSnapshot,
+)
 from app.modules.interview_runtime.schemas import (
     CandidateContext,
     CompanyContext,
@@ -30,15 +41,24 @@ from app.modules.interview_runtime.service import (
 
 __all__ = [
     "CandidateContext",
+    "ClaimEntry",
+    "ClaimsPoolSnapshot",
     "CompanyContext",
     "CompanyProfileMissingError",
+    "CoverageState",
     "KnockoutFailure",
+    "LedgerEntry",
     "QuestionBankNotReadyError",
     "QuestionConfig",
+    "QuestionQueueSnapshot",
     "QuestionRubric",
+    "QuestionState",
+    "QuestionStatus",
     "SessionConfig",
     "SessionResult",
+    "SignalLedgerSnapshot",
     "SignalMetadata",
+    "SignalSnapshot",
     "StageConfig",
     "SteeringObservation",
     "TranscriptEntry",

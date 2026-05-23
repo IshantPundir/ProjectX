@@ -14,20 +14,15 @@ Lifted from `backend/interview_engine/models.py` with two intentional changes:
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-if TYPE_CHECKING:
-    # Forward refs only — concrete imports at module bottom (post-class
-    # definitions) drive `SessionResult.model_rebuild()`. Doing it this way
-    # avoids a circular-import crash with engine.models.speaker, which
-    # imports `TranscriptEntry` from this module.
-    from app.modules.interview_engine.models import (
-        ClaimsPoolSnapshot,
-        QuestionQueueSnapshot,
-        SignalLedgerSnapshot,
-    )
+from app.modules.interview_runtime.results import (
+    ClaimsPoolSnapshot,
+    QuestionQueueSnapshot,
+    SignalLedgerSnapshot,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -428,23 +423,23 @@ class SessionResult(BaseModel):
             "compute a summary (e.g. session aborted before any audio events)."
         ),
     )
-    signal_ledger: "SignalLedgerSnapshot" = Field(
+    signal_ledger: SignalLedgerSnapshot | None = Field(
+        default=None,
         description=(
-            "Append-only evidence log + per-signal coverage snapshots emitted "
-            "by the structured engine at session close (Phase 7+). Forward ref "
-            "resolved via the late import + model_rebuild() below."
+            "v1 structured-engine snapshot (append-only evidence + per-signal coverage). "
+            "None for v2 sessions — the v2 brain emits coverage_summary instead. The "
+            "report builder reads whichever is present."
         ),
     )
-    question_queue: "QuestionQueueSnapshot" = Field(
+    question_queue: QuestionQueueSnapshot | None = Field(default=None, description="v1-only; None for v2.")
+    claims_pool: ClaimsPoolSnapshot | None = Field(default=None, description="v1-only; None for v2.")
+    coverage_summary: dict[str, str] | None = Field(
+        default=None,
         description=(
-            "Per-question state machine snapshot (status, probes, anchors hit) "
-            "emitted by the structured engine at session close."
-        ),
-    )
-    claims_pool: "ClaimsPoolSnapshot" = Field(
-        description=(
-            "Capped pool of biographical claims captured during the interview, "
-            "for downstream report-builder use."
+            "v2-native per-signal final coverage state (signal_value -> "
+            "none|partial|sufficient|failed), produced by interview_engine_v2 CoverageTracker "
+            "at session close. None for v1 sessions (which fill signal_ledger). Richer v2 "
+            "per-turn detail lives in the audit envelope via audit_envelope_ref."
         ),
     )
     audit_envelope_ref: str | None = Field(
@@ -489,15 +484,3 @@ class SessionResult(BaseModel):
         ),
     )
 
-
-# Resolve forward references at module load — must run AFTER SessionResult
-# is fully defined. We import from the leaf submodules directly (not via
-# `engine.models.__init__`) to avoid a partial-init cycle:
-# `engine.models.__init__` triggers `engine.models.speaker`, which imports
-# `TranscriptEntry` back from this very module. Going leaf-direct keeps
-# the late import out of that path entirely.
-from app.modules.interview_engine.models.claims import ClaimsPoolSnapshot  # noqa: E402
-from app.modules.interview_engine.models.ledger import SignalLedgerSnapshot  # noqa: E402
-from app.modules.interview_engine.models.queue import QuestionQueueSnapshot  # noqa: E402
-
-SessionResult.model_rebuild()
