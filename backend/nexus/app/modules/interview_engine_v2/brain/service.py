@@ -164,7 +164,7 @@ class ControlPlane:
                         correlation_id=correlation_id)
             return self._fallback(turn_ref, candidate_utterance, reason="brain error")
 
-        applied = self._coverage.apply_delta(decision.coverage_delta)
+        applied = self._coverage.apply_delta(decision.coverage_map())
         policy = evaluate_policy(decision)
         move = policy.effective_move
         if move is BrainMove.probe and aqid is not None:
@@ -239,17 +239,32 @@ class ControlPlane:
     def _fallback(
         self, turn_ref: str, candidate_utterance: str, *, reason: str,
     ) -> tuple[Directive, TurnDecisionRecord]:
-        """Deterministic safe directive when the brain times out/errors — never stall the turn."""
+        """Deterministic safe directive when the brain times out/errors — never stall the turn.
+
+        Walks STRICTLY FORWARD past the current active question by `position` (preferring still-
+        uncovered mandatory ones) and moves the pointer to the chosen question, so repeated
+        fallbacks march through the bank instead of re-asking the same question forever — the
+        infinite-Q1 loop guard (defense-in-depth for total brain failure).
+        """
         uncovered = self._coverage.uncovered_mandatory()
-        nxt = next(
-            (
-                q for q in sorted(self._config.stage.questions, key=lambda q: q.position)
-                # a question with no primary_signal is eligible if any mandatory remains uncovered
-                if (q.primary_signal in uncovered) or (not q.primary_signal and uncovered)
-            ),
-            None,
+        ordered = sorted(self._config.stage.questions, key=lambda q: q.position)
+        cur_pos = (
+            self._questions[self._active_question_id].position
+            if self._active_question_id in self._questions
+            else None
         )
+        # questions strictly after the current one (by position); if no pointer yet, all of them
+        ahead = [q for q in ordered if cur_pos is None or q.position > cur_pos]
+
+        def _eligible(q: object) -> bool:
+            # a question with no primary_signal is eligible if any mandatory remains uncovered
+            return (q.primary_signal in uncovered) or (not q.primary_signal and bool(uncovered))
+
+        # prefer the next still-uncovered question; else just the next question in order
+        nxt = next((q for q in ahead if _eligible(q)), None) or next(iter(ahead), None)
         if nxt is not None:
+            # advance the pointer so the next fallback moves on (no infinite-Q1 loop)
+            self._active_question_id = nxt.id
             directive = Directive(
                 id=self._new_id(), turn_ref=turn_ref, act=DirectiveAct.ACK_ADVANCE,
                 say=nxt.text, tone=DirectiveTone.NEUTRAL,

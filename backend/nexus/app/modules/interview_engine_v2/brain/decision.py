@@ -51,6 +51,15 @@ class BrainMove(StrEnum):
     close = "close"  # normal end: all covered / wants-to-end (-> CLOSE terminal)
 
 
+class CoverageDeltaItem(BaseModel):
+    """One per-signal coverage assertion (list-of-objects so the schema is OpenAI strict-mode safe;
+    a free-form dict[str,str] generates additionalProperties which strict structured-output
+    rejects)."""
+
+    signal: str = Field(description="The signal value.")
+    state: str = Field(description="Target coverage state: none | partial | sufficient | failed.")
+
+
 class BrainDecision(BaseModel):
     """One brain decision. `reasoning` MUST stay field #1 (see module docstring)."""
 
@@ -70,9 +79,12 @@ class BrainDecision(BaseModel):
     grade: Literal["thin", "concrete", "strong"] | None = Field(
         default=None, description="Evidence grade vs rubric; null when the turn is not gradeable."
     )
-    coverage_delta: dict[str, str] = Field(
-        default_factory=dict,
-        description="signal_value -> target coverage state (none|partial|sufficient|failed).",
+    coverage_delta: list[CoverageDeltaItem] = Field(
+        default_factory=list,
+        description=(
+            "Per-signal coverage updates this turn, as a list of {signal, state} items "
+            "(state ∈ none|partial|sufficient|failed)."
+        ),
     )
     tapped_out: bool = Field(
         default=False,
@@ -131,3 +143,7 @@ class BrainDecision(BaseModel):
             "to the recruiter."
         ),
     )
+
+    def coverage_map(self) -> dict[str, str]:
+        """List-of-items → {signal: state} (the shape CoverageTracker/policy consume)."""
+        return {item.signal: item.state for item in self.coverage_delta}

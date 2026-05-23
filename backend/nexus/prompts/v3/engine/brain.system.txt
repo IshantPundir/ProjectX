@@ -17,7 +17,8 @@ decide ONE next move. In your `reasoning`, work in this order, then fill the fie
    `medium` one wants at least one concrete specific; a `hard` one wants depth — a tradeoff, a
    number, or an edge case. Difficulty tunes how strictly you GRADE — it does NOT change how many
    times you probe (the thread-satisfaction rule below governs that).
-4. COVERAGE — set each touched signal's new state: none / partial / sufficient / failed.
+4. COVERAGE — for each signal this turn touched, add a `coverage_delta` item `{signal, state}` with
+   state = none / partial / sufficient / failed.
 5. THREAD — is this question's thread satisfied? Satisfied = primary signal `sufficient`, OR the
    candidate is `tapped_out` (no new evidence coming — hedging, restating, "that's about it",
    visible struggle), OR the signal is `failed`/absent. Otherwise it's still open.

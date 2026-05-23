@@ -5,7 +5,12 @@ import pytest
 from app.modules.interview_engine_v2 import DirectiveAct
 from app.modules.interview_engine_v2.brain import ControlPlane
 from app.modules.interview_engine_v2.brain import service as brain_service
-from app.modules.interview_engine_v2.brain.decision import BrainDecision, BrainMove, CandidateIntent
+from app.modules.interview_engine_v2.brain.decision import (
+    BrainDecision,
+    BrainMove,
+    CandidateIntent,
+    CoverageDeltaItem,
+)
 from app.modules.interview_engine_v2.coverage import CoverageState, CoverageTracker
 from app.modules.interview_runtime import (
     CandidateContext,
@@ -56,6 +61,10 @@ def _patch_brain(monkeypatch, decision: BrainDecision):
     monkeypatch.setattr(brain_service, "_call_brain", _fake)
 
 
+def _cov(**kw) -> list[CoverageDeltaItem]:
+    return [CoverageDeltaItem(signal=s, state=st) for s, st in kw.items()]
+
+
 async def test_opener_is_intro_then_ask_first_question_verbatim():
     plane, _ = _plane()
     intro, ask = plane.opener()
@@ -67,7 +76,7 @@ async def test_advance_maps_to_ack_advance_with_verbatim_next_question(monkeypat
     plane, cov = _plane()
     _patch_brain(monkeypatch, BrainDecision(
         reasoning="strong; sufficient; advance", candidate_intent=CandidateIntent.answer,
-        grade="strong", coverage_delta={"python": "sufficient"}, move=BrainMove.advance,
+        grade="strong", coverage_delta=_cov(python="sufficient"), move=BrainMove.advance,
         target_signal="python", bank_question_id="q2"))
     directive, record = await plane.decide(
         turn_ref="t-1", candidate_utterance="I built X in Python with tradeoffs.",
@@ -83,7 +92,7 @@ async def test_probe_maps_to_probe_with_verbatim_follow_up(monkeypatch):
     plane, cov = _plane()
     _patch_brain(monkeypatch, BrainDecision(
         reasoning="thin; partial; probe", candidate_intent=CandidateIntent.answer, grade="thin",
-        coverage_delta={"python": "partial"}, move=BrainMove.probe, target_signal="python",
+        coverage_delta=_cov(python="partial"), move=BrainMove.probe, target_signal="python",
         bank_follow_up_index=0))
     directive, _ = await plane.decide(turn_ref="t-1", candidate_utterance="we did stuff",
                                       transcript_window=[], active_question_id="q1")
@@ -123,7 +132,7 @@ async def test_verified_knockout_closes(monkeypatch):
         reasoning="confirmed absent across all alts", candidate_intent=CandidateIntent.indirect_no,
         move=BrainMove.knockout_close, is_knockout=True, or_alternatives=["python"],
         or_alternatives_checked=True, reflect_confirmed=True,
-        coverage_delta={"python": "failed"}, composed_say="No worries — thanks for your time."))
+        coverage_delta=_cov(python="failed"), composed_say="No worries — thanks for your time."))
     directive, _ = await plane.decide(turn_ref="t-4", candidate_utterance="no, not really",
                                       transcript_window=[], active_question_id="q1")
     assert directive.act is DirectiveAct.CLOSE and directive.is_terminal is True
@@ -141,11 +150,49 @@ async def test_brain_timeout_falls_back_to_safe_directive(monkeypatch):
     assert "fallback" in record.move
 
 
+async def test_consecutive_fallbacks_advance_then_close(monkeypatch):
+    """Defense-in-depth: under TOTAL brain failure, each fallback must walk FORWARD by position
+    (never re-ask the same question), then CLOSE once the bank is exhausted — the infinite-Q1
+    loop guard. No pointer yet => fallback#1 q1, fallback#2 q2, fallback#3 CLOSE."""
+    plane, _ = _plane()                              # no opener() -> pointer is None
+
+    async def _boom(**kwargs):
+        raise RuntimeError("brain down")
+    monkeypatch.setattr(brain_service, "_call_brain", _boom)
+
+    d1, r1 = await plane.decide(turn_ref="t-1", candidate_utterance="...", transcript_window=[])
+    d2, r2 = await plane.decide(turn_ref="t-2", candidate_utterance="...", transcript_window=[])
+    assert d1.act is DirectiveAct.ACK_ADVANCE and d2.act is DirectiveAct.ACK_ADVANCE
+    assert d1.say != d2.say                           # DIFFERENT questions — no infinite-Q1 loop
+    assert d1.say == "Tell me about python." and d2.say == "Tell me about kafka."
+    assert r1.move == "fallback_advance" and r2.move == "fallback_advance"
+    assert plane.active_question_id == "q2"           # pointer walked forward each fallback
+
+    d3, r3 = await plane.decide(turn_ref="t-3", candidate_utterance="...", transcript_window=[])
+    assert d3.act is DirectiveAct.CLOSE and d3.is_terminal is True   # ran off the end -> close
+    assert r3.move == "fallback_close"
+
+
+async def test_fallback_advances_past_active_question(monkeypatch):
+    """With the pointer ON q1, a fallback must NOT re-ask q1 — it advances strictly past it."""
+    plane, _ = _plane()
+    plane.opener()                                   # pointer -> q1 (position 0)
+
+    async def _boom(**kwargs):
+        raise RuntimeError("brain down")
+    monkeypatch.setattr(brain_service, "_call_brain", _boom)
+
+    d1, _ = await plane.decide(turn_ref="t-1", candidate_utterance="...", transcript_window=[])
+    assert d1.act is DirectiveAct.ACK_ADVANCE
+    assert d1.say == "Tell me about kafka."          # advanced PAST q1 (the infinite-Q1 bug)
+    assert plane.active_question_id == "q2"
+
+
 async def test_probe_invalid_index_degrades_to_advance_and_moves_pointer(monkeypatch):
     plane, _ = _plane()
     _patch_brain(monkeypatch, BrainDecision(
         reasoning="probe but bad index", candidate_intent=CandidateIntent.answer, grade="thin",
-        coverage_delta={"python": "partial"}, move=BrainMove.probe, target_signal="python",
+        coverage_delta=_cov(python="partial"), move=BrainMove.probe, target_signal="python",
         bank_follow_up_index=99, bank_question_id="q2"))
     directive, _ = await plane.decide(turn_ref="t-1", candidate_utterance="...",
                                       transcript_window=[], active_question_id="q1")
@@ -157,7 +204,7 @@ async def test_advance_unknown_question_id_closes(monkeypatch):
     plane, _ = _plane()
     _patch_brain(monkeypatch, BrainDecision(
         reasoning="advance to nowhere", candidate_intent=CandidateIntent.answer, grade="strong",
-        coverage_delta={"python": "sufficient"}, move=BrainMove.advance,
+        coverage_delta=_cov(python="sufficient"), move=BrainMove.advance,
         bank_question_id="does-not-exist"))
     directive, _ = await plane.decide(turn_ref="t-1", candidate_utterance="...",
                                       transcript_window=[], active_question_id="q1")

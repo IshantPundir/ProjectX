@@ -5,7 +5,13 @@ from app.modules.interview_engine_v2.brain.decision import (
     BrainDecision,
     BrainMove,
     CandidateIntent,
+    CoverageDeltaItem,
 )
+
+
+def _cov(**kw) -> list[CoverageDeltaItem]:
+    """{signal: state} -> list[CoverageDeltaItem] (the new strict-mode-safe shape)."""
+    return [CoverageDeltaItem(signal=s, state=st) for s, st in kw.items()]
 
 
 def _minimal(**over):
@@ -27,7 +33,8 @@ def test_minimal_decision_defaults():
     d = _minimal()
     assert d.move is BrainMove.advance
     assert d.grade is None
-    assert d.coverage_delta == {}
+    assert d.coverage_delta == []
+    assert d.coverage_map() == {}
     assert d.tapped_out is False
     assert d.is_knockout is False
     assert d.answer_meta_grounded is True
@@ -66,6 +73,10 @@ def test_probe_and_ask_reference_fields():
     assert d2.bank_question_id == "q-7"
 
 
-def test_coverage_delta_is_str_map():
-    d = _minimal(coverage_delta={"python": "sufficient", "kafka": "failed"})
-    assert d.coverage_delta["kafka"] == "failed"
+def test_coverage_delta_is_list_of_items_and_maps_to_dict():
+    d = _minimal(coverage_delta=_cov(python="sufficient", kafka="failed"))
+    assert [(i.signal, i.state) for i in d.coverage_delta] == [
+        ("python", "sufficient"),
+        ("kafka", "failed"),
+    ]
+    assert d.coverage_map() == {"python": "sufficient", "kafka": "failed"}

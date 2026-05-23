@@ -54,7 +54,7 @@ def evaluate_policy(decision: BrainDecision) -> PolicyResult:
     # Never probe-for-more when the targeted signal is already graded sufficient/strong.
     if move is BrainMove.probe:
         target = decision.target_signal
-        sufficient = target is not None and decision.coverage_delta.get(target) == "sufficient"
+        sufficient = target is not None and decision.coverage_map().get(target) == "sufficient"
         if decision.grade == "strong" or sufficient:
             violations.append("incoherent_probe_on_sufficient")
             move = BrainMove.advance
