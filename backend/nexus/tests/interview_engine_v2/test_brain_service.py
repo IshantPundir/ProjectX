@@ -298,6 +298,23 @@ async def test_downgraded_knockout_continues_not_closes(monkeypatch):
     assert directive.say in ("Tell me about kafka.", "Tell me about redis.")  # an UNASKED question
 
 
+async def test_probe_at_cap_downgrades_to_advance(monkeypatch):
+    """9f581c21: the same follow-up was asked 3x because soft_probe_cap was never enforced.
+    Once a question is at the cap, a further `probe` must downgrade to `advance`."""
+    plane, cov = _plane()
+    cov.record_probe("q1")
+    cov.record_probe("q1")                                    # q1 now AT cap (2)
+    _patch_brain(monkeypatch, BrainDecision(
+        reasoning="still thin, wants to probe again", candidate_intent=CandidateIntent.answer,
+        grade="thin", coverage_delta=_cov(python="partial"), move=BrainMove.probe,
+        target_signal="python", bank_follow_up_index=1, bank_question_id="q2"))
+    directive, record = await plane.decide(
+        turn_ref="t-1", candidate_utterance="we did some stuff",
+        transcript_window=[], active_question_id="q1")
+    assert directive.act is DirectiveAct.ACK_ADVANCE         # downgraded, not a 3rd probe
+    assert "probe_cap_reached" in record.policy_checks
+
+
 async def test_generic_brain_error_falls_back(monkeypatch):
     plane, _ = _plane()
     async def _boom(**kwargs):

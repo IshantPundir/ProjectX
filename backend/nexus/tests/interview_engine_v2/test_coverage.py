@@ -145,3 +145,12 @@ def test_apply_delta_returns_empty_on_no_change():
     t = _tracker()
     t.apply_delta({"python": "sufficient"})
     assert t.apply_delta({"python": "partial"}) == {}   # sticky -> no change -> empty
+
+
+def test_at_probe_cap_after_cap_probes():
+    t = _tracker()                      # soft_probe_cap=2
+    assert t.at_probe_cap("q1") is False
+    t.record_probe("q1")
+    assert t.at_probe_cap("q1") is False
+    t.record_probe("q1")                # 2 == cap
+    assert t.at_probe_cap("q1") is True

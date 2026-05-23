@@ -102,6 +102,10 @@ class CoverageTracker:
     def probe_count(self, question_id: str) -> int:
         return self._probe_counts.get(question_id, 0)
 
+    def at_probe_cap(self, question_id: str) -> bool:
+        """True once this question has been probed soft_probe_cap times (diminishing returns)."""
+        return self.probe_count(question_id) >= self._cap
+
     def state(self, signal: str) -> CoverageState:
         return self._state.get(signal, CoverageState.none)
 

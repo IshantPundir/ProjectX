@@ -172,6 +172,10 @@ class ControlPlane:
         applied = self._coverage.apply_delta(decision.coverage_map())
         policy = evaluate_policy(decision)
         move = policy.effective_move
+        cap_note: str | None = None
+        if move is BrainMove.probe and aqid is not None and self._coverage.at_probe_cap(aqid):
+            move = BrainMove.advance                 # diminishing returns — stop grinding (9f581c21)  # noqa: E501
+            cap_note = "probe_cap_reached"
         if move is BrainMove.probe and aqid is not None:
             self._coverage.record_probe(aqid)
 
@@ -194,7 +198,7 @@ class ControlPlane:
             coverage_delta={s: st.value for s, st in applied.items()},
             move=decision.move.value,
             reasoning=decision.reasoning,
-            policy_checks=[*policy.checks, *policy.violations],
+            policy_checks=[*policy.checks, *policy.violations, *([cap_note] if cap_note else [])],
             directive_id=directive.id,
         )
         return directive, record
