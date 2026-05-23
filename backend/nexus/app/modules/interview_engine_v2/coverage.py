@@ -2,12 +2,13 @@
 
 Coverage is SIGNAL-based, credited across the whole conversation (doc 09 §1): an answer
 that demonstrates any signal updates that signal's state now, regardless of which question
-is "active". Thread-satisfaction (doc 09 §4) — not turn-count — drives progress: a thread is
-satisfied when its primary signal is `sufficient` OR `failed`/absent OR the candidate has
-`tapped_out` (the brain's diminishing-returns judgment) OR a soft probe cap is hit. The brain
-PROPOSES a per-signal coverage_delta each turn; this tracker MERGES it deterministically
-(`sufficient` is sticky; `failed` is a REVISABLE knockout-candidate — decision C / re-open-closed-thread)
-and is the running source of truth fed back into the next brain prompt as a compact delta.
+is "active". Thread-satisfaction (doc 09 §4) — not turn-count — drives progress: a thread
+is satisfied when its primary signal is `sufficient` OR `failed`/absent OR the candidate
+has `tapped_out` (the brain's diminishing-returns judgment) OR a soft probe cap is hit.
+The brain PROPOSES a per-signal coverage_delta each turn; this tracker MERGES it
+deterministically (`sufficient` is sticky; `failed` is a REVISABLE knockout-candidate —
+decision C / re-open-closed-thread) and is the running source of truth fed back into the
+next brain prompt as a compact delta.
 v2-native (NOT the v1 CoverageState in interview_runtime.results).
 """
 from __future__ import annotations
@@ -19,7 +20,8 @@ class CoverageState(StrEnum):
     none = "none"          # no evidence yet
     partial = "partial"    # some evidence, not conclusive
     sufficient = "sufficient"  # enough credible evidence (terminal — thread covered)
-    failed = "failed"      # evidence they lack it (terminal — knockout candidate if mandatory)
+    # evidence they lack it; revisable knockout-candidate (re-opened by new evidence)
+    failed = "failed"
 
 
 class ThreadStatus(StrEnum):
@@ -76,14 +78,13 @@ class CoverageTracker:
                 continue                                    # sticky — covered stays covered
             if cur is CoverageState.failed:
                 if new in (CoverageState.partial, CoverageState.sufficient):
-                    self._state[sig] = new                  # new evidence re-opens the knockout candidate
+                    self._state[sig] = new  # new evidence re-opens the knockout candidate
                     applied[sig] = new
                 continue                                    # 'none'/'failed' leave it failed
             # cur in {none, partial}: monotonic up, or a jump to failed
-            if new is CoverageState.failed or _RANK[new] >= _RANK[cur]:
-                if new is not cur:
-                    self._state[sig] = new
-                    applied[sig] = new
+            if (new is CoverageState.failed or _RANK[new] >= _RANK[cur]) and new is not cur:
+                self._state[sig] = new
+                applied[sig] = new
         return applied
 
     def record_probe(self, question_id: str) -> None:

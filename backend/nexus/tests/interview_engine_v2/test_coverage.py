@@ -76,34 +76,40 @@ def test_uncovered_mandatory_excludes_terminal():
 def test_thread_status_sufficient():
     t = _tracker()
     t.apply_delta({"python": "sufficient"})
-    assert t.thread_status(primary_signal="python", question_id="q1", tapped_out=False) is ThreadStatus.sufficient
+    status = t.thread_status(primary_signal="python", question_id="q1", tapped_out=False)
+    assert status is ThreadStatus.sufficient
 
 
 def test_thread_status_absent_on_failed():
     t = _tracker()
     t.apply_delta({"kafka": "failed"})
-    assert t.thread_status(primary_signal="kafka", question_id="q2", tapped_out=False) is ThreadStatus.absent
+    status = t.thread_status(primary_signal="kafka", question_id="q2", tapped_out=False)
+    assert status is ThreadStatus.absent
 
 
 def test_thread_status_tapped_out_when_brain_says_so():
     t = _tracker()
     t.apply_delta({"python": "partial"})
-    assert t.thread_status(primary_signal="python", question_id="q1", tapped_out=True) is ThreadStatus.tapped_out
+    status = t.thread_status(primary_signal="python", question_id="q1", tapped_out=True)
+    assert status is ThreadStatus.tapped_out
 
 
 def test_thread_status_tapped_out_on_soft_cap():
     t = _tracker()
     t.apply_delta({"python": "partial"})
     t.record_probe("q1")
-    assert t.thread_status(primary_signal="python", question_id="q1", tapped_out=False) is ThreadStatus.in_progress
+    status = t.thread_status(primary_signal="python", question_id="q1", tapped_out=False)
+    assert status is ThreadStatus.in_progress
     t.record_probe("q1")  # 2 probes == soft cap
-    assert t.thread_status(primary_signal="python", question_id="q1", tapped_out=False) is ThreadStatus.tapped_out
+    status = t.thread_status(primary_signal="python", question_id="q1", tapped_out=False)
+    assert status is ThreadStatus.tapped_out
 
 
 def test_thread_status_in_progress_otherwise():
     t = _tracker()
     t.apply_delta({"python": "partial"})
-    assert t.thread_status(primary_signal="python", question_id="q1", tapped_out=False) is ThreadStatus.in_progress
+    status = t.thread_status(primary_signal="python", question_id="q1", tapped_out=False)
+    assert status is ThreadStatus.in_progress
 
 
 def test_summary_for_prompt_is_compact_and_bounded():
@@ -119,3 +125,9 @@ def test_unknown_signal_in_delta_is_tracked():
     t = _tracker()
     t.apply_delta({"docker": "partial"})
     assert t.state("docker") is CoverageState.partial
+
+
+def test_apply_delta_returns_empty_on_no_change():
+    t = _tracker()
+    t.apply_delta({"python": "sufficient"})
+    assert t.apply_delta({"python": "partial"}) == {}   # sticky -> no change -> empty
