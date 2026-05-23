@@ -292,7 +292,7 @@ class _MouthAgent(Agent):
         # (b) MASK — emit an instant content-free ack (plays while the brain reasons IN PARALLEL).
         self._state["responding"] = True
         self.session.say(self._ack(), add_to_chat_ctx=False)   # fire-and-forget; overlaps the brain
-        self._brain_task = asyncio.ensure_future(self._brain.decide(
+        self._brain_task = asyncio.create_task(self._brain.decide(
             turn_ref=turn_ref, candidate_utterance=text,
             transcript_window=list(self._transcript), correlation_id=self._correlation_id))
         try:
@@ -589,6 +589,8 @@ async def run(
     @session.on("close")
     def _on_close(_ev: object) -> None:
         state["closing"] = True
+        if agent is not None:
+            agent.cancel_brain()
         for key in ("silence_task", "reflex_task"):
             task = state.get(key)
             if isinstance(task, asyncio.Task):
