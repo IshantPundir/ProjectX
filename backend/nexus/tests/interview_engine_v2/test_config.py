@@ -88,3 +88,11 @@ def test_engine_v2_ack_messages_seed_fallback():
     assert all(isinstance(m, str) and m.strip() for m in s.engine_v2_ack_messages)
     # content-free acks only — they must commit to nothing (D3); no question marks.
     assert all("?" not in m for m in s.engine_v2_ack_messages)
+
+
+def test_triage_config_defaults():
+    from app.ai.config import ai_config
+    assert ai_config.engine_triage_model
+    assert ai_config.engine_triage_total_budget_ms <= 3000
+    from app.config import settings
+    assert settings.engine_triage_hold_cap >= 1

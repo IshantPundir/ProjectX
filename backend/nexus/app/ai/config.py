@@ -197,6 +197,22 @@ class AIConfig:
         return self._settings.engine_brain_total_budget_ms
 
     @property
+    def engine_triage_model(self) -> str:
+        return self._settings.engine_triage_model
+
+    @property
+    def engine_triage_effort(self) -> str:
+        return self._settings.engine_triage_effort
+
+    @property
+    def engine_triage_prompt_version(self) -> str:
+        return self._settings.engine_triage_prompt_version
+
+    @property
+    def engine_triage_total_budget_ms(self) -> int:
+        return self._settings.engine_triage_total_budget_ms
+
+    @property
     def engine_brain_prompt_cache_key(self) -> str:
         return self._settings.engine_brain_prompt_cache_key
 

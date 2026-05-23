@@ -522,6 +522,16 @@ class Settings(BaseSettings):
     # + a concise reasoning field (Task 5 prompt) keeps the masked decision tight.
     engine_brain_total_budget_ms: int = 6000
 
+    # Triage tier (the fast classify-and-speak first call; design 2026-05-24). Nano-class model;
+    # reasoning-FIRST field (no reasoning_effort) like the brain. Budget kept tight (it gates the
+    # immediate voice). On timeout/error -> canned ack + route=to_brain (never skip the brain).
+    engine_triage_model: str = "gpt-5.4-nano-2026-03-17"
+    engine_triage_effort: str = ""
+    engine_triage_prompt_version: str = "v3"
+    engine_triage_total_budget_ms: int = 1500
+    # After this many consecutive "still pending" holds on one answer, force the brain to evaluate.
+    engine_triage_hold_cap: int = 2
+
     # Explicit OpenAI prompt_cache_key per surface for stable cache routing
     # (design §11: stable-prefix -> dynamic-suffix). Bump the suffix on a
     # prompt change to avoid cross-version cache pollution.
