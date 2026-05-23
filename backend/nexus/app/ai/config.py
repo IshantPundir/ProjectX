@@ -193,6 +193,10 @@ class AIConfig:
         return self._settings.engine_mouth_prompt_version
 
     @property
+    def engine_brain_total_budget_ms(self) -> int:
+        return self._settings.engine_brain_total_budget_ms
+
+    @property
     def engine_brain_prompt_cache_key(self) -> str:
         return self._settings.engine_brain_prompt_cache_key
 

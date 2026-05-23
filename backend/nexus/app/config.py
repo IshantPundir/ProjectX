@@ -3,7 +3,6 @@ from typing import Annotated, Literal
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-
 NoiseCancellationMode = Literal[
     "ai_coustics_quail",
     "ai_coustics_quail_vf",
@@ -483,6 +482,13 @@ class Settings(BaseSettings):
     # New v3 engine prompt family (rewritten from scratch — brain + per-act mouth).
     engine_brain_prompt_version: str = "v3"
     engine_mouth_prompt_version: str = "v3"
+
+    # Brain total wall-clock budget (ms) before the deterministic fallback directive
+    # kicks in. The brain runs async/parallel, MASKED by the mouth's acknowledgment
+    # (M5 D3, off the CMI-3 perceived-latency gate) — but it's still bounded so a stuck
+    # call can't strand the turn behind the ack. GPT-5.4 low-effort is ~3-7s; 6s budget
+    # + a concise reasoning field (Task 5 prompt) keeps the masked decision tight.
+    engine_brain_total_budget_ms: int = 6000
 
     # Explicit OpenAI prompt_cache_key per surface for stable cache routing
     # (design §11: stable-prefix -> dynamic-suffix). Bump the suffix on a
