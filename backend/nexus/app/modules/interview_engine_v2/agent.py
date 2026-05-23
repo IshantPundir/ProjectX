@@ -311,7 +311,11 @@ class _MouthAgent(Agent):
             return                              # auto-reply voices the confirmed pre-stage now
 
         # (b) MASK — emit an instant content-free ack (plays while the brain reasons IN PARALLEL).
+        # `brain_pending` mutes the silence-timer reflex cues for the whole reasoning window: the
+        # ack drives agent_state->listening (clearing `responding`) before the brain lands, so
+        # without this the hold-space cue fires mid-reasoning at a waiting candidate (ec11e237).
         self._state["responding"] = True
+        self._state["brain_pending"] = True
         self.session.say(self._ack(), add_to_chat_ctx=False)   # fire-and-forget; overlaps the brain
         self._brain_task = asyncio.create_task(self._brain.decide(
             turn_ref=turn_ref, candidate_utterance=text,
@@ -325,6 +329,7 @@ class _MouthAgent(Agent):
             raise StopResponse() from None                      # no reply; the new turn makes one
         finally:
             self._brain_task = None
+            self._state["brain_pending"] = False               # reasoning window over
 
         # Supersede the speculative pre-stage if it is still the staged slot (controller discards
         # it); never deliver two directives for one boundary.
@@ -480,6 +485,11 @@ async def run(
         "closing": False, "silence_task": None,
         "last_listening_at": None, "reflex": None, "reflex_task": None,
         "pending_arm": False,
+        # True from turn-commit until the brain's directive is staged. The masking ack flips
+        # agent_state->listening (clearing `responding`) WHILE the brain still reasons, so
+        # `responding` alone doesn't cover the reasoning window — without this, the hold-space cue
+        # fires "take your time" at a candidate who's actually waiting on the AGENT (ec11e237).
+        "brain_pending": False,
         "result_recorded": False,   # once-guard for _finalize_and_record
         "close_initiated": False,   # once-guard for session.aclose() after terminal CLOSE
     }
@@ -518,8 +528,8 @@ async def run(
         while not state["closing"]:
             await asyncio.sleep(0.5)
             try:
-                if state["responding"] or state["closing"]:
-                    continue
+                if state["responding"] or state["closing"] or state["brain_pending"]:
+                    continue                          # mute all reflex cues while the brain reasons
                 now = time.monotonic()
                 if state["started_answering"]:
                     # Incompleteness gate (M5 decision E / R3): LiveKit's
