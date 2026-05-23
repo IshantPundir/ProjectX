@@ -134,10 +134,12 @@ class ControlPlane:
                 _call_brain(messages=messages, correlation_id=correlation_id), timeout=timeout
             )
         except TimeoutError:
-            log.warning("engine.v2.brain.timeout", turn_ref=turn_ref, timeout_s=timeout)
+            log.warning("engine.v2.brain.timeout", turn_ref=turn_ref, timeout_s=timeout,
+                        correlation_id=correlation_id)
             return self._fallback(turn_ref, candidate_utterance, reason="brain timeout")
         except Exception:  # noqa: BLE001 — the brain must never crash the session
-            log.warning("engine.v2.brain.error", turn_ref=turn_ref, exc_info=True)
+            log.warning("engine.v2.brain.error", turn_ref=turn_ref, exc_info=True,
+                        correlation_id=correlation_id)
             return self._fallback(turn_ref, candidate_utterance, reason="brain error")
 
         applied = self._coverage.apply_delta(decision.coverage_delta)
@@ -150,10 +152,11 @@ class ControlPlane:
             turn_ref=turn_ref, move=move, decision=decision,
             sanitized_say=policy.sanitized_say, active_question_id=aqid,
         )
-        # Advance moves the active-question pointer (when the brain named a valid next question).
+        # ACK_ADVANCE is only ever produced by the advance path of _build_directive (which already
+        # validated bank_question_id), so a directive-driven check also covers the
+        # probe->advance degrade.
         if (
-            move is BrainMove.advance
-            and directive.act is DirectiveAct.ACK_ADVANCE
+            directive.act is DirectiveAct.ACK_ADVANCE
             and decision.bank_question_id in self._questions
         ):
             self._active_question_id = decision.bank_question_id
@@ -219,6 +222,7 @@ class ControlPlane:
         nxt = next(
             (
                 q for q in sorted(self._config.stage.questions, key=lambda q: q.position)
+                # a question with no primary_signal is eligible if any mandatory remains uncovered
                 if (q.primary_signal in uncovered) or (not q.primary_signal and uncovered)
             ),
             None,

@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from app.modules.interview_engine_v2 import DirectiveAct
@@ -130,14 +132,44 @@ async def test_verified_knockout_closes(monkeypatch):
 async def test_brain_timeout_falls_back_to_safe_directive(monkeypatch):
     plane, _ = _plane()
     async def _hang(**kwargs):
-        import asyncio
         await asyncio.sleep(10)
     monkeypatch.setattr(brain_service, "_call_brain", _hang)
-    monkeypatch.setattr(  # no-op guard
-        brain_service.ai_config, "_settings", brain_service.ai_config._settings
-    )
     directive, record = await plane.decide(turn_ref="t-5", candidate_utterance="...",
                                            transcript_window=[], active_question_id="q1",
                                            budget_ms=50)
     assert directive.act in (DirectiveAct.ACK_ADVANCE, DirectiveAct.CLOSE)   # never stalls
+    assert "fallback" in record.move
+
+
+async def test_probe_invalid_index_degrades_to_advance_and_moves_pointer(monkeypatch):
+    plane, _ = _plane()
+    _patch_brain(monkeypatch, BrainDecision(
+        reasoning="probe but bad index", candidate_intent=CandidateIntent.answer, grade="thin",
+        coverage_delta={"python": "partial"}, move=BrainMove.probe, target_signal="python",
+        bank_follow_up_index=99, bank_question_id="q2"))
+    directive, _ = await plane.decide(turn_ref="t-1", candidate_utterance="...",
+                                      transcript_window=[], active_question_id="q1")
+    assert directive.act is DirectiveAct.ACK_ADVANCE and directive.say == "Tell me about kafka."
+    assert plane.active_question_id == "q2"          # pointer MUST move (the bug being fixed)
+
+
+async def test_advance_unknown_question_id_closes(monkeypatch):
+    plane, _ = _plane()
+    _patch_brain(monkeypatch, BrainDecision(
+        reasoning="advance to nowhere", candidate_intent=CandidateIntent.answer, grade="strong",
+        coverage_delta={"python": "sufficient"}, move=BrainMove.advance,
+        bank_question_id="does-not-exist"))
+    directive, _ = await plane.decide(turn_ref="t-1", candidate_utterance="...",
+                                      transcript_window=[], active_question_id="q1")
+    assert directive.act is DirectiveAct.CLOSE and directive.is_terminal is True
+
+
+async def test_generic_brain_error_falls_back(monkeypatch):
+    plane, _ = _plane()
+    async def _boom(**kwargs):
+        raise RuntimeError("brain exploded")
+    monkeypatch.setattr(brain_service, "_call_brain", _boom)
+    directive, record = await plane.decide(turn_ref="t-1", candidate_utterance="...",
+                                           transcript_window=[], active_question_id="q1")
+    assert directive.act in (DirectiveAct.ACK_ADVANCE, DirectiveAct.CLOSE)
     assert "fallback" in record.move
