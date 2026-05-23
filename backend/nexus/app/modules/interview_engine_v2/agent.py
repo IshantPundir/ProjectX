@@ -1,15 +1,19 @@
-"""Interview Engine v2 — LiveKit entrypoint (M4 mouth harness).
+"""Interview Engine v2 — LiveKit entrypoint (M5 brain wiring).
 
-M4 scope: the real MOUTH. A _MouthAgent overrides llm_node to voice the controller's
-current Directive in persona (GPT-5.4-mini "Arjun") via a bounded, cache-stable prompt
-(persona prefix -> per-act block -> dynamic suffix carrying the fenced candidate
-utterance). A DirectiveScript feeds hand-scripted Directives at each turn boundary
-through the M1 DirectiveController (no brain yet) so the live supersession/staleness
-machinery is exercised end-to-end (CMI-4). The M3 AgentSession wiring + behavioral
-silence-timer + EOU config carry forward; the hold-space / unresponsive-ladder reflex
-cues are now persona pre-rendered once at session start (canned Settings strings are the
-fallback). Per-turn latency is sourced from ChatMessage.metrics via conversation_item_added
-(the working 1.5.9 signal; the session-level metrics_collected emits no llm/eou metrics).
+M5 scope: the REAL brain. The hand-scripted DirectiveScript source is replaced by the
+ControlPlane (the brain): on_enter voices the deterministic opener; at each turn boundary
+on_user_turn_completed emits an IMMEDIATE persona acknowledgment to MASK the brain, then runs
+the brain as a cancellable Task IN PARALLEL (never a silent wait — D3) and stages its confirmed
+Directive when it lands, superseding the speculative pre-stage. Option C: while the candidate is
+still answering, a NON-voiced speculative pre-stage is staged from the user-speaking handler so
+the controller's supersede/discard runs live (CMI-4); barge-in cancels the in-flight brain Task.
+The mouth is UNCHANGED from M4 — a _MouthAgent overrides llm_node to voice the controller's
+current Directive in persona (GPT-5.4-mini "Arjun") via a bounded, cache-stable prompt. The M3
+AgentSession wiring + behavioral silence-timer + EOU config carry forward; the hold-space /
+unresponsive-ladder / ack-mask reflex cues are persona pre-rendered once at session start (canned
+Settings strings are the seed + fallback). Per-turn latency is sourced from ChatMessage.metrics
+via conversation_item_added (the working 1.5.9 signal; session-level metrics_collected emits no
+llm/eou metrics).
 
 Imports livekit; only ever imported lazily via interview_engine_v2.__getattr__('run')
 inside the engine container, so the FastAPI/nexus process never loads livekit.
@@ -51,7 +55,10 @@ from app.ai.realtime import (
 )
 from app.config import settings
 from app.modules.interview_engine_v2.audio_metrics import compute_audio_summary
+from app.modules.interview_engine_v2.brain import ControlPlane
+from app.modules.interview_engine_v2.brain.service import build_speculative_directive
 from app.modules.interview_engine_v2.controller import DirectiveController
+from app.modules.interview_engine_v2.coverage import CoverageTracker
 from app.modules.interview_engine_v2.directive import Directive, DirectiveAct, DirectiveTone
 from app.modules.interview_engine_v2.event_log.collector import EventCollector
 from app.modules.interview_engine_v2.mouth.service import ConversationPlane
@@ -100,6 +107,9 @@ def assemble_v2_keyterms(*, candidate_first_name: str, bank_keyterms: list[str])
     return terms
 
 
+# RETAINED (not instantiated by run() in M5): a tested pure reference / debug-harness seed. The
+# M5 run() drives Directives from the ControlPlane brain instead; this scripted source + its
+# test_harness_script.py stay green as a deterministic harness for offline debugging.
 @dataclass
 class DirectiveScript:
     """Hand-scripted Directives for the M4 talk-test (no brain). Mirrors the M3 bank flow:
@@ -165,89 +175,149 @@ class _MouthAgent(Agent):
     """Voices the controller's current Directive in persona via the LLM (no canned text)."""
 
     def __init__(self, *, controller: DirectiveController, mouth: ConversationPlane,
-                 script: DirectiveScript, collector: EventCollector,
+                 brain: ControlPlane, collector: EventCollector,
                  ladder: UnresponsiveLadder, started_at: float, state: dict[str, object],
-                 pose_question: Callable[[float], None]) -> None:
+                 pose_question: Callable[[float], None], correlation_id: str) -> None:
         super().__init__(instructions="")          # persona lives in the per-turn ctx, not here
         self._controller = controller
         self._mouth = mouth
-        self._script = script
+        self._brain = brain
         self._collector = collector
         self._ladder = ladder
         self._started_at = started_at
         self._state = state
         self._pose_question = pose_question
+        self._correlation_id = correlation_id
         self._turn_seq = 0
         self._current_turn_ref = "t-0"              # INTRO/first-ASK live on t-0
         self._last_candidate_text: str | None = None
+        self._transcript: list[tuple[str, str]] = []   # (role, text) window for the brain
+        self._brain_task: asyncio.Task | None = None   # in-flight confirm/decide (barge-in cancels)
+        self._spec_id: str | None = None               # id of the staged speculative pre-stage
 
     def _t_ms(self) -> int:
         return int((time.monotonic() - self._started_at) * 1000)
 
+    def prestage_speculative(self) -> None:
+        """Option C: while the candidate answers, stage a NON-voiced speculative directive for the
+        anticipated next turn so the controller's supersede/discard runs live (CMI-4). Best-effort.
+        """
+        if self._state.get("closing"):
+            return
+        anticipated = f"t-{self._turn_seq + 1}"
+        spec = build_speculative_directive(self._brain, anticipated_turn_ref=anticipated)
+        self._controller.stage(spec)
+        self._spec_id = spec.id
+        self._collector.record(
+            "directive.speculative_staged",
+            {"id": spec.id, "act": spec.act.value, "turn_ref": anticipated},
+            t_ms=self._t_ms(), wall_ms=_now_ms())
+
+    def cancel_brain(self) -> None:
+        """Barge-in / teardown: cancel the in-flight brain decide() Task cleanly (CMI-4)."""
+        task = self._brain_task
+        if task is not None and not task.done():
+            task.cancel()
+
+    def _ack(self) -> str:
+        """Pick a persona-voiced, content-free acknowledgment to MASK the brain (D3). Uses the M4
+        reflex pre-render's `acknowledgment` pool when available; else the canned settings seed."""
+        variants = self._state.get("reflex")
+        pool = getattr(variants, "acknowledgment", None) if variants is not None else None
+        return random.choice(pool) if pool else random.choice(settings.engine_v2_ack_messages)
+
     async def on_enter(self) -> None:
-        # Deliver INTRO then ASK(q1) proactively (no candidate turn precedes them). Each
-        # generate_reply routes through llm_node, which voices the staged directive.
-        for _ in range(2):
-            d = self._script.next_startup()
-            if d is None:
-                break
+        # Deliver the deterministic opener: INTRO then ASK(first bank question) proactively (no
+        # candidate turn precedes them). Each generate_reply routes through llm_node, which voices
+        # the staged directive. No brain call before the first answer (D4).
+        intro, ask = self._brain.opener()
+        for d in (intro, ask):
             self._controller.stage(d)
-            self._current_turn_ref = d.turn_ref
+            self._current_turn_ref = d.turn_ref           # both live on t-0
+            if d.say:
+                self._transcript.append(("agent", d.say))
             await self.session.generate_reply()
 
     async def on_user_turn_completed(
         self, turn_ctx: ChatContext, new_message: ChatMessage,
     ) -> None:
-        # Mute the silence timer from turn-commit through the upcoming reply. agent_state
-        # ('listening' after the reply's TTS playout) is what clears `responding` again.
+        # The brain runs ASYNC/PARALLEL, MASKED by an immediate persona acknowledgment; it is
+        # NEVER awaited in silence (D3). Three paths: (a) a confirmed speculative pre-stage is
+        # already current -> deliver instantly (no ack needed); (b) otherwise emit an instant ack
+        # to mask, run the brain in parallel, deliver its directive when it lands; (c) a barge-in
+        # cancels the in-flight brain Task cleanly. The silence timer is muted from turn-commit
+        # through the upcoming reply; agent_state ('listening' post-playout) clears `responding`.
+        text = new_message.text_content or ""
+        self._last_candidate_text = text
+        self._transcript.append(("candidate", text))
+        word_count = len([w for w in text.split() if w])
+        backchannel = is_backchannel(text, min_words=settings.engine_v2_backchannel_min_words)
+
+        _now = time.monotonic()
+        _last_listen = self._state.get("last_listening_at")
+        pause_before_commit_ms = (int((_now - _last_listen) * 1000)
+                                  if isinstance(_last_listen, (int, float)) else None)
+
+        if should_yield(word_count=word_count, is_backchannel=backchannel):
+            self._ladder.on_candidate_responded()
+
+        label = classify_resumption(ResumptionSignals(
+            prior_utterance_complete=True, gap_ms=0, ai_prompt_fully_delivered=True,
+            word_count=word_count, is_backchannel=backchannel))
+        self._collector.record(
+            "turn.captured",
+            {"word_count": word_count, "is_backchannel": backchannel,
+             "resumption_label": label.value,
+             "pause_before_commit_ms": pause_before_commit_ms},
+            t_ms=self._t_ms(), wall_ms=_now_ms())
+        log.info("engine.v2.turn_committed", word_count=word_count,
+                 pause_before_commit_ms=pause_before_commit_ms, resumption_label=label.value)
+
+        self._turn_seq += 1
+        turn_ref = f"t-{self._turn_seq}"
+        self._current_turn_ref = turn_ref
+
+        # (a) COMMON PATH — a CONFIRMED (non-speculative) pre-stage is already current for this
+        # turn -> deliver instantly, no ack/brain needed. D3 is explicit: we NEVER voice the
+        # deterministic speculative GUESS (build_speculative_directive, speculative=True) — it
+        # exists only to exercise the controller's stage->supersede->discard live (CMI-4) and is
+        # always superseded by the brain's confirm decision in path (b). So this fast-path requires
+        # a non-speculative staged directive (a future in-answer brain pre-compute would set that).
+        confirmed = self._controller.current_for_turn(turn_ref)
+        if confirmed is not None and not confirmed.speculative:
+            self._spec_id = None
+            self._state["responding"] = True
+            return                              # auto-reply voices the confirmed pre-stage now
+
+        # (b) MASK — emit an instant content-free ack (plays while the brain reasons IN PARALLEL).
         self._state["responding"] = True
+        self.session.say(self._ack(), add_to_chat_ctx=False)   # fire-and-forget; overlaps the brain
+        self._brain_task = asyncio.ensure_future(self._brain.decide(
+            turn_ref=turn_ref, candidate_utterance=text,
+            transcript_window=list(self._transcript), correlation_id=self._correlation_id))
         try:
-            text = new_message.text_content or ""
-            self._last_candidate_text = text
-            word_count = len([w for w in text.split() if w])
-            backchannel = is_backchannel(
-                text, min_words=settings.engine_v2_backchannel_min_words)
-
-            _now = time.monotonic()
-            _last_listen = self._state.get("last_listening_at")
-            pause_before_commit_ms = (int((_now - _last_listen) * 1000)
-                                      if isinstance(_last_listen, (int, float)) else None)
-
-            if should_yield(word_count=word_count, is_backchannel=backchannel):
-                self._ladder.on_candidate_responded()
-
-            label = classify_resumption(ResumptionSignals(
-                prior_utterance_complete=True, gap_ms=0, ai_prompt_fully_delivered=True,
-                word_count=word_count, is_backchannel=backchannel))
-            self._collector.record(
-                "turn.captured",
-                {"word_count": word_count, "is_backchannel": backchannel,
-                 "resumption_label": label.value,
-                 "pause_before_commit_ms": pause_before_commit_ms},
-                t_ms=self._t_ms(), wall_ms=_now_ms())
-            log.info("engine.v2.turn_committed", word_count=word_count,
-                     pause_before_commit_ms=pause_before_commit_ms,
-                     resumption_label=label.value)
-
-            self._turn_seq += 1
-            turn_ref = f"t-{self._turn_seq}"
-            self._current_turn_ref = turn_ref
-            if self._script.scenario == "supersession":
-                spec, real = self._script.supersession_pair(turn_ref=turn_ref)
-                self._controller.stage(spec)
-                self._controller.stage(real)
-            else:
-                nxt = self._script.next_after_turn(turn_ref=turn_ref)
-                if nxt is not None:
-                    self._controller.stage(nxt)
-                else:
-                    raise StopResponse()               # script exhausted -> nothing to say
-        except BaseException:
-            # On StopResponse (exhausted) or any error there is no reply coming, so the
-            # agent won't reach 'listening' to clear the flag — clear it here.
+            directive, record = await self._brain_task
+        except asyncio.CancelledError:                          # (c) barge-in cancelled the brain
+            self._collector.record("engine.v2.brain.cancelled", {"turn_ref": turn_ref},
+                                   t_ms=self._t_ms(), wall_ms=_now_ms())
             self._state["responding"] = False
-            raise
-        # Happy path: leave responding=True; agent_state 'listening' clears it post-playout.
+            raise StopResponse() from None                      # no reply; the new turn makes one
+        finally:
+            self._brain_task = None
+
+        # Supersede the speculative pre-stage if it is still the staged slot (controller discards
+        # it); never deliver two directives for one boundary.
+        if self._spec_id is not None and self._controller.staged_id() == self._spec_id:
+            directive = directive.model_copy(update={"supersedes": self._spec_id})
+        self._spec_id = None
+        self._controller.stage(directive)
+        self._collector.record_decision(record, t_ms=self._t_ms(), wall_ms=_now_ms())
+        if directive.say:
+            self._transcript.append(("agent", directive.say))
+        if directive.is_terminal:
+            self._state["closing"] = True
+        # The post-hook auto-reply voices controller.current_for_turn(turn_ref) = the brain's
+        # directive. responding stays True; agent_state 'listening' clears it after playout.
 
     async def llm_node(self, chat_ctx, tools, model_settings):
         directive = self._controller.current_for_turn(self._current_turn_ref)
@@ -379,11 +449,17 @@ async def run(
         persona_name=(ai_config.engine_mouth_persona_name or settings.engine_agent_name),
         job_title=config.job_title,
     )
-    controller = DirectiveController()
-    script = DirectiveScript(
-        questions=[q.text for q in config.stage.questions],
-        scenario=settings.engine_v2_mouth_scenario,
+    # The brain (ControlPlane) — not a script — sources every Directive in M5 (D3).
+    mandatory = [q.primary_signal for q in config.stage.questions
+                 if q.is_mandatory and q.primary_signal]
+    coverage = CoverageTracker(
+        signals=(list(config.signals)
+                 or [q.primary_signal for q in config.stage.questions if q.primary_signal]),
+        mandatory_signals=mandatory,
+        soft_probe_cap=2,
     )
+    brain = ControlPlane(config=config, coverage=coverage)
+    controller = DirectiveController()
 
     def _reflex(kind: str, fallback: str) -> str:
         """Pick a persona-voiced reflex variant if pre-rendered, else the canned seed."""
@@ -449,12 +525,19 @@ async def run(
                 log.warning("engine.v2.silence_watch.tick_failed", exc_info=True)
                 state["responding"] = False
 
+    # Forward-declared so the run()-level user-speaking handler can reach the agent's Option-C
+    # pre-stage + barge-in cancel; assigned below at the original construction site.
+    agent: _MouthAgent | None = None
+
     @session.on("user_state_changed")
     def _on_user_state(ev: UserStateChangedEvent) -> None:
         now = time.monotonic()
         if ev.new_state == "speaking":
             state["started_answering"] = True
             pacer.on_resume()
+            if agent is not None:
+                agent.cancel_brain()         # barge-in: cancel any in-flight brain decision (CMI-4)
+                agent.prestage_speculative()  # Option C: stage the non-voiced speculative pre-stage
         elif ev.new_state == "listening":
             if state["started_answering"]:
                 pacer.on_pause_started(at_s=now)
@@ -478,9 +561,9 @@ async def run(
                          t_ms=int((time.monotonic() - started_at) * 1000))
                 _pose_question(time.monotonic())
 
-    agent = _MouthAgent(controller=controller, mouth=mouth, script=script, collector=collector,
+    agent = _MouthAgent(controller=controller, mouth=mouth, brain=brain, collector=collector,
                         ladder=ladder, started_at=started_at, state=state,
-                        pose_question=_pose_question)
+                        pose_question=_pose_question, correlation_id=correlation_id)
 
     nc_filter = build_noise_cancellation()
     await session.start(
@@ -497,7 +580,8 @@ async def run(
         state["reflex"] = await mouth.prerender_reflex_variants(
             hold_seed=settings.engine_v2_hold_space_message,
             nudge_seed=settings.engine_v2_unresponsive_message_1,
-            still_seed=settings.engine_v2_unresponsive_message_2)
+            still_seed=settings.engine_v2_unresponsive_message_2,
+            ack_seed=list(settings.engine_v2_ack_messages))
     state["reflex_task"] = asyncio.create_task(_prime_reflex())
 
     state["silence_task"] = asyncio.create_task(_silence_watch())

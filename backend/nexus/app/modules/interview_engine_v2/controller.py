@@ -35,6 +35,14 @@ class DirectiveController:
             self._discarded_ids.add(self._staged.id)
             self._staged = None
 
+    def staged_id(self) -> str | None:
+        """The id of the currently-staged directive, or None.
+
+        The agent uses this to decide whether its confirmed brain directive must supersede a
+        still-staged speculative pre-stage (Option C) — never reaches into `_staged` directly.
+        """
+        return self._staged.id if self._staged is not None else None
+
     def current_for_turn(self, turn_ref: str) -> Directive | None:
         """The directive to deliver at this boundary, or None.
 

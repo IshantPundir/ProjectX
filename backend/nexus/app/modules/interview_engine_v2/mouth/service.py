@@ -45,11 +45,20 @@ _ACT_PROMPT: dict[DirectiveAct, str] = {
 
 
 class ReflexCueVariants(BaseModel):
-    """Persona-voiced variants of the three silence-timer reflex cues."""
+    """Persona-voiced variants of the silence-timer reflex cues + the M5 ack-mask.
+
+    `acknowledgment` (M5/D3): content-free "mm, okay —" beats played the instant the candidate
+    finishes, to MASK the brain's parallel reasoning (never a silent wait). Like the other cues
+    they are pre-rendered once at session start; the canned `settings.engine_v2_ack_messages` list
+    is the seed + fallback.
+    """
 
     hold_space: list[str] = Field(min_length=1)
     gentle_nudge: list[str] = Field(min_length=1)
     still_there: list[str] = Field(min_length=1)
+    # Defaulted so a pre-render that omits it (or an older caller) stays valid; the agent's _ack
+    # falls back to settings.engine_v2_ack_messages when the pool is empty/absent anyway.
+    acknowledgment: list[str] = Field(default_factory=lambda: ["Mm, okay."], min_length=1)
 
 
 class ConversationPlane:
@@ -89,14 +98,20 @@ class ConversationPlane:
 
     async def prerender_reflex_variants(
         self, *, hold_seed: str, nudge_seed: str, still_seed: str,
+        ack_seed: list[str] | None = None,
     ) -> ReflexCueVariants:
-        """Pre-render persona-voiced reflex cues once at session start; fall back to seeds."""
+        """Pre-render persona-voiced reflex cues once at session start; fall back to seeds.
+
+        `ack_seed` is the canned content-free ack-mask list (settings.engine_v2_ack_messages) —
+        the seed/fallback for the M5 ack that masks the brain's parallel reasoning (D3).
+        """
         try:
             return await self._call_reflex_llm()
         except Exception:  # noqa: BLE001 — never let pre-render break the behavioral layer
             log.warning("mouth.reflex_prerender_failed_using_seeds", exc_info=True)
             return ReflexCueVariants(
                 hold_space=[hold_seed], gentle_nudge=[nudge_seed], still_there=[still_seed],
+                acknowledgment=list(ack_seed) if ack_seed else ["Mm, okay."],
             )
 
     async def _call_reflex_llm(self) -> ReflexCueVariants:

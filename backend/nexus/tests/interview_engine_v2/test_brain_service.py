@@ -173,3 +173,37 @@ async def test_generic_brain_error_falls_back(monkeypatch):
                                            transcript_window=[], active_question_id="q1")
     assert directive.act in (DirectiveAct.ACK_ADVANCE, DirectiveAct.CLOSE)
     assert "fallback" in record.move
+
+
+# ---------------------------------------------------------------------------
+# Task 7 — pure build_speculative_directive (Option C non-voiced pre-stage, D3)
+# ---------------------------------------------------------------------------
+build_speculative_directive = brain_service.build_speculative_directive
+
+
+def test_speculative_directive_is_speculative_and_non_voiced_shape():
+    plane, cov = _plane()
+    spec = build_speculative_directive(plane, anticipated_turn_ref="t-2")
+    assert spec.speculative is True
+    assert spec.turn_ref == "t-2"
+    assert spec.is_terminal is False                       # a pre-stage is never terminal
+    # points at the next uncovered question (deterministic guess; never voiced — superseded later)
+    assert spec.act.value in ("ACK_ADVANCE", "HOLD")
+
+
+def test_speculative_directive_holds_when_all_covered():
+    plane, cov = _plane()
+    cov.apply_delta({"python": "sufficient"})
+    cov.apply_delta({"kafka": "sufficient"})
+    spec = build_speculative_directive(plane, anticipated_turn_ref="t-9")
+    assert spec.act.value == "HOLD"                        # nothing left to advance to -> hold
+
+
+def test_speculative_directive_is_side_effect_free():
+    """D3: a pre-stage NEVER mutates the single source of truth (coverage) or the brain pointer."""
+    plane, cov = _plane()
+    before = cov.summary_for_result()
+    before_pointer = plane.active_question_id
+    build_speculative_directive(plane, anticipated_turn_ref="t-2")
+    assert cov.summary_for_result() == before               # coverage untouched
+    assert plane.active_question_id == before_pointer        # pointer untouched

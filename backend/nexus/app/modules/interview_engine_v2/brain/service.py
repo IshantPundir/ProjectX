@@ -46,6 +46,28 @@ _MOVE_TO_ACT: dict[BrainMove, DirectiveAct] = {
 _TERMINAL_MOVES = frozenset({BrainMove.knockout_close, BrainMove.close})
 
 
+def build_speculative_directive(plane: ControlPlane, *, anticipated_turn_ref: str) -> Directive:
+    """A deterministic, NON-voiced Option-C pre-stage (D3): staged while the candidate is still
+    answering so the controller's stage->supersede->discard machinery runs live (CMI-4). It is
+    ALWAYS superseded by the confirm decision at the boundary; its content is a benign best-effort
+    guess (advance to the next uncovered question, else a hold). It calls no LLM and mutates no
+    state (coverage stays the single source of truth — the speculative move is never voiced).
+    """
+    uncovered = plane._coverage.uncovered_mandatory()
+    nxt = next(
+        (q for q in sorted(plane._config.stage.questions, key=lambda q: q.position)
+         if q.id != plane._active_question_id
+         and ((q.primary_signal in uncovered) or (not q.primary_signal and uncovered))),
+        None,
+    )
+    if nxt is not None:
+        return Directive(id=plane._new_id(), turn_ref=anticipated_turn_ref,
+                         act=DirectiveAct.ACK_ADVANCE, say=nxt.text, speculative=True)
+    return Directive(id=plane._new_id(), turn_ref=anticipated_turn_ref, act=DirectiveAct.HOLD,
+                     say=None, compose_hint="warm, brief — let them keep going", speculative=True,
+                     tone=DirectiveTone.WARM)
+
+
 async def _call_brain(*, messages: list[dict[str, str]], correlation_id: str) -> BrainDecision:
     """The blessed brain LLM site (instructor structured output). Mocked in unit tests."""
     from app.ai.client import get_openai_client

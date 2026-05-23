@@ -7,8 +7,6 @@ Invariants under test (DESIGN-SPEC §2/§7, doc 08 system-concurrency):
   - a wrong speculative pre-stage is cleanly discarded
 """
 
-import pytest
-
 from app.modules.interview_engine_v2.controller import DirectiveController
 
 
@@ -67,3 +65,15 @@ def test_never_returns_discarded(make_directive):
     c.discard_speculative()
     # re-staging is allowed; a discarded id stays discarded if re-presented
     assert c.current_for_turn("t-1") is None
+
+
+def test_staged_id_reports_current_staged_directive(make_directive):
+    """Task 7: the public accessor the agent uses to decide whether to supersede a pre-stage."""
+    c = DirectiveController()
+    assert c.staged_id() is None                       # nothing staged
+    c.stage(make_directive("d-spec", "t-1", speculative=True))
+    assert c.staged_id() == "d-spec"                   # reflects the staged speculative pre-stage
+    c.stage(make_directive("d-real", "t-1", supersedes="d-spec"))
+    assert c.staged_id() == "d-real"                   # supersession replaces the staged slot
+    c.mark_delivered("d-real")
+    assert c.staged_id() is None                       # cleared after delivery

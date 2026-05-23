@@ -1,8 +1,7 @@
 """AIConfig surface for the v2 engine (default version + brain/mouth model map)."""
 
-import pytest
-
 from app.ai.config import AIConfig
+from app.config import Settings
 
 
 def test_default_version_is_v1():
@@ -77,3 +76,13 @@ def test_engine_mouth_persona_name_env_override(monkeypatch):
     monkeypatch.setenv("ENGINE_MOUTH_PERSONA_NAME", "Priya")
     cfg = AIConfig()
     assert cfg.engine_mouth_persona_name == "Priya"
+
+
+def test_engine_v2_ack_messages_seed_fallback():
+    # Task 7: the canned ack-mask seed + fallback used when no persona pre-render is available.
+    s = Settings()
+    assert isinstance(s.engine_v2_ack_messages, list)
+    assert len(s.engine_v2_ack_messages) >= 1               # at least one safe fallback
+    assert all(isinstance(m, str) and m.strip() for m in s.engine_v2_ack_messages)
+    # content-free acks only — they must commit to nothing (D3); no question marks.
+    assert all("?" not in m for m in s.engine_v2_ack_messages)

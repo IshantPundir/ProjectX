@@ -378,6 +378,18 @@ class Settings(BaseSettings):
     # speculative PROBE then a superseding ACK_ADVANCE for the CMI-4 live test.
     engine_v2_mouth_scenario: str = ""
 
+    # M5 ack-mask (D3): a short, content-free, persona-voiced acknowledgment played the instant
+    # the candidate finishes so the brain's ~3-7s reasoning runs MASKED (never a silent wait). The
+    # mouth pre-renders Arjun-voiced variants at session start; this canned list is the seed +
+    # fallback. Content-free by design — it commits to nothing, so it is never wrong ahead of any
+    # brain move (advance, probe, even a redirect). No questions.
+    engine_v2_ack_messages: list[str] = [
+        "Mm, okay.",
+        "Right.",
+        "Got it.",
+        "Let me think on that.",
+    ]
+
     # Conversational continuation — pre-Speaker cancellation watcher.
     # See docs/superpowers/specs/2026-05-17-conversational-continuation-design.md
     #
