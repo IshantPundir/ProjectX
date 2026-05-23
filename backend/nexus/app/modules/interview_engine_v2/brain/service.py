@@ -145,7 +145,7 @@ class ControlPlane:
             stable_prefix=self._stable_prefix,
             transcript_window=transcript_window,
             coverage_summary=self._coverage.summary_for_prompt(),
-            active_question_id=aqid,
+            active_question=self._questions.get(aqid),
             candidate_utterance=candidate_utterance,
         )
         timeout = (
