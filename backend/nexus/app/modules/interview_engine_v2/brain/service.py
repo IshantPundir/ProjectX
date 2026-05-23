@@ -99,6 +99,9 @@ class ControlPlane:
         self._coverage = coverage
         self._questions = {q.id: q for q in config.stage.questions}
         self._active_question_id: str | None = None  # set by opener(), advanced on advance-move
+        self._asked_ids: set[str] = set()            # questions physically ASKED (repeat-guard)
+        self._pending_advance_id: str | None = None  # resolved next-q for THIS decide() (set in
+        #                                              _build_directive, consumed by decide)
         from app.ai.prompts import PromptLoader  # local import keeps module import light
         loader = PromptLoader(version=ai_config.engine_brain_prompt_version)
         self._stable_prefix = render_stable_prefix(
@@ -117,6 +120,7 @@ class ControlPlane:
         """Deterministic INTRO + ASK(first bank question) — D4. No brain call before any answer."""
         first = min(self._config.stage.questions, key=lambda q: q.position)
         self._active_question_id = first.id
+        self._asked_ids = {first.id}                 # the opener physically asks the first question
         intro = Directive(
             id=self._new_id(), turn_ref="t-0", act=DirectiveAct.INTRO, say=None,
             compose_hint="warm, brief, disclose it's an AI + recorded, set them at ease",
@@ -147,6 +151,7 @@ class ControlPlane:
             coverage_summary=self._coverage.summary_for_prompt(),
             active_question=self._questions.get(aqid),
             candidate_utterance=candidate_utterance,
+            asked_question_ids=sorted(self._asked_ids),   # repeat-guard (brain side)
         )
         timeout = (
             budget_ms if budget_ms is not None else ai_config.engine_brain_total_budget_ms
@@ -170,18 +175,17 @@ class ControlPlane:
         if move is BrainMove.probe and aqid is not None:
             self._coverage.record_probe(aqid)
 
+        self._pending_advance_id = None              # set by _build_directive's advance path
         directive = self._build_directive(
             turn_ref=turn_ref, move=move, decision=decision,
             sanitized_say=policy.sanitized_say, active_question_id=aqid,
         )
-        # ACK_ADVANCE is only ever produced by the advance path of _build_directive (which already
-        # validated bank_question_id), so a directive-driven check also covers the
-        # probe->advance degrade.
-        if (
-            directive.act is DirectiveAct.ACK_ADVANCE
-            and decision.bank_question_id in self._questions
-        ):
-            self._active_question_id = decision.bank_question_id
+        # ACK_ADVANCE is only ever produced by the advance path of _build_directive, which resolves
+        # the repeat-guarded next question into _pending_advance_id (also covers the probe->advance
+        # degrade). Move the pointer to — and record as ASKED — exactly the question we voiced.
+        if directive.act is DirectiveAct.ACK_ADVANCE and self._pending_advance_id is not None:
+            self._active_question_id = self._pending_advance_id
+            self._asked_ids.add(self._pending_advance_id)
         record = TurnDecisionRecord(
             turn_ref=turn_ref,
             candidate_quote=candidate_utterance,
@@ -209,14 +213,15 @@ class ControlPlane:
         tone = DirectiveTone(decision.tone)
         say: str | None
         if move is BrainMove.advance:
-            nxt = self._questions.get(decision.bank_question_id or "")
-            if nxt is None:                    # brain didn't name a valid next q -> close out
+            target_id = self._resolve_advance_target(decision.bank_question_id)
+            if target_id is None:              # invalid pick, or nothing unasked left -> close out
                 return Directive(
                     id=self._new_id(), turn_ref=turn_ref, act=DirectiveAct.CLOSE,
                     say=None, compose_hint="thank warmly; recruiter will follow up",
                     tone=DirectiveTone.WARM, is_terminal=True,
                 )
-            say = nxt.text                     # VERBATIM (D2 — brain selects, never rewrites)
+            self._pending_advance_id = target_id
+            say = self._questions[target_id].text  # VERBATIM (D2 — brain selects, never rewrites)
         elif move is BrainMove.probe:
             active = self._questions.get(active_question_id or "")
             idx = decision.bank_follow_up_index
@@ -235,6 +240,30 @@ class ControlPlane:
             id=self._new_id(), turn_ref=turn_ref, act=act, say=say,
             compose_hint=None, tone=tone, is_terminal=is_terminal,
         )
+
+    def _resolve_advance_target(self, brain_pick: str | None) -> str | None:
+        """The next question to ASK on an advance. Honors the brain's pick when it names a valid,
+        not-yet-asked question; otherwise (already-asked → repeat-guard, d9828b7b; OR unknown/None →
+        a garbled pick or a DOWNGRADED knockout that degraded here, ec11e237) advances to the next
+        UNASKED question. Only an EXHAUSTED bank returns None → the caller closes. Never close on an
+        unverified absence by accident: continue the screen while questions remain.
+        """
+        q = self._questions.get(brain_pick or "")
+        if q is not None and q.id not in self._asked_ids:
+            return q.id                              # valid + not yet asked -> honor the brain
+        return self._next_unasked()        # asked/unknown/None -> next unasked (else close)
+
+    def _next_unasked(self) -> str | None:
+        """The next not-yet-asked question by position, preferring one whose primary signal is still
+        an uncovered mandatory; None when every question has been asked."""
+        uncovered = set(self._coverage.uncovered_mandatory())
+        unasked = [q for q in sorted(self._config.stage.questions, key=lambda q: q.position)
+                   if q.id not in self._asked_ids]
+        if not unasked:
+            return None
+        return next((q.id for q in unasked
+                     if (q.primary_signal in uncovered) or (not q.primary_signal and uncovered)),
+                    unasked[0].id)
 
     def _fallback(
         self, turn_ref: str, candidate_utterance: str, *, reason: str,
@@ -265,6 +294,7 @@ class ControlPlane:
         if nxt is not None:
             # advance the pointer so the next fallback moves on (no infinite-Q1 loop)
             self._active_question_id = nxt.id
+            self._asked_ids.add(nxt.id)        # keep the repeat-guard truthful on brain recovery
             directive = Directive(
                 id=self._new_id(), turn_ref=turn_ref, act=DirectiveAct.ACK_ADVANCE,
                 say=nxt.text, tone=DirectiveTone.NEUTRAL,

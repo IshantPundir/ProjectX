@@ -62,7 +62,13 @@ class CoverageTracker:
         """Merge a brain-proposed per-signal delta. Returns only the entries that changed.
 
         Merge rules (decision C — re-open-closed-thread):
-        - `sufficient` is STICKY: a covered signal is never un-covered by a later weaker turn.
+        - `sufficient` is STICKY against WEAKER turns (`partial`/`none`): a covered signal is never
+          un-covered by modesty, a bare 'yes', or a follow-up that adds nothing. But an explicit
+          `failed` delta DOES flip it (the candidate retracts/contradicts the claim — "actually I
+          was lying, I've never used it"). The brain only proposes `failed` on a genuine
+          contradiction, so honoring it keeps coverage truthful (d9828b7b talk-test: Workato stayed
+          'sufficient' after the candidate confessed they'd lied). `sufficient` and `failed` thus
+          flip between each other on explicit evidence; neither is downgraded by `partial`/`none`.
         - `failed` is REVISABLE: it's a knockout *candidate*, not a lock. A later `partial`/
           `sufficient` (the candidate volunteers contradicting evidence) re-opens it; a `none`/
           `failed` delta leaves it failed. (Prevents prematurely locking an absence — the b99d8cc6
@@ -75,7 +81,10 @@ class CoverageTracker:
             new = CoverageState(raw)
             cur = self._state.get(sig, CoverageState.none)
             if cur is CoverageState.sufficient:
-                continue                                    # sticky — covered stays covered
+                if new is CoverageState.failed:             # explicit retraction flips it down
+                    self._state[sig] = new
+                    applied[sig] = new
+                continue                                    # partial/none/sufficient: stays covered
             if cur is CoverageState.failed:
                 if new in (CoverageState.partial, CoverageState.sufficient):
                     self._state[sig] = new  # new evidence re-opens the knockout candidate

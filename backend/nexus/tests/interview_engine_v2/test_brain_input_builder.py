@@ -117,6 +117,30 @@ def test_message_prefix_identical_across_two_different_turns():
     assert m1[0]["content"] == m2[0]["content"]   # only the suffix changes turn-to-turn
 
 
+def test_build_messages_lists_already_asked_questions():
+    """Repeat-guard (brain side): the dynamic suffix tells the brain which questions were already
+    physically asked so it won't re-pick one (the deterministic guard in service.py is the safety
+    net; this reduces how often it has to override the brain). d9828b7b talk-test."""
+    cfg = _config()
+    prefix = render_stable_prefix(system_prompt=SYSTEM, config=cfg)
+    msgs = build_brain_messages(
+        stable_prefix=prefix, transcript_window=[], coverage_summary="python=none",
+        active_question=_question(), candidate_utterance="hi",
+        asked_question_ids=["q1", "q7"])
+    suffix = msgs[1]["content"]
+    assert "ALREADY ASKED" in suffix
+    assert "q7" in suffix                       # q7 appears ONLY via the already-asked list
+
+
+def test_build_messages_omits_already_asked_section_when_empty():
+    cfg = _config()
+    prefix = render_stable_prefix(system_prompt=SYSTEM, config=cfg)
+    msgs = build_brain_messages(
+        stable_prefix=prefix, transcript_window=[], coverage_summary="python=none",
+        active_question=_question(), candidate_utterance="hi")
+    assert "ALREADY ASKED" not in msgs[1]["content"]
+
+
 def test_transcript_window_is_bounded():
     cfg = _config()
     prefix = render_stable_prefix(system_prompt=SYSTEM, config=cfg)

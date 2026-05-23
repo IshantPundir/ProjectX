@@ -31,14 +31,28 @@ def test_apply_delta_is_monotonic_by_rank():
     assert t.state("python") is CoverageState.sufficient
 
 
-def test_sufficient_is_sticky():
-    """A covered signal cannot be un-covered by a later weaker turn."""
+def test_sufficient_is_sticky_against_weaker_turns():
+    """A covered signal cannot be un-covered by a later WEAKER turn (partial/none) — modesty,
+    a follow-up that adds nothing, a bare 'yes'. Only an explicit `failed` contradiction flips
+    it (see test_sufficient_revised_to_failed_on_explicit_contradiction)."""
     t = _tracker()
     t.apply_delta({"python": "sufficient"})
     t.apply_delta({"python": "partial"})
     assert t.state("python") is CoverageState.sufficient
-    t.apply_delta({"python": "failed"})
+    t.apply_delta({"python": "none"})
     assert t.state("python") is CoverageState.sufficient
+
+
+def test_sufficient_revised_to_failed_on_explicit_contradiction():
+    """A previously-credited signal MUST be revisable down to `failed` when the candidate
+    explicitly retracts/contradicts the claim ("actually I was lying, I've never used it").
+    The brain only proposes a `failed` delta on a genuine contradiction, so honoring it keeps
+    coverage truthful (the d9828b7b talk-test: Workato stayed 'sufficient' after the candidate
+    confessed they'd lied). partial/none stay sticky; only `failed` flips a sufficient signal."""
+    t = _tracker()
+    t.apply_delta({"python": "sufficient"})
+    t.apply_delta({"python": "failed"})
+    assert t.state("python") is CoverageState.failed
 
 
 def test_failed_is_revisable_on_new_evidence():

@@ -152,6 +152,97 @@ async def test_or_knockout_never_closes_on_one_member():
     _assert_no_rubric_leak(directive)
 
 
+async def test_blanket_disclaimer_moves_toward_knockout_not_advance():
+    """d9828b7b: a candidate who disclaims the WHOLE category ("I was lying — I'm not even a
+    programmer, I've never written code in any language") must NOT be met with yet another
+    technical question. A blanket disclaimer covers every OR-alternative at once; early-exit is the
+    default, so the brain confirms the absence (or closes) — it does not grind or advance away."""
+    q = _q(
+        "q1",
+        "backend_language",
+        "Have you worked with Java, Python, or Ruby?",
+        signals=["java", "python", "ruby"],
+        follow_ups=["What about Python?", "Or Ruby?"],
+    )
+    cfg = _config(
+        [q],
+        jd="Backend role. Java OR Python OR Ruby required.",
+        signals=["java", "python", "ruby"],
+    )
+    plane = _plane(cfg, mandatory=["java", "python", "ruby"])
+    directive, record = await plane.decide(
+        turn_ref="t-1",
+        active_question_id="q1",
+        transcript_window=[],
+        candidate_utterance=(
+            "Honestly I was lying earlier — I'm not even a programmer, "
+            "I've never written code in any language."
+        ),
+    )
+    # confirm-then-close, never grind on / advance to another technical question
+    assert directive.act in (DirectiveAct.CONFIRM, DirectiveAct.CLOSE)
+    _assert_no_rubric_leak(directive)
+
+
+async def test_single_skill_no_takes_a_clean_path_not_the_accidental_close():
+    """ec11e237: the brain wrongly padded `or_alternatives` for a SINGLE skill (REST), tripping the
+    OR-unverified downgrade -> probe -> degrade -> ACCIDENTAL terminal close (bypassing the verified
+    bar). With `or_alternatives` reserved for genuine OR-groups, a single-skill "no" now takes a
+    CLEAN path only: a reflect-confirm (continue), or a properly-verified knockout_close — NEVER the
+    accidental OR-unverified degrade-to-close. (Closing on a complete, unambiguous disclaimer is the
+    desired early-exit; requiring a re-confirm there would read as obtuse.)"""
+    cfg = _config(
+        [_q("q1", "rest_apis", "How would you design a connector to a rate-limited REST API?")],
+        jd="Integration role. Hands-on REST API experience required.",
+        signals=["rest_apis"],
+    )
+    plane = _plane(cfg, mandatory=["rest_apis"])
+    directive, record = await plane.decide(
+        turn_ref="t-1",
+        active_question_id="q1",
+        transcript_window=[],
+        candidate_utterance="I don't have any experience building any kind of REST APIs.",
+    )
+    # the ec11e237 bug: a single-skill signal must NEVER trip the OR-group downgrade branch
+    assert "knockout_or_unverified" not in record.policy_checks
+    if directive.is_terminal:
+        # if it closes, it's a CLEANLY VERIFIED knockout — not the accidental degrade-to-close
+        assert "knockout_or_verified" in record.policy_checks
+    else:
+        # else it continues the screen (reflect-confirm / probe / advance), never a dead end
+        assert directive.act in (
+            DirectiveAct.CONFIRM, DirectiveAct.PROBE, DirectiveAct.ACK_ADVANCE)
+    _assert_no_rubric_leak(directive)
+
+
+async def test_retraction_revises_a_credited_signal_to_failed():
+    """d9828b7b: the candidate claimed Workato experience (credited sufficient), then retracted it
+    ("I was lying — I've never used it"). The brain must propose a `failed` coverage_delta so the
+    tracker revises the signal back DOWN — a withdrawn claim must not stay credited."""
+    cfg = _config(
+        [_q("q1", "workato", "How long have you worked hands-on with Workato in production?")],
+        jd="Integration role. Hands-on Workato required.",
+        signals=["workato"],
+    )
+    plane = _plane(cfg, mandatory=["workato"])
+    await plane.decide(
+        turn_ref="t-1",
+        active_question_id="q1",
+        transcript_window=[],
+        candidate_utterance="I've built Workato recipes in production for about two years.",
+    )
+    # the claim should be credited before the retraction
+    cov_after_claim = plane._coverage.state("workato").value
+    assert cov_after_claim in ("partial", "sufficient")
+    await plane.decide(
+        turn_ref="t-2",
+        active_question_id="q1",
+        transcript_window=[("candidate", "I've built Workato recipes for two years.")],
+        candidate_utterance="Actually, I was lying — I've never used Workato at all.",
+    )
+    assert plane._coverage.state("workato").value == "failed"   # revised down on the retraction
+
+
 async def test_indirect_no_is_read_semantically():
     """Indian soft-no (doc 07 §7): a hedge means 'no', handled without grinding (no regex)."""
     cfg = _config(

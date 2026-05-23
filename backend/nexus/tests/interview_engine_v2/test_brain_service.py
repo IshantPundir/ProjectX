@@ -200,15 +200,102 @@ async def test_probe_invalid_index_degrades_to_advance_and_moves_pointer(monkeyp
     assert plane.active_question_id == "q2"          # pointer MUST move (the bug being fixed)
 
 
-async def test_advance_unknown_question_id_closes(monkeypatch):
-    plane, _ = _plane()
+def _config3():
+    """A 3-question bank so the repeat-guard has somewhere unasked to advance to."""
+    return SessionConfig(
+        session_id="s", job_id="j", candidate_id="c", job_title="Backend Engineer",
+        hiring_company_name="Workato", role_summary="rs", jd_text="jd", seniority_level="mid",
+        company=CompanyContext(about="a", industry="i", hiring_bar="h"),
+        candidate=CandidateContext(name="Asha"),
+        stage=StageConfig(stage_id="st", stage_type="ai_screening", name="Screen",
+                          duration_minutes=30, difficulty="medium",
+                          questions=[_q("q1", "python", 0), _q("q2", "kafka", 1),
+                                     _q("q3", "redis", 2)]),
+        signals=["python", "kafka", "redis"],
+    )
+
+
+async def test_advance_does_not_re_ask_an_already_asked_question(monkeypatch):
+    """Repeat-guard (d9828b7b talk-test: turn [24] re-asked turn [7] verbatim). The brain picks the
+    next question by id from a SIGNAL-based view + a bounded transcript window, so it can re-pick a
+    question already physically asked (its signal stayed 'none' after an 'I don't know', and the
+    earlier ask scrolled out of the window). The controller MUST NOT voice a verbatim repeat — it
+    advances to the next UNASKED question instead."""
+    cfg = _config3()
+    cov = CoverageTracker(signals=["python", "kafka", "redis"],
+                          mandatory_signals=["python", "kafka", "redis"])
+    plane = ControlPlane(config=cfg, coverage=cov)
+    plane.opener()                                            # asks q1
+
     _patch_brain(monkeypatch, BrainDecision(
-        reasoning="advance to nowhere", candidate_intent=CandidateIntent.answer, grade="strong",
-        coverage_delta=_cov(python="sufficient"), move=BrainMove.advance,
-        bank_question_id="does-not-exist"))
+        reasoning="advance", candidate_intent=CandidateIntent.no_experience,
+        grade="thin", move=BrainMove.advance, bank_question_id="q2"))
+    d2, _ = await plane.decide(turn_ref="t-1", candidate_utterance="I don't know.",
+                               transcript_window=[])
+    assert d2.say == "Tell me about kafka."                   # q2 asked
+
+    # brain now (wrongly) re-picks q1 — already physically asked at the opener
+    _patch_brain(monkeypatch, BrainDecision(
+        reasoning="re-picks q1", candidate_intent=CandidateIntent.no_experience,
+        grade="thin", move=BrainMove.advance, bank_question_id="q1"))
+    d3, _ = await plane.decide(turn_ref="t-2", candidate_utterance="I don't know.",
+                               transcript_window=[])
+    assert d3.act is DirectiveAct.ACK_ADVANCE
+    assert d3.say == "Tell me about redis."                   # the UNASKED q3, NOT q1 again
+    assert plane.active_question_id == "q3"
+
+
+async def test_advance_to_already_asked_with_no_unasked_left_closes(monkeypatch):
+    """When the brain re-picks an asked question and NOTHING unasked remains, advancing is
+    impossible — close out warmly rather than repeating."""
+    plane, _ = _plane()                                       # 2-question bank
+    plane.opener()                                            # asks q1
+    _patch_brain(monkeypatch, BrainDecision(
+        reasoning="advance to q2", candidate_intent=CandidateIntent.answer, grade="thin",
+        move=BrainMove.advance, bank_question_id="q2"))
+    await plane.decide(turn_ref="t-1", candidate_utterance="...", transcript_window=[])  # asks q2
+    _patch_brain(monkeypatch, BrainDecision(
+        reasoning="re-picks q1, both asked", candidate_intent=CandidateIntent.answer, grade="thin",
+        move=BrainMove.advance, bank_question_id="q1"))
+    d, _ = await plane.decide(turn_ref="t-2", candidate_utterance="...", transcript_window=[])
+    assert d.act is DirectiveAct.CLOSE and d.is_terminal is True
+
+
+async def test_advance_unknown_question_id_falls_back_to_next_unasked(monkeypatch):
+    """Issue-2 hardening (ec11e237): a brain 'advance' that names an unknown/garbled id should
+    CONTINUE to the next unasked question (more robust than closing) — closing is reserved for an
+    exhausted bank (test_advance_to_already_asked_with_no_unasked_left_closes covers that)."""
+    plane, _ = _plane()                                  # 2-q bank, opener not called -> none asked
+    _patch_brain(monkeypatch, BrainDecision(
+        reasoning="advance to nowhere", candidate_intent=CandidateIntent.answer, grade="thin",
+        move=BrainMove.advance, bank_question_id="does-not-exist"))
     directive, _ = await plane.decide(turn_ref="t-1", candidate_utterance="...",
                                       transcript_window=[], active_question_id="q1")
-    assert directive.act is DirectiveAct.CLOSE and directive.is_terminal is True
+    assert directive.act is DirectiveAct.ACK_ADVANCE     # continues, does NOT close
+    assert directive.say in ("Tell me about python.", "Tell me about kafka.")
+
+
+async def test_downgraded_knockout_continues_not_closes(monkeypatch):
+    """Issue-2 (ec11e237): an UNVERIFIED knockout_close must not accidentally CLOSE the screen via
+    the probe->advance degrade fall-through while unasked questions remain. The policy downgrades it
+    (or_alternatives unverified -> probe); with no follow-up + no next-q named, the engine must
+    CONTINUE to the next unasked question, never close on an unverified absence."""
+    cfg = _config3()                                     # q1, q2, q3
+    cov = CoverageTracker(signals=["python", "kafka", "redis"],
+                          mandatory_signals=["python", "kafka", "redis"])
+    plane = ControlPlane(config=cfg, coverage=cov)
+    plane.opener()                                       # asks q1
+    _patch_brain(monkeypatch, BrainDecision(
+        reasoning="thinks mandatory absent, OR-group unverified", grade="thin",
+        candidate_intent=CandidateIntent.no_experience, move=BrainMove.knockout_close,
+        is_knockout=True, or_alternatives=["python", "kafka"], or_alternatives_checked=False,
+        reflect_confirmed=False, bank_follow_up_index=None))
+    directive, record = await plane.decide(
+        turn_ref="t-1", candidate_utterance="I don't know any of that", transcript_window=[])
+    assert "knockout_or_unverified" in record.policy_checks   # the downgrade fired
+    assert directive.is_terminal is False                     # did NOT close (unverified absence)
+    assert directive.act is DirectiveAct.ACK_ADVANCE
+    assert directive.say in ("Tell me about kafka.", "Tell me about redis.")  # an UNASKED question
 
 
 async def test_generic_brain_error_falls_back(monkeypatch):
