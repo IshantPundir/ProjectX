@@ -27,6 +27,7 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 import structlog
 from livekit.agents import (
@@ -78,7 +79,16 @@ from app.modules.interview_engine_v2.turn_taking.pacing import (
     HoldSpacePacer,
     build_endpointing_options,
 )
-from app.modules.interview_runtime import SessionConfig
+from app.database import get_bypass_session
+from app.modules.interview_engine_v2.event_log.sink import LocalFileSink
+from app.modules.interview_engine_v2.result_builder import build_v2_session_result
+from app.modules.interview_runtime import (
+    KnockoutFailure,
+    SessionConfig,
+    SessionResult,  # noqa: F401 — imported so callers can resolve the type from this module
+    TranscriptEntry,
+    record_session_result,
+)
 
 log = structlog.get_logger("interview_engine_v2")
 
@@ -169,6 +179,10 @@ class DirectiveScript:
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def _now_iso() -> str:
+    return datetime.now(UTC).isoformat()
 
 
 class _MouthAgent(Agent):
@@ -409,6 +423,9 @@ async def run(
                          t_ms=int((time.monotonic() - started_at) * 1000),
                          wall_ms=_now_ms())
 
+    # Transcript accumulator — populated via conversation_item_added; fed to _finalize_and_record.
+    transcript_entries: list[TranscriptEntry] = []
+
     # --- CMI-3 (mouth half): per-turn latency from ChatMessage.metrics (the working signal) ---
     @session.on("conversation_item_added")
     def _on_item(ev: object) -> None:
@@ -417,15 +434,36 @@ async def run(
             return
         m = item.metrics or {}
         if item.role == "assistant" and m.get("llm_node_ttft") is not None:
-            collector.record("turn.latency.assistant",
-                {"llm_node_ttft": m.get("llm_node_ttft"), "tts_node_ttfb": m.get("tts_node_ttfb"),
-                 "e2e_latency": m.get("e2e_latency")},
-                t_ms=int((time.monotonic() - started_at) * 1000), wall_ms=_now_ms())
+            collector.record(
+                "turn.latency.assistant",
+                {
+                    "llm_node_ttft": m.get("llm_node_ttft"),
+                    "tts_node_ttfb": m.get("tts_node_ttfb"),
+                    "e2e_latency": m.get("e2e_latency"),
+                },
+                t_ms=int((time.monotonic() - started_at) * 1000),
+                wall_ms=_now_ms(),
+            )
         elif item.role == "user" and m.get("end_of_turn_delay") is not None:
-            collector.record("turn.latency.user",
-                {"end_of_turn_delay": m.get("end_of_turn_delay"),
-                 "transcription_delay": m.get("transcription_delay")},
-                t_ms=int((time.monotonic() - started_at) * 1000), wall_ms=_now_ms())
+            collector.record(
+                "turn.latency.user",
+                {
+                    "end_of_turn_delay": m.get("end_of_turn_delay"),
+                    "transcription_delay": m.get("transcription_delay"),
+                },
+                t_ms=int((time.monotonic() - started_at) * 1000),
+                wall_ms=_now_ms(),
+            )
+        # Transcript capture — both agent and candidate turns.
+        if item.text_content:
+            role = "candidate" if item.role == "user" else "agent"
+            transcript_entries.append(
+                TranscriptEntry(
+                    role=role,
+                    text=item.text_content,
+                    timestamp_ms=int((time.monotonic() - started_at) * 1000),
+                )
+            )
 
     # --- behavioral layer: one silence timer ticks the pure pacer + ladder ---
     ladder = UnresponsiveLadder(EouConfig(
@@ -442,6 +480,8 @@ async def run(
         "closing": False, "silence_task": None,
         "last_listening_at": None, "reflex": None, "reflex_task": None,
         "pending_arm": False,
+        "result_recorded": False,   # once-guard for _finalize_and_record
+        "close_initiated": False,   # once-guard for session.aclose() after terminal CLOSE
     }
 
     mouth = ConversationPlane(
@@ -560,6 +600,79 @@ async def run(
                 log.info("engine.v2.ladder_armed",
                          t_ms=int((time.monotonic() - started_at) * 1000))
                 _pose_question(time.monotonic())
+            # Terminal CLOSE has fully drained (agent back to 'listening'): close the session
+            # so the shutdown callback fires and _finalize_and_record can await the DB write.
+            if ns == "listening" and state.get("closing") and not state.get("close_initiated"):
+                state["close_initiated"] = True
+                asyncio.create_task(session.aclose())
+
+    # ---------------------------------------------------------------------------
+    # _finalize_and_record: async shutdown hook (CMI-1 result path).
+    # Runs once via ctx.add_shutdown_callback — async so DB writes can be awaited.
+    # The M4 sync @session.on("close") handler stays for the audio-summary log;
+    # the DB write lives here (sync close cannot await).
+    # knockout_failures=[] for M5: the brain RECORDs a knockout via the audit
+    # turn.decision event; mapping it into the typed KnockoutFailure list is a
+    # small follow-up not required for M5 acceptance ("records, never rejects").
+    # ---------------------------------------------------------------------------
+    async def _finalize_and_record() -> None:
+        if state.get("result_recorded"):
+            return
+        state["result_recorded"] = True
+        state["closing"] = True
+        env = collector.envelope(closed_at=_now_iso())
+        envelope_ref: str | None = None
+        if settings.engine_event_log_sink == "local":
+            try:
+                envelope_ref = LocalFileSink(
+                    directory=settings.engine_event_log_dir
+                ).write(env)
+            except Exception:  # noqa: BLE001 — never let envelope write block result recording
+                log.warning("engine.v2.envelope_write_failed", exc_info=True)
+        summary = compute_audio_summary(
+            events=[e.model_dump(mode="json") for e in env.events],
+            config_snapshot={
+                "endpointing_mode": ai_config.engine_v2_endpointing_mode,
+                "endpointing_min_delay": ai_config.engine_v2_endpointing_min_delay,
+                "endpointing_max_delay": ai_config.engine_v2_endpointing_max_delay,
+                "turn_detector_unlikely_threshold": (
+                    ai_config.engine_v2_turn_detector_unlikely_threshold
+                ),
+            },
+        )
+        result = build_v2_session_result(
+            config=config,
+            coverage=coverage,
+            transcript=list(transcript_entries),
+            envelope=env,
+            audio_summary=summary,
+            knockout_failures=[],
+            duration_seconds=(time.monotonic() - started_at),
+            completed_at=_now_iso(),
+            audit_envelope_ref=envelope_ref,
+        )
+        try:
+            async with get_bypass_session() as db:
+                await record_session_result(
+                    db,
+                    session_id=uuid.UUID(config.session_id),
+                    tenant_id=tenant_id,
+                    result=result,
+                    correlation_id=correlation_id,
+                )
+                await db.commit()
+            log.info(
+                "engine.v2.result.persisted",
+                session_id=config.session_id,
+                questions_asked=result.questions_asked,
+            )
+        except Exception:  # noqa: BLE001 — log + swallow; teardown must complete
+            log.error("engine.v2.result.persist_failed", exc_info=True)
+
+    # Register the async shutdown callback (LiveKit 1.5.x — see ctx.add_shutdown_callback docs).
+    # The framework awaits all shutdown callbacks before terminating the job process (default 10s
+    # timeout, configurable via shutdown_process_timeout in WorkerOptions).
+    ctx.add_shutdown_callback(_finalize_and_record)
 
     agent = _MouthAgent(controller=controller, mouth=mouth, brain=brain, collector=collector,
                         ladder=ladder, started_at=started_at, state=state,
