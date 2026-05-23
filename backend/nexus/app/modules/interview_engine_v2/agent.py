@@ -206,6 +206,7 @@ class _MouthAgent(Agent):
         self._transcript: list[tuple[str, str]] = []   # (role, text) window for the brain
         self._brain_task: asyncio.Task | None = None   # in-flight confirm/decide (barge-in cancels)
         self._spec_id: str | None = None               # id of the staged speculative pre-stage
+        self._result_transcript: list[TranscriptEntry] = []  # reliable result transcript
 
     def _t_ms(self) -> int:
         return int((time.monotonic() - self._started_at) * 1000)
@@ -248,6 +249,10 @@ class _MouthAgent(Agent):
             self._current_turn_ref = d.turn_ref           # both live on t-0
             if d.say:
                 self._transcript.append(("agent", d.say))
+                # INTRO has say=None (greeting composed by mouth); only ASK and similar
+                # directives with explicit say text are captured here.
+                self._result_transcript.append(
+                    TranscriptEntry(role="agent", text=d.say, timestamp_ms=self._t_ms()))
             await self.session.generate_reply()
 
     async def on_user_turn_completed(
@@ -262,6 +267,10 @@ class _MouthAgent(Agent):
         text = new_message.text_content or ""
         self._last_candidate_text = text
         self._transcript.append(("candidate", text))
+        # Candidate text_content IS reliably populated here (feeds the brain). Capture it.
+        if text.strip():
+            self._result_transcript.append(
+                TranscriptEntry(role="candidate", text=text, timestamp_ms=self._t_ms()))
         word_count = len([w for w in text.split() if w])
         backchannel = is_backchannel(text, min_words=settings.engine_v2_backchannel_min_words)
 
@@ -326,6 +335,12 @@ class _MouthAgent(Agent):
         self._collector.record_decision(record, t_ms=self._t_ms(), wall_ms=_now_ms())
         if directive.say:
             self._transcript.append(("agent", directive.say))
+            # directive.say is the clean verbatim bank text (ASK/PROBE/ACK_ADVANCE) or the
+            # sanitized say set by service.py — accurate for transcript/report. The mouth's
+            # persona-embellished spoken form is not reliably capturable; this is better for
+            # the record.
+            self._result_transcript.append(
+                TranscriptEntry(role="agent", text=directive.say, timestamp_ms=self._t_ms()))
         if directive.is_terminal:
             self._state["closing"] = True
         # The post-hook auto-reply voices controller.current_for_turn(turn_ref) = the brain's
@@ -421,9 +436,6 @@ async def run(
                          t_ms=int((time.monotonic() - started_at) * 1000),
                          wall_ms=_now_ms())
 
-    # Transcript accumulator — populated via conversation_item_added; fed to _finalize_and_record.
-    transcript_entries: list[TranscriptEntry] = []
-
     # --- CMI-3 (mouth half): per-turn latency from ChatMessage.metrics (the working signal) ---
     @session.on("conversation_item_added")
     def _on_item(ev: object) -> None:
@@ -451,16 +463,6 @@ async def run(
                 },
                 t_ms=int((time.monotonic() - started_at) * 1000),
                 wall_ms=_now_ms(),
-            )
-        # Transcript capture — both agent and candidate turns.
-        if item.text_content:
-            role = "candidate" if item.role == "user" else "agent"
-            transcript_entries.append(
-                TranscriptEntry(
-                    role=role,
-                    text=item.text_content,
-                    timestamp_ms=int((time.monotonic() - started_at) * 1000),
-                )
             )
 
     # --- behavioral layer: one silence timer ticks the pure pacer + ladder ---
@@ -656,7 +658,7 @@ async def run(
         result = build_v2_session_result(
             config=config,
             coverage=coverage,
-            transcript=list(transcript_entries),
+            transcript=list(agent._result_transcript) if agent is not None else [],
             envelope=env,
             audio_summary=summary,
             knockout_failures=[],
