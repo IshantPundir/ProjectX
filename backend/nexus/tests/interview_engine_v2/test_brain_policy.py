@@ -1,0 +1,85 @@
+from app.modules.interview_engine_v2.brain.decision import BrainDecision, BrainMove, CandidateIntent
+from app.modules.interview_engine_v2.brain.policy import evaluate_policy
+
+
+def _d(**over):
+    base = dict(reasoning="r", candidate_intent=CandidateIntent.answer, move=BrainMove.advance)
+    base.update(over)
+    return BrainDecision(**base)
+
+
+def test_advance_passes_clean():
+    res = evaluate_policy(_d(move=BrainMove.advance, grade="strong"))
+    assert res.ok and res.effective_move is BrainMove.advance
+    assert res.checks  # at least one gate recorded
+
+
+def test_knockout_on_or_group_without_checking_alternatives_is_downgraded():
+    """The b99d8cc6 bug: never close on 'no Java' when the req was Java OR Python OR Ruby."""
+    res = evaluate_policy(_d(
+        move=BrainMove.knockout_close, is_knockout=True,
+        or_alternatives=["java", "python", "ruby"],
+        or_alternatives_checked=False, reflect_confirmed=True,
+    ))
+    assert not res.ok
+    assert res.effective_move is BrainMove.probe  # downgraded to keep probing the alternatives
+    assert "knockout_or_unverified" in res.violations
+
+
+def test_knockout_without_reflect_confirm_is_downgraded():
+    res = evaluate_policy(_d(
+        move=BrainMove.knockout_close, is_knockout=True,
+        or_alternatives=["java"], or_alternatives_checked=True, reflect_confirmed=False,
+    ))
+    assert not res.ok
+    assert res.effective_move is BrainMove.confirm  # reflect-to-confirm before closing
+    assert "knockout_unconfirmed" in res.violations
+
+
+def test_verified_single_signal_knockout_passes():
+    res = evaluate_policy(_d(
+        move=BrainMove.knockout_close, is_knockout=True,
+        or_alternatives=["java"], or_alternatives_checked=True, reflect_confirmed=True,
+    ))
+    assert res.ok and res.effective_move is BrainMove.knockout_close
+    assert "knockout_or_verified" in res.checks
+
+
+def test_verified_or_group_knockout_passes():
+    res = evaluate_policy(_d(
+        move=BrainMove.knockout_close, is_knockout=True,
+        or_alternatives=["java", "python", "ruby"],
+        or_alternatives_checked=True, reflect_confirmed=True,
+    ))
+    assert res.ok and res.effective_move is BrainMove.knockout_close
+
+
+def test_incoherent_probe_after_strong_grade_is_downgraded_to_advance():
+    """Coherence rule (doc 09 §2): never push for more when grade is strong/sufficient."""
+    res = evaluate_policy(_d(
+        move=BrainMove.probe, grade="strong",
+        coverage_delta={"python": "sufficient"}, target_signal="python",
+    ))
+    assert not res.ok
+    assert res.effective_move is BrainMove.advance
+    assert "incoherent_probe_on_sufficient" in res.violations
+
+
+def test_no_leak_precheck_flags_rubric_in_composed_say():
+    res = evaluate_policy(_d(
+        move=BrainMove.clarify,
+        composed_say="We're looking for strong Kafka here.",
+    ))
+    assert not res.ok
+    assert "no_leak" in res.violations
+    # downgraded: composed_say cleared, mouth composes from hint
+    assert res.sanitized_say is None
+
+
+def test_clean_composed_say_passes_no_leak():
+    res = evaluate_policy(_d(
+        move=BrainMove.clarify,
+        composed_say="Sure — have you set up Kafka yourself?",
+    ))
+    assert res.ok and "no_leak_ok" in res.checks
+    assert res.sanitized_say == "Sure — have you set up Kafka yourself?"
