@@ -42,16 +42,22 @@ def test_old_engine_paths_still_resolve_via_shim(modpath):
     if modpath.endswith("ledger"):
         assert mod.SignalLedgerSnapshot is results.SignalLedgerSnapshot
         assert mod.CoverageState is results.CoverageState
+        assert mod.LedgerEntry is results.LedgerEntry
+        assert mod.SignalSnapshot is results.SignalSnapshot
     elif modpath.endswith("queue"):
         assert mod.QuestionQueueSnapshot is results.QuestionQueueSnapshot
+        assert mod.QuestionStatus is results.QuestionStatus
+        assert mod.QuestionState is results.QuestionState
     else:
         assert mod.ClaimsPoolSnapshot is results.ClaimsPoolSnapshot
+        assert mod.ClaimEntry is results.ClaimEntry
 
 
 def test_interview_runtime_schemas_does_not_import_interview_engine():
     """Static guard: schemas.py must not import from app.modules.interview_engine
     (CMI-1 end state — so deleting interview_engine in M6 can't break build_session_config)."""
-    src = Path("app/modules/interview_runtime/schemas.py").read_text()
+    # anchored to backend/nexus/ regardless of pytest CWD (this file is tests/interview_runtime/<f>)
+    src = (Path(__file__).resolve().parents[2] / "app/modules/interview_runtime/schemas.py").read_text()
     tree = ast.parse(src)
     offenders = []
     for node in ast.walk(tree):

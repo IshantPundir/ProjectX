@@ -431,8 +431,12 @@ class SessionResult(BaseModel):
             "report builder reads whichever is present."
         ),
     )
-    question_queue: QuestionQueueSnapshot | None = Field(default=None, description="v1-only; None for v2.")
-    claims_pool: ClaimsPoolSnapshot | None = Field(default=None, description="v1-only; None for v2.")
+    question_queue: QuestionQueueSnapshot | None = Field(
+        default=None, description="v1-only; None for v2."
+    )
+    claims_pool: ClaimsPoolSnapshot | None = Field(
+        default=None, description="v1-only; None for v2."
+    )
     coverage_summary: dict[str, str] | None = Field(
         default=None,
         description=(
