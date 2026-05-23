@@ -94,3 +94,21 @@ def test_repeat_fallback_when_no_cached_question():
         last_question=None,
     )
     assert "(no previous question to repeat)" in msgs[2]["content"]
+
+
+def test_build_messages_includes_just_said_filler():
+    msgs = build_mouth_messages(
+        directive=Directive(id="d", turn_ref="t-1", act=DirectiveAct.ACK_ADVANCE,
+                            say="How long with Workato?"),
+        persona_preamble="P", act_block="A", candidate_utterance="five years python",
+        last_question=None, just_said_filler="Mm — five years, mostly Python…")
+    suffix = msgs[2]["content"]
+    assert "YOU JUST SAID: «Mm — five years, mostly Python…»" in suffix
+    assert "continue from that" in suffix.lower()
+
+
+def test_build_messages_omits_just_said_when_absent():
+    msgs = build_mouth_messages(
+        directive=Directive(id="d", turn_ref="t-1", act=DirectiveAct.ASK, say="Q?"),
+        persona_preamble="P", act_block="A", candidate_utterance=None, last_question=None)
+    assert "YOU JUST SAID" not in msgs[2]["content"]

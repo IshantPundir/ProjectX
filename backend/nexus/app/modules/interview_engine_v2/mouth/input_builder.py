@@ -38,6 +38,7 @@ def build_mouth_messages(
     act_block: str,
     candidate_utterance: str | None,
     last_question: str | None,
+    just_said_filler: str | None = None,
 ) -> list[dict[str, str]]:
     """Assemble the [persona | act | dynamic-suffix] message list for one mouth turn."""
     # For REPEAT, directive.say is None by convention; effective_say substitutes last_question.
@@ -49,6 +50,11 @@ def build_mouth_messages(
     if candidate_utterance and candidate_utterance.strip():
         # Spotlight candidate speech as DATA, never instructions (identity lock backs this).
         lines.append(f"CANDIDATE SAID: «{candidate_utterance.strip()}»")
+        lines.append("")
+    if just_said_filler and just_said_filler.strip():
+        lines.append(f"YOU JUST SAID: «{just_said_filler.strip()}»")
+        lines.append("Continue from that naturally — don't repeat it, don't restart cold — then "
+                     "deliver the line below faithfully (keep its meaning and any specific terms).")
         lines.append("")
     lines.append("DELIVER THIS NOW:")
     lines.append(f"  intent: {directive.act.value}")
