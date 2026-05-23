@@ -83,3 +83,36 @@ def test_clean_composed_say_passes_no_leak():
     ))
     assert res.ok and "no_leak_ok" in res.checks
     assert res.sanitized_say == "Sure — have you set up Kafka yourself?"
+
+
+def test_incoherent_probe_on_sufficient_coverage_fires_even_without_strong_grade():
+    # the `sufficient`-only branch of Gate 2 (grade is NOT "strong" but target signal is sufficient)
+    res = evaluate_policy(_d(
+        move=BrainMove.probe, grade="concrete",
+        coverage_delta={"python": "sufficient"}, target_signal="python",
+    ))
+    assert not res.ok
+    assert res.effective_move is BrainMove.advance
+    assert "incoherent_probe_on_sufficient" in res.violations
+
+
+def test_coherent_probe_on_thin_grade_passes():
+    # the pass side of Gate 2: probe on a thin/partial signal is coherent
+    res = evaluate_policy(_d(
+        move=BrainMove.probe, grade="thin",
+        coverage_delta={"python": "partial"}, target_signal="python",
+    ))
+    assert res.ok
+    assert "coherent_probe" in res.checks
+
+
+def test_single_signal_knockout_checked_flag_irrelevant_when_confirmed():
+    # contract lock: a single-signal knockout passes when reflect_confirmed,
+    # regardless of or_alternatives_checked (the checked flag only gates multi-signal OR groups)
+    res = evaluate_policy(_d(
+        move=BrainMove.knockout_close, is_knockout=True,
+        or_alternatives=["java"], or_alternatives_checked=False, reflect_confirmed=True,
+    ))
+    assert res.ok
+    assert res.effective_move is BrainMove.knockout_close
+    assert "knockout_or_verified" in res.checks
