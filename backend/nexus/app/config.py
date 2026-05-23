@@ -492,11 +492,16 @@ class Settings(BaseSettings):
     # back to this global default. 'v1' keeps every session on the legacy engine.
     interview_engine_default_version: Literal["v1", "v2"] = "v1"
 
-    # Brain (Control Plane) — GPT-5.4, low reasoning_effort + a reasoning field
-    # (design doc 10). Reasoning model => 'low' is the intended default; callers
-    # still gate on `if ai_config.engine_brain_effort:` per the effort contract,
-    # so overriding the model to a chat variant + clearing the effort is safe.
-    engine_brain_model: str = "gpt-5.4-2026-03-05"
+    # Brain (Control Plane) — reasoning model, low reasoning_effort + a reasoning
+    # field (design doc 10). Model is `gpt-5` (not the design's aspirational
+    # `gpt-5.4-2026-03-05`): the brain uses instructor TOOLS_STRICT structured
+    # output (function tools) on /v1/chat/completions, and `gpt-5.4-2026-03-05`
+    # rejects `reasoning_effort` + function tools there (400: "use /v1/responses
+    # instead"). `gpt-5` supports effort+tools on chat-completions and is what
+    # question_bank already uses with this exact client/mode (verified live
+    # 2026-05-24). To run gpt-5.4 the brain call would need the Responses API
+    # (follow-up). Callers gate on `if ai_config.engine_brain_effort:`.
+    engine_brain_model: str = "gpt-5"
     engine_brain_effort: str = "low"
 
     # Mouth (Conversation Plane) — GPT-5.4 Mini, latency-first, no reasoning effort.
