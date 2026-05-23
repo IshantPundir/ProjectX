@@ -43,8 +43,9 @@ def test_engine_v2_eou_defaults():
     assert cfg.engine_v2_endpointing_mode == "dynamic"
     assert cfg.engine_v2_endpointing_min_delay == 0.8
     assert cfg.engine_v2_endpointing_max_delay == 10.0
-    # Hold-space (mid-answer think pause).
-    assert cfg.engine_v2_hold_space_enabled is True
+    # Hold-space (mid-answer think pause) — DISABLED by default (2026-05-23):
+    # the dumb 2.5s reflex interrupted think-pauses; M5's brain owns HOLD instead.
+    assert cfg.engine_v2_hold_space_enabled is False
     assert cfg.engine_v2_hold_space_delay_s == 2.5
     assert cfg.engine_v2_hold_space_message == "Take your time."
     # Unresponsive ladder.

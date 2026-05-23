@@ -348,11 +348,15 @@ class Settings(BaseSettings):
     # critical path per CMI-3.)
     engine_v2_endpointing_max_delay: float = 10.0
 
-    # Hold-space: one warm cue on a long MID-ANSWER pause (candidate is
-    # formulating, turn-detector has not fired EOU). Never on a complete answer
-    # (doc 08 "resolved"). Realtime reflex — NOT a brain directive. M4's mouth
-    # may later re-voice this in persona; the trigger stays in the turn layer.
-    engine_v2_hold_space_enabled: bool = True
+    # Hold-space: a warm cue on a MID-ANSWER pause (candidate formulating).
+    # DISABLED by default (2026-05-23 talk-test): a blind 2.5s timer can't tell
+    # "still thinking" from "done", so it fired "take your time" over genuine
+    # think-pauses and trailing pauses of complete answers — read as an
+    # interruption. The turn-detector already waits patiently (max_delay), and
+    # M5's brain will own "take your time" semantically via the HOLD directive
+    # (issued at a turn boundary only when it judges the candidate is stuck).
+    # Re-enable + tune the delay here if a dumb mid-pause reflex is wanted.
+    engine_v2_hold_space_enabled: bool = False
     engine_v2_hold_space_delay_s: float = 2.5
     engine_v2_hold_space_message: str = "Take your time."
 
