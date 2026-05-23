@@ -358,3 +358,24 @@ def test_speculative_directive_is_side_effect_free():
     build_speculative_directive(plane, anticipated_turn_ref="t-2")
     assert cov.summary_for_result() == before               # coverage untouched
     assert plane.active_question_id == before_pointer        # pointer untouched
+
+
+async def test_probe_does_not_reuse_a_follow_up(monkeypatch):
+    """The brain re-picking the same follow-up index must yield a DIFFERENT (unused) follow-up,
+    not a verbatim repeat. follow_ups=['What did you own?', 'Any tradeoffs?']."""
+    plane, cov = _plane()
+    _patch_brain(monkeypatch, BrainDecision(
+        reasoning="probe 0", candidate_intent=CandidateIntent.answer, grade="thin",
+        coverage_delta=_cov(python="partial"), move=BrainMove.probe, target_signal="python",
+        bank_follow_up_index=0))
+    d1, _ = await plane.decide(turn_ref="t-1", candidate_utterance="x",
+                               transcript_window=[], active_question_id="q1")
+    assert d1.say == "What did you own?"
+    _patch_brain(monkeypatch, BrainDecision(
+        reasoning="probe 0 again", candidate_intent=CandidateIntent.answer, grade="thin",
+        coverage_delta=_cov(python="partial"), move=BrainMove.probe, target_signal="python",
+        bank_follow_up_index=0))
+    d2, _ = await plane.decide(turn_ref="t-2", candidate_utterance="y",
+                               transcript_window=[], active_question_id="q1")
+    assert d2.act is DirectiveAct.PROBE
+    assert d2.say == "Any tradeoffs?"        # the UNUSED follow-up, not a repeat

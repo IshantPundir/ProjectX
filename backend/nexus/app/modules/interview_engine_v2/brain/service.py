@@ -230,8 +230,17 @@ class ControlPlane:
             active = self._questions.get(active_question_id or "")
             idx = decision.bank_follow_up_index
             if active is not None and idx is not None and 0 <= idx < len(active.follow_ups):
-                say = active.follow_ups[idx]   # VERBATIM follow-up
-            else:                              # no valid follow-up -> degrade to advance/close path
+                used = self._coverage.used_follow_ups(active.id)
+                if idx in used:              # already asked this follow-up -> pick an unused one
+                    idx = next((i for i in range(len(active.follow_ups)) if i not in used), None)
+                if idx is not None:
+                    self._coverage.record_follow_up(active.id, idx)
+                    say = active.follow_ups[idx]   # VERBATIM, unused follow-up
+                else:                              # all follow-ups used -> advance
+                    return self._build_directive(
+                        turn_ref=turn_ref, move=BrainMove.advance, decision=decision,
+                        sanitized_say=sanitized_say, active_question_id=active_question_id)
+            else:                                  # no valid follow-up index -> advance (unchanged)
                 return self._build_directive(
                     turn_ref=turn_ref, move=BrainMove.advance, decision=decision,
                     sanitized_say=sanitized_say, active_question_id=active_question_id,

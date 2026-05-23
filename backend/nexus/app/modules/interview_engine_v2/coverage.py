@@ -56,6 +56,7 @@ class CoverageTracker:
         self._state: dict[str, CoverageState] = {s: CoverageState.none for s in signals}
         self._mandatory: list[str] = list(mandatory_signals)
         self._probe_counts: dict[str, int] = {}
+        self._used_follow_ups: dict[str, set[int]] = {}
         self._cap = soft_probe_cap
 
     def apply_delta(self, delta: dict[str, str]) -> dict[str, CoverageState]:
@@ -105,6 +106,12 @@ class CoverageTracker:
     def at_probe_cap(self, question_id: str) -> bool:
         """True once this question has been probed soft_probe_cap times (diminishing returns)."""
         return self.probe_count(question_id) >= self._cap
+
+    def record_follow_up(self, question_id: str, idx: int) -> None:
+        self._used_follow_ups.setdefault(question_id, set()).add(idx)
+
+    def used_follow_ups(self, question_id: str) -> frozenset[int]:
+        return frozenset(self._used_follow_ups.get(question_id, set()))
 
     def state(self, signal: str) -> CoverageState:
         return self._state.get(signal, CoverageState.none)
