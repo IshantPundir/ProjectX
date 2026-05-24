@@ -78,10 +78,20 @@ class ConversationPlane:
         """The byte-stable cache prefix (rendered once)."""
         return self._persona_preamble
 
+    @property
+    def last_question(self) -> str | None:
+        """The most recently delivered question-bearing line (REPEAT cache / triage context)."""
+        return self._last_question
+
     def build_turn_messages(
         self, directive: Directive, *, candidate_utterance: str | None,
+        just_said_filler: str | None = None,
     ) -> list[dict[str, str]]:
-        """Assemble the [persona | act | dynamic] messages and update the REPEAT cache."""
+        """Assemble the [persona | act | dynamic] messages and update the REPEAT cache.
+
+        `just_said_filler` (Pass-2 linking, design §5): the line triage just spoke; the mouth
+        continues from it without repeating it, while delivering the directive's substance
+        faithfully (verbatim bank text stays intact)."""
         act_block = self._loader.get(_ACT_PROMPT[directive.act])
         messages = build_mouth_messages(
             directive=directive,
@@ -89,6 +99,7 @@ class ConversationPlane:
             act_block=act_block,
             candidate_utterance=candidate_utterance,
             last_question=self._last_question,
+            just_said_filler=just_said_filler,
         )
         if is_question_bearing(directive.act):
             say = effective_say(directive, last_question=self._last_question)

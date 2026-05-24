@@ -1,7 +1,5 @@
 """input_builder.py — bounded, cache-stable per-act message assembly (pure)."""
 
-import pytest
-
 from app.modules.interview_engine_v2.directive import Directive, DirectiveAct, DirectiveTone
 from app.modules.interview_engine_v2.mouth.input_builder import (
     build_mouth_messages,
@@ -35,7 +33,8 @@ def test_persona_prefix_is_identical_across_acts_and_turns():
     a = build_mouth_messages(directive=_ask(), persona_preamble=_PERSONA, act_block="ASK BLOCK",
                              candidate_utterance="foo", last_question=None)
     b = build_mouth_messages(
-        directive=Directive(id="d-2", turn_ref="t-2", act=DirectiveAct.PROBE, say="And what did YOU do?"),
+        directive=Directive(id="d-2", turn_ref="t-2", act=DirectiveAct.PROBE,
+                            say="And what did YOU do?"),
         persona_preamble=_PERSONA, act_block="PROBE BLOCK",
         candidate_utterance="completely different", last_question=None)
     assert a[0]["content"] == b[0]["content"] == _PERSONA
@@ -63,7 +62,7 @@ def test_repeat_uses_cached_last_question():
 
 
 def test_mouth_messages_carry_no_history_only_one_directive():
-    # negative control: the assembled prompt is bounded — exactly persona + act + one dynamic message.
+    # negative control: bounded prompt — exactly persona + act + one dynamic message.
     msgs = build_mouth_messages(directive=_ask(), persona_preamble=_PERSONA, act_block=_ACT_BLOCK,
                                 candidate_utterance="x", last_question=None)
     assert len(msgs) == 3
@@ -112,3 +111,32 @@ def test_build_messages_omits_just_said_when_absent():
         directive=Directive(id="d", turn_ref="t-1", act=DirectiveAct.ASK, say="Q?"),
         persona_preamble="P", act_block="A", candidate_utterance=None, last_question=None)
     assert "YOU JUST SAID" not in msgs[2]["content"]
+
+
+def test_conversation_plane_forwards_just_said_filler():
+    from app.ai.prompts import PromptLoader
+    from app.modules.interview_engine_v2.directive import Directive, DirectiveAct
+    from app.modules.interview_engine_v2.mouth.service import ConversationPlane
+    plane = ConversationPlane(loader=PromptLoader(version="v3"),
+                              persona_name="Arjun", job_title="Backend Engineer")
+    msgs = plane.build_turn_messages(
+        Directive(id="d", turn_ref="t-1", act=DirectiveAct.ACK_ADVANCE,
+                  say="How long with Workato in production?"),
+        candidate_utterance="about five years",
+        just_said_filler="Mm — five years, mostly Python…")
+    suffix = msgs[-1]["content"]
+    assert "YOU JUST SAID: «Mm — five years, mostly Python…»" in suffix
+
+
+def test_conversation_plane_exposes_last_question_after_voicing():
+    from app.ai.prompts import PromptLoader
+    from app.modules.interview_engine_v2.directive import Directive, DirectiveAct
+    from app.modules.interview_engine_v2.mouth.service import ConversationPlane
+    plane = ConversationPlane(loader=PromptLoader(version="v3"),
+                              persona_name="Arjun", job_title="Backend Engineer")
+    assert plane.last_question is None
+    plane.build_turn_messages(
+        Directive(id="d", turn_ref="t-1", act=DirectiveAct.ASK,
+                  say="Tell me about a Python backend."),
+        candidate_utterance=None)
+    assert plane.last_question == "Tell me about a Python backend."
