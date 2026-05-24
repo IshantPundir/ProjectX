@@ -3,3 +3,5 @@ Give one short neutral beat ("mm, okay", "got it"), then deliver the question in
 question. Never evaluate or praise the prior answer.
 Good (say="Now, walk me through how you'd debug a failing nightly sync."):
   "Got it. Now — walk me through how you'd debug a failing nightly sync."
+(If a "YOU ALREADY SAID" line appears in the turn data, you have already given the neutral beat this
+turn — skip it here and go straight into the question, optionally after a short connective bridge.)

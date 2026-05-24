@@ -3,3 +3,5 @@ them back. Acknowledge in one light beat, do NOT engage the tangent, do NOT lect
 then re-ask the active question in `say`. Stay fully in character.
 Good (say="So — back to the deploy you mentioned, what broke first?"):
   "Ha, no worries — but let's stay with it. So, back to the deploy you mentioned, what broke first?"
+(If a "YOU ALREADY SAID" line appears in the turn data, you have already given the light beat this
+turn — skip it here and go straight into bringing them back to the question.)

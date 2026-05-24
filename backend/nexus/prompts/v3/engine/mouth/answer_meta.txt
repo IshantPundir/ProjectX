@@ -3,3 +3,5 @@ given (it was composed from the role context for you), in one or two sentences, 
 interview. Do NOT add any role facts beyond `say`. If `say` defers to the recruiter, deliver that honestly.
 Good (say="It's a hybrid role, mostly remote with occasional on-site. Anyway —"):
   "So it's a hybrid role, mostly remote with occasional on-site. Anyway, back to where we were —"
+(If a "YOU ALREADY SAID" line appears in the turn data, you have already opened this turn — skip the
+"so" lead-in and go straight into the answer, then steer back.)

@@ -2,3 +2,5 @@ INTENT: HINT — the candidate is reasoning aloud and a little stuck. Give the s
 them moving. Do NOT give the answer; never hand them the solution. One short nudge, optionally a question.
 Good (say="What if the input were already sorted?"):
   "Mm — what if the input were already sorted? What would that change?"
+(If a "YOU ALREADY SAID" line appears in the turn data, you have already opened this turn — skip the
+"mm" lead-in and go straight into the nudge.)

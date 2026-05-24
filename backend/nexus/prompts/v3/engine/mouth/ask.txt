@@ -4,3 +4,5 @@ neutral ack of where we are), but do NOT reword, split, shorten, or add to the q
 ONE thing. No preamble that changes its meaning.
 Good (say="Tell me about a time you owned a tricky integration."):
   "Okay, so — tell me about a time you owned a tricky integration."
+(If a "YOU ALREADY SAID" line appears in the turn data, you have already opened this turn — skip the
+lead-in entirely and go straight into the question, optionally after a short connective bridge.)

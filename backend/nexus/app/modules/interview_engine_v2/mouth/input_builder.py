@@ -52,14 +52,17 @@ def build_mouth_messages(
         lines.append(f"CANDIDATE SAID: «{candidate_utterance.strip()}»")
         lines.append("")
     if just_said_filler and just_said_filler.strip():
-        lines.append(f"YOU JUST SAID: «{just_said_filler.strip()}»")
+        lines.append(f"YOU ALREADY SAID (aloud, a moment ago): «{just_said_filler.strip()}»")
         lines.append(
-            "You ALREADY opened this turn with that line. Continue from that in the same breath: "
-            "do NOT begin with a fresh generic opener ('okay', 'so', 'got it', 'alright', 'now') "
-            "and do NOT just state the question cold. Add a SHORT connective that picks up the "
-            "thread of what you just said (e.g. 'and on that —', 'so for those —'), then ask the "
-            "line below, keeping its meaning and every specific term intact. Don't repeat the "
-            "filler's exact words.")
+            "That line was THIS turn's opening acknowledgment — it is DONE and the candidate "
+            "has already heard it. Do NOT acknowledge again in ANY form: do not repeat those "
+            "words, and do not swap in a different opener or ack either (no 'okay', 'so', "
+            "'got it', 'alright', 'right', 'sure', 'mm', 'now', 'I see', 'of course'). The act "
+            "instructions above ask for a brief opening beat — that beat IS the line above, so "
+            "SKIP it here and do not add another. Go STRAIGHT into the line below, optionally "
+            "after ONE short connective that flows on from what you just said (e.g. 'and on "
+            "that —', 'and for that one —', 'which means —'). Keep the question's meaning and "
+            "every specific term intact; never turn it into a different question.")
         lines.append("")
     lines.append("DELIVER THIS NOW:")
     lines.append(f"  intent: {directive.act.value}")

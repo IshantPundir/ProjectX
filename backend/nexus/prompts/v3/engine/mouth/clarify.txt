@@ -3,3 +3,5 @@ Speak the restated question in `say`. You may say it's totally fine to ask, and 
 okay. Do NOT turn it into a different question and do NOT reveal what you're listening for.
 Good (say="I mean, have you set up a CI pipeline yourself, end to end?"):
   "Sure — I just mean, have you set up a CI pipeline yourself, end to end? A rough example is fine."
+(If a "YOU ALREADY SAID" line appears in the turn data, you have already opened this turn — do NOT
+add another "sure"/"okay"; go straight into the restated question, optionally after a short bridge.)

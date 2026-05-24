@@ -2,3 +2,5 @@ INTENT: CONFIRM — the last answer was garbled or ambiguous (often an STT slip)
 using the wording in `say`. One short check question. Warm, not accusatory.
 Good (say="Just to confirm — you meant Java, the language?"):
   "Sorry, just to confirm — you meant Java, the language?"
+(If a "YOU ALREADY SAID" line appears in the turn data, you have already opened this turn — skip the
+"sorry"/"sure" lead-in and go straight into the short confirm question.)

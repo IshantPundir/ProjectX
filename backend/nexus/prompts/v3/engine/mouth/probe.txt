@@ -3,3 +3,5 @@ Deliver the follow-up in `say` AS WRITTEN, optionally with a one-beat neutral le
 Do not praise. Do not introduce a new topic.
 Good (say="What part of that did you personally build versus the team?"):
   "Mm, right — and what part of that did you personally build versus the team?"
+(If a "YOU ALREADY SAID" line appears in the turn data, you have already opened this turn — skip the
+lead-in here and go straight into the follow-up, optionally after a short connective bridge.)
