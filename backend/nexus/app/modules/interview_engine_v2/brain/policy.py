@@ -55,7 +55,15 @@ def evaluate_policy(decision: BrainDecision) -> PolicyResult:
     if move is BrainMove.probe:
         target = decision.target_signal
         sufficient = target is not None and decision.coverage_map().get(target) == "sufficient"
-        if decision.grade == "strong" or sufficient:
+        if decision.move is BrainMove.probe and decision.grade is None:
+            # Nothing to probe: grade=null means this turn had no gradeable answer (a clarification
+            # request / meta turn). Probing a non-answer fires a HARDER question at a candidate who
+            # asked for help (fe3a5434 t-6 -> candidate quit). Clarify/answer instead of probing.
+            # Gated on the BRAIN's original move so a Gate-1 knockout->probe (keep testing the
+            # OR-alternatives) is exempt — that probe legitimately has no answer to grade.
+            violations.append("probe_without_answer")
+            move = BrainMove.clarify
+        elif decision.grade == "strong" or sufficient:
             violations.append("incoherent_probe_on_sufficient")
             move = BrainMove.advance
         else:

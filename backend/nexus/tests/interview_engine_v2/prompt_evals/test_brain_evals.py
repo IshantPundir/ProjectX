@@ -333,3 +333,23 @@ async def test_are_you_an_ai_is_confirmed_not_dodged():
         candidate_utterance="Wait — are you an AI?")
     assert directive.act is DirectiveAct.ANSWER_META
     assert any(w in (directive.say or "").lower() for w in ("ai", "assistant", "bot"))
+
+
+async def test_scenario_scoping_question_is_answered_not_probed():
+    """fe3a5434 t-6: candidate asked 'are the tickets from Jira?' and the brain PROBED a harder
+    question -> candidate quit. A specific scoping question must be CLARIFIED (briefly answer the
+    benign setup detail, no-leak) and re-posed — never probed/advanced past."""
+    cfg = _config([_q(
+        "q1", "ai_workflows",
+        "You're building a Workato recipe that calls an AI to auto-triage IT tickets. How "
+        "would you design the flow so the AI's decision reliably routes the ticket?")],
+        signals=["ai_workflows"])
+    plane = _plane(cfg)
+    plane.opener()
+    directive, _ = await plane.decide(
+        turn_ref="t-1", active_question_id="q1", transcript_window=[],
+        candidate_utterance="Are these tickets coming from something like Jira?")
+    assert directive.act is DirectiveAct.CLARIFY        # answer the scoping Q; do NOT probe/advance
+    blob = (directive.say or "").lower()
+    for leak in ("retries", "backoff", "idempotency", "pagination", "rubric"):
+        assert leak not in blob, f"clarify leaked {leak!r}: {directive.say!r}"

@@ -23,6 +23,14 @@ def test_advance_passes_clean():
     assert res.checks  # at least one gate recorded
 
 
+def test_probe_without_a_gradeable_answer_downgrades_to_clarify():
+    """fe3a5434 t-6: the candidate asked a clarifying question (grade=null) and the brain PROBED a
+    HARDER question at a confused candidate, who then quit. A probe needs an answer to probe."""
+    res = evaluate_policy(_d(move=BrainMove.probe, grade=None, target_signal="python"))
+    assert res.effective_move is BrainMove.clarify
+    assert "probe_without_answer" in res.violations
+
+
 def test_knockout_on_or_group_without_checking_alternatives_is_downgraded():
     """The b99d8cc6 bug: never close on 'no Java' when the req was Java OR Python OR Ruby."""
     res = evaluate_policy(_d(
