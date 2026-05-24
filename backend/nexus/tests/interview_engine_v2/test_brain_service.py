@@ -379,3 +379,50 @@ async def test_probe_does_not_reuse_a_follow_up(monkeypatch):
                                transcript_window=[], active_question_id="q1")
     assert d2.act is DirectiveAct.PROBE
     assert d2.say == "Any tradeoffs?"        # the UNUSED follow-up, not a repeat
+
+
+def _config_3q(*, q2_mandatory: bool):
+    return SessionConfig(
+        session_id="s", job_id="j", candidate_id="c", job_title="Backend Engineer",
+        hiring_company_name="Workato", role_summary="rs", jd_text="jd", seniority_level="mid",
+        company=CompanyContext(about="a", industry="i", hiring_bar="h"),
+        candidate=CandidateContext(name="Asha"),
+        stage=StageConfig(stage_id="st", stage_type="ai_screening", name="Screen",
+                          duration_minutes=30, difficulty="medium",
+                          questions=[_q("q1", "python", 0),
+                                     _q("q2", "kafka", 1, mandatory=q2_mandatory),
+                                     _q("q3", "rest", 2)]),
+        signals=["python", "kafka", "rest"])
+
+
+async def test_advance_does_not_skip_an_unasked_mandatory_question(monkeypatch):
+    """046f21e3: an advance must NOT leapfrog an unasked uncovered-mandatory question even if the
+    brain free-picks a later id."""
+    cfg = _config_3q(q2_mandatory=True)
+    cov = CoverageTracker(signals=["python", "kafka", "rest"],
+                          mandatory_signals=["python", "kafka", "rest"])
+    plane = ControlPlane(config=cfg, coverage=cov)
+    plane.opener()                                            # asks q1 (pos 0)
+    _patch_brain(monkeypatch, BrainDecision(
+        reasoning="advance, jump to q3", candidate_intent=CandidateIntent.answer, grade="concrete",
+        coverage_delta=_cov(python="sufficient"), move=BrainMove.advance, bank_question_id="q3"))
+    directive, _ = await plane.decide(turn_ref="t-1", candidate_utterance="ans",
+                                      transcript_window=[], active_question_id="q1")
+    assert directive.act is DirectiveAct.ACK_ADVANCE
+    assert directive.say == "Tell me about kafka."           # q2 (the skipped mandatory), NOT q3
+
+
+async def test_advance_honors_brain_pick_in_optional_territory(monkeypatch):
+    """Once no unasked uncovered-mandatory remains, the brain's adaptive pick is honored (it may
+    skip an OPTIONAL question)."""
+    cfg = _config_3q(q2_mandatory=False)                     # q2 optional; q1 the only mandatory
+    cov = CoverageTracker(signals=["python", "kafka", "rest"], mandatory_signals=["python"])
+    plane = ControlPlane(config=cfg, coverage=cov)
+    plane.opener()                                            # asks q1
+    _patch_brain(monkeypatch, BrainDecision(
+        reasoning="python covered, jump to q3", candidate_intent=CandidateIntent.answer,
+        grade="strong", coverage_delta=_cov(python="sufficient"), move=BrainMove.advance,
+        bank_question_id="q3"))
+    directive, _ = await plane.decide(turn_ref="t-1", candidate_utterance="ans",
+                                      transcript_window=[], active_question_id="q1")
+    assert directive.say == "Tell me about rest."   # q3 honored (no mandatory left to skip)

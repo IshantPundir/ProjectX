@@ -218,7 +218,8 @@ class ControlPlane:
         tone = DirectiveTone(decision.tone)
         say: str | None
         if move is BrainMove.advance:
-            target_id = self._resolve_advance_target(decision.bank_question_id)
+            target_id = self._resolve_advance_target(decision.bank_question_id,
+                                                     active_question_id=active_question_id)
             if target_id is None:              # invalid pick, or nothing unasked left -> close out
                 return Directive(
                     id=self._new_id(), turn_ref=turn_ref, act=DirectiveAct.CLOSE,
@@ -255,24 +256,47 @@ class ControlPlane:
             compose_hint=None, tone=tone, is_terminal=is_terminal,
         )
 
-    def _resolve_advance_target(self, brain_pick: str | None) -> str | None:
-        """The next question to ASK on an advance. Honors the brain's pick when it names a valid,
-        not-yet-asked question; otherwise (already-asked → repeat-guard, d9828b7b; OR unknown/None →
-        a garbled pick or a DOWNGRADED knockout that degraded here, ec11e237) advances to the next
-        UNASKED question. Only an EXHAUSTED bank returns None → the caller closes. Never close on an
-        unverified absence by accident: continue the screen while questions remain.
+    def _resolve_advance_target(
+        self, brain_pick: str | None, *, active_question_id: str | None = None
+    ) -> str | None:
+        """The next question to ASK on an advance.
+
+        While any unasked MANDATORY question with a still-uncovered signal remains, advance to the
+        next such question by position (`_next_unasked`), IGNORING the brain's free pick — the brain
+        must never skip an unasked mandatory question (046f21e3: it leapfrogged the mandatory
+        Workato-experience question by free-picking a later Workato id). Only once no unasked
+        uncovered-mandatory remains do we honor the brain's adaptive pick (optional territory); a
+        garbled / already-asked / None pick still falls through to `_next_unasked`. An exhausted
+        bank returns None -> the caller closes.
+
+        `active_question_id` (the question currently on the floor) is excluded from the candidate
+        pool so an advance never re-targets it — defence-in-depth that holds even on the
+        probe->advance degrade path, independent of `_asked_ids` bookkeeping.
         """
+        if self._has_unasked_uncovered_mandatory(active_question_id=active_question_id):
+            return self._next_unasked(active_question_id=active_question_id)
         q = self._questions.get(brain_pick or "")
         if q is not None and q.id not in self._asked_ids:
-            return q.id                              # valid + not yet asked -> honor the brain
-        return self._next_unasked()        # asked/unknown/None -> next unasked (else close)
+            return q.id                              # optional territory -> honor the brain
+        return self._next_unasked(active_question_id=active_question_id)
 
-    def _next_unasked(self) -> str | None:
-        """The next not-yet-asked question by position, preferring one whose primary signal is still
-        an uncovered mandatory; None when every question has been asked."""
+    def _has_unasked_uncovered_mandatory(self, *, active_question_id: str | None = None) -> bool:
+        """True if some bank question is BOTH not-yet-asked AND carries a still-uncovered mandatory
+        signal — i.e. a mandatory question we have not asked yet. The active question (on the floor,
+        being answered now) is treated as asked so it is never counted as a skippable question."""
         uncovered = set(self._coverage.uncovered_mandatory())
+        asked_or_active = self._asked_ids | ({active_question_id} if active_question_id else set())
+        return any(q.id not in asked_or_active and q.primary_signal in uncovered
+                   for q in self._config.stage.questions)
+
+    def _next_unasked(self, *, active_question_id: str | None = None) -> str | None:
+        """The next not-yet-asked question by position, preferring one whose primary signal is still
+        an uncovered mandatory; None when every question has been asked. The active question is
+        excluded — advancing to it would be a re-ask."""
+        uncovered = set(self._coverage.uncovered_mandatory())
+        asked_or_active = self._asked_ids | ({active_question_id} if active_question_id else set())
         unasked = [q for q in sorted(self._config.stage.questions, key=lambda q: q.position)
-                   if q.id not in self._asked_ids]
+                   if q.id not in asked_or_active]
         if not unasked:
             return None
         return next((q.id for q in unasked
