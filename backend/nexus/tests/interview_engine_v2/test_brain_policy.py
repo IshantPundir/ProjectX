@@ -133,3 +133,26 @@ def test_single_signal_knockout_checked_flag_irrelevant_when_confirmed():
     assert res.ok
     assert res.effective_move is BrainMove.knockout_close
     assert "knockout_or_verified" in res.checks
+
+
+def _adv(setup):
+    return BrainDecision(reasoning="r", candidate_intent=CandidateIntent.answer,
+                         move=BrainMove.advance, bank_question_id="q3", spoken_setup=setup)
+
+
+def test_benign_spoken_setup_is_preserved():
+    res = evaluate_policy(_adv("Say tickets arrive from a system like Jira."))
+    assert res.sanitized_setup == "Say tickets arrive from a system like Jira."
+    assert "setup_leak" not in res.violations
+
+
+def test_leaky_spoken_setup_is_dropped():
+    res = evaluate_policy(_adv("The rubric wants idempotency and retries."))
+    assert res.sanitized_setup is None
+    assert "setup_leak" in res.violations
+
+
+def test_none_spoken_setup_is_fine():
+    res = evaluate_policy(_adv(None))
+    assert res.sanitized_setup is None
+    assert "setup_leak" not in res.violations

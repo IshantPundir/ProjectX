@@ -21,6 +21,7 @@ class PolicyResult:
     ok: bool
     effective_move: BrainMove          # the move to actually execute (possibly downgraded)
     sanitized_say: str | None   # composed_say after no-leak scrub (None if leaked or was None)
+    sanitized_setup: str | None = None   # spoken_setup after no-leak scrub (None if leaked/absent)
     checks: list[str] = field(default_factory=list)       # gates that passed
     violations: list[str] = field(default_factory=list)   # gates that fired (→ downgrade)
 
@@ -78,6 +79,12 @@ def evaluate_policy(decision: BrainDecision) -> PolicyResult:
 
     sanitized = say
 
+    # --- Gate 3b: no-leak on the optional orienting setup ---
+    setup = decision.spoken_setup
+    if _leaks(setup):
+        violations.append("setup_leak")
+        setup = None
+
     # Always record at least one gate so callers can assert res.checks is non-empty.
     if not checks and not violations:
         checks.append("clean_pass")
@@ -86,6 +93,7 @@ def evaluate_policy(decision: BrainDecision) -> PolicyResult:
         ok=not violations,
         effective_move=move,
         sanitized_say=sanitized,
+        sanitized_setup=setup,
         checks=checks,
         violations=violations,
     )
