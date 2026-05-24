@@ -55,11 +55,13 @@ class TriagePlane:
 
     async def triage(
         self, *, active_question: str | None, accumulated_answer: str,
-        last_spoken_question: str | None, correlation_id: str = "", budget_ms: int | None = None,
+        last_spoken_question: str | None, recent_fillers: list[str] | None = None,
+        correlation_id: str = "", budget_ms: int | None = None,
     ) -> TriageDecision:
         messages = build_triage_messages(
             triage_prefix=self._prefix, active_question=active_question,
-            accumulated_answer=accumulated_answer, last_spoken_question=last_spoken_question)
+            accumulated_answer=accumulated_answer, last_spoken_question=last_spoken_question,
+            recent_fillers=recent_fillers)
         timeout = (budget_ms if budget_ms is not None
                    else ai_config.engine_triage_total_budget_ms) / 1000.0
         try:

@@ -67,19 +67,22 @@ async def test_clarification_request_is_classified_not_answering():
     assert len((d.spoken_line or "").split()) <= 6          # a bare lead-in, not a restatement
 
 
-async def test_neutral_fillers_do_not_collapse_onto_one_word():
-    """046f21e3: the neutral filler said 'Right' on 5 of 7 turns. Across varied neutral turns the
-    openers should vary and not be dominated by a single word."""
+async def test_neutral_fillers_vary_with_recent_filler_memory():
+    """046f21e3/fe3a5434: triage is stateless, so it re-picks the same 'best' filler every turn
+    (nano collapsed onto 'Right', mini onto 'Mm, okay'). Feeding the recent fillers must make it
+    choose varied openers across a run of same-kind turns."""
+    p = _plane()
     answers = ["I don't know.", "Hmm, not sure honestly.", "I have no experience with that.",
                "Maybe? I have not really done it.", "No idea, sorry."]
+    recent: list[str] = []
     openers: list[str] = []
     for a in answers:
-        d = await _plane().triage(
+        d = await p.triage(
             active_question="How would you design a custom REST connector?",
             accumulated_answer=a,
             last_spoken_question="How would you design a custom REST connector?",
-            budget_ms=_EVAL_BUDGET_MS)
+            recent_fillers=list(recent), budget_ms=_EVAL_BUDGET_MS)
+        recent.append(d.spoken_line or "")
         words = (d.spoken_line or "").strip().lstrip("—- ").lower().split()
         openers.append(words[0].strip("—-,.") if words else "")
-    assert len(set(openers)) >= 2, f"fillers collapsed onto one opener: {openers}"
-    assert openers.count("right") <= 2, f"fillers over-rely on 'right': {openers}"
+    assert len(set(openers)) >= 3, f"fillers did not vary with recent-filler memory: {openers}"
