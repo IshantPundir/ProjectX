@@ -80,3 +80,17 @@ def test_coverage_delta_is_list_of_items_and_maps_to_dict():
         ("kafka", "failed"),
     ]
     assert d.coverage_map() == {"python": "sufficient", "kafka": "failed"}
+
+
+def test_spoken_setup_optional_defaults_none():
+    d = BrainDecision(
+        reasoning="r", candidate_intent=CandidateIntent.answer, move=BrainMove.advance
+    )
+    assert d.spoken_setup is None
+
+
+def test_spoken_setup_round_trips():
+    d = BrainDecision(reasoning="r", candidate_intent=CandidateIntent.answer,
+                      move=BrainMove.advance, bank_question_id="q3",
+                      spoken_setup="Say tickets arrive from a system like Jira.")
+    assert d.spoken_setup == "Say tickets arrive from a system like Jira."

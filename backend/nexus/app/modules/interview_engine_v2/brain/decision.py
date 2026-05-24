@@ -114,6 +114,15 @@ class BrainDecision(BaseModel):
             "red flags, or 'what I'm listening for'. Null for probe/advance/repeat."
         ),
     )
+    spoken_setup: str | None = Field(
+        default=None,
+        description=(
+            "Optional ONE benign orienting clause for a technical_scenario advance/ask: the "
+            "scenario's WHAT/WHERE (e.g. 'Say tickets arrive from a system like Jira'), NEVER "
+            "the HOW/solution and never a rubric term. Spoken before the question. Null for "
+            "non-scenario kinds and self-contained questions."
+        ),
+    )
     tone: Literal["WARM", "NEUTRAL", "ENCOURAGING", "CALM"] = "NEUTRAL"
     # Verified-knockout block (doc 05). knockout_close is GATED on these by brain/policy.py.
     is_knockout: bool = Field(
