@@ -201,6 +201,7 @@ class ControlPlane:
         directive = self._build_directive(
             turn_ref=turn_ref, move=move, decision=decision,
             sanitized_say=policy.sanitized_say, active_question_id=aqid,
+            sanitized_setup=policy.sanitized_setup,
         )
         # ACK_ADVANCE is only ever produced by the advance path of _build_directive, which resolves
         # the repeat-guarded next question into _pending_advance_id (also covers the probe->advance
@@ -246,11 +247,13 @@ class ControlPlane:
         decision: BrainDecision,
         sanitized_say: str | None,
         active_question_id: str | None,
+        sanitized_setup: str | None = None,
     ) -> Directive:
         act = _MOVE_TO_ACT[move]
         is_terminal = move in _TERMINAL_MOVES
         tone = DirectiveTone(decision.tone)
         say: str | None
+        spoken_setup: str | None = None
         if move is BrainMove.advance:
             target_id = self._resolve_advance_target(decision.bank_question_id,
                                                      active_question_id=active_question_id)
@@ -262,6 +265,9 @@ class ControlPlane:
                 )
             self._pending_advance_id = target_id
             say = self._questions[target_id].text  # VERBATIM (D2 — brain selects, never rewrites)
+            # Carry the setup only when the resolver honored the brain's own pick; if it was
+            # overridden (mandatory-first), the setup describes the wrong question -> drop it.
+            spoken_setup = sanitized_setup if target_id == decision.bank_question_id else None
         elif move is BrainMove.probe:
             active = self._questions.get(active_question_id or "")
             idx = decision.bank_follow_up_index
@@ -275,11 +281,13 @@ class ControlPlane:
                 else:                              # all follow-ups used -> advance
                     return self._build_directive(
                         turn_ref=turn_ref, move=BrainMove.advance, decision=decision,
-                        sanitized_say=sanitized_say, active_question_id=active_question_id)
+                        sanitized_say=sanitized_say, active_question_id=active_question_id,
+                        sanitized_setup=sanitized_setup)
             else:                                  # no valid follow-up index -> advance (unchanged)
                 return self._build_directive(
                     turn_ref=turn_ref, move=BrainMove.advance, decision=decision,
                     sanitized_say=sanitized_say, active_question_id=active_question_id,
+                    sanitized_setup=sanitized_setup,
                 )
         elif move is BrainMove.repeat:
             say = None                         # mouth replays its cached last question
@@ -288,6 +296,7 @@ class ControlPlane:
         return Directive(
             id=self._new_id(), turn_ref=turn_ref, act=act, say=say,
             compose_hint=None, tone=tone, is_terminal=is_terminal,
+            spoken_setup=spoken_setup,
         )
 
     def _resolve_advance_target(
