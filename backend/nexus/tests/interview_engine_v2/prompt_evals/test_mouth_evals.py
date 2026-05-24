@@ -103,3 +103,48 @@ async def test_ask_preserves_the_question_substance_llm_graded():
                   {"role": "user", "content": f"ORIGINAL: {say}\nSPOKEN: {out}"}],
         response_model=None)
     assert verdict.choices[0].message.content.strip().upper().startswith("YES")
+
+
+async def _voice_with_filler(directive: Directive, *, candidate: str | None, filler: str) -> str:
+    client = get_openai_client()
+    msgs = _plane().build_turn_messages(
+        directive, candidate_utterance=candidate, just_said_filler=filler)
+    resp = await client.chat.completions.create(
+        model=ai_config.engine_mouth_model,
+        messages=[{"role": m["role"], "content": m["content"]} for m in msgs],
+        response_model=None)
+    return resp.choices[0].message.content
+
+
+@pytest.mark.asyncio
+async def test_pass2_preserves_bank_question_while_flowing_from_filler():
+    """Design §5: the bridge governs the lead-in only; the question's substance stays intact."""
+    filler = "Mm — five years, mostly Python…"
+    say = "And with Workato specifically, how many years hands-on in production?"
+    out = await _voice_with_filler(
+        Directive(id="d1", turn_ref="t1", act=DirectiveAct.ACK_ADVANCE, say=say),
+        candidate="about five years, mostly Python backend", filler=filler)
+    low = out.lower()
+    assert "workato" in low                                   # the specific skill is preserved
+    assert out.strip() != filler                              # it's not just the filler echoed back
+    assert out.count("?") <= 1                                # still one question
+
+
+@pytest.mark.asyncio
+async def test_pass2_flow_and_fidelity_llm_graded():
+    filler = "Right, connectors and an LLM step…"
+    say = "If you built a custom REST connector, how would you handle authentication?"
+    out = await _voice_with_filler(
+        Directive(id="d2", turn_ref="t1", act=DirectiveAct.ASK, say=say),
+        candidate="we wired connectors into an LLM pipeline", filler=filler)
+    client = get_openai_client()
+    verdict = await client.chat.completions.create(
+        model=ai_config.engine_mouth_model,
+        messages=[{"role": "system", "content":
+                   "Answer only YES or NO. Given a FILLER the speaker already said and an ORIGINAL "
+                   "question, does the SPOKEN line (a) continue naturally from the filler WITHOUT "
+                   "repeating it verbatim, AND (b) still ask the ORIGINAL question without "
+                   "changing its meaning or adding a second question?"},
+                  {"role": "user", "content": f"FILLER: {filler}\nORIGINAL: {say}\nSPOKEN: {out}"}],
+        response_model=None)
+    assert verdict.choices[0].message.content.strip().upper().startswith("YES")
