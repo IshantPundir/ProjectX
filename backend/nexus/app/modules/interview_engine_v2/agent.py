@@ -216,7 +216,6 @@ class _MouthAgent(Agent):
         self._last_filler: str | None = None      # triage just spoke -> mouth Pass-2 bridge
         self._hold_count: int = 0                  # consecutive still-pending holds this episode
         # per-turn delivery guards (reset at the top of on_user_turn_completed)
-        self._filler_said: bool = False
         self._answer_delivered: bool = False       # brain delivered the question this turn
         self._handled_log_only: bool = False       # dev disagreement-log: brain ran but stays mute
 
@@ -265,7 +264,6 @@ class _MouthAgent(Agent):
         if self._answer_delivered:        # brain already delivered (rare race) -> no stray filler
             return
         self._last_filler = line
-        self._filler_said = True
         self._state["responding"] = True
         self.session.say(line, add_to_chat_ctx=False)   # fire-and-forget; question queues behind it
 
@@ -285,6 +283,11 @@ class _MouthAgent(Agent):
         self._state["last_cue_at"] = now
         self._state["responding"] = True
         self.session.say(line, add_to_chat_ctx=False)
+        # The candidate still owes an answer; re-arm the unresponsive ladder when this cue's TTS
+        # drains (agent_state -> 'listening' consumes pending_arm -> _pose_question), so a
+        # hold-then-silent candidate still reaches the 7s/15s/CLOSE escalation (HANDLED turns
+        # deliver no directive, so llm_node never sets pending_arm).
+        self._state["pending_arm"] = True
 
     def _deliver_repeat(self, turn_ref: str, *, lead_in: str | None) -> None:
         """HANDLED repeat: stage a REPEAT directive (mouth replays the cached last question) and
@@ -354,7 +357,6 @@ class _MouthAgent(Agent):
         accumulated = " ".join(self._pending_answer).strip() or text
 
         # reset per-turn delivery guards
-        self._filler_said = False
         self._answer_delivered = False
         self._handled_log_only = False
         self._state["responding"] = True
@@ -411,10 +413,12 @@ class _MouthAgent(Agent):
             self._say_filler(d.spoken_line)
 
         def _on_brain_done(task: asyncio.Task) -> None:
+            if self._current_turn_ref != turn_ref:
+                return                               # stale: a newer turn owns _brain_task + flags
             self._brain_task = None
-            if task.cancelled() or self._current_turn_ref != turn_ref:
+            if task.cancelled():                     # this turn's brain was cancelled (HANDLED/etc)
                 self._state["brain_pending"] = False
-                return                               # barge-in / HANDLED-cancel / stale -> no-op
+                return
             try:
                 directive, record = task.result()
             except Exception:                        # noqa: BLE001 — brain callback must not crash
