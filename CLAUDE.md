@@ -51,7 +51,7 @@ Each subdirectory has its own `CLAUDE.md` with context-specific rules. Always re
 | STT | Deepgram managed | Client requires audio isolation |
 | LLM async | OpenAI API | — |
 | LLM real-time | OpenAI API (GPT-5 mini class) | Per-token cost > GPU cost |
-| TTS | Cartesia Sonic (pending benchmark) | — |
+| TTS | Sarvam (bulbul:v3) default; Cartesia / OpenAI selectable | — |
 | Storage | AWS S3 | Already native, no migration |
 | Email | Resend | Config swap only |
 | SMS/OTP | Twilio | Config swap only |
@@ -73,7 +73,8 @@ Each subdirectory has its own `CLAUDE.md` with context-specific rules. Always re
 | 3B | Candidates module (CRUD, resume + S3, kanban, PII redaction gate) | ✅ done |
 | 3C.1 | Scheduler invites + supersession chain; session pre-check / consent / OTP; **single-use token enforcement** atomic on `/start` | ✅ done |
 | 3C.2 | LiveKit room + token provisioning on `/start`; in-process engine worker (`app/modules/interview_engine/agent.py`) running a generic LLM-chatbot loop; candidate live UI on LiveKit's `agent-starter-react` template via `@agents-ui` shadcn enclave (`<AgentSessionView_01>`, audio visualizers, control bar); engine graceful-close attribute (`session_outcome`); mid-session rejoin endpoint (`POST /rejoin`); realtime tuning (preemptive generation, dynamic endpointing, adaptive interruption). RLS-only defense layer: `build_session_config` / `record_session_result` are called in-process by the engine and filter every query by an explicit `tenant_id`. (Frontend lives at `frontend/session`; see `docs/superpowers/specs/2026-05-01-frontend-session-extract-design.md`.) | ✅ done |
-| 3D | Audio pipeline tuning (LK Cloud + Sarvam STT + MultilingualModel turn detector with unlikely_threshold=0.5 + adaptive interruption + ai-coustics built-in VAD) shipped 2026-05-12. Orchestrator simplified (no race-condition mitigations); Judge fallback hardened. Real-time `analysis` (scoring, probe selection) + `reporting` (post-session report) still pending. | 🟡 partial |
+| 3D | Audio pipeline (LK Cloud + **Deepgram nova-3 STT (en-IN) + per-session keyterm** + MultilingualModel turn detector + adaptive interruption + ai-coustics VAD). v1 orchestrator simplified + Judge fallback hardened (2026-05-12). `reporting` (post-session report) still pending; real-time `analysis` (scoring/probe selection) is now done in-session by the engine-v2 brain. | 🟡 partial |
+| 3D.engine-v2 | **Conversation/decision core rewrite** — parallel `app/modules/interview_engine_v2/` with a three-tier split: **triage** (fast classify + immediate spoken beat) ∥ **brain** (async control plane: rubric grading, signal coverage, policy gates incl. verified-knockout + no-leak, emits one Directive) → **mouth** (renders the directive as natural spoken Indian English, never sees the rubric). Per-job opt-in via `job_postings.interview_engine_version` (global default `v1`). **MERGED to `main` 2026-05-24, default-OFF** (changed no prod behavior). | ✅ done (default-off) |
 | ATS | Ceipal polling, Greenhouse/Workday adapters, outbound sync | 🟡 stubbed |
 
 Subdirectory CLAUDE.md files are the source of truth for module-level detail. This table is the cross-cutting summary only.
