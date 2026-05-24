@@ -98,8 +98,8 @@ async def test_ask_preserves_the_question_substance_llm_graded():
     verdict = await client.chat.completions.create(
         model=ai_config.engine_mouth_model,
         messages=[{"role": "system", "content":
-                   "Answer only YES or NO. Does the SPOKEN line ask the same single question as the "
-                   "ORIGINAL, without adding a second question or changing its meaning?"},
+                   "Answer only YES or NO. Does the SPOKEN line ask the same single question "
+                   "as the ORIGINAL, without adding a second question or changing its meaning?"},
                   {"role": "user", "content": f"ORIGINAL: {say}\nSPOKEN: {out}"}],
         response_model=None)
     assert verdict.choices[0].message.content.strip().upper().startswith("YES")
@@ -138,13 +138,21 @@ async def test_pass2_flow_and_fidelity_llm_graded():
         Directive(id="d2", turn_ref="t1", act=DirectiveAct.ASK, say=say),
         candidate="we wired connectors into an LLM pipeline", filler=filler)
     client = get_openai_client()
+    # Grade design §5's two rejectable defects (not a subjective polish bar): the interviewer
+    # ALREADY said FILLER aloud, so the SPOKEN line must neither double-open with a redundant
+    # generic acknowledgment nor drop/reshape the ORIGINAL question. A short bridge OR a clean
+    # direct continuation both PASS; only the double-open or a changed/dropped ask FAIL.
     verdict = await client.chat.completions.create(
         model=ai_config.engine_mouth_model,
         messages=[{"role": "system", "content":
-                   "Answer only YES or NO. Given a FILLER the speaker already said and an ORIGINAL "
-                   "question, does the SPOKEN line (a) continue naturally from the filler WITHOUT "
-                   "repeating it verbatim, AND (b) still ask the ORIGINAL question without "
-                   "changing its meaning or adding a second question?"},
+                   "The interviewer ALREADY said the FILLER aloud a moment ago; the SPOKEN line is "
+                   "what they say next and must deliver the ORIGINAL question. Answer only PASS or "
+                   "FAIL.\nFAIL if EITHER: (1) SPOKEN restarts with a redundant generic "
+                   "acknowledgment ('okay', 'so', 'got it', 'alright', 'right', 'now') as if the "
+                   "FILLER had not been said (a robotic double-open); OR (2) SPOKEN drops or "
+                   "changes the meaning of the ORIGINAL question, omits its specific subject/term, "
+                   "or adds a second question. Otherwise PASS — a short connective bridge AND a "
+                   "clean direct continuation are both acceptable."},
                   {"role": "user", "content": f"FILLER: {filler}\nORIGINAL: {say}\nSPOKEN: {out}"}],
         response_model=None)
-    assert verdict.choices[0].message.content.strip().upper().startswith("YES")
+    assert verdict.choices[0].message.content.strip().upper().startswith("PASS"), out

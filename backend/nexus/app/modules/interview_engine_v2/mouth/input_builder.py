@@ -53,8 +53,13 @@ def build_mouth_messages(
         lines.append("")
     if just_said_filler and just_said_filler.strip():
         lines.append(f"YOU JUST SAID: «{just_said_filler.strip()}»")
-        lines.append("Continue from that naturally — don't repeat it, don't restart cold — then "
-                     "deliver the line below faithfully (keep its meaning and any specific terms).")
+        lines.append(
+            "You ALREADY opened this turn with that line. Continue from that in the same breath: "
+            "do NOT begin with a fresh generic opener ('okay', 'so', 'got it', 'alright', 'now') "
+            "and do NOT just state the question cold. Add a SHORT connective that picks up the "
+            "thread of what you just said (e.g. 'and on that —', 'so for those —'), then ask the "
+            "line below, keeping its meaning and every specific term intact. Don't repeat the "
+            "filler's exact words.")
         lines.append("")
     lines.append("DELIVER THIS NOW:")
     lines.append(f"  intent: {directive.act.value}")
