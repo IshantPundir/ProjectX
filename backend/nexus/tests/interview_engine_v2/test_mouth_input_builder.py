@@ -140,3 +140,39 @@ def test_conversation_plane_exposes_last_question_after_voicing():
                   say="Tell me about a Python backend."),
         candidate_utterance=None)
     assert plane.last_question == "Tell me about a Python backend."
+
+
+def test_spoken_setup_surfaces_as_lead_in():
+    from app.modules.interview_engine_v2.directive import Directive, DirectiveAct
+    from app.modules.interview_engine_v2.mouth.input_builder import build_mouth_messages
+    msgs = build_mouth_messages(
+        directive=Directive(id="d", turn_ref="t-1", act=DirectiveAct.ACK_ADVANCE,
+                            say="How would you design the recipe?"),
+        persona_preamble="P", act_block="A", candidate_utterance=None, last_question=None,
+        spoken_setup="Say tickets arrive from a system like Jira.")
+    suffix = msgs[2]["content"]
+    assert "SPOKEN SETUP" in suffix
+    assert "Say tickets arrive from a system like Jira." in suffix
+
+
+def test_spoken_setup_absent_when_none():
+    from app.modules.interview_engine_v2.directive import Directive, DirectiveAct
+    from app.modules.interview_engine_v2.mouth.input_builder import build_mouth_messages
+    msgs = build_mouth_messages(
+        directive=Directive(id="d", turn_ref="t-1", act=DirectiveAct.ASK, say="Q?"),
+        persona_preamble="P", act_block="A", candidate_utterance=None, last_question=None)
+    assert "SPOKEN SETUP" not in msgs[2]["content"]
+
+
+def test_conversation_plane_forwards_directive_spoken_setup():
+    from app.ai.prompts import PromptLoader
+    from app.modules.interview_engine_v2.directive import Directive, DirectiveAct
+    from app.modules.interview_engine_v2.mouth.service import ConversationPlane
+    plane = ConversationPlane(loader=PromptLoader(version="v3"),
+                              persona_name="Arjun", job_title="Backend Engineer")
+    msgs = plane.build_turn_messages(
+        Directive(id="d", turn_ref="t-1", act=DirectiveAct.ACK_ADVANCE,
+                  say="How would you design the recipe?",
+                  spoken_setup="Say tickets arrive from a system like Jira."),
+        candidate_utterance="ok")
+    assert "Say tickets arrive from a system like Jira." in msgs[-1]["content"]

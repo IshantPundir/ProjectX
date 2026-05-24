@@ -100,6 +100,7 @@ class ConversationPlane:
             candidate_utterance=candidate_utterance,
             last_question=self._last_question,
             just_said_filler=just_said_filler,
+            spoken_setup=directive.spoken_setup,
         )
         if is_question_bearing(directive.act):
             say = effective_say(directive, last_question=self._last_question)

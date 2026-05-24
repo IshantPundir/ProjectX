@@ -39,6 +39,7 @@ def build_mouth_messages(
     candidate_utterance: str | None,
     last_question: str | None,
     just_said_filler: str | None = None,
+    spoken_setup: str | None = None,
 ) -> list[dict[str, str]]:
     """Assemble the [persona | act | dynamic-suffix] message list for one mouth turn."""
     # For REPEAT, directive.say is None by convention; effective_say substitutes last_question.
@@ -63,6 +64,12 @@ def build_mouth_messages(
             "after ONE short connective that flows on from what you just said (e.g. 'and on "
             "that —', 'and for that one —', 'which means —'). Keep the question's meaning and "
             "every specific term intact; never turn it into a different question.")
+        lines.append("")
+    if spoken_setup and spoken_setup.strip():
+        lines.append(f"SPOKEN SETUP: «{spoken_setup.strip()}»")
+        lines.append(
+            "Say this short orienting line FIRST (in your own natural spoken words), then deliver "
+            "the question below. It sets the scene; do not treat it as part of the question text.")
         lines.append("")
     lines.append("DELIVER THIS NOW:")
     lines.append(f"  intent: {directive.act.value}")
