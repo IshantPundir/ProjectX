@@ -105,3 +105,11 @@ def test_phase2_triage_budget_and_cue_config():
     from app.config import settings
     assert settings.engine_v2_cue_cooldown_s > 0
     assert settings.engine_v2_triage_brain_disagreement_log is False  # dev-only, off by default
+
+
+def test_brain_budget_covers_observed_tail():
+    from app.ai.config import ai_config
+    # 046f21e3: a legitimate ~6s brain decision timed out at the old 6000ms budget -> the
+    # fallback_advance skipped a candidate clarification. The budget must cover the real ~3-7s
+    # tail (gpt-5.4-mini low-effort) so a slow-but-valid decision lands instead of falling back.
+    assert ai_config.engine_brain_total_budget_ms >= 7000

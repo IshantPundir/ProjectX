@@ -518,9 +518,11 @@ class Settings(BaseSettings):
     # Brain total wall-clock budget (ms) before the deterministic fallback directive
     # kicks in. The brain runs async/parallel, MASKED by the mouth's acknowledgment
     # (M5 D3, off the CMI-3 perceived-latency gate) — but it's still bounded so a stuck
-    # call can't strand the turn behind the ack. GPT-5.4 low-effort is ~3-7s; 6s budget
-    # + a concise reasoning field (Task 5 prompt) keeps the masked decision tight.
-    engine_brain_total_budget_ms: int = 6000
+    # call can't strand the turn behind the ack. GPT-5.4 low-effort is ~3-7s; the old
+    # 6000ms budget timed out a LEGITIMATE ~6s decision in session 046f21e3 (fallback_advance
+    # then skipped a candidate clarification), so it is 8000ms — covers the real 3-7s range
+    # with margin; the fallback still backstops a truly-stuck (>8s) call (masked by the filler).
+    engine_brain_total_budget_ms: int = 8000
 
     # Triage tier (the fast classify-and-speak first call; design 2026-05-24). Nano-class model;
     # reasoning-FIRST field (no reasoning_effort) like the brain. Budget kept tight (it gates the
