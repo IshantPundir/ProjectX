@@ -653,7 +653,12 @@ async def run(
                     # with text-only detection; perfect needs the v2 audio
                     # model. Validate on Task 10 talk-test.
                     if pacer.cue_due(now_s=now):
+                        last_cue = state.get("last_cue_at")
+                        if (isinstance(last_cue, (int, float))
+                                and (now - last_cue) < settings.engine_v2_cue_cooldown_s):
+                            continue              # §9: skip — triage hold already cued
                         pacer.mark_cued()
+                        state["last_cue_at"] = now
                         log.info("engine.v2.holdspace",
                                  t_ms=int((now - started_at) * 1000))
                         state["responding"] = True
@@ -708,6 +713,7 @@ async def run(
             pacer.on_resume()
             if agent is not None:
                 agent.cancel_brain()         # barge-in: cancel any in-flight brain decision (CMI-4)
+                agent.cancel_triage()        # …and the in-flight triage (design §7)
                 agent.prestage_speculative()  # Option C: stage the non-voiced speculative pre-stage
         elif ev.new_state == "listening":
             if state["started_answering"]:
