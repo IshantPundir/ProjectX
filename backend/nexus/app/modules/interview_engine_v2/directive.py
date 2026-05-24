@@ -63,7 +63,7 @@ FORBIDDEN_RUBRIC_TOKENS: tuple[str, ...] = (
 )
 
 
-class RubricLeakError(Exception):
+class RubricLeakError(ValueError):
     """A Directive's speakable text smelled like rubric/evaluation criteria."""
 
 

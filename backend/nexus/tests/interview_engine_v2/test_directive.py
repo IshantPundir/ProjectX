@@ -86,7 +86,8 @@ def test_spoken_setup_defaults_none_and_round_trips():
 
 
 def test_spoken_setup_is_no_leak_validated():
-    with pytest.raises(RubricLeakError):
+    from pydantic import ValidationError
+    with pytest.raises((RubricLeakError, ValidationError)):
         Directive(id="d3", turn_ref="t-1", act=DirectiveAct.ACK_ADVANCE,
                   say="How would you design the recipe?",
                   spoken_setup="Remember the rubric wants idempotency.")
