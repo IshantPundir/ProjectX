@@ -86,12 +86,15 @@ class ConversationPlane:
     def build_turn_messages(
         self, directive: Directive, *, candidate_utterance: str | None,
         just_said_filler: str | None = None,
+        recent_bridges: list[str] | None = None,
     ) -> list[dict[str, str]]:
         """Assemble the [persona | act | dynamic] messages and update the REPEAT cache.
 
         `just_said_filler` (Pass-2 linking, design §5): the line triage just spoke; the mouth
         continues from it without repeating it, while delivering the directive's substance
-        faithfully (verbatim bank text stays intact)."""
+        faithfully (verbatim bank text stays intact).
+        `recent_bridges`: the mouth's last few opening connectives, fed back so it picks a
+        DIFFERENT bridge this turn (mirrors the triage recent_fillers channel)."""
         act_block = self._loader.get(_ACT_PROMPT[directive.act])
         messages = build_mouth_messages(
             directive=directive,
@@ -101,6 +104,7 @@ class ConversationPlane:
             last_question=self._last_question,
             just_said_filler=just_said_filler,
             spoken_setup=directive.spoken_setup,
+            recent_bridges=recent_bridges,
         )
         if is_question_bearing(directive.act):
             say = effective_say(directive, last_question=self._last_question)

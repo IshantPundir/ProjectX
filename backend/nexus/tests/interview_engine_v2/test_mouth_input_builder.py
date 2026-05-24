@@ -176,3 +176,74 @@ def test_conversation_plane_forwards_directive_spoken_setup():
                   spoken_setup="Say tickets arrive from a system like Jira."),
         candidate_utterance="ok")
     assert "Say tickets arrive from a system like Jira." in msgs[-1]["content"]
+
+
+# --- recent_bridges tests ---
+
+def test_recent_bridges_block_present_when_non_empty():
+    """recent_bridges block appears in the dynamic suffix (joined | do NOT reuse)."""
+    bridges = ["and on that —", "and for that one —"]
+    msgs = build_mouth_messages(
+        directive=_ask(), persona_preamble=_PERSONA, act_block=_ACT_BLOCK,
+        candidate_utterance=None, last_question=None,
+        recent_bridges=bridges,
+    )
+    suffix = msgs[2]["content"]
+    assert "and on that —" in suffix
+    assert "and for that one —" in suffix
+    assert "do NOT reuse" in suffix
+
+
+def test_recent_bridges_block_absent_when_empty():
+    """recent_bridges block is suppressed when the list is empty or None."""
+    for val in (None, []):
+        msgs = build_mouth_messages(
+            directive=_ask(), persona_preamble=_PERSONA, act_block=_ACT_BLOCK,
+            candidate_utterance=None, last_question=None,
+            recent_bridges=val,
+        )
+        suffix = msgs[2]["content"]
+        assert "YOU RECENTLY OPENED" not in suffix
+
+
+def test_recent_bridges_block_appears_on_no_filler_path():
+    """recent_bridges fires even when there is no just_said_filler (the no-filler path)."""
+    msgs = build_mouth_messages(
+        directive=_ask(), persona_preamble=_PERSONA, act_block=_ACT_BLOCK,
+        candidate_utterance="something", last_question=None,
+        just_said_filler=None, recent_bridges=["and on that —"],
+    )
+    suffix = msgs[2]["content"]
+    assert "YOU RECENTLY OPENED" in suffix
+    assert "and on that —" in suffix
+
+
+def test_recent_bridges_block_appears_on_filler_path():
+    """recent_bridges fires in addition to the YOU ALREADY SAID block (filler path)."""
+    msgs = build_mouth_messages(
+        directive=Directive(id="d", turn_ref="t-1", act=DirectiveAct.ACK_ADVANCE,
+                            say="How many years?"),
+        persona_preamble=_PERSONA, act_block=_ACT_BLOCK,
+        candidate_utterance="two years", last_question=None,
+        just_said_filler="Mm — two years…",
+        recent_bridges=["and on that —", "which means —"],
+    )
+    suffix = msgs[2]["content"]
+    assert "YOU ALREADY SAID" in suffix          # filler path still present
+    assert "YOU RECENTLY OPENED" in suffix       # bridges block fires alongside it
+    assert "and on that —" in suffix
+
+
+def test_recent_bridges_block_before_deliver_this_now():
+    """The bridges block must appear BEFORE 'DELIVER THIS NOW:' in the dynamic suffix."""
+    msgs = build_mouth_messages(
+        directive=_ask(), persona_preamble=_PERSONA, act_block=_ACT_BLOCK,
+        candidate_utterance=None, last_question=None,
+        recent_bridges=["moving on —"],
+    )
+    suffix = msgs[2]["content"]
+    bridges_pos = suffix.find("YOU RECENTLY OPENED")
+    deliver_pos = suffix.find("DELIVER THIS NOW:")
+    assert bridges_pos != -1
+    assert deliver_pos != -1
+    assert bridges_pos < deliver_pos

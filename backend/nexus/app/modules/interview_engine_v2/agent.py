@@ -65,6 +65,7 @@ from app.modules.interview_engine_v2.coverage import CoverageTracker
 from app.modules.interview_engine_v2.directive import Directive, DirectiveAct, DirectiveTone
 from app.modules.interview_engine_v2.event_log.collector import EventCollector
 from app.modules.interview_engine_v2.event_log.sink import LocalFileSink
+from app.modules.interview_engine_v2.mouth.input_builder import is_question_bearing
 from app.modules.interview_engine_v2.mouth.service import ConversationPlane
 from app.modules.interview_engine_v2.result_builder import build_v2_session_result
 from app.modules.interview_engine_v2.triage import TriagePlane
@@ -186,6 +187,34 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _leading_bridge(text: str) -> str | None:
+    """Extract the opening connective from a spoken line for recent_bridges variety-tracking.
+
+    LEXICAL slice — purely for bookkeeping that the mouth varies its opener; NOT intent/semantic
+    classification (no regex ban applies here; this is the same pattern as the test-suite's
+    _leading_chunk used in the double-open evals).
+
+    Rules:
+    - If an em-dash '—' appears within the first ~12 words, return everything up to and
+      including that dash (e.g. 'and on that —').
+    - Otherwise return the first ~6 words.
+    - Returns None if the result would be empty.
+    """
+    if not text or not text.strip():
+        return None
+    words = text.strip().split()
+    dash_pos = text.find("—")
+    if dash_pos != -1:
+        # Check the dash is within the first ~12 words (i.e. roughly the opening phrase).
+        words_before_dash = text[:dash_pos].split()
+        if len(words_before_dash) <= 12:
+            bridge = text[:dash_pos + 1].strip()   # include the em-dash itself
+            return bridge if bridge else None
+    # No early em-dash — just take the first 6 words as the "opening" for tracking.
+    snippet = " ".join(words[:6])
+    return snippet if snippet else None
+
+
 class _MouthAgent(Agent):
     """Voices the controller's current Directive in persona via the LLM (no canned text)."""
 
@@ -220,6 +249,8 @@ class _MouthAgent(Agent):
         self._answer_delivered: bool = False       # brain delivered the question this turn
         self._handled_log_only: bool = False       # dev disagreement-log: brain ran but stays mute
         self._recent_fillers: deque[str] = deque(maxlen=4)  # fed to triage so it varies its opener
+        # the mouth's recent opening connectives -> fed back so it varies its bridge
+        self._recent_bridges: deque[str] = deque(maxlen=4)
 
     def _t_ms(self) -> int:
         return int((time.monotonic() - self._started_at) * 1000)
@@ -468,7 +499,8 @@ class _MouthAgent(Agent):
              "speculative": directive.speculative}, t_ms=self._t_ms(), wall_ms=_now_ms())
         messages = self._mouth.build_turn_messages(
             directive, candidate_utterance=self._last_candidate_text,
-            just_said_filler=self._last_filler)
+            just_said_filler=self._last_filler,
+            recent_bridges=list(self._recent_bridges))
         self._last_candidate_text = None               # consumed; not carried to the next turn
         self._last_filler = None                       # consumed; one bridge per delivery
         ctx = ChatContext.empty()
@@ -491,6 +523,12 @@ class _MouthAgent(Agent):
         if spoken:
             self._result_transcript.append(
                 TranscriptEntry(role="agent", text=spoken, timestamp_ms=self._t_ms()))
+            # For question-bearing acts, record the leading connective so the next turn avoids it.
+            # LEXICAL slice for variety-tracking only — NOT intent/semantic classification (no ban).
+            if is_question_bearing(directive.act):
+                bridge = _leading_bridge(spoken)
+                if bridge:
+                    self._recent_bridges.append(bridge)
         # NOTE: no _pose_question / aclose here. The ladder is armed by the agent_state
         # 'listening' handler (after TTS playout); termination is M5 (CMI-1).
 

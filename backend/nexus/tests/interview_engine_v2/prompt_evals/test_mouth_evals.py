@@ -276,3 +276,43 @@ async def test_rendering_is_natural_spoken_form_llm_graded():
                   {"role": "user", "content": f"ORIGINAL: {say}\nSPOKEN: {out}"}],
         response_model=None)
     assert verdict.choices[0].message.content.strip().upper().startswith("PASS"), out
+
+
+async def _voice_with_bridges(
+    directive: Directive, *, candidate: str | None, filler: str, bridges: list[str],
+) -> str:
+    client = get_openai_client()
+    msgs = _plane().build_turn_messages(
+        directive, candidate_utterance=candidate,
+        just_said_filler=filler, recent_bridges=bridges)
+    resp = await client.chat.completions.create(
+        model=ai_config.engine_mouth_model,
+        messages=[{"role": m["role"], "content": m["content"]} for m in msgs],
+        response_model=None)
+    return resp.choices[0].message.content
+
+
+@pytest.mark.asyncio
+async def test_recent_bridges_varies_the_opening_connective():
+    """recent_bridges feed prevents the mouth from repeating the same opener every turn.
+
+    Run twice for stability: both runs must avoid the two recently-used connectives.
+    The guard is lexical / case-insensitive (same style as the double-open detectors above).
+    """
+    bridges = ["and on that —", "and for that one —"]
+    directive = Directive(
+        id="d1", turn_ref="t1", act=DirectiveAct.ACK_ADVANCE,
+        say="How many integrations have you maintained end-to-end in production?")
+    filler = "Right, mostly backend work…"
+    candidate = "Yeah, mostly backend integrations."
+
+    for run in range(2):
+        out = await _voice_with_bridges(
+            directive, candidate=candidate, filler=filler, bridges=bridges)
+        low = out.lower().lstrip("\"'""").strip()
+        assert not low.startswith("and on that"), (
+            f"run {run + 1}: repeated 'and on that': {out!r}")
+        assert not low.startswith("and for that one"), (
+            f"run {run + 1}: repeated 'and for that one': {out!r}")
+        # The question substance must still be preserved.
+        assert "integrat" in low, f"run {run + 1}: dropped 'integration': {out!r}"
