@@ -64,10 +64,12 @@ class ReflexCueVariants(BaseModel):
 class ConversationPlane:
     """The mouth: turns a Directive into a bounded, cache-stable mouth-LLM prompt."""
 
-    def __init__(self, *, loader: PromptLoader, persona_name: str, job_title: str) -> None:
+    def __init__(self, *, loader: PromptLoader, persona_name: str, job_title: str,
+                 role_summary: str | None = None) -> None:
         self._loader = loader
         self._persona_name = persona_name
         self._job_title = job_title
+        self._role_summary = role_summary    # surfaced to the mouth on the INTRO turn only (brief)
         self._persona_preamble = render_persona_preamble(
             loader=loader, persona_name=persona_name, job_title=job_title,
         )
@@ -105,6 +107,8 @@ class ConversationPlane:
             just_said_filler=just_said_filler,
             spoken_setup=directive.spoken_setup,
             recent_bridges=recent_bridges,
+            # role brief only on the INTRO turn (warm the candidate + say what the role is about)
+            role_brief=(self._role_summary if directive.act is DirectiveAct.INTRO else None),
         )
         if is_question_bearing(directive.act):
             say = effective_say(directive, last_question=self._last_question)

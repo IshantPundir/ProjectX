@@ -316,3 +316,48 @@ async def test_recent_bridges_varies_the_opening_connective():
             f"run {run + 1}: repeated 'and for that one': {out!r}")
         # The question substance must still be preserved.
         assert "integrat" in low, f"run {run + 1}: dropped 'integration': {out!r}"
+
+
+async def test_intro_briefs_the_role_warmly():
+    """Intro naturalness (user request): the opener should warm the candidate, disclose it's a
+    recorded AI screening, and give a one-line sense of the role from THE ROLE brief (no
+    inventing)."""
+    plane = ConversationPlane(
+        loader=PromptLoader(version=ai_config.engine_mouth_prompt_version),
+        persona_name="Arjun", job_title="Forward Deployed Engineer",
+        role_summary=("Build and run integrations and automations across enterprise apps "
+                      "for customers."))
+    directive = Directive(id="d-i", turn_ref="t-0", act=DirectiveAct.INTRO, say=None,
+                          tone=DirectiveTone.WARM)
+    msgs = plane.build_turn_messages(directive, candidate_utterance=None)
+    client = get_openai_client()
+    resp = await client.chat.completions.create(
+        model=ai_config.engine_mouth_model,
+        messages=[{"role": m["role"], "content": m["content"]} for m in msgs], response_model=None)
+    out = resp.choices[0].message.content
+    low = out.lower()
+    assert "arjun" in low, f"intro should introduce the interviewer: {out!r}"
+    assert any(w in low for w in ("record", "a-i", "ai ", "screening")), (
+        f"AI/recorded disclosure: {out!r}")
+    # briefs the role using the handed brief (a content word from it), not a generic line
+    assert any(w in low for w in ("integration", "automation", "enterprise")), (
+        f"role brief absent: {out!r}")
+
+
+async def test_close_is_warm_and_does_not_reveal_a_verdict():
+    """Close naturalness (88d62df0): the wrap-up must sound like a friendly interviewer ending, with
+    a next-step, and NEVER reveal/imply a verdict (no 'not enough signal', 'lacked', etc.)."""
+    directive = Directive(id="d-c", turn_ref="t-9", act=DirectiveAct.CLOSE, say=None,
+                          is_terminal=True, tone=DirectiveTone.WARM)
+    for _ in range(2):
+        out = await _voice(directive)
+        low = out.lower()
+        # a simple next step
+        assert any(w in low for w in ("recruit", "team", "in touch", "next step", "follow up",
+                                       "get back", "reach out")), (
+            f"close needs a next step: {out!r}")
+        # never reveal / imply a verdict
+        for bad in ("not enough", "enough signal", "lack", "didn't give", "fell short",
+                    "unfortunately",
+                    "not a fit", "don't have enough", "insufficient", "score"):
+            assert bad not in low, f"close leaked a verdict ({bad!r}): {out!r}"

@@ -653,6 +653,7 @@ async def run(
         loader=PromptLoader(version=ai_config.engine_mouth_prompt_version),
         persona_name=(ai_config.engine_mouth_persona_name or settings.engine_agent_name),
         job_title=config.job_title,
+        role_summary=config.role_summary,   # for the INTRO brief (warm the candidate on the role)
     )
     triage = TriagePlane(
         persona_name=(ai_config.engine_mouth_persona_name or settings.engine_agent_name),

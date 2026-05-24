@@ -305,7 +305,13 @@ class ControlPlane:
                 )
         elif move is BrainMove.repeat:
             say = None                         # mouth replays its cached last question
-        else:                                  # composed acts (clarify/redirect/hold/.../close)
+        elif is_terminal:                      # close / knockout_close
+            # The mouth owns the warm close wording (close.txt): one line, identical whether the
+            # screen ended early or ran full, so it never reveals a knockout/verdict (88d62df0: the
+            # brain wrote "I don't have enough signal to continue", which leaks a judgment).
+            # Drop the brain's composed_say; the close.txt act prompt composes the warm close.
+            say = None
+        else:                                  # composed acts (clarify/redirect/hold/...)
             say = sanitized_say
         return Directive(
             id=self._new_id(), turn_ref=turn_ref, act=act, say=say,

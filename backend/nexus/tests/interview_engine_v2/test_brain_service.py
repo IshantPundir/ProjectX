@@ -136,6 +136,9 @@ async def test_verified_knockout_closes(monkeypatch):
     directive, _ = await plane.decide(turn_ref="t-4", candidate_utterance="no, not really",
                                       transcript_window=[], active_question_id="q1")
     assert directive.act is DirectiveAct.CLOSE and directive.is_terminal is True
+    # The mouth owns the warm close wording (close.txt) so it's identical for normal vs knockout and
+    # never reveals the knockout (88d62df0); the brain's composed_say is dropped on a terminal move.
+    assert directive.say is None
 
 
 async def test_brain_timeout_falls_back_to_safe_directive(monkeypatch):

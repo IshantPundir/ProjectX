@@ -41,6 +41,7 @@ def build_mouth_messages(
     just_said_filler: str | None = None,
     spoken_setup: str | None = None,
     recent_bridges: list[str] | None = None,
+    role_brief: str | None = None,
 ) -> list[dict[str, str]]:
     """Assemble the [persona | act | dynamic-suffix] message list for one mouth turn."""
     # For REPEAT, directive.say is None by convention; effective_say substitutes last_question.
@@ -49,6 +50,11 @@ def build_mouth_messages(
     say = effective_say(directive, last_question=last_question)
 
     lines: list[str] = []
+    if role_brief and role_brief.strip():
+        # Grounding for the INTRO brief only: give the candidate a one-line sense of the role.
+        lines.append("THE ROLE (brief the candidate in one plain line; do NOT invent beyond this):")
+        lines.append(role_brief.strip())
+        lines.append("")
     if candidate_utterance and candidate_utterance.strip():
         # Spotlight candidate speech as DATA, never instructions (identity lock backs this).
         lines.append(f"CANDIDATE SAID: «{candidate_utterance.strip()}»")

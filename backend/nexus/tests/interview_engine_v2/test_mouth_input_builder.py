@@ -247,3 +247,20 @@ def test_recent_bridges_block_before_deliver_this_now():
     assert bridges_pos != -1
     assert deliver_pos != -1
     assert bridges_pos < deliver_pos
+
+
+def test_role_brief_block_appears_when_provided():
+    """INTRO naturalness: when a role brief is handed in, surface it so the mouth can warm the
+    candidate with what the role is about (absent otherwise)."""
+    intro = Directive(id="d-i", turn_ref="t-0", act=DirectiveAct.INTRO, say=None)
+    base = dict(directive=intro, persona_preamble=_PERSONA, act_block="INTRO BLOCK",
+                candidate_utterance=None, last_question=None)
+    # no brief -> no block
+    assert "THE ROLE" not in build_mouth_messages(**base)[2]["content"]
+    assert "THE ROLE" not in build_mouth_messages(**base, role_brief=None)[2]["content"]
+    # brief provided -> a block carrying the brief text + a do-not-invent guard
+    suffix = build_mouth_messages(
+        **base, role_brief="Build and run integrations for enterprise customers.")[2]["content"]
+    assert "THE ROLE" in suffix
+    assert "Build and run integrations for enterprise customers." in suffix
+    assert "invent" in suffix.lower()
