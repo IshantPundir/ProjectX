@@ -222,3 +222,57 @@ async def test_pass2_clarify_filler_no_stacked_opener():
         candidate="Are these tickets coming from something like Jira?", filler=filler)
     reason = _double_opens(out, filler)
     assert not reason, f"{reason}: {out!r}"
+
+
+@pytest.mark.asyncio
+async def test_rendering_preserves_specific_terms_and_adds_no_solution():
+    say = ("You're building a Workato recipe that calls an AI to auto-triage IT tickets. "
+           "How would you design the flow so the AI's decision reliably routes the ticket?")
+    out = await _voice(Directive(id="d", turn_ref="t1", act=DirectiveAct.ACK_ADVANCE, say=say))
+    low = out.lower()
+    for term in ("workato", "ticket", "route"):    # specific terms must survive (exact substring)
+        assert term in low, f"dropped specific term {term!r}: {out!r}"
+    assert "ai" in low                             # the AI element survives in some form
+    assert out.count("?") <= 1                     # exactly one question
+    for leak in ("retry", "backoff", "confidence threshold", "human in the loop", "fallback"):
+        assert leak not in low, f"rendering added a solution hint: {out!r}"
+
+
+@pytest.mark.asyncio
+async def test_rendering_leads_with_spoken_setup():
+    say = ("You're building a connector to a rate-limited REST API. How would you design around "
+           "the limit to avoid dropped calls?")
+    out = await _voice(Directive(
+        id="d", turn_ref="t1", act=DirectiveAct.ACK_ADVANCE, say=say,
+        spoken_setup="Say a standard REST API that limits requests per minute."))
+    low = out.lower()
+    assert "rest" in low and ("rate" in low or "limit" in low)
+    assert "minute" in low                         # the setup scene made it into the spoken line
+    assert out.count("?") <= 1
+
+
+@pytest.mark.asyncio
+async def test_rendering_is_natural_spoken_form_llm_graded():
+    say = ("Describe how you would persist an AI agent's state across multi-step tool calls and "
+           "recover from partial failures without losing in-flight work.")
+    out = await _voice(Directive(id="d", turn_ref="t1", act=DirectiveAct.ACK_ADVANCE, say=say))
+    client = get_openai_client()
+    verdict = await client.chat.completions.create(
+        model=ai_config.engine_mouth_model,
+        messages=[{"role": "system", "content":
+                   "You judge whether a SPOKEN interview question is natural to say aloud and "
+                   "faithful to the ORIGINAL. Answer only PASS or FAIL.\nFAIL if SPOKEN: (1) drops "
+                   "or changes a specific term from ORIGINAL (e.g. 'agent state', 'multi-step tool "
+                   "calls', 'partial failures' — a close everyday paraphrase is fine, only a "
+                   "DROPPED or genuinely changed concept fails); (2) adds a solution/hint not in "
+                   "ORIGINAL; (3) asks more than one question; or (4) reproduces the ORIGINAL's "
+                   "exact wording word-for-word with NO spoken reshaping (i.e. it just reads the "
+                   "ORIGINAL sentence aloud, including its written stem like 'Describe how you "
+                   "would…'). Otherwise PASS. A real spoken recast is PASS even if it stays one "
+                   "sentence: dropping the written 'Describe/Explain how you would' stem and "
+                   "turning it into a direct spoken question ('So — how would you…?'), opening "
+                   "with a spoken connective, or splitting into short sentences ALL count as a "
+                   "reshaping, as long as every concept and term is preserved."},
+                  {"role": "user", "content": f"ORIGINAL: {say}\nSPOKEN: {out}"}],
+        response_model=None)
+    assert verdict.choices[0].message.content.strip().upper().startswith("PASS"), out

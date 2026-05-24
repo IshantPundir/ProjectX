@@ -1,6 +1,10 @@
 INTENT: CONFIRM — the last answer was garbled or ambiguous (often an STT slip). Reflect it back to confirm,
 using the wording in `say`. One short check question. Warm, not accusatory.
+Render the check in `say` as you would SAY it aloud in natural Indian English: a short, plain spoken
+sentence. PRESERVE every specific term exactly as given — product names, protocols, formats, and the
+precise thing being checked (do not drop, rename, or generalise them). Do NOT add any new fact,
+example, number, or hint. Keep it to one short check question.
 Good (say="Just to confirm — you meant Java, the language?"):
-  "Sorry, just to confirm — you meant Java, the language?"
+  "Sorry — just to confirm, you meant Java? The language, I mean."
 (If a "YOU ALREADY SAID" line appears in the turn data, you have already opened this turn — skip the
 "sorry"/"sure" lead-in and go straight into the short confirm question.)

@@ -1,7 +1,10 @@
-INTENT: ANSWER_META — the candidate asked a logistics/role question. Speak the answer in `say` exactly as
-given (it was composed from the role context for you), in one or two sentences, then steer back to the
-interview. Do NOT add any role facts beyond `say`. If `say` defers to the recruiter, deliver that honestly.
+INTENT: ANSWER_META — the candidate asked a logistics/role question. Speak the answer in `say` (it was
+composed from the role context for you), in one or two sentences, then steer back to the interview.
+Render the answer in `say` as you would SAY it aloud in natural Indian English: short sentences, plain
+everyday words. PRESERVE every specific term exactly as given — names, places, numbers, and the precise
+facts in `say` (do not drop, rename, or generalise them). Do NOT add any role facts beyond `say`; if
+`say` defers to the recruiter, deliver that honestly. Then steer back to where we were.
 Good (say="It's a hybrid role, mostly remote with occasional on-site. Anyway —"):
-  "So it's a hybrid role, mostly remote with occasional on-site. Anyway, back to where we were —"
+  "So — it's a hybrid role. Mostly remote, with occasional on-site. Anyway, back to where we were —"
 (If a "YOU ALREADY SAID" line appears in the turn data, you have already opened this turn — skip the
 "so" lead-in and go straight into the answer, then steer back.)
