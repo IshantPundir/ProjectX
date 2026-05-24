@@ -532,3 +532,52 @@ async def test_clarify_grounds_concretely_and_keeps_the_technical_ask():
                   {"role": "user", "content": f"CLARIFY: {directive.say}"}],
         response_model=None)
     assert verdict.choices[0].message.content.strip().upper().startswith("YES"), directive.say
+
+
+async def test_buzzword_hypothetical_answer_is_probed_not_advanced():
+    """198184c7: candidate gave a confident hypothetical walkthrough naming the right components
+    ('trigger, transform, call an LLM, classify, route') with no real specifics or ownership, and
+    the brain graded 'concrete' and ADVANCED. Length/buzzwords are NOT evidence — the brain must
+    PROBE to test whether real depth sits behind the claim, not accept it by advancing."""
+    q = ("You're building a Workato recipe that calls an AI to auto-triage IT tickets. How would "
+         "you design the flow so the AI's decision reliably routes the ticket?")
+    cfg = _config([_q("q1", "ai_workflows", q, pos=0, kind="technical_scenario",
+                      follow_ups=["How do you handle a low-confidence or wrong classification?"])],
+                  signals=["ai_workflows"])
+    plane = _plane(cfg)
+    plane.opener()
+    directive, record = await plane.decide(
+        turn_ref="t-1", active_question_id="q1", transcript_window=[("agent", q)],
+        candidate_utterance=(
+            "So I'd use a recipe that triggers whenever a Jira ticket is raised. Then I'd add some "
+            "transformations and normalizations to extract the title, the main content, and tags. "
+            "Once I have that metadata, I'd pass it to an LLM with a structured prompt that "
+            "classifies it, and based on the classification the ticket gets assigned to the right "
+            "destination. Something like that."))
+    print(f"[bluff] move={record.move} grade={record.grade}")
+    assert directive.act is DirectiveAct.PROBE, (
+        f"buzzword/hypothetical answer not probed: move={record.move} grade={record.grade}")
+    _assert_no_rubric_leak(directive)
+
+
+async def test_half_answered_multipart_question_is_probed_on_the_gap():
+    """198184c7 pos4: the question asked for 'safe AND auditable'; candidate covered only 'safe'
+    (least-privilege, human-in-loop) and never auditability. The brain advanced — it should PROBE
+    the unaddressed half rather than accept a half-answer as done."""
+    q = ("You need an AI agent that plans multi-step actions across apps. How would you design its "
+         "action loop so tool use stays safe and auditable?")
+    cfg = _config([_q("q1", "agent_based_ai", q, pos=0, kind="technical_scenario",
+                      follow_ups=["How would you make the agent's tool calls auditable?"])],
+                  signals=["agent_based_ai"])
+    plane = _plane(cfg)
+    plane.opener()
+    directive, record = await plane.decide(
+        turn_ref="t-1", active_question_id="q1", transcript_window=[("agent", q)],
+        candidate_utterance=(
+            "I'd give the agent least-privilege, role-based permissions for the tools, and for "
+            "anything business-critical it goes through a human-in-the-loop approval. Yeah, that's "
+            "what I'd do."))
+    print(f"[half] move={record.move} grade={record.grade}")
+    assert directive.act is DirectiveAct.PROBE, (
+        f"half-answered (safe not auditable) not probed: {record.move}/{record.grade}")
+    _assert_no_rubric_leak(directive)
