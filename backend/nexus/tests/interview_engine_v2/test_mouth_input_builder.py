@@ -102,15 +102,15 @@ def test_build_messages_includes_just_said_filler():
         persona_preamble="P", act_block="A", candidate_utterance="five years python",
         last_question=None, just_said_filler="Mm — five years, mostly Python…")
     suffix = msgs[2]["content"]
-    assert "YOU JUST SAID: «Mm — five years, mostly Python…»" in suffix
-    assert "continue from that" in suffix.lower()
+    assert "YOU ALREADY SAID (aloud, a moment ago): «Mm — five years, mostly Python…»" in suffix
+    assert "do not acknowledge again" in suffix.lower()
 
 
 def test_build_messages_omits_just_said_when_absent():
     msgs = build_mouth_messages(
         directive=Directive(id="d", turn_ref="t-1", act=DirectiveAct.ASK, say="Q?"),
         persona_preamble="P", act_block="A", candidate_utterance=None, last_question=None)
-    assert "YOU JUST SAID" not in msgs[2]["content"]
+    assert "YOU ALREADY SAID" not in msgs[2]["content"]
 
 
 def test_conversation_plane_forwards_just_said_filler():
@@ -125,7 +125,7 @@ def test_conversation_plane_forwards_just_said_filler():
         candidate_utterance="about five years",
         just_said_filler="Mm — five years, mostly Python…")
     suffix = msgs[-1]["content"]
-    assert "YOU JUST SAID: «Mm — five years, mostly Python…»" in suffix
+    assert "YOU ALREADY SAID (aloud, a moment ago): «Mm — five years, mostly Python…»" in suffix
 
 
 def test_conversation_plane_exposes_last_question_after_voicing():

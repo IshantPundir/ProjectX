@@ -156,3 +156,69 @@ async def test_pass2_flow_and_fidelity_llm_graded():
                   {"role": "user", "content": f"FILLER: {filler}\nORIGINAL: {say}\nSPOKEN: {out}"}],
         response_model=None)
     assert verdict.choices[0].message.content.strip().upper().startswith("PASS"), out
+
+
+# A spoken line "double-opens" when it begins by repeating the filler the voice layer just spoke,
+# or by stacking a fresh standalone acknowledgment on top of it. Detected structurally (no LLM
+# grader — the opener question is a precise lexical property; an LLM grader proved flaky here,
+# false-failing the intended "and on that —" bridge). A short CONNECTIVE bridge ("and on that —",
+# "so for those —") has content words in its leading chunk, so it is NOT flagged; a standalone ack
+# ("Got it.", "Sure —", "I see —", "Mm, okay —") is a short chunk of only ack-words.
+_ACK_WORDS = frozenset({
+    "okay", "ok", "so", "got", "it", "alright", "right", "sure", "mm", "mhm", "mhmm",
+    "now", "well", "i", "see", "of", "course", "yeah", "yes", "hmm", "ah", "uh", "uhhuh",
+    "gotcha", "noted", "cool",
+})
+
+
+def _leading_chunk(s: str) -> str:
+    """The text before the first clause separator (em-dash / comma / period / etc.), no regex."""
+    s = s.strip().lstrip("\"'“”")
+    for i, ch in enumerate(s):
+        if ch in "—,.;:?!" or (ch == "-" and i > 0 and s[i - 1] == " "):
+            return s[:i]
+    return s
+
+
+def _double_opens(spoken: str, filler: str) -> str:
+    """Return a non-empty reason if `spoken` double-opens after `filler` was already said."""
+    low = spoken.strip().lstrip("\"'“”").lower()
+    fcore = filler.lower().strip().rstrip("—-…. ,").strip()
+    if fcore and low.startswith(fcore):
+        return f"echoes the filler {filler!r}"
+    words = [w.strip("'\"") for w in _leading_chunk(spoken).lower().split()]
+    words = [w for w in words if w]
+    if words and len(words) <= 3 and all(w in _ACK_WORDS for w in words):
+        return f"opens with a standalone ack {_leading_chunk(spoken)!r}"
+    return ""
+
+
+@pytest.mark.asyncio
+async def test_pass2_bare_neutral_filler_no_double_open():
+    """14f71902 (the audible bug): triage already spoke a BARE NEUTRAL filler aloud ('I see —').
+    The mouth must continue from it, never re-open the turn — and especially must not ECHO the
+    filler's own words ("I see — ... I see — and on that, hi, no problem ..."). Bare neutral fillers
+    are the worst case: they read like the very 'one short neutral beat' the act block asks for, so
+    the mouth is tempted to repeat them. A short bridge or a clean direct start passes."""
+    filler = "I see —"
+    say = "How many years of full-time professional experience do you have?"
+    out = await _voice_with_filler(
+        Directive(id="d1", turn_ref="t1", act=DirectiveAct.ACK_ADVANCE, say=say),
+        candidate="Hi — so, like, how are you?", filler=filler)
+    reason = _double_opens(out, filler)
+    assert not reason, f"{reason}: {out!r}"
+    assert "year" in out.lower() or "experience" in out.lower(), f"dropped the question: {out!r}"
+
+
+@pytest.mark.asyncio
+async def test_pass2_clarify_filler_no_stacked_opener():
+    """14f71902 Cause 1 (clarify variant): filler 'Sure —' then a CLARIFY whose say already carries
+    its own re-pose. The mouth must not add a second 'Sure —'/'Okay —' on top of the filler."""
+    filler = "Sure —"
+    say = ("Assume a standard ticketing system like Jira. How would you design the flow so "
+           "the AI's decision routes the ticket reliably?")
+    out = await _voice_with_filler(
+        Directive(id="d1", turn_ref="t1", act=DirectiveAct.CLARIFY, say=say),
+        candidate="Are these tickets coming from something like Jira?", filler=filler)
+    reason = _double_opens(out, filler)
+    assert not reason, f"{reason}: {out!r}"
