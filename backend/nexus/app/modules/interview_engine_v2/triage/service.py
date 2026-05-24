@@ -36,7 +36,18 @@ async def _call_triage(*, messages: list[dict[str, str]], correlation_id: str) -
     }
     if ai_config.engine_triage_effort:
         kwargs["reasoning_effort"] = ai_config.engine_triage_effort
-    return await client.chat.completions.create(**kwargs)
+    decision, completion = await client.chat.completions.create_with_completion(**kwargs)
+    usage = getattr(completion, "usage", None)
+    if usage is not None:
+        details = getattr(usage, "prompt_tokens_details", None)
+        log.info(
+            "engine.v2.triage.usage",
+            prompt_tokens=getattr(usage, "prompt_tokens", None),
+            cached_tokens=getattr(details, "cached_tokens", None),
+            completion_tokens=getattr(usage, "completion_tokens", None),
+            correlation_id=correlation_id,
+        )
+    return decision
 
 
 class TriagePlane:

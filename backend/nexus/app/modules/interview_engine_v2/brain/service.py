@@ -96,7 +96,18 @@ async def _call_brain(*, messages: list[dict[str, str]], correlation_id: str) ->
         create_kwargs["reasoning_effort"] = ai_config.engine_brain_effort
     # prompt_cache_key: Step 0 spike confirmed True (SDK forwards it) — include it.
     create_kwargs["prompt_cache_key"] = ai_config.engine_brain_prompt_cache_key
-    return await client.chat.completions.create(**create_kwargs)
+    decision, completion = await client.chat.completions.create_with_completion(**create_kwargs)
+    usage = getattr(completion, "usage", None)
+    if usage is not None:
+        details = getattr(usage, "prompt_tokens_details", None)
+        log.info(
+            "engine.v2.brain.usage",
+            prompt_tokens=getattr(usage, "prompt_tokens", None),
+            cached_tokens=getattr(details, "cached_tokens", None),
+            completion_tokens=getattr(usage, "completion_tokens", None),
+            correlation_id=correlation_id,
+        )
+    return decision
 
 
 class ControlPlane:
