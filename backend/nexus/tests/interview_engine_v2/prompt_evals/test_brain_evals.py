@@ -22,7 +22,8 @@ from app.modules.interview_runtime import (
 pytestmark = [pytest.mark.prompt_quality, pytest.mark.asyncio]
 
 
-def _q(qid, primary, text, signals=None, follow_ups=None, mandatory=True, pos=0):
+def _q(qid, primary, text, signals=None, follow_ups=None, mandatory=True, pos=0,
+       kind="behavioral"):
     return QuestionConfig(
         id=qid,
         position=pos,
@@ -39,7 +40,7 @@ def _q(qid, primary, text, signals=None, follow_ups=None, mandatory=True, pos=0)
             below_bar="generic, no specifics",
         ),
         evaluation_hint="listen for individual contribution",
-        question_kind="behavioral",
+        question_kind=kind,
         primary_signal=primary,
         difficulty="medium",
     )
@@ -408,3 +409,62 @@ async def test_redirect_say_does_not_lead_with_a_generic_opener():
     assert not _leads_with_opener(directive.say), (
         f"redirect say still leads with an opener (collides with the filler): {directive.say!r}")
     _assert_no_rubric_leak(directive)
+
+
+async def test_clarify_after_probe_addresses_the_floor_line():
+    """4137c1bb: when a PROBE is the line ON THE FLOOR and the candidate asks 'what do you mean?',
+    the brain must clarify the PROBE — not re-pose the main question or jump to the next one."""
+    from app.modules.interview_engine_v2.brain.service import FloorRef
+    cfg = _config([
+        _q("q1", "rest", "How would you design a connector to a rate-limited REST API?",
+           follow_ups=["How would you page through large result sets?"], pos=0),
+        _q("q2", "json", "How would you transform and validate a JSON payload?", pos=1),
+    ])
+    plane = _plane(cfg)
+    plane.opener()
+    # Deterministically put the paging PROBE on the floor (as if it was just asked), so this tests
+    # the prompt's floor-awareness, not the stochastic question of whether turn-1 probes.
+    plane._floor = FloorRef(canonical_text="How would you page through large result sets?",
+                            kind="probe", thread_question_id="q1")
+    directive, record = await plane.decide(
+        turn_ref="t-1", active_question_id="q1",
+        transcript_window=[("agent", "How would you page through large result sets?"),
+                           ("candidate", "What do you mean by large result sets?")],
+        candidate_utterance="What do you mean by large result sets?")
+    assert directive.act is DirectiveAct.CLARIFY, record.move
+    low = (directive.say or "").lower()
+    # Tolerant on wording (the eval's stated contract): the clarify must explain the "large result
+    # sets" probe — which the brain may paraphrase ("a lot of items in one search/response", "many
+    # rows", ...) rather than echo verbatim. The STRICT, load-bearing invariant (4137c1bb) is the
+    # negative below: it must NOT drift to the JSON question.
+    on_floor = ("result set", "result", "page", "pagination", "records", "rows", "items",
+                "search", "response", "lot of", "many", "fits", "data back")
+    assert any(w in low for w in on_floor), \
+        f"clarify did not address the paging probe on the floor: {directive.say!r}"
+    assert "json" not in low and "transform" not in low, \
+        f"clarify drifted to the JSON question instead of the floor: {directive.say!r}"
+    _assert_no_rubric_leak(directive)
+
+
+async def test_scenario_spoken_setup_is_benign_no_leak():
+    """When the brain advances to an abstract technical_scenario question it MAY author
+    spoken_setup; if it does, the setup must be benign — no rubric token, no solution component."""
+    cfg = _config([
+        _q("q1", "exp", "How many years have you worked with Workato?", pos=0,
+           kind="experience_check"),
+        _q("q2", "rest", "You're building a connector to a rate-limited REST API. How would you "
+           "design around the limit to avoid dropped calls?", pos=1, kind="technical_scenario")],
+        signals=["exp", "rest"])
+    plane = _plane(cfg, mandatory=[])
+    plane.opener()
+    directive, record = await plane.decide(
+        turn_ref="t-1", active_question_id="q1", transcript_window=[],
+        candidate_utterance="About two years with Workato, hands on, building recipes.")
+    # If the brain authored setup, it must be benign (no solution leak). Absence is also acceptable.
+    if directive.spoken_setup:
+        s = directive.spoken_setup.lower()
+        for leak in ("retry", "retries", "backoff", "429", "pagination", "idempoten", "rubric",
+                     "throttl", "queue calls", "rate-limit header"):
+            assert leak not in s, (
+                f"spoken_setup leaked a solution component: {directive.spoken_setup!r}")
+    print(f"[setup-probe] spoken_setup={directive.spoken_setup!r}")
