@@ -96,3 +96,12 @@ def test_triage_config_defaults():
     assert ai_config.engine_triage_total_budget_ms <= 3000
     from app.config import settings
     assert settings.engine_triage_hold_cap >= 1
+
+
+def test_phase2_triage_budget_and_cue_config():
+    from app.ai.config import ai_config
+    # bumped off 1500 (real nano ≈2s) but still within the Phase 1 cap (≤3000)
+    assert 2000 <= ai_config.engine_triage_total_budget_ms <= 3000
+    from app.config import settings
+    assert settings.engine_v2_cue_cooldown_s > 0
+    assert settings.engine_v2_triage_brain_disagreement_log is False  # dev-only, off by default

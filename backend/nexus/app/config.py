@@ -528,7 +528,13 @@ class Settings(BaseSettings):
     engine_triage_model: str = "gpt-5.4-nano-2026-03-17"
     engine_triage_effort: str = ""
     engine_triage_prompt_version: str = "v3"
-    engine_triage_total_budget_ms: int = 1500
+    engine_triage_total_budget_ms: int = 2500  # real nano ≈2s under prompt-caching (was 1500)
+    # §9 reconciliation: after any reflex/triage cue, suppress the OTHER cue path for this long so
+    # the acoustic hold-space pacer and triage's "still-pending" continuation cue never double-fire.
+    engine_v2_cue_cooldown_s: float = 4.0
+    # Dev-only (design §7): on a HANDLED turn, let the (otherwise-cancelled) brain finish ONLY
+    # to log a triage↔brain disagreement — never to change what is spoken. OFF in prod.
+    engine_v2_triage_brain_disagreement_log: bool = False
     # After this many consecutive "still pending" holds on one answer, force the brain to evaluate.
     engine_triage_hold_cap: int = 2
 
