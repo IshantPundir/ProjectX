@@ -472,12 +472,12 @@ async def test_scenario_spoken_setup_is_benign_no_leak():
     print(f"[setup-probe] spoken_setup={directive.spoken_setup!r}")
 
 
-async def test_bare_abstract_scenario_advance_authors_concrete_setup():
-    """46d3f739: the abstract agent question (`...an AI agent that plans multi-step actions across
-    apps...`) shipped with spoken_setup=None -> candidate had nothing concrete to reason about and
-    quit. A technical_scenario whose TEXT names no concrete application SHOULD get a concrete
-    grounding clause. We force a clean advance (signal pre-credited + tapped-out) so the advance
-    path is exercised deterministically."""
+async def test_advance_to_abstract_scenario_no_longer_sets_spoken_setup():
+    """spoken_setup is now ON-DEMAND ONLY (prompt edit 2026-05-24): the brain MUST NOT
+    proactively author a setup on advance, even for an abstract technical_scenario question.
+    The candidate gets the question as written; if they need grounding they ask (clarify path).
+    We force a clean advance (signal pre-credited + tapped-out) so the advance path is
+    exercised deterministically. RED on the old prompt; GREEN on the new one."""
     abstract_q = ("You need an AI agent that plans multi-step actions across apps. How would you "
                   "design its action loop so tool use stays safe and auditable?")
     cfg = _config([
@@ -493,12 +493,9 @@ async def test_bare_abstract_scenario_advance_authors_concrete_setup():
         candidate_utterance="Two years, full time. Yeah, that's about it on that.")
     print(f"[setup] act={directive.act.value} spoken_setup={directive.spoken_setup!r}")
     assert directive.act is DirectiveAct.ACK_ADVANCE, record.move
-    assert directive.spoken_setup, (
-        "bare abstract technical_scenario advanced with NO grounding setup")
-    s = directive.spoken_setup.lower()
-    for leak in ("retry", "backoff", "audit log", "guardrail", "approval gate", "rubric"):
-        assert leak not in s, (
-            f"spoken_setup leaked a solution component: {directive.spoken_setup!r}")
+    assert directive.spoken_setup is None, (
+        f"brain proactively authored spoken_setup on advance — must be None (on-demand only): "
+        f"{directive.spoken_setup!r}")
 
 
 async def test_clarify_grounds_concretely_and_keeps_the_technical_ask():
@@ -580,4 +577,111 @@ async def test_half_answered_multipart_question_is_probed_on_the_gap():
     print(f"[half] move={record.move} grade={record.grade}")
     assert directive.act is DirectiveAct.PROBE, (
         f"half-answered (safe not auditable) not probed: {record.move}/{record.grade}")
+    _assert_no_rubric_leak(directive)
+
+
+# ---------------------------------------------------------------------------
+# NEW CASES (2026-05-24) — wrap-up redesign + spoken_setup on-demand-only
+# ---------------------------------------------------------------------------
+
+async def test_wants_to_end_closes_without_inviting_questions():
+    """Session b5c83e1e bug: candidate said 'I'd like to end the interview now' and the brain
+    fired a proactive answer_meta invite ('Before we wrap up — is there anything you'd like to
+    ask?'). The correct move is a direct CLOSE — no invitation. Also assert the spoken text does
+    NOT contain a candidate-question invite.
+    RED on the old prompt (invited first); GREEN on the new prompt (closes directly)."""
+    cfg = _config([
+        _q("q1", "python", "Tell me about a backend you built in Python.", pos=0),
+        _q("q2", "kafka", "Tell me about your experience with Kafka.", pos=1),
+    ])
+    plane = _plane(cfg)
+    plane.opener()
+    directive, record = await plane.decide(
+        turn_ref="t-1",
+        active_question_id="q1",
+        transcript_window=[],
+        candidate_utterance="Actually, I'd like to end the interview now.",
+    )
+    print(f"[wants_to_end] act={directive.act.value} say={directive.say!r}")
+    # Must close, not invite to ask questions
+    assert directive.act is DirectiveAct.CLOSE, (
+        f"wants-to-end should produce CLOSE not {directive.act.value}: {record.move}")
+    # Spoken text must NOT contain an invitation to ask questions
+    spoken = (directive.say or "").lower()
+    invite_fragments = (
+        "anything you'd like to ask",
+        "questions about the role",
+        "questions about the team",
+        "anything you want to ask",
+        "do you have any questions",
+        "feel free to ask",
+    )
+    for frag in invite_fragments:
+        assert frag not in spoken, (
+            f"CLOSE on wants_to_end contains a candidate-question invite ({frag!r}): "
+            f"{directive.say!r}")
+    _assert_no_rubric_leak(directive)
+
+
+async def test_performance_question_is_deflected_not_revealed_and_is_not_closed_on():
+    """Session b5c83e1e bug: candidate asked 'How did I do? Was my performance good?' and the
+    brain closed (and had previously invited the question via the proactive invite). Correct
+    behavior: move=answer_meta, warmly deflect (recruiter follows up), do NOT reveal any
+    evaluation, do NOT close on top of the candidate's question.
+    RED on the old prompt; GREEN on the new prompt."""
+    cfg = _config([
+        _q("q1", "python", "Tell me about a backend you built in Python.", pos=0),
+        _q("q2", "kafka", "Tell me about your experience with Kafka.", pos=1),
+    ])
+    plane = _plane(cfg)
+    plane.opener()
+    directive, record = await plane.decide(
+        turn_ref="t-1",
+        active_question_id="q1",
+        transcript_window=[],
+        candidate_utterance="How did I do? Was my performance good?",
+    )
+    print(f"[perf_q] act={directive.act.value} say={directive.say!r}")
+    # Must be answer_meta (not close)
+    assert directive.act is DirectiveAct.ANSWER_META, (
+        f"performance question must be answer_meta not {directive.act.value}: {record.move}")
+    # Must NOT reveal any evaluation
+    spoken = (directive.say or "").lower()
+    reveal_words = ("passed", "failed", "score", "you did well", "good job", "strong",
+                    "weak", "excellent", "great performance", "well done", "impressed")
+    for word in reveal_words:
+        assert word not in spoken, (
+            f"spoken text reveals evaluation ({word!r}): {directive.say!r}")
+    # Must contain a warm deflect pointing to recruiter / next steps
+    assert any(w in spoken for w in ("recruiter", "follow up", "next step", "next steps",
+                                      "get back", "reach out", "they will")), (
+        f"spoken text should point candidate to recruiter/next steps: {directive.say!r}")
+    _assert_no_rubric_leak(directive)
+
+
+async def test_close_does_not_fire_on_an_unanswered_candidate_question():
+    """INVARIANT: the brain must never close on top of an unanswered candidate question.
+    Setup: candidate asks a job question ('What's the team size?') right at wrap-up. The
+    brain must answer/deflect first (answer_meta) and NOT fire close in the same turn.
+    RED on the old prompt (could close if 'before you close' invite logic advanced to close);
+    GREEN on the new prompt."""
+    cfg = _config([
+        _q("q1", "python", "Tell me about a backend you built in Python.", pos=0),
+        _q("q2", "kafka", "Tell me about your experience with Kafka.", pos=1),
+    ])
+    plane = _plane(cfg)
+    plane.opener()
+    # Seed: questions are largely covered so the brain is near wrap-up
+    plane._coverage.apply_delta({"python": "sufficient", "kafka": "sufficient"})
+    directive, record = await plane.decide(
+        turn_ref="t-1",
+        active_question_id="q1",
+        transcript_window=[],
+        candidate_utterance="What's the team size for this role?",
+    )
+    print(f"[unanswered_q] act={directive.act.value} say={directive.say!r}")
+    # Must address the candidate question, not close on top of it
+    assert directive.act is DirectiveAct.ANSWER_META, (
+        f"unanswered candidate question at wrap-up must be answer_meta not "
+        f"{directive.act.value}: {record.move}")
     _assert_no_rubric_leak(directive)

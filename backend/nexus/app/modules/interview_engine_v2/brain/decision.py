@@ -117,10 +117,11 @@ class BrainDecision(BaseModel):
     spoken_setup: str | None = Field(
         default=None,
         description=(
-            "Optional ONE benign orienting clause for a technical_scenario advance/ask: the "
+            "Optional ONE benign orienting clause authored ON DEMAND when grounding a "
+            "technical_scenario via the clarify move (the candidate asked for scope): the "
             "scenario's WHAT/WHERE (e.g. 'Say tickets arrive from a system like Jira'), NEVER "
-            "the HOW/solution and never a rubric term. Spoken before the question. Null for "
-            "non-scenario kinds and self-contained questions."
+            "the HOW/solution and never a rubric term. Null on a normal advance/ask and for "
+            "non-scenario kinds."
         ),
     )
     tone: Literal["WARM", "NEUTRAL", "ENCOURAGING", "CALM"] = "NEUTRAL"
