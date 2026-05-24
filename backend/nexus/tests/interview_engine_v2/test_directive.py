@@ -66,3 +66,27 @@ def test_close_happy_path():
 def test_ask_rejects_whitespace_only_say():
     with pytest.raises(ValidationError):
         Directive(id="d-ws", turn_ref="t-1", act=DirectiveAct.ASK, say="   ")
+
+
+# ---------------------------------------------------------------------------
+# spoken_setup field
+# ---------------------------------------------------------------------------
+
+from app.modules.interview_engine_v2.directive import RubricLeakError  # noqa: E402
+
+
+def test_spoken_setup_defaults_none_and_round_trips():
+    d = Directive(id="d1", turn_ref="t-1", act=DirectiveAct.ACK_ADVANCE,
+                  say="How would you design the recipe?")
+    assert d.spoken_setup is None
+    d2 = Directive(id="d2", turn_ref="t-1", act=DirectiveAct.ACK_ADVANCE,
+                   say="How would you design the recipe?",
+                   spoken_setup="Say tickets arrive from a system like Jira.")
+    assert d2.spoken_setup == "Say tickets arrive from a system like Jira."
+
+
+def test_spoken_setup_is_no_leak_validated():
+    with pytest.raises(RubricLeakError):
+        Directive(id="d3", turn_ref="t-1", act=DirectiveAct.ACK_ADVANCE,
+                  say="How would you design the recipe?",
+                  spoken_setup="Remember the rubric wants idempotency.")

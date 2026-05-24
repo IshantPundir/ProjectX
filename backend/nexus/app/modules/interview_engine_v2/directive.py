@@ -63,7 +63,7 @@ FORBIDDEN_RUBRIC_TOKENS: tuple[str, ...] = (
 )
 
 
-class RubricLeakError(ValueError):
+class RubricLeakError(Exception):
     """A Directive's speakable text smelled like rubric/evaluation criteria."""
 
 
@@ -91,6 +91,14 @@ class Directive(BaseModel):
         default=None,
         description="SHORT, leak-safe styling for composed parts, or null.",
     )
+    spoken_setup: str | None = Field(
+        default=None,
+        description=(
+            "Optional brain-authored benign orienting clause, spoken BEFORE the question "
+            "(rubric-aware, no-leak). The mouth leads with it then voices the question. "
+            "Null for most asks."
+        ),
+    )
     tone: DirectiveTone = DirectiveTone.NEUTRAL
     is_terminal: bool = Field(
         default=False, description="True only on CLOSE; session ends after delivery."
@@ -110,7 +118,9 @@ class Directive(BaseModel):
             raise ValueError("CLOSE directive must have is_terminal=True")
         if self.is_terminal and self.act is not DirectiveAct.CLOSE:
             raise ValueError("is_terminal=True is only valid on a CLOSE directive")
-        haystack = " ".join(p for p in (self.say, self.compose_hint) if p).lower()
+        haystack = " ".join(
+            p for p in (self.say, self.compose_hint, self.spoken_setup) if p
+        ).lower()
         for token in FORBIDDEN_RUBRIC_TOKENS:
             if token in haystack:
                 raise RubricLeakError(
