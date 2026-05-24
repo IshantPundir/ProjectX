@@ -6,6 +6,8 @@ the emitted Directive + TurnDecisionRecord. Tolerant on wording; strict on the l
 invariants (master §6.2 / DESIGN-SPEC §6/§12 / docs 05·09·13)."""
 import pytest
 
+from app.ai.client import get_openai_client
+from app.ai.config import ai_config
 from app.modules.interview_engine_v2 import DirectiveAct
 from app.modules.interview_engine_v2.brain import ControlPlane
 from app.modules.interview_engine_v2.coverage import CoverageTracker
@@ -468,3 +470,65 @@ async def test_scenario_spoken_setup_is_benign_no_leak():
             assert leak not in s, (
                 f"spoken_setup leaked a solution component: {directive.spoken_setup!r}")
     print(f"[setup-probe] spoken_setup={directive.spoken_setup!r}")
+
+
+async def test_bare_abstract_scenario_advance_authors_concrete_setup():
+    """46d3f739: the abstract agent question (`...an AI agent that plans multi-step actions across
+    apps...`) shipped with spoken_setup=None -> candidate had nothing concrete to reason about and
+    quit. A technical_scenario whose TEXT names no concrete application SHOULD get a concrete
+    grounding clause. We force a clean advance (signal pre-credited + tapped-out) so the advance
+    path is exercised deterministically."""
+    abstract_q = ("You need an AI agent that plans multi-step actions across apps. How would you "
+                  "design its action loop so tool use stays safe and auditable?")
+    cfg = _config([
+        _q("q1", "prior", "How many years of automation work have you done?", pos=0,
+           kind="experience_check"),
+        _q("q2", "agent_based_ai", abstract_q, pos=1, kind="technical_scenario")],
+        signals=["prior", "agent_based_ai"])
+    plane = _plane(cfg, mandatory=[])
+    plane.opener()
+    plane._coverage.apply_delta({"prior": "sufficient"})   # q1 done -> nothing to probe -> advance
+    directive, record = await plane.decide(
+        turn_ref="t-1", active_question_id="q1", transcript_window=[],
+        candidate_utterance="Two years, full time. Yeah, that's about it on that.")
+    print(f"[setup] act={directive.act.value} spoken_setup={directive.spoken_setup!r}")
+    assert directive.act is DirectiveAct.ACK_ADVANCE, record.move
+    assert directive.spoken_setup, (
+        "bare abstract technical_scenario advanced with NO grounding setup")
+    s = directive.spoken_setup.lower()
+    for leak in ("retry", "backoff", "audit log", "guardrail", "approval gate", "rubric"):
+        assert leak not in s, (
+            f"spoken_setup leaked a solution component: {directive.spoken_setup!r}")
+
+
+async def test_clarify_grounds_concretely_and_keeps_the_technical_ask():
+    """46d3f739: candidate asked 'what's the application / end goal?' on the abstract agent
+    question; the brain SIMPLIFIED ('auditable' -> 'easy to review') and offered vague grounding
+    ('a normal app-to-app flow') -> candidate quit. The clarify must KEEP the technical ask intact
+    AND commit to a concrete scenario."""
+    from app.modules.interview_engine_v2.brain.service import FloorRef
+    q = ("You need an AI agent that plans multi-step actions across apps. How would you design its "
+         "action loop so tool use stays safe and auditable?")
+    cfg = _config([_q("q1", "agent_based_ai", q, pos=0, kind="technical_scenario")],
+                  signals=["agent_based_ai"])
+    plane = _plane(cfg)
+    plane.opener()
+    plane._floor = FloorRef(canonical_text=q, kind="main", thread_question_id="q1")
+    directive, record = await plane.decide(
+        turn_ref="t-1", active_question_id="q1",
+        transcript_window=[("agent", q),
+                           ("candidate", "what's the exact application and the end goal here?")],
+        candidate_utterance="Like, what's the exact application and the end goal here?")
+    assert directive.act is DirectiveAct.CLARIFY, record.move
+    low = (directive.say or "").lower()
+    assert "audit" in low, f"clarify dropped the technical ask 'auditable': {directive.say!r}"
+    _assert_no_rubric_leak(directive)
+    verdict = await get_openai_client().chat.completions.create(
+        model=ai_config.engine_brain_model,
+        messages=[{"role": "system", "content":
+                   "Answer only YES or NO. Does the CLARIFY give the candidate a CONCRETE, "
+                   "tangible scenario to reason about — a real application and what it is for — "
+                   "not a vague abstraction like 'a normal app-to-app flow'?"},
+                  {"role": "user", "content": f"CLARIFY: {directive.say}"}],
+        response_model=None)
+    assert verdict.choices[0].message.content.strip().upper().startswith("YES"), directive.say

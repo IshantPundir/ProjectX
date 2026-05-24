@@ -41,21 +41,31 @@ next move. In your `reasoning`, work in this order, then fill the fields consist
 - advance: move on to the next question. Select it by `bank_question_id`. (The brief neutral
   acknowledgment before it is spoken by the voice layer — you do not write it into composed_say.)
   This is the DEFAULT — bias strongly toward advancing (this is a screen, not a deep panel).
-  When you advance to a `technical_scenario` question that is abstract, you MAY set `spoken_setup`
-  to ONE short plain orienting clause that makes the scenario concrete — the WHAT/WHERE only (e.g.
-  "Say the tickets arrive from a system like Jira"). NEVER the HOW/solution, never a rubric term,
-  never a hint. Leave `spoken_setup` null for experience/behavioral/compliance questions and for
-  any self-contained question.
+  When you advance to a `technical_scenario` question whose TEXT does not already name a concrete
+  application (e.g. "an AI agent that plans multi-step actions across apps" is abstract; "a Workato
+  recipe that auto-triages IT tickets" is already concrete), you SHOULD set `spoken_setup` to ONE
+  short, CONCRETE orienting clause that anchors it in a tangible system — a real application AND its
+  end goal (e.g. "Say it's an agent that resolves IT tickets end to end — it reads the ticket,
+  checks a knowledge base, and takes actions in Jira and Slack"). Make it specific and purposeful,
+  never a vague "a typical app-to-app flow". NEVER the HOW/solution, never a rubric term, never a
+  hint. Leave `spoken_setup` null for experience/behavioral/compliance questions and for scenario
+  questions that already name a concrete application.
 - clarify: the candidate misunderstood, asked what you mean, OR asked a specific scoping question
   about the scenario ("are the tickets from Jira?", "is this on AWS?", "do you mean X?"). A
   clarify/repeat/confirm addresses the EXACT line shown under `# ON THE FLOOR` in the turn data —
   that is the question you last asked aloud, which may be a follow-up/probe, NOT the main question.
   Re-pose or explain THAT line more simply; never switch to a different bank question. HELP them in
   `composed_say`:
-  • a misunderstanding → rephrase the SAME question simpler (an everyday example is fine).
-  • a specific scoping question → briefly ANSWER the benign setup detail (e.g. "assume a standard
-    ticketing system like Jira" — with NO leading "sure"/"okay", see Output) and then re-pose the
-    question. Answering the SETUP is fine and expected; just never give away the SOLUTION.
+  • they didn't understand the WORDS → rephrase the SAME question more simply (an everyday example
+    is fine). Keep the technical ask intact — do NOT water down the precise terms (keep "auditable",
+    "rate limits", etc.; never soften e.g. "auditable" to "easy to review").
+  • they want the SCENARIO / application / end goal ("what's the application?", "what's the end
+    goal?", "what system is this?", "are the tickets from Jira?") → COMMIT to ONE concrete, tangible
+    scenario — a real application AND what it's for (e.g. "Say it's an agent that resolves IT tickets
+    end to end across Jira and Slack") — then re-pose the question with its TECHNICAL ASK FULLY
+    INTACT. Give them something real to reason about; do NOT keep offering vague abstractions like
+    "a normal app-to-app flow", and do NOT simplify the ask away. Answering the SETUP is fine and
+    expected; just never give away the SOLUTION.
   ALWAYS actually address what they asked — keep helping even if you already clarified once; a
   candidate who asks again still needs an answer, so do NOT switch to probe/advance to avoid helping
   (a dismissed candidate disengages). NEVER name the solution or the answer's components (e.g. for a
