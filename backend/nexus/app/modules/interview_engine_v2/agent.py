@@ -67,7 +67,7 @@ from app.modules.interview_engine_v2.event_log.sink import LocalFileSink
 from app.modules.interview_engine_v2.mouth.service import ConversationPlane
 from app.modules.interview_engine_v2.result_builder import build_v2_session_result
 from app.modules.interview_engine_v2.triage import TriagePlane
-from app.modules.interview_engine_v2.triage.decision import TriageKind, TriageRoute  # noqa: F401
+from app.modules.interview_engine_v2.triage.decision import TriageKind, TriageRoute
 from app.modules.interview_engine_v2.turn_taking.eou import (
     EouConfig,
     LadderAction,
@@ -250,13 +250,6 @@ class _MouthAgent(Agent):
         if task is not None and not task.done():
             task.cancel()
 
-    def _ack(self) -> str:
-        """Pick a persona-voiced, content-free acknowledgment to MASK the brain (D3). Uses the M4
-        reflex pre-render's `acknowledgment` pool when available; else the canned settings seed."""
-        variants = self._state.get("reflex")
-        pool = getattr(variants, "acknowledgment", None) if variants is not None else None
-        return random.choice(pool) if pool else random.choice(settings.engine_v2_ack_messages)
-
     def _active_question_text(self) -> str | None:
         """The active question for triage's completeness judgment = the mouth's REPEAT cache."""
         return self._mouth.last_question
@@ -312,17 +305,15 @@ class _MouthAgent(Agent):
     async def on_user_turn_completed(
         self, turn_ctx: ChatContext, new_message: ChatMessage,
     ) -> None:
-        # The brain runs ASYNC/PARALLEL, MASKED by an immediate persona acknowledgment; it is
-        # NEVER awaited in silence (D3). Three paths: (a) a confirmed speculative pre-stage is
-        # already current -> deliver instantly (no ack needed); (b) otherwise emit an instant ack
-        # to mask, run the brain in parallel, deliver its directive when it lands; (c) a barge-in
-        # cancels the in-flight brain Task cleanly. The silence timer is muted from turn-commit
-        # through the upcoming reply; agent_state ('listening' post-playout) clears `responding`.
+        # Separate clocks (D3 / design §3): launch TRIAGE ∥ BRAIN at the same instant; never await.
+        # Triage gates the immediate voice (filler / hold / repeat); the brain gates the eventual
+        # question, delivered when it lands (StopResponse + done-callbacks). HANDLED cancels the
+        # speculatively-launched brain (accepted waste). Barge-in cancels both.
         text = new_message.text_content or ""
         self._last_candidate_text = text
         self._transcript.append(("candidate", text))
-        # Candidate text_content IS reliably populated here (feeds the brain). Capture it.
         if text.strip():
+            self._pending_answer.append(text)        # accumulate fragments for this answer episode
             self._result_transcript.append(
                 TranscriptEntry(role="candidate", text=text, timestamp_ms=self._t_ms()))
         word_count = len([w for w in text.split() if w])
@@ -332,18 +323,15 @@ class _MouthAgent(Agent):
         _last_listen = self._state.get("last_listening_at")
         pause_before_commit_ms = (int((_now - _last_listen) * 1000)
                                   if isinstance(_last_listen, (int, float)) else None)
-
         if should_yield(word_count=word_count, is_backchannel=backchannel):
             self._ladder.on_candidate_responded()
-
         label = classify_resumption(ResumptionSignals(
             prior_utterance_complete=True, gap_ms=0, ai_prompt_fully_delivered=True,
             word_count=word_count, is_backchannel=backchannel))
         self._collector.record(
             "turn.captured",
             {"word_count": word_count, "is_backchannel": backchannel,
-             "resumption_label": label.value,
-             "pause_before_commit_ms": pause_before_commit_ms},
+             "resumption_label": label.value, "pause_before_commit_ms": pause_before_commit_ms},
             t_ms=self._t_ms(), wall_ms=_now_ms())
         log.info("engine.v2.turn_committed", word_count=word_count,
                  pause_before_commit_ms=pause_before_commit_ms, resumption_label=label.value)
@@ -351,59 +339,106 @@ class _MouthAgent(Agent):
         self._turn_seq += 1
         turn_ref = f"t-{self._turn_seq}"
         self._current_turn_ref = turn_ref
+        accumulated = " ".join(self._pending_answer).strip() or text
 
-        # (a) COMMON PATH — a CONFIRMED (non-speculative) pre-stage is already current for this
-        # turn -> deliver instantly, no ack/brain needed. D3 is explicit: we NEVER voice the
-        # deterministic speculative GUESS (build_speculative_directive, speculative=True) — it
-        # exists only to exercise the controller's stage->supersede->discard live (CMI-4) and is
-        # always superseded by the brain's confirm decision in path (b). So this fast-path requires
-        # a non-speculative staged directive (a future in-answer brain pre-compute would set that).
-        confirmed = self._controller.current_for_turn(turn_ref)
-        if confirmed is not None and not confirmed.speculative:
-            self._spec_id = None
-            self._state["responding"] = True
-            return                              # auto-reply voices the confirmed pre-stage now
-
-        # (b) MASK — emit an instant content-free ack (plays while the brain reasons IN PARALLEL).
-        # `brain_pending` mutes the silence-timer reflex cues for the whole reasoning window: the
-        # ack drives agent_state->listening (clearing `responding`) before the brain lands, so
-        # without this the hold-space cue fires mid-reasoning at a waiting candidate (ec11e237).
+        # reset per-turn delivery guards
+        self._filler_said = False
+        self._answer_delivered = False
+        self._handled_log_only = False
         self._state["responding"] = True
-        self._state["brain_pending"] = True
-        self.session.say(self._ack(), add_to_chat_ctx=False)   # fire-and-forget; overlaps the brain
-        self._brain_task = asyncio.create_task(self._brain.decide(
-            turn_ref=turn_ref, candidate_utterance=text,
-            transcript_window=list(self._transcript), correlation_id=self._correlation_id))
-        try:
-            directive, record = await self._brain_task
-        except asyncio.CancelledError:                          # (c) barge-in cancelled the brain
-            self._collector.record("engine.v2.brain.cancelled", {"turn_ref": turn_ref},
-                                   t_ms=self._t_ms(), wall_ms=_now_ms())
-            self._state["responding"] = False
-            raise StopResponse() from None                      # no reply; the new turn makes one
-        finally:
-            self._brain_task = None
-            self._state["brain_pending"] = False               # reasoning window over
+        self._state["brain_pending"] = True          # mutes reflex cues for the reasoning window
 
-        # Supersede the speculative pre-stage if it is still the staged slot (controller discards
-        # it); never deliver two directives for one boundary.
-        if self._spec_id is not None and self._controller.staged_id() == self._spec_id:
-            directive = directive.model_copy(update={"supersedes": self._spec_id})
-        self._spec_id = None
-        self._controller.stage(directive)
-        self._collector.record_decision(record, t_ms=self._t_ms(), wall_ms=_now_ms())
-        if directive.say:
-            self._transcript.append(("agent", directive.say))
-            # directive.say is the clean verbatim bank text (ASK/PROBE/ACK_ADVANCE) or the
-            # sanitized say set by service.py — accurate for transcript/report. The mouth's
-            # persona-embellished spoken form is not reliably capturable; this is better for
-            # the record.
-            self._result_transcript.append(
-                TranscriptEntry(role="agent", text=directive.say, timestamp_ms=self._t_ms()))
-        if directive.is_terminal:
-            self._state["closing"] = True
-        # The post-hook auto-reply voices controller.current_for_turn(turn_ref) = the brain's
-        # directive. responding stays True; agent_state 'listening' clears it after playout.
+        # --- launch both tiers at the SAME instant (separate clocks; neither awaited) ---
+        self._triage_task = asyncio.create_task(self._triage.triage(
+            active_question=self._active_question_text(),
+            accumulated_answer=accumulated,
+            last_spoken_question=self._mouth.last_question,
+            correlation_id=self._correlation_id))
+        self._brain_task = asyncio.create_task(self._brain.decide(
+            turn_ref=turn_ref, candidate_utterance=accumulated,
+            transcript_window=list(self._transcript), correlation_id=self._correlation_id))
+
+        def _on_triage_done(task: asyncio.Task) -> None:
+            if task.cancelled() or self._current_turn_ref != turn_ref:
+                return                               # barge-in / stale turn -> no-op
+            try:
+                d = task.result()
+            except Exception:                        # noqa: BLE001 — triage callback must not crash
+                log.warning("engine.v2.triage.callback_failed", exc_info=True)
+                return
+            self._collector.record(
+                "engine.v2.triage.decision",
+                {"kind": d.kind.value, "route": d.route.value, "answer_complete": d.answer_complete,
+                 "replay": d.replay_last_question, "spoken_line": d.spoken_line,
+                 "turn_ref": turn_ref},
+                t_ms=self._t_ms(), wall_ms=_now_ms())
+            still_pending = (d.kind is TriageKind.answering and not d.answer_complete)
+
+            if d.route is TriageRoute.handled and d.kind is TriageKind.repeat_request:
+                self.cancel_brain()
+                self._deliver_repeat(turn_ref, lead_in=d.spoken_line)
+                return
+
+            if d.route is TriageRoute.handled and still_pending:
+                self._hold_count += 1
+                if self._hold_count > settings.engine_triage_hold_cap:
+                    # hold cap reached -> force TO_BRAIN: keep the brain running, neutral filler,
+                    # the brain delivers on the FULL accumulated answer (design §4.4/§4.6).
+                    self._say_filler(d.spoken_line)
+                    return
+                # genuine hold: speak a continuation cue, accumulate, skip the brain this turn.
+                if settings.engine_v2_triage_brain_disagreement_log:
+                    self._handled_log_only = True    # let the brain finish only to log (dev §7)
+                else:
+                    self.cancel_brain()
+                self._say_hold_cue(d.spoken_line)
+                self._state["brain_pending"] = False
+                return
+
+            # route == to_brain (or any non-handled): masking filler, brain delivers the question.
+            self._say_filler(d.spoken_line)
+
+        def _on_brain_done(task: asyncio.Task) -> None:
+            self._brain_task = None
+            if task.cancelled() or self._current_turn_ref != turn_ref:
+                self._state["brain_pending"] = False
+                return                               # barge-in / HANDLED-cancel / stale -> no-op
+            try:
+                directive, record = task.result()
+            except Exception:                        # noqa: BLE001 — brain callback must not crash
+                log.warning("engine.v2.brain.callback_failed", exc_info=True)
+                self._state["brain_pending"] = False
+                return
+            if self._handled_log_only:
+                # dev disagreement-log: triage HANDLED this turn; record the brain's would-be move
+                # but DO NOT speak it (never change what's spoken — design §7).
+                self._collector.record(
+                    "engine.v2.triage_brain_disagreement",
+                    {"turn_ref": turn_ref, "brain_act": directive.act.value},
+                    t_ms=self._t_ms(), wall_ms=_now_ms())
+                self._state["brain_pending"] = False
+                return
+            # supersede a still-staged speculative pre-stage (Option C / CMI-4); stage the directive
+            if self._spec_id is not None and self._controller.staged_id() == self._spec_id:
+                directive = directive.model_copy(update={"supersedes": self._spec_id})
+            self._spec_id = None
+            self._controller.stage(directive)
+            self._collector.record_decision(record, t_ms=self._t_ms(), wall_ms=_now_ms())
+            if directive.say:
+                self._transcript.append(("agent", directive.say))
+                self._result_transcript.append(
+                    TranscriptEntry(role="agent", text=directive.say, timestamp_ms=self._t_ms()))
+            if directive.is_terminal:
+                self._state["closing"] = True
+            self._pending_answer.clear()             # answer consumed -> reset the episode
+            self._hold_count = 0
+            self._answer_delivered = True
+            self._state["brain_pending"] = False
+            self.session.generate_reply()            # mouth Pass-2 continues from the filler
+
+        self._triage_task.add_done_callback(_on_triage_done)
+        self._brain_task.add_done_callback(_on_brain_done)
+        raise StopResponse()                         # suppress the framework auto-reply (spike §1)
 
     async def llm_node(self, chat_ctx, tools, model_settings):
         directive = self._controller.current_for_turn(self._current_turn_ref)
