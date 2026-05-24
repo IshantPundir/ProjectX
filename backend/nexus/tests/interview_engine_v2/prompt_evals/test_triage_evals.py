@@ -86,3 +86,92 @@ async def test_neutral_fillers_vary_with_recent_filler_memory():
         words = (d.spoken_line or "").strip().lstrip("—- ").lower().split()
         openers.append(words[0].strip("—-,.") if words else "")
     assert len(set(openers)) >= 3, f"fillers did not vary with recent-filler memory: {openers}"
+
+
+# --- Issue 3 (session 0eaa8acb): triage judged CONTENT-completeness ("did they answer well?")
+# instead of TURN-completeness ("did they finish speaking?"), so complete-but-imperfect answers
+# that ended in disfluency were classified still-answering -> "Go on…"/"Mm-hmm…" -> the candidate
+# had to insist "I've already answered." Triage never sees the rubric and must NEVER judge answer
+# quality: a finished thought (however weak/rambling/trailing-off) is COMPLETE -> to_brain. ---
+
+_RATE_LIMIT_Q = "How would you design around a REST API rate limit to avoid dropped calls?"
+_CONTEXT_Q = "How would you keep context across steps without leaking sensitive data?"
+_TOOLS_Q = "How would you constrain which tools the agent can call and with what parameters?"
+_AGENT_LOOP_Q = "How would you design its action loop so tool use stays safe and auditable?"
+
+
+async def test_weak_but_finished_answer_routes_to_brain_not_continuation():
+    """Weak-candidate principle: a thin/wrong-but-FINISHED answer must go to the brain (which
+    grades it), never get a 'go on'. They've stopped talking even though the answer is weak —
+    triage must not infer 'this is missing things, so they must have more to say.'"""
+    for _ in range(2):
+        d = await _plane().triage(
+            active_question=_RATE_LIMIT_Q,
+            accumulated_answer="Um, I think you just, like, retry it a few times. That's it.",
+            last_spoken_question=_RATE_LIMIT_Q,
+            budget_ms=_EVAL_BUDGET_MS)
+        assert d.route is TriageRoute.to_brain, f"weak finished -> to_brain: {d.reasoning}"
+        assert d.answer_complete is True, f"weak finished is complete: {d.reasoning}"
+
+
+async def test_disfluent_complete_answer_is_not_treated_as_still_going():
+    """0eaa8acb t-11: a complete, substantive answer ending in disfluency was wrongly classified
+    still-answering -> 'Mm-hmm…' -> candidate 'I think I've already answered this.' A finished
+    thought ending in filler is COMPLETE -> to_brain."""
+    for _ in range(2):
+        d = await _plane().triage(
+            active_question=_CONTEXT_Q,
+            accumulated_answer=(
+                "Yeah. So, like, it can be a two step process, for the first step we use "
+                "something like regex patterns and pattern matching to detect these kind of "
+                "sensitive details, and before passing it to an LLM, and after passing it we "
+                "can prompt engineer it to make sure that it masks these details."),
+            last_spoken_question=_CONTEXT_Q,
+            budget_ms=_EVAL_BUDGET_MS)
+        assert d.route is TriageRoute.to_brain, f"complete -> to_brain: {d.reasoning}"
+        assert d.answer_complete is True, f"finished is complete: {d.reasoning}"
+
+
+async def test_trailing_off_rhetorical_ending_is_complete():
+    """0eaa8acb t-18: an answer trailing into '…what's happening?' wrongly got 'Go on…'. A
+    disfluent / rhetorical trailing on a finished point is COMPLETE -> to_brain."""
+    for _ in range(2):
+        d = await _plane().triage(
+            active_question=_TOOLS_Q,
+            accumulated_answer=(
+                "It depends on the use case and the integration. So we can have Slack for "
+                "messaging, and if there's anything that requires a human in the loop, even in "
+                "general ticket routing, we can integrate Slack so the stakeholders are always "
+                "notified about what's, yeah, like, what's happening?"),
+            last_spoken_question=_TOOLS_Q,
+            budget_ms=_EVAL_BUDGET_MS)
+        assert d.route is TriageRoute.to_brain, f"trailing-off -> to_brain: {d.reasoning}"
+        assert d.answer_complete is True, f"trailing-off is complete: {d.reasoning}"
+
+
+async def test_unambiguous_midclause_cutoff_is_still_answering():
+    """Guardrail: a turn plainly cut off mid-clause (dangling connective) should still get a short
+    continuation cue (route=handled) — we keep the backchannel for genuine mid-sentence stops, we
+    just stop firing it on FINISHED thoughts."""
+    d = await _plane().triage(
+        active_question="Walk me through how you'd design the ticket-triage flow.",
+        accumulated_answer=(
+            "Sure, so first I would extract the title and the content and the tags, and then "
+            "I would"),
+        last_spoken_question="Walk me through how you'd design the ticket-triage flow.",
+        budget_ms=_EVAL_BUDGET_MS)
+    assert d.route is TriageRoute.handled and d.answer_complete is False, (
+        f"a plainly mid-clause cut-off should be still-answering: {d.reasoning}")
+
+
+async def test_let_me_think_for_a_moment_is_held():
+    """The explicit thinking request the user tested must keep working: hold, not the brain."""
+    d = await _plane().triage(
+        active_question=_AGENT_LOOP_Q,
+        accumulated_answer="Hmm, let me think for a moment.",
+        last_spoken_question=_AGENT_LOOP_Q,
+        budget_ms=_EVAL_BUDGET_MS)
+    assert d.route is TriageRoute.handled and d.answer_complete is False, (
+        f"explicit thinking request must be held: {d.reasoning}")
+    line = (d.spoken_line or "").lower()
+    assert "take your time" in line or "no rush" in line, f"hold cue expected: {d.spoken_line!r}"
