@@ -301,12 +301,8 @@ class _MouthAgent(Agent):
         if self._answer_delivered:               # brain already delivered -> don't double-deliver
             return
         self._last_filler = lead_in
-        replayed = self._mouth.last_question             # the question REPEAT will voice
         self._controller.stage(Directive(
             id=f"rpt-{turn_ref}", turn_ref=turn_ref, act=DirectiveAct.REPEAT, say=None))
-        if replayed:                                     # record the replayed question
-            self._result_transcript.append(
-                TranscriptEntry(role="agent", text=replayed, timestamp_ms=self._t_ms()))
         self._finish_answer_episode()
         self._state["brain_pending"] = False
         self.session.generate_reply()    # routes through llm_node -> mouth REPEAT (filler-aware)
@@ -321,10 +317,6 @@ class _MouthAgent(Agent):
             self._current_turn_ref = d.turn_ref           # both live on t-0
             if d.say:
                 self._transcript.append(("agent", d.say))
-                # INTRO has say=None (greeting composed by mouth); only ASK and similar
-                # directives with explicit say text are captured here.
-                self._result_transcript.append(
-                    TranscriptEntry(role="agent", text=d.say, timestamp_ms=self._t_ms()))
             await self.session.generate_reply()
 
     async def on_user_turn_completed(
@@ -455,8 +447,6 @@ class _MouthAgent(Agent):
             self._collector.record_decision(record, t_ms=self._t_ms(), wall_ms=_now_ms())
             if directive.say:
                 self._transcript.append(("agent", directive.say))
-                self._result_transcript.append(
-                    TranscriptEntry(role="agent", text=directive.say, timestamp_ms=self._t_ms()))
             if directive.is_terminal:
                 self._state["closing"] = True
             self._finish_answer_episode()            # answer consumed -> reset the episode
@@ -491,8 +481,16 @@ class _MouthAgent(Agent):
         # window AFTER hearing it. INTRO is not a posed question; CLOSE is terminal.
         if not directive.is_terminal and directive.act is not DirectiveAct.INTRO:
             self._state["pending_arm"] = True
+        spoken_parts: list[str] = []
         async for chunk in Agent.default.llm_node(self, ctx, tools, model_settings):
+            delta = getattr(getattr(chunk, "delta", None), "content", None)
+            if isinstance(delta, str):
+                spoken_parts.append(delta)
             yield chunk
+        spoken = "".join(spoken_parts).strip()
+        if spoken:
+            self._result_transcript.append(
+                TranscriptEntry(role="agent", text=spoken, timestamp_ms=self._t_ms()))
         # NOTE: no _pose_question / aclose here. The ladder is armed by the agent_state
         # 'listening' handler (after TTS playout); termination is M5 (CMI-1).
 
