@@ -395,11 +395,14 @@ class Settings(BaseSettings):
     # mouth pre-renders Arjun-voiced variants at session start; this canned list is the seed +
     # fallback. Content-free by design — it commits to nothing, so it is never wrong ahead of any
     # brain move (advance, probe, even a redirect). No questions.
+    # Canned content-free acks: the triage fallback filler + the M5 reflex pre-render seed. Keep
+    # them neutral acknowledgments of the CANDIDATE — never agent-stalling phrases like
+    # "Let me think on that." (that made the agent sound confused in fe3a5434).
     engine_v2_ack_messages: list[str] = [
         "Mm, okay.",
         "Right.",
         "Got it.",
-        "Let me think on that.",
+        "Mm-hmm.",
     ]
 
     # Conversational continuation — pre-Speaker cancellation watcher.
@@ -524,13 +527,16 @@ class Settings(BaseSettings):
     # with margin; the fallback still backstops a truly-stuck (>8s) call (masked by the filler).
     engine_brain_total_budget_ms: int = 8000
 
-    # Triage tier (the fast classify-and-speak first call; design 2026-05-24). Nano-class model;
-    # reasoning-FIRST field (no reasoning_effort) like the brain. Budget kept tight (it gates the
-    # immediate voice). On timeout/error -> canned ack + route=to_brain (never skip the brain).
-    engine_triage_model: str = "gpt-5.4-nano-2026-03-17"
+    # Triage tier (the fast classify-and-speak first call; design 2026-05-24). MINI model:
+    # measured comparably fast to nano warm (~1.1-1.5s) but classifies materially better
+    # (nano mislabeled clarifications as job_question/repeat in fe3a5434, breaking the convo);
+    # reasoning-FIRST field (no reasoning_effort). Budget gates the immediate voice but must cover
+    # the cold-start/variance tail (nano hit 2.5s -> fallback to a canned ack in fe3a5434), so it
+    # is 3500ms. On timeout/error -> canned ack + route=to_brain (never skip the brain).
+    engine_triage_model: str = "gpt-5.4-mini-2026-03-17"
     engine_triage_effort: str = ""
     engine_triage_prompt_version: str = "v3"
-    engine_triage_total_budget_ms: int = 2500  # real nano ≈2s under prompt-caching (was 1500)
+    engine_triage_total_budget_ms: int = 3500  # mini ~1.1-1.5s warm; covers cold-start/variance
     # §9 reconciliation: after any reflex/triage cue, suppress the OTHER cue path for this long so
     # the acoustic hold-space pacer and triage's "still-pending" continuation cue never double-fire.
     engine_v2_cue_cooldown_s: float = 4.0

@@ -93,15 +93,17 @@ def test_engine_v2_ack_messages_seed_fallback():
 def test_triage_config_defaults():
     from app.ai.config import ai_config
     assert ai_config.engine_triage_model
-    assert ai_config.engine_triage_total_budget_ms <= 3000
+    # gates the immediate voice, but must cover the mini cold-start/variance tail (fe3a5434:
+    # nano fell back at the old 2500ms budget) — kept under 4000ms so the filler stays prompt.
+    assert ai_config.engine_triage_total_budget_ms <= 4000
     from app.config import settings
     assert settings.engine_triage_hold_cap >= 1
 
 
 def test_phase2_triage_budget_and_cue_config():
     from app.ai.config import ai_config
-    # bumped off 1500 (real nano ≈2s) but still within the Phase 1 cap (≤3000)
-    assert 2000 <= ai_config.engine_triage_total_budget_ms <= 3000
+    # mini triage: budget covers cold-start/variance (fe3a5434 fell back at 2500) but stays prompt
+    assert 2000 <= ai_config.engine_triage_total_budget_ms <= 4000
     from app.config import settings
     assert settings.engine_v2_cue_cooldown_s > 0
     assert settings.engine_v2_triage_brain_disagreement_log is False  # dev-only, off by default
