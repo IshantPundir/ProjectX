@@ -77,6 +77,7 @@ def build_brain_messages(
     max_transcript_turns: int = _DEFAULT_WINDOW,
     active_probe_count: int = 0,
     floor: object | None = None,
+    failed_mandatory: list[str] | None = None,
 ) -> list[dict[str, str]]:
     """Assemble [system: stable prefix] + [user: dynamic suffix]. Suffix is bounded.
 
@@ -103,9 +104,22 @@ def build_brain_messages(
             f"confirm must address THIS line, not a different question)\n"
             f"[{getattr(floor, 'kind', 'main')}] {floor.canonical_text}\n\n"
         )
+    knockout_block = ""
+    if failed_mandatory:
+        joined = ", ".join(failed_mandatory)
+        knockout_block = (
+            f"# KNOCKOUT PENDING — a MANDATORY requirement is unmet\n"
+            f"The candidate has disclaimed or retracted: {joined}. The role REQUIRES this, so the "
+            f"screen is effectively OVER — this takes PRECEDENCE over the active question. Do NOT "
+            f"advance to another question and do NOT close normally while it stands. If you have "
+            f"NOT yet reflected it back to confirm, move=confirm ONCE (give them the chance to "
+            f"correct a mishearing). If they have already confirmed it or stated the absence more "
+            f"than once, set reflect_confirmed=true and move=knockout_close now.\n\n"
+        )
     suffix = (
         f"# RECENT TRANSCRIPT (most recent last)\n{transcript}\n\n"
         f"# COVERAGE SO FAR\n{coverage_summary}\n\n"
+        f"{knockout_block}"
         f"# PROBES SO FAR ON THIS QUESTION: {active_probe_count}  "
         f"(soft cap ~2 — bias to advance once you've probed; don't re-ask)\n\n"
         f"{asked_block}"

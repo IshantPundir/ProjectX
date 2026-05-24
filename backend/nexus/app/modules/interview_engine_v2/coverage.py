@@ -135,6 +135,16 @@ class CoverageTracker:
     def uncovered_mandatory(self) -> list[str]:
         return [s for s in self._mandatory if not self.is_covered(s)]
 
+    def failed_mandatory(self) -> list[str]:
+        """Mandatory signals the candidate has disclaimed/retracted (state == failed).
+
+        Each is a KNOCKOUT trigger: the role requires it, so the screen is over. `is_covered`
+        treats `failed` as a closed thread (don't re-probe), which is why a failed MANDATORY signal
+        otherwise reads as "satisfied, advance" — surfacing it separately lets the brain finish the
+        confirm→knockout_close instead of advancing past it (b33f4ed5). `failed` stays REVISABLE, so
+        the confirm step still gives the candidate a chance to correct a mishearing."""
+        return [s for s in self._mandatory if self.state(s) is CoverageState.failed]
+
     def summary_for_prompt(self) -> str:
         """Compact single-line projection for the brain prompt's dynamic suffix (bounded)."""
         return ", ".join(f"{s}={st.value}" for s, st in self._state.items())

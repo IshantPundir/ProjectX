@@ -181,6 +181,9 @@ class ControlPlane:
             asked_question_ids=sorted(self._asked_ids),   # repeat-guard (brain side)
             active_probe_count=(self._coverage.probe_count(aqid) if aqid else 0),
             floor=self._floor,  # PRE-update floor: what's on the floor when the candidate spoke
+            # A mandatory signal already failed/disclaimed is a pending knockout the brain must
+            # complete (confirm→knockout_close), never advance past (b33f4ed5).
+            failed_mandatory=self._coverage.failed_mandatory(),
         )
         timeout = (
             budget_ms if budget_ms is not None else ai_config.engine_brain_total_budget_ms

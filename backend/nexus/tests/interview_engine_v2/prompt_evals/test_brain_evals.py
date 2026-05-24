@@ -685,3 +685,56 @@ async def test_close_does_not_fire_on_an_unanswered_candidate_question():
         f"unanswered candidate question at wrap-up must be answer_meta not "
         f"{directive.act.value}: {record.move}")
     _assert_no_rubric_leak(directive)
+
+
+async def test_failed_mandatory_completes_knockout_does_not_advance():
+    """b33f4ed5 (HEADLINE): candidate retracted Workato (MANDATORY) mid-screen while a DIFFERENT
+    (agent-design) question was on the floor; the brain confirmed, then on re-affirmation it
+    ADVANCED instead of completing the knockout, so the screen never closed. A failed MANDATORY is a
+    knockout that OVERRIDES advancing: once confirmed, knockout_close (terminal), never advance."""
+    cfg = _config([
+        _q("q_wk", "workato", "How long have you worked hands-on with Workato?", pos=0),
+        _q("q_agent", "agent_design",
+           "Design an AI agent's action loop so tool use stays safe and auditable.",
+           pos=1, kind="technical_scenario"),
+    ], jd="Integration role. Hands-on Workato is REQUIRED.", signals=["workato", "agent_design"])
+    plane = _plane(cfg, mandatory=["workato"])
+    # the candidate already disclaimed Workato (mandatory); the agent reflected it back to confirm
+    plane._coverage.apply_delta({"workato": "failed"})
+    for _ in range(2):
+        directive, record = await plane.decide(
+            turn_ref="t-1",
+            active_question_id="q_agent",        # a DIFFERENT question is on the floor
+            transcript_window=[
+                ("agent", "So just to confirm — you have no hands-on Workato experience at all?"),
+                ("candidate", "Right, I already told you, I have no Workato experience."),
+            ],
+            candidate_utterance="Yeah, I just said I don't have it. What do you want next?",
+        )
+        assert directive.act is not DirectiveAct.ACK_ADVANCE, (
+            f"must NOT advance past a confirmed failed-mandatory: {record.move}")
+        assert directive.is_terminal is True, (
+            f"a confirmed failed-mandatory must knockout_close: {record.move} / {record.reasoning}")
+        _assert_no_rubric_leak(directive)
+
+
+async def test_failed_optional_signal_does_not_trigger_knockout():
+    """Guardrail: only MANDATORY failures are knockouts. A failed OPTIONAL signal must NOT close the
+    screen — the brain is free to advance/probe other questions."""
+    cfg = _config([
+        _q("q_wk", "workato", "How long have you worked hands-on with Workato?", pos=0,
+           mandatory=True),
+        _q("q_lead", "leadership", "Tell me about leading a project.", pos=1, mandatory=False),
+    ], jd="Integration role. Workato required; leadership is a nice-to-have.",
+       signals=["workato", "leadership"])
+    plane = _plane(cfg, mandatory=["workato"])    # leadership is OPTIONAL
+    plane._coverage.apply_delta({"leadership": "failed", "workato": "sufficient"})
+    directive, record = await plane.decide(
+        turn_ref="t-1",
+        active_question_id="q_lead",
+        transcript_window=[("candidate", "I haven't really led a project, no.")],
+        candidate_utterance="No, I haven't led a project before.",
+    )
+    assert directive.is_terminal is False, (
+        f"a failed OPTIONAL signal must NOT knockout-close: {record.move}/{record.reasoning}")
+    _assert_no_rubric_leak(directive)

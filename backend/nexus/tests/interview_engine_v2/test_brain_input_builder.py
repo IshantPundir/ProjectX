@@ -159,3 +159,25 @@ def test_build_messages_shows_active_probe_count():
         stable_prefix=prefix, transcript_window=[], coverage_summary="python=partial",
         active_question=_question(), candidate_utterance="hi", active_probe_count=2)
     assert "PROBES SO FAR ON THIS QUESTION: 2" in msgs[1]["content"]
+
+
+def test_knockout_pending_block_appears_only_for_failed_mandatory():
+    """b33f4ed5: a failed MANDATORY signal must be surfaced as a KNOCKOUT PENDING block so the brain
+    completes the confirm->knockout_close instead of advancing past it. Absent when none failed."""
+    cfg = _config()
+    prefix = render_stable_prefix(system_prompt=SYSTEM, config=cfg)
+    base = dict(
+        stable_prefix=prefix,
+        transcript_window=[("candidate", "I don't have Workato experience.")],
+        coverage_summary="python=failed, kafka=none",
+        active_question=_question(),
+        candidate_utterance="I already said I don't have it.",
+    )
+    # no failed_mandatory -> no block
+    assert "KNOCKOUT PENDING" not in build_brain_messages(**base)[1]["content"]
+    assert "KNOCKOUT PENDING" not in build_brain_messages(**base, failed_mandatory=[])[1]["content"]
+    # failed_mandatory present -> a prominent block naming the signal + the confirm/knockout rule
+    suffix = build_brain_messages(**base, failed_mandatory=["python"])[1]["content"]
+    assert "KNOCKOUT PENDING" in suffix
+    assert "python" in suffix
+    assert "knockout_close" in suffix

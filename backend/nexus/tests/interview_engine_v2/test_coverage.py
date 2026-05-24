@@ -154,3 +154,16 @@ def test_at_probe_cap_after_cap_probes():
     assert t.at_probe_cap("q1") is False
     t.record_probe("q1")                # 2 == cap
     assert t.at_probe_cap("q1") is True
+
+
+def test_failed_mandatory_lists_only_failed_mandatory_signals():
+    """b33f4ed5: a failed MANDATORY signal is a knockout the brain must complete, but is_covered()
+    treats it as a closed thread. failed_mandatory() surfaces it separately."""
+    t = _tracker()  # mandatory = python, kafka ; optional = leadership
+    assert t.failed_mandatory() == []
+    t.apply_delta({"leadership": "failed"})      # optional failed -> NOT a knockout
+    assert t.failed_mandatory() == []
+    t.apply_delta({"python": "sufficient"})      # mandatory covered -> not failed
+    assert t.failed_mandatory() == []
+    t.apply_delta({"kafka": "failed"})           # mandatory disclaimed -> knockout
+    assert t.failed_mandatory() == ["kafka"]

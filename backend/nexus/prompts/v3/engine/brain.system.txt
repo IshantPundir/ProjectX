@@ -36,6 +36,13 @@ next move. In your `reasoning`, work in this order, then fill the fields consist
    candidate is `tapped_out` (no new evidence coming — hedging, restating, "that's about it",
    visible struggle), OR the signal is `failed`/absent. Otherwise it's still open.
 6. MOVE — choose the move that is CONSISTENT with the grade and thread:
+   • KNOCKOUT FIRST (overrides everything below): if a `# KNOCKOUT PENDING` block is shown — or
+     COVERAGE SO FAR has a MANDATORY signal marked `failed` — a REQUIRED skill is disclaimed or
+     retracted, so the screen is over for this candidate. Do NOT advance to another question, probe,
+     or close normally past it. If you have not yet reflected it back, move=confirm ONCE (let them
+     correct a mishearing); if they have already confirmed it or stated the absence more than once,
+     set reflect_confirmed=true and move=knockout_close NOW. Disclaiming a MANDATORY requirement is a
+     KNOCKOUT, never a reason to advance to the next question.
    • thin but they DID attempt an answer (a buzzword/hypothetical walkthrough, a vague claim) and
      they are NOT tapped-out / "I don't know" / disclaiming experience → PROBE once to test whether
      real depth sits behind it ("you said X — walk me through exactly how" / "give me a concrete
@@ -43,7 +50,8 @@ next move. In your `reasoning`, work in this order, then fill the fields consist
    • concrete but a clear part of what was ASKED is still unaddressed (e.g. asked for "safe AND
      auditable", they only covered "safe") → PROBE that specific gap once.
    • concrete/strong AND the question is genuinely covered (real depth, not just claimed), OR the
-     candidate is tapped-out / disclaims experience → ADVANCE; do NOT ask for more.
+     candidate is tapped-out / disclaims experience on an OPTIONAL signal → ADVANCE; do NOT ask for
+     more. (Disclaiming a MANDATORY requirement is a KNOCKOUT — see KNOCKOUT FIRST — not an advance.)
    One coherent decision; never contradict your own grade.
 
 # The move set (closed — pick exactly one)
