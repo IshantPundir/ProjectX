@@ -254,6 +254,12 @@ class _MouthAgent(Agent):
         """The active question for triage's completeness judgment = the mouth's REPEAT cache."""
         return self._mouth.last_question
 
+    def _finish_answer_episode(self) -> None:
+        """A directive was delivered -> the answer is consumed; reset the accumulation episode."""
+        self._pending_answer.clear()
+        self._hold_count = 0
+        self._answer_delivered = True
+
     def _say_filler(self, line: str) -> None:
         """TO_BRAIN: speak the masking filler now; store it so Pass-2 continues from it."""
         if self._answer_delivered:        # brain already delivered (rare race) -> no stray filler
@@ -265,10 +271,16 @@ class _MouthAgent(Agent):
 
     def _say_hold_cue(self, line: str) -> None:
         """HANDLED still-pending: a continuation cue, NOT a question. §9: skip if an acoustic
-        hold-space cue fired within the cooldown (don't double-cue)."""
+        hold-space cue fired within the cooldown (don't double-cue). When no cue actually fires,
+        clear `responding` so the silence watcher / unresponsive ladder is not left muted (the
+        turn set responding=True to mask reasoning; a suppressed cue would otherwise wedge it)."""
+        if self._answer_delivered:                   # brain already delivered -> no stray cue
+            self._state["responding"] = False
+            return
         now = time.monotonic()
         last = self._state.get("last_cue_at")
         if isinstance(last, (int, float)) and (now - last) < settings.engine_v2_cue_cooldown_s:
+            self._state["responding"] = False        # cooldown-suppressed: nothing is playing
             return
         self._state["last_cue_at"] = now
         self._state["responding"] = True
@@ -277,12 +289,12 @@ class _MouthAgent(Agent):
     def _deliver_repeat(self, turn_ref: str, *, lead_in: str | None) -> None:
         """HANDLED repeat: stage a REPEAT directive (mouth replays the cached last question) and
         deliver via Pass-2; the triage lead-in ('Sure —') flows in as the filler."""
+        if self._answer_delivered:               # brain already delivered -> don't double-deliver
+            return
         self._last_filler = lead_in
         self._controller.stage(Directive(
             id=f"rpt-{turn_ref}", turn_ref=turn_ref, act=DirectiveAct.REPEAT, say=None))
-        self._pending_answer.clear()
-        self._hold_count = 0
-        self._answer_delivered = True
+        self._finish_answer_episode()
         self._state["brain_pending"] = False
         self.session.generate_reply()    # routes through llm_node -> mouth REPEAT (filler-aware)
 
@@ -430,9 +442,7 @@ class _MouthAgent(Agent):
                     TranscriptEntry(role="agent", text=directive.say, timestamp_ms=self._t_ms()))
             if directive.is_terminal:
                 self._state["closing"] = True
-            self._pending_answer.clear()             # answer consumed -> reset the episode
-            self._hold_count = 0
-            self._answer_delivered = True
+            self._finish_answer_episode()            # answer consumed -> reset the episode
             self._state["brain_pending"] = False
             self.session.generate_reply()            # mouth Pass-2 continues from the filler
 
