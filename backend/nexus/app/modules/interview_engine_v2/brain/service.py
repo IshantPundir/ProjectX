@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from dataclasses import dataclass
+from typing import Literal
 
 import structlog
 
@@ -37,7 +38,7 @@ class FloorRef:
     'what is being asked'). `canonical_text` is the brain's intent (the mouth re-renders it);
     `kind` in {main, probe, clarify}; `thread_question_id` is the bank question being graded."""
     canonical_text: str
-    kind: str
+    kind: Literal["main", "probe", "clarify"]
     thread_question_id: str | None
 
 
@@ -222,6 +223,7 @@ class ControlPlane:
         )
         return directive, record
 
+    # Keep in sync with the mouth's _QUESTION_BEARING set (mouth/input_builder.py) — same concept.
     _FLOOR_KIND: dict[DirectiveAct, str] = {
         DirectiveAct.ASK: "main", DirectiveAct.ACK_ADVANCE: "main",
         DirectiveAct.PROBE: "probe", DirectiveAct.CLARIFY: "clarify",
@@ -377,6 +379,7 @@ class ControlPlane:
                 tone=DirectiveTone.WARM, is_terminal=True,
             )
             move = "fallback_close"
+        self._update_floor(directive)  # ACK_ADVANCE moves the floor; CLOSE has say=None so no-ops
         record = TurnDecisionRecord(
             turn_ref=turn_ref, candidate_quote=candidate_utterance, move=move,
             reasoning=f"deterministic fallback ({reason})", policy_checks=["fallback"],
