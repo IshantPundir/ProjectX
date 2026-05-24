@@ -175,3 +175,32 @@ async def test_let_me_think_for_a_moment_is_held():
         f"explicit thinking request must be held: {d.reasoning}")
     line = (d.spoken_line or "").lower()
     assert "take your time" in line or "no rush" in line, f"hold cue expected: {d.spoken_line!r}"
+
+
+async def test_uh_let_me_think_about_this_is_held():
+    """0eaa8acb t-8: candidate said 'Uh-huh. Uh, let me think about this.' and triage marked it a
+    COMPLETE answer -> to_brain -> (brain timed out ->) the agent advanced. It carries NO answer
+    content — it's a stall. Must be held, not sent on as an answer."""
+    for _ in range(2):
+        d = await _plane().triage(
+            active_question="What safeguards would you add to catch bad AI outputs before acting?",
+            accumulated_answer="Uh-huh. Uh, let me think about this.",
+            last_spoken_question=(
+                "What safeguards would you add to catch bad AI outputs before acting?"),
+            budget_ms=_EVAL_BUDGET_MS)
+        assert d.answer_complete is False, f"a stall is not an answer: {d.reasoning}"
+        assert d.route is TriageRoute.handled, f"a stall must be held, not sent on: {d.reasoning}"
+
+
+async def test_thinking_stall_without_the_words_let_me_think_is_held():
+    """Intent-understanding, NOT keyword-matching: a stall phrased WITHOUT 'let me think' (no
+    answer content, just signaling they need a moment) must still be held."""
+    for _ in range(2):
+        d = await _plane().triage(
+            active_question="How would you design the action loop so tool use stays auditable?",
+            accumulated_answer="Hmm. Okay. Give me a second to wrap my head around this one.",
+            last_spoken_question=(
+                "How would you design the action loop so tool use stays auditable?"),
+            budget_ms=_EVAL_BUDGET_MS)
+        assert d.answer_complete is False, f"a content-free stall is not an answer: {d.reasoning}"
+        assert d.route is TriageRoute.handled, f"a stall must be held: {d.reasoning}"
