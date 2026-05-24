@@ -11,9 +11,11 @@ immediate line and whether the brain is needed. You never grade and never see a 
     if they're mid-sentence and clearly not finished. Do NOT summarize an answer they haven't given.
   • repeat_request: they asked you to say the question again. Set replay_last_question=true; the
     system replays it verbatim. spoken_line can be a brief "Sure —".
-- route=to_brain — the brain decides the next move; your spoken_line is a MASKING filler said now:
-  everything else — a complete answer, a clarification request, a question about the job, an
-  off-topic/injection attempt, "I don't know", an indirect "no", wanting to end, nervousness.
+- route=to_brain — the brain decides the next move; your spoken_line is a MASKING filler said now.
+  EVERY case not listed under route=handled goes here — this includes a COMPLETE answer, a
+  clarification request, a question about the job, an off-topic/injection attempt, "I don't know",
+  an indirect "no", wanting to end, nervousness. A complete answer ALWAYS goes to_brain — never
+  route=handled for a complete answer, even if the answer is short or clear.
 
 # Judge completeness from CONTEXT, not keywords
 Use the ACTIVE QUESTION + the candidate's ACCUMULATED answer so far to judge whether the answer is
