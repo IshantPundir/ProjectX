@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from dataclasses import dataclass
 
 import structlog
 
@@ -28,6 +29,17 @@ from app.modules.interview_engine_v2.directive import Directive, DirectiveAct, D
 from app.modules.interview_runtime import SessionConfig
 
 log = structlog.get_logger("interview_engine_v2.brain")
+
+
+@dataclass(frozen=True)
+class FloorRef:
+    """The exact question-bearing line currently awaiting an answer (single source of truth for
+    'what is being asked'). `canonical_text` is the brain's intent (the mouth re-renders it);
+    `kind` in {main, probe, clarify}; `thread_question_id` is the bank question being graded."""
+    canonical_text: str
+    kind: str
+    thread_question_id: str | None
+
 
 _MOVE_TO_ACT: dict[BrainMove, DirectiveAct] = {
     BrainMove.probe: DirectiveAct.PROBE,
@@ -102,6 +114,7 @@ class ControlPlane:
         self._asked_ids: set[str] = set()            # questions physically ASKED (repeat-guard)
         self._pending_advance_id: str | None = None  # resolved next-q for THIS decide() (set in
         #                                              _build_directive, consumed by decide)
+        self._floor: FloorRef | None = None          # last question-bearing line voiced (floor ref)
         from app.ai.prompts import PromptLoader  # local import keeps module import light
         loader = PromptLoader(version=ai_config.engine_brain_prompt_version)
         self._stable_prefix = render_stable_prefix(
@@ -121,6 +134,8 @@ class ControlPlane:
         first = min(self._config.stage.questions, key=lambda q: q.position)
         self._active_question_id = first.id
         self._asked_ids = {first.id}                 # the opener physically asks the first question
+        self._floor = FloorRef(canonical_text=first.text, kind="main",
+                               thread_question_id=first.id)
         intro = Directive(
             id=self._new_id(), turn_ref="t-0", act=DirectiveAct.INTRO, say=None,
             compose_hint="warm, brief, disclose it's an AI + recorded, set them at ease",
@@ -153,6 +168,7 @@ class ControlPlane:
             candidate_utterance=candidate_utterance,
             asked_question_ids=sorted(self._asked_ids),   # repeat-guard (brain side)
             active_probe_count=(self._coverage.probe_count(aqid) if aqid else 0),
+            floor=self._floor,  # PRE-update floor: what's on the floor when the candidate spoke
         )
         timeout = (
             budget_ms if budget_ms is not None else ai_config.engine_brain_total_budget_ms
@@ -191,6 +207,8 @@ class ControlPlane:
         if directive.act is DirectiveAct.ACK_ADVANCE and self._pending_advance_id is not None:
             self._active_question_id = self._pending_advance_id
             self._asked_ids.add(self._pending_advance_id)
+        self._update_floor(directive)  # update floor AFTER pointer is advanced (thread_question_id
+        #                                reflects the new active question for ACK_ADVANCE)
         record = TurnDecisionRecord(
             turn_ref=turn_ref,
             candidate_quote=candidate_utterance,
@@ -203,6 +221,20 @@ class ControlPlane:
             directive_id=directive.id,
         )
         return directive, record
+
+    _FLOOR_KIND: dict[DirectiveAct, str] = {
+        DirectiveAct.ASK: "main", DirectiveAct.ACK_ADVANCE: "main",
+        DirectiveAct.PROBE: "probe", DirectiveAct.CLARIFY: "clarify",
+        DirectiveAct.REDIRECT: "clarify",
+    }
+
+    def _update_floor(self, directive: Directive) -> None:
+        """Record the question-bearing line just produced. Non-question acts leave the floor."""
+        kind = self._FLOOR_KIND.get(directive.act)
+        if kind is None or not directive.say:
+            return
+        self._floor = FloorRef(canonical_text=directive.say, kind=kind,
+                               thread_question_id=self._active_question_id)
 
     def _build_directive(
         self,
