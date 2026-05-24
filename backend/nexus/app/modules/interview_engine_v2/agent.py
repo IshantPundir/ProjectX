@@ -66,6 +66,8 @@ from app.modules.interview_engine_v2.event_log.collector import EventCollector
 from app.modules.interview_engine_v2.event_log.sink import LocalFileSink
 from app.modules.interview_engine_v2.mouth.service import ConversationPlane
 from app.modules.interview_engine_v2.result_builder import build_v2_session_result
+from app.modules.interview_engine_v2.triage import TriagePlane
+from app.modules.interview_engine_v2.triage.decision import TriageKind, TriageRoute  # noqa: F401
 from app.modules.interview_engine_v2.turn_taking.eou import (
     EouConfig,
     LadderAction,
@@ -189,7 +191,8 @@ class _MouthAgent(Agent):
     def __init__(self, *, controller: DirectiveController, mouth: ConversationPlane,
                  brain: ControlPlane, collector: EventCollector,
                  ladder: UnresponsiveLadder, started_at: float, state: dict[str, object],
-                 pose_question: Callable[[float], None], correlation_id: str) -> None:
+                 pose_question: Callable[[float], None], correlation_id: str,
+                 triage: TriagePlane) -> None:
         super().__init__(instructions="")          # persona lives in the per-turn ctx, not here
         self._controller = controller
         self._mouth = mouth
@@ -207,6 +210,15 @@ class _MouthAgent(Agent):
         self._brain_task: asyncio.Task | None = None   # in-flight confirm/decide (barge-in cancels)
         self._spec_id: str | None = None               # id of the staged speculative pre-stage
         self._result_transcript: list[TranscriptEntry] = []  # reliable result transcript
+        self._triage = triage
+        self._triage_task: asyncio.Task | None = None
+        self._pending_answer: list[str] = []     # candidate fragments in the current answer episode
+        self._last_filler: str | None = None      # triage just spoke -> mouth Pass-2 bridge
+        self._hold_count: int = 0                  # consecutive still-pending holds this episode
+        # per-turn delivery guards (reset at the top of on_user_turn_completed)
+        self._filler_said: bool = False
+        self._answer_delivered: bool = False       # brain delivered the question this turn
+        self._handled_log_only: bool = False       # dev disagreement-log: brain ran but stays mute
 
     def _t_ms(self) -> int:
         return int((time.monotonic() - self._started_at) * 1000)
@@ -232,12 +244,54 @@ class _MouthAgent(Agent):
         if task is not None and not task.done():
             task.cancel()
 
+    def cancel_triage(self) -> None:
+        """Barge-in / HANDLED: cancel the in-flight triage Task cleanly."""
+        task = self._triage_task
+        if task is not None and not task.done():
+            task.cancel()
+
     def _ack(self) -> str:
         """Pick a persona-voiced, content-free acknowledgment to MASK the brain (D3). Uses the M4
         reflex pre-render's `acknowledgment` pool when available; else the canned settings seed."""
         variants = self._state.get("reflex")
         pool = getattr(variants, "acknowledgment", None) if variants is not None else None
         return random.choice(pool) if pool else random.choice(settings.engine_v2_ack_messages)
+
+    def _active_question_text(self) -> str | None:
+        """The active question for triage's completeness judgment = the mouth's REPEAT cache."""
+        return self._mouth.last_question
+
+    def _say_filler(self, line: str) -> None:
+        """TO_BRAIN: speak the masking filler now; store it so Pass-2 continues from it."""
+        if self._answer_delivered:        # brain already delivered (rare race) -> no stray filler
+            return
+        self._last_filler = line
+        self._filler_said = True
+        self._state["responding"] = True
+        self.session.say(line, add_to_chat_ctx=False)   # fire-and-forget; question queues behind it
+
+    def _say_hold_cue(self, line: str) -> None:
+        """HANDLED still-pending: a continuation cue, NOT a question. §9: skip if an acoustic
+        hold-space cue fired within the cooldown (don't double-cue)."""
+        now = time.monotonic()
+        last = self._state.get("last_cue_at")
+        if isinstance(last, (int, float)) and (now - last) < settings.engine_v2_cue_cooldown_s:
+            return
+        self._state["last_cue_at"] = now
+        self._state["responding"] = True
+        self.session.say(line, add_to_chat_ctx=False)
+
+    def _deliver_repeat(self, turn_ref: str, *, lead_in: str | None) -> None:
+        """HANDLED repeat: stage a REPEAT directive (mouth replays the cached last question) and
+        deliver via Pass-2; the triage lead-in ('Sure —') flows in as the filler."""
+        self._last_filler = lead_in
+        self._controller.stage(Directive(
+            id=f"rpt-{turn_ref}", turn_ref=turn_ref, act=DirectiveAct.REPEAT, say=None))
+        self._pending_answer.clear()
+        self._hold_count = 0
+        self._answer_delivered = True
+        self._state["brain_pending"] = False
+        self.session.generate_reply()    # routes through llm_node -> mouth REPEAT (filler-aware)
 
     async def on_enter(self) -> None:
         # Deliver the deterministic opener: INTRO then ASK(first bank question) proactively (no
@@ -361,8 +415,10 @@ class _MouthAgent(Agent):
             {"id": directive.id, "act": directive.act.value, "turn_ref": directive.turn_ref,
              "speculative": directive.speculative}, t_ms=self._t_ms(), wall_ms=_now_ms())
         messages = self._mouth.build_turn_messages(
-            directive, candidate_utterance=self._last_candidate_text)
+            directive, candidate_utterance=self._last_candidate_text,
+            just_said_filler=self._last_filler)
         self._last_candidate_text = None               # consumed; not carried to the next turn
+        self._last_filler = None                       # consumed; one bridge per delivery
         ctx = ChatContext.empty()
         for m in messages:
             ctx.add_message(role=m["role"], content=m["content"])
@@ -492,10 +548,15 @@ async def run(
         "brain_pending": False,
         "result_recorded": False,   # once-guard for _finalize_and_record
         "close_initiated": False,   # once-guard for session.aclose() after terminal CLOSE
+        "last_cue_at": None,    # §9 cue-cooldown timestamp (set by triage hold + acoustic pacer)
     }
 
     mouth = ConversationPlane(
         loader=PromptLoader(version=ai_config.engine_mouth_prompt_version),
+        persona_name=(ai_config.engine_mouth_persona_name or settings.engine_agent_name),
+        job_title=config.job_title,
+    )
+    triage = TriagePlane(
         persona_name=(ai_config.engine_mouth_persona_name or settings.engine_agent_name),
         job_title=config.job_title,
     )
@@ -701,7 +762,8 @@ async def run(
 
     agent = _MouthAgent(controller=controller, mouth=mouth, brain=brain, collector=collector,
                         ladder=ladder, started_at=started_at, state=state,
-                        pose_question=_pose_question, correlation_id=correlation_id)
+                        pose_question=_pose_question, correlation_id=correlation_id,
+                        triage=triage)
 
     nc_filter = build_noise_cancellation()
     await session.start(
