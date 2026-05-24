@@ -25,6 +25,7 @@ import asyncio
 import random
 import time
 import uuid
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -218,6 +219,7 @@ class _MouthAgent(Agent):
         # per-turn delivery guards (reset at the top of on_user_turn_completed)
         self._answer_delivered: bool = False       # brain delivered the question this turn
         self._handled_log_only: bool = False       # dev disagreement-log: brain ran but stays mute
+        self._recent_fillers: deque[str] = deque(maxlen=4)  # fed to triage so it varies its opener
 
     def _t_ms(self) -> int:
         return int((time.monotonic() - self._started_at) * 1000)
@@ -265,6 +267,8 @@ class _MouthAgent(Agent):
             return
         self._last_filler = line
         self._state["responding"] = True
+        self._result_transcript.append(                  # record what the candidate actually heard
+            TranscriptEntry(role="agent", text=line, timestamp_ms=self._t_ms()))
         self.session.say(line, add_to_chat_ctx=False)   # fire-and-forget; question queues behind it
 
     def _say_hold_cue(self, line: str) -> None:
@@ -282,6 +286,8 @@ class _MouthAgent(Agent):
             return
         self._state["last_cue_at"] = now
         self._state["responding"] = True
+        self._result_transcript.append(                  # record what the candidate actually heard
+            TranscriptEntry(role="agent", text=line, timestamp_ms=self._t_ms()))
         self.session.say(line, add_to_chat_ctx=False)
         # The candidate still owes an answer; re-arm the unresponsive ladder when this cue's TTS
         # drains (agent_state -> 'listening' consumes pending_arm -> _pose_question), so a
@@ -295,8 +301,12 @@ class _MouthAgent(Agent):
         if self._answer_delivered:               # brain already delivered -> don't double-deliver
             return
         self._last_filler = lead_in
+        replayed = self._mouth.last_question             # the question REPEAT will voice
         self._controller.stage(Directive(
             id=f"rpt-{turn_ref}", turn_ref=turn_ref, act=DirectiveAct.REPEAT, say=None))
+        if replayed:                                     # record the replayed question
+            self._result_transcript.append(
+                TranscriptEntry(role="agent", text=replayed, timestamp_ms=self._t_ms()))
         self._finish_answer_episode()
         self._state["brain_pending"] = False
         self.session.generate_reply()    # routes through llm_node -> mouth REPEAT (filler-aware)
@@ -367,6 +377,7 @@ class _MouthAgent(Agent):
             active_question=self._active_question_text(),
             accumulated_answer=accumulated,
             last_spoken_question=self._mouth.last_question,
+            recent_fillers=list(self._recent_fillers),
             correlation_id=self._correlation_id))
         self._brain_task = asyncio.create_task(self._brain.decide(
             turn_ref=turn_ref, candidate_utterance=accumulated,
@@ -386,6 +397,8 @@ class _MouthAgent(Agent):
                  "replay": d.replay_last_question, "spoken_line": d.spoken_line,
                  "turn_ref": turn_ref},
                 t_ms=self._t_ms(), wall_ms=_now_ms())
+            if d.spoken_line:
+                self._recent_fillers.append(d.spoken_line)   # so the next turn varies its opener
             still_pending = (d.kind is TriageKind.answering and not d.answer_complete)
 
             if d.route is TriageRoute.handled and d.kind is TriageKind.repeat_request:
