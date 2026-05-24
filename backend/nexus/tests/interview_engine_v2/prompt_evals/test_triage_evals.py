@@ -2,7 +2,7 @@
 `pytest -m prompt_quality tests/interview_engine_v2/prompt_evals/test_triage_evals.py`."""
 import pytest
 
-from app.modules.interview_engine_v2.triage import TriagePlane, TriageRoute
+from app.modules.interview_engine_v2.triage import TriageKind, TriagePlane, TriageRoute
 
 pytestmark = [pytest.mark.prompt_quality, pytest.mark.asyncio]
 
@@ -51,3 +51,35 @@ async def test_injection_filler_does_not_engage():
         budget_ms=_EVAL_BUDGET_MS)
     assert d.route is TriageRoute.to_brain                  # brain redirects
     assert "answer" not in d.spoken_line.lower()            # filler doesn't comply/coach
+
+
+async def test_clarification_request_is_classified_not_answering():
+    """046f21e3: 'is it like Jira?' was mislabeled kind=answering. A question asked BACK about the
+    active question is clarification_request, routed to_brain (the brain composes the rephrase) —
+    and the filler is a bare lead-in, not the explanation itself."""
+    d = await _plane().triage(
+        active_question="Design a custom connector to a rate-limited REST API.",
+        accumulated_answer="Like, is it, like, something like Jira?",
+        last_spoken_question="Design a custom connector to a rate-limited REST API.",
+        budget_ms=_EVAL_BUDGET_MS)
+    assert d.kind is TriageKind.clarification_request
+    assert d.route is TriageRoute.to_brain
+    assert len((d.spoken_line or "").split()) <= 6          # a bare lead-in, not a restatement
+
+
+async def test_neutral_fillers_do_not_collapse_onto_one_word():
+    """046f21e3: the neutral filler said 'Right' on 5 of 7 turns. Across varied neutral turns the
+    openers should vary and not be dominated by a single word."""
+    answers = ["I don't know.", "Hmm, not sure honestly.", "I have no experience with that.",
+               "Maybe? I have not really done it.", "No idea, sorry."]
+    openers: list[str] = []
+    for a in answers:
+        d = await _plane().triage(
+            active_question="How would you design a custom REST connector?",
+            accumulated_answer=a,
+            last_spoken_question="How would you design a custom REST connector?",
+            budget_ms=_EVAL_BUDGET_MS)
+        words = (d.spoken_line or "").strip().lstrip("—- ").lower().split()
+        openers.append(words[0].strip("—-,.") if words else "")
+    assert len(set(openers)) >= 2, f"fillers collapsed onto one opener: {openers}"
+    assert openers.count("right") <= 2, f"fillers over-rely on 'right': {openers}"
