@@ -298,5 +298,9 @@ class AIConfig:
     def report_scorer_prompt_version(self) -> str:
         return self._settings.report_scorer_prompt_version
 
+    @property
+    def report_scorer_prompt_cache_key_prefix(self) -> str:
+        return self._settings.report_scorer_prompt_cache_key_prefix
+
 
 ai_config = AIConfig(settings)

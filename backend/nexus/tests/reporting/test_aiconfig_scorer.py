@@ -118,6 +118,13 @@ def test_aiconfig_report_scorer_prompt_version(monkeypatch):
     assert cfg.report_scorer_prompt_version == "v3"
 
 
+def test_aiconfig_report_scorer_prompt_cache_key_prefix(monkeypatch):
+    """AIConfig.report_scorer_prompt_cache_key_prefix surfaces the Settings field."""
+    monkeypatch.setenv("REPORT_SCORER_PROMPT_CACHE_KEY_PREFIX", "scorer-v2")
+    cfg = AIConfig()
+    assert cfg.report_scorer_prompt_cache_key_prefix == "scorer-v2"
+
+
 # ---------------------------------------------------------------------------
 # Effort-gating contract: effort="" must be gateable (returns "")
 # ---------------------------------------------------------------------------
