@@ -171,18 +171,15 @@ def test_real_session_question_order_preserved() -> None:
 
 
 def test_real_session_probes_nonzero_for_heavy_question() -> None:
-    """c99c92ca (RAG/triage design) had many probes — should be > 0."""
+    """c99c92ca-a2fe-4814-8932-edaba1e61a5a (RAG/triage design) had many probes — should be > 0."""
     envelope = json.loads((FIX / "e4072361_envelope.json").read_text())
     transcript = json.loads((FIX / "e4072361_transcript.json").read_text())
     units = segment(transcript=transcript, envelope=envelope)
-    # c99c92ca is the question about AI routing/RAG
+    # Anchor to the known heavy question by its full UUID (4 probes + 3 clarifies in the fixture).
     heavy = next(
-        (
-            u
-            for u in units
-            if "RAG" in u.candidate_answer or "route" in u.question_text.lower()
-        ),
+        (u for u in units if u.question_id == "c99c92ca-a2fe-4814-8932-edaba1e61a5a"),
         None,
     )
-    if heavy is not None:
-        assert heavy.probes_fired > 0
+    assert heavy is not None, "c99c92ca question not found in segmented units"
+    assert heavy.probes_fired > 0
+    assert heavy.clarifies > 0

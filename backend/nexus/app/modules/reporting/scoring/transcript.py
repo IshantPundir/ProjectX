@@ -55,8 +55,8 @@ def segment(
           (answering/no_experience/off_topic/backchannel/…).
 
     bank_questions:
-        Not used in the current implementation; reserved so callers can pass
-        question-bank metadata for future enrichment.
+        Reserved/unused; accepted so callers can pass question-bank metadata
+        for future enrichment without a breaking signature change.
 
     Returns
     -------
