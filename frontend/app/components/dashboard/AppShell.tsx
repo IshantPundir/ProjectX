@@ -1,9 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useMemo, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
 import type { MeResponse } from "@/lib/api/auth";
 import { isAnyAdmin } from "@/lib/hooks/use-me";
 import { BrandLogo, BrandMark } from "@/components/px";
@@ -155,7 +154,6 @@ const FOOTER_NAV: readonly NavItem[] = [
     icon: NI.plug,
     visible: isAnyAdmin,
   },
-  { href: "/profile", label: "Profile", icon: NI.user },
 ] as const;
 
 /* ─── Breadcrumbs from pathname ────────────────────────────── */
@@ -209,14 +207,11 @@ function NavLink({
       href={item.href}
       title={collapsed ? item.label : undefined}
       aria-current={active ? "page" : undefined}
-      className="group relative flex items-center gap-2.5 rounded-md transition-colors"
+      className={`px-navlink group relative flex items-center gap-2.5 rounded-md ${active ? "is-active" : ""}`}
       style={{
         height: 32,
         padding: collapsed ? "0 7px" : "0 10px",
-        background: active ? "var(--px-accent-tint)" : "transparent",
-        color: active ? "var(--px-fg)" : "var(--px-fg-2)",
         fontSize: 13,
-        fontWeight: active ? 500 : 400,
       }}
     >
       {active && (
@@ -262,16 +257,13 @@ export interface AppShellProps {
 export function AppShell({
   userEmail,
   userName,
-  userRole = "Recruiter",
   orgContext,
   aiChip,
   me,
   children,
 }: AppShellProps) {
   const pathname = usePathname();
-  const router = useRouter();
   const [collapsed, setCollapsed] = useState(false);
-  const [signingOut, setSigningOut] = useState(false);
 
   const crumbs = useCrumbs(pathname);
 
@@ -279,14 +271,6 @@ export function AppShell({
     if (href === "/") return pathname === "/";
     return pathname === href || pathname.startsWith(href + "/");
   };
-
-  async function handleSignOut() {
-    setSigningOut(true);
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    router.push("/login");
-    router.refresh();
-  }
 
   const initials = (userName || userEmail)
     .split(/[\s@.]+/)
@@ -355,8 +339,7 @@ export function AppShell({
               onClick={() => setCollapsed(true)}
               title="Collapse"
               aria-label="Collapse sidebar"
-              className="flex h-[22px] w-[22px] cursor-pointer items-center justify-center rounded border-none bg-transparent"
-              style={{ color: "var(--px-fg-3)" }}
+              className="px-icon-btn flex h-[22px] w-[22px] cursor-pointer items-center justify-center rounded border-none"
             >
               <ShIcon d={NI.chevL} size={13} />
             </button>
@@ -369,8 +352,7 @@ export function AppShell({
             onClick={() => setCollapsed(false)}
             title="Expand"
             aria-label="Expand sidebar"
-            className="mx-auto my-1 flex h-[26px] w-full cursor-pointer items-center justify-center border-none bg-transparent"
-            style={{ color: "var(--px-fg-3)" }}
+            className="px-icon-btn mx-auto my-1 flex h-[26px] w-full cursor-pointer items-center justify-center rounded border-none"
           >
             <ShIcon d={NI.chevR} size={13} />
           </button>
@@ -410,51 +392,6 @@ export function AppShell({
           ))}
         </div>
 
-        {/* User chip */}
-        <div
-          className="flex flex-shrink-0 items-center gap-2.5 border-t px-3.5"
-          style={{ height: 52, borderColor: "var(--px-hairline)" }}
-        >
-          <div
-            className="flex h-[26px] w-[26px] flex-shrink-0 items-center justify-center rounded-full text-[11px] font-semibold"
-            style={{
-              background: "var(--px-accent-tint)",
-              color: "var(--px-accent)",
-            }}
-          >
-            {initials}
-          </div>
-          {!collapsed && (
-            <div className="min-w-0 flex-1">
-              <div
-                className="truncate text-[12px] font-medium leading-tight"
-                style={{ color: "var(--px-fg)" }}
-                title={userName || userEmail}
-              >
-                {userName || userEmail}
-              </div>
-              <div
-                className="truncate text-[10.5px] leading-tight"
-                style={{ color: "var(--px-fg-4)" }}
-              >
-                {userRole}
-              </div>
-            </div>
-          )}
-          {!collapsed && (
-            <button
-              type="button"
-              onClick={handleSignOut}
-              disabled={signingOut}
-              title={signingOut ? "Signing out…" : "Sign out"}
-              aria-label="Sign out"
-              className="flex h-[22px] w-[22px] cursor-pointer items-center justify-center rounded border-none bg-transparent transition-colors disabled:opacity-50"
-              style={{ color: "var(--px-fg-3)" }}
-            >
-              <ShIcon d={NI.logOut} size={13} />
-            </button>
-          )}
-        </div>
       </aside>
 
       {/* ─── Main column ─── */}
@@ -544,8 +481,7 @@ export function AppShell({
           <button
             type="button"
             aria-label="Notifications"
-            className="relative flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border-none bg-transparent"
-            style={{ color: "var(--px-fg-3)" }}
+            className="px-icon-btn relative flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border-none"
           >
             <ShIcon d={NI.bell} size={14} />
             <span
@@ -554,6 +490,21 @@ export function AppShell({
               aria-hidden="true"
             />
           </button>
+
+          {/* Profile — links to the profile page (which holds the sign-out action) */}
+          <Link
+            href="/profile"
+            aria-label="Profile"
+            aria-current={isActive("/profile") ? "page" : undefined}
+            title={userName || userEmail}
+            className="px-avatar-btn flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-[11px] font-semibold"
+            style={{
+              background: "var(--px-accent-tint)",
+              color: "var(--px-accent)",
+            }}
+          >
+            {initials}
+          </Link>
         </header>
 
         {/* Page content — no overflow-auto so the body remains the scroll

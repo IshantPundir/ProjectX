@@ -653,6 +653,26 @@
 /* ─── Tabular figures ─── */
 .px-num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
 
+/* ─── Chrome nav: sidebar items, icon buttons, avatar (hover + active) ─── */
+.px-navlink {
+  color: var(--px-fg-2);
+  background: transparent;
+  transition: background var(--px-d1) var(--px-ease), color var(--px-d1) var(--px-ease);
+}
+.px-navlink:hover { background: var(--px-surface); color: var(--px-fg); }
+.px-navlink.is-active { background: var(--px-accent-tint); color: var(--px-fg); font-weight: 500; }
+.px-navlink.is-active:hover { background: var(--px-accent-tint); }
+
+.px-icon-btn {
+  color: var(--px-fg-3);
+  background: transparent;
+  transition: background var(--px-d1) var(--px-ease), color var(--px-d1) var(--px-ease);
+}
+.px-icon-btn:hover { background: var(--px-surface); color: var(--px-fg); }
+
+.px-avatar-btn { transition: box-shadow var(--px-d1) var(--px-ease); }
+.px-avatar-btn:hover { box-shadow: 0 0 0 2px var(--px-accent-line); }
+
 /* ─────────────────────────────────────────────────────────
    Form inputs — polished .px-input system
    Consumed by any hand-rolled native input. shadcn primitives
