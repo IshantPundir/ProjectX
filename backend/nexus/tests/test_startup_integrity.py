@@ -14,16 +14,16 @@ def test_every_module_models_py_loads_and_registers_tables():
     Base.metadata. Catches typos / missing model migrations.
     """
     # Force load every per-module models file.
-    import app.modules.auth.models  # noqa: F401
     import app.modules.audit.models  # noqa: F401
+    import app.modules.auth.models  # noqa: F401
     import app.modules.candidates.models  # noqa: F401
     import app.modules.jd.models  # noqa: F401
     import app.modules.org_units.models  # noqa: F401
     import app.modules.pipelines.models  # noqa: F401
     import app.modules.question_bank.models  # noqa: F401
+    import app.modules.reporting.models  # noqa: F401
     import app.modules.roles.models  # noqa: F401
     import app.modules.session.models  # noqa: F401
-
     from app.database import Base
 
     # Every table that app/main.py's _TENANT_SCOPED_TABLES tracks must
@@ -50,6 +50,7 @@ def test_every_module_models_py_loads_and_registers_tables():
         "stage_questions",
         "roles",
         "sessions",
+        "session_reports",
     }
     actual = set(Base.metadata.tables.keys())
     missing = expected - actual
@@ -62,16 +63,16 @@ def test_base_registry_configure_resolves_all_string_fks():
     raises sqlalchemy.exc.InvalidRequestError.
     """
     # Same imports as above — needed in case this test runs in isolation.
-    import app.modules.auth.models  # noqa: F401
     import app.modules.audit.models  # noqa: F401
+    import app.modules.auth.models  # noqa: F401
     import app.modules.candidates.models  # noqa: F401
     import app.modules.jd.models  # noqa: F401
     import app.modules.org_units.models  # noqa: F401
     import app.modules.pipelines.models  # noqa: F401
     import app.modules.question_bank.models  # noqa: F401
+    import app.modules.reporting.models  # noqa: F401
     import app.modules.roles.models  # noqa: F401
     import app.modules.session.models  # noqa: F401
-
     from app.database import Base
 
     # No exception → all FK strings resolved.
