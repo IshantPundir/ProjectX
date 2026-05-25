@@ -64,12 +64,20 @@ function OrgUnitNodeImpl({
     }
   }
 
-  const badgeClass =
+  const badgeStyle =
     pressure === 'hot'
-      ? 'bg-red-50 text-red-700 border-red-200'
+      ? {
+          background: 'var(--px-danger-bg)',
+          color: 'var(--px-danger)',
+          borderColor: 'var(--px-danger-line)',
+        }
       : pressure === 'steady'
-        ? 'bg-amber-50 text-amber-700 border-amber-200'
-        : ''
+        ? {
+            background: 'var(--px-caution-bg)',
+            color: 'var(--px-caution)',
+            borderColor: 'var(--px-caution-line)',
+          }
+        : {}
 
   const cardStyle: CSSProperties = {
     width: 168,
@@ -205,7 +213,7 @@ function OrgUnitNodeImpl({
             aria-label="Imported from ATS — company profile incomplete"
             className="ml-2 flex-none"
             title="Imported from ATS. Complete the company profile to enable job creation."
-            style={{ color: 'var(--px-caution, #b45309)' }}
+            style={{ color: 'var(--px-caution)' }}
           >
             <AlertCircle size={12} strokeWidth={2} />
           </span>
@@ -213,7 +221,8 @@ function OrgUnitNodeImpl({
       {pressure && (
         <span
           data-testid="open-roles-badge"
-          className={`ml-2 flex-none rounded-full border px-[7px] py-[2px] text-[10px] font-bold ${badgeClass}`}
+          className="ml-2 flex-none rounded-full border px-[7px] py-[2px] text-[10px] font-bold"
+          style={badgeStyle}
         >
           {unit.openRoles}
         </span>

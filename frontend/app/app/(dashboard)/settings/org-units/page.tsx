@@ -350,9 +350,9 @@ function SelectedDetail({
               className="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase"
               style={{
                 letterSpacing: "0.3px",
-                color: "var(--px-caution, #b45309)",
-                background: "var(--px-caution-bg, #fef3c7)",
-                borderColor: "var(--px-caution-line, #fde68a)",
+                color: "var(--px-caution)",
+                background: "var(--px-caution-bg)",
+                borderColor: "var(--px-caution-line)",
               }}
             >
               profile incomplete

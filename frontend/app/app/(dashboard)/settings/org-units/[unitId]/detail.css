@@ -866,7 +866,7 @@
 .section.highlight .card {
   background: linear-gradient(
     180deg,
-    rgba(14, 111, 99, 0.04) 0%,
+    rgba(108, 92, 208, 0.04) 0%,
     var(--px-surface) 60%
   );
   border-color: var(--px-accent-line);

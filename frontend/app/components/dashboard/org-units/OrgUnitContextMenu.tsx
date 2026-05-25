@@ -410,7 +410,7 @@ export function OrgUnitContextMenu({
               background: 'var(--px-surface)',
               border: `1px solid ${p.isDanger ? 'var(--color-red-200)' : 'var(--px-hairline-strong)'}`,
               boxShadow:
-                '0 8px 24px rgba(58, 45, 28, 0.08), 0 2px 4px rgba(58, 45, 28, 0.04)',
+                '0 8px 24px rgba(20, 40, 60, 0.08), 0 2px 4px rgba(20, 40, 60, 0.04)',
               cursor: 'pointer',
               whiteSpace: 'nowrap',
               // Promote each pill to its own compositor layer. Combined
