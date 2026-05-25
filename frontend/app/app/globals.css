@@ -513,6 +513,8 @@
 .px-badge.caution   { background: var(--px-caution-bg); border-color: var(--px-caution-line); color: var(--px-caution); }
 .px-badge.danger    { background: var(--px-danger-bg); border-color: var(--px-danger-line); color: var(--px-danger); }
 .px-badge.ai        { background: var(--px-ai-bg); border-color: var(--px-ai-line); color: var(--px-ai); }
+.px-badge.human     { background: var(--px-human-bg); border-color: var(--px-human-line); color: var(--px-human); }
+.px-badge.neutral   { background: var(--px-neutral-cat-bg); border-color: var(--px-neutral-cat-line); color: var(--px-neutral-cat); }
 
 /* ─── Skeleton ─── */
 @keyframes px-skeleton-shimmer {
