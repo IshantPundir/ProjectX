@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter, Fraunces, JetBrains_Mono } from "next/font/google";
+import { brand } from "@/lib/brand";
 import "./globals.css";
 
 const inter = Inter({
@@ -22,8 +23,8 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ProjectX",
-  description: "AI Video Interview Platform",
+  title: brand.name,
+  description: brand.tagline,
 };
 
 export default function RootLayout({
@@ -35,8 +36,8 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${inter.variable} ${fraunces.variable} ${jetbrainsMono.variable} h-full antialiased`}
-      data-px-theme="warm-light"
-      data-px-density="comfortable"
+      data-px-theme={brand.theme}
+      data-px-density={brand.density}
     >
       <body className="min-h-full flex flex-col bg-background text-foreground font-sans">
         {children}
