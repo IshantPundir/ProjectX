@@ -25,17 +25,25 @@
   --color-px-accent: var(--px-accent);
   --color-px-accent-2: var(--px-accent-2);
   --color-px-accent-soft: var(--px-accent-soft);
+  --color-px-accent-ink: var(--px-accent-ink);
   --color-px-ai: var(--px-ai);
   --color-px-caution: var(--px-caution);
   --color-px-ok: var(--px-ok);
   --color-px-danger: var(--px-danger);
   --color-px-human: var(--px-human);
+  --color-px-neutral-cat: var(--px-neutral-cat);
+  --color-px-ok-fill: var(--px-ok-fill);
+  --color-px-ai-fill: var(--px-ai-fill);
+  --color-px-human-fill: var(--px-human-fill);
+  --color-px-neutral-cat-fill: var(--px-neutral-cat-fill);
+  --color-px-caution-fill: var(--px-caution-fill);
+  --color-px-danger-fill: var(--px-danger-fill);
 
   /* ─────────────────────────────────────────────────────────
      Override the Tailwind neutral + semantic palettes so that
      legacy `bg-zinc-*` / `text-red-*` / `bg-green-*` / `text-blue-*`
      / `text-amber-*` / `text-emerald-*` / `text-indigo-*` / `text-purple-*`
-     / `bg-white` usages inherit the warm-light v4 palette without
+     / `bg-white` usages inherit the daylight v4 palette without
      touching every call site. Tuned so semantic ramps read correctly
      (50/100 = tinted bg, 500/600 = saturated brand, 700/900 = text).
      ───────────────────────────────────────────────────────── */
@@ -282,7 +290,6 @@
   white-space: nowrap;
   outline: none;
 }
-.px-btn:focus-visible { box-shadow: 0 0 0 3px var(--px-accent-tint); }
 .px-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .px-btn:hover:not(:disabled) { background: var(--px-surface-2); color: var(--px-fg); }
 
@@ -359,7 +366,7 @@
 
 .px-dialog-backdrop {
   position: fixed; inset: 0; z-index: 50;
-  background: rgba(30, 27, 22, 0.34);
+  background: rgba(14, 14, 14, 0.45);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
   animation: px-dialog-fade-in 140ms var(--px-ease);
@@ -407,7 +414,6 @@
 }
 .px-dialog-close:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px var(--px-accent-tint);
 }
 
 .px-dialog-header {
@@ -420,7 +426,7 @@
 .px-dialog-title {
   margin: 0;
   font-family: var(--font-serif);
-  font-weight: 400;
+  font-weight: 700;
   font-size: 22px;
   letter-spacing: -0.4px;
   line-height: 1.2;
@@ -546,8 +552,8 @@
   left: 50%;
   transform: translateX(-50%);
   padding: 6px 10px;
-  background: #1E1B16;
-  color: #F6F2EC;
+  background: var(--px-fg);
+  color: var(--px-surface);
   border-radius: var(--px-r-sm);
   font-size: 11.5px;
   line-height: 1.4;
@@ -635,6 +641,9 @@
 }
 .px-pulse { animation: px-pulse 1.8s ease-in-out infinite; }
 
+/* ─── Tabular figures ─── */
+.px-num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
+
 /* ─────────────────────────────────────────────────────────
    Form inputs — polished .px-input system
    Consumed by any hand-rolled native input. shadcn primitives
@@ -659,7 +668,7 @@
               background var(--px-d1) var(--px-ease);
   -webkit-appearance: none;
   appearance: none;
-  box-shadow: inset 0 1px 0 rgba(58, 45, 28, 0.02);
+  box-shadow: inset 0 1px 0 rgba(40, 45, 60, 0.02);
 }
 .px-input::placeholder { color: var(--px-fg-4); }
 .px-input:hover:not(:disabled):not(:focus) {
@@ -667,8 +676,6 @@
 }
 .px-input:focus {
   border-color: var(--px-accent);
-  box-shadow: 0 0 0 3px var(--px-accent-tint),
-              inset 0 1px 0 rgba(58, 45, 28, 0.02);
 }
 .px-input:disabled {
   color: var(--px-fg-4);
@@ -744,7 +751,7 @@ select.px-input::-ms-expand { display: none; }
 .px-radio { border-radius: 99px; }
 .px-check:hover, .px-radio:hover { border-color: var(--px-fg-3); }
 .px-check:focus-visible, .px-radio:focus-visible {
-  outline: none; box-shadow: 0 0 0 3px var(--px-accent-tint);
+  outline: none;
 }
 .px-check:checked, .px-radio:checked {
   background: var(--px-accent); border-color: var(--px-accent);
@@ -778,17 +785,17 @@ select.px-input::-ms-expand { display: none; }
 }
 .px-switch:checked { background: var(--px-accent); }
 .px-switch:checked::after { left: 14px; }
-.px-switch:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--px-accent-tint); }
+.px-switch:focus-visible { outline: none; }
 
 /* ------------------------------------------------------------------ */
 /* Stage card "generating" animations (retained from Phase 2A)         */
 /* ------------------------------------------------------------------ */
 @keyframes stage-glow {
   0%, 100% {
-    box-shadow: 0 0 0 0 rgba(14, 111, 99, 0);
+    box-shadow: 0 0 0 0 rgba(255, 196, 40, 0);
   }
   50% {
-    box-shadow: 0 0 20px 2px rgba(14, 111, 99, 0.28);
+    box-shadow: 0 0 20px 2px rgba(255, 196, 40, 0.28);
   }
 }
 
@@ -815,7 +822,7 @@ select.px-input::-ms-expand { display: none; }
     90deg,
     transparent 0%,
     transparent 35%,
-    rgba(14, 111, 99, 0.14) 50%,
+    rgba(255, 196, 40, 0.14) 50%,
     transparent 65%,
     transparent 100%
   );
@@ -863,5 +870,40 @@ select.px-input::-ms-expand { display: none; }
   }
   .stage-generating-shimmer::before {
     background: none;
+  }
+}
+
+/* ─── High-contrast keyboard focus — yellow fails 3:1 on white, so use ink. ─── */
+.px-btn:focus-visible,
+.px-input:focus-visible,
+select.px-input:focus-visible,
+.px-check:focus-visible,
+.px-radio:focus-visible,
+.px-switch:focus-visible,
+.px-dialog-close:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--px-surface), 0 0 0 4px var(--px-fg);
+}
+/* Pointer focus on inputs keeps the soft accent affordance + border. */
+.px-input:focus:not(:focus-visible) {
+  border-color: var(--px-accent);
+  box-shadow: 0 0 0 3px var(--px-accent-tint), inset 0 1px 0 rgba(14, 14, 14, 0.02);
+}
+
+/* ─── Glass (chrome + ephemeral surfaces ONLY) ─── */
+.px-glass {
+  background: var(--px-glass-bg);
+  border: 1px solid var(--px-glass-border);
+  -webkit-backdrop-filter: blur(var(--px-glass-blur));
+  backdrop-filter: blur(var(--px-glass-blur));
+}
+@supports not (backdrop-filter: blur(1px)) {
+  .px-glass { background: var(--px-surface-2); }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .px-glass {
+    background: var(--px-surface-2);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 }
