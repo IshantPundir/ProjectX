@@ -31,7 +31,6 @@ def combine_signal(observations: list[SignalObservation]) -> tuple[SignalState, 
 
     best = max(confident, key=lambda o: _RANK[o.level])
     any_redflag = any(o.red_flags_hit for o in confident)
-    reaches_bar = _RANK[best.level] >= _RANK["meets_bar"]
 
     if best.level == "excellent" and not any_redflag:
         state: SignalState = "excellent"
