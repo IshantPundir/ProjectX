@@ -644,6 +644,10 @@
 }
 .px-pulse { animation: px-pulse 1.8s ease-in-out infinite; }
 
+@keyframes px-spin { to { transform: rotate(360deg); } }
+.px-spin { animation: px-spin 0.7s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .px-spin { animation-duration: 1.4s; } }
+
 /* ─── Tabular figures ─── */
 .px-num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
 
