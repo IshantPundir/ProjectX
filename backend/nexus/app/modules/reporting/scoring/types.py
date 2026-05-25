@@ -23,6 +23,8 @@ class ScoredUnit:
     clarifies: int
     word_count: int
     candidate_engaged: bool      # triage kind ∈ answering (not no_experience/off_topic/backchannel)
+    # bank question_kind (e.g. "experience_check"); None for legacy units without the field
+    question_kind: str | None = None
 
 
 @dataclass(frozen=True)

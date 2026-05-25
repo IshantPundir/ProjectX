@@ -696,10 +696,10 @@ class Settings(BaseSettings):
     # extraction / question-bank / engine models above.
     #
     # ``openai_report_scorer_model`` — strong reasoning model to evaluate
-    # full transcripts and emit structured rubric grades. gpt-5.1 is the
-    # default (reasoning model, supports reasoning_effort). Switch to a
+    # full transcripts and emit structured rubric grades. gpt-5.4 is the
+    # default (full reasoning model, supports reasoning_effort). Switch to a
     # cheaper model by setting OPENAI_REPORT_SCORER_MODEL=gpt-5.4-mini.
-    openai_report_scorer_model: str = "gpt-5.1"
+    openai_report_scorer_model: str = "gpt-5.4"
 
     # ``openai_report_scorer_effort`` — reasoning_effort forwarded to the
     # OpenAI API only when non-empty (effort-gating contract: callers gate on

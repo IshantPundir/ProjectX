@@ -247,6 +247,7 @@ def segment(
                 clarifies=clarifies[idx],
                 word_count=wc,
                 candidate_engaged=engaged[idx],
+                question_kind=q.get("question_kind"),
             )
         )
 

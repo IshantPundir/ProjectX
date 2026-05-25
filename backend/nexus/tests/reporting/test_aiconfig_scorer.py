@@ -18,9 +18,9 @@ from app.config import Settings
 
 
 def test_settings_report_scorer_model_default():
-    """openai_report_scorer_model defaults to gpt-5.1 (strong reasoning model)."""
+    """openai_report_scorer_model defaults to gpt-5.4 (full reasoning model)."""
     fields = Settings.model_fields
-    assert fields["openai_report_scorer_model"].default == "gpt-5.1"
+    assert fields["openai_report_scorer_model"].default == "gpt-5.4"
 
 
 def test_settings_report_scorer_effort_default():

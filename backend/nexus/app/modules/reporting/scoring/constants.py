@@ -10,3 +10,9 @@ SUBSTANTIVE_WORD_FLOOR = 8      # min words for an answer to count as a "substan
 
 TECHNICAL_TYPES = frozenset({"competency", "experience", "credential"})
 BEHAVIORAL_TYPES = frozenset({"behavioral"})
+
+# Question kinds where a brief, clear answer is a complete answer.
+# For these kinds, any engaged non-empty response counts as FULL opportunity
+# regardless of word count — e.g. "More than sixteen years" is a complete
+# answer to "how many years experience?".
+FACTUAL_QUESTION_KINDS: frozenset[str] = frozenset({"experience_check", "compliance_binary"})

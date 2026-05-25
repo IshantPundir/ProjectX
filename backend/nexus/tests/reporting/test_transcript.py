@@ -444,6 +444,59 @@ def test_synthetic_mandatory_questions_ordered_before_non_mandatory() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_real_session_question_kind_propagated_from_bank() -> None:
+    """ScoredUnit.question_kind must match the bank's question_kind field.
+
+    The two experience_check questions in the fixture (0ab73bfa and 2fe68aad)
+    must surface as question_kind='experience_check' in the emitted units.
+    The technical_scenario questions must surface as 'technical_scenario'.
+    """
+    envelope, questions = _load_real_fixtures()
+    units = segment(envelope=envelope, questions=questions)
+
+    # Build a lookup from question_id prefix → emitted unit
+    unit_by_prefix = {u.question_id[:8]: u for u in units}
+
+    # The years-of-experience question (position=0, is_mandatory=True)
+    years_unit = unit_by_prefix.get("0ab73bfa")
+    assert years_unit is not None, "Years-of-experience unit not found"
+    assert years_unit.question_kind == "experience_check", (
+        f"Expected 'experience_check'; got {years_unit.question_kind!r}"
+    )
+
+    # The Workato-years question (position=1, is_mandatory=True)
+    workato_unit = unit_by_prefix.get("2fe68aad")
+    assert workato_unit is not None, "Workato-years unit not found"
+    assert workato_unit.question_kind == "experience_check", (
+        f"Expected 'experience_check'; got {workato_unit.question_kind!r}"
+    )
+
+    # A technical_scenario question (programming, 4f648441)
+    prog_unit = unit_by_prefix.get("4f648441")
+    assert prog_unit is not None, "Programming question unit not found"
+    assert prog_unit.question_kind == "technical_scenario", (
+        f"Expected 'technical_scenario'; got {prog_unit.question_kind!r}"
+    )
+
+
+def test_synthetic_question_kind_none_when_missing_from_bank() -> None:
+    """When a bank question has no question_kind key, ScoredUnit.question_kind
+    must be None (not raise, not default to a non-None string)."""
+    # _make_synthetic_questions does NOT include question_kind — legacy shape.
+    questions = _make_synthetic_questions(["q0"])
+
+    envelope = {
+        "events": [
+            _ev_dir(0, "ASK", "t-0"),
+            _ev_td(100, "t-1", "My answer"),
+        ]
+    }
+
+    units = segment(envelope=envelope, questions=questions)
+    assert len(units) == 1
+    assert units[0].question_kind is None
+
+
 def test_transcript_kwarg_accepted_but_not_used_for_mapping() -> None:
     """Passing transcript= should not break the call; units still come from envelope."""
     questions = _make_synthetic_questions(["q0"])
