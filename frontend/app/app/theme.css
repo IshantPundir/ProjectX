@@ -104,7 +104,7 @@
   --c-green-600: #206649;
   --c-green-700: #14523A;
   --c-green-800: #103F2E;
-  --c-green-900: #0C3D2A;
+  --c-green-900: #082C1E;
 
   --c-emerald-50:  #EAF5F0;
   --c-emerald-100: #D4EBE2;
@@ -152,7 +152,7 @@
   --c-amber-50:  #FBF6E4;
   --c-amber-100: #F6ECC4;
   --c-amber-200: #EDD990;
-  --c-amber-300: #E4C364;
+  --c-amber-300: #ECC050;
   --c-amber-400: #EDAC38;
   --c-amber-500: #E8930C;
   --c-amber-600: #C07A0A;
@@ -271,7 +271,7 @@
   --px-r-lg: 10px;
   --px-r-xl: 14px;
 
-  /* Shadows */
+  /* Shadows — cool-tinted on md/lg — deliberate */
   --px-shadow-sm: 0 1px 2px rgba(14, 14, 14, 0.05);
   --px-shadow-md: 0 8px 24px rgba(40, 45, 60, 0.08), 0 2px 4px rgba(40, 45, 60, 0.04);
   --px-shadow-lg: 0 24px 60px rgba(40, 45, 60, 0.14), 0 6px 16px rgba(40, 45, 60, 0.06);

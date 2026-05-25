@@ -287,12 +287,12 @@
 .px-btn:hover:not(:disabled) { background: var(--px-surface-2); color: var(--px-fg); }
 
 .px-btn.primary {
-  background: var(--px-accent); color: #fff;
+  background: var(--px-accent); color: var(--px-accent-ink);
   font-weight: 600;
   box-shadow: 0 1px 2px rgba(0,0,0,0.06), 0 0 0 1px var(--px-accent-line);
 }
 .px-btn.primary:hover:not(:disabled) {
-  background: var(--px-accent-2); color: #fff;
+  background: var(--px-accent-2); color: var(--px-accent-ink);
   box-shadow: 0 2px 6px var(--px-accent-glow), 0 0 0 1px var(--px-accent-line);
 }
 
