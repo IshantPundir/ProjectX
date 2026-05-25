@@ -58,14 +58,15 @@ export const Button = React.forwardRef<
   const variantClass = VARIANT_CLASS[resolvedVariant];
   const sizeClass = SIZE_CLASS[size];
   const isDisabled = disabled || loading;
+  const isIconSize = size === "icon" || size === "icon-sm" || size === "icon-xs";
   return (
     <button
+      {...rest}
       ref={ref}
       type={type}
       className={cn(variantClass, sizeClass, className)}
       disabled={isDisabled}
       aria-busy={loading || undefined}
-      {...rest}
     >
       {loading && (
         <svg
@@ -76,7 +77,7 @@ export const Button = React.forwardRef<
           <path d="M21 12a9 9 0 1 1-6.2-8.6" />
         </svg>
       )}
-      {children}
+      {isIconSize && loading ? null : children}
     </button>
   );
 });

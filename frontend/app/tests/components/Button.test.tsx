@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { render, screen } from "@testing-library/react";
 import { Button } from "@/components/px/Button";
 
 describe("Button loading", () => {
@@ -12,7 +12,9 @@ describe("Button loading", () => {
 
   it("is not disabled when not loading", () => {
     render(<Button>Save</Button>);
-    expect(screen.getByRole("button", { name: /save/i })).not.toBeDisabled();
+    const btn = screen.getByRole("button", { name: /save/i });
+    expect(btn).not.toBeDisabled();
+    expect(btn.querySelector("svg")).toBeNull();
   });
 
   it("keeps an explicit disabled even when not loading", () => {
