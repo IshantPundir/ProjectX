@@ -51,7 +51,7 @@ describe('useProctoringController', () => {
     )
     await act(async () => {
       await result.current.report('tab_switch')
-      await result.current.report('focus_loss')
+      await result.current.report('fullscreen_abandoned')
     })
     expect(onTerminated).toHaveBeenCalledTimes(1)
   })

@@ -2,7 +2,9 @@ import type { ProctoringKind } from '@/lib/api/candidate-session'
 
 export const HARD_KINDS: ReadonlySet<ProctoringKind> = new Set([
   'tab_switch',
-  'focus_loss',
+  // focus_loss is now soft (returned within the grace window); focus_abandoned
+  // is the hard "grace expired" terminator — mirrors the fullscreen pair.
+  'focus_abandoned',
   'fullscreen_abandoned',
   'devtools',
 ])
@@ -15,6 +17,7 @@ export function isHard(kind: ProctoringKind): boolean {
 export const VIOLATION_LABEL: Record<ProctoringKind, string> = {
   tab_switch: 'switching tabs',
   focus_loss: 'leaving the interview window',
+  focus_abandoned: 'leaving the interview window',
   fullscreen_abandoned: 'exiting fullscreen',
   devtools: 'opening developer tools',
   fullscreen_exit: 'exiting fullscreen',

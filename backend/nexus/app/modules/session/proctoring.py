@@ -13,7 +13,11 @@ Severity = Literal["hard", "soft"]
 
 VIOLATION_SEVERITY: dict[str, Severity] = {
     "tab_switch": "hard",
-    "focus_loss": "hard",
+    # focus_loss is the "returned within the grace window" signal (soft warning),
+    # mirroring fullscreen_exit. focus_abandoned is the "grace expired" signal
+    # (hard, terminates), mirroring fullscreen_abandoned.
+    "focus_loss": "soft",
+    "focus_abandoned": "hard",
     "fullscreen_abandoned": "hard",
     "devtools": "hard",
     "fullscreen_exit": "soft",

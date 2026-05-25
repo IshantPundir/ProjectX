@@ -5,7 +5,10 @@ import { useVisibilityGuard } from '@/components/interview/proctoring/use-visibi
 import { useFocusGuard } from '@/components/interview/proctoring/use-focus-guard'
 import { useKeyboardGuard } from '@/components/interview/proctoring/use-keyboard-guard'
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  vi.restoreAllMocks()
+  vi.useRealTimers()
+})
 
 function setVisibility(state: 'visible' | 'hidden') {
   Object.defineProperty(document, 'visibilityState', { value: state, configurable: true })
@@ -35,19 +38,70 @@ describe('useVisibilityGuard', () => {
 })
 
 describe('useFocusGuard', () => {
-  it('fires focus_loss on blur when the tab is still visible', () => {
+  it('opens the grace overlay on blur without an immediate violation', () => {
+    vi.useFakeTimers()
     setVisibility('visible')
     const onViolation = vi.fn()
-    renderHook(() => useFocusGuard({ armed: true, onViolation }))
+    const { result } = renderHook(() =>
+      useFocusGuard({ armed: true, graceSeconds: 10, onViolation }),
+    )
     act(() => window.dispatchEvent(new Event('blur')))
+    expect(result.current.showOverlay).toBe(true)
+    expect(onViolation).not.toHaveBeenCalled()
+  })
+
+  it('reports soft focus_loss and closes the overlay when focus returns in time', () => {
+    vi.useFakeTimers()
+    setVisibility('visible')
+    const onViolation = vi.fn()
+    const { result } = renderHook(() =>
+      useFocusGuard({ armed: true, graceSeconds: 10, onViolation }),
+    )
+    act(() => window.dispatchEvent(new Event('blur')))
+    act(() => {
+      vi.advanceTimersByTime(3000)
+      window.dispatchEvent(new Event('focus'))
+    })
     expect(onViolation).toHaveBeenCalledWith('focus_loss')
+    expect(onViolation).toHaveBeenCalledTimes(1)
+    expect(result.current.showOverlay).toBe(false)
+  })
+
+  it('reports hard focus_abandoned when the grace window expires', () => {
+    vi.useFakeTimers()
+    setVisibility('visible')
+    const onViolation = vi.fn()
+    const { result } = renderHook(() =>
+      useFocusGuard({ armed: true, graceSeconds: 3, onViolation }),
+    )
+    act(() => window.dispatchEvent(new Event('blur')))
+    act(() => vi.advanceTimersByTime(3000))
+    expect(onViolation).toHaveBeenCalledWith('focus_abandoned')
+    expect(result.current.showOverlay).toBe(false)
   })
 
   it('defers to the visibility guard when the blur is a tab switch (hidden)', () => {
+    vi.useFakeTimers()
     setVisibility('hidden')
     const onViolation = vi.fn()
-    renderHook(() => useFocusGuard({ armed: true, onViolation }))
+    const { result } = renderHook(() =>
+      useFocusGuard({ armed: true, graceSeconds: 10, onViolation }),
+    )
     act(() => window.dispatchEvent(new Event('blur')))
+    expect(result.current.showOverlay).toBe(false)
+    expect(onViolation).not.toHaveBeenCalled()
+  })
+
+  it('does nothing when not armed', () => {
+    vi.useFakeTimers()
+    setVisibility('visible')
+    const onViolation = vi.fn()
+    const { result } = renderHook(() =>
+      useFocusGuard({ armed: false, graceSeconds: 10, onViolation }),
+    )
+    act(() => window.dispatchEvent(new Event('blur')))
+    act(() => vi.advanceTimersByTime(10000))
+    expect(result.current.showOverlay).toBe(false)
     expect(onViolation).not.toHaveBeenCalled()
   })
 })

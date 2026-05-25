@@ -90,6 +90,7 @@ class AudioProcessingHints(BaseModel):
 ProctoringKind = Literal[
     "tab_switch",
     "focus_loss",
+    "focus_abandoned",
     "fullscreen_abandoned",
     "devtools",
     "fullscreen_exit",

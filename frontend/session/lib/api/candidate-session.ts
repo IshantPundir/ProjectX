@@ -55,6 +55,7 @@ export interface AudioProcessingHints {
 export type ProctoringKind =
   | 'tab_switch'
   | 'focus_loss'
+  | 'focus_abandoned'
   | 'fullscreen_abandoned'
   | 'devtools'
   | 'fullscreen_exit'
