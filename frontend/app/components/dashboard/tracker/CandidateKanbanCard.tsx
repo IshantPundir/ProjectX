@@ -17,12 +17,12 @@ interface Props {
 
 // Stable avatar color derived from the candidate's display name.
 const AVATAR_COLORS = [
-  '#C97B5E',
-  '#7A8DB8',
-  '#8B9E7E',
-  '#B89064',
-  '#9B7AB0',
-  '#6FA3A1',
+  '#6C5CD0',
+  '#3F7FB5',
+  '#1F8497',
+  '#2F8E73',
+  '#9A5BA8',
+  '#C0607E',
 ]
 function avatarColor(name: string | null | undefined): string {
   const n = (name || '?').trim()
@@ -266,7 +266,7 @@ export default function CandidateKanbanCard(props: Props) {
   const lifted = hover && !isDragging
   const style: React.CSSProperties = {
     ...CARD_WRAPPER_STYLE,
-    border: `1px solid ${lifted ? 'var(--px-hairline-strong, var(--px-fg-5, #d1d5db))' : 'var(--px-hairline)'}`,
+    border: `1px solid ${lifted ? 'var(--px-hairline-strong, var(--px-fg-5, var(--px-surface-3)))' : 'var(--px-hairline)'}`,
     cursor: isDragging ? 'grabbing' : 'grab',
     opacity: isDragging ? 0.35 : undefined,
     boxShadow: lifted

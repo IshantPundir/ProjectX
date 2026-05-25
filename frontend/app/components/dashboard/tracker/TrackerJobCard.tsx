@@ -14,12 +14,12 @@ interface Props {
 // distinct without depending on a stage-type → color map (which would
 // need to grow whenever pipeline-stage v6 ships).
 const BAR_COLORS = [
-  '#3b82f6', // blue
-  '#8b5cf6', // violet
-  '#f59e0b', // amber
-  '#10b981', // emerald
-  '#ec4899', // pink
-  '#6b7280', // gray
+  '#6C5CD0', // violet
+  '#1F8497', // cyan
+  '#2C8472', // mint
+  '#E8930C', // amber
+  '#C0607E', // rose
+  '#5C6B73', // slate
 ] as const
 
 function statusPillStyle(status: JobStatus): { label: string; bg: string; fg: string } {
@@ -28,9 +28,9 @@ function statusPillStyle(status: JobStatus): { label: string; bg: string; fg: st
   // branch is a defensive fallback in case the filter is ever loosened
   // — it renders the raw status rather than mislabelling.
   if (status === 'active') {
-    return { label: 'live', bg: 'rgba(16,185,129,0.12)', fg: '#10b981' }
+    return { label: 'live', bg: 'var(--px-ok-bg)', fg: 'var(--px-ok)' }
   }
-  return { label: status, bg: 'rgba(113,113,122,0.12)', fg: '#71717a' }
+  return { label: status, bg: 'var(--px-surface-3)', fg: 'var(--px-fg-3)' }
 }
 
 
