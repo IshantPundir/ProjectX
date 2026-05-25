@@ -1,4 +1,4 @@
-from app.modules.reporting.scoring.input_builder import render_prefix, build_messages
+from app.modules.reporting.scoring.input_builder import build_messages, render_prefix
 
 QUESTION = {"id": "q4", "text": "Design an agent loop…",
             "rubric": {"excellent": "concrete loop + guardrails", "meets_bar": "basic loop",
