@@ -67,6 +67,8 @@ _TENANT_SCOPED_TABLES: tuple[str, ...] = (
     "ats_job_assignments",
     "ats_stage_mappings",
     "ats_sync_logs",
+    # Phase 3D reporting — post-session evaluation report (migration 0047).
+    "session_reports",
 )
 
 
@@ -233,6 +235,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     import app.modules.roles.models  # noqa: F401
     import app.modules.session.models  # noqa: F401
     import app.modules.tenant_settings.models  # noqa: F401
+    import app.modules.reporting.models  # noqa: F401
 
     from app.database import Base
     Base.registry.configure()
