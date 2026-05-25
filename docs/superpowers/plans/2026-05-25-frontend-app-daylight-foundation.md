@@ -248,6 +248,21 @@ In `app/globals.css`, replace these literals:
 - Any remaining `rgba(58, 45, 28, …)` shadow literals → neutral `rgba(40,45,60,…)` (these mostly live in theme.css now; grep `globals.css` for `58, 45, 28` and `30, 27, 22` and replace any stragglers).
 
 Confirm none remain: `grep -nE '14, ?111, ?99|58, ?45, ?28|30, ?27, ?22|1E1B16|F6F2EC' app/globals.css` → empty.
+> Note: `.px-btn.primary` `color:#fff` → `var(--px-accent-ink)` was ALREADY fixed in Task 1's follow-up commit `67a99998` (it was a Critical contrast regression). Do not redo it. Do leave other `.px-btn` variants alone here unless they hardcode a warm hex.
+
+- [ ] **Step 1b: Fix stale comment + add missing `@theme` mappings**
+
+In `app/globals.css`: (a) the `@theme inline` block comment near line ~38 still says "inherit the warm-light v4 palette" — change "warm-light" → "daylight". (b) Add these to the `@theme inline` block alongside the existing `--color-px-*` mappings so the new tokens are reachable as Tailwind utilities and the chart/fill vars resolve:
+```css
+  --color-px-accent-ink: var(--px-accent-ink);
+  --color-px-neutral-cat: var(--px-neutral-cat);
+  --color-px-ok-fill: var(--px-ok-fill);
+  --color-px-ai-fill: var(--px-ai-fill);
+  --color-px-human-fill: var(--px-human-fill);
+  --color-px-neutral-cat-fill: var(--px-neutral-cat-fill);
+  --color-px-caution-fill: var(--px-caution-fill);
+  --color-px-danger-fill: var(--px-danger-fill);
+```
 
 - [ ] **Step 2: Make the dialog title use Urbanist bold**
 

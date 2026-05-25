@@ -2,7 +2,19 @@
 
 **Date:** 2026-05-25
 **Surface:** `frontend/app` (recruiter dashboard) only
-**Status:** Design — pending implementation plan
+**Status:** ✅ Implemented on `main` (Foundation + live design iteration). Sections 2–11 below are the *original* design; the **Revision** block records where it actually landed.
+
+---
+
+## Revision — final landed state (2026-05-25, after live iteration)
+
+The Foundation (tokens/font/globals/AppShell/primitives) shipped as specified, then the **palette and chrome were reworked live** with the user. The committed result differs from sections 3 & 5 below in these ways:
+
+- **Palette → "Iris" (logo-derived), not the warm-yellow pastel of §3.** Pulled from the BinQle Q mark: **deep navy-teal ink `#0C2A38`**, cool light surfaces (`#F4F6F8`), and **violet/lavender/cyan** pastels. Signature accent is **violet `#6C5CD0`** (so `--px-accent-ink` is **white**, not dark — primary buttons are white-on-violet). Semantic category set: ok = mint-teal `#AEE3D9`, ai/info = cyan `#B6E4EE`, human/Borderline = lavender `#D8CEF4`, neutral = mauve `#EAD0E6`, caution = amber `#E8930C`, danger = coral-red `#E5556B`. The warm-yellow `#FFC428` palette was rejected for clashing with the logo + reading as generic. (Token values live in the `[data-px-theme="daylight"]` block in `app/theme.css`.)
+- **Chrome → calm NEUTRAL, not glass (revises §5).** Per ui-ux-pro-max guidance (data-dense + AI-native both want minimal/neutral chrome), the sidebar + topbar are a **uniform opaque neutral surface (`--px-bg-2`)** — the frosted-glass and the opaque-gradient-wash variants were both tried and rejected (the gradient wash read as an unfinished fade and flattened the active-state contrast). The Iris gradient is now a **purposeful accent only** (gradient logo, violet active/focus, pastel content cards, and the login/onboarding backdrop). `.px-glass` / `.px-glass-chrome` utilities remain for ephemeral surfaces (dialogs, popovers).
+- **Top bar is opaque + high z-index** so page content scrolls cleanly *behind* it (legible); the content panel keeps a smooth concave `rounded-tl-2xl` corner filled by a neutral corner-painter (no backdrop gap).
+- **Profile moved to the top-right of the top bar** (avatar → `/profile`); the sidebar user-chip + its sign-out were removed (logout lives on the profile page). Nav items, chrome icon buttons, and the avatar gained hover states (`.px-navlink` / `.px-icon-btn` / `.px-avatar-btn`).
+- **Still pending (page-polish phase, unchanged from §7):** route-level hardcoded old-palette colors (`detail.css`, `JobPipelineFunnel.tsx` stage colors, dashboard attention-card accents), `-fill` pastel usage on kanban/cards, chart palette wiring, `SignalsPanel` `.px-dot` aria-hidden, and the operational note to not run `next build` against the live dev `.next`.
 
 ---
 
