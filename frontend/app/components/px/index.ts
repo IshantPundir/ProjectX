@@ -59,3 +59,5 @@ export type { TooltipContentProps } from "./Tooltip";
 export { Toaster } from "./Toaster";
 
 export { Checkbox } from "./Checkbox";
+
+export { BrandLogo, BrandMark } from "./BrandLogo";
