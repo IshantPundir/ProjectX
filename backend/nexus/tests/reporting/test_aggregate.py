@@ -1,7 +1,20 @@
-from app.modules.reporting.scoring.aggregate import combine_signal, SignalObservation
+from app.modules.reporting.scoring.aggregate import (
+    ScoredSignal,
+    SignalObservation,
+    combine_signal,
+    score_dimension,
+    score_overall,
+)
+
 
 def obs(level, opp, red=False):
     return SignalObservation(level=level, opportunity=opp, red_flags_hit=red)
+
+
+def ss(sig_type, weight, state, score):
+    return ScoredSignal(value=f"{sig_type}-{weight}", type=sig_type, weight=weight,
+                        knockout=False, priority="required", state=state, score=score)
+
 
 def test_not_assessed_when_no_opportunity():
     state, score = combine_signal([obs("below_bar", "none")])
@@ -32,12 +45,6 @@ def test_partial_opportunity_alone_is_not_assessed():
     assert state == "not_assessed" and score is None
 
 
-from app.modules.reporting.scoring.aggregate import score_dimension, ScoredSignal
-
-def ss(type, weight, state, score):
-    return ScoredSignal(value=f"{type}-{weight}", type=type, weight=weight,
-                        knockout=False, priority="required", state=state, score=score)
-
 def test_dimension_weighted_mean_excludes_not_assessed():
     signals = [ss("competency", 3, "excellent", 100),
                ss("competency", 1, "below_bar", 30),
@@ -46,7 +53,7 @@ def test_dimension_weighted_mean_excludes_not_assessed():
     # (3*100 + 1*30) / (3+1) = 82.5 → 82 ; coverage = (3+1)/(3+1+2) = 0.666...
     assert dim.score == 82
     assert round(dim.coverage, 3) == 0.667
-    assert dim.confidence in ("high", "medium", "low")
+    assert dim.confidence == "medium"
 
 def test_dimension_all_not_assessed_is_none():
     dim = score_dimension("behavioral",
@@ -54,7 +61,6 @@ def test_dimension_all_not_assessed_is_none():
     assert dim.score is None and dim.coverage == 0.0
 
 def test_overall_weighted_mean():
-    from app.modules.reporting.scoring.aggregate import score_overall
     score, cov = score_overall([ss("competency", 3, "excellent", 100),
                                 ss("behavioral", 1, "below_bar", 30)])
     assert score == 82 and round(cov, 2) == 1.0

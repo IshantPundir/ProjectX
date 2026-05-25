@@ -77,6 +77,10 @@ def _confidence(coverage: float) -> Confidence:
 def score_dimension(
     name: str, signals: list[ScoredSignal], types: frozenset[str]
 ) -> DimensionScore:
+    """Weighted mean over signals whose type is in `types`.
+
+    Coverage = assessed weight / dimension total weight (not overall total).
+    """
     members = [s for s in signals if s.type in types]
     total_w = sum(s.weight for s in members)
     assessed = [s for s in members if s.score is not None]
