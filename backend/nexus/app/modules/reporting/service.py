@@ -33,10 +33,10 @@ from app.modules.reporting.scoring.constants import (
     BEHAVIORAL_TYPES,
     TECHNICAL_TYPES,
 )
-from app.modules.reporting.scoring.judge import grade_answer
+from app.modules.reporting.scoring.judge import grade_answer, grade_communication
 from app.modules.reporting.scoring.opportunity import classify
 from app.modules.reporting.scoring.transcript import segment
-from app.modules.reporting.scoring.types import SignalDef
+from app.modules.reporting.scoring.types import Opportunity, SignalDef
 
 logger = structlog.get_logger()
 
@@ -59,7 +59,7 @@ def _scored_signal_to_card(
         knockout=sig.knockout,
         state=sig.state,
         score=sig.score,
-        opportunity=opportunity,  # type: ignore[arg-type]
+        opportunity=opportunity,
         evidence=evidence,
         covered_by=covered_by,
     )
@@ -146,7 +146,7 @@ async def build_report(
     signal_evidence: dict[str, list[EvidenceOut]] = defaultdict(list)
     signal_covered_by: dict[str, list[str]] = defaultdict(list)
     # Per-question: the dominant opportunity (from the unit)
-    signal_opportunity: dict[str, str | None] = {}  # signal_value → last opportunity seen
+    signal_opportunity: dict[str, Opportunity | None] = {}  # signal_value → last opportunity seen
 
     # Per-question scorecards
     question_scorecards: list[QuestionScorecard] = []
@@ -240,8 +240,22 @@ async def build_report(
     beh_dim = score_dimension("behavioral", scored_signals, BEHAVIORAL_TYPES)
 
     # ------------------------------------------------------------------
+    # Step 5b — Communication dimension (content-only; excluded from Overall)
+    # ------------------------------------------------------------------
+    transcript_text = "\n".join(
+        t["text"] for t in transcript if t.get("role") == "candidate"
+    )
+    comm_verdict = await grade_communication(
+        transcript_text=transcript_text,
+        correlation_id=correlation_id,
+    )
+    _comm_level_score: dict[str, int] = {"weak": 30, "adequate": 70, "strong": 100}
+    comm_score = _comm_level_score[comm_verdict.level]
+
+    # ------------------------------------------------------------------
     # Step 6 — Overall score + coverage
     # ------------------------------------------------------------------
+    # score_overall operates only on JD ScoredSignals — communication is NOT included.
     overall, coverage = score_overall(scored_signals)
 
     # ------------------------------------------------------------------
@@ -293,6 +307,19 @@ async def build_report(
             score=beh_dim.score,
             coverage=beh_dim.coverage,
             confidence=beh_dim.confidence,
+        ),
+        # Communication is a content-only dimension scored across the full
+        # transcript.  It is intentionally NOT included in score_overall(),
+        # which aggregates only JD-signal ScoredSignals.
+        "communication": DimensionScoreOut(
+            name="communication",
+            score=comm_score,
+            coverage=1.0,
+            confidence="medium",
+            note=(
+                "content-only; full communication scoring pending"
+                " session recording (sub-project B)"
+            ),
         ),
     }
 

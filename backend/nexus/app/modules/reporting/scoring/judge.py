@@ -20,20 +20,15 @@ exactly:
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import structlog
 
 from app.ai.client import get_openai_client
 from app.ai.config import ai_config
 from app.ai.prompts import PromptLoader
 from app.ai.tracing import set_llm_span_attributes
-from app.modules.reporting.schemas import AnswerRating, JudgeVerdict
+from app.modules.reporting.schemas import AnswerRating, CommunicationVerdict, JudgeVerdict
 from app.modules.reporting.scoring.grounding import ground_quotes
 from app.modules.reporting.scoring.input_builder import build_messages, render_prefix
-
-if TYPE_CHECKING:
-    pass
 
 log = structlog.get_logger()
 
@@ -195,3 +190,71 @@ async def grade_answer_consistent(
             return rating
     # Should never reach here.
     return ratings[0]
+
+
+async def grade_communication(
+    *,
+    transcript_text: str,
+    correlation_id: str,
+) -> CommunicationVerdict:
+    """Grade the candidate's content-level communication across the full transcript.
+
+    Loads ``prompts/v3/report_scorer/communication.txt`` as the stable system
+    prefix; the transcript is placed last in the user message (cache-friendly
+    pattern).  Returns a :class:`CommunicationVerdict` with ``level`` ∈
+    {``weak``, ``adequate``, ``strong``}.
+
+    This score is **NOT** included in the Overall score — it is a separate
+    content-level read of the full transcript, independent of JD signals.
+
+    Args:
+        transcript_text: Candidate turns joined into a single string.
+        correlation_id:  Correlation ID for tracing and structured logs.
+    """
+    system_prompt = PromptLoader(
+        version=ai_config.report_scorer_prompt_version
+    ).get("report_scorer/communication")
+
+    messages = build_messages(prefix=system_prompt, transcript_excerpt=transcript_text)
+
+    prompt_cache_key = (
+        f"{ai_config.report_scorer_prompt_cache_key_prefix}"
+        f":communication"
+        f":{ai_config.report_scorer_prompt_version}"
+        f":{ai_config.report_scorer_model}"
+    )
+
+    set_llm_span_attributes(
+        prompt_name="report_scorer_communication",
+        prompt_version=ai_config.report_scorer_prompt_version,
+        correlation_id=correlation_id,
+    )
+
+    client = get_openai_client()
+    create_kwargs: dict[str, object] = {
+        "model": ai_config.report_scorer_model,
+        "response_model": CommunicationVerdict,
+        "messages": messages,
+        "max_retries": 1,
+        "prompt_cache_key": prompt_cache_key,
+    }
+    if ai_config.report_scorer_effort:
+        create_kwargs["reasoning_effort"] = ai_config.report_scorer_effort
+
+    verdict, completion = await client.chat.completions.create_with_completion(
+        **create_kwargs
+    )
+
+    # Log cache usage — never log the transcript or evidence quotes.
+    usage = getattr(completion, "usage", None)
+    if usage is not None:
+        details = getattr(usage, "prompt_tokens_details", None)
+        log.info(
+            "reporting.judge.communication.usage",
+            prompt_tokens=getattr(usage, "prompt_tokens", None),
+            cached_tokens=getattr(details, "cached_tokens", None),
+            completion_tokens=getattr(usage, "completion_tokens", None),
+            correlation_id=correlation_id,
+        )
+
+    return verdict

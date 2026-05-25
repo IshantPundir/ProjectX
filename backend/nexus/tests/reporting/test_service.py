@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app.modules.reporting.schemas import AnswerRating
+from app.modules.reporting.schemas import AnswerRating, CommunicationVerdict
 from app.modules.reporting.service import build_report
 
 FIX = pathlib.Path(__file__).parent / "fixtures"
@@ -70,8 +70,8 @@ async def test_weak_bluffer_is_confident_reject():
 
 @pytest.mark.asyncio
 async def test_not_assessed_signals_excluded():
-    """A question never delivered → its signal stays not_assessed → excluded
-    from the dimension weighted mean → dimension score is None."""
+    """not_assessed signals are excluded from the dimension weighted mean —
+    only assessed signals' scores count."""
 
     # Minimal transcript: only one question delivered (q1) out of two in bank.
     # q2 has no agent turn with its question_id → never delivered → not_assessed.
@@ -177,3 +177,50 @@ async def test_not_assessed_signals_excluded():
     assert not_assessed, "signal-b should appear in signal_scorecards"
     assert not_assessed[0].state == "not_assessed"
     assert not_assessed[0].score is None
+
+
+# ---------------------------------------------------------------------------
+# Communication dimension — separate from Overall (Task 15b)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_communication_is_separate_and_not_in_overall():
+    envelope = json.loads((FIX / "e4072361_envelope.json").read_text())
+    transcript = json.loads((FIX / "e4072361_transcript.json").read_text())
+    bank = json.loads((FIX / "job_bank_slice.json").read_text())
+
+    async def fake_grade(*, question, transcript_excerpt, correlation_id, n_samples=1):
+        return AnswerRating(
+            question_id=question["id"],
+            level="below_bar",
+            evidence_quotes=[],
+            red_flags_hit=["buzzwords"],
+            justification="thin",
+            grounded=True,
+        )
+
+    async def fake_comm(*, transcript_text, correlation_id):
+        return CommunicationVerdict(
+            evidence_quotes=[], justification="ok", level="adequate"
+        )
+
+    with patch(
+        "app.modules.reporting.service.grade_answer", side_effect=fake_grade
+    ), patch(
+        "app.modules.reporting.service.grade_communication", side_effect=fake_comm
+    ):
+        report = await build_report(
+            transcript=transcript,
+            envelope=envelope,
+            questions=bank["questions"],
+            signal_metadata=bank["signal_metadata"],
+            correlation_id="c1",
+        )
+
+    # communication dimension present, "adequate" -> 70
+    assert report.dimension_scores["communication"].score == 70
+    # communication is content-only and NOT folded into Overall:
+    # Overall is computed only from JD signals (all below_bar here -> low). Communication=70
+    # must NOT raise the Overall. Assert Overall reflects only JD signals (<= below_bar band).
+    assert report.overall_score is None or report.overall_score <= 30
