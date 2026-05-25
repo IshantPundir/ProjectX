@@ -235,6 +235,7 @@ class ControlPlane:
             reasoning=decision.reasoning,
             policy_checks=[*policy.checks, *policy.violations, *([cap_note] if cap_note else [])],
             directive_id=directive.id,
+            active_question_id=aqid,  # question on the floor BEFORE this turn's advance (if any)
         )
         return directive, record
 
@@ -376,6 +377,8 @@ class ControlPlane:
         fallbacks march through the bank instead of re-asking the same question forever — the
         infinite-Q1 loop guard (defense-in-depth for total brain failure).
         """
+        # Capture the question on the floor BEFORE any pointer advance (for audit).
+        fallback_aqid: str | None = self._active_question_id
         uncovered = self._coverage.uncovered_mandatory()
         ordered = sorted(self._config.stage.questions, key=lambda q: q.position)
         cur_pos = (
@@ -413,5 +416,6 @@ class ControlPlane:
             turn_ref=turn_ref, candidate_quote=candidate_utterance, move=move,
             reasoning=f"deterministic fallback ({reason})", policy_checks=["fallback"],
             directive_id=directive.id,
+            active_question_id=fallback_aqid,  # question on the floor when the candidate spoke
         )
         return directive, record

@@ -40,3 +40,38 @@ def test_grade_is_constrained():
     with pytest.raises(ValidationError):
         TurnDecisionRecord(turn_ref="t-1", candidate_quote="x", move="probe",
                            reasoning="y", directive_id="d", grade="amazing")
+
+
+def test_active_question_id_defaults_to_none():
+    """active_question_id must default to None for backward compatibility."""
+    r = TurnDecisionRecord(
+        turn_ref="t-1", candidate_quote="x", move="probe",
+        reasoning="y", directive_id="d",
+    )
+    assert r.active_question_id is None
+
+
+def test_active_question_id_round_trips():
+    """active_question_id round-trips through model_dump (the collector uses model_dump)."""
+    r = TurnDecisionRecord(
+        turn_ref="t-42",
+        candidate_quote="I built the billing sync end to end.",
+        move="probe",
+        reasoning="Concrete on ownership; one probe to test depth.",
+        directive_id="d-7f3a",
+        active_question_id="q-abc123",
+    )
+    assert r.active_question_id == "q-abc123"
+    dumped = r.model_dump(mode="json")
+    assert dumped["active_question_id"] == "q-abc123"
+
+
+def test_active_question_id_none_serializes_as_none():
+    """None active_question_id serializes correctly (not omitted or as string 'None')."""
+    r = TurnDecisionRecord(
+        turn_ref="t-1", candidate_quote="x", move="probe",
+        reasoning="y", directive_id="d",
+    )
+    dumped = r.model_dump(mode="json")
+    assert "active_question_id" in dumped
+    assert dumped["active_question_id"] is None

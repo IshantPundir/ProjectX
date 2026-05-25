@@ -531,3 +531,262 @@ def test_transcript_kwarg_accepted_but_not_used_for_mapping() -> None:
     assert len(units) == 1
     assert units[0].question_id == "q0"
     assert "Envelope answer" in units[0].candidate_answer
+
+
+# ---------------------------------------------------------------------------
+# Logged-id mode tests (PART B)
+# ---------------------------------------------------------------------------
+
+
+def _ev_td_with_aqid(t_ms: int, turn_ref: str, quote: str, active_question_id: str) -> dict:
+    """Build a turn.decision event with the active_question_id ground-truth field."""
+    return {
+        "kind": "turn.decision",
+        "t_ms": t_ms,
+        "payload": {
+            "turn_ref": turn_ref,
+            "candidate_quote": quote,
+            "active_question_id": active_question_id,
+        },
+    }
+
+
+def test_logged_id_mode_out_of_order_advancement() -> None:
+    """Core correctness test: when turn.decisions carry active_question_id, the report must
+    map each answer to the LOGGED question — NOT to the pointer-walk position.
+
+    Setup: 5 questions at positions 0-4 (all mandatory).  The brain answers them
+    in a non-sequential order:
+      answer 1 → q at position 4  (active_question_id="q4")
+      answer 2 → q at position 0  (active_question_id="q0")
+
+    Pointer mode would wrongly assign answer 1 → position-0 question and
+    answer 2 → position-1 question.  Logged-id mode must use the brain's
+    ground truth.
+    """
+    questions = _make_synthetic_questions(["q0", "q1", "q2", "q3", "q4"])
+
+    envelope = {
+        "events": [
+            # ASK fires first (puts something on the pointer-walk floor)
+            _ev_dir(0, "ASK", "t-0"),
+            # Answer 1 → brain says this was for q4 (position 4)
+            _ev_td_with_aqid(100, "t-1", "Answer for q4", "q4"),
+            # ACK_ADVANCE in the log (pointer would advance to q1)
+            _ev_dir(110, "ACK_ADVANCE", "t-1"),
+            # Answer 2 → brain says this was for q0 (position 0)
+            _ev_td_with_aqid(200, "t-2", "Answer for q0", "q0"),
+        ]
+    }
+
+    units = segment(envelope=envelope, questions=questions)
+
+    # Must have exactly 2 units — one per answered question.
+    assert len(units) == 2, (
+        f"Expected 2 units; got {len(units)}: {[u.question_id for u in units]}"
+    )
+
+    # Units must be in first-answered order: q4 then q0.
+    assert units[0].question_id == "q4", (
+        f"First unit should be q4 (first answered); got {units[0].question_id!r}"
+    )
+    assert units[1].question_id == "q0", (
+        f"Second unit should be q0 (second answered); got {units[1].question_id!r}"
+    )
+
+    # Content must match the logged id, not the pointer position.
+    assert "Answer for q4" in units[0].candidate_answer, (
+        f"units[0] should contain 'Answer for q4'; got {units[0].candidate_answer!r}"
+    )
+    assert "Answer for q0" in units[1].candidate_answer, (
+        f"units[1] should contain 'Answer for q0'; got {units[1].candidate_answer!r}"
+    )
+
+    # Unanswered questions must produce no units.
+    answered_ids = {u.question_id for u in units}
+    assert answered_ids == {"q0", "q4"}, (
+        f"Only q0 and q4 should appear; got {answered_ids}"
+    )
+
+
+def test_logged_id_mode_probes_attributed_to_logged_question() -> None:
+    """PROBE directives must be counted against the question named by the turn_ref's
+    active_question_id, not against the pointer-walk position."""
+    questions = _make_synthetic_questions(["q0", "q1"])
+
+    # The brain answers q1 (position 1) before q0 (position 0) — non-sequential.
+    # Pointer walk would assign the probe to q0 (position 0, first in order).
+    envelope = {
+        "events": [
+            _ev_dir(0, "ASK", "t-0"),
+            # t-1 graded q1
+            _ev_td_with_aqid(100, "t-1", "Thin answer for q1", "q1"),
+            # PROBE fired for turn t-1 → should be attributed to q1
+            {"kind": "directive.delivered", "t_ms": 110,
+             "payload": {"act": "PROBE", "turn_ref": "t-1"}},
+            # t-2 graded q0
+            _ev_td_with_aqid(200, "t-2", "Answer for q0", "q0"),
+        ]
+    }
+
+    units = segment(envelope=envelope, questions=questions)
+
+    assert len(units) == 2
+    by_id = {u.question_id: u for u in units}
+    assert "q1" in by_id and "q0" in by_id
+
+    # The probe must be on q1, not q0.
+    assert by_id["q1"].probes_fired == 1, (
+        f"q1 should have 1 probe_fired; got {by_id['q1'].probes_fired}"
+    )
+    assert by_id["q0"].probes_fired == 0, (
+        f"q0 should have 0 probes_fired; got {by_id['q0'].probes_fired}"
+    )
+
+
+def test_logged_id_mode_clarify_attributed_to_logged_question() -> None:
+    """CLARIFY directives must be counted against the question named by active_question_id."""
+    questions = _make_synthetic_questions(["q0", "q1"])
+
+    envelope = {
+        "events": [
+            _ev_dir(0, "ASK", "t-0"),
+            _ev_td_with_aqid(100, "t-1", "Unclear answer for q1", "q1"),
+            {"kind": "directive.delivered", "t_ms": 110,
+             "payload": {"act": "CLARIFY", "turn_ref": "t-1"}},
+            _ev_td_with_aqid(200, "t-2", "Answer for q0", "q0"),
+        ]
+    }
+
+    units = segment(envelope=envelope, questions=questions)
+    by_id = {u.question_id: u for u in units}
+
+    assert by_id["q1"].clarifies == 1
+    assert by_id["q0"].clarifies == 0
+
+
+def test_logged_id_mode_engagement_via_triage() -> None:
+    """Triage kind must be associated with the LOGGED question, not the pointer position."""
+    questions = _make_synthetic_questions(["q0", "q1"])
+
+    # The brain is on q1 (non-sequential); triage says no_experience for t-1.
+    # Only q1 should be marked not-engaged.
+    envelope = {
+        "events": [
+            _ev_triage(90, "t-1", "no_experience"),
+            _ev_dir(0, "ASK", "t-0"),
+            _ev_td_with_aqid(100, "t-1", "I have no experience", "q1"),
+            _ev_triage(190, "t-2", "answering"),
+            _ev_td_with_aqid(200, "t-2", "Answer for q0", "q0"),
+        ]
+    }
+
+    units = segment(envelope=envelope, questions=questions)
+    by_id = {u.question_id: u for u in units}
+
+    assert by_id["q1"].candidate_engaged is False
+    assert by_id["q0"].candidate_engaged is True
+
+
+def test_logged_id_mode_uses_question_kind_from_bank() -> None:
+    """question_kind must be sourced from the bank question, not hardcoded."""
+    questions = [
+        {
+            "id": "qa",
+            "text": "Question A",
+            "is_mandatory": True,
+            "position": 0,
+            "question_kind": "experience_check",
+            "signal_values": [],
+        },
+        {
+            "id": "qb",
+            "text": "Question B",
+            "is_mandatory": True,
+            "position": 1,
+            "question_kind": "technical_scenario",
+            "signal_values": [],
+        },
+    ]
+
+    envelope = {
+        "events": [
+            _ev_dir(0, "ASK", "t-0"),
+            _ev_td_with_aqid(100, "t-1", "Experience answer", "qa"),
+            _ev_td_with_aqid(200, "t-2", "Technical answer", "qb"),
+        ]
+    }
+
+    units = segment(envelope=envelope, questions=questions)
+    by_id = {u.question_id: u for u in units}
+
+    assert by_id["qa"].question_kind == "experience_check"
+    assert by_id["qb"].question_kind == "technical_scenario"
+
+
+def test_logged_id_mode_unknown_aqid_is_skipped() -> None:
+    """If active_question_id names a question not in the bank, that turn is skipped gracefully."""
+    questions = _make_synthetic_questions(["q0"])
+
+    envelope = {
+        "events": [
+            _ev_dir(0, "ASK", "t-0"),
+            _ev_td_with_aqid(100, "t-1", "Answer for unknown", "does-not-exist"),
+            _ev_td_with_aqid(200, "t-2", "Answer for q0", "q0"),
+        ]
+    }
+
+    units = segment(envelope=envelope, questions=questions)
+
+    assert len(units) == 1
+    assert units[0].question_id == "q0"
+    assert "Answer for q0" in units[0].candidate_answer
+
+
+def test_logged_id_mode_mode_detection_requires_nonnull_aqid() -> None:
+    """Pointer mode is used when ALL turn.decision events have null/missing active_question_id.
+
+    This is the backward-compat guarantee: the e4072361 real fixture (no active_question_id
+    in any event) must continue to use the pointer walk, not the logged-id path.
+    """
+    questions = _make_synthetic_questions(["q0", "q1"])
+
+    # No active_question_id → pointer mode
+    envelope = {
+        "events": [
+            _ev_dir(0, "ASK", "t-0"),
+            _ev_td(100, "t-1", "Answer for q0"),  # no active_question_id
+            _ev_dir(110, "ACK_ADVANCE", "t-1"),
+            _ev_td(200, "t-2", "Answer for q1"),  # no active_question_id
+        ]
+    }
+
+    units = segment(envelope=envelope, questions=questions)
+
+    # Pointer mode: q0 first (position 0), then q1 (position 1).
+    assert len(units) == 2
+    assert units[0].question_id == "q0"
+    assert units[1].question_id == "q1"
+
+
+def test_real_session_pointer_fallback_unchanged() -> None:
+    """The e4072361 real session (no active_question_id) must continue to use pointer mode.
+
+    This test is the backward-compat guard: adding logged-id mode must NOT break
+    sessions recorded before the field was introduced.
+    """
+    envelope, questions = _load_real_fixtures()
+
+    # Confirm no active_question_id in any turn.decision event.
+    has_aqid = any(
+        (e.get("payload") or {}).get("active_question_id") is not None
+        for e in (envelope.get("events") or [])
+        if e.get("kind") == "turn.decision"
+    )
+    assert not has_aqid, (
+        "e4072361 fixture has active_question_id — it should be testing pointer fallback mode"
+    )
+
+    units = segment(envelope=envelope, questions=questions)
+    # The pointer-walk invariants are the same as the existing real-fixture tests.
+    assert len(units) >= 7, f"Expected ≥7 pointer-mode units; got {len(units)}"

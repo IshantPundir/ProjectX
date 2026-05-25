@@ -39,3 +39,10 @@ class TurnDecisionRecord(BaseModel):
         default_factory=list, description="Deterministic gates that passed/fired this turn."
     )
     directive_id: str = Field(min_length=1, description="The Directive this record produced.")
+    active_question_id: str | None = Field(
+        default=None,
+        description=(
+            "Bank question id on the floor when this turn was graded "
+            "(the question this answer addresses). None for legacy records."
+        ),
+    )

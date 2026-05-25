@@ -429,3 +429,87 @@ async def test_advance_honors_brain_pick_in_optional_territory(monkeypatch):
     directive, _ = await plane.decide(turn_ref="t-1", candidate_utterance="ans",
                                       transcript_window=[], active_question_id="q1")
     assert directive.say == "Tell me about rest."   # q3 honored (no mandatory left to skip)
+
+
+# ---------------------------------------------------------------------------
+# active_question_id in TurnDecisionRecord (PART A — audit ground truth)
+# ---------------------------------------------------------------------------
+
+
+async def test_decide_record_carries_active_question_id(monkeypatch):
+    """TurnDecisionRecord.active_question_id must equal the question on the floor BEFORE the
+    advance (the question the candidate's answer addresses, not the one we're moving to)."""
+    plane, _ = _plane()
+    _patch_brain(monkeypatch, BrainDecision(
+        reasoning="strong; advance", candidate_intent=CandidateIntent.answer,
+        grade="strong", coverage_delta=_cov(python="sufficient"), move=BrainMove.advance,
+        target_signal="python", bank_question_id="q2"))
+    # active_question_id="q1" is explicit so we know what was on the floor
+    directive, record = await plane.decide(
+        turn_ref="t-1", candidate_utterance="I built Python pipelines.",
+        transcript_window=[], active_question_id="q1")
+    assert directive.act is DirectiveAct.ACK_ADVANCE
+    # The record's active_question_id must be q1 (the question being answered),
+    # NOT q2 (the question advanced to after this turn).
+    assert record.active_question_id == "q1", (
+        f"Expected 'q1' (the pre-advance active question); got {record.active_question_id!r}"
+    )
+
+
+async def test_decide_record_active_question_id_with_probe(monkeypatch):
+    """On a probe (no advance) the active_question_id stays on the current question."""
+    plane, _ = _plane()
+    _patch_brain(monkeypatch, BrainDecision(
+        reasoning="thin; probe", candidate_intent=CandidateIntent.answer, grade="thin",
+        coverage_delta=_cov(python="partial"), move=BrainMove.probe, target_signal="python",
+        bank_follow_up_index=0))
+    _, record = await plane.decide(
+        turn_ref="t-1", candidate_utterance="we did stuff",
+        transcript_window=[], active_question_id="q1")
+    assert record.active_question_id == "q1"
+
+
+async def test_fallback_record_carries_active_question_id_before_advance(monkeypatch):
+    """Fallback TurnDecisionRecord must capture the question on the floor BEFORE the fallback
+    advance so the report knows which question was being answered when the brain failed."""
+    plane, _ = _plane()
+    plane.opener()                                            # pointer → q1
+
+    async def _boom(**kwargs):
+        raise RuntimeError("brain down")
+    monkeypatch.setattr(brain_service, "_call_brain", _boom)
+
+    directive, record = await plane.decide(
+        turn_ref="t-1", candidate_utterance="...", transcript_window=[])
+    # The fallback advanced to q2, but the candidate was answering q1.
+    assert directive.act is DirectiveAct.ACK_ADVANCE
+    assert directive.say == "Tell me about kafka."      # advanced to q2
+    assert record.active_question_id == "q1", (         # but was grading q1
+        f"Fallback record active_question_id should be 'q1'; got {record.active_question_id!r}"
+    )
+
+
+async def test_decide_record_active_question_id_flows_into_event_payload(monkeypatch):
+    """The turn.decision event payload (via EventCollector.record_decision) must contain
+    active_question_id — this is the key the report uses in logged-id mode."""
+    from app.modules.interview_engine_v2.event_log.collector import EventCollector
+
+    plane, _ = _plane()
+    _patch_brain(monkeypatch, BrainDecision(
+        reasoning="strong; advance", candidate_intent=CandidateIntent.answer,
+        grade="strong", coverage_delta=_cov(python="sufficient"), move=BrainMove.advance,
+        target_signal="python", bank_question_id="q2"))
+    directive, record = await plane.decide(
+        turn_ref="t-1", candidate_utterance="I wrote Python parsers.",
+        transcript_window=[], active_question_id="q1")
+
+    collector = EventCollector(session_id="s", tenant_id="t", correlation_id="c")
+    collector.record_decision(record, t_ms=100, wall_ms=50)
+    env = collector.envelope()
+
+    td_event = next(e for e in env.events if e.kind == "turn.decision")
+    payload = td_event.payload
+    assert "active_question_id" in payload, "active_question_id missing from turn.decision payload"
+    assert payload["active_question_id"] == "q1", (
+        f"Expected 'q1' in event payload; got {payload['active_question_id']!r}"
+    )
