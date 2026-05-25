@@ -64,6 +64,9 @@ from app.modules.question_bank import actors as _question_bank_actors  # noqa: F
 # was removed, so this no longer runs on a scheduler tick).
 from app.modules.ats import actors as _ats_actors  # noqa: F401, E402
 
+# Phase 3D reporting — post-session score_session_report actor.
+from app.modules.reporting import actors as _reporting_actors  # noqa: F401, E402
+
 # Flush OTel batched spans on worker exit.
 atexit.register(_otel_provider.shutdown)
 

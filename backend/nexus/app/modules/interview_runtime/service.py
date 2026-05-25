@@ -424,3 +424,21 @@ async def record_session_result(
             "result_status": derived_status,
         },
     )
+
+    # Enqueue async report scoring for v2 sessions only.
+    # Gate: coverage_summary is not None marks a v2 SessionResult (v1 leaves it None).
+    # Local import avoids any future circular-import risk between interview_runtime
+    # and reporting (reporting.actors → reporting.service → no reverse dep).
+    if result.coverage_summary is not None:
+        from app.modules.reporting.actors import score_session_report  # noqa: PLC0415
+        score_session_report.send(
+            str(session_id),
+            str(tenant_id),
+            correlation_id,
+        )
+        logger.info(
+            "interview_runtime.record_session_result.report_enqueued",
+            session_id=str(session_id),
+            tenant_id=str(tenant_id),
+            correlation_id=correlation_id,
+        )
