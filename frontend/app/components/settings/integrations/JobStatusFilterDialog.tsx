@@ -186,8 +186,8 @@ export function JobStatusFilterDialog({
           <p
             className="px-hint mt-2 rounded-[8px] border px-3 py-2"
             style={{
-              borderColor: "var(--px-warning-border, #fde68a)",
-              background: "var(--px-warning-bg, #fffbeb)",
+              borderColor: "var(--px-caution-line)",
+              background: "var(--px-caution-bg)",
               color: "var(--px-fg)",
             }}
           >

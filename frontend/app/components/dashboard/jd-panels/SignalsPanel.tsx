@@ -255,7 +255,7 @@ export function SignalsPanel({ snapshot }: Props) {
             Level · <b className="ml-1 capitalize">{snapshot.seniority_level}</b>
           </span>
           <span className="px-chip ok">
-            <span className="px-dot" />
+            <span className="px-dot" aria-hidden="true" />
             {snapshot.signals.length} signals
           </span>
           {doubleCheckCount > 0 && (

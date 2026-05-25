@@ -64,7 +64,7 @@ export function Tabs<T extends string>({
             style={{
               background: selected ? 'var(--px-accent)' : 'transparent',
               color: selected
-                ? '#fff'
+                ? 'var(--px-accent-ink)'
                 : item.disabled
                   ? 'var(--px-fg-4)'
                   : 'var(--px-fg)',
