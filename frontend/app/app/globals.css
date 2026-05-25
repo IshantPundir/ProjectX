@@ -261,12 +261,8 @@
   body {
     @apply text-foreground;
     background: var(--px-bg);
-    background-image:
-      radial-gradient(72% 58% at 6% 2%, rgba(172,215,220,0.34), transparent 60%),
-      radial-gradient(64% 72% at 102% 104%, rgba(220,215,172,0.34), transparent 60%),
-      radial-gradient(50% 50% at 60% -10%, rgba(220,172,175,0.16), transparent 70%),
-      linear-gradient(135deg,#EFF2EE,#E7EEF1);
-    background-attachment: fixed;
+    background-image: var(--px-backdrop);
+    background-attachment: fixed; /* one paint; the glass chrome blurs this fixed backdrop */
     font-feature-settings: "cv11", "ss01";
     -webkit-font-smoothing: antialiased;
   }
@@ -891,7 +887,7 @@ select.px-input:focus-visible,
   outline: none;
   box-shadow: 0 0 0 2px var(--px-surface), 0 0 0 4px var(--px-fg);
 }
-/* ─── Glass (chrome + ephemeral surfaces ONLY) ─── */
+/* ─── Glass (ephemeral surfaces: dialogs, popovers, floating panels) ─── */
 .px-glass {
   background: var(--px-glass-bg);
   border: 1px solid var(--px-glass-border);

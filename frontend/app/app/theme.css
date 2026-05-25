@@ -224,6 +224,13 @@
   --px-glass-border:  rgba(255, 255, 255, 0.65);
   --px-glass-sheen:   linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.85), transparent);
 
+  /* Backdrop — the fixed full-viewport gradient the glass chrome blurs */
+  --px-backdrop:
+    radial-gradient(72% 58% at 6% 2%, rgba(172,215,220,0.34), transparent 60%),
+    radial-gradient(64% 72% at 102% 104%, rgba(220,215,172,0.34), transparent 60%),
+    radial-gradient(50% 50% at 60% -10%, rgba(220,172,175,0.16), transparent 70%),
+    linear-gradient(135deg,#EFF2EE,#E7EEF1);
+
   /* Semantic — dark-ink role vars + pastel fills */
   --px-ok:          #0C3D2A;
   --px-ok-fill:     #A1D8C1;

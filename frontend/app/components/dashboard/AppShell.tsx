@@ -454,9 +454,10 @@ export function AppShell({
       {/* ─── Main column ─── */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {/* Top bar — sticky so it stays visible regardless of scroll level.
-            No bottom border — the content area below carries a rounded
-            top-left + top/left hairlines that trace the chrome/content seam
-            into a single smooth L-shape. */}
+            Topbar shares the same glass fill as the rail (one continuous frosted
+            surface, no divider). The content panel below is solid white with a
+            rounded top-left + top/left hairline, so it reads as floating inside
+            the glass. */}
         <header
           className="px-glass-chrome sticky top-0 flex h-[var(--px-topbar-h,48px)] flex-shrink-0 items-center gap-3 px-4"
           style={{
