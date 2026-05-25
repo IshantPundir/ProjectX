@@ -30,3 +30,31 @@ def test_best_of_multiple_when_one_excellent():
 def test_partial_opportunity_alone_is_not_assessed():
     state, score = combine_signal([obs("meets_bar", "partial")])
     assert state == "not_assessed" and score is None
+
+
+from app.modules.reporting.scoring.aggregate import score_dimension, ScoredSignal
+
+def ss(type, weight, state, score):
+    return ScoredSignal(value=f"{type}-{weight}", type=type, weight=weight,
+                        knockout=False, priority="required", state=state, score=score)
+
+def test_dimension_weighted_mean_excludes_not_assessed():
+    signals = [ss("competency", 3, "excellent", 100),
+               ss("competency", 1, "below_bar", 30),
+               ss("competency", 2, "not_assessed", None)]   # excluded
+    dim = score_dimension("technical", signals, {"competency", "experience", "credential"})
+    # (3*100 + 1*30) / (3+1) = 82.5 → 82 ; coverage = (3+1)/(3+1+2) = 0.666...
+    assert dim.score == 82
+    assert round(dim.coverage, 3) == 0.667
+    assert dim.confidence in ("high", "medium", "low")
+
+def test_dimension_all_not_assessed_is_none():
+    dim = score_dimension("behavioral",
+                          [ss("behavioral", 2, "not_assessed", None)], {"behavioral"})
+    assert dim.score is None and dim.coverage == 0.0
+
+def test_overall_weighted_mean():
+    from app.modules.reporting.scoring.aggregate import score_overall
+    score, cov = score_overall([ss("competency", 3, "excellent", 100),
+                                ss("behavioral", 1, "below_bar", 30)])
+    assert score == 82 and round(cov, 2) == 1.0

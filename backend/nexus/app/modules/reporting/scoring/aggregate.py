@@ -1,10 +1,11 @@
 """Deterministic, pure scoring math: signal → dimension → knockout gate → overall → verdict.
 No LLM, no IO. This is the auditable core; everything here is unit-tested exhaustively."""
 from __future__ import annotations
+
 from dataclasses import dataclass
 
 from app.modules.reporting.scoring.constants import LEVEL_POINTS
-from app.modules.reporting.scoring.types import BarsLevel, Opportunity, SignalState
+from app.modules.reporting.scoring.types import BarsLevel, Confidence, Opportunity, SignalState
 
 _RANK = {"below_bar": 0, "meets_bar": 1, "excellent": 2}
 
@@ -44,3 +45,56 @@ def combine_signal(observations: list[SignalObservation]) -> tuple[SignalState, 
         state = best.level                  # meets_bar, no red flag
     score = LEVEL_POINTS.get(state)         # not_assessed not reached here
     return state, score
+
+
+@dataclass(frozen=True)
+class ScoredSignal:
+    value: str
+    type: str
+    weight: int
+    knockout: bool
+    priority: str
+    state: SignalState
+    score: int | None
+
+
+@dataclass(frozen=True)
+class DimensionScore:
+    name: str
+    score: int | None
+    coverage: float          # assessed weight / total weight in this dimension
+    confidence: Confidence
+
+
+def _confidence(coverage: float) -> Confidence:
+    if coverage >= 0.75:
+        return "high"
+    if coverage >= 0.4:
+        return "medium"
+    return "low"
+
+
+def score_dimension(
+    name: str, signals: list[ScoredSignal], types: frozenset[str]
+) -> DimensionScore:
+    members = [s for s in signals if s.type in types]
+    total_w = sum(s.weight for s in members)
+    assessed = [s for s in members if s.score is not None]
+    assessed_w = sum(s.weight for s in assessed)
+    if assessed_w == 0:
+        return DimensionScore(name=name, score=None, coverage=0.0, confidence="low")
+    weighted = sum(s.weight * s.score for s in assessed) / assessed_w
+    coverage = (assessed_w / total_w) if total_w else 0.0
+    return DimensionScore(name=name, score=int(round(weighted)),
+                          coverage=coverage, confidence=_confidence(coverage))
+
+
+def score_overall(signals: list[ScoredSignal]) -> tuple[int | None, float]:
+    """Overall = weighted mean over ALL assessed JD signals; coverage over all JD signals."""
+    total_w = sum(s.weight for s in signals)
+    assessed = [s for s in signals if s.score is not None]
+    assessed_w = sum(s.weight for s in assessed)
+    if assessed_w == 0:
+        return None, 0.0
+    weighted = sum(s.weight * s.score for s in assessed) / assessed_w
+    return int(round(weighted)), (assessed_w / total_w if total_w else 0.0)
