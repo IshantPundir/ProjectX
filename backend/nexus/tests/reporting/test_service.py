@@ -44,7 +44,16 @@ async def test_weak_bluffer_is_confident_reject():
             grounded=True,
         )
 
-    with patch("app.modules.reporting.service.grade_answer", side_effect=fake_grade):
+    async def fake_comm(*, transcript_text, correlation_id):
+        return CommunicationVerdict(
+            evidence_quotes=[], justification="ok", level="adequate"
+        )
+
+    with patch(
+        "app.modules.reporting.service.grade_answer", side_effect=fake_grade
+    ), patch(
+        "app.modules.reporting.service.grade_communication", side_effect=fake_comm
+    ):
         report = await build_report(
             transcript=transcript,
             envelope=envelope,
@@ -152,7 +161,16 @@ async def test_not_assessed_signals_excluded():
             grounded=True,
         )
 
-    with patch("app.modules.reporting.service.grade_answer", side_effect=fake_grade):
+    async def fake_comm(*, transcript_text, correlation_id):
+        return CommunicationVerdict(
+            evidence_quotes=[], justification="ok", level="adequate"
+        )
+
+    with patch(
+        "app.modules.reporting.service.grade_answer", side_effect=fake_grade
+    ), patch(
+        "app.modules.reporting.service.grade_communication", side_effect=fake_comm
+    ):
         report = await build_report(
             transcript=transcript,
             envelope=envelope,
