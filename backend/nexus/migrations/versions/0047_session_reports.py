@@ -9,8 +9,8 @@ table references session_reports.
 Revision ID: 0047
 Revises: 0046
 """
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "0047"
@@ -129,6 +129,20 @@ def upgrade() -> None:
     )
     _enable_rls("session_reports")
 
+    # BEFORE UPDATE trigger — keeps updated_at current on every UPDATE.
+    # touch_updated_at() is a shared function created in migration 0017;
+    # it is already present in the DB.  Mirror the exact pattern used by
+    # stage_questions (0017) and sessions (0014).
+    op.execute("""
+        CREATE TRIGGER session_reports_touch_updated_at
+            BEFORE UPDATE ON session_reports
+            FOR EACH ROW
+            EXECUTE FUNCTION touch_updated_at()
+    """)
+
 
 def downgrade() -> None:
+    op.execute(
+        "DROP TRIGGER IF EXISTS session_reports_touch_updated_at ON session_reports;"
+    )
     op.drop_table("session_reports")

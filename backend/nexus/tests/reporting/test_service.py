@@ -50,7 +50,7 @@ async def test_weak_bluffer_is_confident_reject():
         )
 
     with patch(
-        "app.modules.reporting.service.grade_answer", side_effect=fake_grade
+        "app.modules.reporting.service.grade_answer_consistent", side_effect=fake_grade
     ), patch(
         "app.modules.reporting.service.grade_communication", side_effect=fake_comm
     ):
@@ -60,6 +60,7 @@ async def test_weak_bluffer_is_confident_reject():
             questions=bank["questions"],
             signal_metadata=bank["signal_metadata"],
             correlation_id="c1",
+            n_samples=1,
         )
 
     assert report.verdict == "reject"
@@ -167,7 +168,7 @@ async def test_not_assessed_signals_excluded():
         )
 
     with patch(
-        "app.modules.reporting.service.grade_answer", side_effect=fake_grade
+        "app.modules.reporting.service.grade_answer_consistent", side_effect=fake_grade
     ), patch(
         "app.modules.reporting.service.grade_communication", side_effect=fake_comm
     ):
@@ -177,6 +178,7 @@ async def test_not_assessed_signals_excluded():
             questions=questions,
             signal_metadata=signal_metadata,
             correlation_id="c2",
+            n_samples=1,
         )
 
     # signal-b was never delivered → not_assessed → excluded from behavioral mean.
@@ -224,7 +226,7 @@ async def test_communication_is_separate_and_not_in_overall():
         )
 
     with patch(
-        "app.modules.reporting.service.grade_answer", side_effect=fake_grade
+        "app.modules.reporting.service.grade_answer_consistent", side_effect=fake_grade
     ), patch(
         "app.modules.reporting.service.grade_communication", side_effect=fake_comm
     ):
@@ -234,6 +236,7 @@ async def test_communication_is_separate_and_not_in_overall():
             questions=bank["questions"],
             signal_metadata=bank["signal_metadata"],
             correlation_id="c1",
+            n_samples=1,
         )
 
     # communication dimension present, "adequate" -> 70
@@ -242,6 +245,136 @@ async def test_communication_is_separate_and_not_in_overall():
     # Overall is computed only from JD signals (all below_bar here -> low). Communication=70
     # must NOT raise the Overall. Assert Overall reflects only JD signals (<= below_bar band).
     assert report.overall_score is None or report.overall_score <= 30
+
+
+# ---------------------------------------------------------------------------
+# Selective self-consistency wiring test (I1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_selective_self_consistency_routing():
+    """Knockout-signal questions are called with n_samples=max_samples;
+    non-knockout questions are called with n_samples=1.
+
+    Setup:
+    - q-ko  covers 'signal-ko'  (knockout=True)
+    - q-ok  covers 'signal-ok'  (knockout=False)
+    Both questions are delivered in the transcript.
+    build_report is called with n_samples=3 (max_samples=3).
+    The fake grade_answer_consistent records the n_samples kwarg per call.
+    We assert:
+      - q-ko  call used n_samples=3
+      - q-ok  call used n_samples=1
+    """
+    transcript = [
+        {
+            "role": "agent",
+            "text": "Tell me about your Python depth.",
+            "timestamp_ms": 1000,
+            "question_id": "q-ko",
+        },
+        {
+            "role": "candidate",
+            "text": "I have used Python for five years in production systems.",
+            "timestamp_ms": 2000,
+            "question_id": "q-ko",
+        },
+        {
+            "role": "agent",
+            "text": "Describe a teamwork situation.",
+            "timestamp_ms": 3000,
+            "question_id": "q-ok",
+        },
+        {
+            "role": "candidate",
+            "text": "We collaborated daily across time zones on a shared codebase.",
+            "timestamp_ms": 4000,
+            "question_id": "q-ok",
+        },
+    ]
+    envelope = {"events": []}
+
+    questions = [
+        {
+            "id": "q-ko",
+            "text": "Tell me about your Python depth.",
+            "signal_values": ["signal-ko"],
+            "rubric": {"below_bar": "none", "meets_bar": "some", "excellent": "deep"},
+            "positive_evidence": [],
+            "red_flags": [],
+        },
+        {
+            "id": "q-ok",
+            "text": "Describe a teamwork situation.",
+            "signal_values": ["signal-ok"],
+            "rubric": {"below_bar": "none", "meets_bar": "some", "excellent": "great"},
+            "positive_evidence": [],
+            "red_flags": [],
+        },
+    ]
+
+    signal_metadata = [
+        {
+            "value": "signal-ko",
+            "type": "experience",
+            "weight": 2,
+            "knockout": True,
+            "priority": "required",
+        },
+        {
+            "value": "signal-ok",
+            "type": "behavioral",
+            "weight": 1,
+            "knockout": False,
+            "priority": "preferred",
+        },
+    ]
+
+    # Record (question_id, n_samples) for every grade_answer_consistent call.
+    calls: list[tuple[str, int]] = []
+
+    async def fake_grade_consistent(*, question, transcript_excerpt, correlation_id, n_samples=1):
+        calls.append((question["id"], n_samples))
+        return AnswerRating(
+            question_id=question["id"],
+            level="meets_bar",
+            evidence_quotes=[],
+            red_flags_hit=[],
+            justification="ok",
+            grounded=True,
+        )
+
+    async def fake_comm(*, transcript_text, correlation_id):
+        return CommunicationVerdict(
+            evidence_quotes=[], justification="ok", level="adequate"
+        )
+
+    with patch(
+        "app.modules.reporting.service.grade_answer_consistent",
+        side_effect=fake_grade_consistent,
+    ), patch(
+        "app.modules.reporting.service.grade_communication", side_effect=fake_comm
+    ):
+        await build_report(
+            transcript=transcript,
+            envelope=envelope,
+            questions=questions,
+            signal_metadata=signal_metadata,
+            correlation_id="c-sel",
+            n_samples=3,
+        )
+
+    # Exactly two grading calls (one per delivered question).
+    assert len(calls) == 2, f"Expected 2 grading calls; got {len(calls)}: {calls}"
+
+    calls_by_qid = dict(calls)
+    assert calls_by_qid["q-ko"] == 3, (
+        f"Knockout question should use n_samples=3; got {calls_by_qid['q-ko']}"
+    )
+    assert calls_by_qid["q-ok"] == 1, (
+        f"Non-knockout question should use n_samples=1; got {calls_by_qid['q-ok']}"
+    )
 
 
 # ---------------------------------------------------------------------------

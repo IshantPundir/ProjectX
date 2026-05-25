@@ -37,7 +37,7 @@ from app.modules.reporting.scoring.constants import (
     BEHAVIORAL_TYPES,
     TECHNICAL_TYPES,
 )
-from app.modules.reporting.scoring.judge import grade_answer, grade_communication
+from app.modules.reporting.scoring.judge import grade_answer_consistent, grade_communication
 from app.modules.reporting.scoring.opportunity import classify
 from app.modules.reporting.scoring.transcript import segment
 from app.modules.reporting.scoring.types import Opportunity, SignalDef
@@ -109,13 +109,14 @@ async def build_report(
     questions: list[dict],
     signal_metadata: list[dict],
     correlation_id: str,
-    n_samples: int = 1,
+    n_samples: int | None = None,
 ) -> ReportRead:
     """Orchestrate all scoring pipeline stages and return a :class:`ReportRead`.
 
     Steps:
     1. Segment transcript into one ScoredUnit per delivered question.
-    2. Grade each unit via the LLM judge (grade_answer).
+    2. Grade each unit via the LLM judge (grade_answer_consistent).
+       Knockout-signal questions use N-sample majority vote; others use 1 sample.
     3. Accumulate SignalObservations per signal value.
     4. Collapse observations → ScoredSignal (combine_signal).
     5. Score dimensions (technical / behavioral).
@@ -123,6 +124,9 @@ async def build_report(
     7. Resolve knockouts + verdict.
     8. Map dataclasses → Pydantic and return ReportRead.
     """
+    # Resolve max_samples: explicit arg wins; fall back to config.
+    max_samples: int = n_samples if n_samples is not None else ai_config.report_scorer_n_samples
+
     # ------------------------------------------------------------------
     # Step 1 — Segmentation
     # ------------------------------------------------------------------
@@ -144,16 +148,22 @@ async def build_report(
         for m in signal_metadata
     ]
 
+    # Set of signal values that are knockouts — used for selective self-consistency.
+    knockout_signal_values: set[str] = {m["value"] for m in signal_metadata if m.get("knockout")}
+
     # Per-signal: accumulate observations
     signal_observations: dict[str, list[SignalObservation]] = defaultdict(list)
     # Per-signal: accumulate evidence and which questions covered it
     signal_evidence: dict[str, list[EvidenceOut]] = defaultdict(list)
     signal_covered_by: dict[str, list[str]] = defaultdict(list)
-    # Per-question: the dominant opportunity (from the unit)
-    signal_opportunity: dict[str, Opportunity | None] = {}  # signal_value → last opportunity seen
+    # Per-signal: strongest opportunity seen (full > partial > none).
+    signal_opportunity: dict[str, Opportunity | None] = {}  # signal_value → best opportunity seen
 
     # Per-question scorecards
     question_scorecards: list[QuestionScorecard] = []
+
+    # Opportunity strength ordering: higher index = stronger.
+    opportunity_strength: dict[str | None, int] = {"none": 0, None: 0, "partial": 1, "full": 2}
 
     # ------------------------------------------------------------------
     # Step 3 — Grade each delivered unit
@@ -174,11 +184,18 @@ async def build_report(
         )
         opportunity = classify(unit)
 
-        rating: AnswerRating = await grade_answer(
+        # Selective self-consistency: use N samples for knockout-signal questions,
+        # single pass for all others.
+        is_knockout_q = bool(
+            set(question.get("signal_values", [])) & knockout_signal_values
+        )
+        n = max_samples if is_knockout_q else 1
+
+        rating: AnswerRating = await grade_answer_consistent(
             question=question,
             transcript_excerpt=transcript_excerpt,
             correlation_id=correlation_id,
-            n_samples=n_samples,
+            n_samples=n,
         )
 
         # Build evidence list for this question
@@ -202,7 +219,10 @@ async def build_report(
             signal_evidence[sig_value].extend(question_evidence)
             if unit.question_id not in signal_covered_by[sig_value]:
                 signal_covered_by[sig_value].append(unit.question_id)
-            signal_opportunity[sig_value] = opportunity
+            # Keep the strongest opportunity seen for this signal (M2 fix).
+            current = signal_opportunity.get(sig_value)
+            if opportunity_strength.get(opportunity, 0) > opportunity_strength.get(current, 0):
+                signal_opportunity[sig_value] = opportunity
 
         # Build QuestionScorecard
         question_scorecards.append(
@@ -369,7 +389,7 @@ async def build_report(
         reasoning_effort=ai_config.report_scorer_effort or None,
         verbosity=ai_config.report_scorer_verbosity,
         prompt_version=ai_config.report_scorer_prompt_version,
-        n_samples=n_samples,
+        n_samples=max_samples,
         generated_at=datetime.now(UTC).isoformat(),
         correlation_id=correlation_id,
     )
