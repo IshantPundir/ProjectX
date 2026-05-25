@@ -308,11 +308,13 @@ export function AppShell({
         // viewport-height regardless of how the parent scrolls (body-level
         // scroll, internal scroll container, or a mix of both).
         //
-        // No right border — the rail + top bar paint the SAME backdrop gradient
-        // with background-attachment:fixed, so the gradient is anchored to the
-        // viewport and flows continuously across the rail→topbar corner (one
-        // chrome surface). Opaque fill so scrolling content passes cleanly
-        // behind. The content panel's flush top/left hairline is the only seam.
+        // No right border — rail + top bar share one calm NEUTRAL fill so they
+        // read as a single continuous chrome surface; the content panel's flush
+        // top/left hairline is the only seam. Chrome is intentionally neutral
+        // (minimal-chrome): the Iris gradient is reserved for purposeful accents
+        // (the logo, the violet active state, focus rings) rather than washing
+        // the nav — a full gradient here flattened the active-item contrast and
+        // read as an unfinished fade.
         //
         // `data-appshell-rail` is a stable query hook so pages with pinned
         // master-detail layouts (e.g. /jobs/[id]/questions) can measure
@@ -322,8 +324,7 @@ export function AppShell({
         style={{
           width: railWidth,
           transition: "width 180ms cubic-bezier(0.2, 0.8, 0.3, 1)",
-          background: "var(--px-backdrop)",
-          backgroundAttachment: "fixed",
+          background: "var(--px-bg-2)",
           // Chrome sits above page content so scrolling content passes behind it.
           zIndex: 40,
         }}
@@ -459,25 +460,21 @@ export function AppShell({
       {/* ─── Main column ─── */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {/* Top bar — sticky so it stays visible regardless of scroll level.
-            Paints the SAME backdrop gradient as the rail with
-            background-attachment:fixed, so the gradient flows continuously from
-            the rail across the corner into the bar. OPAQUE (the gradient's base
-            is solid) and high z-index, so page content scrolls cleanly behind it
-            and the bar stays legible. */}
+            Same neutral fill as the rail (one continuous chrome surface), opaque
+            and high z-index so page content scrolls cleanly behind it and the
+            bar stays legible. */}
         <header
           className="sticky top-0 flex h-[var(--px-topbar-h,48px)] flex-shrink-0 items-center gap-3 px-4"
           style={{
             zIndex: 30,
-            background: "var(--px-backdrop)",
-            backgroundAttachment: "fixed",
+            background: "var(--px-bg-2)",
           }}
         >
           {/* Concave corner-painter — fills the chrome's inner L-corner
-              (everything OUTSIDE a 16px quarter-circle, cut via mask) with the
-              same viewport-fixed backdrop gradient as the bar, so the content
-              panel's rounded-tl-2xl corner reads as one smooth concave curve
-              from bar into content with no gap or tone break. Sits flush at the
-              top bar's bottom-left. */}
+              (everything OUTSIDE a 16px quarter-circle) with the neutral chrome
+              fill, so the content panel's rounded-tl-2xl corner reads as one
+              smooth concave curve from bar into content with no gap. Sits flush
+              at the top bar's bottom-left. */}
           <span
             aria-hidden="true"
             className="pointer-events-none absolute"
@@ -486,12 +483,8 @@ export function AppShell({
               left: 0,
               width: 16,
               height: 16,
-              background: "var(--px-backdrop)",
-              backgroundAttachment: "fixed",
-              WebkitMaskImage:
-                "radial-gradient(circle at bottom right, transparent 0 16px, #000 16px)",
-              maskImage:
-                "radial-gradient(circle at bottom right, transparent 0 16px, #000 16px)",
+              background:
+                "radial-gradient(circle at bottom right, transparent 0, transparent 16px, var(--px-bg-2) 16px)",
             }}
           />
 
