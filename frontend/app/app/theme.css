@@ -1,0 +1,292 @@
+/* ─────────────────────────────────────────────────────────
+   Design tokens — the LOOK of the app, one block per theme.
+   To add a theme: copy the warm-light block below, rename the
+   selector to [data-px-theme="<name>"], change the values, then
+   add "<name>" to ThemeName in lib/brand.ts and set brand.theme.
+   ───────────────────────────────────────────────────────── */
+
+/* ─────────────────────────────────────────────────────────
+   ProjectX v4 tokens — warm-light default
+   Warm off-white · Deep teal accent · Comfortable density
+   ───────────────────────────────────────────────────────── */
+:root,
+[data-px-theme="warm-light"] {
+  /* Tailwind named-palette ramps — per theme; referenced from globals.css @theme */
+  --c-white: #FCFAF6;
+
+  --c-zinc-50: #F6F2EC;
+  --c-zinc-100: #EEE8DE;
+  --c-zinc-200: #E5DFD3;
+  --c-zinc-300: #C5BFB3;
+  --c-zinc-400: #9A9388;
+  --c-zinc-500: #6B6458;
+  --c-zinc-600: #3A342B;
+  --c-zinc-700: #1E1B16;
+  --c-zinc-800: #1E1B16;
+  --c-zinc-900: #1E1B16;
+  --c-zinc-950: #0F0D0A;
+
+  --c-neutral-50: #F6F2EC;
+  --c-neutral-100: #EEE8DE;
+  --c-neutral-200: #E5DFD3;
+  --c-neutral-300: #C5BFB3;
+  --c-neutral-400: #9A9388;
+  --c-neutral-500: #6B6458;
+  --c-neutral-600: #3A342B;
+  --c-neutral-700: #1E1B16;
+  --c-neutral-800: #1E1B16;
+  --c-neutral-900: #1E1B16;
+
+  --c-stone-50: #F6F2EC;
+  --c-stone-100: #EEE8DE;
+  --c-stone-200: #E5DFD3;
+  --c-stone-300: #C5BFB3;
+  --c-stone-400: #9A9388;
+  --c-stone-500: #6B6458;
+  --c-stone-600: #3A342B;
+  --c-stone-700: #1E1B16;
+  --c-stone-800: #1E1B16;
+  --c-stone-900: #1E1B16;
+
+  --c-slate-50: #F6F2EC;
+  --c-slate-100: #EEE8DE;
+  --c-slate-200: #E5DFD3;
+  --c-slate-300: #C5BFB3;
+  --c-slate-400: #9A9388;
+  --c-slate-500: #6B6458;
+  --c-slate-600: #3A342B;
+  --c-slate-700: #1E1B16;
+  --c-slate-800: #1E1B16;
+  --c-slate-900: #1E1B16;
+
+  --c-gray-50: #F6F2EC;
+  --c-gray-100: #EEE8DE;
+  --c-gray-200: #E5DFD3;
+  --c-gray-300: #C5BFB3;
+  --c-gray-400: #9A9388;
+  --c-gray-500: #6B6458;
+  --c-gray-600: #3A342B;
+  --c-gray-700: #1E1B16;
+  --c-gray-800: #1E1B16;
+  --c-gray-900: #1E1B16;
+
+  --c-red-50: #F7EAE6;
+  --c-red-100: #F1D8D0;
+  --c-red-200: #E7BAAE;
+  --c-red-300: #DB9586;
+  --c-red-400: #CD6B57;
+  --c-red-500: #B4331E;
+  --c-red-600: #9C2C1A;
+  --c-red-700: #8A2715;
+  --c-red-800: #6F1F11;
+  --c-red-900: #551810;
+
+  --c-rose-50: #F7EAE6;
+  --c-rose-100: #F1D8D0;
+  --c-rose-400: #CD6B57;
+  --c-rose-500: #B4331E;
+  --c-rose-600: #9C2C1A;
+  --c-rose-700: #8A2715;
+
+  --c-green-50: #E4EFEC;
+  --c-green-100: #CCE3DE;
+  --c-green-200: #A3CFC6;
+  --c-green-300: #7AB9AD;
+  --c-green-400: #40948A;
+  --c-green-500: #0E6F63;
+  --c-green-600: #0A564D;
+  --c-green-700: #08453E;
+  --c-green-800: #06342F;
+  --c-green-900: #052925;
+
+  --c-emerald-50: #E4EFEC;
+  --c-emerald-100: #CCE3DE;
+  --c-emerald-400: #40948A;
+  --c-emerald-500: #0E6F63;
+  --c-emerald-600: #0A564D;
+  --c-emerald-700: #08453E;
+  --c-emerald-800: #06342F;
+
+  --c-teal-50: #E4EFEC;
+  --c-teal-100: #CCE3DE;
+  --c-teal-400: #40948A;
+  --c-teal-500: #0E6F63;
+  --c-teal-600: #0A564D;
+  --c-teal-700: #08453E;
+
+  --c-blue-50: #E2EAF3;
+  --c-blue-100: #CFDCEA;
+  --c-blue-200: #A6BDD9;
+  --c-blue-300: #7D9EC7;
+  --c-blue-400: #5485B0;
+  --c-blue-500: #2B6CB8;
+  --c-blue-600: #234E7F;
+  --c-blue-700: #1C3E65;
+  --c-blue-800: #162F4D;
+  --c-blue-900: #11253B;
+
+  --c-sky-50: #E2EAF3;
+  --c-sky-100: #CFDCEA;
+  --c-sky-500: #2B6CB8;
+  --c-sky-600: #234E7F;
+  --c-sky-700: #1C3E65;
+
+  --c-indigo-50: #E2EAF3;
+  --c-indigo-100: #CFDCEA;
+  --c-indigo-500: #2B6CB8;
+  --c-indigo-600: #234E7F;
+  --c-indigo-700: #1C3E65;
+  --c-indigo-800: #162F4D;
+
+  --c-amber-50: #F5EADB;
+  --c-amber-100: #ECDBC1;
+  --c-amber-200: #DDBE8A;
+  --c-amber-300: #D0A55E;
+  --c-amber-400: #C78936;
+  --c-amber-500: #B86E1C;
+  --c-amber-600: #955918;
+  --c-amber-700: #7A4A14;
+  --c-amber-800: #5E380F;
+  --c-amber-900: #472B0B;
+
+  --c-yellow-50: #F5EADB;
+  --c-yellow-100: #ECDBC1;
+  --c-yellow-500: #B86E1C;
+  --c-yellow-600: #955918;
+  --c-yellow-700: #7A4A14;
+
+  --c-orange-50: #F5EADB;
+  --c-orange-100: #ECDBC1;
+  --c-orange-500: #B86E1C;
+  --c-orange-600: #955918;
+  --c-orange-700: #7A4A14;
+
+  --c-purple-50: #EEE5F3;
+  --c-purple-100: #E1D1EB;
+  --c-purple-500: #7A4E99;
+  --c-purple-600: #5F3C78;
+  --c-purple-700: #4C3061;
+  --c-purple-800: #3A2449;
+
+  --c-violet-50: #EEE5F3;
+  --c-violet-100: #E1D1EB;
+  --c-violet-500: #7A4E99;
+  --c-violet-600: #5F3C78;
+  --c-violet-700: #4C3061;
+
+  --c-fuchsia-50: #EEE5F3;
+  --c-fuchsia-500: #7A4E99;
+  --c-fuchsia-600: #5F3C78;
+
+  /* Surfaces — warm off-white, not stark */
+  --px-bg:        #F6F2EC;
+  --px-bg-2:      #EEE8DE;
+  --px-surface:   #FCFAF6;
+  --px-surface-2: #F2ECE0;
+  --px-surface-3: #E5DFD3;
+  --px-hairline:        rgba(58, 45, 28, 0.10);
+  --px-hairline-strong: rgba(58, 45, 28, 0.18);
+  --px-divider:         rgba(58, 45, 28, 0.06);
+
+  /* Ink — warm */
+  --px-fg:   #1E1B16;
+  --px-fg-2: #3A342B;
+  --px-fg-3: #6B6458;
+  --px-fg-4: #9A9388;
+  --px-fg-5: #C5BFB3;
+
+  /* Accent — deep teal */
+  --px-accent:       #0E6F63;
+  --px-accent-2:     #0A564D;
+  --px-accent-soft:  #4FA99C;
+  --px-accent-glow:  rgba(14, 111, 99, 0.28);
+  --px-accent-tint:  rgba(14, 111, 99, 0.10);
+  --px-accent-line:  rgba(14, 111, 99, 0.24);
+
+  /* Semantic */
+  --px-ai:       #2B6CB8;
+  --px-ai-bg:    rgba(43, 108, 184, 0.08);
+  --px-ai-line:  rgba(43, 108, 184, 0.22);
+
+  --px-caution:     #B86E1C;
+  --px-caution-bg:  rgba(184, 110, 28, 0.09);
+  --px-caution-line:rgba(184, 110, 28, 0.24);
+
+  --px-ok:       #0E6F63;
+  --px-ok-bg:    rgba(14, 111, 99, 0.10);
+  --px-ok-line:  rgba(14, 111, 99, 0.24);
+
+  --px-danger:      #B4331E;
+  --px-danger-bg:   rgba(180, 51, 30, 0.08);
+  --px-danger-line: rgba(180, 51, 30, 0.22);
+
+  --px-human:      #7A4E99;
+  --px-human-bg:   rgba(122, 78, 153, 0.08);
+  --px-human-line: rgba(122, 78, 153, 0.22);
+
+  /* Density rhythm (comfortable default) */
+  --px-row-h: 34px;
+  --px-row-py: 10px;
+  --px-group-gap: 14px;
+
+  /* Chrome dimensions — consumed by AppShell + any page that needs to
+     stick elements flush below the top bar (e.g. master-detail asides). */
+  --px-topbar-h: 48px;
+
+  /* Radii (px) */
+  --px-r-xs: 4px;
+  --px-r-sm: 6px;
+  --px-r-md: 8px;
+  --px-r-lg: 10px;
+  --px-r-xl: 14px;
+
+  /* Shadows */
+  --px-shadow-sm: 0 1px 2px rgba(58, 45, 28, 0.05);
+  --px-shadow-md: 0 8px 24px rgba(58, 45, 28, 0.08), 0 2px 4px rgba(58, 45, 28, 0.04);
+  --px-shadow-lg: 0 24px 60px rgba(58, 45, 28, 0.14), 0 6px 16px rgba(58, 45, 28, 0.06);
+
+  /* Motion */
+  --px-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --px-d1: 120ms;
+  --px-d2: 200ms;
+  --px-d3: 320ms;
+
+  /* ─── shadcn semantic tokens mapped to v4 palette ─── */
+  --background: var(--px-bg);
+  --foreground: var(--px-fg);
+  --card: var(--px-surface);
+  --card-foreground: var(--px-fg);
+  --popover: var(--px-surface);
+  --popover-foreground: var(--px-fg);
+  --primary: var(--px-accent);
+  --primary-foreground: #FFFFFF;
+  --secondary: var(--px-surface-2);
+  --secondary-foreground: var(--px-fg-2);
+  --muted: var(--px-bg-2);
+  --muted-foreground: var(--px-fg-3);
+  --accent: var(--px-surface-2);
+  --accent-foreground: var(--px-fg);
+  --destructive: var(--px-danger);
+  --border: var(--px-surface-3);
+  --input: var(--px-surface-3);
+  --ring: var(--px-accent);
+  --chart-1: var(--px-accent);
+  --chart-2: var(--px-ai);
+  --chart-3: var(--px-caution);
+  --chart-4: var(--px-human);
+  --chart-5: var(--px-accent-soft);
+  --radius: 0.5rem;
+  --sidebar: var(--px-bg-2);
+  --sidebar-foreground: var(--px-fg);
+  --sidebar-primary: var(--px-accent);
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: var(--px-surface-2);
+  --sidebar-accent-foreground: var(--px-fg);
+  --sidebar-border: var(--px-surface-3);
+  --sidebar-ring: var(--px-accent);
+}
+
+/* Density modifiers */
+[data-px-density="compact"]     { --px-row-h: 28px; --px-row-py: 6px;  --px-group-gap: 10px; }
+[data-px-density="comfortable"] { --px-row-h: 34px; --px-row-py: 10px; --px-group-gap: 14px; }
+[data-px-density="spacious"]    { --px-row-h: 42px; --px-row-py: 14px; --px-group-gap: 20px; }
