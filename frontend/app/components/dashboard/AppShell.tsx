@@ -308,9 +308,9 @@ export function AppShell({
         // viewport-height regardless of how the parent scrolls (body-level
         // scroll, internal scroll container, or a mix of both).
         //
-        // No right border — the rounded top-left corner on the content area
-        // provides the visible seam, letting the rail + top bar read as one
-        // continuous chrome surface.
+        // No right border — the rail + top bar share one glass fill and read
+        // as a single continuous chrome surface; the content panel's flush
+        // top/left hairline is the only visible seam.
         //
         // `data-appshell-rail` is a stable query hook so pages with pinned
         // master-detail layouts (e.g. /jobs/[id]/questions) can measure
@@ -320,7 +320,9 @@ export function AppShell({
         style={{
           width: railWidth,
           transition: "width 180ms cubic-bezier(0.2, 0.8, 0.3, 1)",
-          zIndex: 10,
+          // Chrome sits above page content so scrolling content passes BEHIND
+          // the glass and is frosted by its backdrop-filter (never paints over).
+          zIndex: 40,
         }}
       >
         {/* Brand */}
@@ -455,13 +457,13 @@ export function AppShell({
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {/* Top bar — sticky so it stays visible regardless of scroll level.
             Topbar shares the same glass fill as the rail (one continuous frosted
-            surface, no divider). The content panel below is solid white with a
-            rounded top-left + top/left hairline, so it reads as floating inside
-            the glass. */}
+            surface, no divider). It sits ABOVE the page content (high z-index)
+            so content scrolls BEHIND the glass and is frosted by its
+            backdrop-filter, rather than painting over the bar. */}
         <header
           className="px-glass-chrome sticky top-0 flex h-[var(--px-topbar-h,48px)] flex-shrink-0 items-center gap-3 px-4"
           style={{
-            zIndex: 9,
+            zIndex: 30,
           }}
         >
           {/* Breadcrumbs */}
@@ -535,10 +537,11 @@ export function AppShell({
         {/* Page content — no overflow-auto so the body remains the scroll
             container. A scroll context here would trap sticky descendants
             (Sections, Copilot) to a non-scrolling ancestor and unpin them
-            from the actual scroll. Rounded top-left + top/left hairlines
-            still curve the chrome/content seam into a single smooth L. */}
+            from the actual scroll. Solid white panel meeting the glass chrome
+            with a flush top/left hairline (no corner radius — a rounded notch
+            would expose the body backdrop through the translucent chrome). */}
         <div
-          className="min-h-0 flex-1 border-l border-t rounded-tl-2xl"
+          className="min-h-0 flex-1 border-l border-t"
           style={{
             background: "var(--px-surface)",
             borderColor: "var(--px-hairline)",
