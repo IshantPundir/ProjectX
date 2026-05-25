@@ -1,0 +1,543 @@
+{
+  "questions": [
+    {
+      "id": "0ab73bfa-6ffe-4de5-8b6c-efff6fb83814",
+      "position": 0,
+      "source": "ai_generated",
+      "text": "How many years of full-time professional experience do you have?",
+      "signal_values": [
+        "4+ years total professional experience"
+      ],
+      "estimated_minutes": 1.5,
+      "is_mandatory": true,
+      "question_kind": "experience_check",
+      "difficulty": "easy",
+      "follow_ups": [
+        "Which employers and roles make up those years?",
+        "Are these years continuous full-time, not internships or training?",
+        "What was your longest single tenure, and what did you do there?"
+      ],
+      "positive_evidence": [
+        "States a clear total of four or more years",
+        "Names real employers and role titles with approximate dates",
+        "Clarifies full-time employment versus internships or coursework",
+        "Briefly describes responsibilities relevant to integration or automation",
+        "Mentions longest tenure with scope or key duty"
+      ],
+      "red_flags": [
+        "Gives a vague total with no employers or dates",
+        "Counts internships, part-time, or training toward the total",
+        "Cannot recall roles, timelines, or responsibilities"
+      ],
+      "rubric": {
+        "below_bar": "Does not reach four full-time years, or is vague about employment history, counts internships/training, or cannot provide employers/roles.",
+        "excellent": "States four or more full-time years, names employers and roles with approximate dates, distinguishes full-time from internships, and summarizes relevant responsibilities or scope.",
+        "meets_bar": "States total years and at least some employer/role context suggesting full-time work; details may be sparse but plausible."
+      },
+      "evaluation_hint": "Confirms the knockout of four-plus full-time professional years with concrete, falsifiable employment details.",
+      "edited_by_recruiter": false
+    },
+    {
+      "id": "2fe68aad-6984-47d6-9cfc-6bed08172aa2",
+      "position": 1,
+      "source": "ai_generated",
+      "text": "How many years have you worked hands-on with Workato in production?",
+      "signal_values": [
+        "At least 1 year hands-on experience with Workato"
+      ],
+      "estimated_minutes": 2.5,
+      "is_mandatory": true,
+      "question_kind": "experience_check",
+      "difficulty": "easy",
+      "follow_ups": [
+        "Name one production recipe or connector you personally owned end to end.",
+        "Roughly what volume or impact did it have, like runs per day or users affected?",
+        "Which systems did it integrate, and what key triggers or actions did you use?"
+      ],
+      "positive_evidence": [
+        "States one or more years hands-on in production",
+        "Names a real recipe or connector they owned, not just assisted",
+        "Mentions scale signals like runs per day, SLAs, or user impact",
+        "Names integrated systems or apps involved",
+        "References Workato concepts like triggers, actions, connections, jobs, or environments"
+      ],
+      "red_flags": [
+        "Describes only tutorials, POCs, or shadowing with no production",
+        "Cannot name a concrete recipe, connector, or integrated systems",
+        "Confuses Workato with another platform or uses only generic buzzwords"
+      ],
+      "rubric": {
+        "below_bar": "Less than a year or only non-production exposure; cannot provide a specific owned example; mixes up platforms or stays at buzzword level.",
+        "excellent": "Gives a precise tenure of at least one year, cites a production recipe/connector they owned with integrated systems, scale metrics, and concrete Workato features used.",
+        "meets_bar": "States at least one year and provides one specific production example with some concrete detail (system names, features, or scale)."
+      },
+      "evaluation_hint": "Gate on at least one year of production Workato work; listen for owned assets and real production detail and scale.",
+      "edited_by_recruiter": false
+    },
+    {
+      "id": "c99c92ca-a2fe-4814-8932-edaba1e61a5a",
+      "position": 3,
+      "source": "ai_generated",
+      "text": "You\u2019re building a Workato recipe that calls an AI to auto-triage IT tickets. How would you design the flow so the AI\u2019s decision reliably routes the ticket?",
+      "signal_values": [
+        "Designing and implementing AI-driven workflows"
+      ],
+      "estimated_minutes": 3.0,
+      "is_mandatory": true,
+      "question_kind": "technical_scenario",
+      "difficulty": "medium",
+      "follow_ups": [
+        "How would you keep context across steps without leaking sensitive data?",
+        "What safeguards would you add to catch bad AI outputs before acting?",
+        "What\u2019s your fallback if the model is down or low confidence?"
+      ],
+      "positive_evidence": [
+        "References specific Workato constructs like triggers, callable recipes, variables, and error handlers.",
+        "Plans structured model outputs (e.g., JSON) with schema validation before routing.",
+        "Uses confidence thresholds, human-in-the-loop approval, or rule checks to gate actions.",
+        "Designs idempotency, retries, and dead\u2011letter paths for failed or uncertain cases.",
+        "Addresses security: PII masking, secrets management, and least\u2011privilege connections."
+      ],
+      "red_flags": [
+        "Lets the AI decide and act with no validation, fallback, or human review.",
+        "No mention of concrete Workato mechanics or routing logic.",
+        "Ignores security, privacy, or data leakage concerns."
+      ],
+      "rubric": {
+        "below_bar": "Hand-wavy \u201cthe AI routes it\u201d answer with no validation, fallback, or concrete steps. No Workato specifics; ignores reliability and security.",
+        "excellent": "Clearly outlines a Workato-centric design: trigger \u2192 call AI \u2192 parse structured output \u2192 validate against a schema \u2192 route. Explains thresholds, fallbacks (manual queue or rule-based), error paths, idempotency, and masking of sensitive data. Names concrete Workato features and why they are used.",
+        "meets_bar": "Describes a workable flow from model output to routing with some validation and a basic fallback. Mentions at least one Workato mechanism and some error handling, but lacks depth on thresholds, idempotency, or data protection."
+      },
+      "evaluation_hint": "Assess ability to design a safe, deterministic AI-driven workflow in Workato with validation, fallbacks, and security.",
+      "edited_by_recruiter": false
+    },
+    {
+      "id": "137ae49f-75c9-4d47-9260-3a54ec37283a",
+      "position": 4,
+      "source": "ai_generated",
+      "text": "You need an AI agent that plans multi\u2011step actions across apps. How would you design its action loop so tool use stays safe and auditable?",
+      "signal_values": [
+        "AI engineering focused on agent-based AI systems",
+        "Designing and implementing AI-driven workflows"
+      ],
+      "estimated_minutes": 3.0,
+      "is_mandatory": true,
+      "question_kind": "technical_scenario",
+      "difficulty": "hard",
+      "follow_ups": [
+        "How would you constrain which tools the agent can call and with what parameters?",
+        "How would you persist the agent\u2019s state and recover from partial failures?",
+        "What limits or timeouts would you impose on the loop?"
+      ],
+      "positive_evidence": [
+        "Describes a planner\u2011executor or ReAct\u2011style loop with step caps and timeouts.",
+        "Defines an allow\u2011listed tool registry with schemas, parameter validation, and policy checks.",
+        "Adds approvals or guardrails for high\u2011impact actions; sandboxes side effects and supports rollbacks.",
+        "Persists state and traces with correlation IDs in a store (e.g., DB/queue) for audit and recovery.",
+        "Addresses rate limits and partial failure handling with compensating actions or retries."
+      ],
+      "red_flags": [
+        "Says the agent can call any API freely with no constraints or audit.",
+        "No plan for state persistence, observability, or rollback; purely aspirational buzzwords."
+      ],
+      "rubric": {
+        "below_bar": "Vague \u201clet the agent figure it out\u201d answer with no controls, no state, and no audit. Cannot explain how to keep actions safe.",
+        "excellent": "Explains a concrete agent loop (plan\u2192act\u2192observe) with strict tool contracts, allow\u2011lists, validation, and human/policy gates. Covers state storage, correlation IDs, audit logs, failure recovery, and limits/timeouts. Justifies choices and risks.",
+        "meets_bar": "Outlines a reasonable loop with some tool constraints and basic logging or approval. Mentions state or recovery at a high level but lacks specifics on schemas, limits, or auditability."
+      },
+      "evaluation_hint": "Probe for real agent safety design: tool contracts, state, limits, audit, and recovery \u2014 not just LLM buzzwords.",
+      "edited_by_recruiter": false
+    },
+    {
+      "id": "9ffff440-d383-4201-9cb0-bfe43e0c9d11",
+      "position": 5,
+      "source": "ai_generated",
+      "text": "You\u2019re building a custom connector to a REST API that enforces rate limits. How would you design around the limit to avoid dropped calls?",
+      "signal_values": [
+        "API expertise: RESTful APIs",
+        "Data formats/structures: JSON"
+      ],
+      "estimated_minutes": 3.0,
+      "is_mandatory": true,
+      "question_kind": "technical_scenario",
+      "difficulty": "medium",
+      "follow_ups": [
+        "How would you page through large result sets?",
+        "What\u2019s your retry and backoff approach on five\u2011x responses?",
+        "How would you ensure idempotency on retries?"
+      ],
+      "positive_evidence": [
+        "Handles HTTP 429 and Retry\u2011After headers; proposes client\u2011side throttling or token\u2011bucket control.",
+        "Uses Workato concurrency controls or job queues to shape traffic.",
+        "Explains cursor/next\u2011link pagination and avoids expensive deep offsets.",
+        "Describes exponential backoff with jitter and a circuit breaker for persistent failures.",
+        "Ensures idempotency with keys or conditional requests to avoid duplicates on retries."
+      ],
+      "red_flags": [
+        "Says to \u201cjust retry\u201d without backoff or respecting headers.",
+        "Ignores pagination strategy or uses naive offset only; no idempotency plan."
+      ],
+      "rubric": {
+        "below_bar": "Shallow answer that ignores headers, retries aggressively, or omits pagination and idempotency.",
+        "excellent": "Details a rate\u2011aware design: respects 429/Retry\u2011After, implements client throttling, shapes concurrency, and uses cursor\u2011based pagination. Explains backoff with jitter, circuit breaker, and idempotency keys/conditional requests.",
+        "meets_bar": "Mentions rate limits and retries with some backoff and a basic pagination plan. May miss concurrency shaping or idempotency details."
+      },
+      "evaluation_hint": "Listen for concrete REST practices: respecting 429, pagination type, backoff with jitter, concurrency shaping, and idempotency.",
+      "edited_by_recruiter": false
+    },
+    {
+      "id": "4f648441-f43c-4e15-94f4-b238d81794bc",
+      "position": 6,
+      "source": "ai_generated",
+      "text": "In whichever of Java, Python, or Ruby you\u2019re strongest, how would you implement a robust JSON transform that validates and maps fields for an integration step?",
+      "signal_values": [
+        "Proficiency in at least one programming language: Java, Python, or Ruby",
+        "Data formats/structures: JSON"
+      ],
+      "estimated_minutes": 2.0,
+      "is_mandatory": true,
+      "question_kind": "technical_scenario",
+      "difficulty": "medium",
+      "follow_ups": [
+        "How would you handle malformed or unexpected input?",
+        "How would you unit test this mapping logic?",
+        "How would you log enough detail without leaking sensitive data?"
+      ],
+      "positive_evidence": [
+        "Names one of the languages and appropriate libraries (e.g., Java Jackson/Gson; Python jsonschema/Pydantic; Ruby JSON::Schema), not tool\u2011specific.",
+        "Validates against a schema and handles types, nulls, and defaults before mapping.",
+        "Uses defensive parsing with try/catch and routes bad records to a dead letter or quarantine.",
+        "Describes unit tests with edge cases and golden samples; separates pure mapping from I/O.",
+        "Mentions structured logs with redaction or field\u2011level masking."
+      ],
+      "red_flags": [
+        "Lists buzzwords without a concrete language choice or libraries.",
+        "Skips validation and tests; relies on prints and happy\u2011path parsing."
+      ],
+      "rubric": {
+        "below_bar": "Vague, language\u2011agnostic answer with no libraries, no validation, and no testing strategy.",
+        "excellent": "Picks a valid language and cites suitable libraries. Walks validation (schema, types), defensive parsing, clear mapping, and error routing. Explains unit tests and logging with redaction. The approach is implementable and language\u2011appropriate.",
+        "meets_bar": "Chooses a language and outlines mapping with some validation and basic tests. Missing depth on schema, error routing, or logging hygiene."
+      },
+      "evaluation_hint": "Confirms real hands\u2011on depth in at least one of Java/Python/Ruby by describing concrete JSON validation, mapping, errors, and tests.",
+      "edited_by_recruiter": false
+    },
+    {
+      "id": "55127779-ec02-420f-ae43-44e0b5a873af",
+      "position": 7,
+      "source": "ai_generated",
+      "text": "A Workato recipe that syncs tickets is intermittently timing out in production. How would you investigate and improve its reliability?",
+      "signal_values": [
+        "Monitor, troubleshoot, and optimize integration workflows for performance and reliability"
+      ],
+      "estimated_minutes": 3.0,
+      "is_mandatory": true,
+      "question_kind": "technical_scenario",
+      "difficulty": "medium",
+      "follow_ups": [
+        "Which logs, metrics, or dashboards would you check first?",
+        "If the external API is slow, what optimizations would you try?",
+        "How would you add alerts to catch this earlier next time?"
+      ],
+      "positive_evidence": [
+        "Starts with Workato job history, step timings, error details, and payload samples.",
+        "Checks and tunes concurrency, batch size, timeouts, and polling windows; considers queues.",
+        "Measures external API latency and uses bulk/async endpoints, caching, or partial syncs.",
+        "Implements retries with backoff, circuit breaker, and a dead\u2011letter queue for failures.",
+        "Adds monitoring and alerts on error rate, latency, and queue depth with thresholds."
+      ],
+      "red_flags": [
+        "Suggests rerunning jobs or blaming the network without systematic debugging.",
+        "No mention of observability, concrete levers, or optimizations tied to findings."
+      ],
+      "rubric": {
+        "below_bar": "Unstructured guesswork with no concrete Workato signals or tuning levers; hopes retries alone will fix it.",
+        "excellent": "Presents a structured debug plan using Workato observability (jobs, timings, errors). Tunes concurrency/batching/timeouts, addresses slow externals with bulk/async or caching, adds resilient retries and DLQ, and defines alerts and SLOs.",
+        "meets_bar": "Provides a reasonable checklist (check logs, adjust timeouts, add retries) and some performance tweaks, but lacks systematic measurement or clear alerting."
+      },
+      "evaluation_hint": "Evaluate systematic troubleshooting and performance tuning of Workato recipes, including observability, tuning knobs, resiliency, and alerting.",
+      "edited_by_recruiter": false
+    },
+    {
+      "id": "07b4442d-b9d7-4445-8a0a-ec3cef5777a9",
+      "position": 2,
+      "source": "ai_generated",
+      "text": "Tell me about a time you led an integration project and had to align cross-functional teams on requirements.",
+      "signal_values": [
+        "Collaborate with cross-functional teams to gather requirements and deliver automation solutions",
+        "Document technical specifications, workflows, and best practices",
+        "Provide technical guidance and support to team members and stakeholders"
+      ],
+      "estimated_minutes": 2.0,
+      "is_mandatory": false,
+      "question_kind": "behavioral",
+      "difficulty": "medium",
+      "follow_ups": [
+        "What did you personally do to gather and clarify the requirements?",
+        "How did you handle a conflict or change request during the project?",
+        "What was the outcome or impact when it went live?"
+      ],
+      "positive_evidence": [
+        "Describes a specific project with involved teams and systems",
+        "Uses first person to explain actions like workshops, interviews, or writing user stories",
+        "Mentions artifacts such as specs, diagrams, or acceptance criteria",
+        "Explains handling of changes, trade-offs, or stakeholder conflict",
+        "States a measurable or concrete outcome after delivery"
+      ],
+      "red_flags": [
+        "Speaks only in \"we\" without personal actions",
+        "Gives a generic story with no teams, systems, or artifacts named",
+        "No clear result or learning from the situation"
+      ],
+      "rubric": {
+        "below_bar": "Keeps it generic and team-focused with no personal actions, lacks specifics on requirements work, and provides no tangible outcome.",
+        "excellent": "Provides a clear STAR story with specific teams and systems, first-person actions to gather/clarify requirements, documentation or artifacts, conflict/change handling, and a concrete outcome.",
+        "meets_bar": "Gives a real example with some first-person actions and a general outcome; may be light on artifacts or metrics."
+      },
+      "evaluation_hint": "Tests real cross-functional collaboration and ownership; reward first-person, concrete steps, artifacts, and outcomes.",
+      "edited_by_recruiter": false
+    }
+  ],
+  "signal_metadata": [
+    {
+      "value": "4+ years total professional experience",
+      "type": "experience",
+      "priority": "required",
+      "weight": 3,
+      "knockout": true,
+      "stage": "screen",
+      "evaluation_method": "verbal_response",
+      "evaluation_hint": null
+    },
+    {
+      "value": "At least 1 year hands-on experience with Workato",
+      "type": "experience",
+      "priority": "required",
+      "weight": 3,
+      "knockout": true,
+      "stage": "screen",
+      "evaluation_method": "verbal_response",
+      "evaluation_hint": null
+    },
+    {
+      "value": "Designing and implementing AI-driven workflows",
+      "type": "competency",
+      "priority": "required",
+      "weight": 3,
+      "knockout": false,
+      "stage": "interview",
+      "evaluation_method": "code_exercise",
+      "evaluation_hint": null
+    },
+    {
+      "value": "AI engineering focused on agent-based AI systems",
+      "type": "competency",
+      "priority": "required",
+      "weight": 3,
+      "knockout": false,
+      "stage": "interview",
+      "evaluation_method": "code_exercise",
+      "evaluation_hint": null
+    },
+    {
+      "value": "Integration project implementation (end-to-end connectivity across enterprise applications)",
+      "type": "experience",
+      "priority": "required",
+      "weight": 2,
+      "knockout": false,
+      "stage": "interview",
+      "evaluation_method": "scenario_walkthrough",
+      "evaluation_hint": null
+    },
+    {
+      "value": "API expertise: RESTful APIs",
+      "type": "competency",
+      "priority": "required",
+      "weight": 3,
+      "knockout": false,
+      "stage": "interview",
+      "evaluation_method": "code_exercise",
+      "evaluation_hint": null
+    },
+    {
+      "value": "API expertise: SOAP/XML",
+      "type": "competency",
+      "priority": "required",
+      "weight": 2,
+      "knockout": false,
+      "stage": "interview",
+      "evaluation_method": "code_exercise",
+      "evaluation_hint": null
+    },
+    {
+      "value": "Data formats/structures: JSON",
+      "type": "competency",
+      "priority": "required",
+      "weight": 2,
+      "knockout": false,
+      "stage": "screen",
+      "evaluation_method": "verbal_response",
+      "evaluation_hint": null
+    },
+    {
+      "value": "Practical experience with automation technologies and middleware",
+      "type": "competency",
+      "priority": "required",
+      "weight": 2,
+      "knockout": false,
+      "stage": "interview",
+      "evaluation_method": "code_exercise",
+      "evaluation_hint": null
+    },
+    {
+      "value": "Proficiency in at least one programming language: Java, Python, or Ruby",
+      "type": "competency",
+      "priority": "required",
+      "weight": 2,
+      "knockout": true,
+      "stage": "screen",
+      "evaluation_method": "verbal_response",
+      "evaluation_hint": null
+    },
+    {
+      "value": "Sound understanding of RDBMS or NoSQL databases",
+      "type": "competency",
+      "priority": "required",
+      "weight": 2,
+      "knockout": false,
+      "stage": "screen",
+      "evaluation_method": "verbal_response",
+      "evaluation_hint": null
+    },
+    {
+      "value": "Experience with other integration platforms (TIBCO, Dell Boomi, MuleSoft)",
+      "type": "competency",
+      "priority": "preferred",
+      "weight": 1,
+      "knockout": false,
+      "stage": "screen",
+      "evaluation_method": "verbal_response",
+      "evaluation_hint": null
+    },
+    {
+      "value": "Familiarity with cloud technologies (iPaaS, SaaS applications, cloud infrastructure)",
+      "type": "competency",
+      "priority": "preferred",
+      "weight": 1,
+      "knockout": false,
+      "stage": "interview",
+      "evaluation_method": "code_exercise",
+      "evaluation_hint": null
+    },
+    {
+      "value": "Experience integrating cloud business applications (Workday, NetSuite, Salesforce, ServiceNow, Marketo)",
+      "type": "experience",
+      "priority": "preferred",
+      "weight": 1,
+      "knockout": false,
+      "stage": "screen",
+      "evaluation_method": "verbal_response",
+      "evaluation_hint": null
+    },
+    {
+      "value": "Knowledge of microservices and API-based integration architecture",
+      "type": "competency",
+      "priority": "preferred",
+      "weight": 1,
+      "knockout": false,
+      "stage": "interview",
+      "evaluation_method": "code_exercise",
+      "evaluation_hint": null
+    },
+    {
+      "value": "Knowledge of event-driven architecture",
+      "type": "competency",
+      "priority": "preferred",
+      "weight": 1,
+      "knockout": false,
+      "stage": "interview",
+      "evaluation_method": "code_exercise",
+      "evaluation_hint": null
+    },
+    {
+      "value": "Exposure to BPM or RPA-based process automation",
+      "type": "competency",
+      "priority": "preferred",
+      "weight": 1,
+      "knockout": false,
+      "stage": "interview",
+      "evaluation_method": "code_exercise",
+      "evaluation_hint": null
+    },
+    {
+      "value": "Monitor, troubleshoot, and optimize integration workflows for performance and reliability",
+      "type": "competency",
+      "priority": "required",
+      "weight": 2,
+      "knockout": false,
+      "stage": "interview",
+      "evaluation_method": "code_exercise",
+      "evaluation_hint": null
+    },
+    {
+      "value": "Collaborate with cross-functional teams to gather requirements and deliver automation solutions",
+      "type": "behavioral",
+      "priority": "required",
+      "weight": 2,
+      "knockout": false,
+      "stage": "interview",
+      "evaluation_method": "behavioral_question",
+      "evaluation_hint": null
+    },
+    {
+      "value": "Document technical specifications, workflows, and best practices",
+      "type": "behavioral",
+      "priority": "required",
+      "weight": 2,
+      "knockout": false,
+      "stage": "interview",
+      "evaluation_method": "behavioral_question",
+      "evaluation_hint": null
+    },
+    {
+      "value": "Provide technical guidance and support to team members and stakeholders",
+      "type": "behavioral",
+      "priority": "required",
+      "weight": 2,
+      "knockout": false,
+      "stage": "interview",
+      "evaluation_method": "behavioral_question",
+      "evaluation_hint": null
+    },
+    {
+      "value": "BTech/BE or higher in CS/AI/ML or related field",
+      "type": "credential",
+      "priority": "required",
+      "weight": 2,
+      "knockout": false,
+      "stage": "screen",
+      "evaluation_method": "credential_verify",
+      "evaluation_hint": null
+    },
+    {
+      "value": "Relevant certifications in integration platforms or cloud technologies",
+      "type": "credential",
+      "priority": "preferred",
+      "weight": 1,
+      "knockout": false,
+      "stage": "screen",
+      "evaluation_method": "credential_verify",
+      "evaluation_hint": null
+    },
+    {
+      "value": "Stay updated with industry trends in AI, automation, and integration",
+      "type": "behavioral",
+      "priority": "required",
+      "weight": 1,
+      "knockout": false,
+      "stage": "interview",
+      "evaluation_method": "behavioral_question",
+      "evaluation_hint": null
+    }
+  ]
+}

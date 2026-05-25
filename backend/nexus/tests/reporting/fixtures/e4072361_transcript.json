@@ -1,0 +1,278 @@
+[
+  {
+    "role": "agent",
+    "text": "Hi, I'm the AI interviewer for BinQle. Thanks for joining today. We'll be going through a structured interview for the Jr. Forward Deployed Engineer role. I'll be asking you a series of questions covering your experience, technical skills, and how you approach real-world integration challenges. Please answer as naturally as you would in any professional conversation. Let's get started.",
+    "timestamp_ms": 2993,
+    "question_id": null
+  },
+  {
+    "role": "agent",
+    "text": "How many years of full-time professional experience do you have?",
+    "timestamp_ms": 22628,
+    "question_id": "0ab73bfa-6ffe-4de5-8b6c-efff6fb83814"
+  },
+  {
+    "role": "candidate",
+    "text": "More than sixteen years.",
+    "timestamp_ms": 45007,
+    "question_id": "0ab73bfa-6ffe-4de5-8b6c-efff6fb83814"
+  },
+  {
+    "role": "agent",
+    "text": "Got it, thank you. How many years have you worked hands-on with Workato in production?",
+    "timestamp_ms": 45008,
+    "question_id": "2fe68aad-6984-47d6-9cfc-6bed08172aa2"
+  },
+  {
+    "role": "candidate",
+    "text": "Five years.",
+    "timestamp_ms": 56106,
+    "question_id": "2fe68aad-6984-47d6-9cfc-6bed08172aa2"
+  },
+  {
+    "role": "agent",
+    "text": "Great. Can you walk me through a specific Workato recipe you built in production — what it did, what triggered it, and what systems it connected?",
+    "timestamp_ms": 56107,
+    "question_id": "2fe68aad-6984-47d6-9cfc-6bed08172aa2"
+  },
+  {
+    "role": "candidate",
+    "text": "So I build this recipe of for an IT support chat that analyzes the query and then opens up the ticket to the relevant department, you know, if it is for IAM or if it is for mobile support, if it is for laptop support. So it it takes up the query and then and then opens up a relevant ticket and that allocates it to the relevant team.",
+    "timestamp_ms": 100339,
+    "question_id": "2fe68aad-6984-47d6-9cfc-6bed08172aa2"
+  },
+  {
+    "role": "agent",
+    "text": "That's interesting. Walk me through how the AI analysis step worked — what was the trigger, how did it classify the query, and how did it decide which department to route to?",
+    "timestamp_ms": 100340,
+    "question_id": "c99c92ca-a2fe-4814-8932-edaba1e61a5a"
+  },
+  {
+    "role": "candidate",
+    "text": "So the trigger would be the interaction by the user on the ITSM tool, and from there, a recipe would be triggered to analyze the query first. It it uses then the then it uses the RAD to refer the knowledge articles for the issues that have already been logged And then it feeds a ticket with all the details and you know, perhaps if possible, the screenshots and then goes ahead and locks the ticket.",
+    "timestamp_ms": 154628,
+    "question_id": "c99c92ca-a2fe-4814-8932-edaba1e61a5a"
+  },
+  {
+    "role": "agent",
+    "text": "You mentioned RAG — how exactly did that fit into the classification step? Did the AI make the routing decision, or was it rule-based after the RAG retrieval?",
+    "timestamp_ms": 154630,
+    "question_id": "c99c92ca-a2fe-4814-8932-edaba1e61a5a"
+  },
+  {
+    "role": "candidate",
+    "text": "No. You you you use Rag. We stringently use Rag for this.",
+    "timestamp_ms": 172728,
+    "question_id": "c99c92ca-a2fe-4814-8932-edaba1e61a5a"
+  },
+  {
+    "role": "agent",
+    "text": "Okay. And when the RAG retrieval doesn't give a confident match — what mechanism did you use to handle that case and still route correctly?",
+    "timestamp_ms": 172730,
+    "question_id": "c99c92ca-a2fe-4814-8932-edaba1e61a5a"
+  },
+  {
+    "role": "candidate",
+    "text": "Having some guardrails, better prompts,",
+    "timestamp_ms": 190083,
+    "question_id": "c99c92ca-a2fe-4814-8932-edaba1e61a5a"
+  },
+  {
+    "role": "agent",
+    "text": "You're building a Workato recipe that calls an AI to auto-triage IT tickets. How would you design the recipe so that ticket priority, routing, and notification happen reliably, even when the AI response is ambiguous or the downstream apps are temporarily unavailable?",
+    "timestamp_ms": 190085,
+    "question_id": "c99c92ca-a2fe-4814-8932-edaba1e61a5a"
+  },
+  {
+    "role": "candidate",
+    "text": "How would what kind of actions are you expecting, and what kind of applications how secure applications? I asked you a question.",
+    "timestamp_ms": 219962,
+    "question_id": "c99c92ca-a2fe-4814-8932-edaba1e61a5a"
+  },
+  {
+    "role": "agent",
+    "text": "Sure — let me be more specific. Think about the Jira and Slack integration you described. How would you ensure that the Jira ticket is created and the Slack notification fires reliably, and how would you handle the case where one of those steps fails mid-recipe?",
+    "timestamp_ms": 219965,
+    "question_id": "c99c92ca-a2fe-4814-8932-edaba1e61a5a"
+  },
+  {
+    "role": "candidate",
+    "text": "So all the tickets created in Jira would ideally be allocated to the respective users, and they would be in informed on Slack. And for the audits, you know, the ticket IDs would be the unique identifiers and then all the logs and measures will be taken.",
+    "timestamp_ms": 259868,
+    "question_id": "c99c92ca-a2fe-4814-8932-edaba1e61a5a"
+  },
+  {
+    "role": "agent",
+    "text": "What specific data fields would you pass from the Workato recipe into Jira when creating the ticket, and what would you pass back out?",
+    "timestamp_ms": 259870,
+    "question_id": "c99c92ca-a2fe-4814-8932-edaba1e61a5a"
+  },
+  {
+    "role": "candidate",
+    "text": "I didn't understand the question.",
+    "timestamp_ms": 274374,
+    "question_id": "c99c92ca-a2fe-4814-8932-edaba1e61a5a"
+  },
+  {
+    "role": "agent",
+    "text": "Let me rephrase — in your recipe, when creating a Jira ticket, which fields does your recipe populate, and which fields does it read back from Jira once the ticket is created?",
+    "timestamp_ms": 274376,
+    "question_id": "c99c92ca-a2fe-4814-8932-edaba1e61a5a"
+  },
+  {
+    "role": "candidate",
+    "text": "For the Jira and Slack flow?",
+    "timestamp_ms": 291285,
+    "question_id": "c99c92ca-a2fe-4814-8932-edaba1e61a5a"
+  },
+  {
+    "role": "agent",
+    "text": "Yes, specifically for the Jira step — what fields does your recipe write to Jira, and what does it read back?",
+    "timestamp_ms": 291288,
+    "question_id": "c99c92ca-a2fe-4814-8932-edaba1e61a5a"
+  },
+  {
+    "role": "candidate",
+    "text": "So if it is creating change requests in Jira, so the change ID and is is is what it will be created. But the input that will be taking on Jira would be the change details or descriptions, the type of change, you know, if it is an a standard change or an emergency change, you know, as per the ITL processes, And then the inputs that it will be passing on to Jira, be only the the change ID, the the the ID that is created on Jira. Right? What is the change all about? The the brief summary? The change duration or the change window. The rest, the engineer can go ahead and visit Jira to see rest of the details.",
+    "timestamp_ms": 359493,
+    "question_id": "c99c92ca-a2fe-4814-8932-edaba1e61a5a"
+  },
+  {
+    "role": "agent",
+    "text": "And what happens if the Jira API call fails partway through — how does your recipe handle that failure and recover?",
+    "timestamp_ms": 359495,
+    "question_id": "c99c92ca-a2fe-4814-8932-edaba1e61a5a"
+  },
+  {
+    "role": "candidate",
+    "text": "So if the agent is in is in a failure state, we would go ahead and look at the log analyze what has gone wrong, and then take the respective answer measure.",
+    "timestamp_ms": 392520,
+    "question_id": "c99c92ca-a2fe-4814-8932-edaba1e61a5a"
+  },
+  {
+    "role": "agent",
+    "text": "You need an AI agent that plans multi-step actions across apps. How would you design its action loop, how would it decide the next step, and how would it recover from a failed action mid-plan?",
+    "timestamp_ms": 392522,
+    "question_id": "137ae49f-75c9-4d47-9260-3a54ec37283a"
+  },
+  {
+    "role": "candidate",
+    "text": "I don't understand the question.",
+    "timestamp_ms": 410729,
+    "question_id": "137ae49f-75c9-4d47-9260-3a54ec37283a"
+  },
+  {
+    "role": "agent",
+    "text": "Let me break it down — imagine you're building an AI agent in Workato that needs to: first query a database, then call an external API based on the result, then update a record. How would you structure the recipe's logic so the agent decides what to do next at each step, and what happens when one of those actions returns an error?",
+    "timestamp_ms": 410732,
+    "question_id": "137ae49f-75c9-4d47-9260-3a54ec37283a"
+  },
+  {
+    "role": "candidate",
+    "text": "So the connector would have us have their own limits and notifiers to that will that will notify the user that this is the basic limit of the API calls and we cannot go beyond above and beyond it. At a very basic level, this should would work.",
+    "timestamp_ms": 443739,
+    "question_id": "9ffff440-d383-4201-9cb0-bfe43e0c9d11"
+  },
+  {
+    "role": "agent",
+    "text": "You're building a custom connector to a REST API that enforces rate limits. How would you design around those limits, and what would you do if the API returns a 5xx response under load?",
+    "timestamp_ms": 443741,
+    "question_id": "9ffff440-d383-4201-9cb0-bfe43e0c9d11"
+  },
+  {
+    "role": "candidate",
+    "text": "I don't understand what five x response is.",
+    "timestamp_ms": 459559,
+    "question_id": "9ffff440-d383-4201-9cb0-bfe43e0c9d11"
+  },
+  {
+    "role": "agent",
+    "text": "A 5xx response means the server returned an error — like a 500 Internal Server Error or 503 Service Unavailable. In that case, what would your connector do — retry immediately, wait and retry, or something else?",
+    "timestamp_ms": 459562,
+    "question_id": "9ffff440-d383-4201-9cb0-bfe43e0c9d11"
+  },
+  {
+    "role": "candidate",
+    "text": "Okay. So, uh, there will be retry method, and, they in in my recipe, would have the error handling blocks. Which would take care of such errors.",
+    "timestamp_ms": 484454,
+    "question_id": "9ffff440-d383-4201-9cb0-bfe43e0c9d11"
+  },
+  {
+    "role": "agent",
+    "text": "And how would you handle the rate limit itself — say the API allows 100 calls per minute and your recipe makes 200? Walk me through the specific mechanism.",
+    "timestamp_ms": 484456,
+    "question_id": "9ffff440-d383-4201-9cb0-bfe43e0c9d11"
+  },
+  {
+    "role": "candidate",
+    "text": "I don't know the answer of this question.",
+    "timestamp_ms": 495421,
+    "question_id": "9ffff440-d383-4201-9cb0-bfe43e0c9d11"
+  },
+  {
+    "role": "agent",
+    "text": "In whichever of Java, Python, or Ruby you're strongest, how would you implement a robust JSON transformation — parsing an input payload, restructuring fields, handling missing or malformed values, and serializing back to JSON?",
+    "timestamp_ms": 495423,
+    "question_id": "4f648441-f43c-4e15-94f4-b238d81794bc"
+  },
+  {
+    "role": "candidate",
+    "text": "I would take this up at Java. Or rather root or Python. I would have my libraries involved and you know, for transforming the JSON. Already given you the answer.",
+    "timestamp_ms": 557192,
+    "question_id": "4f648441-f43c-4e15-94f4-b238d81794bc"
+  },
+  {
+    "role": "agent",
+    "text": "Let's be more specific — if you're using Python, walk me through the actual code: how would you parse the JSON, handle a missing required field, and serialize the result back?",
+    "timestamp_ms": 557195,
+    "question_id": "4f648441-f43c-4e15-94f4-b238d81794bc"
+  },
+  {
+    "role": "candidate",
+    "text": "The other handling blocks in the recipe would take care of it. It would be built in a robust way, and you know, if there are malformed or unexpected input, it would resend the request for the That's it.",
+    "timestamp_ms": 595841,
+    "question_id": "4f648441-f43c-4e15-94f4-b238d81794bc"
+  },
+  {
+    "role": "agent",
+    "text": "And if you needed to write a unit test for that JSON transformation function, how would you approach it?",
+    "timestamp_ms": 595843,
+    "question_id": "4f648441-f43c-4e15-94f4-b238d81794bc"
+  },
+  {
+    "role": "candidate",
+    "text": "I am not a test. Why is it asking me a tester?",
+    "timestamp_ms": 612942,
+    "question_id": "4f648441-f43c-4e15-94f4-b238d81794bc"
+  },
+  {
+    "role": "agent",
+    "text": "To clarify — I mean, how would you verify that your JSON transformation code works correctly for edge cases like missing fields or unexpected data types?",
+    "timestamp_ms": 612945,
+    "question_id": "4f648441-f43c-4e15-94f4-b238d81794bc"
+  },
+  {
+    "role": "candidate",
+    "text": "That is what the testers would do. It's not my responsibility.",
+    "timestamp_ms": 631178,
+    "question_id": "4f648441-f43c-4e15-94f4-b238d81794bc"
+  },
+  {
+    "role": "agent",
+    "text": "A Workato recipe that syncs tickets is intermittently timing out in production. How would you investigate the root cause and what steps would you take to fix it?",
+    "timestamp_ms": 631182,
+    "question_id": "55127779-ec02-420f-ae43-44e0b5a873af"
+  },
+  {
+    "role": "candidate",
+    "text": "So I would in introduce batch processing for this so that the sync is done in a batch and not there's not much traffic or load on the on the recipe.",
+    "timestamp_ms": 667360,
+    "question_id": "55127779-ec02-420f-ae43-44e0b5a873af"
+  },
+  {
+    "role": "agent",
+    "text": "Thanks for your time today. That brings us to the end of the interview. We'll be in touch with next steps.",
+    "timestamp_ms": 667362,
+    "question_id": null
+  }
+]
