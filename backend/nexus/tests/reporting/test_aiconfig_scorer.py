@@ -8,11 +8,9 @@ Construction pattern mirrors test_engine_settings.py:
   - monkeypatch.setenv + Settings() for Settings field tests
   - AIConfig() (no args) for AIConfig property tests
 """
-import pytest
 
 from app.ai.config import AIConfig
 from app.config import Settings
-
 
 # ---------------------------------------------------------------------------
 # Settings field defaults — assert coded defaults are what we expect
