@@ -247,9 +247,9 @@ function BlockedView({ job }: { job: JobPostingWithSnapshot }) {
       <section
         className="rounded-[10px] border p-6"
         style={{
-          background: 'var(--px-caution-bg, #fef3c7)',
-          borderColor: 'var(--px-caution-line, #fde68a)',
-          color: 'var(--px-caution, #92400e)',
+          background: 'var(--px-caution-bg)',
+          borderColor: 'var(--px-caution-line)',
+          color: 'var(--px-caution)',
         }}
         role="status"
       >
@@ -743,9 +743,9 @@ function ActionErrorBanner({
     <div
       className="flex items-start gap-3 rounded-[10px] border p-3.5"
       style={{
-        background: 'var(--px-caution-bg, #fef3c7)',
-        borderColor: 'var(--px-caution-line, #fde68a)',
-        color: 'var(--px-caution, #92400e)',
+        background: 'var(--px-caution-bg)',
+        borderColor: 'var(--px-caution-line)',
+        color: 'var(--px-caution)',
       }}
       role="alert"
     >

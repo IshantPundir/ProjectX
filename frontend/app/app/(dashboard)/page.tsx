@@ -549,7 +549,7 @@ export default async function DashboardPage() {
         <div className="grid grid-cols-1 gap-3.5 md:grid-cols-3">
           <AttentionCard
             eyebrow="JD review"
-            accent="var(--px-accent)"
+            accent="var(--px-ai)"
             title="Staff Backend Engineer"
             body="Copilot extracted 17 signals, 2 to double-check."
             meta="Ready to approve · 4m ago"

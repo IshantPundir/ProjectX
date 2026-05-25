@@ -538,9 +538,9 @@ function QBReview({
       // shadow work — composited, no layout.
       gsap.fromTo(
         asideRef.current,
-        { boxShadow: '0 0 0 0 rgba(58, 45, 28, 0)' },
+        { boxShadow: '0 0 0 0 rgba(20, 40, 60, 0)' },
         {
-          boxShadow: '8px 0 22px -14px rgba(58, 45, 28, 0.18)',
+          boxShadow: '8px 0 22px -14px rgba(20, 40, 60, 0.18)',
           ease: 'none',
           scrollTrigger: {
             trigger: containerRef.current,
