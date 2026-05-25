@@ -259,8 +259,15 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
-    font-feature-settings: "cv11", "ss01", "ss03";
+    @apply text-foreground;
+    background: var(--px-bg);
+    background-image:
+      radial-gradient(72% 58% at 6% 2%, rgba(172,215,220,0.34), transparent 60%),
+      radial-gradient(64% 72% at 102% 104%, rgba(220,215,172,0.34), transparent 60%),
+      radial-gradient(50% 50% at 60% -10%, rgba(220,172,175,0.16), transparent 70%),
+      linear-gradient(135deg,#EFF2EE,#E7EEF1);
+    background-attachment: fixed;
+    font-feature-settings: "cv11", "ss01";
     -webkit-font-smoothing: antialiased;
   }
   html {
@@ -900,4 +907,18 @@ select.px-input:focus-visible,
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
+}
+
+/* Glass for the app CHROME (rail + topbar) — fill + blur, NO border, so the
+   sidebar and topbar read as one continuous surface (no divider seam). */
+.px-glass-chrome {
+  background: var(--px-glass-bg);
+  -webkit-backdrop-filter: blur(var(--px-glass-blur));
+  backdrop-filter: blur(var(--px-glass-blur));
+}
+@supports not (backdrop-filter: blur(1px)) {
+  .px-glass-chrome { background: var(--px-surface-2); -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .px-glass-chrome { background: var(--px-surface-2); -webkit-backdrop-filter: none; backdrop-filter: none; }
 }

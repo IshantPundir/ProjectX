@@ -213,7 +213,7 @@ function NavLink({
       style={{
         height: 32,
         padding: collapsed ? "0 7px" : "0 10px",
-        background: active ? "var(--px-surface-2)" : "transparent",
+        background: active ? "var(--px-accent-tint)" : "transparent",
         color: active ? "var(--px-fg)" : "var(--px-fg-2)",
         fontSize: 13,
         fontWeight: active ? 500 : 400,
@@ -300,7 +300,7 @@ export function AppShell({
   return (
     <div
       className="flex h-full w-full"
-      style={{ background: "var(--px-bg)", color: "var(--px-fg)" }}
+      style={{ background: "transparent", color: "var(--px-fg)" }}
     >
       {/* ─── Nav rail ─── */}
       <aside
@@ -316,10 +316,9 @@ export function AppShell({
         // master-detail layouts (e.g. /jobs/[id]/questions) can measure
         // the rail's right edge and extend their aside flush to it.
         data-appshell-rail=""
-        className="sticky top-0 self-start flex h-screen flex-shrink-0 flex-col overflow-hidden"
+        className="px-glass-chrome sticky top-0 self-start flex h-screen flex-shrink-0 flex-col overflow-hidden"
         style={{
           width: railWidth,
-          background: "var(--px-bg-2)",
           transition: "width 180ms cubic-bezier(0.2, 0.8, 0.3, 1)",
           zIndex: 10,
         }}
@@ -459,29 +458,11 @@ export function AppShell({
             top-left + top/left hairlines that trace the chrome/content seam
             into a single smooth L-shape. */}
         <header
-          className="sticky top-0 flex h-[var(--px-topbar-h,48px)] flex-shrink-0 items-center gap-3 px-4"
+          className="px-glass-chrome sticky top-0 flex h-[var(--px-topbar-h,48px)] flex-shrink-0 items-center gap-3 px-4"
           style={{
-            background: "var(--px-bg-2)",
             zIndex: 9,
           }}
         >
-          {/* Concave corner painter — fills the chrome's inner L-corner with
-              a curve that mirrors the content area's rounded top-left, so
-              nav rail + top bar + content read as one smooth shape. Sits
-              just below the top bar, anchored to its bottom-left. */}
-          <span
-            aria-hidden="true"
-            className="pointer-events-none absolute"
-            style={{
-              top: "100%",
-              left: 0,
-              width: 16,
-              height: 16,
-              background:
-                "radial-gradient(circle at bottom right, transparent 0, transparent 16px, var(--px-bg-2) 16px)",
-            }}
-          />
-
           {/* Breadcrumbs */}
           <nav
             aria-label="Breadcrumb"
@@ -558,7 +539,7 @@ export function AppShell({
         <div
           className="min-h-0 flex-1 border-l border-t rounded-tl-2xl"
           style={{
-            background: "var(--px-bg)",
+            background: "var(--px-surface)",
             borderColor: "var(--px-hairline)",
           }}
         >
