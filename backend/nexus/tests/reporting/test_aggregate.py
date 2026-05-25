@@ -1,7 +1,10 @@
 from app.modules.reporting.scoring.aggregate import (
+    KnockoutResult,
     ScoredSignal,
     SignalObservation,
     combine_signal,
+    knockout_status,
+    resolve_verdict,
     score_dimension,
     score_overall,
 )
@@ -64,3 +67,37 @@ def test_overall_weighted_mean():
     score, cov = score_overall([ss("competency", 3, "excellent", 100),
                                 ss("behavioral", 1, "below_bar", 30)])
     assert score == 82 and round(cov, 2) == 1.0
+
+
+def test_knockout_failed_when_below_bar():
+    assert knockout_status(state="below_bar") == "failed"
+
+def test_knockout_passed_when_meets():
+    assert knockout_status(state="meets_bar") == "passed"
+
+def test_knockout_insufficient_when_not_assessed():
+    assert knockout_status(state="not_assessed") == "insufficient"
+
+def test_verdict_reject_on_failed_knockout_regardless_of_overall():
+    v = resolve_verdict(overall=90, coverage=0.9,
+                        knockouts=[KnockoutResult(signal="prog", status="failed",
+                                                  reason="x", evidence=[])])
+    assert v.verdict == "reject" and "must-have" in v.reason
+
+def test_verdict_borderline_on_insufficient_knockout():
+    v = resolve_verdict(overall=90, coverage=0.9,
+                        knockouts=[KnockoutResult(signal="prog", status="insufficient",
+                                                  reason="x", evidence=[])])
+    assert v.verdict == "borderline"
+
+def test_verdict_from_tier_when_all_pass():
+    v = resolve_verdict(overall=80, coverage=0.9, knockouts=[
+        KnockoutResult(signal="prog", status="passed", reason="", evidence=[])])
+    assert v.verdict == "advance"
+
+def test_coverage_override_forces_borderline():
+    v = resolve_verdict(overall=90, coverage=0.4, knockouts=[])
+    assert v.verdict == "borderline" and "assessed" in v.reason
+
+def test_reject_tier():
+    assert resolve_verdict(overall=40, coverage=0.9, knockouts=[]).verdict == "reject"

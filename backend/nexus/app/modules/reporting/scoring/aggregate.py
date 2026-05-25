@@ -4,8 +4,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.modules.reporting.scoring.constants import LEVEL_POINTS
-from app.modules.reporting.scoring.types import BarsLevel, Confidence, Opportunity, SignalState
+from app.modules.reporting.scoring.constants import (
+    ADVANCE_THRESHOLD,
+    LEVEL_POINTS,
+    MIN_COVERAGE_FOR_ADVANCE,
+    REJECT_THRESHOLD,
+)
+from app.modules.reporting.scoring.types import (
+    BarsLevel,
+    Confidence,
+    KnockoutStatus,
+    Opportunity,
+    SignalState,
+    Verdict,
+)
 
 _RANK = {"below_bar": 0, "meets_bar": 1, "excellent": 2}
 
@@ -102,3 +114,45 @@ def score_overall(signals: list[ScoredSignal]) -> tuple[int | None, float]:
         return None, 0.0
     weighted = sum(s.weight * s.score for s in assessed) / assessed_w
     return int(round(weighted)), (assessed_w / total_w if total_w else 0.0)
+
+
+def knockout_status(*, state: SignalState) -> KnockoutStatus:
+    if state == "not_assessed":
+        return "insufficient"
+    if state == "below_bar":
+        return "failed"
+    return "passed"          # meets_bar | excellent
+
+
+@dataclass(frozen=True)
+class KnockoutResult:
+    signal: str
+    status: KnockoutStatus
+    reason: str
+    evidence: list  # list[Evidence-as-dict]
+
+
+@dataclass(frozen=True)
+class VerdictResult:
+    verdict: Verdict
+    reason: str
+
+
+def resolve_verdict(*, overall: int | None, coverage: float,
+                    knockouts: list[KnockoutResult]) -> VerdictResult:
+    failed = [k for k in knockouts if k.status == "failed"]
+    if failed:
+        return VerdictResult("reject", f"failed must-have: {failed[0].signal}")
+    insufficient = [k for k in knockouts if k.status == "insufficient"]
+    if insufficient:
+        return VerdictResult("borderline",
+                             f"couldn't confirm must-have: {insufficient[0].signal}")
+    if overall is None:
+        return VerdictResult("borderline", "no assessable evidence collected")
+    if overall >= ADVANCE_THRESHOLD and coverage < MIN_COVERAGE_FOR_ADVANCE:
+        return VerdictResult("borderline", "not enough assessed to advance confidently")
+    if overall >= ADVANCE_THRESHOLD:
+        return VerdictResult("advance", "meets the bar across assessed signals")
+    if overall < REJECT_THRESHOLD:
+        return VerdictResult("reject", "below the bar across assessed signals")
+    return VerdictResult("borderline", "mixed evidence — human review")
