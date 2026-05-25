@@ -1,18 +1,51 @@
-"""Transcript ↔ envelope segmentation.
+"""Envelope-driven segmentation for the post-session report scorer.
 
-Joins a frozen session transcript (agent turns + candidate turns) with the
-audit envelope (per-turn triage decisions, directive acts, word-count captures)
-to produce one :class:`ScoredUnit` per delivered question.
+The v2 engine writes ``sessions.transcript`` with ``question_id = null`` on
+every turn — transcript question_id tagging was never wired.  This module
+therefore drives segmentation exclusively from the **audit envelope** (the
+engine's authoritative per-turn record), which *does* carry the structure
+needed to reconstruct per-question answer buckets.
 
-This module is deliberately pure (no I/O, no async).  All data is passed as
-plain dicts so it can be called from tests without any database plumbing.
+Design
+------
+``segment`` replaces the old transcript-question_id approach with an
+envelope-pointer walk:
+
+1. Order the bank questions the way the engine asks them (mandatory-first,
+   then by ``position``).
+2. Walk ``events`` in chronological order maintaining ``q_idx`` (an index into
+   the ordered question list):
+
+   * ``directive.delivered`` with act ``ASK`` or ``ACK_ADVANCE`` → advance
+     ``q_idx`` to the next question.
+   * ``directive.delivered`` with act ``PROBE`` → increment the current
+     question's ``probes_fired``.
+   * ``directive.delivered`` with act ``CLARIFY`` or ``REPEAT`` → increment
+     the current question's ``clarifies``.
+   * ``turn.decision`` (a candidate answer) → attribute the ``candidate_quote``
+     and triage kind to ``ordered[q_idx]``.
+   * ``INTRO`` / ``CLOSE`` / all other event kinds → ignored.
+
+3. Emit one ``ScoredUnit`` per question that received ≥1 ``turn.decision``
+   event (question reached *and* answered), in ask order.  Questions never
+   reached produce no unit; their signals stay ``not_assessed``, which is
+   correct.
+
+This module is deliberately **pure** (no I/O, no async).  All data is passed
+as plain dicts so it can be called from tests without any database plumbing.
 """
 from __future__ import annotations
 
-from collections import defaultdict
 from typing import Any
 
 from app.modules.reporting.scoring.types import ScoredUnit
+
+# ---------------------------------------------------------------------------
+# Directive act constants
+# ---------------------------------------------------------------------------
+_ADVANCE_ACTS: frozenset[str] = frozenset({"ASK", "ACK_ADVANCE"})
+_PROBE_ACT = "PROBE"
+_CLARIFY_ACTS: frozenset[str] = frozenset({"CLARIFY", "REPEAT"})
 
 # ---------------------------------------------------------------------------
 # Triage kinds that indicate the candidate was NOT engaged with the question.
@@ -20,10 +53,6 @@ from app.modules.reporting.scoring.types import ScoredUnit
 _NOT_ENGAGED_KINDS: frozenset[str] = frozenset(
     {"no_experience", "off_topic", "backchannel", "injection", "indirect_no"}
 )
-
-# Directive acts that are PROBE / CLARIFY (count toward probes_fired / clarifies).
-_PROBE_ACT = "PROBE"
-_CLARIFY_ACT = "CLARIFY"
 
 
 # ---------------------------------------------------------------------------
@@ -33,225 +62,191 @@ _CLARIFY_ACT = "CLARIFY"
 
 def segment(
     *,
-    transcript: list[dict[str, Any]],
     envelope: dict[str, Any],
-    bank_questions: list[dict[str, Any]] | None = None,  # reserved for future use
+    questions: list[dict[str, Any]],
+    # Legacy compat: transcript is still accepted (used by build_report for the
+    # communication dimension) but is no longer used for question mapping.
+    transcript: list[dict[str, Any]] | None = None,
+    # Historical alias kept for callers that used bank_questions= kwarg.
+    bank_questions: list[dict[str, Any]] | None = None,
 ) -> list[ScoredUnit]:
-    """Return one :class:`ScoredUnit` per delivered question, in question order.
+    """Return one :class:`ScoredUnit` per delivered question, in ask order.
 
     Parameters
     ----------
-    transcript:
-        List of turn dicts with keys ``role`` ("agent"|"candidate"), ``text``,
-        ``timestamp_ms`` (int), and ``question_id`` (str | None).
     envelope:
         The session audit envelope dict with an ``events`` key whose value is a
-        list of event dicts.  Relevant event kinds:
+        time-ordered list of event dicts.  Relevant event kinds:
 
-        * ``directive.delivered`` — carries ``act`` (INTRO/ASK/PROBE/ACK_ADVANCE/
-          CLARIFY/REPEAT/CLOSE) and ``turn_ref``.
-        * ``turn.captured`` — carries ``word_count``.
-        * ``engine.v2.triage.decision`` — carries ``turn_ref`` and ``kind``
-          (answering/no_experience/off_topic/backchannel/…).
+        * ``directive.delivered`` — ``payload`` carries ``act`` (INTRO / ASK /
+          ACK_ADVANCE / PROBE / CLARIFY / REPEAT / CLOSE).
+        * ``turn.decision`` — ``payload`` carries ``candidate_quote``,
+          ``turn_ref``, ``grade``, ``attributed_signals``.
+        * ``engine.v2.triage.decision`` — ``payload`` carries ``turn_ref`` and
+          ``kind`` (answering / no_experience / off_topic / …).
+
+    questions:
+        The ordered list of question dicts from the question bank.  Each entry
+        must have at minimum ``id`` (str), ``text`` (str), ``is_mandatory``
+        (bool), and ``position`` (int).
+
+    transcript:
+        Accepted for backward compatibility and still used by ``build_report``
+        to build the full-transcript text for the communication dimension.
+        **Not used for question mapping.**
 
     bank_questions:
-        Reserved/unused; accepted so callers can pass question-bank metadata
-        for future enrichment without a breaking signature change.
+        Legacy alias for ``questions``; ignored when ``questions`` is provided.
 
     Returns
     -------
     list[ScoredUnit]
-        One entry per unique ``question_id``, in the order the questions first
-        appear in the transcript.
+        One entry per question that received ≥ 1 candidate answer, in the order
+        the engine asked them (mandatory-first, then by ``position``).
     """
+    # Resolve questions: explicit arg wins over legacy bank_questions alias.
+    resolved_questions: list[dict[str, Any]] = (
+        questions if questions is not None else (bank_questions or [])
+    )
+
     events: list[dict[str, Any]] = envelope.get("events") or []
 
     # ------------------------------------------------------------------
-    # Phase 1 — Build per-question buckets from the transcript.
+    # Step 1 — Order questions the way the engine asks them.
+    # Mandatory-first, then ascending position.
+    # This mirrors the engine's bank-advancement order exactly.
     # ------------------------------------------------------------------
-    # question_order: unique question_ids in first-appearance order
-    question_order: list[str] = []
-    # question_text: first agent-turn text that carried each question_id
-    question_text: dict[str, str] = {}
-    # candidate_turns: all candidate turn dicts per question_id (accumulated)
-    candidate_turns: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    # answer_start_ms: timestamp_ms of the first candidate turn per question_id
-    answer_start_ms: dict[str, int] = {}
-    # agent turns indexed by position for later timestamp matching
-    agent_turns: list[dict[str, Any]] = []
-
-    # Track the current "open" question_id as we walk the transcript.
-    current_qid: str | None = None
-
-    for turn in transcript:
-        role = turn.get("role", "")
-        qid = turn.get("question_id") or None
-        t_ms: int = int(turn.get("timestamp_ms", 0))
-
-        if role == "agent":
-            agent_turns.append(turn)
-            if qid is not None:
-                if qid not in question_text:
-                    # First agent turn for this question — it is the question delivery.
-                    question_order.append(qid)
-                    question_text[qid] = turn.get("text", "")
-                current_qid = qid
-
-        elif role == "candidate":
-            # Candidate turns are attributed to the most-recently-opened qid.
-            # The transcript sometimes carries the qid directly on the candidate
-            # turn; we prefer that over the inferred current_qid.
-            effective_qid = qid if qid is not None else current_qid
-            if effective_qid is not None:
-                candidate_turns[effective_qid].append(turn)
-                if effective_qid not in answer_start_ms:
-                    answer_start_ms[effective_qid] = t_ms
-
-    # ------------------------------------------------------------------
-    # Phase 2 — Derive probe / clarify counts from the envelope.
-    #
-    # Strategy: match each directive.delivered event to the nearest agent
-    # turn by timestamp (they are nearly simultaneous — within ~2 ms in
-    # real sessions).  The matched agent turn's question_id tells us which
-    # question the act belongs to.
-    # ------------------------------------------------------------------
-    probes_per_q: dict[str, int] = defaultdict(int)
-    clarifies_per_q: dict[str, int] = defaultdict(int)
-
-    if agent_turns:
-        agent_ts: list[int] = [int(t.get("timestamp_ms", 0)) for t in agent_turns]
-
-        for event in events:
-            if event.get("kind") != "directive.delivered":
-                continue
-            payload = event.get("payload") or {}
-            act: str = payload.get("act", "")
-            if act not in (_PROBE_ACT, _CLARIFY_ACT):
-                continue
-            e_t_ms = int(event.get("t_ms", 0))
-            # Find the agent turn closest in time to this directive.
-            closest_idx = min(range(len(agent_ts)), key=lambda i: abs(agent_ts[i] - e_t_ms))
-            matched_qid = agent_turns[closest_idx].get("question_id")
-            if matched_qid is not None:
-                if act == _PROBE_ACT:
-                    probes_per_q[matched_qid] += 1
-                else:
-                    clarifies_per_q[matched_qid] += 1
-
-    # ------------------------------------------------------------------
-    # Phase 3 — Derive candidate_engaged per question.
-    #
-    # Strategy: match each candidate turn to the nearest triage decision
-    # by timestamp (triage fires ~1–6 s before the transcript records the
-    # turn; always the closest event when no other candidate turn is nearby).
-    # engaged = kind NOT IN _NOT_ENGAGED_KINDS.
-    # A question is engaged if AT LEAST ONE of its candidate turns is engaged,
-    # OR (fallback) if the candidate said something non-empty and there is no
-    # triage signal to contradict it.
-    # ------------------------------------------------------------------
-    triage_events = sorted(
-        [e for e in events if e.get("kind") == "engine.v2.triage.decision"],
-        key=lambda e: int(e.get("t_ms", 0)),
+    ordered: list[dict[str, Any]] = sorted(
+        resolved_questions,
+        key=lambda q: (not q.get("is_mandatory", False), q.get("position", 0)),
     )
-    triage_ts: list[int] = [int(e.get("t_ms", 0)) for e in triage_events]
 
-    # Build per-question engagement flag.
-    engaged_per_q: dict[str, bool] = {}
+    if not ordered:
+        return []
 
-    for qid in question_order:
-        turns_for_q = candidate_turns.get(qid, [])
-        if not turns_for_q:
-            # No candidate turns → not engaged.
-            engaged_per_q[qid] = False
+    # ------------------------------------------------------------------
+    # Step 2 — Build per-turn triage kind lookup.
+    # ``engine.v2.triage.decision`` fires once per candidate turn (same
+    # turn_ref as the turn.decision for that turn).
+    # ------------------------------------------------------------------
+    triage_kind_by_turn: dict[str, str] = {}
+    for e in events:
+        if e.get("kind") == "engine.v2.triage.decision":
+            payload = e.get("payload") or {}
+            turn_ref = payload.get("turn_ref")
+            kind = payload.get("kind")
+            if turn_ref is not None and kind is not None:
+                triage_kind_by_turn[turn_ref] = kind
+
+    # ------------------------------------------------------------------
+    # Step 3 — Walk events in order, maintaining q_idx and per-question
+    # accumulators.
+    #
+    # Engagement is computed via a separate post-walk pass (Step 3b) to
+    # avoid the complexity of distinguishing "no triage seen yet" from
+    # "triage confirms engaging" in a single pass.
+    # ------------------------------------------------------------------
+    # Per-question accumulators (indexed by position in ``ordered``).
+    answer_parts: list[list[str]] = [[] for _ in ordered]
+    probes_fired: list[int] = [0] * len(ordered)
+    clarifies: list[int] = [0] * len(ordered)
+    first_ts: list[int | None] = [None] * len(ordered)
+    has_answer: list[bool] = [False] * len(ordered)
+    # Per-question: turn_refs seen (for engagement computation).
+    per_q_turn_refs: list[list[str]] = [[] for _ in ordered]
+
+    q_idx: int = -1  # -1 = before any question is on the floor
+
+    for event in events:
+        kind = event.get("kind")
+        payload: dict[str, Any] = event.get("payload") or {}
+        t_ms: int = int(event.get("t_ms", 0))
+
+        if kind == "directive.delivered":
+            act: str = payload.get("act", "")
+
+            if act in _ADVANCE_ACTS:
+                # Advance to the next question in the ordered list.
+                # Guard: more advances than questions (e.g. a trailing
+                # ACK_ADVANCE after the last question) → clamp at end.
+                q_idx += 1
+
+            elif act == _PROBE_ACT and 0 <= q_idx < len(ordered):
+                probes_fired[q_idx] += 1
+
+            elif act in _CLARIFY_ACTS and 0 <= q_idx < len(ordered):
+                clarifies[q_idx] += 1
+
+            # INTRO, CLOSE → no-op.
+
+        elif kind == "turn.decision":
+            # A graded candidate turn.  Attribute to the current question.
+            if 0 <= q_idx < len(ordered):
+                turn_ref: str | None = payload.get("turn_ref")
+                quote: str = (payload.get("candidate_quote") or "").strip()
+
+                if quote:
+                    answer_parts[q_idx].append(quote)
+
+                # Track timestamp from the event (first answer for this question).
+                if first_ts[q_idx] is None:
+                    first_ts[q_idx] = t_ms
+
+                has_answer[q_idx] = True
+
+                if turn_ref is not None:
+                    per_q_turn_refs[q_idx].append(turn_ref)
+
+    # ------------------------------------------------------------------
+    # Step 3b — Compute engagement per question via a clean post-walk.
+    #
+    # engaged = True if ANY candidate turn for this question has a triage
+    # kind NOT in _NOT_ENGAGED_KINDS.  If there is no triage signal at
+    # all, default to True (candidate said something, no evidence otherwise).
+    # ------------------------------------------------------------------
+    engaged: list[bool] = []
+    for idx in range(len(ordered)):
+        refs = per_q_turn_refs[idx]
+        if not refs:
+            engaged.append(True)
             continue
 
-        if not triage_ts:
-            # No triage signal at all → default True if candidate said something.
-            has_content = any(t.get("text", "").strip() for t in turns_for_q)
-            engaged_per_q[qid] = has_content
-            continue
-
-        # Per-turn engagement, then aggregate with OR (any engaged = True).
         any_engaged = False
-        for ct in turns_for_q:
-            ct_t = int(ct.get("timestamp_ms", 0))
-            closest_i = min(range(len(triage_ts)), key=lambda i: abs(triage_ts[i] - ct_t))
-            kind = triage_events[closest_i].get("payload", {}).get("kind", "")
-            if kind not in _NOT_ENGAGED_KINDS:
-                any_engaged = True
-                break  # short-circuit — one engaged turn is enough
-        engaged_per_q[qid] = any_engaged
+        any_triage = False
+        for ref in refs:
+            tk = triage_kind_by_turn.get(ref)
+            if tk is not None:
+                any_triage = True
+                if tk not in _NOT_ENGAGED_KINDS:
+                    any_engaged = True
+                    break  # short-circuit — one engaging turn is enough
+
+        # No triage signal for any turn → default True.
+        engaged.append(any_engaged if any_triage else True)
 
     # ------------------------------------------------------------------
-    # Phase 4 — Derive word_count from turn.captured events when possible.
-    #
-    # turn.captured fires slightly before the candidate turn is recorded in
-    # the transcript.  We match by timestamp proximity and attribute the
-    # word_count to the question_id of the nearest candidate turn.
-    #
-    # If alignment fails (no captured events, or sparse coverage), we fall
-    # back to len(text.split()) on each candidate turn.
-    # ------------------------------------------------------------------
-    all_cand_turns: list[dict[str, Any]] = [
-        t for t in transcript if t.get("role") == "candidate"
-    ]
-    all_cand_ts: list[int] = [int(t.get("timestamp_ms", 0)) for t in all_cand_turns]
-
-    captured_wc_per_q: dict[str, int] = defaultdict(int)
-    captured_match_counts: dict[str, int] = defaultdict(int)
-
-    if all_cand_turns:
-        for event in events:
-            if event.get("kind") != "turn.captured":
-                continue
-            payload = event.get("payload") or {}
-            wc = int(payload.get("word_count", 0))
-            e_t_ms = int(event.get("t_ms", 0))
-            # Find nearest candidate turn.
-            closest_i = min(range(len(all_cand_ts)), key=lambda i: abs(all_cand_ts[i] - e_t_ms))
-            matched_ct = all_cand_turns[closest_i]
-            # Attribute to the question the candidate turn belongs to.
-            # We use effective_qid: turn's own qid or fall back to the question
-            # that the candidate was answering (same logic as Phase 1).
-            c_qid = matched_ct.get("question_id") or None
-            if c_qid is None:
-                # If the candidate turn had no qid, find which question it was
-                # added to in Phase 1 by scanning candidate_turns dicts.
-                for q, turns in candidate_turns.items():
-                    if matched_ct in turns:
-                        c_qid = q
-                        break
-            if c_qid is not None:
-                captured_wc_per_q[c_qid] += wc
-                captured_match_counts[c_qid] += 1
-
-    # ------------------------------------------------------------------
-    # Phase 5 — Assemble ScoredUnit list.
+    # Step 4 — Emit one ScoredUnit per question that received ≥1 answer.
     # ------------------------------------------------------------------
     units: list[ScoredUnit] = []
 
-    for qid in question_order:
-        turns_for_q = candidate_turns.get(qid, [])
+    for idx, q in enumerate(ordered):
+        if not has_answer[idx]:
+            # Question never reached / never answered → no unit.
+            continue
 
-        # Candidate answer: join all candidate turn texts.
-        candidate_answer = " ".join(t.get("text", "").strip() for t in turns_for_q).strip()
-
-        # word_count: prefer turn.captured aggregate; fall back to text split.
-        if captured_match_counts.get(qid, 0) > 0:
-            wc = captured_wc_per_q[qid]
-        else:
-            wc = sum(len(t.get("text", "").split()) for t in turns_for_q)
+        candidate_answer = " ".join(answer_parts[idx]).strip()
+        wc = len(candidate_answer.split()) if candidate_answer else 0
 
         units.append(
             ScoredUnit(
-                question_id=qid,
-                question_text=question_text.get(qid, ""),
+                question_id=q["id"],
+                question_text=q.get("text", ""),
                 candidate_answer=candidate_answer,
-                answer_start_ms=answer_start_ms.get(qid, 0),
-                probes_fired=probes_per_q.get(qid, 0),
-                clarifies=clarifies_per_q.get(qid, 0),
+                answer_start_ms=first_ts[idx] or 0,
+                probes_fired=probes_fired[idx],
+                clarifies=clarifies[idx],
                 word_count=wc,
-                candidate_engaged=engaged_per_q.get(qid, True),
+                candidate_engaged=engaged[idx],
             )
         )
 

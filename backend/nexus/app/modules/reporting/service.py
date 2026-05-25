@@ -128,9 +128,12 @@ async def build_report(
     max_samples: int = n_samples if n_samples is not None else ai_config.report_scorer_n_samples
 
     # ------------------------------------------------------------------
-    # Step 1 — Segmentation
+    # Step 1 — Segmentation (envelope-driven)
+    # The v2 engine never populates question_id on transcript turns, so
+    # segmentation is driven entirely from the audit envelope.  The transcript
+    # parameter is still used below for the communication dimension.
     # ------------------------------------------------------------------
-    units = segment(transcript=transcript, envelope=envelope, bank_questions=questions)
+    units = segment(envelope=envelope, questions=questions)
 
     # ------------------------------------------------------------------
     # Step 2 — Lookup helpers

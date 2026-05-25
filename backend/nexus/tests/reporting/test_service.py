@@ -81,35 +81,61 @@ async def test_weak_bluffer_is_confident_reject():
 @pytest.mark.asyncio
 async def test_not_assessed_signals_excluded():
     """not_assessed signals are excluded from the dimension weighted mean —
-    only assessed signals' scores count."""
+    only assessed signals' scores count.
 
-    # Minimal transcript: only one question delivered (q1) out of two in bank.
-    # q2 has no agent turn with its question_id → never delivered → not_assessed.
+    Segmentation is envelope-driven: q1 is delivered via ASK + turn.decision;
+    q2 has no directive events → never delivered → not_assessed.
+    """
+    # Transcript is still passed (used for the communication dimension),
+    # but question_id values on turns are ignored for segmentation.
     transcript = [
         {
             "role": "agent",
             "text": "What is your experience?",
             "timestamp_ms": 1000,
-            "question_id": "q1",
+            "question_id": None,
         },
         {
             "role": "candidate",
             "text": "I have worked for several years in this field doing various things.",
             "timestamp_ms": 2000,
-            "question_id": "q1",
+            "question_id": None,
         },
-        # q2 is never delivered (no agent turn with question_id=q2)
     ]
 
-    # Minimal envelope — no events needed for this test
-    envelope = {"events": []}
+    # Envelope delivers q1 (mandatory, position=0) only.
+    # q2 (mandatory, position=1) is never reached — no ASK/ACK_ADVANCE for it.
+    envelope = {
+        "events": [
+            {
+                "kind": "directive.delivered",
+                "t_ms": 1000,
+                "payload": {"act": "ASK", "turn_ref": "t-0"},
+            },
+            {
+                "kind": "turn.decision",
+                "t_ms": 2000,
+                "payload": {
+                    "turn_ref": "t-1",
+                    "candidate_quote": (
+                        "I have worked for several years"
+                        " in this field doing various things."
+                    ),
+                },
+            },
+            # Session ends — q2 never delivered.
+        ]
+    }
 
     # Two questions, each covering a different signal.
     # q1 covers signal-a (behavioral), q2 covers signal-b (behavioral).
+    # Both are mandatory so ordering is position-based: q1(pos=0) first, q2(pos=1) second.
     questions = [
         {
             "id": "q1",
             "text": "What is your experience?",
+            "is_mandatory": True,
+            "position": 0,
             "signal_values": ["signal-a"],
             "rubric": {
                 "below_bar": "vague",
@@ -122,6 +148,8 @@ async def test_not_assessed_signals_excluded():
         {
             "id": "q2",
             "text": "Describe a challenge.",
+            "is_mandatory": True,
+            "position": 1,
             "signal_values": ["signal-b"],
             "rubric": {
                 "below_bar": "vague",
@@ -260,45 +288,72 @@ async def test_selective_self_consistency_routing():
     Setup:
     - q-ko  covers 'signal-ko'  (knockout=True)
     - q-ok  covers 'signal-ok'  (knockout=False)
-    Both questions are delivered in the transcript.
+    Both questions are delivered via envelope directive events.
     build_report is called with n_samples=3 (max_samples=3).
     The fake grade_answer_consistent records the n_samples kwarg per call.
     We assert:
       - q-ko  call used n_samples=3
       - q-ok  call used n_samples=1
     """
+    # Transcript is still passed (used for the communication dimension);
+    # question_id on turns is ignored for segmentation.
     transcript = [
-        {
-            "role": "agent",
-            "text": "Tell me about your Python depth.",
-            "timestamp_ms": 1000,
-            "question_id": "q-ko",
-        },
         {
             "role": "candidate",
             "text": "I have used Python for five years in production systems.",
             "timestamp_ms": 2000,
-            "question_id": "q-ko",
-        },
-        {
-            "role": "agent",
-            "text": "Describe a teamwork situation.",
-            "timestamp_ms": 3000,
-            "question_id": "q-ok",
+            "question_id": None,
         },
         {
             "role": "candidate",
             "text": "We collaborated daily across time zones on a shared codebase.",
             "timestamp_ms": 4000,
-            "question_id": "q-ok",
+            "question_id": None,
         },
     ]
-    envelope = {"events": []}
+    # Envelope delivers both q-ko (mandatory, position=0) and q-ok (mandatory, position=1).
+    # ASK → q-ko; turn.decision → attributed to q-ko; ACK_ADVANCE → q-ok;
+    # turn.decision → attributed to q-ok.
+    envelope = {
+        "events": [
+            {
+                "kind": "directive.delivered",
+                "t_ms": 1000,
+                "payload": {"act": "ASK", "turn_ref": "t-0"},
+            },
+            {
+                "kind": "turn.decision",
+                "t_ms": 2000,
+                "payload": {
+                    "turn_ref": "t-1",
+                    "candidate_quote": "I have used Python for five years in production systems.",
+                },
+            },
+            {
+                "kind": "directive.delivered",
+                "t_ms": 2010,
+                "payload": {"act": "ACK_ADVANCE", "turn_ref": "t-1"},
+            },
+            {
+                "kind": "turn.decision",
+                "t_ms": 4000,
+                "payload": {
+                    "turn_ref": "t-2",
+                    "candidate_quote": (
+                        "We collaborated daily across time zones"
+                        " on a shared codebase."
+                    ),
+                },
+            },
+        ]
+    }
 
     questions = [
         {
             "id": "q-ko",
             "text": "Tell me about your Python depth.",
+            "is_mandatory": True,
+            "position": 0,
             "signal_values": ["signal-ko"],
             "rubric": {"below_bar": "none", "meets_bar": "some", "excellent": "deep"},
             "positive_evidence": [],
@@ -307,6 +362,8 @@ async def test_selective_self_consistency_routing():
         {
             "id": "q-ok",
             "text": "Describe a teamwork situation.",
+            "is_mandatory": True,
+            "position": 1,
             "signal_values": ["signal-ok"],
             "rubric": {"below_bar": "none", "meets_bar": "some", "excellent": "great"},
             "positive_evidence": [],
