@@ -2,7 +2,7 @@
 // Single source of truth for product identity and the active look.
 // Change the name/logo here; change colors in app/theme.css.
 
-export type ThemeName = "warm-light"; // add new names here as themes are added to app/theme.css
+export type ThemeName = "daylight"; // add new names here as themes are added to app/theme.css
 export type DensityName = "compact" | "comfortable" | "spacious";
 
 export interface LogoAsset {
@@ -38,6 +38,6 @@ export const brand = {
     wordmark: { src: "/brand/binqle-wordmark.png", width: 960, height: 263 },
     mark: { src: "/brand/binqle-mark.png", width: 256, height: 256 },
   },
-  theme: "warm-light",
+  theme: "daylight",
   density: "comfortable",
 } as const satisfies BrandConfig;
