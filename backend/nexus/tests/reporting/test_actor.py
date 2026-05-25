@@ -26,7 +26,6 @@ from app.modules.reporting.models import SessionReport
 from app.modules.reporting.schemas import ReportRead, SummaryOut
 from app.modules.session.models import Session as SessionRow
 
-
 # ---------------------------------------------------------------------------
 # Minimal ReportRead returned by the mocked build_report
 # ---------------------------------------------------------------------------
