@@ -456,26 +456,22 @@ export function AppShell({
       {/* ─── Main column ─── */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {/* Top bar — sticky so it stays visible regardless of scroll level.
-            Topbar shares the same glass fill as the rail (one continuous frosted
-            surface, no divider). It sits ABOVE the page content (high z-index)
-            so content scrolls BEHIND the glass and is frosted by its
-            backdrop-filter, rather than painting over the bar. */}
+            SOLID (opaque) fill, not glass: it sits ABOVE the page content
+            (high z-index) so content scrolls cleanly BEHIND it and is hidden,
+            keeping the bar fully legible while scrolling. (The rail keeps its
+            glass since nothing scrolls behind it.) */}
         <header
-          className="px-glass-chrome sticky top-0 flex h-[var(--px-topbar-h,48px)] flex-shrink-0 items-center gap-3 px-4"
+          className="sticky top-0 flex h-[var(--px-topbar-h,48px)] flex-shrink-0 items-center gap-3 px-4"
           style={{
             zIndex: 30,
-            // Lighter blur than the rail (which uses the default 16px) so more
-            // of the scrolling content stays visible behind the glass top bar.
-            // Overriding the var (not backdrop-filter) keeps the reduced-
-            // transparency / no-backdrop-filter fallbacks in .px-glass-chrome intact.
-            ["--px-glass-blur" as string]: "8px",
+            background: "var(--px-bg-2)",
           }}
         >
-          {/* Concave corner-painter — fills the chrome's inner L-corner with
-              chrome glass (everything OUTSIDE a 16px quarter-circle), so the
-              content panel's rounded-tl-2xl corner reads as one smooth concave
-              curve from rail into top bar. Uses the glass fill (not the body
-              backdrop) so no gap shows. Sits flush at the top bar's bottom-left. */}
+          {/* Concave corner-painter — fills the chrome's inner L-corner
+              (everything OUTSIDE a 16px quarter-circle) with the solid top-bar
+              fill, so the content panel's rounded-tl-2xl corner reads as one
+              smooth concave curve from top bar into content with no gap. Sits
+              flush at the top bar's bottom-left. */}
           <span
             aria-hidden="true"
             className="pointer-events-none absolute"
@@ -485,7 +481,7 @@ export function AppShell({
               width: 16,
               height: 16,
               background:
-                "radial-gradient(circle at bottom right, transparent 0, transparent 16px, var(--px-glass-bg) 16px)",
+                "radial-gradient(circle at bottom right, transparent 0, transparent 16px, var(--px-bg-2) 16px)",
             }}
           />
 
