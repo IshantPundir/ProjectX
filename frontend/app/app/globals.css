@@ -2,7 +2,7 @@
 @import "./theme.css";
 
 @theme inline {
-  /* Fonts — Inter + Fraunces + JetBrains Mono per ProjectX v4 */
+  /* Fonts — Urbanist (sans+headings) + JetBrains Mono */
   --font-sans: var(--font-sans);
   --font-serif: var(--font-serif);
   --font-mono: var(--font-mono);

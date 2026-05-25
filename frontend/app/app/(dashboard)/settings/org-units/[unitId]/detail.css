@@ -13,8 +13,8 @@
  */
 
 :root {
-  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
-  --font-serif: 'Fraunces', Georgia, serif;
+  --font-sans: 'Urbanist', system-ui, -apple-system, sans-serif;
+  --font-serif: var(--font-sans);
   --font-mono: 'JetBrains Mono', ui-monospace, monospace;
 }
 
