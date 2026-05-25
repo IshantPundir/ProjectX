@@ -1,28 +1,37 @@
-"""Per-answer LLM judge — instructor structured call with prefix caching.
+"""Per-answer LLM judge — Responses API with native Structured Outputs.
 
 Grades a single candidate answer against a question's rubric.  The
 system prompt + question context form a stable prefix that is shared
 across all candidates answering the same question, enabling OpenAI
-automatic prefix caching.
+automatic prefix caching (Responses API caches automatically; no
+explicit ``prompt_cache_key`` needed for caching, but we pass it so
+the SDK can attach it to the request for Langfuse / OTel correlation).
+
+Uses ``client.responses.parse(text_format=...)`` (NOT function tools)
+so ``reasoning={"effort": ...}`` is supported — function tools +
+reasoning_effort is explicitly rejected by gpt-5.4 on /v1/chat/completions
+with HTTP 400.
 
 Pattern mirrors ``app/modules/interview_engine_v2/brain/service.py``
-exactly:
-- ``get_openai_client()`` imported at module level (mockable in tests).
-- ``create_with_completion`` for (parsed_model, raw_completion) tuple.
-- Effort-gating: ``reasoning_effort`` forwarded only when
-  ``ai_config.report_scorer_effort`` is truthy.
-- ``prompt_cache_key`` built per call so all candidates grading the
-  same question share the cached system-prompt prefix.
-- ``set_llm_span_attributes`` enriches the active OTel span (no-op
-  when no span is recording).
+except the Responses API is used instead of chat.completions:
+- ``get_raw_openai_client()`` imported at module level (mockable in tests).
+- ``response.output_parsed`` for parsed model extraction.
+- Effort-gating: ``reasoning={"effort": ...}`` forwarded only when
+  ``ai_config.report_scorer_effort`` is truthy (dict form, not
+  ``reasoning_effort=``).
+- ``prompt_cache_key`` passed through (accepted by responses.parse).
+- ``set_llm_span_attributes`` enriches the active OTel span.
 - Structured logs via structlog — no PII (transcripts / quotes never
   logged).
+- Refusal path handled gracefully: returns a conservative below_bar
+  AnswerRating so one model refusal does not crash the entire report.
 """
 from __future__ import annotations
 
 import structlog
+from opentelemetry import trace
 
-from app.ai.client import get_openai_client
+from app.ai.client import get_raw_openai_client
 from app.ai.config import ai_config
 from app.ai.prompts import PromptLoader
 from app.ai.tracing import set_llm_span_attributes
@@ -31,6 +40,7 @@ from app.modules.reporting.scoring.grounding import ground_quotes
 from app.modules.reporting.scoring.input_builder import build_messages, render_prefix
 
 log = structlog.get_logger()
+_tracer = trace.get_tracer("nexus.ai.openai")
 
 # Level ordering for majority vote / tie-break (conservative = lower is better)
 _LEVEL_ORDER: list[str] = ["below_bar", "meets_bar", "excellent"]
@@ -52,6 +62,39 @@ def _majority_level(levels: list[str]) -> str:
     return candidates[0]
 
 
+def _extract_parsed_or_refusal(response: object) -> tuple[object | None, bool]:
+    """Extract the parsed object from a ParsedResponse, or detect refusal.
+
+    Returns ``(parsed_object, is_refusal)``.
+
+    Primary path: ``response.output_parsed`` (SDK convenience property).
+    Fallback: iterate ``response.output[].content[]`` for the first
+    ``output_text`` item with a non-None ``parsed`` value, or detect a
+    ``refusal`` content type.
+    """
+    # Fast path — SDK convenience property
+    output_parsed = getattr(response, "output_parsed", None)
+    if output_parsed is not None:
+        return output_parsed, False
+
+    # Detailed walk — also detects refusals
+    output_items = getattr(response, "output", None) or []
+    for item in output_items:
+        item_type = getattr(item, "type", None)
+        if item_type == "message":
+            for content in getattr(item, "content", None) or []:
+                content_type = getattr(content, "type", None)
+                if content_type == "refusal":
+                    return None, True
+                if content_type == "output_text":
+                    parsed = getattr(content, "parsed", None)
+                    if parsed is not None:
+                        return parsed, False
+
+    # output_parsed is None and no refusal found — treat as missing parse
+    return None, False
+
+
 async def grade_answer(
     *,
     question: dict,
@@ -59,7 +102,7 @@ async def grade_answer(
     correlation_id: str,
     n_samples: int = 1,
 ) -> AnswerRating:
-    """Grade a single candidate answer with one LLM call.
+    """Grade a single candidate answer with one Responses API call.
 
     Args:
         question: Dict with keys ``id``, ``text``, ``rubric`` (dict with
@@ -75,7 +118,9 @@ async def grade_answer(
 
     Returns:
         ``AnswerRating`` with grounded evidence quotes and a
-        ``grounded`` flag.
+        ``grounded`` flag.  If the model refuses, returns a
+        conservative ``below_bar`` rating with no evidence and
+        ``grounded=False`` rather than crashing the report.
     """
     system_prompt = PromptLoader(
         version=ai_config.report_scorer_prompt_version
@@ -102,34 +147,55 @@ async def grade_answer(
         correlation_id=correlation_id,
     )
 
-    client = get_openai_client()
-    create_kwargs: dict[str, object] = {
+    client = get_raw_openai_client()
+    kwargs: dict[str, object] = {
         "model": ai_config.report_scorer_model,
-        "response_model": JudgeVerdict,
-        "messages": messages,
-        "max_retries": 1,
+        "input": messages,
+        "text_format": JudgeVerdict,
         "prompt_cache_key": prompt_cache_key,
     }
-    # Effort-gating contract: forward reasoning_effort ONLY when truthy.
-    # Reasoning models reject temperature/seed — do not pass them.
+    # Effort-gating: pass reasoning as a dict (Responses API form), not
+    # reasoning_effort= (chat.completions form).
     if ai_config.report_scorer_effort:
-        create_kwargs["reasoning_effort"] = ai_config.report_scorer_effort
+        kwargs["reasoning"] = {"effort": ai_config.report_scorer_effort}
 
-    verdict, completion = await client.chat.completions.create_with_completion(
-        **create_kwargs
-    )
+    with _tracer.start_as_current_span("openai.responses.parse"):
+        set_llm_span_attributes(
+            prompt_name="report_scorer",
+            prompt_version=ai_config.report_scorer_prompt_version,
+            correlation_id=correlation_id,
+        )
+        response = await client.responses.parse(**kwargs)
 
     # Log cache usage — never log the transcript or evidence quotes.
-    usage = getattr(completion, "usage", None)
+    usage = getattr(response, "usage", None)
     if usage is not None:
-        details = getattr(usage, "prompt_tokens_details", None)
+        details = getattr(usage, "input_tokens_details", None)
         log.info(
             "reporting.judge.usage",
-            prompt_tokens=getattr(usage, "prompt_tokens", None),
+            input_tokens=getattr(usage, "input_tokens", None),
             cached_tokens=getattr(details, "cached_tokens", None),
-            completion_tokens=getattr(usage, "completion_tokens", None),
+            output_tokens=getattr(usage, "output_tokens", None),
             correlation_id=correlation_id,
             question_id=question_id,
+        )
+
+    verdict, is_refusal = _extract_parsed_or_refusal(response)
+
+    if is_refusal or verdict is None:
+        log.warning(
+            "reporting.judge.refusal",
+            question_id=question_id,
+            correlation_id=correlation_id,
+            is_refusal=is_refusal,
+        )
+        return AnswerRating(
+            question_id=question_id,
+            level="below_bar",
+            evidence_quotes=[],
+            red_flags_hit=[],
+            justification="Model refused to grade this answer.",
+            grounded=False,
         )
 
     # Ground evidence quotes against the transcript — drop hallucinations.
@@ -224,37 +290,48 @@ async def grade_communication(
         f":{ai_config.report_scorer_model}"
     )
 
-    set_llm_span_attributes(
-        prompt_name="report_scorer_communication",
-        prompt_version=ai_config.report_scorer_prompt_version,
-        correlation_id=correlation_id,
-    )
-
-    client = get_openai_client()
-    create_kwargs: dict[str, object] = {
+    client = get_raw_openai_client()
+    kwargs: dict[str, object] = {
         "model": ai_config.report_scorer_model,
-        "response_model": CommunicationVerdict,
-        "messages": messages,
-        "max_retries": 1,
+        "input": messages,
+        "text_format": CommunicationVerdict,
         "prompt_cache_key": prompt_cache_key,
     }
     if ai_config.report_scorer_effort:
-        create_kwargs["reasoning_effort"] = ai_config.report_scorer_effort
+        kwargs["reasoning"] = {"effort": ai_config.report_scorer_effort}
 
-    verdict, completion = await client.chat.completions.create_with_completion(
-        **create_kwargs
-    )
+    with _tracer.start_as_current_span("openai.responses.parse"):
+        set_llm_span_attributes(
+            prompt_name="report_scorer_communication",
+            prompt_version=ai_config.report_scorer_prompt_version,
+            correlation_id=correlation_id,
+        )
+        response = await client.responses.parse(**kwargs)
 
     # Log cache usage — never log the transcript or evidence quotes.
-    usage = getattr(completion, "usage", None)
+    usage = getattr(response, "usage", None)
     if usage is not None:
-        details = getattr(usage, "prompt_tokens_details", None)
+        details = getattr(usage, "input_tokens_details", None)
         log.info(
             "reporting.judge.communication.usage",
-            prompt_tokens=getattr(usage, "prompt_tokens", None),
+            input_tokens=getattr(usage, "input_tokens", None),
             cached_tokens=getattr(details, "cached_tokens", None),
-            completion_tokens=getattr(usage, "completion_tokens", None),
+            output_tokens=getattr(usage, "output_tokens", None),
             correlation_id=correlation_id,
+        )
+
+    verdict, is_refusal = _extract_parsed_or_refusal(response)
+
+    if is_refusal or verdict is None:
+        log.warning(
+            "reporting.judge.communication.refusal",
+            correlation_id=correlation_id,
+            is_refusal=is_refusal,
+        )
+        return CommunicationVerdict(
+            evidence_quotes=[],
+            justification="Model refused to grade communication.",
+            level="weak",
         )
 
     return verdict

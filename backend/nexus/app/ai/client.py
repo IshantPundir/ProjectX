@@ -71,6 +71,30 @@ async def _log_response(response: "httpx.Response") -> None:
 
 
 @lru_cache(maxsize=1)
+def _build_raw_openai_client() -> AsyncOpenAI:
+    """Build the underlying AsyncOpenAI instance (memoized, shared).
+
+    Both get_openai_client() (instructor-wrapped) and get_raw_openai_client()
+    (bare, for the Responses API) reuse the same AsyncOpenAI instance so the
+    httpx connection pool, event hooks, and SDK-level retry policy are
+    identical for all callers.
+    """
+    http_client = httpx.AsyncClient(
+        timeout=ai_config.request_timeout_seconds,
+        event_hooks={
+            "request": [_log_request],
+            "response": [_log_response],
+        },
+    )
+    return AsyncOpenAI(
+        api_key=settings.openai_api_key,
+        timeout=ai_config.request_timeout_seconds,
+        max_retries=1,
+        http_client=http_client,
+    )
+
+
+@lru_cache(maxsize=1)
 def get_openai_client() -> instructor.AsyncInstructor:
     """Return a memoized async OpenAI client wrapped with instructor.
 
@@ -87,20 +111,22 @@ def get_openai_client() -> instructor.AsyncInstructor:
     via app.ai.otel.instrument_openai()) wraps every chat.completions.create
     call into a span. Prompt metadata is added by callers via
     app.ai.tracing.set_llm_span_attributes()."""
-    http_client = httpx.AsyncClient(
-        timeout=ai_config.request_timeout_seconds,
-        event_hooks={
-            "request": [_log_request],
-            "response": [_log_response],
-        },
-    )
-    raw = AsyncOpenAI(
-        api_key=settings.openai_api_key,
-        timeout=ai_config.request_timeout_seconds,
-        max_retries=1,
-        http_client=http_client,
-    )
     return instructor.from_openai(
-        raw,
+        _build_raw_openai_client(),
         mode=instructor.Mode.TOOLS_STRICT,
     )
+
+
+@lru_cache(maxsize=1)
+def get_raw_openai_client() -> AsyncOpenAI:
+    """Return the memoized raw AsyncOpenAI client (no instructor wrapper).
+
+    Use this for Responses API calls (``client.responses.parse``) which do
+    not go through instructor's tool-call shim.  The underlying client is
+    the SAME instance as the one wrapped by ``get_openai_client()`` — same
+    httpx pool, same event hooks, same SDK-level retry policy.
+
+    Callers MUST stay within ``app/ai/`` or be explicitly documented
+    exceptions (currently: ``app/modules/reporting/scoring/judge.py``).
+    """
+    return _build_raw_openai_client()
