@@ -80,11 +80,10 @@ async def _seed_completed_v2_session(db):
     - raw_result_json with coverage_summary (v2 marker) and no audit_envelope_ref
     - transcript = []
 
-    No StageQuestion bank is seeded because the actor's bank-loading path is
-    exercised only when build_report actually runs; since we mock build_report,
-    the bank query will return an empty list (no rows) — the actor logs a
-    warning and returns before calling build_report.  To properly exercise the
-    full path including bank loading we seed a minimal bank below.
+    A minimal confirmed StageQuestionBank + one StageQuestion are seeded so the
+    actor's bank-loading path succeeds and the full actor path (including
+    build_report) is exercised.  A confirmed JobPostingSignalSnapshot is also
+    seeded so signal_metadata loading succeeds.
     """
     from datetime import UTC, datetime
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -145,12 +146,15 @@ async def _score_session_report_async(
                 select(StageQuestionBank).where(
                     StageQuestionBank.stage_id == stage.id,
                     StageQuestionBank.tenant_id == tenant_id,
+                    StageQuestionBank.status == "confirmed",
                 )
             )
         ).scalar_one_or_none()
 
         if bank is None:
-            log.warning("reporting.actor.bank_not_found", stage_id=str(stage.id))
+            log.warning(
+                "reporting.actor.no_confirmed_bank", stage_id=str(stage.id)
+            )
             return
 
         # Load all questions for the bank ordered by position
@@ -279,7 +283,6 @@ async def _score_session_report_async(
                 ).scalar_one_or_none()
 
                 if failed_row is None:
-                    from datetime import UTC, datetime
                     failed_row = SessionReport(
                         session_id=session_id,
                         tenant_id=tenant_id,
@@ -294,6 +297,8 @@ async def _score_session_report_async(
                 else:
                     failed_row.status = "failed"
                     failed_row.generation_error = str(exc)[:500]
+                    # Keep failed_row.version unchanged — avoids unique-key conflict
+                    # on retry when a row already exists at a given version.
                 await db.commit()
             except Exception as inner_exc:  # noqa: BLE001
                 log.warning(
