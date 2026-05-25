@@ -1,12 +1,16 @@
 """Post-session report compilation, score aggregation, PDF generation."""
 from __future__ import annotations
 
+import uuid
 from collections import defaultdict
 from datetime import UTC, datetime
 
 import structlog
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.config import ai_config
+from app.modules.reporting.models import SessionReport
 from app.modules.reporting.schemas import (
     AnswerRating,
     DimensionScoreOut,
@@ -393,3 +397,89 @@ async def build_report(
         status="ready",
         scoring_manifest=scoring_manifest,
     )
+
+
+async def persist_report(
+    db: AsyncSession,
+    *,
+    session_id: uuid.UUID,
+    tenant_id: uuid.UUID,
+    assignment_id: uuid.UUID,
+    report: ReportRead,
+    rubric_snapshot: dict | None = None,
+    force: bool = False,
+) -> SessionReport:
+    """Persist a :class:`ReportRead` to the ``session_reports`` table.
+
+    - If no row exists for ``session_id``: create one at ``version=1``.
+    - If a row exists and ``force`` is False: return existing unchanged (idempotent no-op).
+    - If a row exists and ``force`` is True: overwrite every value field and
+      increment ``version`` by 1.
+
+    The caller (test or actor) owns the transaction.  This function calls
+    ``await db.flush()`` but never ``commit()``.
+    """
+    existing = (
+        await db.execute(
+            select(SessionReport).where(SessionReport.session_id == session_id)
+        )
+    ).scalar_one_or_none()
+
+    values: dict = dict(
+        verdict=report.verdict,
+        verdict_reason=report.verdict_reason,
+        overall_score=report.overall_score,
+        overall_coverage=(
+            float(report.overall_coverage) if report.overall_coverage is not None else None
+        ),
+        overall_confidence=report.overall_confidence,
+        dimension_scores={k: v.model_dump(mode="json") for k, v in report.dimension_scores.items()},
+        knockout_results=[k.model_dump(mode="json") for k in report.knockout_results],
+        signal_scorecards=[s.model_dump(mode="json") for s in report.signal_scorecards],
+        question_scorecards=[q.model_dump(mode="json") for q in report.question_scorecards],
+        summary=report.summary.model_dump(mode="json"),
+        scoring_manifest=(
+            report.scoring_manifest.model_dump(mode="json") if report.scoring_manifest else None
+        ),
+        engine_version=report.engine_version or "v2",
+        status="ready",
+        generated_at=datetime.now(UTC),
+        rubric_snapshot=rubric_snapshot,
+    )
+
+    if existing is None:
+        row = SessionReport(
+            session_id=session_id,
+            tenant_id=tenant_id,
+            assignment_id=assignment_id,
+            version=1,
+            **values,
+        )
+        db.add(row)
+        await db.flush()
+        logger.info(
+            "reporting.service.persist_report.created",
+            session_id=str(session_id),
+            version=1,
+        )
+        return row
+
+    if not force:
+        logger.info(
+            "reporting.service.persist_report.noop",
+            session_id=str(session_id),
+            version=existing.version,
+        )
+        return existing
+
+    # force=True — overwrite fields and bump version
+    for field, val in values.items():
+        setattr(existing, field, val)
+    existing.version = existing.version + 1
+    await db.flush()
+    logger.info(
+        "reporting.service.persist_report.force_updated",
+        session_id=str(session_id),
+        version=existing.version,
+    )
+    return existing

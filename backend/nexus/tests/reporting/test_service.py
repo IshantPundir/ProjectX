@@ -242,3 +242,164 @@ async def test_communication_is_separate_and_not_in_overall():
     # Overall is computed only from JD signals (all below_bar here -> low). Communication=70
     # must NOT raise the Overall. Assert Overall reflects only JD signals (<= below_bar band).
     assert report.overall_score is None or report.overall_score <= 30
+
+
+# ---------------------------------------------------------------------------
+# persist_report tests (Task 16)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_persist_report_creates_ready_row(db):
+    from sqlalchemy import select
+
+    from app.modules.reporting.models import SessionReport
+    from app.modules.reporting.schemas import ReportRead, SummaryOut
+    from app.modules.reporting.service import persist_report
+    from app.modules.session.models import Session as SessionRow
+    from tests.conftest import create_test_client, create_test_user, make_assignment_with_stage
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    assignment, stage = await make_assignment_with_stage(db, tenant, user)
+
+    sess = SessionRow(
+        tenant_id=tenant.id,
+        assignment_id=assignment.id,
+        stage_id=stage.id,
+        state="completed",
+        created_by=user.id,
+    )
+    db.add(sess)
+    await db.flush()
+
+    report = ReportRead(
+        verdict="reject",
+        verdict_reason="failed must-have: x",
+        overall_score=42,
+        overall_coverage=0.8,
+        overall_confidence="high",
+        dimension_scores={},
+        knockout_results=[],
+        signal_scorecards=[],
+        question_scorecards=[],
+        summary=SummaryOut(headline="h"),
+    )
+
+    await persist_report(
+        db,
+        session_id=sess.id,
+        tenant_id=tenant.id,
+        assignment_id=assignment.id,
+        report=report,
+    )
+
+    row = (
+        await db.execute(
+            select(SessionReport).where(SessionReport.session_id == sess.id)
+        )
+    ).scalar_one()
+
+    assert row.status == "ready"
+    assert row.verdict == "reject"
+    assert row.version == 1
+
+
+@pytest.mark.asyncio
+async def test_persist_report_idempotent_and_force_bumps_version(db):
+    """Two no-force calls leave version=1; force=True bumps to version=2."""
+    from sqlalchemy import select
+
+    from app.modules.reporting.models import SessionReport
+    from app.modules.reporting.schemas import ReportRead, SummaryOut
+    from app.modules.reporting.service import persist_report
+    from app.modules.session.models import Session as SessionRow
+    from tests.conftest import create_test_client, create_test_user, make_assignment_with_stage
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    assignment, stage = await make_assignment_with_stage(db, tenant, user)
+
+    sess = SessionRow(
+        tenant_id=tenant.id,
+        assignment_id=assignment.id,
+        stage_id=stage.id,
+        state="completed",
+        created_by=user.id,
+    )
+    db.add(sess)
+    await db.flush()
+
+    report_v1 = ReportRead(
+        verdict="advance",
+        verdict_reason="strong across all signals",
+        overall_score=88,
+        overall_coverage=0.9,
+        overall_confidence="high",
+        dimension_scores={},
+        knockout_results=[],
+        signal_scorecards=[],
+        question_scorecards=[],
+        summary=SummaryOut(headline="strong candidate"),
+    )
+
+    # First call — creates the row
+    await persist_report(
+        db,
+        session_id=sess.id,
+        tenant_id=tenant.id,
+        assignment_id=assignment.id,
+        report=report_v1,
+    )
+
+    # Second call without force — must be a no-op (still version=1)
+    await persist_report(
+        db,
+        session_id=sess.id,
+        tenant_id=tenant.id,
+        assignment_id=assignment.id,
+        report=report_v1,
+        force=False,
+    )
+
+    row_after_two = (
+        await db.execute(
+            select(SessionReport).where(SessionReport.session_id == sess.id)
+        )
+    ).scalar_one()
+
+    assert row_after_two.version == 1
+    assert row_after_two.verdict == "advance"
+
+    # Third call with force=True — must bump version and update verdict
+    report_v2 = ReportRead(
+        verdict="borderline",
+        verdict_reason="re-scored after rubric correction",
+        overall_score=61,
+        overall_coverage=0.75,
+        overall_confidence="medium",
+        dimension_scores={},
+        knockout_results=[],
+        signal_scorecards=[],
+        question_scorecards=[],
+        summary=SummaryOut(headline="borderline — needs human review"),
+    )
+
+    await persist_report(
+        db,
+        session_id=sess.id,
+        tenant_id=tenant.id,
+        assignment_id=assignment.id,
+        report=report_v2,
+        force=True,
+    )
+
+    row_after_force = (
+        await db.execute(
+            select(SessionReport).where(SessionReport.session_id == sess.id)
+        )
+    ).scalar_one()
+
+    assert row_after_force.version == 2
+    assert row_after_force.verdict == "borderline"
+    assert row_after_force.overall_score == 61
