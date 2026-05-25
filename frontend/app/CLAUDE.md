@@ -86,10 +86,11 @@ The following files exist verbatim in both apps and must be kept in sync. There 
 | `components/px/Button.tsx` | Visual + a11y identity must match across surfaces |
 | `components/px/Input.tsx` | Same |
 | `components/px/Toaster.tsx` | Same (sonner config) |
-| `public/projectx-logo.svg` | Brand identity |
 | Shadcn → px CSS-variable token mapping in `app/globals.css` | Visual consistency |
 
 Any change to one of these files in either app MUST be applied to the other in the same PR, or the PR description must explicitly call out the deliberate divergence with a one-line rationale.
+
+> **Divergence (2026-05-25):** the recruiter app was rebranded to **BinQle** and its design tokens were extracted to `app/theme.css` + `lib/brand.ts`. `frontend/session` was intentionally **not** updated in that pass (separate brand surface, later phase). The "Shadcn → px CSS-variable token mapping" row above now refers to `app/theme.css` (the token values) + `app/globals.css` (the `@theme` mapping) in the recruiter app; treat that row as recruiter-app-only until the candidate surface is rebranded.
 
 ---
 
@@ -100,8 +101,9 @@ Any change to one of these files in either app MUST be applied to the other in t
 ```
 frontend/app/
 ├── app/                                  ← Next.js App Router
-│   ├── layout.tsx                        ← Root layout (Geist fonts, zinc-50 bg)
-│   ├── globals.css                       ← Tailwind v4 import only + @theme tokens
+│   ├── layout.tsx                        ← Root layout (Inter/Fraunces/JetBrains fonts; title + theme + density from lib/brand.ts)
+│   ├── globals.css                       ← Tailwind import + @theme mapping + .px-* utilities (imports ./theme.css)
+│   ├── theme.css                         ← ALL design tokens, one block per theme + density
 │   ├── (auth)/
 │   │   ├── layout.tsx                    ← Centered card container
 │   │   ├── login/page.tsx                ← Email+password + JWT tenant_id check
@@ -133,7 +135,7 @@ frontend/app/
 │           ├── page.tsx              ← Org unit infinite-canvas tree + create
 │           └── [unitId]/page.tsx     ← Unit detail: members, roles, sub-units, delete
 ├── components/
-│   ├── px/                               ← In-house design-system primitives (Button, Input, Dialog, Tooltip, …)
+│   ├── px/                               ← In-house design-system primitives (Button, Input, Dialog, Tooltip, BrandLogo/BrandMark, …)
 │   └── dashboard/
 │       ├── AppShell.tsx                  ← Sidebar nav + header
 │       ├── SessionGuard.tsx              ← Client-side session presence check
@@ -149,6 +151,7 @@ frontend/app/
 ├── stores/
 │   └── job-edit.ts                       ← Zustand: editable signal state with isDirty tracking
 ├── lib/
+│   ├── brand.ts                          ← name/logo/tagline + active theme/density (single source)
 │   ├── api/                              ← Typed API namespaces: client, jobs, candidates, pipelines, question-banks, questions, scheduler, team, org-units, auth, errors
 │   ├── auth/                             ← getFreshSupabaseToken, handle-error (global 401 sink)
 │   ├── hooks/                            ← 50+ TanStack Query hooks (use-jobs, use-candidates, use-banks, use-pipeline-templates, use-job-status-stream, use-questions-status-stream, …)
@@ -313,6 +316,21 @@ When adding endpoints for a new backend module, create a new file under `lib/api
 - Responsive: dashboard is desktop-first (1280px minimum viewport target). Candidate interview UI must work on any device — candidates may join from mobile.
 
 **Custom breakpoints:** `3xl: 1440px` added in `app/globals.css` via the `@theme` directive (Phase 2A — for the three-panel JD review layout). Tailwind v4 uses `--breakpoint-<name>` CSS variables inside `@theme`, NOT a `tailwind.config.ts` file (there isn't one).
+
+### Branding & Theming — single source of truth
+
+- **Name / logo / tagline / active look:** `lib/brand.ts`. Change the product name,
+  logo assets, tagline, or the active `theme`/`density` here — nowhere else. Visible
+  product name today: **BinQle.ai** (`brand.name`) / **BinQle** (`brand.shortName`).
+- **Colors / radii / shadows / density:** `app/theme.css`. One block per theme
+  (`[data-px-theme="<name>"]`). To add a theme: copy the `warm-light` block, rename the
+  selector, change values, add the name to `ThemeName` in `lib/brand.ts`, set `brand.theme`.
+  Tailwind named-palette utilities (`bg-zinc-*`, `text-red-*`, …) resolve through per-theme
+  `--c-*` variables, so a theme swap recolors the whole app — not just semantic tokens.
+- **Logo in components:** `<BrandLogo>` (wordmark) and `<BrandMark>` (square mark) from
+  `@/components/px`. Never hardcode logo SVGs or the product name in components or pages.
+- `app/globals.css` holds only Tailwind plumbing (`@theme inline` mapping) + the `.px-*`
+  utility classes, plus `@import "./theme.css"`.
 
 ---
 
