@@ -101,7 +101,7 @@ Any change to one of these files in either app MUST be applied to the other in t
 ```
 frontend/app/
 ├── app/                                  ← Next.js App Router
-│   ├── layout.tsx                        ← Root layout (Inter/Fraunces/JetBrains fonts; title + theme + density from lib/brand.ts)
+│   ├── layout.tsx                        ← Root layout (Urbanist/JetBrains fonts; title + theme + density from lib/brand.ts)
 │   ├── globals.css                       ← Tailwind import + @theme mapping + .px-* utilities (imports ./theme.css)
 │   ├── theme.css                         ← ALL design tokens, one block per theme + density
 │   ├── (auth)/
