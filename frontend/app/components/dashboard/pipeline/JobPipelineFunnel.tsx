@@ -141,12 +141,12 @@ type StagePalette = { fill: string; edge: string; label: string }
 // a candidate's journey: pale intake → saturated evaluation → warm
 // human decision → sage offer.
 const STAGE_TYPE_PALETTE: Record<StageType, StagePalette> = {
-  intake:          { fill: '#E3EFEC', edge: '#9EC4BD', label: '#0A564D' },
-  phone_screen:    { fill: '#CFE4DF', edge: '#7FB0A7', label: '#0A564D' },
-  take_home:       { fill: '#B6D4CD', edge: '#5C9D92', label: '#0A4A42' },
-  ai_screening:    { fill: '#98C2BA', edge: '#3E877B', label: '#083C35' },
-  human_interview: { fill: '#E8D4B0', edge: '#C29A5E', label: '#6B4918' },
-  debrief:         { fill: '#E3BF91', edge: '#B5844C', label: '#5A3810' },
+  intake:          { fill: '#E8E3F7', edge: '#C9BEF0', label: '#4A3E7A' },
+  phone_screen:    { fill: '#DEEFF4', edge: '#BBE0EC', label: '#1A5E6E' },
+  take_home:       { fill: '#CFEAEF', edge: '#93D3DE', label: '#15616D' },
+  ai_screening:    { fill: '#D6F0E8', edge: '#9FDCC9', label: '#0B3D34' },
+  human_interview: { fill: '#F6E7C6', edge: '#E6C277', label: '#7A4A08' },
+  debrief:         { fill: '#F1DBA8', edge: '#D7A648', label: '#5A3810' },
 }
 
 function paletteFor(type: StageType): StagePalette {
@@ -899,7 +899,7 @@ function HeroScene({
           height: 380,
           borderRadius: 999,
           background:
-            'radial-gradient(circle, color-mix(in oklab, #E8D4B0 60%, transparent) 0%, transparent 70%)',
+            'radial-gradient(circle, color-mix(in oklab, #F6E7C6 60%, transparent) 0%, transparent 70%)',
           opacity: 0.38,
         }}
       />
@@ -1271,7 +1271,7 @@ function HeroFunnel({
                 transformOrigin: `${cx}px ${sliceCenterY}px`,
                 transformBox: 'view-box',
                 filter: isHover
-                  ? 'drop-shadow(0 6px 14px rgba(58, 45, 28, 0.16))'
+                  ? 'drop-shadow(0 6px 14px rgba(20, 40, 60, 0.16))'
                   : undefined,
                 transition: isDragging
                   ? 'none'
@@ -1393,10 +1393,10 @@ function HeroFunnel({
                     fill="white"
                     stroke="rgba(0,0,0,0.08)"
                   />
-                  <circle cx={7} cy={8} r={1} fill="#999" />
-                  <circle cx={13} cy={8} r={1} fill="#999" />
-                  <circle cx={7} cy={12} r={1} fill="#999" />
-                  <circle cx={13} cy={12} r={1} fill="#999" />
+                  <circle cx={7} cy={8} r={1} fill="var(--px-fg-4)" />
+                  <circle cx={13} cy={8} r={1} fill="var(--px-fg-4)" />
+                  <circle cx={7} cy={12} r={1} fill="var(--px-fg-4)" />
+                  <circle cx={13} cy={12} r={1} fill="var(--px-fg-4)" />
                 </g>
               ) : (
                 <g transform={`translate(${tl - 44}, ${y + sliceH / 2 - 10})`}>
@@ -1458,17 +1458,17 @@ function HeroFunnel({
           // (intake / phone_screen / take_home) so the shower harmonises
           // with the pale-teal Intake slice.
           const INFLOW_BUBBLES = [
-            { dx: -208, offset: 44, r: 2.5, fill: '#9EC4BD', dur: 1.7, delay: 0.0 },
-            { dx: -170, offset: 38, r: 3.0, fill: '#7FB0A7', dur: 1.5, delay: 0.45 },
-            { dx: -132, offset: 46, r: 2.5, fill: '#5C9D92', dur: 1.9, delay: 0.2 },
-            { dx: -92,  offset: 40, r: 3.0, fill: '#9EC4BD', dur: 1.4, delay: 0.7 },
-            { dx: -50,  offset: 48, r: 4.0, fill: '#7FB0A7', dur: 1.6, delay: 0.1 },
-            { dx: -10,  offset: 42, r: 2.5, fill: '#5C9D92', dur: 1.85, delay: 0.55 },
-            { dx: 34,   offset: 46, r: 3.0, fill: '#9EC4BD', dur: 1.5, delay: 0.25 },
-            { dx: 76,   offset: 38, r: 2.5, fill: '#7FB0A7', dur: 1.75, delay: 0.95 },
-            { dx: 122,  offset: 44, r: 4.0, fill: '#5C9D92', dur: 1.55, delay: 0.35 },
-            { dx: 166,  offset: 48, r: 2.5, fill: '#9EC4BD', dur: 1.9, delay: 0.8 },
-            { dx: 208,  offset: 40, r: 3.0, fill: '#7FB0A7', dur: 1.6, delay: 0.15 },
+            { dx: -208, offset: 44, r: 2.5, fill: '#C9BEF0', dur: 1.7, delay: 0.0 },
+            { dx: -170, offset: 38, r: 3.0, fill: '#BBE0EC', dur: 1.5, delay: 0.45 },
+            { dx: -132, offset: 46, r: 2.5, fill: '#93D3DE', dur: 1.9, delay: 0.2 },
+            { dx: -92,  offset: 40, r: 3.0, fill: '#C9BEF0', dur: 1.4, delay: 0.7 },
+            { dx: -50,  offset: 48, r: 4.0, fill: '#BBE0EC', dur: 1.6, delay: 0.1 },
+            { dx: -10,  offset: 42, r: 2.5, fill: '#93D3DE', dur: 1.85, delay: 0.55 },
+            { dx: 34,   offset: 46, r: 3.0, fill: '#C9BEF0', dur: 1.5, delay: 0.25 },
+            { dx: 76,   offset: 38, r: 2.5, fill: '#BBE0EC', dur: 1.75, delay: 0.95 },
+            { dx: 122,  offset: 44, r: 4.0, fill: '#93D3DE', dur: 1.55, delay: 0.35 },
+            { dx: 166,  offset: 48, r: 2.5, fill: '#C9BEF0', dur: 1.9, delay: 0.8 },
+            { dx: 208,  offset: 40, r: 3.0, fill: '#BBE0EC', dur: 1.6, delay: 0.15 },
           ]
           return (
             <g>
@@ -1507,7 +1507,7 @@ function HeroFunnel({
           const cx = VB_W / 2
           return (
             <g>
-              <circle cx={cx} cy={y + 22} r={4} fill="#5E8E73">
+              <circle cx={cx} cy={y + 22} r={4} fill="#9FDCC9">
                 <animate
                   attributeName="cy"
                   values={`${y};${y + 40}`}
@@ -1521,7 +1521,7 @@ function HeroFunnel({
                   repeatCount="indefinite"
                 />
               </circle>
-              <circle cx={cx - 8} cy={y + 26} r={3} fill="#B5844C">
+              <circle cx={cx - 8} cy={y + 26} r={3} fill="#D7A648">
                 <animate
                   attributeName="cy"
                   values={`${y};${y + 46}`}
@@ -1537,7 +1537,7 @@ function HeroFunnel({
                   begin="0.4s"
                 />
               </circle>
-              <circle cx={cx + 7} cy={y + 30} r={3} fill="#C29A5E">
+              <circle cx={cx + 7} cy={y + 30} r={3} fill="#E6C277">
                 <animate
                   attributeName="cy"
                   values={`${y};${y + 48}`}

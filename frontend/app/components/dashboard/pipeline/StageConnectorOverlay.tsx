@@ -114,8 +114,8 @@ export function StageConnectorOverlay({ selectedStageId, hidden }: Props) {
           x2="100%"
           y2="0%"
         >
-          <stop offset="0%" stopColor="#60a5fa" stopOpacity="0.8" />
-          <stop offset="100%" stopColor="#2563eb" stopOpacity="0.9" />
+          <stop offset="0%" style={{ stopColor: 'var(--px-accent-soft)' }} stopOpacity="0.8" />
+          <stop offset="100%" style={{ stopColor: 'var(--px-accent)' }} stopOpacity="0.9" />
         </linearGradient>
       </defs>
       <path
@@ -126,10 +126,10 @@ export function StageConnectorOverlay({ selectedStageId, hidden }: Props) {
         strokeDasharray="4 4"
         strokeLinecap="round"
         className="transition-all duration-300 ease-out"
-        style={{ filter: 'drop-shadow(0 0 4px rgba(37, 99, 235, 0.25))' }}
+        style={{ filter: 'drop-shadow(0 0 4px var(--px-accent-line))' }}
       />
-      <circle cx={paths.start.x} cy={paths.start.y} r="4" fill="#2563eb" />
-      <circle cx={paths.end.x} cy={paths.end.y} r="4" fill="#2563eb" />
+      <circle cx={paths.start.x} cy={paths.start.y} r="4" style={{ fill: 'var(--px-accent)' }} />
+      <circle cx={paths.end.x} cy={paths.end.y} r="4" style={{ fill: 'var(--px-accent)' }} />
     </svg>
   )
 }

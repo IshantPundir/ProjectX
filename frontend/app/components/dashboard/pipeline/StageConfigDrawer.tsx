@@ -177,7 +177,7 @@ export function StageConfigDrawer({ stage, jobId, onChange, onClose }: Props) {
                 type="text"
                 value={stage.name}
                 onChange={(e) => update('name', e.target.value)}
-                className="w-full text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
+                className="w-full text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[var(--px-accent)] focus:border-[var(--px-accent)]"
                 style={{ borderColor: 'var(--px-divider)' }}
               />
             </div>
@@ -196,7 +196,7 @@ export function StageConfigDrawer({ stage, jobId, onChange, onClose }: Props) {
                 aria-label="Stage type"
                 value={stage.stage_type}
                 onChange={(e) => handleTypeChange(e.target.value as StageType)}
-                className="w-full text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
+                className="w-full text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[var(--px-accent)] focus:border-[var(--px-accent)]"
                 style={{
                   background: 'var(--px-surface)',
                   borderColor: 'var(--px-divider)',
@@ -231,7 +231,7 @@ export function StageConfigDrawer({ stage, jobId, onChange, onClose }: Props) {
                     )
                   }}
                   placeholder="No SLA"
-                  className="w-full text-sm border rounded-lg px-3 py-2 pr-14 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
+                  className="w-full text-sm border rounded-lg px-3 py-2 pr-14 focus:outline-none focus:ring-2 focus:ring-[var(--px-accent)] focus:border-[var(--px-accent)]"
                   style={{ borderColor: 'var(--px-divider)' }}
                 />
                 <span
@@ -270,7 +270,7 @@ export function StageConfigDrawer({ stage, jobId, onChange, onClose }: Props) {
                       max={240}
                       value={screeningStage?.duration_minutes ?? ''}
                       onChange={(e) => update('duration_minutes', parseInt(e.target.value) || 1)}
-                      className="w-full text-sm border rounded-lg px-3 py-2 pr-12 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
+                      className="w-full text-sm border rounded-lg px-3 py-2 pr-12 focus:outline-none focus:ring-2 focus:ring-[var(--px-accent)] focus:border-[var(--px-accent)]"
                       style={{ borderColor: 'var(--px-divider)' }}
                     />
                     <span
@@ -366,7 +366,7 @@ export function StageConfigDrawer({ stage, jobId, onChange, onClose }: Props) {
                   aria-label="Advance behavior"
                   value={screeningStage?.advance_behavior ?? 'auto_advance'}
                   onChange={(e) => update('advance_behavior', e.target.value as AdvanceBehavior)}
-                  className="w-full text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
+                  className="w-full text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[var(--px-accent)] focus:border-[var(--px-accent)]"
                   style={{
                     background: 'var(--px-surface)',
                     borderColor: 'var(--px-divider)',
