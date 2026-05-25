@@ -689,5 +689,47 @@ class Settings(BaseSettings):
     def _strip_candidate_session_trailing_slash(cls, v: str) -> str:
         return v.rstrip("/")
 
+    # --- Reporting — offline report scorer (Phase 3D+ post-session) ---
+    # The report scorer is an async LLM judge that runs after a session
+    # completes and produces the per-candidate evaluation report.
+    # All knobs are env-driven following the same convention as the
+    # extraction / question-bank / engine models above.
+    #
+    # ``openai_report_scorer_model`` — strong reasoning model to evaluate
+    # full transcripts and emit structured rubric grades. gpt-5.1 is the
+    # default (reasoning model, supports reasoning_effort). Switch to a
+    # cheaper model by setting OPENAI_REPORT_SCORER_MODEL=gpt-5.4-mini.
+    openai_report_scorer_model: str = "gpt-5.1"
+
+    # ``openai_report_scorer_effort`` — reasoning_effort forwarded to the
+    # OpenAI API only when non-empty (effort-gating contract: callers gate on
+    # `if ai_config.report_scorer_effort:` before forwarding the param).
+    # "medium" is a good default for transcript-length reasoning; set "" to
+    # disable reasoning_effort entirely (required for non-reasoning models).
+    openai_report_scorer_effort: str = "medium"
+
+    # ``openai_report_scorer_verbosity`` — controls how verbose the judge's
+    # chain-of-thought / explanations are in structured output. "low" keeps
+    # the response compact and reduces token cost; increase to "high" for
+    # debugging or audit-trail depth.
+    openai_report_scorer_verbosity: str = "low"
+
+    # ``openai_report_scorer_n_samples`` — number of independent LLM samples
+    # to draw per report and then aggregate (majority-vote / mean). Higher
+    # values improve consistency at the cost of token spend. 3 is a sensible
+    # default for production; set to 1 for fast dev/test cycles.
+    openai_report_scorer_n_samples: int = 3
+
+    # ``report_scorer_prompt_version`` — controls which versioned prompt
+    # directory PromptLoader reads from (prompts/v{N}/). v3 is the current
+    # active prompt family (engine-v2 prompts live there).
+    report_scorer_prompt_version: str = "v3"
+
+    # ``report_scorer_prompt_cache_key_prefix`` — stable prefix for the
+    # OpenAI prompt_cache_key. Bump the suffix on a prompt change to avoid
+    # cross-version cache pollution (mirrors engine_brain_prompt_cache_key
+    # pattern).
+    report_scorer_prompt_cache_key_prefix: str = "judge"
+
 
 settings = Settings()
