@@ -464,6 +464,11 @@ export function AppShell({
           className="px-glass-chrome sticky top-0 flex h-[var(--px-topbar-h,48px)] flex-shrink-0 items-center gap-3 px-4"
           style={{
             zIndex: 30,
+            // Lighter blur than the rail (which uses the default 16px) so more
+            // of the scrolling content stays visible behind the glass top bar.
+            // Overriding the var (not backdrop-filter) keeps the reduced-
+            // transparency / no-backdrop-filter fallbacks in .px-glass-chrome intact.
+            ["--px-glass-blur" as string]: "8px",
           }}
         >
           {/* Concave corner-painter — fills the chrome's inner L-corner with
