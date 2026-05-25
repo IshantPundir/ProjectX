@@ -28,6 +28,11 @@ default if an operator overrides a model to a chat variant. Production
 deploys opt into reasoning models per evaluator role by setting both
 the ``EVALUATOR_<ROLE>_MODEL`` and ``EVALUATOR_<ROLE>_EFFORT`` env
 vars together.
+
+Exception: ``report_scorer_effort`` defaults to ``"medium"`` (non-empty)
+because the report scorer is explicitly configured to use a reasoning model
+(``gpt-5.1``). Any component whose default model IS a reasoning model MAY
+document a non-empty effort default; all others must default to ``""``.
 ------------------------------------------------------------------
 """
 

@@ -725,10 +725,11 @@ class Settings(BaseSettings):
     # active prompt family (engine-v2 prompts live there).
     report_scorer_prompt_version: str = "v3"
 
-    # ``report_scorer_prompt_cache_key_prefix`` — stable prefix for the
-    # OpenAI prompt_cache_key. Bump the suffix on a prompt change to avoid
-    # cross-version cache pollution (mirrors engine_brain_prompt_cache_key
-    # pattern).
+    # ``report_scorer_prompt_cache_key_prefix`` — PREFIX only (not a verbatim
+    # key). The report scorer concatenates this with dynamic parts to form keys
+    # like ``judge:{prompt_version}:{question_id}:{model}``. This differs from
+    # ``engine_brain_prompt_cache_key``, which IS used verbatim. Bump this
+    # prefix on a prompt-family change to avoid cross-version cache pollution.
     report_scorer_prompt_cache_key_prefix: str = "judge"
 
 
