@@ -25,6 +25,7 @@ import { isAnyAdmin } from '@/lib/hooks/use-me'
 import type { TeamMember } from '@/lib/api/team'
 import { DangerConfirmDialog } from '@/components/px'
 import { AccessDenied } from '@/components/dashboard/AccessDenied'
+import { brand } from '@/lib/brand'
 
 import { inviteTeamMemberSchema, type InviteTeamMemberFormValues } from './schema'
 
@@ -438,7 +439,7 @@ export default function TeamPage() {
                               onClick={() =>
                                 setConfirmAction({
                                   title: 'Deactivate user',
-                                  message: `Deactivate ${m.email}? They will lose access to ProjectX.`,
+                                  message: `Deactivate ${m.email}? They will lose access to ${brand.shortName}.`,
                                   confirmLabel: 'Deactivate',
                                   pendingLabel: 'Deactivating…',
                                   onConfirm: async () => {

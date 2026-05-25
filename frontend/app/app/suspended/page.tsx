@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { authApi } from "@/lib/api/auth";
 import { ApiError } from "@/lib/api/client";
+import { brand } from "@/lib/brand";
 import { SignOutButton } from "./sign-out-button";
 
 export default async function SuspendedPage() {
@@ -66,7 +67,7 @@ export default async function SuspendedPage() {
           Account suspended
         </h1>
         <p className="mt-3 text-sm" style={{ color: "var(--px-fg-3)" }}>
-          Your organization&apos;s ProjectX workspace has been suspended.
+          Your organization&apos;s {brand.name} workspace has been suspended.
           Please contact your administrator if you believe this is an error.
         </p>
         <div className="mt-6">

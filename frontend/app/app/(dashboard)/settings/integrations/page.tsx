@@ -7,6 +7,7 @@ import { Button, Skeleton } from "@/components/px";
 import { ConnectionListCard } from "@/components/settings/integrations/ConnectionListCard";
 import { listConnections, type ATSConnection } from "@/lib/api/ats";
 import { getFreshSupabaseToken } from "@/lib/auth/tokens";
+import { brand } from "@/lib/brand";
 
 export default function IntegrationsPage() {
   const { data, isLoading, error } = useQuery<ATSConnection[]>({
@@ -25,7 +26,7 @@ export default function IntegrationsPage() {
             Integrations
           </h1>
           <p className="mt-1 text-sm text-zinc-500">
-            Connect an ATS so ProjectX can import your clients, jobs, and
+            Connect an ATS so {brand.shortName} can import your clients, jobs, and
             candidates automatically.
           </p>
         </div>

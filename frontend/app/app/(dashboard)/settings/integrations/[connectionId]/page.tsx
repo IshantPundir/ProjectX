@@ -31,6 +31,7 @@ import {
 } from "@/lib/api/ats";
 import { ApiError } from "@/lib/api/client";
 import { getFreshSupabaseToken } from "@/lib/auth/tokens";
+import { brand } from "@/lib/brand";
 
 const VENDOR_LABEL: Record<string, string> = {
   ats_ceipal: "Ceipal",
@@ -253,7 +254,7 @@ export default function ConnectionDetailPage() {
         <div>
           <h2 className="text-lg font-medium text-zinc-900">Sync mode</h2>
           <p className="text-xs text-zinc-500">
-            How ProjectX reacts when a candidate&apos;s submission status changes
+            How {brand.shortName} reacts when a candidate&apos;s submission status changes
             in Ceipal. Advisory is the safe default.
           </p>
         </div>
@@ -308,7 +309,7 @@ export default function ConnectionDetailPage() {
       <DangerConfirmDialog
         open={confirmDelete}
         title="Remove ATS connection?"
-        description="Imported clients, jobs, and candidates stay in ProjectX. You can re-connect later, but cursor history is lost."
+        description={`Imported clients, jobs, and candidates stay in ${brand.shortName}. You can re-connect later, but cursor history is lost.`}
         confirmLabel="Remove"
         pendingLabel="Removing…"
         pending={remove.isPending}

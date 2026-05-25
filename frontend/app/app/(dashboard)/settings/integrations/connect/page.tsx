@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { CeipalConnectionForm } from "@/components/settings/integrations/CeipalConnectionForm";
+import { brand } from "@/lib/brand";
 
 export default function ConnectPage() {
   // Future: vendor picker. For MVP only Ceipal is supported. The state
@@ -19,7 +20,7 @@ export default function ConnectPage() {
           Connect ATS
         </h1>
         <p className="mt-1 text-sm text-zinc-500">
-          Connect your ATS account so ProjectX can import clients, jobs, and
+          Connect your ATS account so {brand.shortName} can import clients, jobs, and
           candidates. Credentials are encrypted at rest.
         </p>
       </div>

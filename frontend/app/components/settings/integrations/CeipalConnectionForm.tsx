@@ -14,6 +14,7 @@ import {
 } from "@/lib/api/ats";
 import { ApiError } from "@/lib/api/client";
 import { getFreshSupabaseToken } from "@/lib/auth/tokens";
+import { brand } from "@/lib/brand";
 
 export function CeipalConnectionForm() {
   const router = useRouter();
@@ -127,7 +128,7 @@ export function CeipalConnectionForm() {
         }}
       >
         These credentials are encrypted at rest with AES-128 (Fernet) and never
-        appear in logs. ProjectX only fetches data when you click Resync — there
+        appear in logs. {brand.shortName} only fetches data when you click Resync — there
         is no scheduled poller in MVP.
       </div>
 

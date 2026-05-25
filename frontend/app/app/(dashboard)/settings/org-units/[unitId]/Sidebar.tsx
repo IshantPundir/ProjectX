@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { DangerConfirmDialog } from "@/components/px";
 import { useDeleteOrgUnit } from "@/lib/hooks/use-delete-org-unit";
 import type { OrgUnit } from "@/lib/api/org-units";
+import { brand } from "@/lib/brand";
 
 const TYPE_DOT: Record<string, string> = {
   company: "var(--px-accent)",
@@ -180,7 +181,7 @@ function TenantInfoCard({ unit }: { unit: OrgUnit }) {
       </div>
       <div className="tenant-note">
         The root company unit cannot be deleted. To remove the tenant
-        entirely, contact ProjectX support.
+        entirely, contact {brand.shortName} support.
       </div>
     </div>
   );

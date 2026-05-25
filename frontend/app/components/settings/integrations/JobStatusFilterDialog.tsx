@@ -24,6 +24,7 @@ import {
 } from "@/lib/api/ats";
 import { ApiError } from "@/lib/api/client";
 import { getFreshSupabaseToken } from "@/lib/auth/tokens";
+import { brand } from "@/lib/brand";
 
 type Props = {
   open: boolean;
@@ -150,7 +151,7 @@ export function JobStatusFilterDialog({
     <Dialog open={open} onOpenChange={(v) => (!v ? onClose() : undefined)}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Which job statuses should ProjectX import?</DialogTitle>
+          <DialogTitle>Which job statuses should {brand.shortName} import?</DialogTitle>
           <DialogDescription>
             Ceipal lets you pre-filter by status. Pick the ones worth syncing —
             inactive statuses cost up to 22 minutes per full sync.
