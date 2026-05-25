@@ -466,6 +466,24 @@ export function AppShell({
             zIndex: 30,
           }}
         >
+          {/* Concave corner-painter — fills the chrome's inner L-corner with
+              chrome glass (everything OUTSIDE a 16px quarter-circle), so the
+              content panel's rounded-tl-2xl corner reads as one smooth concave
+              curve from rail into top bar. Uses the glass fill (not the body
+              backdrop) so no gap shows. Sits flush at the top bar's bottom-left. */}
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute"
+            style={{
+              top: "100%",
+              left: 0,
+              width: 16,
+              height: 16,
+              background:
+                "radial-gradient(circle at bottom right, transparent 0, transparent 16px, var(--px-glass-bg) 16px)",
+            }}
+          />
+
           {/* Breadcrumbs */}
           <nav
             aria-label="Breadcrumb"
@@ -537,11 +555,12 @@ export function AppShell({
         {/* Page content — no overflow-auto so the body remains the scroll
             container. A scroll context here would trap sticky descendants
             (Sections, Copilot) to a non-scrolling ancestor and unpin them
-            from the actual scroll. Solid white panel meeting the glass chrome
-            with a flush top/left hairline (no corner radius — a rounded notch
-            would expose the body backdrop through the translucent chrome). */}
+            from the actual scroll. Solid white panel with a rounded top-left
+            corner; the glass corner-painter in the top bar fills the concave
+            notch with chrome glass (not the body backdrop), so the rail→topbar
+            inner corner reads as one smooth curve with no gap. */}
         <div
-          className="min-h-0 flex-1 border-l border-t"
+          className="min-h-0 flex-1 rounded-tl-2xl border-l border-t"
           style={{
             background: "var(--px-surface)",
             borderColor: "var(--px-hairline)",
