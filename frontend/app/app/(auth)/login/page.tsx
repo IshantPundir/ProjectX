@@ -9,6 +9,8 @@ import { authApi } from '@/lib/api/auth'
 import { ApiError } from '@/lib/api/client'
 import { applyApiErrorToForm } from '@/lib/api/errors'
 import { createClient } from '@/lib/supabase/client'
+import { BrandLogo } from '@/components/px'
+import { brand } from '@/lib/brand'
 
 import { loginSchema, type LoginFormValues } from './schema'
 
@@ -79,22 +81,11 @@ export default function LoginPage() {
   return (
     <>
       <div className="mb-8 text-center">
-        <div
-          className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full"
-          style={{ background: 'var(--px-accent)' }}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="white" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-            <polygon points="5 3 19 12 5 21 5 3" />
-          </svg>
+        <div className="mb-4 flex justify-center">
+          <BrandLogo height={40} />
         </div>
-        <h1
-          className="px-serif m-0 text-[32px] font-normal"
-          style={{ letterSpacing: '-0.6px', color: 'var(--px-fg)' }}
-        >
-          ProjectX
-        </h1>
         <p className="mt-1 text-[13px]" style={{ color: 'var(--px-fg-3)' }}>
-          Sign in to your recruiting dashboard
+          {brand.loginSubtitle}
         </p>
       </div>
       <form
