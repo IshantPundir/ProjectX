@@ -15,6 +15,12 @@ export type BadgeVariant =
 
 export interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
   variant?: BadgeVariant;
+  /**
+   * Show a leading status dot (a second, non-color signal so meaning isn't
+   * conveyed by color alone). Meaningful on semantic variants
+   * (ok/caution/danger/ai/human/neutral); on default/secondary the dot is
+   * just neutral ink and carries no meaning.
+   */
   dot?: boolean;
 }
 
