@@ -430,7 +430,7 @@ async def record_session_result(
     # Local import avoids any future circular-import risk between interview_runtime
     # and reporting (reporting.actors → reporting.service → no reverse dep).
     if result.coverage_summary is not None:
-        from app.modules.reporting.actors import score_session_report  # noqa: PLC0415
+        from app.modules.reporting import score_session_report  # noqa: PLC0415
         score_session_report.send(
             str(session_id),
             str(tenant_id),

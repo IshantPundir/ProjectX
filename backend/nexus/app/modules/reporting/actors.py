@@ -95,7 +95,7 @@ async def _score_session_report_async(
         # Load question bank + signal snapshot for the session's stage
         # ------------------------------------------------------------------
         from app.modules.candidates.models import CandidateJobAssignment
-        from app.modules.interview_runtime.service import _project_signal_metadata
+        from app.modules.interview_runtime import project_signal_metadata
         from app.modules.jd.models import JobPosting, JobPostingSignalSnapshot
         from app.modules.pipelines.models import JobPipelineStage
         from app.modules.question_bank.models import StageQuestion, StageQuestionBank
@@ -213,9 +213,9 @@ async def _score_session_report_async(
             return
 
         # Project snapshot.signals → list[dict] shape build_report expects.
-        # _project_signal_metadata returns list[SignalMetadata] (Pydantic models);
+        # project_signal_metadata returns list[SignalMetadata] (Pydantic models);
         # build_report wants list[dict] — convert via model_dump.
-        signal_metadata_models = _project_signal_metadata(snapshot.signals or [])
+        signal_metadata_models = project_signal_metadata(snapshot.signals or [])
         signal_metadata: list[dict] = [
             m.model_dump() for m in signal_metadata_models
         ]

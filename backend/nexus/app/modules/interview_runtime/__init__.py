@@ -35,6 +35,9 @@ from app.modules.interview_runtime.schemas import (
     TranscriptEntry,
 )
 from app.modules.interview_runtime.service import (
+    _project_signal_metadata as project_signal_metadata,
+)
+from app.modules.interview_runtime.service import (
     build_session_config,
     record_session_result,
 )
@@ -63,5 +66,6 @@ __all__ = [
     "SteeringObservation",
     "TranscriptEntry",
     "build_session_config",
+    "project_signal_metadata",
     "record_session_result",
 ]
