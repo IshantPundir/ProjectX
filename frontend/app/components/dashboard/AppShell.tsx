@@ -6,6 +6,7 @@ import { useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { MeResponse } from "@/lib/api/auth";
 import { isAnyAdmin } from "@/lib/hooks/use-me";
+import { BrandLogo, BrandMark } from "@/components/px";
 
 /* ─── Icons ────────────────────────────────────────────────── */
 
@@ -328,22 +329,11 @@ export function AppShell({
           className="flex flex-shrink-0 items-center gap-2.5 px-3.5"
           style={{ height: 52 }}
         >
-          <div
-            className="flex h-[26px] w-[26px] flex-shrink-0 items-center justify-center rounded-md"
-            style={{ background: "var(--px-accent)" }}
-          >
-            <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-              <path d="M3 2v8l5-4z" fill="#fff" />
-            </svg>
-          </div>
-          {!collapsed && (
-            <div className="min-w-0 flex-1">
-              <div
-                className="text-[13px] font-semibold leading-tight"
-                style={{ color: "var(--px-fg)" }}
-              >
-                ProjectX
-              </div>
+          {collapsed ? (
+            <BrandMark size={26} />
+          ) : (
+            <div className="flex min-w-0 flex-1 items-center gap-2.5">
+              <BrandLogo height={22} />
               {orgContext && (
                 <div
                   className="truncate text-[10.5px] leading-tight"
