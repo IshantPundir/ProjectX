@@ -1,8 +1,9 @@
 'use client'
 
+import type { ReactNode } from 'react'
 import { Button } from '@/components/px'
 
-function Centered({ children }: { children: React.ReactNode }) {
+function Centered({ children }: { children: ReactNode }) {
   return <div className="mx-auto max-w-[640px] px-8 py-16 text-center">{children}</div>
 }
 
