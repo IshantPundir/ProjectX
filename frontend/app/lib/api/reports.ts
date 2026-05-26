@@ -110,6 +110,25 @@ export interface HumanDecisionIn {
   rationale: string
 }
 
+export interface ReportIndexItem {
+  session_id: string
+  candidate_id: string | null
+  candidate_name: string | null
+  job_title: string | null
+  stage_name: string | null
+  completed_at: string | null
+  report_status: 'none' | 'pending' | 'generating' | 'ready' | 'failed'
+  verdict: Verdict | null
+  overall_score: number | null
+}
+
+export interface ReportIndexPage {
+  items: ReportIndexItem[]
+  total: number
+  offset: number
+  limit: number
+}
+
 // --- Envelope: the polling-friendly union ---
 export type ReportEnvelope =
   | { state: 'ready'; report: ReportRead }
@@ -138,6 +157,20 @@ export const reportsApi = {
       if (err instanceof ApiError && err.status === 404) return { state: 'noReport' }
       throw err
     }
+  },
+
+  list: (
+    token: string,
+    opts?: { offset?: number; limit?: number; signal?: AbortSignal },
+  ): Promise<ReportIndexPage> => {
+    const params = new URLSearchParams()
+    if (opts?.offset != null) params.set('offset', String(opts.offset))
+    if (opts?.limit != null) params.set('limit', String(opts.limit))
+    const qs = params.toString()
+    return apiFetch<ReportIndexPage>(`/api/reports${qs ? `?${qs}` : ''}`, {
+      token,
+      signal: opts?.signal,
+    })
   },
 
   regenerate: (token: string, sessionId: string): Promise<{ status: string }> =>

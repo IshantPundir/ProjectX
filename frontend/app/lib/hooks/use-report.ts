@@ -13,6 +13,7 @@ import {
   reportsApi,
   type HumanDecisionIn,
   type ReportEnvelope,
+  type ReportIndexPage,
   type ReportRead,
 } from '@/lib/api/reports'
 import { getFreshSupabaseToken } from '@/lib/auth/tokens'
@@ -102,6 +103,25 @@ export function useRegenerateReport(sessionId: string) {
     onSuccess: () => {
       // Optimistically flip to pending so polling starts immediately.
       qc.setQueryData<ReportEnvelope>(['report', sessionId], { state: 'pending', status: 'generating' })
+    },
+  })
+}
+
+export function useReportsIndex() {
+  return useQuery<ReportIndexPage>({
+    queryKey: ['reports-index'],
+    queryFn: async ({ signal }) => {
+      const token = await getFreshSupabaseToken()
+      return reportsApi.list(token, { signal })
+    },
+    // While any row is mid-generation, poll so it flips to ready/failed live.
+    refetchInterval: (q) => {
+      const items = q.state.data?.items ?? []
+      return items.some(
+        (i) => i.report_status === 'pending' || i.report_status === 'generating',
+      )
+        ? 5000
+        : false
     },
   })
 }
