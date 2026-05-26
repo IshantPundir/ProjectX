@@ -1,8 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
-import { Button } from '@/components/px'
+import { Button, Textarea } from '@/components/px'
 import type { HumanDecision, HumanDecisionValue, Verdict } from '@/lib/api/reports'
 
 interface Props {
@@ -22,6 +22,10 @@ export function HumanDecisionPanel({ verdict, decision, onSubmit, isSubmitting }
   const [editing, setEditing] = useState(false)
   const [choice, setChoice] = useState<HumanDecisionValue | null>(null)
   const [rationale, setRationale] = useState('')
+
+  useEffect(() => {
+    setEditing(false)
+  }, [decision])
 
   const showForm = editing || decision === null
   const canSubmit = choice !== null && rationale.trim().length > 0 && !isSubmitting
@@ -82,13 +86,12 @@ export function HumanDecisionPanel({ verdict, decision, onSubmit, isSubmitting }
       <label htmlFor="decision-rationale" className="mt-2.5 block text-[10px] font-semibold uppercase tracking-wide" style={{ color: 'var(--px-fg-4)' }}>
         Rationale (required)
       </label>
-      <textarea
+      <Textarea
         id="decision-rationale"
         value={rationale}
         onChange={(e) => setRationale(e.target.value)}
         rows={3}
-        className="mt-1 w-full rounded-md border p-2 text-[11.5px]"
-        style={{ borderColor: 'var(--px-hairline-strong)', background: 'var(--px-surface)', color: 'var(--px-fg)' }}
+        className="mt-1 w-full"
         placeholder="Why this decision, with reference to the evidence above."
       />
 
