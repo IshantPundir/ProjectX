@@ -1,0 +1,113 @@
+import type {
+  Confidence, KnockoutStatus, SignalState, Verdict,
+} from '@/lib/api/reports'
+
+export type Tone = 'ok' | 'caution' | 'danger' | 'neutral' | 'human' | 'accent'
+
+/** Ink (text/stroke) color var per tone. Pastels (`-fill`) never carry text. */
+export const TONE_INK: Record<Tone, string> = {
+  ok: 'var(--px-ok)',
+  caution: 'var(--px-caution)',
+  danger: 'var(--px-danger)',
+  neutral: 'var(--px-fg-4)',
+  human: 'var(--px-human)',
+  accent: 'var(--px-accent)',
+}
+
+/** Saturated fill var per tone (solid chip backgrounds / gauge rings). */
+export const TONE_FILL: Record<Tone, string> = {
+  ok: 'var(--px-ok-fill)',
+  caution: 'var(--px-caution-fill)',
+  danger: 'var(--px-danger-fill)',
+  neutral: 'var(--px-surface-3)',
+  human: 'var(--px-human-fill)',
+  accent: 'var(--px-accent)',
+}
+
+/** Soft tint var per tone (card backgrounds). */
+export const TONE_BG: Record<Tone, string> = {
+  ok: 'var(--px-ok-bg)',
+  caution: 'var(--px-caution-bg)',
+  danger: 'var(--px-danger-bg)',
+  neutral: 'var(--px-surface-2)',
+  human: 'var(--px-human-bg)',
+  accent: 'var(--px-accent-tint)',
+}
+
+/** 0–100 integer → "X.X" out of ten; null stays null (never a zero). */
+export function scoreToTen(score: number | null): string | null {
+  if (score === null || score === undefined) return null
+  return (score / 10).toFixed(1)
+}
+
+/** ms → "mm:ss". */
+export function formatTimestamp(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000))
+  const m = Math.floor(total / 60)
+  const s = total % 60
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+}
+
+export interface VerdictMeta { label: string; tone: Tone }
+const VERDICT_META: Record<Verdict, VerdictMeta> = {
+  advance: { label: 'Advance', tone: 'ok' },
+  borderline: { label: 'Borderline', tone: 'human' },
+  reject: { label: 'Reject', tone: 'danger' },
+}
+export function verdictMeta(v: Verdict): VerdictMeta {
+  return VERDICT_META[v]
+}
+
+/** Tier tone from a 0–100 score (advance≥75 / borderline 55–74 / reject<55). */
+export function scoreBandTone(score: number | null): Tone {
+  if (score === null || score === undefined) return 'neutral'
+  if (score >= 75) return 'ok'
+  if (score >= 55) return 'caution'
+  return 'danger'
+}
+
+export function signalStateTone(state: SignalState): Tone {
+  switch (state) {
+    case 'excellent':
+    case 'meets_bar':
+      return 'ok'
+    case 'below_bar':
+      return 'danger'
+    case 'not_assessed':
+      return 'neutral'
+  }
+}
+
+export function knockoutStatusTone(status: KnockoutStatus): Tone {
+  switch (status) {
+    case 'passed':
+      return 'ok'
+    case 'failed':
+      return 'danger'
+    case 'insufficient':
+      return 'caution'
+  }
+}
+
+const SIGNAL_STATE_LABEL: Record<SignalState, string> = {
+  excellent: 'Excellent',
+  meets_bar: 'Meets bar',
+  below_bar: 'Below bar',
+  not_assessed: 'Not assessed',
+}
+export function signalStateLabel(state: SignalState): string {
+  return SIGNAL_STATE_LABEL[state]
+}
+
+const KO_STATUS_LABEL: Record<KnockoutStatus, string> = {
+  passed: 'Passed',
+  failed: 'Failed',
+  insufficient: 'Insufficient',
+}
+export function knockoutStatusLabel(status: KnockoutStatus): string {
+  return KO_STATUS_LABEL[status]
+}
+
+export function confidenceLabel(c: Confidence): string {
+  return { high: 'High', medium: 'Medium', low: 'Low' }[c]
+}
