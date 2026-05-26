@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 
 import { Button, Textarea } from '@/components/px'
 import type { HumanDecision, HumanDecisionValue, Verdict } from '@/lib/api/reports'
@@ -23,9 +23,14 @@ export function HumanDecisionPanel({ verdict, decision, onSubmit, isSubmitting }
   const [choice, setChoice] = useState<HumanDecisionValue | null>(null)
   const [rationale, setRationale] = useState('')
 
-  useEffect(() => {
+  // Reset the form back to the decided view when a new decision lands
+  // (React's recommended "adjust state during render on prop change" pattern —
+  // avoids react-hooks/set-state-in-effect).
+  const [prevDecision, setPrevDecision] = useState(decision)
+  if (decision !== prevDecision) {
+    setPrevDecision(decision)
     setEditing(false)
-  }, [decision])
+  }
 
   const showForm = editing || decision === null
   const canSubmit = choice !== null && rationale.trim().length > 0 && !isSubmitting
