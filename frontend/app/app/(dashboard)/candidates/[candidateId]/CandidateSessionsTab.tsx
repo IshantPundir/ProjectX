@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { toast } from 'sonner'
 
 import { SessionStatusBadge } from '@/components/dashboard/candidates/SessionStatusBadge'
@@ -65,6 +66,7 @@ export default function CandidateSessionsTab({ candidateId }: Props) {
         <AssignmentSessionsBlock
           key={assignment.id}
           assignment={assignment}
+          candidateId={candidateId}
         />
       ))}
     </div>
@@ -73,9 +75,10 @@ export default function CandidateSessionsTab({ candidateId }: Props) {
 
 interface AssignmentSessionsBlockProps {
   assignment: AssignmentResponse
+  candidateId: string
 }
 
-function AssignmentSessionsBlock({ assignment }: AssignmentSessionsBlockProps) {
+function AssignmentSessionsBlock({ assignment, candidateId }: AssignmentSessionsBlockProps) {
   const sessionsQuery = useAssignmentSessions(assignment.id)
   const sessions = sessionsQuery.data?.items ?? []
 
@@ -139,7 +142,12 @@ function AssignmentSessionsBlock({ assignment }: AssignmentSessionsBlockProps) {
           </thead>
           <tbody className="divide-y divide-zinc-100">
             {sessions.map((session) => (
-              <SessionRow key={session.id} session={session} />
+              <SessionRow
+                key={session.id}
+                session={session}
+                candidateId={candidateId}
+                jobTitle={assignment.job_title || 'Interview'}
+              />
             ))}
           </tbody>
         </table>
@@ -150,9 +158,11 @@ function AssignmentSessionsBlock({ assignment }: AssignmentSessionsBlockProps) {
 
 interface SessionRowProps {
   session: SessionDetail
+  candidateId: string
+  jobTitle: string
 }
 
-function SessionRow({ session }: SessionRowProps) {
+export function SessionRow({ session, candidateId, jobTitle }: SessionRowProps) {
   const resend = useResendInvite()
   const revoke = useRevokeInvite()
   const actionable = isPreActive(session.state)
@@ -178,6 +188,13 @@ function SessionRow({ session }: SessionRowProps) {
     )
   }
 
+  const reportHref =
+    `/reports/session/${session.id}` +
+    `?candidateId=${encodeURIComponent(candidateId)}` +
+    `&candidateName=${encodeURIComponent('')}` +
+    `&title=${encodeURIComponent(jobTitle)}` +
+    `&subtitle=${encodeURIComponent(session.stage_name || '')}`
+
   return (
     <tr className="hover:bg-zinc-50">
       <td className="px-4 py-2 text-sm text-zinc-900">
@@ -190,30 +207,41 @@ function SessionRow({ session }: SessionRowProps) {
         {new Date(session.created_at).toLocaleString()}
       </td>
       <td className="px-4 py-2 text-right text-sm">
-        {actionable ? (
-          <div className="inline-flex gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={pending}
-              onClick={handleResend}
+        <div className="inline-flex items-center gap-2">
+          {session.state === 'completed' && (
+            <Link
+              href={reportHref}
+              className="text-xs font-medium hover:underline"
+              style={{ color: 'var(--px-accent)' }}
             >
-              {resend.isPending ? 'Resending…' : 'Resend'}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={pending}
-              onClick={handleRevoke}
-            >
-              {revoke.isPending ? 'Revoking…' : 'Revoke'}
-            </Button>
-          </div>
-        ) : (
-          <span className="text-xs text-zinc-400">—</span>
-        )}
+              View report
+            </Link>
+          )}
+          {actionable ? (
+            <div className="inline-flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={pending}
+                onClick={handleResend}
+              >
+                {resend.isPending ? 'Resending…' : 'Resend'}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={pending}
+                onClick={handleRevoke}
+              >
+                {revoke.isPending ? 'Revoking…' : 'Revoke'}
+              </Button>
+            </div>
+          ) : session.state === 'completed' ? null : (
+            <span className="text-xs text-zinc-400">—</span>
+          )}
+        </div>
       </td>
     </tr>
   )
