@@ -119,6 +119,26 @@ class HumanDecisionIn(BaseModel):
     rationale: str
 
 
+class ReportIndexItem(BaseModel):
+    """One row in the /reports hub: a completed session + its report status."""
+    session_id: str
+    candidate_id: str | None = None
+    candidate_name: str | None = None
+    job_title: str | None = None
+    stage_name: str | None = None
+    completed_at: str | None = None
+    report_status: str  # none | pending | generating | ready | failed
+    verdict: Verdict | None = None
+    overall_score: int | None = None
+
+
+class ReportIndexPage(BaseModel):
+    items: list[ReportIndexItem]
+    total: int
+    offset: int
+    limit: int
+
+
 class ReportRead(BaseModel):
     """Recruiter-facing report serialization (mirrors session_reports columns)."""
 

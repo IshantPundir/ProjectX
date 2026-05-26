@@ -564,3 +564,80 @@ async def test_post_decision_report_not_found_404(db: AsyncSession):
         restore()
 
     assert r.status_code == 404, r.text
+
+
+# ---------------------------------------------------------------------------
+# Tests: GET /api/reports (index)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_report_index_lists_completed_with_report(db: AsyncSession):
+    """GET /api/reports → completed session with a ready report appears."""
+    session_row, tenant_id = await seed_minimal_session(db, state="completed")
+    await _seed_report(db, session_row, tenant_id, status="ready")
+    user_row = await _get_user_for_tenant(db, tenant_id)
+
+    headers, restore = _setup_test_context(db, user_row, tenant_id)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            r = await ac.get("/api/reports", headers=headers)
+    finally:
+        restore()
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    item = next(
+        (it for it in body["items"] if it["session_id"] == str(session_row.id)),
+        None,
+    )
+    assert item is not None, body
+    assert item["report_status"] == "ready"
+    assert item["verdict"] == "advance"
+    assert item["overall_score"] == 85
+
+
+@pytest.mark.asyncio
+async def test_report_index_missing_permission_403(db: AsyncSession):
+    """GET /api/reports without reports.view → 403."""
+    session_row, tenant_id = await seed_minimal_session(db, state="completed")
+    await _seed_report(db, session_row, tenant_id, status="ready")
+    user_row = await _get_user_for_tenant(db, tenant_id)
+
+    headers, restore = _setup_test_context(
+        db, user_row, tenant_id, permissions=("candidates.view",)
+    )
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            r = await ac.get("/api/reports", headers=headers)
+    finally:
+        restore()
+
+    assert r.status_code == 403, r.text
+
+
+@pytest.mark.asyncio
+async def test_report_index_cross_tenant_excluded(db: AsyncSession):
+    """Tenant B's index must not contain tenant A's completed session."""
+    session_a, tenant_a = await seed_minimal_session(db, state="completed")
+    await _seed_report(db, session_a, tenant_a, status="ready")
+
+    client_b = await create_test_client(db)
+    user_b = await create_test_user(db, client_b.id)
+
+    headers_b, restore_b = _setup_test_context(db, user_b, client_b.id)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            r = await ac.get("/api/reports", headers=headers_b)
+    finally:
+        restore_b()
+
+    assert r.status_code == 200, r.text
+    sids = [it["session_id"] for it in r.json()["items"]]
+    assert str(session_a.id) not in sids

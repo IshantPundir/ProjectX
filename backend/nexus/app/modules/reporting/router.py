@@ -17,8 +17,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_tenant_db
@@ -26,7 +26,12 @@ from app.modules.audit import log_event
 from app.modules.auth import UserContext, get_current_user_roles
 from app.modules.reporting.actors import score_session_report
 from app.modules.reporting.models import SessionReport
-from app.modules.reporting.schemas import HumanDecisionIn, ReportRead
+from app.modules.reporting.schemas import (
+    HumanDecisionIn,
+    ReportIndexItem,
+    ReportIndexPage,
+    ReportRead,
+)
 
 router = APIRouter(prefix="/api/reports", tags=["reporting"])
 
@@ -148,6 +153,80 @@ async def get_report_by_session(
         )
 
     return _row_to_read(row).model_dump(mode="json")
+
+
+# ---------------------------------------------------------------------------
+# GET /api/reports  — hub index of completed sessions + report status
+# ---------------------------------------------------------------------------
+
+
+@router.get("", summary="List completed sessions with report status (hub)")
+async def list_report_index(
+    request: Request,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_tenant_db),
+    user: UserContext = Depends(get_current_user_roles),
+) -> Any:
+    """Paginated list of completed sessions that are reportable.
+
+    A session appears when it is `completed` AND (already has a report OR runs
+    the v2 engine, i.e. is scoreable). Tenant-scoped by an explicit
+    `s.tenant_id` filter (works in tests where RLS is disabled) plus RLS in
+    prod. RBAC: reports.view or super-admin.
+    """
+    _require_reports_view(user)
+    tenant_id: uuid_mod.UUID = user.user.tenant_id
+
+    base = """
+        FROM sessions s
+        LEFT JOIN candidate_job_assignments a ON a.id = s.assignment_id
+        LEFT JOIN candidates c ON c.id = a.candidate_id
+        LEFT JOIN job_postings j ON j.id = a.job_posting_id
+        LEFT JOIN job_pipeline_stages st ON st.id = s.stage_id
+        LEFT JOIN session_reports sr ON sr.session_id = s.id
+        WHERE s.tenant_id = :tenant_id
+          AND s.state = 'completed'
+          AND (sr.id IS NOT NULL OR j.interview_engine_version = 'v2')
+    """
+    params: dict[str, Any] = {"tenant_id": str(tenant_id)}
+
+    total = (
+        await db.execute(text("SELECT count(*) " + base), params)
+    ).scalar_one()
+
+    rows = (
+        await db.execute(
+            text(
+                "SELECT s.id AS session_id, a.candidate_id, c.name AS candidate_name, "
+                "j.title AS job_title, st.name AS stage_name, s.completed_at, "
+                "COALESCE(sr.status, 'none') AS report_status, sr.verdict AS verdict, "
+                "sr.overall_score AS overall_score "
+                + base
+                + " ORDER BY s.completed_at DESC NULLS LAST, s.created_at DESC "
+                "LIMIT :limit OFFSET :offset"
+            ),
+            {**params, "limit": limit, "offset": offset},
+        )
+    ).mappings().all()
+
+    items = [
+        ReportIndexItem(
+            session_id=str(r["session_id"]),
+            candidate_id=str(r["candidate_id"]) if r["candidate_id"] else None,
+            candidate_name=r["candidate_name"],
+            job_title=r["job_title"],
+            stage_name=r["stage_name"],
+            completed_at=r["completed_at"].isoformat() if r["completed_at"] else None,
+            report_status=r["report_status"],
+            verdict=r["verdict"],
+            overall_score=r["overall_score"],
+        )
+        for r in rows
+    ]
+    return ReportIndexPage(
+        items=items, total=int(total), offset=offset, limit=limit
+    ).model_dump(mode="json")
 
 
 # ---------------------------------------------------------------------------
