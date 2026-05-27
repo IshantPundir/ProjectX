@@ -6,16 +6,31 @@ from dataclasses import dataclass
 
 from app.modules.reporting.scoring.constants import (
     ADVANCE_THRESHOLD,
+    BORDERLINE_CEILING,
+    HOLISTIC_ADJ_MAX,
     MIN_COVERAGE_FOR_ADVANCE,
+    REJECT_CEILING,
     REJECT_THRESHOLD,
-    STATE_POINTS,
+    STATE_TEXTURE_POINTS,
 )
 from app.modules.reporting.scoring.engine_signals import KnockoutClose
-from app.modules.reporting.scoring.types import Confidence, CovState, KnockoutStatus, Verdict
+from app.modules.reporting.scoring.types import (
+    Confidence, CovState, GradeTexture, KnockoutStatus, Verdict,
+)
+
+
+def score_signal(state: CovState, texture: GradeTexture | None) -> int | None:
+    """Per-signal points from coverage state AND evidence texture.
+    `none` → None (excluded from the denominator). Texture defaults to
+    `concrete` (no penalty) when a signal was not LLM-rechecked."""
+    if state == "none":
+        return None
+    return STATE_TEXTURE_POINTS[state][texture or "concrete"]
 
 
 def score_state(state: CovState) -> int | None:
-    return STATE_POINTS[state]
+    """Back-compat: concrete-texture baseline (no bluff penalty)."""
+    return score_signal(state, "concrete")
 
 
 @dataclass(frozen=True)
@@ -27,6 +42,7 @@ class ScoredSignal:
     priority: str
     state: CovState
     score: int | None
+    texture: GradeTexture = "concrete"
 
 
 @dataclass(frozen=True)

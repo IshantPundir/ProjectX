@@ -1,21 +1,31 @@
 from app.modules.reporting.scoring.aggregate import (
-    ScoredSignal, score_state, score_dimension, score_overall,
+    ScoredSignal, score_signal, score_state, score_dimension, score_overall,
     knockout_status, resolve_verdict, KnockoutResult,
 )
 from app.modules.reporting.scoring.engine_signals import KnockoutClose
 
 
-def ss(t, w, state, *, knockout=False, priority="required"):
+def ss(t, w, state, *, knockout=False, priority="required", texture="concrete"):
     return ScoredSignal(value=f"{t}-{w}-{state}", type=t, weight=w,
                         knockout=knockout, priority=priority, state=state,
-                        score=score_state(state))
+                        texture=texture, score=score_signal(state, texture))
 
 
-def test_score_state_mapping():
-    assert score_state("exceeded") == 100
-    assert score_state("sufficient") == 70
-    assert score_state("partial") == 30
-    assert score_state("failed") == 0
+def test_score_signal_texture_matrix():
+    assert score_signal("sufficient", "concrete") == 75
+    assert score_signal("sufficient", "thin") == 50      # bluff penalty
+    assert score_signal("exceeded", "concrete") == 100
+    assert score_signal("partial", "thin") == 25
+    assert score_signal("failed", "concrete") == 0
+    assert score_signal("none", "concrete") is None
+
+
+def test_score_signal_defaults_to_concrete_when_texture_missing():
+    assert score_signal("sufficient", None) == 75       # factual gates / un-rechecked = no penalty
+
+
+def test_score_state_alias_is_concrete_baseline():
+    assert score_state("sufficient") == 75
     assert score_state("none") is None
 
 
@@ -24,26 +34,29 @@ def test_dimension_excludes_none():
                           [ss("competency", 3, "sufficient"), ss("competency", 1, "partial"),
                            ss("competency", 2, "none")],
                           {"competency", "experience", "credential"})
-    # (3*70 + 1*30)/(3+1) = 60 ; coverage (3+1)/(3+1+2)=0.667
-    assert dim.score == 60
+    # (3*75 + 1*40)/(3+1) = 66.25 → 66 ; coverage (3+1)/(3+1+2)=0.667
+    assert dim.score == 66
     assert round(dim.coverage, 3) == 0.667
     assert dim.confidence == "medium"
 
 
-def test_reference_session1_technical_lands_at_41():
+def test_reference_session1_technical_recomputed():
     sigs = (
         [ss("experience", 3, "sufficient"), ss("experience", 3, "sufficient")]
         + [ss("competency", 3, "partial")] * 3
         + [ss("competency", 2, "partial")] * 3
     )
     dim = score_dimension("technical", sigs, {"competency", "experience", "credential"})
-    assert dim.score == 41          # (420+450)/21 -> 41.4 -> 41 ; matches PDF 4.2
+    # sufficient=75, partial=40 (concrete baseline via ss()):
+    # (3*75 + 3*75 + 3*40*3 + 2*40*3) / (3+3+9+6) = (225+225+360+240)/21 = 1050/21 = 50
+    assert dim.score == 50
 
 
 def test_overall_excludes_unassessed_and_communication():
     score, cov = score_overall([ss("competency", 3, "sufficient"),
                                 ss("behavioral", 1, "partial")])
-    assert score == 60 and round(cov, 2) == 1.0
+    # (3*75 + 1*40)/4 = 66.25 → 66
+    assert score == 66 and round(cov, 2) == 1.0
 
 
 def test_knockout_status():
