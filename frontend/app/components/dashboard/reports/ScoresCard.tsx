@@ -30,10 +30,10 @@ export function ScoresCard({ report }: { report: ReportRead }) {
       </div>
 
       {dims.length > 0 && (
-        <div className="flex flex-wrap justify-center gap-3">
+        <div className="flex flex-wrap justify-center gap-x-5 gap-y-3">
           {dims.map(({ key, label }) => {
             const d = report.scores[key]
-            return <ScoreGauge key={key} score={d?.score ?? null} label={label} size={58}
+            return <ScoreGauge key={key} score={d?.score ?? null} label={label} size={88}
               toneOverride={d ? tierTone(d.tone) : undefined} caption={caption(d)} />
           })}
         </div>
