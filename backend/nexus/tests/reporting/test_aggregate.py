@@ -59,6 +59,53 @@ def test_overall_excludes_unassessed_and_communication():
     assert score == 66 and round(cov, 2) == 1.0
 
 
+from app.modules.reporting.scoring.aggregate import (
+    signal_ceiling, clamp_to_ceiling, apply_holistic,
+)
+from app.modules.reporting.scoring.constants import REJECT_CEILING, BORDERLINE_CEILING
+
+
+def test_ceiling_failed_must_have():
+    sigs = [ss("competency", 3, "failed", knockout=True), ss("experience", 3, "sufficient")]
+    assert signal_ceiling(sigs, knockout_close=False, coverage=0.9) == REJECT_CEILING
+
+
+def test_ceiling_knockout_close():
+    sigs = [ss("experience", 3, "sufficient")]
+    assert signal_ceiling(sigs, knockout_close=True, coverage=0.9) == REJECT_CEILING
+
+
+def test_ceiling_unconfirmed_must_have():
+    sigs = [ss("competency", 3, "partial", knockout=True), ss("experience", 3, "sufficient")]
+    assert signal_ceiling(sigs, knockout_close=False, coverage=0.9) == BORDERLINE_CEILING
+
+
+def test_ceiling_low_coverage():
+    sigs = [ss("experience", 3, "sufficient")]
+    assert signal_ceiling(sigs, knockout_close=False, coverage=0.4) == BORDERLINE_CEILING
+
+
+def test_ceiling_clean():
+    sigs = [ss("competency", 3, "sufficient", knockout=True), ss("experience", 3, "sufficient")]
+    assert signal_ceiling(sigs, knockout_close=False, coverage=0.9) is None
+
+
+def test_clamp_to_ceiling():
+    assert clamp_to_ceiling(80, REJECT_CEILING) == 35
+    assert clamp_to_ceiling(20, REJECT_CEILING) == 20
+    assert clamp_to_ceiling(80, None) == 80
+    assert clamp_to_ceiling(None, REJECT_CEILING) == REJECT_CEILING   # knockout w/ no assessed signals
+    assert clamp_to_ceiling(None, None) is None
+
+
+def test_apply_holistic_bounds_and_recaps():
+    assert apply_holistic(50, 4, None) == 54
+    assert apply_holistic(50, 99, None) == 55         # delta hard-bounded to ±5
+    assert apply_holistic(50, -99, None) == 45
+    assert apply_holistic(60, 5, BORDERLINE_CEILING) == 60   # re-cap: can't break borderline ceiling
+    assert apply_holistic(None, 5, None) is None
+
+
 def test_knockout_status():
     assert knockout_status(state="failed") == "failed"
     assert knockout_status(state="sufficient") == "passed"

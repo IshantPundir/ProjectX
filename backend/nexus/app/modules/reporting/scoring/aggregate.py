@@ -111,6 +111,40 @@ class VerdictResult:
     reason: str
 
 
+def signal_ceiling(
+    signals: list[ScoredSignal], *, knockout_close: bool, coverage: float
+) -> int | None:
+    """The fit ceiling implied by must-have status + coverage. None = no cap."""
+    must_haves = [s for s in signals if s.knockout]
+    if knockout_close or any(s.state == "failed" for s in must_haves):
+        return REJECT_CEILING
+    if any(s.state in ("none", "partial") for s in must_haves) or (
+        coverage < MIN_COVERAGE_FOR_ADVANCE
+    ):
+        return BORDERLINE_CEILING
+    return None
+
+
+def clamp_to_ceiling(value: int | None, ceiling: int | None) -> int | None:
+    """Cap a base score by its fit ceiling. A knockout (REJECT_CEILING) with no
+    assessed signals (value None) still resolves to the reject band."""
+    if value is None:
+        return REJECT_CEILING if ceiling == REJECT_CEILING else None
+    return min(value, ceiling) if ceiling is not None else value
+
+
+def apply_holistic(
+    session_score: int | None, delta: int, ceiling: int | None
+) -> int | None:
+    """Session score + bounded ±HOLISTIC_ADJ_MAX delta, clamped 0..100, then
+    re-capped so the adjustment can never break a categorical guarantee."""
+    if session_score is None:
+        return None
+    bounded = max(-HOLISTIC_ADJ_MAX, min(HOLISTIC_ADJ_MAX, delta))
+    raw = max(0, min(100, session_score + bounded))
+    return min(raw, ceiling) if ceiling is not None else raw
+
+
 def resolve_verdict(
     *, overall: int | None, coverage: float,
     knockouts: list[KnockoutResult], knockout_close: KnockoutClose | None,
