@@ -62,7 +62,10 @@ def _tone_by_score(s: int | None) -> str:
 
 
 def _triage_kind_by_question(envelope: dict) -> dict[str, str]:
-    """Map active_question_id -> the strongest triage kind seen for it."""
+    """Map active_question_id -> the LAST triage kind seen for it (the
+    final-state representative: a candidate who disclaims after a weak attempt
+    ends as no_experience; one who engages after an initial "I don't know" ends
+    as answering)."""
     turn_to_q: dict[str, str] = {}
     for e in envelope.get("events", []):
         if e.get("kind") == "turn.decision":
