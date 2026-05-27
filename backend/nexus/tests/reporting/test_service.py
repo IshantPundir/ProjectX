@@ -13,6 +13,7 @@ import pytest
 from app.modules.reporting.schemas import (
     CommunicationVerdict,
     DecisionOut,
+    HolisticAdjustmentOut,
     MethodologyOut,
     NarrativeOut,
     SignalRecheckOut,
@@ -85,7 +86,9 @@ async def test_build_report_uses_engine_map_and_is_complete():
          patch("app.modules.reporting.service.write_narrative", AsyncMock(return_value=narrative)), \
          patch("app.modules.reporting.service.grade_communication",
                AsyncMock(return_value=CommunicationVerdict(evidence_quotes=[], justification="",
-                                                           level="adequate"))):
+                                                           level="adequate"))), \
+         patch("app.modules.reporting.service.score_holistic",
+               AsyncMock(return_value=HolisticAdjustmentOut(delta=2, justification="solid depth"))):
         report = await build_report(
             transcript=[{"role": "candidate", "text": "About six years."}],
             envelope=_envelope(), coverage_summary=coverage,
@@ -98,6 +101,12 @@ async def test_build_report_uses_engine_map_and_is_complete():
     assert report.scores["communication"].score == 70      # adequate
     assert any(sa.signal == "4+ years total professional experience"
                for sa in report.signal_assessments)
+    # Task 7: new ScoreOut fields
+    overall_out = report.scores["overall"]
+    assert overall_out.session_score is not None
+    assert overall_out.holistic_delta == 2
+    expected_overall = min(100, overall_out.session_score + 2)
+    assert overall_out.score == expected_overall
 
 
 @pytest.mark.asyncio
@@ -125,7 +134,9 @@ async def test_build_report_knockout_close_is_reject():
          patch("app.modules.reporting.service.write_narrative", AsyncMock(return_value=narrative)), \
          patch("app.modules.reporting.service.grade_communication",
                AsyncMock(return_value=CommunicationVerdict(evidence_quotes=[], justification="",
-                                                           level="weak"))):
+                                                           level="weak"))), \
+         patch("app.modules.reporting.service.score_holistic",
+               AsyncMock(return_value=HolisticAdjustmentOut(delta=0, justification="no signal"))):
         report = await build_report(
             transcript=[], envelope=env, coverage_summary=coverage,
             questions=_questions(), signal_metadata=_signal_metadata(), correlation_id="c1")
@@ -158,7 +169,9 @@ async def test_factual_gate_signal_is_not_rechecked():
          patch("app.modules.reporting.service.write_narrative", AsyncMock(return_value=narrative)), \
          patch("app.modules.reporting.service.grade_communication",
                AsyncMock(return_value=CommunicationVerdict(evidence_quotes=[], justification="",
-                                                           level="adequate"))):
+                                                           level="adequate"))), \
+         patch("app.modules.reporting.service.score_holistic",
+               AsyncMock(return_value=HolisticAdjustmentOut(delta=0, justification="no signal"))):
         report = await build_report(
             transcript=[], envelope=_envelope(), coverage_summary=coverage,
             questions=_questions(), signal_metadata=_signal_metadata(), correlation_id="c1")

@@ -22,13 +22,18 @@ from app.modules.reporting.schemas import (
 from app.modules.reporting.scoring.aggregate import (
     KnockoutResult,
     ScoredSignal,
+    apply_holistic,
+    clamp_to_ceiling,
     confidence_from_coverage,
     knockout_status,
     resolve_verdict,
     score_dimension,
     score_overall,
+    score_signal,
     score_state,
+    signal_ceiling,
 )
+from app.modules.reporting.scoring.holistic import score_holistic
 from app.modules.reporting.scoring.constants import (
     BEHAVIORAL_TYPES,
     FACTUAL_QUESTION_KINDS,
@@ -167,12 +172,28 @@ async def build_report(*, transcript, envelope, coverage_summary, questions,
     for sv, rc in recheck_results.items():
         final_state[sv] = rc.state
 
+    def _texture(sv: str) -> str:
+        rc = recheck_results.get(sv)
+        return rc.grade if rc else "concrete"
+
     scored = [ScoredSignal(value=d.value, type=d.type, weight=d.weight, knockout=d.knockout,
                            priority=d.priority, state=final_state[d.value],
-                           score=score_state(final_state[d.value])) for d in signal_defs]
+                           texture=_texture(d.value),
+                           score=score_signal(final_state[d.value], _texture(d.value)))
+              for d in signal_defs]
     tech = score_dimension("technical", scored, TECHNICAL_TYPES)
     beh = score_dimension("behavioral", scored, BEHAVIORAL_TYPES)
-    overall, coverage = score_overall(scored)
+    base, coverage = score_overall(scored)
+
+    ceiling = signal_ceiling(scored, knockout_close=knockout_close is not None, coverage=coverage)
+    session_score = clamp_to_ceiling(base, ceiling)
+
+    adjustment = await score_holistic(
+        session_score=session_score, scored=scored,
+        knockout_close=knockout_close is not None, coverage=coverage,
+        transcript_text="\n".join(t["text"] for t in transcript if t.get("role") == "candidate"),
+        correlation_id=correlation_id)
+    overall = apply_holistic(session_score, adjustment.delta, ceiling)
 
     comm = await grade_communication(
         transcript_text="\n".join(t["text"] for t in transcript if t.get("role") == "candidate"),
@@ -203,11 +224,12 @@ async def build_report(*, transcript, envelope, coverage_summary, questions,
             status_badge=badge, status_tone=tone,
             question_text=q.get("text", ""), candidate_quote=u.candidate_answer))
 
+    scored_by_value = {s.value: s for s in scored}
     signal_assessments = [SignalAssessmentOut(
         signal=d.value, type=d.type, weight=d.weight, knockout=d.knockout, priority=d.priority,
         engine_state=engine_states[d.value], final_state=final_state[d.value],
         grade=(recheck_results[d.value].grade if d.value in recheck_results else None),
-        score=score_state(final_state[d.value]),
+        score=scored_by_value[d.value].score,
         evidence=(
             recheck_results[d.value].evidence_quotes if d.value in recheck_results else []),
         overridden=(
@@ -246,7 +268,10 @@ async def build_report(*, transcript, envelope, coverage_summary, questions,
         overall_confidence=confidence_from_coverage(coverage) if overall is not None else "low",
         decision=narrative.decision,
         scores={
-            "overall": _score_out(overall, coverage, tech.confidence),
+            "overall": ScoreOut(
+                score=overall, tier_label=tier_label(overall), tone=_tone_by_score(overall),
+                confidence=confidence_from_coverage(coverage) if overall is not None else "low",
+                coverage=coverage, session_score=session_score, holistic_delta=adjustment.delta),
             "technical": _score_out(tech.score, tech.coverage, tech.confidence),
             "behavioral": _score_out(beh.score, beh.coverage, beh.confidence),
             "communication": _score_out(comm_score, 1.0, "medium"),
@@ -262,6 +287,10 @@ async def build_report(*, transcript, envelope, coverage_summary, questions,
                 "n_signals_rechecked": len(recheck_results),
                 "n_overrides": sum(1 for r in recheck_results.values() if r.overridden),
                 "coverage_map": {k: final_state[k] for k in final_state},
+                "session_score": session_score,
+                "holistic_delta": adjustment.delta,
+                "holistic_justification": adjustment.justification,
+                "ceiling_applied": ceiling,
             }),
     )
 
