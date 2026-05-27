@@ -83,6 +83,7 @@ export default function ReportsPage() {
                 <th className="px-4 py-2.5 text-[10.5px] font-semibold uppercase tracking-wide">Verdict</th>
                 <th className="px-4 py-2.5 text-right text-[10.5px] font-semibold uppercase tracking-wide">
                   <button type="button" onClick={() => setSortByScore((v) => !v)}
+                          aria-label="Sort by score"
                           className="uppercase tracking-wide hover:underline"
                           style={{ color: sortByScore ? 'var(--px-accent)' : 'inherit' }}>
                     Score {sortByScore ? '↓' : ''}

@@ -26,7 +26,6 @@ describe('ScoresCard', () => {
       },
     })
     render(<ScoresCard report={report} />)
-    expect(screen.getByText(/Session score 3\.6/)).toBeInTheDocument()
-    expect(screen.getByText(/\+0\.2/)).toBeInTheDocument()
+    expect(screen.getByText(/Session score 3\.6 · holistic \+0\.2/)).toBeInTheDocument()
   })
 })
