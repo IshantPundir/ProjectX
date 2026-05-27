@@ -2,9 +2,14 @@
 
 Single-flight via pg_try_advisory_lock — concurrent ticks across replicas
 return immediately on lock contention. Targets state='active' rows whose
-state_changed_at is older than reaper_stuck_threshold_seconds AND have no
-agent_completed_at — the empirical signature of an engine that died
-without ever transitioning the session itself.
+LAST SIGN OF LIFE — COALESCE(last_engine_heartbeat_at, state_changed_at) —
+is older than reaper_stuck_threshold_seconds AND have no agent_completed_at.
+
+Liveness, not duration: the running engine pulses last_engine_heartbeat_at
+periodically (agent.py), so a legitimately long interview that is still
+pulsing is NEVER reaped, while a dead engine (pulse goes stale) or one that
+never connected (no pulse → falls back to state_changed_at) is reaped once
+that timestamp ages past the threshold.
 
 The in-process entrypoint handler (Phase 2) covers the happy-error path
 where the engine catches its own exception. This reaper covers the cases
@@ -16,7 +21,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy import text as sql_text
 
 from app.config import settings
@@ -46,11 +51,16 @@ async def run_stuck_session_reaper() -> None:
             cutoff = datetime.now(UTC) - timedelta(
                 seconds=settings.reaper_stuck_threshold_seconds
             )
+            # Last sign of life: a fresh engine heartbeat keeps a long-but-live
+            # interview safe; NULL (never connected) falls back to state_changed_at.
+            last_sign_of_life = func.coalesce(
+                SessionRow.last_engine_heartbeat_at, SessionRow.state_changed_at
+            )
             stuck = (
                 await db.execute(
                     select(SessionRow.id, SessionRow.tenant_id).where(
                         SessionRow.state == "active",
-                        SessionRow.state_changed_at < cutoff,
+                        last_sign_of_life < cutoff,
                         SessionRow.agent_completed_at.is_(None),
                     )
                 )

@@ -96,6 +96,7 @@ from app.modules.interview_runtime import (
     SessionConfig,
     TranscriptEntry,
     build_session_config,
+    record_engine_heartbeat,
     record_session_result,
 )
 from app.modules.session import classify_engine_exception, transition_to_error
@@ -826,6 +827,23 @@ async def run(
                 state["close_initiated"] = True
                 asyncio.create_task(_terminate_session())
 
+    async def _heartbeat_loop() -> None:
+        """Pulse last_engine_heartbeat_at every engine_heartbeat_interval_seconds so the
+        stuck-session reaper treats this (possibly long) interview as alive. The first
+        beat fires immediately; a missed beat is logged, never fatal; the loop ends when
+        finalize cancels it (the row is about to leave 'active')."""
+        session_uuid = uuid.UUID(config.session_id)
+        while True:
+            try:
+                async with get_bypass_session() as hb_db:
+                    await record_engine_heartbeat(
+                        hb_db, session_id=session_uuid, tenant_id=tenant_id)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — a missed beat must never crash the session
+                log.warning("engine.v2.heartbeat_failed", exc_info=True)
+            await asyncio.sleep(settings.engine_heartbeat_interval_seconds)
+
     # ---------------------------------------------------------------------------
     # _finalize_and_record: async shutdown hook (CMI-1 result path).
     # Runs once via ctx.add_shutdown_callback — async so DB writes can be awaited.
@@ -840,6 +858,10 @@ async def run(
             return
         state["result_recorded"] = True
         state["closing"] = True
+        # Stop the liveness pulse — the session is about to leave 'active'.
+        hb_task = state.get("heartbeat_task")
+        if hb_task is not None:
+            hb_task.cancel()
         env = collector.envelope(closed_at=_now_iso())
         envelope_ref: str | None = None
         if settings.engine_event_log_sink == "local":
@@ -919,6 +941,9 @@ async def run(
             delete_room_on_close=True,
         ),
     )
+    # Liveness heartbeat: now that the engine session is running, pulse the DB so the
+    # stuck-session reaper never mistakes a long-but-live interview for a dead engine.
+    state["heartbeat_task"] = asyncio.create_task(_heartbeat_loop())
     # INTRO + first ASK are delivered by _MouthAgent.on_enter (no explicit say() block here).
 
     # Pre-render persona reflex cues in the background (HOLD/REASSURE decision); seeds = canned.

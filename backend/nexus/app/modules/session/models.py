@@ -73,6 +73,13 @@ class Session(Base):
     questions_asked: Mapped[int | None] = mapped_column(Integer)
     probes_fired: Mapped[int | None] = mapped_column(Integer)
     agent_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Liveness pulse written periodically by the running engine (see agent.py
+    # heartbeat task). The reaper treats a session as alive while this is fresh,
+    # so a legitimately long interview is never reaped; a dead engine stops
+    # pulsing and is reaped once the pulse goes stale. NULL until the first beat.
+    last_engine_heartbeat_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     result_status: Mapped[str | None] = mapped_column(Text)
     error_code: Mapped[str | None] = mapped_column(Text)
     proctoring_violations: Mapped[list[dict]] = mapped_column(

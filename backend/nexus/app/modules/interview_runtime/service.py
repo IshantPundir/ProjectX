@@ -334,6 +334,31 @@ def _project_signal_metadata(raw_signals: list[object]) -> list[SignalMetadata]:
     return out
 
 
+async def record_engine_heartbeat(
+    db: AsyncSession,
+    *,
+    session_id: uuid.UUID,
+    tenant_id: uuid.UUID,
+) -> None:
+    """Pulse the engine-liveness timestamp for a running session.
+
+    Written periodically by the in-process engine (agent.py heartbeat loop) so the
+    stuck-session reaper can tell a long-but-live interview from a dead engine.
+    Gated on state='active' (a no-op once the session has terminated), tenant-scoped,
+    and run on a bypass-RLS session — same contract as the other engine-facing helpers.
+    """
+    await db.execute(
+        update(SessionRow)
+        .where(
+            SessionRow.id == session_id,
+            SessionRow.tenant_id == tenant_id,
+            SessionRow.state == "active",
+        )
+        .values(last_engine_heartbeat_at=datetime.now(UTC))
+    )
+    await db.commit()
+
+
 async def record_session_result(
     db: AsyncSession,
     *,

@@ -45,6 +45,9 @@ async def test_only_stuck_active_sessions_transition(db):
 
     fresh, _ = await seed_minimal_session(db, state="active")
     fresh.state_changed_at = recent
+    # A live engine pulses recently — the reaper must treat it as alive
+    # (clearly inside the stale-pulse threshold, not on its boundary).
+    fresh.last_engine_heartbeat_at = datetime.now(UTC) - timedelta(seconds=10)
 
     done, _ = await seed_minimal_session(db, state="completed")
     done.state_changed_at = past
@@ -67,6 +70,65 @@ async def test_only_stuck_active_sessions_transition(db):
     assert refreshed_stuck.error_code == "engine_unresponsive"
     assert refreshed_fresh.state == "active"  # within threshold
     assert refreshed_done.state == "completed"
+
+
+@pytest.mark.asyncio
+async def test_live_long_session_with_fresh_heartbeat_not_reaped(db):
+    """A legitimately long interview that is still pulsing is NEVER reaped,
+    no matter how long ago it went active. Liveness, not duration, decides."""
+    long_ago = datetime.now(UTC) - timedelta(minutes=60)
+    fresh_beat = datetime.now(UTC) - timedelta(seconds=5)
+
+    live, _ = await seed_minimal_session(db, state="active")
+    live.state_changed_at = long_ago          # active for an hour
+    live.last_engine_heartbeat_at = fresh_beat  # but engine pulsed 5s ago
+    await db.flush()
+
+    await run_stuck_session_reaper()
+
+    refreshed = (await db.execute(
+        select(SessionRow).where(SessionRow.id == live.id)
+    )).scalar_one()
+    assert refreshed.state == "active"  # alive -> survives
+
+
+@pytest.mark.asyncio
+async def test_dead_engine_stale_heartbeat_is_reaped(db):
+    """An engine that pulsed but then died (stale heartbeat past threshold) is
+    reaped even though it once showed signs of life."""
+    long_ago = datetime.now(UTC) - timedelta(minutes=60)
+
+    dead, _ = await seed_minimal_session(db, state="active")
+    dead.state_changed_at = long_ago
+    dead.last_engine_heartbeat_at = long_ago  # last pulse an hour ago -> stale
+    await db.flush()
+
+    await run_stuck_session_reaper()
+
+    refreshed = (await db.execute(
+        select(SessionRow).where(SessionRow.id == dead.id)
+    )).scalar_one()
+    assert refreshed.state == "error"
+    assert refreshed.error_code == "engine_unresponsive"
+
+
+@pytest.mark.asyncio
+async def test_agent_never_connected_is_reaped(db):
+    """No heartbeat ever (dispatch never arrived): falls back to state_changed_at,
+    reaped once that ages past the threshold."""
+    long_ago = datetime.now(UTC) - timedelta(minutes=60)
+
+    never, _ = await seed_minimal_session(db, state="active")
+    never.state_changed_at = long_ago
+    never.last_engine_heartbeat_at = None
+    await db.flush()
+
+    await run_stuck_session_reaper()
+
+    refreshed = (await db.execute(
+        select(SessionRow).where(SessionRow.id == never.id)
+    )).scalar_one()
+    assert refreshed.state == "error"
 
 
 @pytest.mark.asyncio

@@ -39,6 +39,7 @@ from app.modules.interview_runtime.service import (
 )
 from app.modules.interview_runtime.service import (
     build_session_config,
+    record_engine_heartbeat,
     record_session_result,
 )
 
@@ -67,5 +68,6 @@ __all__ = [
     "TranscriptEntry",
     "build_session_config",
     "project_signal_metadata",
+    "record_engine_heartbeat",
     "record_session_result",
 ]

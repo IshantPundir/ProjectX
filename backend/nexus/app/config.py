@@ -374,13 +374,21 @@ class Settings(BaseSettings):
     # Passed as `enhancement_level` to the ai_coustics plugin (0.0 = off, 1.0 = max).
     interview_nc_enhancement_level: float = 0.5
 
-    # Stuck-session reaper. Sweeps state='active' sessions whose
-    # state_changed_at is older than reaper_stuck_threshold_seconds and
-    # transitions them to state='error' with error_code='engine_unresponsive'.
-    # Disabled by setting reaper_enabled=false (tests do this).
+    # Stuck-session reaper. Sweeps state='active' sessions whose LAST SIGN OF LIFE
+    # — COALESCE(last_engine_heartbeat_at, state_changed_at) — is older than
+    # reaper_stuck_threshold_seconds, transitioning them to error/engine_unresponsive.
+    # Liveness-aware: a live engine pulses last_engine_heartbeat_at every
+    # engine_heartbeat_interval_seconds, so a long-but-live interview is never reaped;
+    # the threshold is now a STALE-PULSE tolerance (a few missed beats = dead), not an
+    # interview-duration cap. Disabled by setting reaper_enabled=false (tests do this).
     reaper_enabled: bool = True
     reaper_interval_seconds: int = 300   # how often the scheduler ticks
-    reaper_stuck_threshold_seconds: int = 900  # 15 min — typical AI screen is 30 min
+    # 300s ≈ 15 missed 20s beats — safely past any transient engine/DB hiccup, while
+    # still surfacing a genuinely dead engine within ~5 min. (Was 900s + duration-based,
+    # which both reaped real >15min interviews AND mislabeled completed ones — 2026-05-27.)
+    reaper_stuck_threshold_seconds: int = 300
+    # How often the running engine writes its liveness pulse (agent.py heartbeat task).
+    engine_heartbeat_interval_seconds: int = 20
 
     # --- Interview engine (two-plane) — model map ---
     # Brain (Control Plane) — FAST model + reasoning-FIRST FIELD for coherence, NO
