@@ -56,11 +56,12 @@ export function verdictMeta(v: Verdict): VerdictMeta {
   return VERDICT_META[v]
 }
 
-/** Tier tone from a 0–100 score (advance≥75 / borderline 55–74 / reject<55). */
+/** Tier tone from a 0–100 score, aligned to backend verdict thresholds
+ *  (ADVANCE_THRESHOLD 65 / REJECT_THRESHOLD 40 in reporting/scoring/constants.py). */
 export function scoreBandTone(score: number | null): Tone {
   if (score === null || score === undefined) return 'neutral'
-  if (score >= 75) return 'ok'
-  if (score >= 55) return 'caution'
+  if (score >= 65) return 'ok'
+  if (score >= 40) return 'caution'
   return 'danger'
 }
 
