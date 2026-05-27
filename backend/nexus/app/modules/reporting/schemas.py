@@ -14,6 +14,16 @@ from app.modules.reporting.scoring.types import (
 )
 
 
+class SignalRecheckOut(BaseModel):
+    """Structured output from the per-signal post-interview re-check."""
+    evidence_quotes: list[str] = Field(default_factory=list)
+    justification: str = ""
+    grade: Literal["concrete", "thin", "null"] = "null"
+    state: Literal["exceeded", "sufficient", "partial", "failed"]
+    overridden: bool = False
+    override_reason: str | None = None
+
+
 class JudgeVerdict(BaseModel):
     """Strict structured output from the per-answer judge. Evidence BEFORE score."""
 
