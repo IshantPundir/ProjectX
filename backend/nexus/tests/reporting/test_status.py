@@ -48,3 +48,14 @@ def test_partial_default():
                          signal_defs={"S": ("competency", False, "required")},
                          no_experience=False, closed_before_complete=False)
     assert b == "partial"
+
+
+def test_failed_preferred_not_failed_required():
+    b, tone = derive_status(
+        unit(),
+        signal_states={"S": "failed"},
+        signal_defs={"S": ("competency", False, "preferred")},
+        no_experience=False, closed_before_complete=False,
+    )
+    assert b == "not_fully_assessed"   # no sufficient/exceeded/partial → fallback
+    assert tone == "neutral"

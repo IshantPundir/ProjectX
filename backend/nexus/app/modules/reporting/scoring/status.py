@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from app.modules.reporting.scoring.types import StatusBadge, ScoredUnit
 
-_FACTUAL_KINDS = frozenset({"experience_check", "compliance_binary"})
-
 _TONE: dict[str, str] = {
     "passed": "ok", "partial": "caution", "failed_required": "danger",
     "not_demonstrated": "danger", "not_attempted": "neutral",
