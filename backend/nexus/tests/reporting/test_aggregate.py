@@ -160,3 +160,11 @@ def test_ceiling_just_below_min_coverage():
 def test_ceiling_unassessed_must_have():
     sigs = [ss("competency", 3, "none", knockout=True), ss("experience", 3, "sufficient")]
     assert signal_ceiling(sigs, knockout_close=False, coverage=0.9) == BORDERLINE_CEILING
+
+
+def test_apply_holistic_cannot_lift_reject_ceiling():
+    # Strongest categorical guarantee: a +5 holistic nudge on a knockout/failed-must-have
+    # score must NEVER escape the reject band (the delta is re-capped after the add).
+    assert apply_holistic(35, 5, REJECT_CEILING) == 35
+    assert apply_holistic(34, 5, REJECT_CEILING) == 35
+    assert apply_holistic(30, 5, REJECT_CEILING) == 35
