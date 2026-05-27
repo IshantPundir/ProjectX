@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import Link from 'next/link'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
@@ -32,6 +33,10 @@ export default function ReportsPage() {
   const { data, isLoading, error } = useReportsIndex()
   const { data: me } = useMe()
   const isSuperAdmin = !!me?.is_super_admin
+  const [sortByScore, setSortByScore] = useState(false)
+  const items = (data?.items ?? []).slice().sort((a, b) =>
+    sortByScore ? (b.overall_score ?? -1) - (a.overall_score ?? -1) : 0,
+  )
 
   return (
     <div className="mx-auto max-w-[1200px] px-8 pb-10 pt-5">
@@ -76,12 +81,18 @@ export default function ReportsPage() {
                 <th className="px-4 py-2.5 text-[10.5px] font-semibold uppercase tracking-wide">Role</th>
                 <th className="px-4 py-2.5 text-[10.5px] font-semibold uppercase tracking-wide">Stage</th>
                 <th className="px-4 py-2.5 text-[10.5px] font-semibold uppercase tracking-wide">Verdict</th>
-                <th className="px-4 py-2.5 text-right text-[10.5px] font-semibold uppercase tracking-wide">Score</th>
+                <th className="px-4 py-2.5 text-right text-[10.5px] font-semibold uppercase tracking-wide">
+                  <button type="button" onClick={() => setSortByScore((v) => !v)}
+                          className="uppercase tracking-wide hover:underline"
+                          style={{ color: sortByScore ? 'var(--px-accent)' : 'inherit' }}>
+                    Score {sortByScore ? '↓' : ''}
+                  </button>
+                </th>
                 <th className="px-4 py-2.5 text-right text-[10.5px] font-semibold uppercase tracking-wide">Action</th>
               </tr>
             </thead>
             <tbody>
-              {data.items.map((item) => (
+              {items.map((item) => (
                 <ReportRow key={item.session_id} item={item} isSuperAdmin={isSuperAdmin} />
               ))}
             </tbody>
