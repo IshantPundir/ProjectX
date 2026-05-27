@@ -1,14 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { reportsApi } from '@/lib/api/reports'
 import { ApiError } from '@/lib/api/client'
+import { makeReport } from '../components/reports/_fixture'
 
-const READY = {
-  verdict: 'reject', verdict_reason: 'failed must-have', overall_score: 36,
-  overall_coverage: 0.7, overall_confidence: 'medium', dimension_scores: {},
-  knockout_results: [], signal_scorecards: [], question_scorecards: [],
-  summary: { headline: 'h', strengths: [], gaps: [], rationale: '' },
-  status: 'ready', id: 'r1', session_id: 's1', version: 1,
-}
+const READY = makeReport({ verdict: 'reject' })
 
 function mockFetch(status: number, body: unknown) {
   return vi.fn().mockResolvedValue({

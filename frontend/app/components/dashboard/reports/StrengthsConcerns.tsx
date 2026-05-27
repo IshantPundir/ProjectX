@@ -6,9 +6,9 @@ export function StrengthsConcerns({ strengths, concerns }: { strengths: Strength
     <section className="rounded-xl border bg-white p-3.5" style={{ borderColor: 'var(--px-hairline)' }} aria-label="Strengths and concerns">
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <div>
-          <div className="mb-2 text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--px-ok)' }}>
+          <h2 className="mb-2 text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--px-ok)' }}>
             Strengths {strengths.length}
-          </div>
+          </h2>
           <ul className="space-y-2">
             {strengths.map((s, i) => (
               <li key={i}>
@@ -19,9 +19,9 @@ export function StrengthsConcerns({ strengths, concerns }: { strengths: Strength
           </ul>
         </div>
         <div>
-          <div className="mb-2 text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--px-danger)' }}>
+          <h2 className="mb-2 text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--px-danger)' }}>
             Concerns {concerns.length}
-          </div>
+          </h2>
           <ul className="space-y-2">
             {concerns.map((c, i) => {
               const sev = severityMeta(c.severity)

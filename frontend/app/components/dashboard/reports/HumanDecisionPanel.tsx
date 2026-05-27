@@ -4,6 +4,7 @@ import { useState } from 'react'
 
 import { Button, Textarea } from '@/components/px'
 import type { HumanDecision, HumanDecisionValue, Verdict } from '@/lib/api/reports'
+import { verdictMeta } from './report-format'
 
 interface Props {
   verdict: Verdict
@@ -66,7 +67,7 @@ export function HumanDecisionPanel({ verdict, decision, onSubmit, isSubmitting }
       )}
 
       <p className="mb-2 text-[10.5px]" style={{ color: 'var(--px-fg-2)' }}>
-        AI recommends <b>{verdict}</b>. You decide.
+        AI assessment: <b>{verdictMeta(verdict).label}</b>. You decide.
       </p>
 
       <div className="flex gap-1.5" role="group" aria-label="Decision">
