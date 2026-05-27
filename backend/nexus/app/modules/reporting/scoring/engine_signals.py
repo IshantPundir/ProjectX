@@ -12,6 +12,8 @@ from typing import Any
 from app.modules.reporting.scoring.types import CovState, SignalDef, SignalTurn
 
 _VALID_STATES: frozenset[str] = frozenset({"exceeded", "sufficient", "partial", "failed", "none"})
+# NOTE: `exceeded` is assigned only by the post-interview LLM re-check (Task 6),
+# never emitted by the engine's coverage_summary (which is sufficient/partial/failed/none).
 
 
 def build_engine_states(
@@ -36,30 +38,35 @@ def detect_knockout_close(envelope: dict[str, Any]) -> KnockoutClose | None:
     """Return a KnockoutClose if the engine ended on a knockout, else None.
 
     Trigger: a turn.decision with move == 'knockout_close'. The triggering signal
-    is the most-recent signal marked `failed` in a turn.decision at/ before that
-    close (its own attributed_signals first, else the last failed coverage_delta).
+    is the most-recent signal marked `failed` (its own attributed_signals first,
+    else the last failed coverage_delta). The evidence quote is the candidate's
+    answer on the turn that FAILED the signal — NOT the close event's own quote,
+    which is frequently a filler/backchannel ("Hello?") rather than the disclaimer.
+
+    Only the first knockout_close is meaningful; the engine terminates after it.
     """
     events: list[dict] = envelope.get("events") or []
     last_failed: str | None = None
+    failed_quote_by_signal: dict[str, str] = {}
     for e in events:
         if e.get("kind") != "turn.decision":
             continue
         p = e.get("payload") or {}
+        quote = (p.get("candidate_quote") or "").strip()
         for sig, st in (p.get("coverage_delta") or {}).items():
             if st == "failed":
                 last_failed = sig
+                if quote:
+                    failed_quote_by_signal[sig] = quote
         if p.get("move") == "knockout_close":
-            trigger = None
             attributed = p.get("attributed_signals") or []
-            if attributed:
-                trigger = attributed[0]
-            trigger = trigger or last_failed
-            quote = (p.get("candidate_quote") or "").strip()
+            trigger = attributed[0] if attributed else last_failed
+            evidence_quote = (failed_quote_by_signal.get(trigger or "") or quote)
             reason = (
                 f"Interview closed on a must-have gap: '{trigger}'."
                 if trigger else "Interview closed early on a knockout."
             )
-            return KnockoutClose(signal=trigger, quote=quote, reason=reason)
+            return KnockoutClose(signal=trigger, quote=evidence_quote, reason=reason)
     return None
 
 

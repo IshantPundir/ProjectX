@@ -54,3 +54,20 @@ def test_collect_signal_evidence_gathers_touching_turns():
     assert [t.candidate_quote for t in ev_a] == ["q1"]
     ev_b = collect_signal_evidence(env, "B")          # via coverage_delta key
     assert [t.candidate_quote for t in ev_b] == ["q2"]
+
+
+def test_detect_knockout_close_uses_failing_turn_quote_not_filler():
+    # The failing turn carries the incriminating quote; the close turn is a filler.
+    env = {"events": [
+        {"kind": "turn.decision", "payload": {
+            "move": "advance", "attributed_signals": ["API"],
+            "coverage_delta": {"API": "failed"},
+            "candidate_quote": "I've never built any custom connectors."}},
+        {"kind": "turn.decision", "payload": {
+            "move": "knockout_close", "attributed_signals": [],
+            "coverage_delta": {}, "candidate_quote": "Hello?"}},
+    ]}
+    ko = detect_knockout_close(env)
+    assert ko is not None
+    assert ko.signal == "API"
+    assert ko.quote == "I've never built any custom connectors."   # NOT "Hello?"
