@@ -23,7 +23,13 @@ import pytest
 from sqlalchemy import select
 
 from app.modules.reporting.models import SessionReport
-from app.modules.reporting.schemas import ReportRead, SummaryOut
+from app.modules.reporting.schemas import (
+    DecisionOut,
+    MethodologyOut,
+    ReportRead,
+    ScoreOut,
+    WhyColumn,
+)
 from app.modules.session.models import Session as SessionRow
 
 # ---------------------------------------------------------------------------
@@ -36,11 +42,16 @@ _FAKE_REPORT = ReportRead(
     overall_score=85,
     overall_coverage=0.9,
     overall_confidence="high",
-    dimension_scores={},
-    knockout_results=[],
-    signal_scorecards=[],
-    question_scorecards=[],
-    summary=SummaryOut(headline="Strong candidate — recommended for advancement."),
+    decision=DecisionOut(
+        headline="Strong candidate — recommended for advancement.",
+        why_positive=WhyColumn(title="", body=""),
+        why_negative=WhyColumn(title="", body=""),
+    ),
+    scores={
+        "overall": ScoreOut(score=85, tier_label="Strong", tone="ok",
+                            confidence="high", coverage=0.9),
+    },
+    methodology=MethodologyOut(note="", charity_flags=[]),
     status="ready",
     engine_version="v2",
 )
