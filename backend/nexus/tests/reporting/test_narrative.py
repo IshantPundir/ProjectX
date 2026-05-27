@@ -29,3 +29,21 @@ async def test_write_narrative_returns_prose():
         res = await write_narrative(ground_truth_json="{}", correlation_id="c1")
     assert res.decision.headline == "Borderline."
     assert res.methodology.note.startswith("7 of 8")
+
+
+@pytest.mark.asyncio
+async def test_write_narrative_refusal_returns_valid_fallback():
+    class R:
+        output_parsed = None
+        output = []
+        usage = None
+    with patch("app.modules.reporting.scoring.narrative.get_raw_openai_client") as gc:
+        client = AsyncMock()
+        client.responses.parse = AsyncMock(return_value=R())
+        gc.return_value = client
+        res = await write_narrative(ground_truth_json="{}", correlation_id="c1")
+    # fallback is a valid NarrativeOut, not an exception
+    assert isinstance(res, NarrativeOut)
+    assert res.decision.headline  # non-empty fallback headline
+    assert res.methodology.note == "Narrative generation failed."
+    assert res.strengths == [] and res.concerns == []
