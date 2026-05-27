@@ -61,6 +61,7 @@ services:
         condition: service_healthy
     volumes:
       - .:/app
+      - ./engine-events:/tmp/engine-events
     command: dramatiq app.worker --processes 2 --threads 4
 
   nexus-engine:

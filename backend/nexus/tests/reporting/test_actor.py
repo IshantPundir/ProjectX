@@ -309,3 +309,27 @@ async def test_actor_idempotent_skip_when_ready(db):
     assert row.status == "ready"
     assert row.verdict == "reject"   # unchanged from the pre-seeded value
     assert row.version == 1
+
+
+# ---------------------------------------------------------------------------
+# _resolve_envelope unit tests (Task 1)
+# ---------------------------------------------------------------------------
+
+
+import json
+from pathlib import Path
+from app.modules.reporting.actors import _resolve_envelope
+
+
+def test_resolve_envelope_prefers_config_dir(tmp_path, monkeypatch):
+    sid = "c7173674-7795-4268-b4ab-829ad45b801b"
+    (tmp_path / f"{sid}.json").write_text(json.dumps({"events": [{"kind": "x"}]}))
+    monkeypatch.setattr("app.modules.reporting.actors.settings.engine_event_log_dir", str(tmp_path))
+    env = _resolve_envelope(session_id=sid, stored_ref="/tmp/engine-events/does-not-exist.json")
+    assert env["events"] == [{"kind": "x"}]
+
+
+def test_resolve_envelope_falls_back_to_empty(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.modules.reporting.actors.settings.engine_event_log_dir", str(tmp_path))
+    env = _resolve_envelope(session_id="nope", stored_ref=None)
+    assert env == {"events": []}
