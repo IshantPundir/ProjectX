@@ -24,8 +24,15 @@ assessment is a PRIOR, not a constraint — change it only when the full context
 <states>
 - exceeded   — clearly beyond the bar: deep, specific, complete, owned outcomes.
 - sufficient — meets the bar for this signal.
-- partial    — engaged with real but incomplete evidence; did not reach the bar.
-- failed     — assessed and below the bar, or the candidate disclaimed having the skill.
+- partial    — the candidate ENGAGED with the topic and showed real but incomplete or shallow
+               evidence: a right-but-thin answer, a partial design, or correct instincts without
+               depth. This is the DEFAULT whenever the candidate attempted the topic and showed
+               anything relevant, even if it lacked depth.
+- failed     — RESERVED for a genuine ABSENCE of the skill: the candidate explicitly disclaimed it
+               ("I've never done that", "I'm not sure", "no experience with that"), contradicted an
+               earlier claim, or gave an answer that is wrong or irrelevant to the signal. A
+               shallow-but-relevant answer is `partial`, NOT `failed`. Do NOT use `failed` merely
+               because the answer lacked depth or specifics — lack of depth is `partial`.
 </states>
 
 <output_spec>
