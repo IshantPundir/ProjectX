@@ -112,10 +112,12 @@ All points/thresholds live in `scoring/constants.py` as named constants and are 
 ### 4.4 Verdict decision tree (deterministic, ordered)
 
 1. Engine fired **`knockout_close`** (terminal CLOSE on a must-have gap) **or** any `knockout=true` signal is `failed` → **Not Recommended** (deal-breaker; `verdict_reason` names the triggering signal).
-2. Any `knockout=true` signal is `none` (never confirmed) → **Borderline** ("couldn't confirm must-have: …").
+2. Any `knockout=true` signal is `none` (never confirmed) **or `partial`** (engaged but depth not established) → **Borderline** ("couldn't confirm must-have: …").
 3. Overall ≥ `ADVANCE_THRESHOLD` **and** overall coverage ≥ `MIN_COVERAGE_FOR_ADVANCE` → **Recommended**.
 4. Overall < `REJECT_THRESHOLD` → **Not Recommended**.
 5. otherwise → **Borderline**.
+
+> **Knockout state → verdict (calibration decision, 2026-05-27, implementation review):** a must-have signal maps `failed → Reject` (genuine absence/disclaim only — see the re-check `failed` definition below), but **`partial → Borderline`** and `none → Borderline` ("couldn't confirm → human review"). `knockout_status` therefore returns `failed` only for the `failed` state; `partial` and `none` both return `insufficient`. This honors the "Borderline always needs a human" invariant — a partially-demonstrated must-have is not auto-rejected. (Supersedes the earlier draft where `partial` on a knockout counted as a hard fail.)
 
 - **Honoring `knockout_close` is a key fix.** Session 2 ("I've never built custom connectors" → engine closed on it) correctly becomes Not Recommended — matching the PDF — even though that signal is not flagged `knockout=true` in the snapshot. The triggering signal is identified from the `turn.decision` whose `move` was `knockout_close` (its `attributed_signals` / the last `failed` coverage_delta before CLOSE).
 - **Borderline is a hard human-review hold** — never auto-resolved (product invariant). The report states this; `HumanDecisionPanel` handles the decision.
@@ -138,7 +140,10 @@ For each signal whose engine state ≠ `none`:
   - `overridden: bool`, `override_reason: str | null` (set when the model differs from the engine's state)
 - The returned `state` replaces the engine's state in the deterministic map; Layer 1 math then runs on the corrected map.
 - `none` signals are **not** re-checked (nothing to read); they remain `not_assessed`.
-- Per-signal calls are **parallelizable** and **prefix-cacheable** (the rubric block is byte-stable per signal). Model: `ai_config.report_scorer_model` (`gpt-5.4`, `effort=medium`) — no latency budget. The old per-answer N-sample self-consistency can be retired or repurposed.
+- **Factual gates are not re-checked (calibration decision, 2026-05-27).** A signal whose covering question(s) are all `experience_check` / `compliance_binary` kind keeps the engine's live state — the engine *asked* a counting/binary question and the candidate cleared it; the bank rubric's depth anchors (employer/role/date detail) are not what the engine probed for, so re-checking would unfairly downgrade a brief-but-complete answer. (A separate, out-of-scope follow-up will have the engine itself consult rubrics so it elicits that detail live.) Only substantive technical/behavioral signals are re-checked.
+- **`failed` means absence, not shallowness (calibration decision, 2026-05-27).** The re-check prompt reserves `failed` for a genuine absence/disclaim/contradiction ("I've never done that", "I'm not sure", wrong/irrelevant answer). A real-but-shallow answer is `partial`, never `failed`. This keeps the `partial → Borderline` knockout routing meaningful and stops the stronger post-session model from over-rejecting on depth alone.
+- Per-signal calls are **parallelizable** and **prefix-cacheable** (the cache key uses a 12-char SHA-256 of the signal value to stay within OpenAI's 64-char `prompt_cache_key` cap). Model: `ai_config.report_scorer_model` (`gpt-5.4`, `effort=medium`) — no latency budget. The old per-answer N-sample self-consistency is retired.
+- **Determinism note:** the re-check + communication LLM passes are not bit-reproducible run-to-run, but the report is **generated once on session completion and persisted**; it is only recomputed on an explicit super-admin force-regenerate. The stored row is the auditable record. The verdict is additionally made robust by deriving it from the coverage map (e.g. an unconfirmed must-have → Borderline) rather than a knife-edge score.
 
 Every override (engine_state → final_state, reason) is recorded in `signal_assessments[]` and summarized in the manifest — the defensibility trail.
 
