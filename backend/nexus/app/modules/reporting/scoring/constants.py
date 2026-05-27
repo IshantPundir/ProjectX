@@ -1,12 +1,9 @@
 """Scoring constants. All policy numbers live here (configurable later)."""
 from __future__ import annotations
 
-LEVEL_POINTS: dict[str, int] = {"excellent": 100, "meets_bar": 70, "below_bar": 30}
-
 ADVANCE_THRESHOLD = 65          # Overall >= → advance (when not knockout-capped)
 REJECT_THRESHOLD = 40           # Overall <  → reject
 MIN_COVERAGE_FOR_ADVANCE = 0.6  # below this, a high Overall is forced to borderline
-SUBSTANTIVE_WORD_FLOOR = 8      # min words for an answer to count as a "substantive" engagement
 
 TECHNICAL_TYPES = frozenset({"competency", "experience", "credential"})
 BEHAVIORAL_TYPES = frozenset({"behavioral"})
@@ -34,6 +31,9 @@ STATE_POINTS: dict[str, int | None] = {
 # above: "Strong" sits comfortably above advance, "Meets Bar" spans the
 # advance-borderline corridor, "Below Bar" spans borderline-reject, and
 # "Well Below Bar" covers clear rejects.  Tunable here without touching logic.
+# NOTE: ADVANCE_THRESHOLD (65) sits inside the "Meets Bar" band (55-69): a
+# "Meets Bar" candidate CAN be auto-advanced. "Below Bar" (40-54) is the
+# borderline zone; REJECT_THRESHOLD (40) is its floor.
 _TIER_BANDS: list[tuple[int, str]] = [
     (70, "Strong"),
     (55, "Meets Bar"),

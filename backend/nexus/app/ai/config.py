@@ -259,14 +259,6 @@ class AIConfig:
         return self._settings.openai_report_scorer_effort
 
     @property
-    def report_scorer_verbosity(self) -> str:
-        return self._settings.openai_report_scorer_verbosity
-
-    @property
-    def report_scorer_n_samples(self) -> int:
-        return self._settings.openai_report_scorer_n_samples
-
-    @property
     def report_scorer_prompt_version(self) -> str:
         return self._settings.report_scorer_prompt_version
 

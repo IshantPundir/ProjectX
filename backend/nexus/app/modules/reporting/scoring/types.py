@@ -4,9 +4,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-BarsLevel = Literal["below_bar", "meets_bar", "excellent"]
-Opportunity = Literal["full", "partial", "none"]
-SignalState = Literal["excellent", "meets_bar", "below_bar", "not_assessed"]
 KnockoutStatus = Literal["passed", "failed", "insufficient"]
 Verdict = Literal["advance", "borderline", "reject"]
 Confidence = Literal["high", "medium", "low"]

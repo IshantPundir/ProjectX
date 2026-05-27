@@ -28,13 +28,11 @@ class CommunicationVerdict(BaseModel):
 class ScoringManifest(BaseModel):
     scorer_model: str | None = None
     reasoning_effort: str | None = None
-    verbosity: str | None = None
     prompt_version: str | None = None
     prompt_cache_key: str | None = None
     scorer_code_version: str | None = None
     bank_id: str | None = None
     signal_snapshot_id: str | None = None
-    n_samples: int | None = None
     cache_hit_rate: float | None = None
     evidence_grounding_summary: dict | None = None
     generated_at: str | None = None

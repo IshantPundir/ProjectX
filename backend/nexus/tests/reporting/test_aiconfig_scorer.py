@@ -29,18 +29,6 @@ def test_settings_report_scorer_effort_default():
     assert fields["openai_report_scorer_effort"].default == "medium"
 
 
-def test_settings_report_scorer_verbosity_default():
-    """openai_report_scorer_verbosity defaults to 'low'."""
-    fields = Settings.model_fields
-    assert fields["openai_report_scorer_verbosity"].default == "low"
-
-
-def test_settings_report_scorer_n_samples_default():
-    """openai_report_scorer_n_samples defaults to 3."""
-    fields = Settings.model_fields
-    assert fields["openai_report_scorer_n_samples"].default == 3
-
-
 def test_settings_report_scorer_prompt_version_default():
     """report_scorer_prompt_version defaults to 'v3' (current active engine prompt dir)."""
     fields = Settings.model_fields
@@ -62,16 +50,12 @@ def test_settings_report_scorer_fields_read_from_env(monkeypatch):
     """All report scorer Settings fields are overridable via environment variables."""
     monkeypatch.setenv("OPENAI_REPORT_SCORER_MODEL", "gpt-5.2")
     monkeypatch.setenv("OPENAI_REPORT_SCORER_EFFORT", "high")
-    monkeypatch.setenv("OPENAI_REPORT_SCORER_VERBOSITY", "medium")
-    monkeypatch.setenv("OPENAI_REPORT_SCORER_N_SAMPLES", "5")
     monkeypatch.setenv("REPORT_SCORER_PROMPT_VERSION", "v4")
     monkeypatch.setenv("REPORT_SCORER_PROMPT_CACHE_KEY_PREFIX", "scorer")
 
     s = Settings()
     assert s.openai_report_scorer_model == "gpt-5.2"
     assert s.openai_report_scorer_effort == "high"
-    assert s.openai_report_scorer_verbosity == "medium"
-    assert s.openai_report_scorer_n_samples == 5
     assert s.report_scorer_prompt_version == "v4"
     assert s.report_scorer_prompt_cache_key_prefix == "scorer"
 
@@ -93,20 +77,6 @@ def test_aiconfig_report_scorer_effort(monkeypatch):
     monkeypatch.setenv("OPENAI_REPORT_SCORER_EFFORT", "low")
     cfg = AIConfig()
     assert cfg.report_scorer_effort == "low"
-
-
-def test_aiconfig_report_scorer_verbosity(monkeypatch):
-    """AIConfig.report_scorer_verbosity surfaces the Settings field."""
-    monkeypatch.setenv("OPENAI_REPORT_SCORER_VERBOSITY", "high")
-    cfg = AIConfig()
-    assert cfg.report_scorer_verbosity == "high"
-
-
-def test_aiconfig_report_scorer_n_samples(monkeypatch):
-    """AIConfig.report_scorer_n_samples surfaces the Settings field."""
-    monkeypatch.setenv("OPENAI_REPORT_SCORER_N_SAMPLES", "7")
-    cfg = AIConfig()
-    assert cfg.report_scorer_n_samples == 7
 
 
 def test_aiconfig_report_scorer_prompt_version(monkeypatch):

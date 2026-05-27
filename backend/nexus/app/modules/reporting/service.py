@@ -22,6 +22,7 @@ from app.modules.reporting.schemas import (
 from app.modules.reporting.scoring.aggregate import (
     KnockoutResult,
     ScoredSignal,
+    confidence_from_coverage,
     knockout_status,
     resolve_verdict,
     score_dimension,
@@ -242,7 +243,7 @@ async def build_report(*, transcript, envelope, coverage_summary, questions,
     return ReportRead(
         verdict=verdict.verdict, verdict_reason=narrative.decision.headline or verdict.reason,
         overall_score=overall, overall_coverage=coverage,
-        overall_confidence=tech.confidence if overall is not None else "low",
+        overall_confidence=confidence_from_coverage(coverage) if overall is not None else "low",
         decision=narrative.decision,
         scores={
             "overall": _score_out(overall, coverage, tech.confidence),

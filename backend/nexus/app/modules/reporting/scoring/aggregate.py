@@ -37,7 +37,7 @@ class DimensionScore:
     confidence: Confidence
 
 
-def _confidence(coverage: float) -> Confidence:
+def confidence_from_coverage(coverage: float) -> Confidence:
     if coverage >= 0.75:
         return "high"
     if coverage >= 0.4:
@@ -57,7 +57,7 @@ def score_dimension(
     weighted = sum(s.weight * s.score for s in assessed) / assessed_w  # type: ignore[operator]
     coverage = (assessed_w / total_w) if total_w else 0.0
     return DimensionScore(name=name, score=int(round(weighted)),
-                          coverage=coverage, confidence=_confidence(coverage))
+                          coverage=coverage, confidence=confidence_from_coverage(coverage))
 
 
 def score_overall(signals: list[ScoredSignal]) -> tuple[int | None, float]:
