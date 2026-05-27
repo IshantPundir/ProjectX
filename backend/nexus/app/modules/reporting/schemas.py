@@ -25,6 +25,14 @@ class CommunicationVerdict(BaseModel):
     level: Literal["weak", "adequate", "strong"]
 
 
+class HolisticAdjustmentOut(BaseModel):
+    """Layer-2.5 cross-signal gestalt adjustment to the deterministic session score.
+    Bounded; cannot override a categorical guarantee (re-capped after the fact)."""
+    evidence_quotes: list[str] = Field(default_factory=list)
+    justification: str = ""
+    delta: int = 0  # raw model output; hard-bounded to ±HOLISTIC_ADJ_MAX downstream
+
+
 class ScoringManifest(BaseModel):
     scorer_model: str | None = None
     reasoning_effort: str | None = None
@@ -123,6 +131,8 @@ class ScoreOut(BaseModel):
     tone: str                      # ok | caution | danger | neutral
     confidence: Confidence
     coverage: float = 0.0
+    session_score: int | None = None   # pre-adjustment deterministic base (overall only)
+    holistic_delta: int | None = None  # bounded ±5 delta applied (overall only)
 
 
 class QuestionOut(BaseModel):
