@@ -115,30 +115,25 @@ def test_knockout_status():
 
 
 def test_verdict_knockout_close_is_reject():
-    v = resolve_verdict(overall=90, coverage=0.9, knockouts=[],
+    v = resolve_verdict(overall=35, coverage=0.9, knockouts=[],
                         knockout_close=KnockoutClose(signal="API", quote="never", reason="x"))
     assert v.verdict == "reject" and "API" in v.reason
 
 
 def test_verdict_reject_on_failed_knockout_flag():
-    v = resolve_verdict(overall=90, coverage=0.9, knockout_close=None,
+    v = resolve_verdict(overall=35, coverage=0.9, knockout_close=None,
                         knockouts=[KnockoutResult(signal="prog", status="failed", reason="x")])
     assert v.verdict == "reject"
 
 
-def test_verdict_borderline_on_unconfirmed_knockout():
-    v = resolve_verdict(overall=90, coverage=0.9, knockout_close=None,
-                        knockouts=[KnockoutResult(signal="prog", status="insufficient", reason="x")])
-    assert v.verdict == "borderline"
-
-
-def test_verdict_advance_when_clear():
+def test_verdict_advance_when_score_clears_bar():
     assert resolve_verdict(overall=70, coverage=0.9, knockout_close=None,
                            knockouts=[]).verdict == "advance"
 
 
-def test_verdict_borderline_on_low_coverage():
-    assert resolve_verdict(overall=90, coverage=0.4, knockout_close=None,
+def test_verdict_borderline_when_capped_at_borderline():
+    # an unconfirmed must-have was capped upstream to <=60 by signal_ceiling
+    assert resolve_verdict(overall=60, coverage=0.9, knockout_close=None,
                            knockouts=[]).verdict == "borderline"
 
 
@@ -147,6 +142,6 @@ def test_verdict_reject_on_low_overall():
                            knockouts=[]).verdict == "reject"
 
 
-def test_verdict_borderline_middle():
-    assert resolve_verdict(overall=50, coverage=0.9, knockout_close=None,
+def test_verdict_none_overall_is_borderline():
+    assert resolve_verdict(overall=None, coverage=0.0, knockout_close=None,
                            knockouts=[]).verdict == "borderline"

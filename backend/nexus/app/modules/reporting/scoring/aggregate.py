@@ -149,19 +149,17 @@ def resolve_verdict(
     *, overall: int | None, coverage: float,
     knockouts: list[KnockoutResult], knockout_close: KnockoutClose | None,
 ) -> VerdictResult:
+    """Score-driven verdict. `overall` already encodes must-have/coverage caps
+    (see signal_ceiling), so the score band is the primary decision. knockout_close
+    and a failed must-have remain categorical reject backstops (defense-in-depth)."""
     if knockout_close is not None:
         sig = knockout_close.signal or "a must-have skill"
         return VerdictResult("reject", f"Interview closed on a must-have gap: {sig}")
-    failed = [k for k in knockouts if k.status == "failed"]
-    if failed:
-        return VerdictResult("reject", f"failed must-have: {failed[0].signal}")
-    insufficient = [k for k in knockouts if k.status == "insufficient"]
-    if insufficient:
-        return VerdictResult("borderline", f"couldn't confirm must-have: {insufficient[0].signal}")
+    if any(k.status == "failed" for k in knockouts):
+        failed = next(k for k in knockouts if k.status == "failed")
+        return VerdictResult("reject", f"failed must-have: {failed.signal}")
     if overall is None:
         return VerdictResult("borderline", "no assessable evidence collected")
-    if overall >= ADVANCE_THRESHOLD and coverage < MIN_COVERAGE_FOR_ADVANCE:
-        return VerdictResult("borderline", "not enough assessed to advance confidently")
     if overall >= ADVANCE_THRESHOLD:
         return VerdictResult("advance", "meets the bar across assessed signals")
     if overall < REJECT_THRESHOLD:
