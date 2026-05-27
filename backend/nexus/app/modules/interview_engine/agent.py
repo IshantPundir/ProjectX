@@ -564,7 +564,7 @@ async def run(
     tenant_id: uuid.UUID,
     correlation_id: str,
 ) -> None:
-    """v2 per-session run. M4: directive-injection mouth harness (scripted directives, no brain)."""
+    """Per-session engine run: connect, drive the triage ∥ brain → mouth turn loop, record the SessionResult."""
     started_at = time.monotonic()
     collector = EventCollector(
         session_id=config.session_id,
