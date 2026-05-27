@@ -7,13 +7,13 @@ envelope. These are the post-Phase-7.2 SessionResult fields; the legacy
 """
 from __future__ import annotations
 
-from app.modules.interview_engine.models.claims import ClaimsPoolSnapshot
-from app.modules.interview_engine.models.ledger import (
+from app.modules.interview_runtime import (
+    ClaimsPoolSnapshot,
     CoverageState,
+    QuestionQueueSnapshot,
     SignalLedgerSnapshot,
     SignalSnapshot,
 )
-from app.modules.interview_engine.models.queue import QuestionQueueSnapshot
 from app.modules.interview_runtime.schemas import SessionResult
 
 

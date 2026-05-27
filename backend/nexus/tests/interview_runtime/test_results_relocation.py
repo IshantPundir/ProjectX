@@ -1,10 +1,7 @@
-"""CMI-1: the snapshot models live in interview_runtime.results; the old engine paths
-re-export them (shims); interview_runtime no longer imports interview_engine."""
+"""The snapshot models live in interview_runtime.results; interview_runtime never imports
+the engine module (so build_session_config can't be broken by engine changes)."""
 import ast
-import importlib
 from pathlib import Path
-
-import pytest
 
 
 def test_snapshots_importable_from_results():
@@ -27,30 +24,6 @@ def test_snapshots_importable_from_results():
         snapshots={"s": SignalSnapshot(signal_value="s", coverage=CoverageState.partial)},
     )
     assert snap.entries[0].coverage_after is CoverageState.partial
-
-
-@pytest.mark.parametrize("modpath", [
-    "app.modules.interview_engine.models.ledger",
-    "app.modules.interview_engine.models.queue",
-    "app.modules.interview_engine.models.claims",
-])
-def test_old_engine_paths_still_resolve_via_shim(modpath):
-    """v1's deep importers (state/, judge/) must keep working byte-stable."""
-    mod = importlib.import_module(modpath)
-    from app.modules.interview_runtime import results
-    # the shim re-exports the SAME class object, not a copy
-    if modpath.endswith("ledger"):
-        assert mod.SignalLedgerSnapshot is results.SignalLedgerSnapshot
-        assert mod.CoverageState is results.CoverageState
-        assert mod.LedgerEntry is results.LedgerEntry
-        assert mod.SignalSnapshot is results.SignalSnapshot
-    elif modpath.endswith("queue"):
-        assert mod.QuestionQueueSnapshot is results.QuestionQueueSnapshot
-        assert mod.QuestionStatus is results.QuestionStatus
-        assert mod.QuestionState is results.QuestionState
-    else:
-        assert mod.ClaimsPoolSnapshot is results.ClaimsPoolSnapshot
-        assert mod.ClaimEntry is results.ClaimEntry
 
 
 def test_interview_runtime_schemas_does_not_import_interview_engine():

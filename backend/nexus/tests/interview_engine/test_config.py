@@ -1,16 +1,7 @@
-"""AIConfig surface for the v2 engine (default version + brain/mouth model map)."""
+"""AIConfig surface for the interview engine (brain/mouth model map)."""
 
 from app.ai.config import AIConfig
 from app.config import Settings
-
-
-def test_default_version_is_v1():
-    assert AIConfig().interview_engine_default_version == "v1"
-
-
-def test_default_version_env_override(monkeypatch):
-    monkeypatch.setenv("INTERVIEW_ENGINE_DEFAULT_VERSION", "v2")
-    assert AIConfig().interview_engine_default_version == "v2"
 
 
 def test_brain_and_mouth_model_map():

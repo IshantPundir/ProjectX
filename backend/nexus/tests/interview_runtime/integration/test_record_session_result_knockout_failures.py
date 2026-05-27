@@ -7,12 +7,12 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import select, text as sql_text
 
-from app.modules.interview_engine.models.claims import ClaimsPoolSnapshot
-from app.modules.interview_engine.models.ledger import SignalLedgerSnapshot
-from app.modules.interview_engine.models.queue import QuestionQueueSnapshot
 from app.modules.interview_runtime import (
+    ClaimsPoolSnapshot,
     KnockoutFailure,
+    QuestionQueueSnapshot,
     SessionResult,
+    SignalLedgerSnapshot,
     record_session_result,
 )
 from app.modules.session.models import Session as SessionRow
