@@ -1,6 +1,4 @@
-import type {
-  Confidence, KnockoutStatus, SignalState, Verdict,
-} from '@/lib/api/reports'
+import type { Confidence, Severity, StatusBadge, Verdict } from '@/lib/api/reports'
 
 export type Tone = 'ok' | 'caution' | 'danger' | 'neutral' | 'human' | 'accent'
 
@@ -50,9 +48,9 @@ export function formatTimestamp(ms: number): string {
 
 export interface VerdictMeta { label: string; tone: Tone }
 const VERDICT_META: Record<Verdict, VerdictMeta> = {
-  advance: { label: 'Advance', tone: 'ok' },
+  advance: { label: 'Recommended', tone: 'ok' },
   borderline: { label: 'Borderline', tone: 'human' },
-  reject: { label: 'Reject', tone: 'danger' },
+  reject: { label: 'Not Recommended', tone: 'danger' },
 }
 export function verdictMeta(v: Verdict): VerdictMeta {
   return VERDICT_META[v]
@@ -66,47 +64,31 @@ export function scoreBandTone(score: number | null): Tone {
   return 'danger'
 }
 
-export function signalStateTone(state: SignalState): Tone {
-  switch (state) {
-    case 'excellent':
-    case 'meets_bar':
-      return 'ok'
-    case 'below_bar':
-      return 'danger'
-    case 'not_assessed':
-      return 'neutral'
-  }
+const _TONES: readonly Tone[] = ['ok', 'caution', 'danger', 'neutral', 'human', 'accent']
+
+/** Validate a backend-provided tone string; unknown → neutral. */
+export function tierTone(tone: string): Tone {
+  return (_TONES as readonly string[]).includes(tone) ? (tone as Tone) : 'neutral'
 }
 
-export function knockoutStatusTone(status: KnockoutStatus): Tone {
-  switch (status) {
-    case 'passed':
-      return 'ok'
-    case 'failed':
-      return 'danger'
-    case 'insufficient':
-      return 'caution'
-  }
-}
+export interface BadgeMeta { label: string; tone: Tone }
 
-const SIGNAL_STATE_LABEL: Record<SignalState, string> = {
-  excellent: 'Excellent',
-  meets_bar: 'Meets bar',
-  below_bar: 'Below bar',
-  not_assessed: 'Not assessed',
+const SEVERITY_META: Record<Severity, BadgeMeta> = {
+  deal_breaker: { label: 'Deal-breaker', tone: 'danger' },
+  major: { label: 'Major', tone: 'caution' },
+  moderate: { label: 'Moderate', tone: 'neutral' },
 }
-export function signalStateLabel(state: SignalState): string {
-  return SIGNAL_STATE_LABEL[state]
-}
+export function severityMeta(s: Severity): BadgeMeta { return SEVERITY_META[s] }
 
-const KO_STATUS_LABEL: Record<KnockoutStatus, string> = {
-  passed: 'Passed',
-  failed: 'Failed',
-  insufficient: 'Insufficient',
+const STATUS_BADGE_META: Record<StatusBadge, BadgeMeta> = {
+  passed: { label: 'Passed', tone: 'ok' },
+  partial: { label: 'Partial', tone: 'caution' },
+  failed_required: { label: 'Failed — required skill', tone: 'danger' },
+  not_demonstrated: { label: 'Not demonstrated', tone: 'danger' },
+  not_attempted: { label: 'Not attempted', tone: 'neutral' },
+  not_fully_assessed: { label: 'Not fully assessed', tone: 'neutral' },
 }
-export function knockoutStatusLabel(status: KnockoutStatus): string {
-  return KO_STATUS_LABEL[status]
-}
+export function statusBadgeMeta(b: StatusBadge): BadgeMeta { return STATUS_BADGE_META[b] }
 
 export function confidenceLabel(c: Confidence): string {
   return { high: 'High', medium: 'Medium', low: 'Low' }[c]
