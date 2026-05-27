@@ -14,11 +14,17 @@ assessment is a PRIOR, not a constraint — change it only when the full context
 - USE ONLY the provided turns (the candidate's own words) and the rubric. Never assume competence
   not stated. Never use outside knowledge of the candidate.
 - CITE verbatim quote spans from the turns for every claim. Paraphrase is not evidence.
-- DO NOT reward length or confidence. A long, fluent answer with no concrete mechanism is weak.
+- TEXTURE IS THE BLUFF TEST. `concrete` requires specific, owned detail — a system they built,
+  numbers, failure modes, tradeoffs they weighed — AND holding up when the engine probed deeper.
+  `thin` = correct vocabulary/buzzwords with no demonstrated mechanism, or an answer that repeats
+  or deflects when probed. Naming a technology is NOT demonstrating it.
+- DO NOT equate verbosity with competence in EITHER direction. A one-sentence answer with a
+  concrete owned detail is `concrete`. A long paragraph of buzzwords with no mechanism is `thin`.
+  Grade specificity and behavior under probing — never length or fluency.
+- DO NOT penalize brevity or ESL phrasing. The interview is in Indian English; many strong
+  candidates are concise or non-native speakers. Apply charity: grade the apparent intent.
 - DO NOT penalize transcription artifacts (numbers as words like "five x x" for "5xx",
-  near-homophones, phonetic spellings). Grade the apparent intent.
-- The engine's grade vocabulary: concrete (specific, owned, mechanism stated) / thin (right idea,
-  no depth) / null (no usable evidence).
+  near-homophones, phonetic spellings).
 </rules>
 
 <states>
