@@ -560,18 +560,6 @@ class Settings(BaseSettings):
     # disable reasoning_effort entirely (required for non-reasoning models).
     openai_report_scorer_effort: str = "medium"
 
-    # ``openai_report_scorer_verbosity`` — controls how verbose the judge's
-    # chain-of-thought / explanations are in structured output. "low" keeps
-    # the response compact and reduces token cost; increase to "high" for
-    # debugging or audit-trail depth.
-    openai_report_scorer_verbosity: str = "low"
-
-    # ``openai_report_scorer_n_samples`` — number of independent LLM samples
-    # to draw per report and then aggregate (majority-vote / mean). Higher
-    # values improve consistency at the cost of token spend. 3 is a sensible
-    # default for production; set to 1 for fast dev/test cycles.
-    openai_report_scorer_n_samples: int = 3
-
     # ``report_scorer_prompt_version`` — controls which versioned prompt
     # directory PromptLoader reads from (prompts/v{N}/). v3 is the current
     # active prompt family (engine-v2 prompts live there).
@@ -583,6 +571,10 @@ class Settings(BaseSettings):
     # ``engine_brain_prompt_cache_key``, which IS used verbatim. Bump this
     # prefix on a prompt-family change to avoid cross-version cache pollution.
     report_scorer_prompt_cache_key_prefix: str = "judge"
+
+    # ``openai_report_narrative_model`` — model for the prose-only narrative layer.
+    openai_report_narrative_model: str = "gpt-5.4"
+    openai_report_narrative_effort: str = "low"
 
 
 settings = Settings()

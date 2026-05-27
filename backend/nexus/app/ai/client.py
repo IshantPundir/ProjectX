@@ -127,6 +127,8 @@ def get_raw_openai_client() -> AsyncOpenAI:
     httpx pool, same event hooks, same SDK-level retry policy.
 
     Callers MUST stay within ``app/ai/`` or be explicitly documented
-    exceptions (currently: ``app/modules/reporting/scoring/judge.py``).
+    exceptions (currently: ``app/modules/reporting/scoring/judge.py``,
+    ``app/modules/reporting/scoring/recheck.py``,
+    ``app/modules/reporting/scoring/narrative.py``).
     """
     return _build_raw_openai_client()

@@ -23,7 +23,13 @@ import pytest
 from sqlalchemy import select
 
 from app.modules.reporting.models import SessionReport
-from app.modules.reporting.schemas import ReportRead, SummaryOut
+from app.modules.reporting.schemas import (
+    DecisionOut,
+    MethodologyOut,
+    ReportRead,
+    ScoreOut,
+    WhyColumn,
+)
 from app.modules.session.models import Session as SessionRow
 
 # ---------------------------------------------------------------------------
@@ -36,11 +42,16 @@ _FAKE_REPORT = ReportRead(
     overall_score=85,
     overall_coverage=0.9,
     overall_confidence="high",
-    dimension_scores={},
-    knockout_results=[],
-    signal_scorecards=[],
-    question_scorecards=[],
-    summary=SummaryOut(headline="Strong candidate — recommended for advancement."),
+    decision=DecisionOut(
+        headline="Strong candidate — recommended for advancement.",
+        why_positive=WhyColumn(title="", body=""),
+        why_negative=WhyColumn(title="", body=""),
+    ),
+    scores={
+        "overall": ScoreOut(score=85, tier_label="Strong", tone="ok",
+                            confidence="high", coverage=0.9),
+    },
+    methodology=MethodologyOut(note="", charity_flags=[]),
     status="ready",
     engine_version="v2",
 )
@@ -309,3 +320,51 @@ async def test_actor_idempotent_skip_when_ready(db):
     assert row.status == "ready"
     assert row.verdict == "reject"   # unchanged from the pre-seeded value
     assert row.version == 1
+
+
+# ---------------------------------------------------------------------------
+# _resolve_envelope unit tests (Task 1)
+# ---------------------------------------------------------------------------
+
+
+import json
+from pathlib import Path
+from app.modules.reporting.actors import _resolve_envelope
+
+
+def test_resolve_envelope_prefers_config_dir(tmp_path, monkeypatch):
+    sid = "c7173674-7795-4268-b4ab-829ad45b801b"
+    (tmp_path / f"{sid}.json").write_text(json.dumps({"events": [{"kind": "x"}]}))
+    monkeypatch.setattr("app.modules.reporting.actors.settings.engine_event_log_dir", str(tmp_path))
+    env = _resolve_envelope(session_id=sid, stored_ref="/tmp/engine-events/does-not-exist.json")
+    assert env["events"] == [{"kind": "x"}]
+
+
+def test_resolve_envelope_falls_back_to_empty(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.modules.reporting.actors.settings.engine_event_log_dir", str(tmp_path))
+    env = _resolve_envelope(session_id="nope", stored_ref=None)
+    assert env == {"events": []}
+
+
+def test_resolve_envelope_uses_stored_ref_when_not_in_config_dir(tmp_path, monkeypatch):
+    # config dir is empty (no <session_id>.json there); the absolute stored_ref exists.
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    ref = other / "abc.json"
+    ref.write_text(json.dumps({"events": [{"kind": "from_ref"}]}))
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    monkeypatch.setattr("app.modules.reporting.actors.settings.engine_event_log_dir", str(cfg))
+    env = _resolve_envelope(session_id="missing", stored_ref=str(ref))
+    assert env["events"] == [{"kind": "from_ref"}]
+
+
+def test_resolve_envelope_finds_basename_in_config_dir(tmp_path, monkeypatch):
+    # stored_ref points at a stale absolute path, but the file lives at config_dir/<basename>.
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    (cfg / "abc.json").write_text(json.dumps({"events": [{"kind": "by_basename"}]}))
+    monkeypatch.setattr("app.modules.reporting.actors.settings.engine_event_log_dir", str(cfg))
+    env = _resolve_envelope(session_id="missing",
+                            stored_ref="/old/container/path/abc.json")
+    assert env["events"] == [{"kind": "by_basename"}]

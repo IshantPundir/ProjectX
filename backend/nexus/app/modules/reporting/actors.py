@@ -22,11 +22,40 @@ import dramatiq
 import structlog
 from sqlalchemy import desc, select, text
 
+from app.config import settings
 from app.database import get_bypass_session
 from app.modules.reporting.models import SessionReport
 from app.modules.reporting.service import build_report, persist_report
 
 logger = structlog.get_logger("reporting.actor")
+
+
+# ---------------------------------------------------------------------------
+# Envelope resolver (portable across services)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_envelope(*, session_id: str, stored_ref: str | None) -> dict:
+    """Load the audit envelope by session_id from the worker's own configured
+    event-log dir; fall back to the stored ref; degrade to empty events.
+
+    The engine stores an absolute container path (e.g. /tmp/engine-events/<id>.json)
+    that is NOT mounted in the worker. Resolving by session_id against this
+    process's engine_event_log_dir makes the path portable across services.
+    """
+    candidates: list[Path] = []
+    if settings.engine_event_log_dir:
+        candidates.append(Path(settings.engine_event_log_dir) / f"{session_id}.json")
+    if stored_ref:
+        candidates.append(Path(stored_ref))
+        if settings.engine_event_log_dir:
+            candidates.append(Path(settings.engine_event_log_dir) / Path(stored_ref).name)
+    for path in candidates:
+        try:
+            return json.loads(path.read_text())
+        except Exception:  # noqa: BLE001 — try the next candidate
+            continue
+    return {"events": []}
 
 
 # ---------------------------------------------------------------------------
@@ -224,18 +253,15 @@ async def _score_session_report_async(
         # Load audit envelope from filesystem (best-effort; degrade gracefully)
         # ------------------------------------------------------------------
         raw_result: dict = sess.raw_result_json or {}
-        audit_envelope_ref: str | None = raw_result.get("audit_envelope_ref")
-        envelope: dict = {"events": []}
-        if audit_envelope_ref:
-            try:
-                raw_text = await asyncio.to_thread(Path(audit_envelope_ref).read_text)
-                envelope = json.loads(raw_text)
-            except Exception as exc:  # noqa: BLE001
-                log.warning(
-                    "reporting.actor.envelope_unreadable",
-                    audit_envelope_ref=audit_envelope_ref,
-                    error=type(exc).__name__,
-                )
+        envelope: dict = await asyncio.to_thread(
+            _resolve_envelope,
+            session_id=str(session_id),
+            stored_ref=raw_result.get("audit_envelope_ref"),
+        )
+        if not envelope.get("events"):
+            log.warning("reporting.actor.envelope_empty",
+                        audit_envelope_ref=raw_result.get("audit_envelope_ref"))
+        coverage_summary: dict = raw_result.get("coverage_summary") or {}
 
         transcript: list[dict] = list(sess.transcript or [])
 
@@ -254,6 +280,7 @@ async def _score_session_report_async(
                 envelope=envelope,
                 questions=questions,
                 signal_metadata=signal_metadata,
+                coverage_summary=coverage_summary,
                 correlation_id=correlation_id,
             )
 

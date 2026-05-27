@@ -1,4 +1,4 @@
-"""Tests for the per-answer LLM judge.
+"""Tests for the communication judge.
 
 Mocks at the app/ai boundary — no real LLM calls.
 Patch target: ``app.modules.reporting.scoring.judge.get_raw_openai_client``
@@ -7,6 +7,9 @@ The fake response mirrors the real ``ParsedResponse`` accessor contract:
 - ``response.output_parsed`` returns the parsed Pydantic model (fast path).
 - ``response.usage`` has ``input_tokens_details.cached_tokens`` (new shape
   in the Responses API — differs from chat.completions' prompt_tokens_details).
+
+The per-answer BARS judge (``grade_answer`` / ``grade_answer_consistent``) was
+removed in the report-generator redesign; only ``grade_communication`` remains.
 """
 from __future__ import annotations
 
@@ -15,17 +18,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.modules.reporting.schemas import JudgeVerdict
-from app.modules.reporting.scoring.judge import grade_answer
+from app.modules.reporting.schemas import CommunicationVerdict
+from app.modules.reporting.scoring.judge import grade_communication
 
 
 def _make_fake_response(verdict: object, cached: int) -> SimpleNamespace:
-    """Build a fake ParsedResponse-shaped object.
-
-    Mirrors the two fields judge.py reads:
-    - ``output_parsed``  — the parsed Pydantic model (SDK convenience property).
-    - ``usage``          — token counters (Responses API shape).
-    """
+    """Build a fake ParsedResponse-shaped object."""
     return SimpleNamespace(
         output_parsed=verdict,
         output=[],  # not walked when output_parsed is set
@@ -59,26 +57,12 @@ def _make_fake_client(fake_response: object) -> MagicMock:
     return fake_client
 
 
-QUESTION = {
-    "id": "q6",
-    "text": "Java/JSON transform?",
-    "rubric": {
-        "excellent": "validates + maps",
-        "meets_bar": "basic transform",
-        "below_bar": "vague, no validation",
-    },
-    "positive_evidence": ["schema validation"],
-    "red_flags": ["no validation"],
-}
-
-
 @pytest.mark.asyncio
-async def test_grade_answer_grounds_evidence_and_returns_level():
-    verdict = JudgeVerdict(
-        evidence_quotes=["take this up at Java"],
-        red_flags_hit=["buzzwords"],
-        justification="thin",
-        level="below_bar",
+async def test_grade_communication_returns_level():
+    verdict = CommunicationVerdict(
+        evidence_quotes=["clear and structured"],
+        justification="organized answers",
+        level="strong",
     )
     fake_response = _make_fake_response(verdict, cached=800)
     fake_client = _make_fake_client(fake_response)
@@ -87,55 +71,25 @@ async def test_grade_answer_grounds_evidence_and_returns_level():
         "app.modules.reporting.scoring.judge.get_raw_openai_client",
         return_value=fake_client,
     ):
-        rating = await grade_answer(
-            question=QUESTION,
-            transcript_excerpt="CANDIDATE: I would take this up at Java...",
+        result = await grade_communication(
+            transcript_text="CANDIDATE: I structured my answer clearly...",
             correlation_id="c1",
         )
 
-    assert rating.question_id == "q6"
-    assert rating.level == "below_bar"
-    assert rating.evidence_quotes == ["take this up at Java"]  # grounded (substring present)
-    assert rating.grounded is True
+    assert result.level == "strong"
 
     # Confirm responses.parse was called (not chat.completions)
     fake_client.responses.parse.assert_called_once()
     call_kwargs = fake_client.responses.parse.call_args.kwargs
-    assert call_kwargs["text_format"] is JudgeVerdict
+    assert call_kwargs["text_format"] is CommunicationVerdict
     assert "input" in call_kwargs
     assert "messages" not in call_kwargs  # old chat.completions key absent
 
 
 @pytest.mark.asyncio
-async def test_grade_answer_drops_hallucinated_quote():
-    verdict = JudgeVerdict(
-        evidence_quotes=["I led a 200-person team"],  # NOT in transcript
-        red_flags_hit=[],
-        justification="x",
-        level="meets_bar",
-    )
-    fake_response = _make_fake_response(verdict, cached=0)
-    fake_client = _make_fake_client(fake_response)
-
-    with patch(
-        "app.modules.reporting.scoring.judge.get_raw_openai_client",
-        return_value=fake_client,
-    ):
-        rating = await grade_answer(
-            question=QUESTION,
-            transcript_excerpt="CANDIDATE: I used Java.",
-            correlation_id="c1",
-        )
-
-    assert rating.evidence_quotes == []  # hallucinated quote dropped
-    assert rating.grounded is False  # flagged: an ungrounded quote was returned
-
-
-@pytest.mark.asyncio
-async def test_grade_answer_refusal_returns_below_bar_no_crash():
-    """When the model returns a refusal, grade_answer returns a conservative
-    below_bar AnswerRating with no evidence and grounded=False.  It must NOT
-    raise an exception (one refusal must not abort the entire report)."""
+async def test_grade_communication_refusal_returns_weak_no_crash():
+    """When the model refuses, grade_communication returns a conservative weak
+    verdict rather than raising."""
     fake_response = _make_refusal_response()
     fake_client = _make_fake_client(fake_response)
 
@@ -143,35 +97,24 @@ async def test_grade_answer_refusal_returns_below_bar_no_crash():
         "app.modules.reporting.scoring.judge.get_raw_openai_client",
         return_value=fake_client,
     ):
-        rating = await grade_answer(
-            question=QUESTION,
-            transcript_excerpt="CANDIDATE: I used Java.",
+        result = await grade_communication(
+            transcript_text="CANDIDATE: I used Java.",
             correlation_id="c1",
         )
 
-    assert rating.question_id == "q6"
-    assert rating.level == "below_bar"
-    assert rating.evidence_quotes == []
-    assert rating.grounded is False
+    assert result.level == "weak"
+    assert result.evidence_quotes == []
 
 
 @pytest.mark.asyncio
-async def test_grade_answer_passes_reasoning_when_effort_set(monkeypatch):
+async def test_grade_communication_passes_reasoning_when_effort_set():
     """When report_scorer_effort is truthy, reasoning dict is passed to responses.parse."""
-    from app.ai import config as ai_config_module
-
-    monkeypatch.setattr(ai_config_module.ai_config, "_settings", None)  # noqa
-    # Override just the effort property via a lightweight approach
-    verdict = JudgeVerdict(
-        evidence_quotes=[],
-        red_flags_hit=[],
-        justification="ok",
-        level="meets_bar",
+    verdict = CommunicationVerdict(
+        evidence_quotes=[], justification="ok", level="adequate"
     )
     fake_response = _make_fake_response(verdict, cached=0)
     fake_client = _make_fake_client(fake_response)
 
-    # Patch ai_config.report_scorer_effort to return a truthy value
     with (
         patch(
             "app.modules.reporting.scoring.judge.get_raw_openai_client",
@@ -186,9 +129,8 @@ async def test_grade_answer_passes_reasoning_when_effort_set(monkeypatch):
         mock_cfg.report_scorer_prompt_version = "v3"
         mock_cfg.report_scorer_prompt_cache_key_prefix = "test"
 
-        await grade_answer(
-            question=QUESTION,
-            transcript_excerpt="CANDIDATE: I used Java.",
+        await grade_communication(
+            transcript_text="CANDIDATE: I used Java.",
             correlation_id="c2",
         )
 

@@ -1,8 +1,9 @@
 """Post-session report compilation, score aggregation, PDF generation."""
 from __future__ import annotations
 
+import asyncio
+import json
 import uuid
-from collections import defaultdict
 from datetime import UTC, datetime
 
 import structlog
@@ -12,37 +13,43 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.config import ai_config
 from app.modules.reporting.models import SessionReport
 from app.modules.reporting.schemas import (
-    AnswerRating,
-    DimensionScoreOut,
-    EvidenceOut,
-    KnockoutResultOut,
-    QuestionScorecard,
+    QuestionOut,
     ReportRead,
+    ScoreOut,
     ScoringManifest,
-    SignalScorecard,
-    SummaryOut,
+    SignalAssessmentOut,
 )
 from app.modules.reporting.scoring.aggregate import (
     KnockoutResult,
     ScoredSignal,
-    SignalObservation,
-    _confidence,
-    combine_signal,
+    confidence_from_coverage,
     knockout_status,
     resolve_verdict,
     score_dimension,
     score_overall,
+    score_state,
 )
 from app.modules.reporting.scoring.constants import (
     BEHAVIORAL_TYPES,
+    FACTUAL_QUESTION_KINDS,
     TECHNICAL_TYPES,
+    tier_label,
 )
-from app.modules.reporting.scoring.judge import grade_answer_consistent, grade_communication
-from app.modules.reporting.scoring.opportunity import classify
+from app.modules.reporting.scoring.engine_signals import (
+    build_engine_states,
+    collect_signal_evidence,
+    detect_knockout_close,
+)
+from app.modules.reporting.scoring.judge import grade_communication
+from app.modules.reporting.scoring.narrative import write_narrative
+from app.modules.reporting.scoring.recheck import recheck_signal
+from app.modules.reporting.scoring.status import derive_status
 from app.modules.reporting.scoring.transcript import segment
-from app.modules.reporting.scoring.types import Opportunity, SignalDef
+from app.modules.reporting.scoring.types import SignalDef
 
 logger = structlog.get_logger()
+
+_COMM_POINTS = {"weak": 30, "adequate": 70, "strong": 100}
 
 
 # ---------------------------------------------------------------------------
@@ -50,51 +57,62 @@ logger = structlog.get_logger()
 # ---------------------------------------------------------------------------
 
 
-def _scored_signal_to_card(
-    sig: ScoredSignal,
-    evidence: list[EvidenceOut],
-    covered_by: list[str],
-    opportunity: str | None,
-) -> SignalScorecard:
-    return SignalScorecard(
-        value=sig.value,
-        type=sig.type,
-        weight=sig.weight,
-        knockout=sig.knockout,
-        state=sig.state,
-        score=sig.score,
-        opportunity=opportunity,
-        evidence=evidence,
-        covered_by=covered_by,
+def _tone_by_score(s: int | None) -> str:
+    if s is None:
+        return "neutral"
+    return "ok" if s >= 65 else "caution" if s >= 40 else "danger"
+
+
+def _triage_kind_by_question(envelope: dict) -> dict[str, str]:
+    """Map active_question_id -> the LAST triage kind seen for it (the
+    final-state representative: a candidate who disclaims after a weak attempt
+    ends as no_experience; one who engages after an initial "I don't know" ends
+    as answering)."""
+    turn_to_q: dict[str, str] = {}
+    for e in envelope.get("events", []):
+        if e.get("kind") == "turn.decision":
+            p = e.get("payload") or {}
+            if p.get("turn_ref") and p.get("active_question_id"):
+                turn_to_q[p["turn_ref"]] = p["active_question_id"]
+    out: dict[str, str] = {}
+    for e in envelope.get("events", []):
+        if e.get("kind") == "engine.v2.triage.decision":
+            p = e.get("payload") or {}
+            qid = turn_to_q.get(p.get("turn_ref"))
+            if qid and p.get("kind"):
+                out[qid] = p["kind"]
+    return out
+
+
+def _is_factual_gate_signal(signal_value: str, questions: list[dict]) -> bool:
+    """True if every bank question covering this signal is a factual gate
+    (experience_check / compliance_binary). Such gates are answered correctly
+    by a brief, clear response; the live engine already judged them, and the
+    rubric's depth anchors (employer/role/date detail) are not what the engine
+    probed for — so the post-session re-check would unfairly downgrade them.
+    We trust the engine's state for these and only re-check substantive signals.
+    """
+    covering = [q for q in questions if signal_value in q.get("signal_values", [])]
+    return bool(covering) and all(
+        q.get("question_kind") in FACTUAL_QUESTION_KINDS for q in covering
     )
 
 
-def _build_summary(
-    verdict: str,
-    verdict_reason: str,
-    scored_signals: list[ScoredSignal],
-    knockout_results: list[KnockoutResult],
-) -> SummaryOut:
-    headline_map = {
-        "advance": "Candidate meets the bar — recommended for advancement.",
-        "borderline": "Candidate is borderline — human review required.",
-        "reject": "Candidate does not meet the bar — recommended for rejection.",
-    }
-    strengths = [
-        s.value for s in scored_signals if s.state in ("excellent", "meets_bar")
-    ]
-    gaps = [s.value for s in scored_signals if s.state == "below_bar"]
-    # Also surface failed knockout signals in gaps (even if already below_bar)
-    failed_ko = [k.signal for k in knockout_results if k.status == "failed"]
-    for fk in failed_ko:
-        if fk not in gaps:
-            gaps.append(fk)
-    return SummaryOut(
-        headline=headline_map.get(verdict, verdict),
-        strengths=strengths,
-        gaps=gaps,
-        rationale=verdict_reason,
-    )
+def _narrative_ground_truth(*, job_questions, scored, verdict, overall, tech, beh,
+                            comm_score, knockout_close) -> str:
+    return json.dumps({
+        "verdict": verdict.verdict, "verdict_reason": verdict.reason,
+        "scores": {"overall": overall, "technical": tech.score,
+                   "behavioral": beh.score, "communication": comm_score},
+        "knockout_close": (
+            {"signal": knockout_close.signal, "quote": knockout_close.quote}
+            if knockout_close else None),
+        "signals": [{"signal": s.value, "type": s.type, "state": s.state,
+                     "must_have": s.knockout, "priority": s.priority} for s in scored],
+        "questions": [{"question_id": q.question_id, "question_text": q.question_text,
+                       "candidate_said": q.candidate_quote, "status": q.status_badge}
+                      for q in job_questions],
+    }, ensure_ascii=False)
 
 
 # ---------------------------------------------------------------------------
@@ -102,323 +120,149 @@ def _build_summary(
 # ---------------------------------------------------------------------------
 
 
-async def build_report(
-    *,
-    transcript: list[dict],
-    envelope: dict,
-    questions: list[dict],
-    signal_metadata: list[dict],
-    correlation_id: str,
-    n_samples: int | None = None,
-) -> ReportRead:
-    """Orchestrate all scoring pipeline stages and return a :class:`ReportRead`.
+async def build_report(*, transcript, envelope, coverage_summary, questions,
+                       signal_metadata, correlation_id, n_samples=None):
+    """Orchestrate the three-layer report build on top of the engine coverage map.
 
-    Steps:
-    1. Segment transcript into one ScoredUnit per delivered question.
-    2. Grade each unit via the LLM judge (grade_answer_consistent).
-       Knockout-signal questions use N-sample majority vote; others use 1 sample.
-    3. Accumulate SignalObservations per signal value.
-    4. Collapse observations → ScoredSignal (combine_signal).
-    5. Score dimensions (technical / behavioral).
-    6. Score overall + coverage.
-    7. Resolve knockouts + verdict.
-    8. Map dataclasses → Pydantic and return ReportRead.
+    Layer 1 (deterministic): project the engine's coverage_summary onto the role
+    signals, detect a knockout_close, score dimensions + overall, resolve the
+    verdict — all pure math.
+
+    Layer 2 (LLM re-check): for every signal the engine reached, re-check the
+    candidate's evidence vs the rubric; the re-check may override the engine
+    state (e.g. raise to `exceeded`).
+
+    Layer 3 (LLM narrative): hand the final, fixed numbers to the prose writer.
     """
-    # Resolve max_samples: explicit arg wins; fall back to config.
-    max_samples: int = n_samples if n_samples is not None else ai_config.report_scorer_n_samples
-
-    # ------------------------------------------------------------------
-    # Step 1 — Segmentation (envelope-driven)
-    # The v2 engine never populates question_id on transcript turns, so
-    # segmentation is driven entirely from the audit envelope.  The transcript
-    # parameter is still used below for the communication dimension.
-    # ------------------------------------------------------------------
-    units = segment(envelope=envelope, questions=questions)
-
-    # ------------------------------------------------------------------
-    # Step 2 — Lookup helpers
-    # ------------------------------------------------------------------
-    question_by_id: dict[str, dict] = {q["id"]: q for q in questions}
-
-    signal_defs: list[SignalDef] = [
-        SignalDef(
-            value=m["value"],
-            type=m["type"],
-            weight=m["weight"],
-            knockout=m["knockout"],
-            priority=m["priority"],
-        )
+    signal_defs = [
+        SignalDef(value=m["value"], type=m["type"], weight=m["weight"],
+                  knockout=m["knockout"], priority=m["priority"])
         for m in signal_metadata
     ]
+    def_by_value = {d.value: d for d in signal_defs}
+    engine_states = build_engine_states(coverage_summary, signal_defs)
+    knockout_close = detect_knockout_close(envelope)
 
-    # Set of signal values that are knockouts — used for selective self-consistency.
-    knockout_signal_values: set[str] = {m["value"] for m in signal_metadata if m.get("knockout")}
-
-    # Per-signal: accumulate observations
-    signal_observations: dict[str, list[SignalObservation]] = defaultdict(list)
-    # Per-signal: accumulate evidence and which questions covered it
-    signal_evidence: dict[str, list[EvidenceOut]] = defaultdict(list)
-    signal_covered_by: dict[str, list[str]] = defaultdict(list)
-    # Per-signal: strongest opportunity seen (full > partial > none).
-    signal_opportunity: dict[str, Opportunity | None] = {}  # signal_value → best opportunity seen
-
-    # Per-question scorecards
-    question_scorecards: list[QuestionScorecard] = []
-
-    # Opportunity strength ordering: higher index = stronger.
-    opportunity_strength: dict[str | None, int] = {"none": 0, None: 0, "partial": 1, "full": 2}
-
-    # ------------------------------------------------------------------
-    # Step 3 — Grade each delivered unit
-    # ------------------------------------------------------------------
-    for unit in units:
-        question = question_by_id.get(unit.question_id)
-        if question is None:
-            logger.warning(
-                "reporting.service.unknown_question",
-                question_id=unit.question_id,
-                correlation_id=correlation_id,
-            )
-            continue
-
-        transcript_excerpt = (
-            f"INTERVIEWER: {unit.question_text}\n"
-            f"CANDIDATE: {unit.candidate_answer}"
-        )
-        opportunity = classify(unit)
-
-        # Selective self-consistency: use N samples for knockout-signal questions,
-        # single pass for all others.
-        is_knockout_q = bool(
-            set(question.get("signal_values", [])) & knockout_signal_values
-        )
-        n = max_samples if is_knockout_q else 1
-
-        rating: AnswerRating = await grade_answer_consistent(
-            question=question,
-            transcript_excerpt=transcript_excerpt,
-            correlation_id=correlation_id,
-            n_samples=n,
-        )
-
-        # Build evidence list for this question
-        question_evidence = [
-            EvidenceOut(
-                quote=q,
-                timestamp_ms=unit.answer_start_ms,
-                question_id=unit.question_id,
-            )
-            for q in rating.evidence_quotes
-        ]
-
-        # Accumulate into per-signal buckets
-        for sig_value in question.get("signal_values", []):
-            obs = SignalObservation(
-                level=rating.level,
-                opportunity=opportunity,
-                red_flags_hit=bool(rating.red_flags_hit),
-            )
-            signal_observations[sig_value].append(obs)
-            signal_evidence[sig_value].extend(question_evidence)
-            if unit.question_id not in signal_covered_by[sig_value]:
-                signal_covered_by[sig_value].append(unit.question_id)
-            # Keep the strongest opportunity seen for this signal (M2 fix).
-            current = signal_opportunity.get(sig_value)
-            if opportunity_strength.get(opportunity, 0) > opportunity_strength.get(current, 0):
-                signal_opportunity[sig_value] = opportunity
-
-        # Build QuestionScorecard
-        question_scorecards.append(
-            QuestionScorecard(
-                question_id=unit.question_id,
-                question_text=unit.question_text,
-                level=rating.level,
-                evidence=question_evidence,
-                red_flags_hit=rating.red_flags_hit,
-                probes_fired=unit.probes_fired,
-                opportunity=opportunity,
-            )
-        )
-
-    # ------------------------------------------------------------------
-    # Step 4 — Collapse observations → ScoredSignal
-    # ------------------------------------------------------------------
-    scored_signals: list[ScoredSignal] = []
-
-    for sig_def in signal_defs:
-        observations = signal_observations.get(sig_def.value, [])
-        state, score = combine_signal(observations)
-        scored_signals.append(
-            ScoredSignal(
-                value=sig_def.value,
-                type=sig_def.type,
-                weight=sig_def.weight,
-                knockout=sig_def.knockout,
-                priority=sig_def.priority,
-                state=state,
-                score=score,
-            )
-        )
-
-    # ------------------------------------------------------------------
-    # Step 5 — Dimension scores
-    # ------------------------------------------------------------------
-    tech_dim = score_dimension("technical", scored_signals, TECHNICAL_TYPES)
-    beh_dim = score_dimension("behavioral", scored_signals, BEHAVIORAL_TYPES)
-
-    # ------------------------------------------------------------------
-    # Step 5b — Communication dimension (content-only; excluded from Overall)
-    # ------------------------------------------------------------------
-    transcript_text = "\n".join(
-        t["text"] for t in transcript if t.get("role") == "candidate"
-    )
-    comm_verdict = await grade_communication(
-        transcript_text=transcript_text,
-        correlation_id=correlation_id,
-    )
-    _comm_level_score: dict[str, int] = {"weak": 30, "adequate": 70, "strong": 100}
-    comm_score = _comm_level_score[comm_verdict.level]
-
-    # ------------------------------------------------------------------
-    # Step 6 — Overall score + coverage
-    # ------------------------------------------------------------------
-    # score_overall operates only on JD ScoredSignals — communication is NOT included.
-    overall, coverage = score_overall(scored_signals)
-
-    # ------------------------------------------------------------------
-    # Step 7 — Knockouts + verdict
-    # ------------------------------------------------------------------
-    knockout_results: list[KnockoutResult] = []
-    for sig in scored_signals:
-        if not sig.knockout:
-            continue
-        status = knockout_status(state=sig.state)
-        reason_map = {
-            "passed": f"Signal '{sig.value}' confirmed at or above the bar.",
-            "failed": f"Signal '{sig.value}' was assessed as below the bar.",
-            "insufficient": f"Signal '{sig.value}' could not be confirmed — insufficient evidence.",
-        }
-        ko_evidence = [
-            ev.__dict__ if hasattr(ev, "__dict__") else ev
-            for ev in signal_evidence.get(sig.value, [])
-        ]
-        knockout_results.append(
-            KnockoutResult(
-                signal=sig.value,
-                status=status,
-                reason=reason_map[status],
-                evidence=ko_evidence,
-            )
-        )
-
-    verdict_result = resolve_verdict(
-        overall=overall,
-        coverage=coverage,
-        knockouts=knockout_results,
-    )
-
-    # ------------------------------------------------------------------
-    # Step 8 — Map dataclasses → Pydantic and assemble ReportRead
-    # ------------------------------------------------------------------
-
-    # DimensionScore → DimensionScoreOut
-    dimension_scores_out: dict[str, DimensionScoreOut] = {
-        "technical": DimensionScoreOut(
-            name=tech_dim.name,
-            score=tech_dim.score,
-            coverage=tech_dim.coverage,
-            confidence=tech_dim.confidence,
-        ),
-        "behavioral": DimensionScoreOut(
-            name=beh_dim.name,
-            score=beh_dim.score,
-            coverage=beh_dim.coverage,
-            confidence=beh_dim.confidence,
-        ),
-        # Communication is a content-only dimension scored across the full
-        # transcript.  It is intentionally NOT included in score_overall(),
-        # which aggregates only JD-signal ScoredSignals.
-        "communication": DimensionScoreOut(
-            name="communication",
-            score=comm_score,
-            coverage=1.0,
-            confidence="medium",
-            note=(
-                "content-only; full communication scoring pending"
-                " session recording (sub-project B)"
-            ),
-        ),
-    }
-
-    # ScoredSignal → SignalScorecard
-    signal_scorecards_out: list[SignalScorecard] = [
-        _scored_signal_to_card(
-            sig=ss,
-            evidence=signal_evidence.get(ss.value, []),
-            covered_by=signal_covered_by.get(ss.value, []),
-            opportunity=signal_opportunity.get(ss.value),
-        )
-        for ss in scored_signals
+    reached = [
+        d for d in signal_defs
+        if engine_states[d.value] != "none"
+        and not _is_factual_gate_signal(d.value, questions)
     ]
+    q_by_signal: dict[str, dict] = {}
+    for q in questions:
+        for sv in q.get("signal_values", []):
+            q_by_signal.setdefault(sv, q)
 
-    # KnockoutResult → KnockoutResultOut
-    knockout_results_out: list[KnockoutResultOut] = [
-        KnockoutResultOut(
-            signal=kr.signal,
-            status=kr.status,
-            reason=kr.reason,
-            evidence=[
-                EvidenceOut(**ev) if isinstance(ev, dict) else ev
-                for ev in kr.evidence
-            ],
-        )
-        for kr in knockout_results
-    ]
+    async def _one(d: SignalDef):
+        ev = collect_signal_evidence(envelope, d.value)
+        q = q_by_signal.get(d.value, {})
+        ctx = f"Q: {q.get('text','')}\nrubric: {json.dumps(q.get('rubric', {}))}"
+        return d.value, await recheck_signal(signal_def=d, evidence_turns=ev,
+                                             question_context=ctx,
+                                             engine_state=engine_states[d.value],
+                                             correlation_id=correlation_id)
+    recheck_results = dict(await asyncio.gather(*[_one(d) for d in reached])) if reached else {}
 
-    # Overall confidence from coverage
-    overall_confidence = _confidence(coverage)
+    final_state = dict(engine_states)
+    for sv, rc in recheck_results.items():
+        final_state[sv] = rc.state
 
-    # Summary
-    summary = _build_summary(
-        verdict=verdict_result.verdict,
-        verdict_reason=verdict_result.reason,
-        scored_signals=scored_signals,
-        knockout_results=knockout_results,
-    )
+    scored = [ScoredSignal(value=d.value, type=d.type, weight=d.weight, knockout=d.knockout,
+                           priority=d.priority, state=final_state[d.value],
+                           score=score_state(final_state[d.value])) for d in signal_defs]
+    tech = score_dimension("technical", scored, TECHNICAL_TYPES)
+    beh = score_dimension("behavioral", scored, BEHAVIORAL_TYPES)
+    overall, coverage = score_overall(scored)
 
-    # Scoring manifest
-    scoring_manifest = ScoringManifest(
-        scorer_model=ai_config.report_scorer_model,
-        reasoning_effort=ai_config.report_scorer_effort or None,
-        verbosity=ai_config.report_scorer_verbosity,
-        prompt_version=ai_config.report_scorer_prompt_version,
-        n_samples=max_samples,
-        generated_at=datetime.now(UTC).isoformat(),
-        correlation_id=correlation_id,
-    )
+    comm = await grade_communication(
+        transcript_text="\n".join(t["text"] for t in transcript if t.get("role") == "candidate"),
+        correlation_id=correlation_id)
+    comm_score = _COMM_POINTS[comm.level]
+
+    knockouts = [KnockoutResult(signal=s.value, status=knockout_status(state=s.state),
+                                reason="") for s in scored if s.knockout]
+    verdict = resolve_verdict(overall=overall, coverage=coverage,
+                              knockouts=knockouts, knockout_close=knockout_close)
+
+    units = segment(envelope=envelope, questions=questions)
+    closed_early = knockout_close is not None
+    triage_kind_by_q = _triage_kind_by_question(envelope)
+    q_out: list[QuestionOut] = []
+    for i, u in enumerate(units):
+        q = next((x for x in questions if x["id"] == u.question_id), {})
+        svs = q.get("signal_values", [])
+        states = {sv: final_state.get(sv, "none") for sv in svs}
+        defs = {sv: (def_by_value[sv].type, def_by_value[sv].knockout, def_by_value[sv].priority)
+                for sv in svs if sv in def_by_value}
+        badge, tone = derive_status(
+            u, signal_states=states, signal_defs=defs,
+            no_experience=triage_kind_by_q.get(u.question_id) == "no_experience",
+            closed_before_complete=closed_early and i == len(units) - 1)
+        q_out.append(QuestionOut(
+            seq=i + 1, question_id=u.question_id, title=q.get("text", "")[:60],
+            status_badge=badge, status_tone=tone,
+            question_text=q.get("text", ""), candidate_quote=u.candidate_answer))
+
+    signal_assessments = [SignalAssessmentOut(
+        signal=d.value, type=d.type, weight=d.weight, knockout=d.knockout, priority=d.priority,
+        engine_state=engine_states[d.value], final_state=final_state[d.value],
+        grade=(recheck_results[d.value].grade if d.value in recheck_results else None),
+        score=score_state(final_state[d.value]),
+        evidence=(
+            recheck_results[d.value].evidence_quotes if d.value in recheck_results else []),
+        overridden=(
+            recheck_results[d.value].overridden if d.value in recheck_results else False),
+        override_reason=(
+            recheck_results[d.value].override_reason if d.value in recheck_results else None),
+    ) for d in signal_defs]
+
+    gt = _narrative_ground_truth(job_questions=q_out, scored=scored, verdict=verdict,
+                                 overall=overall, tech=tech, beh=beh, comm_score=comm_score,
+                                 knockout_close=knockout_close)
+    narrative = await write_narrative(ground_truth_json=gt, correlation_id=correlation_id)
+    read_by_qid = {qn.question_id: qn for qn in narrative.questions}
+    for qo in q_out:
+        nq = read_by_qid.get(qo.question_id)
+        if nq:
+            qo.our_read = nq.our_read
+            if nq.candidate_quote:
+                qo.candidate_quote = nq.candidate_quote
+
+    def _score_out(score, cov, conf):
+        return ScoreOut(score=score, tier_label=tier_label(score), tone=_tone_by_score(score),
+                        confidence=conf, coverage=cov)
 
     logger.info(
         "reporting.service.build_report.done",
-        verdict=verdict_result.verdict,
+        verdict=verdict.verdict,
         overall_score=overall,
         overall_coverage=coverage,
         correlation_id=correlation_id,
     )
 
     return ReportRead(
-        verdict=verdict_result.verdict,
-        verdict_reason=verdict_result.reason,
-        overall_score=overall,
-        overall_coverage=coverage,
-        overall_confidence=overall_confidence,
-        dimension_scores=dimension_scores_out,
-        knockout_results=knockout_results_out,
-        signal_scorecards=signal_scorecards_out,
-        question_scorecards=question_scorecards,
-        summary=summary,
-        engine_version="v2",
-        status="ready",
-        scoring_manifest=scoring_manifest,
+        verdict=verdict.verdict, verdict_reason=narrative.decision.headline or verdict.reason,
+        overall_score=overall, overall_coverage=coverage,
+        overall_confidence=confidence_from_coverage(coverage) if overall is not None else "low",
+        decision=narrative.decision,
+        scores={
+            "overall": _score_out(overall, coverage, tech.confidence),
+            "technical": _score_out(tech.score, tech.coverage, tech.confidence),
+            "behavioral": _score_out(beh.score, beh.coverage, beh.confidence),
+            "communication": _score_out(comm_score, 1.0, "medium"),
+        },
+        quick_summary=narrative.quick_summary, strengths=narrative.strengths,
+        concerns=narrative.concerns, questions=q_out, methodology=narrative.methodology,
+        signal_assessments=signal_assessments, engine_version="v2", status="ready",
+        scoring_manifest=ScoringManifest(
+            scorer_model=ai_config.report_scorer_model,
+            prompt_version=ai_config.report_scorer_prompt_version,
+            generated_at=datetime.now(UTC).isoformat(), correlation_id=correlation_id,
+            evidence_grounding_summary={
+                "n_signals_rechecked": len(recheck_results),
+                "n_overrides": sum(1 for r in recheck_results.values() if r.overridden),
+                "coverage_map": {k: final_state[k] for k in final_state},
+            }),
     )
 
 
@@ -453,17 +297,21 @@ async def persist_report(
         verdict_reason=report.verdict_reason,
         overall_score=report.overall_score,
         overall_coverage=(
-            float(report.overall_coverage) if report.overall_coverage is not None else None
-        ),
+            float(report.overall_coverage) if report.overall_coverage is not None else None),
         overall_confidence=report.overall_confidence,
-        dimension_scores={k: v.model_dump(mode="json") for k, v in report.dimension_scores.items()},
-        knockout_results=[k.model_dump(mode="json") for k in report.knockout_results],
-        signal_scorecards=[s.model_dump(mode="json") for s in report.signal_scorecards],
-        question_scorecards=[q.model_dump(mode="json") for q in report.question_scorecards],
-        summary=report.summary.model_dump(mode="json"),
+        dimension_scores={k: v.model_dump(mode="json") for k, v in report.scores.items()},
+        knockout_results=[],
+        signal_scorecards=[s.model_dump(mode="json") for s in report.signal_assessments],
+        question_scorecards=[q.model_dump(mode="json") for q in report.questions],
+        summary={
+            "decision": report.decision.model_dump(mode="json"),
+            "quick_summary": report.quick_summary,
+            "strengths": [s.model_dump(mode="json") for s in report.strengths],
+            "concerns": [c.model_dump(mode="json") for c in report.concerns],
+            "methodology": report.methodology.model_dump(mode="json"),
+        },
         scoring_manifest=(
-            report.scoring_manifest.model_dump(mode="json") if report.scoring_manifest else None
-        ),
+            report.scoring_manifest.model_dump(mode="json") if report.scoring_manifest else None),
         engine_version=report.engine_version or "v2",
         status="ready",
         generated_at=datetime.now(UTC),

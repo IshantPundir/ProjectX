@@ -4,28 +4,17 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from app.modules.reporting.scoring.types import (
-    BarsLevel,
-    Confidence,
-    KnockoutStatus,
-    Opportunity,
-    SignalState,
-    Verdict,
-)
+from app.modules.reporting.scoring.types import Confidence, Verdict
 
 
-class JudgeVerdict(BaseModel):
-    """Strict structured output from the per-answer judge. Evidence BEFORE score."""
-
-    evidence_quotes: list[str] = Field(
-        default_factory=list,
-        description="Verbatim spans copied from the transcript that justify the level.",
-    )
-    red_flags_hit: list[str] = Field(default_factory=list)
-    justification: str = Field(
-        description="Map the cited evidence to the rubric anchor."
-    )
-    level: BarsLevel
+class SignalRecheckOut(BaseModel):
+    """Structured output from the per-signal post-interview re-check."""
+    evidence_quotes: list[str] = Field(default_factory=list)
+    justification: str = ""
+    grade: Literal["concrete", "thin", "null"] = "null"
+    state: Literal["exceeded", "sufficient", "partial", "failed"]
+    overridden: bool = False
+    override_reason: str | None = None
 
 
 class CommunicationVerdict(BaseModel):
@@ -36,78 +25,14 @@ class CommunicationVerdict(BaseModel):
     level: Literal["weak", "adequate", "strong"]
 
 
-class EvidenceOut(BaseModel):
-    quote: str
-    timestamp_ms: int
-    question_id: str
-    grounded: bool = True
-
-
-class AnswerRating(BaseModel):
-    """Judge result for one delivered question, post-grounding."""
-
-    question_id: str
-    level: BarsLevel
-    evidence_quotes: list[str] = Field(default_factory=list)
-    red_flags_hit: list[str] = Field(default_factory=list)
-    justification: str = ""
-    grounded: bool = True
-
-
-class SignalScorecard(BaseModel):
-    value: str
-    type: str
-    weight: int
-    knockout: bool
-    state: SignalState
-    score: int | None
-    opportunity: Opportunity | None = None
-    evidence: list[EvidenceOut] = Field(default_factory=list)
-    covered_by: list[str] = Field(default_factory=list)
-
-
-class DimensionScoreOut(BaseModel):
-    name: str
-    score: int | None
-    coverage: float
-    confidence: Confidence
-    note: str | None = None
-
-
-class KnockoutResultOut(BaseModel):
-    signal: str
-    status: KnockoutStatus
-    reason: str
-    evidence: list[EvidenceOut] = Field(default_factory=list)
-
-
-class QuestionScorecard(BaseModel):
-    question_id: str
-    question_text: str
-    level: BarsLevel | Literal["not_assessed"]
-    evidence: list[EvidenceOut] = Field(default_factory=list)
-    red_flags_hit: list[str] = Field(default_factory=list)
-    probes_fired: int = 0
-    opportunity: Opportunity | None = None
-
-
-class SummaryOut(BaseModel):
-    headline: str
-    strengths: list[str] = Field(default_factory=list)
-    gaps: list[str] = Field(default_factory=list)
-    rationale: str = ""
-
-
 class ScoringManifest(BaseModel):
     scorer_model: str | None = None
     reasoning_effort: str | None = None
-    verbosity: str | None = None
     prompt_version: str | None = None
     prompt_cache_key: str | None = None
     scorer_code_version: str | None = None
     bank_id: str | None = None
     signal_snapshot_id: str | None = None
-    n_samples: int | None = None
     cache_hit_rate: float | None = None
     evidence_grounding_summary: dict | None = None
     generated_at: str | None = None
@@ -139,21 +64,108 @@ class ReportIndexPage(BaseModel):
     limit: int
 
 
-class ReportRead(BaseModel):
-    """Recruiter-facing report serialization (mirrors session_reports columns)."""
+# ---------------------------------------------------------------------------
+# Narrative sub-models (prose-only LLM output — no scores/verdict)
+# ---------------------------------------------------------------------------
 
-    # required core (constructed in the test):
+
+class WhyColumn(BaseModel):
+    title: str
+    body: str
+
+
+class DecisionOut(BaseModel):
+    headline: str
+    why_positive: WhyColumn
+    why_negative: WhyColumn
+
+
+class StrengthOut(BaseModel):
+    title: str
+    detail: str
+
+
+class ConcernOut(BaseModel):
+    title: str
+    detail: str
+    severity: Literal["deal_breaker", "major", "moderate"]
+
+
+class QuestionNarrative(BaseModel):
+    question_id: str
+    candidate_quote: str          # cleaned, readable; meaning preserved
+    our_read: str
+
+
+class MethodologyOut(BaseModel):
+    note: str
+    charity_flags: list[str] = Field(default_factory=list)
+
+
+class NarrativeOut(BaseModel):
+    """Prose-only LLM output. Contains NO scores/verdict."""
+    decision: DecisionOut
+    quick_summary: str
+    strengths: list[StrengthOut] = Field(default_factory=list)
+    concerns: list[ConcernOut] = Field(default_factory=list)
+    questions: list[QuestionNarrative] = Field(default_factory=list)
+    methodology: MethodologyOut
+
+
+# ---------------------------------------------------------------------------
+# PDF-shaped report output models (Task 8)
+# ---------------------------------------------------------------------------
+
+
+class ScoreOut(BaseModel):
+    score: int | None
+    tier_label: str
+    tone: str                      # ok | caution | danger | neutral
+    confidence: Confidence
+    coverage: float = 0.0
+
+
+class QuestionOut(BaseModel):
+    seq: int
+    question_id: str
+    title: str
+    status_badge: str
+    status_tone: str
+    question_text: str
+    candidate_quote: str
+    our_read: str = ""
+
+
+class SignalAssessmentOut(BaseModel):
+    signal: str
+    type: str
+    weight: int
+    knockout: bool
+    priority: str
+    engine_state: str
+    final_state: str
+    grade: str | None = None
+    score: int | None = None
+    evidence: list[str] = Field(default_factory=list)
+    overridden: bool = False
+    override_reason: str | None = None
+
+
+class ReportRead(BaseModel):
+    """Recruiter-facing report (PDF-shaped). Mirrors session_reports JSONB columns."""
     verdict: Verdict
     verdict_reason: str
     overall_score: int | None
     overall_coverage: float
     overall_confidence: Confidence
-    dimension_scores: dict[str, DimensionScoreOut]
-    knockout_results: list[KnockoutResultOut]
-    signal_scorecards: list[SignalScorecard]
-    question_scorecards: list[QuestionScorecard]
-    summary: SummaryOut
-    # optional metadata (defaults so the test construction works):
+    decision: DecisionOut
+    scores: dict[str, ScoreOut]                       # overall|technical|behavioral|communication
+    quick_summary: str = ""
+    strengths: list[StrengthOut] = Field(default_factory=list)
+    concerns: list[ConcernOut] = Field(default_factory=list)
+    questions: list[QuestionOut] = Field(default_factory=list)
+    methodology: MethodologyOut
+    signal_assessments: list[SignalAssessmentOut] = Field(default_factory=list)
     id: str | None = None
     session_id: str | None = None
     status: str = "ready"

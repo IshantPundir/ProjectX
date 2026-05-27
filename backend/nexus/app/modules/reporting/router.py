@@ -63,7 +63,14 @@ def _row_to_read(row: SessionReport) -> ReportRead:
 
     JSONB columns are stored as plain dicts/lists; Pydantic coerces nested
     dicts into the nested model types via model_validate.
+
+    Column mapping (persist_report writes, _row_to_read reads):
+      dimension_scores  → scores
+      summary           → decision, quick_summary, strengths, concerns, methodology
+      question_scorecards → questions
+      signal_scorecards → signal_assessments
     """
+    summary = row.summary or {}
     return ReportRead.model_validate(
         {
             "id": str(row.id),
@@ -74,16 +81,26 @@ def _row_to_read(row: SessionReport) -> ReportRead:
             "verdict": row.verdict,
             "verdict_reason": row.verdict_reason,
             "overall_score": row.overall_score,
-            # Numeric → float coercion; None propagated as-is
+            # Numeric → float coercion; None → 0.0 (safe default)
             "overall_coverage": (
                 float(row.overall_coverage) if row.overall_coverage is not None else 0.0
             ),
-            "overall_confidence": row.overall_confidence,
-            "dimension_scores": row.dimension_scores or {},
-            "knockout_results": row.knockout_results or [],
-            "signal_scorecards": row.signal_scorecards or [],
-            "question_scorecards": row.question_scorecards or [],
-            "summary": row.summary or {},
+            "overall_confidence": row.overall_confidence or "low",
+            "decision": summary.get("decision") or {
+                "headline": row.verdict_reason or "",
+                "why_positive": {"title": "", "body": ""},
+                "why_negative": {"title": "", "body": ""},
+            },
+            "scores": row.dimension_scores or {},
+            "quick_summary": summary.get("quick_summary", ""),
+            "strengths": summary.get("strengths", []),
+            "concerns": summary.get("concerns", []),
+            "questions": row.question_scorecards or [],
+            "methodology": summary.get("methodology") or {
+                "note": "",
+                "charity_flags": [],
+            },
+            "signal_assessments": row.signal_scorecards or [],
             "scoring_manifest": row.scoring_manifest,
             "human_decision": row.human_decision,
             "generated_at": row.generated_at.isoformat() if row.generated_at else None,
