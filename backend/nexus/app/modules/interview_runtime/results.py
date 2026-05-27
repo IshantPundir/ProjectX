@@ -1,13 +1,14 @@
 """Engine-result snapshot models — the neutral, self-contained home for the
-SignalLedger / QuestionQueue / ClaimsPool snapshots (CMI-1, master §3a).
+SignalLedger / QuestionQueue / ClaimsPool snapshots.
 
-Relocated here from app/modules/interview_engine/models/{ledger,queue,claims}.py so
-that interview_runtime (the engine↔nexus wire contract) does NOT depend on the v1
-engine package. The old paths re-export from here (thin shims) so v1's internal
-importers stay byte-stable; when v1 is deleted in M6 the shims go with it and this
-module stands alone. Pure pydantic — no imports from interview_engine. v2's own
-coverage model lives in interview_engine/coverage.py; these are the v1-emitted
-shapes the report builder consumes, kept optional on SessionResult.
+These live in interview_runtime (the engine↔nexus wire contract) so they
+have no dependency on the interview_engine package. Pure pydantic — no
+imports from interview_engine. The engine's live coverage model is
+interview_engine/coverage.py; the snapshots here are the optional
+structured shapes the report builder may consume, kept optional on
+SessionResult (the engine emits `coverage_summary` for the per-signal
+final state, and these remain populated for any historical rows that
+carried them).
 """
 from __future__ import annotations
 

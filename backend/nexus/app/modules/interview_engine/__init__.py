@@ -1,12 +1,15 @@
-"""Interview Engine — two-plane hybrid (brain + mouth + Directive).
+"""Interview Engine — the three-tier conversation/control core.
 
-The decision/conversation core (see
-docs/superpowers/plans/2026-05-22-interview-engine-v2-master-plan.md). Dispatch
-to the engine is unconditional — there is no longer a version-selection branch.
+A `triage` plane (fast turn classification + the immediate spoken beat) runs in
+parallel with the `brain` (async control plane: rubric grading, signal coverage,
+policy gates, emits one `Directive`); the `mouth` renders that directive as
+natural spoken Indian English. The entrypoint builds the SessionConfig and runs
+the engine unconditionally — there is a single engine, no version branch.
 
-Pure artifacts (no livekit) are exported eagerly. `run` (the LiveKit entrypoint,
-which pulls livekit) is exported lazily via __getattr__ so importing the pure
-artifacts never loads livekit into the nexus/FastAPI process.
+Pure artifacts (no livekit) are exported eagerly. The livekit-bearing exports —
+`run` (the LiveKit entrypoint) and `server` (the worker bootstrap) — are exported
+lazily via __getattr__ so importing the pure artifacts never loads livekit into
+the nexus/FastAPI process.
 """
 
 from __future__ import annotations

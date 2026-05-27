@@ -1,21 +1,21 @@
-"""Interview Engine v2 — LiveKit entrypoint (M5 brain wiring).
+"""Interview Engine — LiveKit entrypoint + worker bootstrap.
 
-M5 scope: the REAL brain. The hand-scripted DirectiveScript source is replaced by the
-ControlPlane (the brain): on_enter voices the deterministic opener; at each turn boundary
-on_user_turn_completed emits an IMMEDIATE persona acknowledgment to MASK the brain, then runs
-the brain as a cancellable Task IN PARALLEL (never a silent wait — D3) and stages its confirmed
-Directive when it lands, superseding the speculative pre-stage. Option C: while the candidate is
-still answering, a NON-voiced speculative pre-stage is staged from the user-speaking handler so
-the controller's supersede/discard runs live (CMI-4); barge-in cancels the in-flight brain Task.
-The mouth is UNCHANGED from M4 — a _MouthAgent overrides llm_node to voice the controller's
-current Directive in persona (GPT-5.4-mini "Arjun") via a bounded, cache-stable prompt. The M3
-AgentSession wiring + behavioral silence-timer + EOU config carry forward; the hold-space /
-unresponsive-ladder / ack-mask reflex cues are persona pre-rendered once at session start (canned
-Settings strings are the seed + fallback). Per-turn latency is sourced from ChatMessage.metrics
-via conversation_item_added (the working 1.5.9 signal; session-level metrics_collected emits no
-llm/eou metrics).
+The ControlPlane (the brain) drives the conversation: on_enter voices the deterministic
+opener; at each turn boundary on_user_turn_completed emits an IMMEDIATE persona acknowledgment
+to MASK the brain, then runs the brain as a cancellable Task IN PARALLEL (never a silent wait)
+and stages its confirmed Directive when it lands, superseding the speculative pre-stage. While
+the candidate is still answering, a NON-voiced speculative pre-stage is staged from the
+user-speaking handler so the controller's supersede/discard runs live; barge-in cancels the
+in-flight brain Task. The mouth is a _MouthAgent that overrides llm_node to voice the
+controller's current Directive in persona (GPT-5.4-mini "Arjun") via a bounded, cache-stable
+prompt. The AgentSession wiring + behavioral silence-timer + EOU config carry forward; the
+hold-space / unresponsive-ladder / ack-mask reflex cues are persona pre-rendered once at session
+start (canned Settings strings are the seed + fallback). Per-turn latency is sourced from
+ChatMessage.metrics via conversation_item_added (the working 1.5.9 signal; session-level
+metrics_collected emits no llm/eou metrics).
 
-Imports livekit; only ever imported lazily via interview_engine.__getattr__('run')
+This module also carries the worker bootstrap (`server`/`prewarm`/`entrypoint`). It imports
+livekit, and is only ever imported lazily via interview_engine.__getattr__('run' / 'server')
 inside the engine container, so the FastAPI/nexus process never loads livekit.
 """
 

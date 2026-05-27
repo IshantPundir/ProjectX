@@ -64,10 +64,11 @@ services:
     command: dramatiq app.worker --processes 2 --threads 4
 
   nexus-engine:
-    # Phase 3 — engine merged into nexus. Runs from the same Docker image as
-    # nexus and nexus-worker, just with `python -m app.modules.interview_engine`
-    # as the command. Reads SessionConfig + writes SessionResult in-process via
-    # build_session_config / record_session_result; no HTTP boundary, no JWT.
+    # Phase 3 — engine merged into nexus. Runs the single interview engine from
+    # the same Docker image as nexus and nexus-worker, just with
+    # `python -m app.modules.interview_engine` as the command. Reads SessionConfig
+    # + writes SessionResult in-process via build_session_config /
+    # record_session_result; no HTTP boundary, no JWT.
     build:
       context: .
       dockerfile: Dockerfile

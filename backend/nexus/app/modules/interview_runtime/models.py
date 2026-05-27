@@ -1,11 +1,9 @@
-"""TranscriptEntry — extracted into a leaf module to break the circular
-import between interview_runtime.schemas and engine.models.speaker.
+"""TranscriptEntry — a leaf data model kept in its own module so callers can
+import it without re-entering the partially-initialized
+``interview_runtime`` package (importing from
+``interview_runtime.schemas`` would trigger that cycle).
 
-interview_engine.models.speaker imports TranscriptEntry. Re-importing
-from interview_runtime.schemas would re-enter the partially-initialized
-package. Importing from this leaf module bypasses the cycle entirely.
-
-interview_runtime.schemas re-exports TranscriptEntry for backward
+``interview_runtime.schemas`` re-exports TranscriptEntry for backward
 compatibility — existing callers don't need to change.
 
 NOTE: This file is named `models.py` because the module-boundary test

@@ -1,14 +1,14 @@
 """Pydantic schemas exchanged between Nexus and the interview engine.
 
 These models define the wire contract. The interview engine imports them
-via the path-dep on the nexus package — `from app.modules.interview_runtime.schemas import ...`.
+from within the nexus package — `from app.modules.interview_runtime.schemas import ...`.
 
-Lifted from `backend/interview_engine/models.py` with two intentional changes:
-1. `CandidateContext.email` is removed — engine never receives PII (CLAUDE.md
-   "no raw PII in logs"; spec Section 6.5).
-2. `StageType` reflects the v5 stage-type set (post-migration 0016), not the
-   stale set in the engine source. The runtime allowlist (ai_screening +
-   phone_screen) is enforced separately in build_session_config.
+Two contract invariants worth calling out:
+1. `CandidateContext.email` is intentionally absent — the engine never receives PII
+   (CLAUDE.md "no raw PII in logs"; spec Section 6.5).
+2. `StageType` reflects the v5 stage-type set (post-migration 0016). The runtime
+   allowlist (ai_screening + phone_screen) is enforced separately in
+   build_session_config.
 """
 
 from __future__ import annotations
@@ -77,21 +77,20 @@ class QuestionConfig(BaseModel):
     question_kind: str = Field(
         default="technical_scenario",
         description=(
-            "RELAXED READ PROJECTION (interview-engine-v2 M2, decision D1). The "
-            "canonical taxonomy (experience_check | behavioral | technical_scenario "
-            "| compliance_binary) is enforced at the WRITE boundary — the "
-            "GeneratedQuestion generator model + the stage_questions.question_kind DB "
-            "CHECK. This field is intentionally an unconstrained `str` (NOT a union) "
-            "during v1 coexistence so the reference-only v1 engine suite + "
-            "sample_session_config.json (which read QuestionConfig with the legacy "
-            "strings 'behavioral_star'/'technical_depth') stay a TRUE untouched "
-            "regression backstop. Tighten to the new Literal at M6 when v1 is retired."
+            "RELAXED READ PROJECTION. The canonical taxonomy (experience_check | "
+            "behavioral | technical_scenario | compliance_binary) is enforced at the "
+            "WRITE boundary — the GeneratedQuestion generator model + the "
+            "stage_questions.question_kind DB CHECK. This field is intentionally an "
+            "unconstrained `str` (NOT a union) on the read path so older persisted "
+            "rows / fixtures (e.g. the legacy strings 'behavioral_star' / "
+            "'technical_depth') deserialize without error rather than raising on a "
+            "tighter Literal."
         ),
     )
     primary_signal: str | None = Field(
         default=None,
         description=(
-            "The single signal value the lead question opens (the v2 brain's crisp "
+            "The single signal value the lead question opens (the brain's crisp "
             "thread-satisfaction key). Projected from stage_questions.primary_signal; "
             "None for legacy/hand rows. signal_values stays the broader coverable set."
         ),
@@ -416,24 +415,27 @@ class SessionResult(BaseModel):
     signal_ledger: SignalLedgerSnapshot | None = Field(
         default=None,
         description=(
-            "v1 structured-engine snapshot (append-only evidence + per-signal coverage). "
-            "None for v2 sessions — the v2 brain emits coverage_summary instead. The "
-            "report builder reads whichever is present."
+            "Optional structured snapshot (append-only evidence + per-signal coverage). "
+            "The current engine emits coverage_summary instead and leaves this None; it "
+            "stays populated for any historical rows that carried it. The report builder "
+            "reads whichever is present."
         ),
     )
     question_queue: QuestionQueueSnapshot | None = Field(
-        default=None, description="v1-only; None for v2."
+        default=None,
+        description="Optional structured snapshot; None for current-engine sessions.",
     )
     claims_pool: ClaimsPoolSnapshot | None = Field(
-        default=None, description="v1-only; None for v2."
+        default=None,
+        description="Optional structured snapshot; None for current-engine sessions.",
     )
     coverage_summary: dict[str, str] | None = Field(
         default=None,
         description=(
-            "v2-native per-signal final coverage state (signal_value -> "
-            "none|partial|sufficient|failed), produced by interview_engine CoverageTracker "
-            "at session close. None for v1 sessions (which fill signal_ledger). Richer v2 "
-            "per-turn detail lives in the audit envelope via audit_envelope_ref."
+            "Per-signal final coverage state (signal_value -> "
+            "none|partial|sufficient|failed), produced by the interview_engine "
+            "CoverageTracker at session close. Richer per-turn detail lives in the "
+            "audit envelope via audit_envelope_ref."
         ),
     )
     audit_envelope_ref: str | None = Field(
