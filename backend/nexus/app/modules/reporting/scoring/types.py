@@ -42,3 +42,26 @@ class Evidence:
     timestamp_ms: int
     question_id: str
     grounded: bool = True
+
+
+# ---------------------------------------------------------------------------
+# New coverage-state scoring vocabulary (additive — Task 2)
+# ---------------------------------------------------------------------------
+
+# Engine coverage states + the LLM-only `exceeded` headroom state.
+CovState = Literal["exceeded", "sufficient", "partial", "failed", "none"]
+GradeTexture = Literal["concrete", "thin", "null"]
+CommLevel = Literal["weak", "adequate", "strong"]
+StatusBadge = Literal[
+    "passed", "partial", "failed_required",
+    "not_demonstrated", "not_attempted", "not_fully_assessed",
+]
+
+
+@dataclass(frozen=True)
+class SignalTurn:
+    """One turn that touched a signal (from the audit envelope)."""
+    candidate_quote: str
+    grade: str | None            # concrete | thin | null
+    reasoning: str
+    question_id: str | None

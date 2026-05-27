@@ -1,20 +1,29 @@
-from app.modules.reporting.scoring import constants
-from app.modules.reporting.scoring.types import ScoredUnit, SignalDef
+from app.modules.reporting.scoring.constants import (
+    STATE_POINTS, ADVANCE_THRESHOLD, REJECT_THRESHOLD,
+    MIN_COVERAGE_FOR_ADVANCE, TECHNICAL_TYPES, BEHAVIORAL_TYPES, tier_label,
+)
 
 
-def test_anchors_and_thresholds():
-    assert constants.LEVEL_POINTS == {"excellent": 100, "meets_bar": 70, "below_bar": 30}
-    assert constants.ADVANCE_THRESHOLD == 75
-    assert constants.REJECT_THRESHOLD == 55
-    assert constants.MIN_COVERAGE_FOR_ADVANCE == 0.6
-    assert constants.SUBSTANTIVE_WORD_FLOOR == 8
-    assert frozenset({"competency", "experience", "credential"}) == constants.TECHNICAL_TYPES
-    assert frozenset({"behavioral"}) == constants.BEHAVIORAL_TYPES
+def test_state_points():
+    assert STATE_POINTS == {
+        "exceeded": 100, "sufficient": 70, "partial": 30, "failed": 0, "none": None,
+    }
 
-def test_scored_unit_is_frozen():
-    u = ScoredUnit(question_id="q1", question_text="Q?", candidate_answer="A",
-                   answer_start_ms=10, probes_fired=1, clarifies=0,
-                   word_count=12, candidate_engaged=True)
-    assert u.question_id == "q1"
-    sd = SignalDef(value="Workato", type="experience", weight=3, knockout=True, priority="required")
-    assert sd.knockout is True
+
+def test_thresholds():
+    assert ADVANCE_THRESHOLD == 65
+    assert REJECT_THRESHOLD == 40
+    assert MIN_COVERAGE_FOR_ADVANCE == 0.6
+
+
+def test_tier_label_bands():
+    assert tier_label(80) == "Strong"
+    assert tier_label(60) == "Meets Bar"
+    assert tier_label(50) == "Below Bar"
+    assert tier_label(30) == "Well Below Bar"
+    assert tier_label(None) == "Not Assessed"
+
+
+def test_type_sets():
+    assert TECHNICAL_TYPES == frozenset({"competency", "experience", "credential"})
+    assert BEHAVIORAL_TYPES == frozenset({"behavioral"})
