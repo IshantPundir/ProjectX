@@ -1,75 +1,52 @@
-"""ProjectX Interview Engine — structured-agent entrypoint.
+"""Interview Engine v2 — LiveKit entrypoint (M5 brain wiring).
 
-Phase 9.1 cutover. The placeholder ``GenericInterviewAgent`` (and its
-``_build_system_prompt`` / ``_build_session_result`` helpers) is gone;
-its job is now owned by :class:`InterviewOrchestrator`. This file is the
-LiveKit harness around the orchestrator: dispatch wiring, plugin
-construction, audio-tuning observability, and close-handler glue. The
-orchestrator owns turn semantics, state, prompt-grounded speech, and
-SessionResult composition.
+M5 scope: the REAL brain. The hand-scripted DirectiveScript source is replaced by the
+ControlPlane (the brain): on_enter voices the deterministic opener; at each turn boundary
+on_user_turn_completed emits an IMMEDIATE persona acknowledgment to MASK the brain, then runs
+the brain as a cancellable Task IN PARALLEL (never a silent wait — D3) and stages its confirmed
+Directive when it lands, superseding the speculative pre-stage. Option C: while the candidate is
+still answering, a NON-voiced speculative pre-stage is staged from the user-speaking handler so
+the controller's supersede/discard runs live (CMI-4); barge-in cancels the in-flight brain Task.
+The mouth is UNCHANGED from M4 — a _MouthAgent overrides llm_node to voice the controller's
+current Directive in persona (GPT-5.4-mini "Arjun") via a bounded, cache-stable prompt. The M3
+AgentSession wiring + behavioral silence-timer + EOU config carry forward; the hold-space /
+unresponsive-ladder / ack-mask reflex cues are persona pre-rendered once at session start (canned
+Settings strings are the seed + fallback). Per-turn latency is sourced from ChatMessage.metrics
+via conversation_item_added (the working 1.5.9 signal; session-level metrics_collected emits no
+llm/eou metrics).
 
-What stays:
-  * Audio pipeline (STT/LLM/TTS/VAD/turn-detector via app.ai.realtime).
-  * Audit envelope (EventCollector + sink).
-  * SessionConfig fetch + tenant_settings load on dispatch.
-  * Audio tuning summary helper + close handler that persists
-    SessionResult and publishes ``session_outcome`` to the candidate
-    frontend.
-  * ``preemptive_generation`` is **disabled**: the structured agent
-    drives every turn through Judge → State → Speaker, so framework
-    speculation would only race the orchestrator.
-  * STT plugin construction goes through ``build_stt_plugin_for_session``
-    so the per-session keyterm seam (Task 6.2) is wired and ready.
+Imports livekit; only ever imported lazily via interview_engine.__getattr__('run')
+inside the engine container, so the FastAPI/nexus process never loads livekit.
 """
 
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
+import random
 import time
 import uuid
-from collections.abc import AsyncIterable
+from collections import deque
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Literal
 
 import structlog
 from livekit.agents import (
     Agent,
     AgentServer,
     AgentSession,
-    AgentStateChangedEvent,
-    CloseEvent,
-    ErrorEvent,
+    ChatContext,
+    ChatMessage,
     JobContext,
     JobProcess,
     MetricsCollectedEvent,
-    ModelSettings,
+    StopResponse,
     TurnHandlingOptions,
-    UserInputTranscribedEvent,
     UserStateChangedEvent,
-    llm,
     room_io,
 )
-from livekit.agents.inference.interruption import OverlappingSpeechEvent
-from livekit.agents.voice.events import (
-    AgentFalseInterruptionEvent,
-    CloseReason,
-    ConversationItemAddedEvent,
-    FunctionToolsExecutedEvent,
-    SessionUsageUpdatedEvent,
-    SpeechCreatedEvent,
-)
-
-# Process-startup plugin imports. Each call registers the plugin so that
-# `python agent.py download-files` discovers and prewarms model files at
-# container build time. Per the `app.ai.realtime` carve-out (see
-# backend/nexus/CLAUDE.md), direct vendor SDK imports are forbidden
-# EXCEPT for process-startup model registration of plugins that need
-# local model files. turn_detector (multilingual EOU) qualifies.
-# VAD is now ai-coustics' built-in adapter — no separate model to prewarm.
 from livekit.plugins.turn_detector import multilingual as _turn_detector_multilingual  # noqa: F401
-from openai import AsyncOpenAI
 from opentelemetry.trace import set_tracer_provider as _otel_set_global_provider
 
 from app.ai.config import ai_config
@@ -77,66 +54,64 @@ from app.ai.otel import bootstrap_tracer_provider
 from app.ai.prompts import PromptLoader
 from app.ai.realtime import (
     build_interruption_options,
-    build_llm_plugin,
+    build_mouth_llm_plugin,
     build_noise_cancellation,
+    build_stt_plugin,
     build_tts_plugin,
     build_turn_detector,
     build_vad,
 )
 from app.config import settings
 from app.database import get_bypass_session
-from app.modules.interview_engine.audit_events import STTKeytermsAppliedPayload
-from app.modules.interview_engine.event_kinds import AUDIO_STT_KEYTERMS_APPLIED
-from app.modules.interview_engine.event_log import (
-    EventCollector,
-    EventLogSink,
-    build_sink_from_settings,
+from app.modules.interview_engine.audio_metrics import compute_audio_summary
+from app.modules.interview_engine.brain import ControlPlane
+from app.modules.interview_engine.brain.service import build_speculative_directive
+from app.modules.interview_engine.controller import DirectiveController
+from app.modules.interview_engine.coverage import CoverageTracker
+from app.modules.interview_engine.directive import Directive, DirectiveAct, DirectiveTone
+from app.modules.interview_engine.event_log.collector import EventCollector
+from app.modules.interview_engine.event_log.sink import LocalFileSink
+from app.modules.interview_engine.mouth.input_builder import is_question_bearing
+from app.modules.interview_engine.mouth.service import ConversationPlane
+from app.modules.interview_engine.result_builder import build_v2_session_result
+from app.modules.interview_engine.triage import TriagePlane
+from app.modules.interview_engine.triage.decision import TriageKind, TriageRoute
+from app.modules.interview_engine.turn_taking.eou import (
+    EouConfig,
+    LadderAction,
+    UnresponsiveLadder,
+    is_backchannel,
 )
-from app.modules.interview_engine.frontend_attributes import AttributePublisher
-from app.modules.interview_engine.judge.service import JudgeService
-from app.modules.interview_engine.orchestrator import (
-    InterviewOrchestrator,
-    OrchestratorConfig,
+from app.modules.interview_engine.turn_taking.floor import (
+    ResumptionSignals,
+    classify_resumption,
+    should_yield,
 )
-from app.modules.interview_engine.speaker.persona import resolve_persona_name
-from app.modules.interview_engine.speaker.service import SpeakerService
-from app.modules.interview_engine.state.engine import StateEngine, StateEngineConfig
-from app.modules.interview_engine.stt_factory import build_stt_plugin_for_session
+from app.modules.interview_engine.turn_taking.pacing import (
+    EndpointingSettings,
+    HoldSpacePacer,
+    build_endpointing_options,
+)
 from app.modules.interview_runtime import (
-    SessionResult,
+    SessionConfig,
+    TranscriptEntry,
     build_session_config,
     record_session_result,
 )
 from app.modules.session import classify_engine_exception, transition_to_error
-from app.modules.tenant_settings import get_tenant_settings
 
-log = structlog.get_logger("interview-engine")
+log = structlog.get_logger("interview_engine")
 
+_KEYTERM_CAP = 50
 
-SessionOutcome = Literal[
-    "completed",
-    "candidate_ended",
-    "candidate_disconnected",
-    "candidate_unresponsive",
-    "knockout_closed",
-    "time_expired",
-    "error",
-]
 
 server = AgentServer(host="0.0.0.0", port=8081)
 
 
 def prewarm(proc: JobProcess) -> None:
-    """Process-startup hook.
-
-    Bootstrap a TracerProvider so livekit-agents' built-in spans ship
-    to whatever aggregator the operator points OTLP at. Production-
-    safe default: no env vars set -> spans go nowhere.
-
-    VAD is no longer prewarmed — we use ai-coustics' built-in VAD
-    adapter, which lives inside the ai-coustics process loaded for
-    noise cancellation. No separate model weights to load.
-    """
+    """Process-startup hook: bootstrap an OTel TracerProvider so livekit-agents'
+    built-in spans ship to whatever OTLP endpoint the operator configures.
+    Production-safe default: no env vars set -> spans go nowhere."""
     provider = bootstrap_tracer_provider()
     _otel_set_global_provider(provider)
     proc.userdata["otel_provider"] = provider
@@ -146,101 +121,829 @@ def prewarm(proc: JobProcess) -> None:
 server.setup_fnc = prewarm
 
 
-class StructuredInterviewAgent(Agent):
-    """LiveKit Agent subclass that delegates to InterviewOrchestrator.
+def assemble_v2_keyterms(*, candidate_first_name: str, bank_keyterms: list[str]) -> list[str]:
+    """v2-native keyterm pass (self-contained; no import of interview_engine/).
 
-    Two LiveKit-pipeline customizations:
-
-    * ``on_user_turn_completed`` delegates to the orchestrator and returns
-      normally. The orchestrator already delivered the structured-agent
-      reply via ``session.say()``; we DO NOT raise ``StopResponse`` here.
-      Returning normally lets the framework run its post-hook flow, which
-      auto-appends ``new_message`` to ``chat_ctx`` and fires the
-      ``conversation_item_added`` event — that event is what populates
-      LiveKit's per-session ``chat_history.json``. Raising StopResponse
-      (the previous behaviour) short-circuited that auto-append, so every
-      candidate utterance was missing from chat_history.
-    * ``llm_node`` is overridden to yield nothing. With StopResponse gone,
-      the framework will otherwise call its default LLM node and produce
-      a duplicate reply on top of the one our Speaker already streamed.
-      An empty async generator tells the downstream TTS node there is no
-      LLM reply to synthesize, while keeping the chat-context auto-append
-      path active.
+    Candidate first name + cached bank keyterms, case-insensitive dedup, capped.
     """
+    terms: list[str] = []
 
-    def __init__(
-        self,
-        *,
-        orchestrator: InterviewOrchestrator,
-        instructions: str,
-    ) -> None:
-        super().__init__(instructions=instructions)
-        self._orchestrator = orchestrator
-        # Mirrored on the agent so the close handler / disconnect listener
-        # can mark + read the outcome regardless of which path closed
-        # the session. Population is best-effort: the orchestrator's
-        # SessionResult is always the source of truth for the persisted
-        # session record.
-        self._end_outcome: SessionOutcome | None = None
-        self._persisted = False
-        self._envelope_written = False
-        self._audio_tuning_summary: dict[str, object] | None = None
+    def _add(term: str) -> None:
+        t = term.strip()
+        if not t or len(terms) >= _KEYTERM_CAP:
+            return
+        if any(t.lower() == x.lower() for x in terms):
+            return
+        terms.append(t)
 
-    @property
-    def orchestrator(self) -> InterviewOrchestrator:
-        return self._orchestrator
+    if candidate_first_name.strip():
+        _add(candidate_first_name.split()[0])
+    for term in bank_keyterms:
+        _add(term)
+    return terms
+
+
+# RETAINED (not instantiated by run() in M5): a tested pure reference / debug-harness seed. The
+# M5 run() drives Directives from the ControlPlane brain instead; this scripted source + its
+# test_harness_script.py stay green as a deterministic harness for offline debugging.
+@dataclass
+class DirectiveScript:
+    """Hand-scripted Directives for the M4 talk-test (no brain). Mirrors the M3 bank flow:
+    INTRO + ASK(q1) at startup, then ACK_ADVANCE to each remaining question per turn, then CLOSE.
+    `scenario="supersession"` exposes a speculative+superseder pair for the CMI-4 live test."""
+
+    questions: list[str]
+    scenario: str = ""
+    _startup_idx: int = field(default=0, init=False)
+    _q_idx: int = field(default=1, init=False)      # q[0] asked at startup; q[1..] via ACK_ADVANCE
+    _closed: bool = field(default=False, init=False)
+    _seq: int = field(default=0, init=False)
+
+    def _id(self) -> str:
+        self._seq += 1
+        return f"d-{self._seq}"
+
+    def next_startup(self) -> Directive | None:
+        """INTRO (idx 0), then ASK q[0] (idx 1); None afterwards."""
+        if self._startup_idx == 0:
+            self._startup_idx = 1
+            return Directive(id=self._id(), turn_ref="t-0", act=DirectiveAct.INTRO,
+                             say=None, compose_hint="warm, brief, set them at ease",
+                             tone=DirectiveTone.WARM)
+        if self._startup_idx == 1:
+            self._startup_idx = 2
+            if not self.questions:
+                return None
+            return Directive(id=self._id(), turn_ref="t-0", act=DirectiveAct.ASK,
+                             say=self.questions[0])
+        return None
+
+    def next_after_turn(self, *, turn_ref: str) -> Directive | None:
+        """ACK_ADVANCE to the next question, else one CLOSE. Empty-bank edge: with no
+        questions, _q_idx (1) is never < len (0), so the first call falls straight through
+        to a single CLOSE; the _closed flag returns None thereafter."""
+        if self._closed:
+            return None
+        if self._q_idx < len(self.questions):
+            say = self.questions[self._q_idx]
+            self._q_idx += 1
+            return Directive(id=self._id(), turn_ref=turn_ref, act=DirectiveAct.ACK_ADVANCE, say=say)
+        self._closed = True
+        return Directive(id=self._id(), turn_ref=turn_ref, act=DirectiveAct.CLOSE, say=None,
+                         compose_hint="thank warmly; recruiter will follow up",
+                         tone=DirectiveTone.WARM, is_terminal=True)
+
+    def supersession_pair(self, *, turn_ref: str) -> tuple[Directive, Directive]:
+        """CMI-4: a speculative PROBE pre-stage + a superseding ACK_ADVANCE for the same turn."""
+        spec = Directive(id=self._id(), turn_ref=turn_ref, act=DirectiveAct.PROBE,
+                         say="What part of that did you build yourself?", speculative=True)
+        real = Directive(id=self._id(), turn_ref=turn_ref, act=DirectiveAct.ACK_ADVANCE,
+                         say=(self.questions[1] if len(self.questions) > 1 else "Let's move on."),
+                         supersedes=spec.id)
+        return spec, real
+
+
+def _now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def _now_iso() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _leading_bridge(text: str) -> str | None:
+    """Extract the opening connective from a spoken line for recent_bridges variety-tracking.
+
+    LEXICAL slice — purely for bookkeeping that the mouth varies its opener; NOT intent/semantic
+    classification (no regex ban applies here; this is the same pattern as the test-suite's
+    _leading_chunk used in the double-open evals).
+
+    Rules:
+    - If an em-dash '—' appears within the first ~12 words, return everything up to and
+      including that dash (e.g. 'and on that —').
+    - Otherwise return the first ~6 words.
+    - Returns None if the result would be empty.
+    """
+    if not text or not text.strip():
+        return None
+    words = text.strip().split()
+    dash_pos = text.find("—")
+    if dash_pos != -1:
+        # Check the dash is within the first ~12 words (i.e. roughly the opening phrase).
+        words_before_dash = text[:dash_pos].split()
+        if len(words_before_dash) <= 12:
+            bridge = text[:dash_pos + 1].strip()   # include the em-dash itself
+            return bridge if bridge else None
+    # No early em-dash — just take the first 6 words as the "opening" for tracking.
+    snippet = " ".join(words[:6])
+    return snippet if snippet else None
+
+
+class _MouthAgent(Agent):
+    """Voices the controller's current Directive in persona via the LLM (no canned text)."""
+
+    def __init__(self, *, controller: DirectiveController, mouth: ConversationPlane,
+                 brain: ControlPlane, collector: EventCollector,
+                 ladder: UnresponsiveLadder, started_at: float, state: dict[str, object],
+                 pose_question: Callable[[float], None], correlation_id: str,
+                 triage: TriagePlane) -> None:
+        super().__init__(instructions="")          # persona lives in the per-turn ctx, not here
+        self._controller = controller
+        self._mouth = mouth
+        self._brain = brain
+        self._collector = collector
+        self._ladder = ladder
+        self._started_at = started_at
+        self._state = state
+        self._pose_question = pose_question
+        self._correlation_id = correlation_id
+        self._turn_seq = 0
+        self._current_turn_ref = "t-0"              # INTRO/first-ASK live on t-0
+        self._last_candidate_text: str | None = None
+        self._transcript: list[tuple[str, str]] = []   # (role, text) window for the brain
+        self._brain_task: asyncio.Task | None = None   # in-flight confirm/decide (barge-in cancels)
+        self._spec_id: str | None = None               # id of the staged speculative pre-stage
+        self._result_transcript: list[TranscriptEntry] = []  # reliable result transcript
+        self._triage = triage
+        self._triage_task: asyncio.Task | None = None
+        self._pending_answer: list[str] = []     # candidate fragments in the current answer episode
+        self._last_filler: str | None = None      # triage just spoke -> mouth Pass-2 bridge
+        self._hold_count: int = 0                  # consecutive still-pending holds this episode
+        # per-turn delivery guards (reset at the top of on_user_turn_completed)
+        self._answer_delivered: bool = False       # brain delivered the question this turn
+        self._handled_log_only: bool = False       # dev disagreement-log: brain ran but stays mute
+        self._recent_fillers: deque[str] = deque(maxlen=4)  # fed to triage so it varies its opener
+        # the mouth's recent opening connectives -> fed back so it varies its bridge
+        self._recent_bridges: deque[str] = deque(maxlen=4)
+
+    def _t_ms(self) -> int:
+        return int((time.monotonic() - self._started_at) * 1000)
+
+    def prestage_speculative(self) -> None:
+        """Option C: while the candidate answers, stage a NON-voiced speculative directive for the
+        anticipated next turn so the controller's supersede/discard runs live (CMI-4). Best-effort.
+        """
+        if self._state.get("closing"):
+            return
+        anticipated = f"t-{self._turn_seq + 1}"
+        spec = build_speculative_directive(self._brain, anticipated_turn_ref=anticipated)
+        self._controller.stage(spec)
+        self._spec_id = spec.id
+        self._collector.record(
+            "directive.speculative_staged",
+            {"id": spec.id, "act": spec.act.value, "turn_ref": anticipated},
+            t_ms=self._t_ms(), wall_ms=_now_ms())
+
+    def cancel_brain(self) -> None:
+        """Barge-in / teardown: cancel the in-flight brain decide() Task cleanly (CMI-4)."""
+        task = self._brain_task
+        if task is not None and not task.done():
+            task.cancel()
+
+    def cancel_triage(self) -> None:
+        """Barge-in / HANDLED: cancel the in-flight triage Task cleanly."""
+        task = self._triage_task
+        if task is not None and not task.done():
+            task.cancel()
+
+    def _active_question_text(self) -> str | None:
+        """The active question for triage's completeness judgment = the mouth's REPEAT cache."""
+        return self._mouth.last_question
+
+    def _finish_answer_episode(self) -> None:
+        """A directive was delivered -> the answer is consumed; reset the accumulation episode."""
+        self._pending_answer.clear()
+        self._hold_count = 0
+        self._answer_delivered = True
+
+    def _say_filler(self, line: str) -> None:
+        """TO_BRAIN: speak the masking filler now; store it so Pass-2 continues from it."""
+        if self._answer_delivered:        # brain already delivered (rare race) -> no stray filler
+            return
+        self._last_filler = line
+        self._state["responding"] = True
+        self._result_transcript.append(                  # record what the candidate actually heard
+            TranscriptEntry(role="agent", text=line, timestamp_ms=self._t_ms()))
+        self.session.say(line, add_to_chat_ctx=False)   # fire-and-forget; question queues behind it
+
+    def _say_hold_cue(self, line: str) -> None:
+        """HANDLED still-pending: a continuation cue, NOT a question. §9: skip if an acoustic
+        hold-space cue fired within the cooldown (don't double-cue). When no cue actually fires,
+        clear `responding` so the silence watcher / unresponsive ladder is not left muted (the
+        turn set responding=True to mask reasoning; a suppressed cue would otherwise wedge it)."""
+        if self._answer_delivered:                   # brain already delivered -> no stray cue
+            self._state["responding"] = False
+            return
+        now = time.monotonic()
+        last = self._state.get("last_cue_at")
+        if isinstance(last, (int, float)) and (now - last) < settings.engine_v2_cue_cooldown_s:
+            self._state["responding"] = False        # cooldown-suppressed: nothing is playing
+            return
+        self._state["last_cue_at"] = now
+        self._state["responding"] = True
+        self._result_transcript.append(                  # record what the candidate actually heard
+            TranscriptEntry(role="agent", text=line, timestamp_ms=self._t_ms()))
+        self.session.say(line, add_to_chat_ctx=False)
+        # The candidate still owes an answer; re-arm the unresponsive ladder when this cue's TTS
+        # drains (agent_state -> 'listening' consumes pending_arm -> _pose_question), so a
+        # hold-then-silent candidate still reaches the 7s/15s/CLOSE escalation (HANDLED turns
+        # deliver no directive, so llm_node never sets pending_arm).
+        self._state["pending_arm"] = True
+
+    def _deliver_repeat(self, turn_ref: str, *, lead_in: str | None) -> None:
+        """HANDLED repeat: stage a REPEAT directive (mouth replays the cached last question) and
+        deliver via Pass-2; the triage lead-in ('Sure —') flows in as the filler."""
+        if self._answer_delivered:               # brain already delivered -> don't double-deliver
+            return
+        self._last_filler = lead_in
+        self._controller.stage(Directive(
+            id=f"rpt-{turn_ref}", turn_ref=turn_ref, act=DirectiveAct.REPEAT, say=None))
+        self._finish_answer_episode()
+        self._state["brain_pending"] = False
+        self.session.generate_reply()    # routes through llm_node -> mouth REPEAT (filler-aware)
 
     async def on_enter(self) -> None:
-        await self._orchestrator.on_enter(self)
+        # Deliver the deterministic opener: INTRO then ASK(first bank question) proactively (no
+        # candidate turn precedes them). Each generate_reply routes through llm_node, which voices
+        # the staged directive. No brain call before the first answer (D4).
+        intro, ask = self._brain.opener()
+        for d in (intro, ask):
+            self._controller.stage(d)
+            self._current_turn_ref = d.turn_ref           # both live on t-0
+            if d.say:
+                self._transcript.append(("agent", d.say))
+            await self.session.generate_reply()
 
     async def on_user_turn_completed(
-        self,
-        turn_ctx: Any,
-        new_message: Any,
+        self, turn_ctx: ChatContext, new_message: ChatMessage,
     ) -> None:
-        """Delegate to the orchestrator and return normally.
+        # Separate clocks (D3 / design §3): launch TRIAGE ∥ BRAIN at the same instant; never await.
+        # Triage gates the immediate voice (filler / hold / repeat); the brain gates the eventual
+        # question, delivered when it lands (StopResponse + done-callbacks). HANDLED cancels the
+        # speculatively-launched brain (accepted waste). Barge-in cancels both.
+        text = new_message.text_content or ""
+        self._last_candidate_text = text
+        self._transcript.append(("candidate", text))
+        if text.strip():
+            self._pending_answer.append(text)        # accumulate fragments for this answer episode
+            self._result_transcript.append(
+                TranscriptEntry(role="candidate", text=text, timestamp_ms=self._t_ms()))
+        word_count = len([w for w in text.split() if w])
+        backchannel = is_backchannel(text, min_words=settings.engine_v2_backchannel_min_words)
 
-        Returning normally (rather than raising ``StopResponse``) is what
-        keeps the framework's auto-append → ``conversation_item_added``
-        → ``chat_history`` capture chain alive. The duplicate-reply
-        problem this used to solve is now handled by the ``llm_node``
-        override below.
-        """
-        await self._orchestrator.on_user_turn_completed(
-            self, turn_ctx, new_message,
+        _now = time.monotonic()
+        _last_listen = self._state.get("last_listening_at")
+        pause_before_commit_ms = (int((_now - _last_listen) * 1000)
+                                  if isinstance(_last_listen, (int, float)) else None)
+        if should_yield(word_count=word_count, is_backchannel=backchannel):
+            self._ladder.on_candidate_responded()
+        label = classify_resumption(ResumptionSignals(
+            prior_utterance_complete=True, gap_ms=0, ai_prompt_fully_delivered=True,
+            word_count=word_count, is_backchannel=backchannel))
+        self._collector.record(
+            "turn.captured",
+            {"word_count": word_count, "is_backchannel": backchannel,
+             "resumption_label": label.value, "pause_before_commit_ms": pause_before_commit_ms},
+            t_ms=self._t_ms(), wall_ms=_now_ms())
+        log.info("engine.v2.turn_committed", word_count=word_count,
+                 pause_before_commit_ms=pause_before_commit_ms, resumption_label=label.value)
+
+        self._turn_seq += 1
+        turn_ref = f"t-{self._turn_seq}"
+        self._current_turn_ref = turn_ref
+        accumulated = " ".join(self._pending_answer).strip() or text
+
+        # reset per-turn delivery guards
+        self._answer_delivered = False
+        self._handled_log_only = False
+        self._state["responding"] = True
+        self._state["brain_pending"] = True          # mutes reflex cues for the reasoning window
+
+        # --- launch both tiers at the SAME instant (separate clocks; neither awaited) ---
+        self._triage_task = asyncio.create_task(self._triage.triage(
+            active_question=self._active_question_text(),
+            accumulated_answer=accumulated,
+            last_spoken_question=self._mouth.last_question,
+            recent_fillers=list(self._recent_fillers),
+            correlation_id=self._correlation_id))
+        self._brain_task = asyncio.create_task(self._brain.decide(
+            turn_ref=turn_ref, candidate_utterance=accumulated,
+            transcript_window=list(self._transcript), correlation_id=self._correlation_id))
+
+        def _on_triage_done(task: asyncio.Task) -> None:
+            if task.cancelled() or self._current_turn_ref != turn_ref:
+                return                               # barge-in / stale turn -> no-op
+            try:
+                d = task.result()
+            except Exception:                        # noqa: BLE001 — triage callback must not crash
+                log.warning("engine.v2.triage.callback_failed", exc_info=True)
+                return
+            self._collector.record(
+                "engine.v2.triage.decision",
+                {"kind": d.kind.value, "route": d.route.value, "answer_complete": d.answer_complete,
+                 "replay": d.replay_last_question, "spoken_line": d.spoken_line,
+                 "turn_ref": turn_ref},
+                t_ms=self._t_ms(), wall_ms=_now_ms())
+            if d.spoken_line:
+                self._recent_fillers.append(d.spoken_line)   # so the next turn varies its opener
+            still_pending = (d.kind is TriageKind.answering and not d.answer_complete)
+
+            if d.route is TriageRoute.handled and d.kind is TriageKind.repeat_request:
+                self.cancel_brain()
+                self._deliver_repeat(turn_ref, lead_in=d.spoken_line)
+                return
+
+            if d.route is TriageRoute.handled and still_pending:
+                self._hold_count += 1
+                if self._hold_count > settings.engine_triage_hold_cap:
+                    # hold cap reached -> force TO_BRAIN: keep the brain running, neutral filler,
+                    # the brain delivers on the FULL accumulated answer (design §4.4/§4.6).
+                    self._say_filler(d.spoken_line)
+                    return
+                # genuine hold: speak a continuation cue, accumulate, skip the brain this turn.
+                if settings.engine_v2_triage_brain_disagreement_log:
+                    self._handled_log_only = True    # let the brain finish only to log (dev §7)
+                else:
+                    self.cancel_brain()
+                self._say_hold_cue(d.spoken_line)
+                self._state["brain_pending"] = False
+                return
+
+            # route == to_brain (or any non-handled): masking filler, brain delivers the question.
+            self._say_filler(d.spoken_line)
+
+        def _on_brain_done(task: asyncio.Task) -> None:
+            if self._current_turn_ref != turn_ref:
+                return                               # stale: a newer turn owns _brain_task + flags
+            self._brain_task = None
+            if task.cancelled():                     # this turn's brain was cancelled (HANDLED/etc)
+                self._state["brain_pending"] = False
+                return
+            try:
+                directive, record = task.result()
+            except Exception:                        # noqa: BLE001 — brain callback must not crash
+                log.warning("engine.v2.brain.callback_failed", exc_info=True)
+                self._state["brain_pending"] = False
+                return
+            if self._handled_log_only:
+                # dev disagreement-log: triage HANDLED this turn; record the brain's would-be move
+                # but DO NOT speak it (never change what's spoken — design §7).
+                self._collector.record(
+                    "engine.v2.triage_brain_disagreement",
+                    {"turn_ref": turn_ref, "brain_act": directive.act.value},
+                    t_ms=self._t_ms(), wall_ms=_now_ms())
+                self._state["brain_pending"] = False
+                return
+            # supersede a still-staged speculative pre-stage (Option C / CMI-4); stage the directive
+            if self._spec_id is not None and self._controller.staged_id() == self._spec_id:
+                directive = directive.model_copy(update={"supersedes": self._spec_id})
+            self._spec_id = None
+            self._controller.stage(directive)
+            self._collector.record_decision(record, t_ms=self._t_ms(), wall_ms=_now_ms())
+            if directive.say:
+                self._transcript.append(("agent", directive.say))
+            if directive.is_terminal:
+                self._state["closing"] = True
+            self._finish_answer_episode()            # answer consumed -> reset the episode
+            self._state["brain_pending"] = False
+            self.session.generate_reply()            # mouth Pass-2 continues from the filler
+
+        self._triage_task.add_done_callback(_on_triage_done)
+        self._brain_task.add_done_callback(_on_brain_done)
+        raise StopResponse()                         # suppress the framework auto-reply (spike §1)
+
+    async def llm_node(self, chat_ctx, tools, model_settings):
+        directive = self._controller.current_for_turn(self._current_turn_ref)
+        if directive is None:
+            raise StopResponse()                       # nothing current (stale/discarded)
+        self._state["responding"] = True               # cleared by agent_state once playout ends
+        self._controller.mark_delivered(directive.id)
+        self._collector.record("directive.delivered",
+            {"id": directive.id, "act": directive.act.value, "turn_ref": directive.turn_ref,
+             "speculative": directive.speculative}, t_ms=self._t_ms(), wall_ms=_now_ms())
+        messages = self._mouth.build_turn_messages(
+            directive, candidate_utterance=self._last_candidate_text,
+            just_said_filler=self._last_filler,
+            recent_bridges=list(self._recent_bridges))
+        self._last_candidate_text = None               # consumed; not carried to the next turn
+        self._last_filler = None                       # consumed; one bridge per delivery
+        ctx = ChatContext.empty()
+        for m in messages:
+            ctx.add_message(role=m["role"], content=m["content"])
+        if directive.is_terminal:
+            self._state["closing"] = True
+        # Defer arming the unresponsive ladder until the agent actually FINISHES speaking
+        # this question (agent_state -> 'listening'), so the candidate gets the full patience
+        # window AFTER hearing it. INTRO is not a posed question; CLOSE is terminal.
+        if not directive.is_terminal and directive.act is not DirectiveAct.INTRO:
+            self._state["pending_arm"] = True
+        spoken_parts: list[str] = []
+        async for chunk in Agent.default.llm_node(self, ctx, tools, model_settings):
+            delta = getattr(getattr(chunk, "delta", None), "content", None)
+            if isinstance(delta, str):
+                spoken_parts.append(delta)
+            yield chunk
+        spoken = "".join(spoken_parts).strip()
+        if spoken:
+            self._result_transcript.append(
+                TranscriptEntry(role="agent", text=spoken, timestamp_ms=self._t_ms()))
+            # For question-bearing acts, record the leading connective so the next turn avoids it.
+            # LEXICAL slice for variety-tracking only — NOT intent/semantic classification (no ban).
+            if is_question_bearing(directive.act):
+                bridge = _leading_bridge(spoken)
+                if bridge:
+                    self._recent_bridges.append(bridge)
+        # NOTE: no _pose_question / aclose here. The ladder is armed by the agent_state
+        # 'listening' handler (after TTS playout); termination is M5 (CMI-1).
+
+
+async def run(
+    ctx: JobContext,
+    config: SessionConfig,
+    *,
+    tenant_id: uuid.UUID,
+    correlation_id: str,
+) -> None:
+    """v2 per-session run. M4: directive-injection mouth harness (scripted directives, no brain)."""
+    started_at = time.monotonic()
+    collector = EventCollector(
+        session_id=config.session_id,
+        tenant_id=str(tenant_id),
+        correlation_id=correlation_id,
+    )
+    collector.record(
+        "engine.v2.dispatched",
+        {"job_title": config.job_title, "question_count": len(config.stage.questions)},
+        t_ms=0, wall_ms=_now_ms(),
+    )
+
+    await ctx.connect()
+    await ctx.wait_for_participant()
+
+    keyterms = assemble_v2_keyterms(
+        candidate_first_name=config.candidate.name,
+        bank_keyterms=list(config.keyterms),
+    )
+    endpointing = build_endpointing_options(EndpointingSettings(
+        mode=ai_config.engine_v2_endpointing_mode,
+        min_delay=ai_config.engine_v2_endpointing_min_delay,
+        max_delay=ai_config.engine_v2_endpointing_max_delay,
+    ))
+    session = AgentSession(
+        stt=build_stt_plugin(keyterms=keyterms),
+        llm=build_mouth_llm_plugin(),                 # the mouth voices via the LLM node
+        tts=build_tts_plugin(),
+        vad=build_vad(),
+        user_away_timeout=None,                       # the manual ladder owns unresponsive behavior
+        turn_handling=TurnHandlingOptions(
+            turn_detection=build_turn_detector(
+                unlikely_threshold=ai_config.engine_v2_turn_detector_unlikely_threshold,
+            ),
+            preemptive_generation={"enabled": False},  # quality-before-latency lock
+            endpointing=endpointing,
+            interruption=build_interruption_options(),
+        ),
+    )
+
+    # --- legacy session metrics (kept; tts still flows here). CMI-3 authoritative source is below. ---
+    @session.on("metrics_collected")
+    def _on_metrics(ev: MetricsCollectedEvent) -> None:
+        # NOTE: in LK 1.5.9 this session-level event yields TTS audio.metrics only — NOT
+        # llm/eou latency. The CMI-3 latency source is the conversation_item_added handler.
+        m = ev.metrics
+        try:
+            payload = m.model_dump(exclude={"timestamp", "metadata"})
+        except Exception:  # noqa: BLE001
+            payload = {"raw": str(m)}
+        collector.record(f"audio.metrics.{m.type}", payload,
+                         t_ms=int((time.monotonic() - started_at) * 1000),
+                         wall_ms=_now_ms())
+
+    # --- CMI-3 (mouth half): per-turn latency from ChatMessage.metrics (the working signal) ---
+    @session.on("conversation_item_added")
+    def _on_item(ev: object) -> None:
+        item = getattr(ev, "item", None)
+        if not isinstance(item, ChatMessage):
+            return
+        m = item.metrics or {}
+        if item.role == "assistant" and m.get("llm_node_ttft") is not None:
+            collector.record(
+                "turn.latency.assistant",
+                {
+                    "llm_node_ttft": m.get("llm_node_ttft"),
+                    "tts_node_ttfb": m.get("tts_node_ttfb"),
+                    "e2e_latency": m.get("e2e_latency"),
+                },
+                t_ms=int((time.monotonic() - started_at) * 1000),
+                wall_ms=_now_ms(),
+            )
+        elif item.role == "user" and m.get("end_of_turn_delay") is not None:
+            collector.record(
+                "turn.latency.user",
+                {
+                    "end_of_turn_delay": m.get("end_of_turn_delay"),
+                    "transcription_delay": m.get("transcription_delay"),
+                },
+                t_ms=int((time.monotonic() - started_at) * 1000),
+                wall_ms=_now_ms(),
+            )
+
+    # --- behavioral layer: one silence timer ticks the pure pacer + ladder ---
+    ladder = UnresponsiveLadder(EouConfig(
+        prompt_1_s=ai_config.engine_v2_unresponsive_prompt_1_s,
+        prompt_2_s=ai_config.engine_v2_unresponsive_prompt_2_s,
+        max_no_responses=ai_config.engine_v2_unresponsive_max_no_responses,
+    ))
+    pacer = HoldSpacePacer(
+        enabled=ai_config.engine_v2_hold_space_enabled,
+        delay_s=ai_config.engine_v2_hold_space_delay_s,
+    )
+    state: dict[str, object] = {
+        "started_answering": False, "responding": False,
+        "closing": False, "silence_task": None,
+        "last_listening_at": None, "reflex": None, "reflex_task": None,
+        "pending_arm": False,
+        # True from turn-commit until the brain's directive is staged. The masking ack flips
+        # agent_state->listening (clearing `responding`) WHILE the brain still reasons, so
+        # `responding` alone doesn't cover the reasoning window — without this, the hold-space cue
+        # fires "take your time" at a candidate who's actually waiting on the AGENT (ec11e237).
+        "brain_pending": False,
+        "result_recorded": False,   # once-guard for _finalize_and_record
+        "close_initiated": False,   # once-guard for session.aclose() after terminal CLOSE
+        "last_cue_at": None,    # §9 cue-cooldown timestamp (set by triage hold + acoustic pacer)
+    }
+
+    mouth = ConversationPlane(
+        loader=PromptLoader(version=ai_config.engine_mouth_prompt_version),
+        persona_name=(ai_config.engine_mouth_persona_name or settings.engine_agent_name),
+        job_title=config.job_title,
+        role_summary=config.role_summary,   # for the INTRO brief (warm the candidate on the role)
+    )
+    triage = TriagePlane(
+        persona_name=(ai_config.engine_mouth_persona_name or settings.engine_agent_name),
+        job_title=config.job_title,
+    )
+    # The brain (ControlPlane) — not a script — sources every Directive in M5 (D3).
+    mandatory = [q.primary_signal for q in config.stage.questions
+                 if q.is_mandatory and q.primary_signal]
+    coverage = CoverageTracker(
+        signals=(list(config.signals)
+                 or [q.primary_signal for q in config.stage.questions if q.primary_signal]),
+        mandatory_signals=mandatory,
+        soft_probe_cap=2,
+    )
+    brain = ControlPlane(config=config, coverage=coverage)
+    controller = DirectiveController()
+
+    def _reflex(kind: str, fallback: str) -> str:
+        """Pick a persona-voiced reflex variant if pre-rendered, else the canned seed."""
+        variants = state.get("reflex")
+        pool = getattr(variants, kind, None) if variants is not None else None
+        return random.choice(pool) if pool else fallback
+
+    def _pose_question(at_s: float) -> None:
+        """Arm the ladder for a freshly-posed question and reset turn state."""
+        ladder.on_question_posed(at_s=at_s)
+        pacer.on_resume()
+        state["started_answering"] = False
+
+    async def _silence_watch() -> None:
+        """Tick the pacer (mid-answer) OR the ladder (pre-answer) while silent."""
+        while not state["closing"]:
+            await asyncio.sleep(0.5)
+            try:
+                if state["responding"] or state["closing"] or state["brain_pending"]:
+                    continue                          # mute all reflex cues while the brain reasons
+                now = time.monotonic()
+                if state["started_answering"]:
+                    # Incompleteness gate (M5 decision E / R3): LiveKit's
+                    # MultilingualModel does NOT expose a mid-pause "still-
+                    # extending" signal, so we use the delay-above-commit-
+                    # latency proxy. A COMPLETE answer commits via
+                    # on_user_turn_completed which sets state["responding"]=True
+                    # (typically within ~1-2s); that mutes this branch before
+                    # the cue delay (3.0s) elapses. Only a detector-held-open
+                    # INCOMPLETE pause — which the turn-detector holds up to
+                    # engine_v2_endpointing_max_delay (10s) — survives here.
+                    # The brain's HOLD directive (Task 6, fires at a committed
+                    # turn boundary) is a separate, complementary path.
+                    # v1 caveat: "never on a complete answer" is best-effort
+                    # with text-only detection; perfect needs the v2 audio
+                    # model. Validate on Task 10 talk-test.
+                    if pacer.cue_due(now_s=now):
+                        last_cue = state.get("last_cue_at")
+                        if (isinstance(last_cue, (int, float))
+                                and (now - last_cue) < settings.engine_v2_cue_cooldown_s):
+                            continue              # §9: skip — triage hold already cued
+                        pacer.mark_cued()
+                        state["last_cue_at"] = now
+                        log.info("engine.v2.holdspace",
+                                 t_ms=int((now - started_at) * 1000))
+                        state["responding"] = True
+                        try:
+                            await session.say(
+                                _reflex("hold_space", settings.engine_v2_hold_space_message),
+                                add_to_chat_ctx=False)
+                        finally:
+                            state["responding"] = False
+                    continue
+                action = ladder.action(now_s=now)
+                if action is LadderAction.NONE:
+                    continue
+                state["responding"] = True
+                try:
+                    if action is LadderAction.PROMPT_1:
+                        await session.say(
+                            _reflex("gentle_nudge", settings.engine_v2_unresponsive_message_1),
+                            add_to_chat_ctx=False)
+                    elif action is LadderAction.PROMPT_2:
+                        await session.say(
+                            _reflex("still_there", settings.engine_v2_unresponsive_message_2),
+                            add_to_chat_ctx=False)
+                        ladder.on_question_posed(at_s=now)
+                    elif action is LadderAction.CLOSE_UNRESPONSIVE:
+                        state["closing"] = True
+                        collector.record("engine.v2.candidate_unresponsive", {},
+                                         t_ms=int((now - started_at) * 1000),
+                                         wall_ms=_now_ms())
+                        await session.say(
+                            _reflex("still_there", settings.engine_v2_unresponsive_message_2),
+                            add_to_chat_ctx=False)
+                        state["close_initiated"] = True
+                        await session.aclose()
+                finally:
+                    state["responding"] = False
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                log.warning("engine.v2.silence_watch.tick_failed", exc_info=True)
+                state["responding"] = False
+
+    # Forward-declared so the run()-level user-speaking handler can reach the agent's Option-C
+    # pre-stage + barge-in cancel; assigned below at the original construction site.
+    agent: _MouthAgent | None = None
+
+    @session.on("user_state_changed")
+    def _on_user_state(ev: UserStateChangedEvent) -> None:
+        now = time.monotonic()
+        if ev.new_state == "speaking":
+            state["started_answering"] = True
+            pacer.on_resume()
+            if agent is not None:
+                agent.cancel_brain()         # barge-in: cancel any in-flight brain decision (CMI-4)
+                agent.cancel_triage()        # …and the in-flight triage (design §7)
+                agent.prestage_speculative()  # Option C: stage the non-voiced speculative pre-stage
+        elif ev.new_state == "listening":
+            if state["started_answering"]:
+                pacer.on_pause_started(at_s=now)
+            state["last_listening_at"] = now
+        collector.record("audio.user.state",
+                         {"old_state": ev.old_state, "new_state": ev.new_state},
+                         t_ms=int((now - started_at) * 1000), wall_ms=_now_ms())
+
+    @session.on("agent_state_changed")
+    def _on_agent_state(ev: object) -> None:
+        ns = str(getattr(ev, "new_state", ""))
+        if ns in ("thinking", "speaking"):
+            state["responding"] = True
+        elif ns in ("listening", "idle"):
+            state["responding"] = False
+            # The agent just finished speaking. If that was a posed question, arm the
+            # unresponsive ladder NOW (patient window starts after the candidate hears it).
+            if ns == "listening" and state.get("pending_arm"):
+                state["pending_arm"] = False
+                log.info("engine.v2.ladder_armed",
+                         t_ms=int((time.monotonic() - started_at) * 1000))
+                _pose_question(time.monotonic())
+            # Terminal CLOSE has fully drained (agent back to 'listening'): close the session
+            # so the shutdown callback fires and _finalize_and_record can await the DB write.
+            if ns == "listening" and state.get("closing") and not state.get("close_initiated"):
+                state["close_initiated"] = True
+                asyncio.create_task(session.aclose())
+
+    # ---------------------------------------------------------------------------
+    # _finalize_and_record: async shutdown hook (CMI-1 result path).
+    # Runs once via ctx.add_shutdown_callback — async so DB writes can be awaited.
+    # The M4 sync @session.on("close") handler stays for the audio-summary log;
+    # the DB write lives here (sync close cannot await).
+    # knockout_failures=[] for M5: the brain RECORDs a knockout via the audit
+    # turn.decision event; mapping it into the typed KnockoutFailure list is a
+    # small follow-up not required for M5 acceptance ("records, never rejects").
+    # ---------------------------------------------------------------------------
+    async def _finalize_and_record() -> None:
+        if state.get("result_recorded"):
+            return
+        state["result_recorded"] = True
+        state["closing"] = True
+        env = collector.envelope(closed_at=_now_iso())
+        envelope_ref: str | None = None
+        if settings.engine_event_log_sink == "local":
+            try:
+                envelope_ref = LocalFileSink(
+                    directory=settings.engine_event_log_dir
+                ).write(env)
+            except Exception:  # noqa: BLE001 — never let envelope write block result recording
+                log.warning("engine.v2.envelope_write_failed", exc_info=True)
+        summary = compute_audio_summary(
+            events=[e.model_dump(mode="json") for e in env.events],
+            config_snapshot={
+                "endpointing_mode": ai_config.engine_v2_endpointing_mode,
+                "endpointing_min_delay": ai_config.engine_v2_endpointing_min_delay,
+                "endpointing_max_delay": ai_config.engine_v2_endpointing_max_delay,
+                "turn_detector_unlikely_threshold": (
+                    ai_config.engine_v2_turn_detector_unlikely_threshold
+                ),
+            },
         )
+        result = build_v2_session_result(
+            config=config,
+            coverage=coverage,
+            transcript=list(agent._result_transcript) if agent is not None else [],
+            envelope=env,
+            audio_summary=summary,
+            knockout_failures=[],
+            duration_seconds=(time.monotonic() - started_at),
+            completed_at=_now_iso(),
+            audit_envelope_ref=envelope_ref,
+        )
+        try:
+            async with get_bypass_session() as db:
+                await record_session_result(
+                    db,
+                    session_id=uuid.UUID(config.session_id),
+                    tenant_id=tenant_id,
+                    result=result,
+                    correlation_id=correlation_id,
+                )
+                await db.commit()
+            log.info(
+                "engine.v2.result.persisted",
+                session_id=config.session_id,
+                questions_asked=result.questions_asked,
+            )
+        except Exception:  # noqa: BLE001 — log + swallow; teardown must complete
+            log.error("engine.v2.result.persist_failed", exc_info=True)
 
-    async def llm_node(
-        self,
-        chat_ctx: llm.ChatContext,
-        tools: list[llm.FunctionTool],
-        model_settings: ModelSettings,
-    ) -> AsyncIterable[llm.ChatChunk]:
-        """No-op LLM node: the orchestrator already delivered the reply.
+    # Register the async shutdown callback (LiveKit 1.5.x — see ctx.add_shutdown_callback docs).
+    # The framework awaits all shutdown callbacks before terminating the job process (default 10s
+    # timeout, configurable via shutdown_process_timeout in WorkerOptions).
+    ctx.add_shutdown_callback(_finalize_and_record)
 
-        The orchestrator's ``session.say()`` (called inside
-        ``on_user_turn_completed``) is the source of truth for the
-        agent's structured response. With ``StopResponse`` removed, the
-        framework would otherwise run its default LLM node and stream a
-        second, free-form reply on top of ours. Yielding nothing makes
-        the downstream TTS node a no-op while keeping the framework's
-        chat-context auto-append path active (so ``new_message`` lands
-        in LiveKit's ``chat_history``).
+    agent = _MouthAgent(controller=controller, mouth=mouth, brain=brain, collector=collector,
+                        ladder=ladder, started_at=started_at, state=state,
+                        pose_question=_pose_question, correlation_id=correlation_id,
+                        triage=triage)
 
-        ``return; yield`` is the canonical Python idiom for an empty
-        async generator — the ``yield`` keyword turns the coroutine into
-        a generator function; the ``return`` exits before producing any
-        value.
-        """
-        return
-        yield  # makes this an async generator (unreachable)
+    nc_filter = build_noise_cancellation()
+    await session.start(
+        agent=agent, room=ctx.room,
+        room_options=room_io.RoomOptions(
+            audio_input=room_io.AudioInputOptions(noise_cancellation=nc_filter),
+            delete_room_on_close=True,
+        ),
+    )
+    # INTRO + first ASK are delivered by _MouthAgent.on_enter (no explicit say() block here).
+
+    # Pre-render persona reflex cues in the background (HOLD/REASSURE decision); seeds = canned.
+    async def _prime_reflex() -> None:
+        state["reflex"] = await mouth.prerender_reflex_variants(
+            hold_seed=settings.engine_v2_hold_space_message,
+            nudge_seed=settings.engine_v2_unresponsive_message_1,
+            still_seed=settings.engine_v2_unresponsive_message_2,
+            ack_seed=list(settings.engine_v2_ack_messages))
+    state["reflex_task"] = asyncio.create_task(_prime_reflex())
+
+    state["silence_task"] = asyncio.create_task(_silence_watch())
+
+    @session.on("close")
+    def _on_close(_ev: object) -> None:
+        state["closing"] = True
+        if agent is not None:
+            agent.cancel_brain()
+        for key in ("silence_task", "reflex_task"):
+            task = state.get(key)
+            if isinstance(task, asyncio.Task):
+                task.cancel()
+        env = collector.envelope()
+        summary = compute_audio_summary(
+            events=[e.model_dump(mode="json") for e in env.events],
+            config_snapshot={
+                "endpointing_mode": ai_config.engine_v2_endpointing_mode,
+                "endpointing_min_delay": ai_config.engine_v2_endpointing_min_delay,
+                "endpointing_max_delay": ai_config.engine_v2_endpointing_max_delay,
+                "turn_detector_unlikely_threshold":
+                    ai_config.engine_v2_turn_detector_unlikely_threshold,
+            },
+        )
+        # CMI-3: the talk-test reads these numbers (incl. the `perceived` block) from the logs.
+        log.info("engine.v2.audio_tuning_summary", **summary)
 
 
 @server.rtc_session(agent_name=settings.engine_agent_name)
 async def entrypoint(ctx: JobContext) -> None:
-    """Per-session entrypoint."""
+    """Per-session entrypoint. Parses dispatch metadata, binds the log context,
+    then runs the engine; any pre-run crash is funneled to the failure handler."""
     metadata = json.loads(ctx.job.metadata or "{}")
-
     session_id_str = metadata["session_id"]
     tenant_id_str = metadata["tenant_id"]
     correlation_id = metadata.get("correlation_id", session_id_str)
@@ -264,7 +967,7 @@ async def entrypoint(ctx: JobContext) -> None:
             tenant_uuid=tenant_uuid,
             correlation_id=correlation_id,
         )
-        raise  # preserves LiveKit's existing "job crashed" log
+        raise  # preserves LiveKit's "job crashed" log
 
 
 async def _run_entrypoint(
@@ -273,32 +976,11 @@ async def _run_entrypoint(
     tenant_uuid: uuid.UUID,
     correlation_id: str,
 ) -> None:
-    """The body of the per-session entrypoint.
-
-    Extracted from `entrypoint()` so Phase 2.2 can wrap the call site
-    with a try/except. The decorator-level @server.rtc_session is kept
-    thin so the failure handler's blanket-except sits in its own clearly-
-    named function rather than inline under the LiveKit decorator.
-    Pure code motion — no behavior change inside.
-
-    Caller (entrypoint) must have already called
-    structlog.contextvars.bind_contextvars() — this helper relies on
-    the bound context for every log line below.
-    """
-    # Re-establish the string forms that the existing inline code uses
-    # (session_id, tenant_id_str). This avoids having to rename every
-    # internal reference. session_uuid / tenant_uuid (typed) remain in
-    # scope and are preferred for any call that accepts uuid.UUID.
-    session_id = str(session_uuid)
-    tenant_id_str = str(tenant_uuid)
-
+    """Fetch the SessionConfig and run the engine (unconditional — single engine)."""
     async with get_bypass_session() as db:
         session_config = await build_session_config(
-            db,
-            session_id=session_uuid,
-            tenant_id=tenant_uuid,
+            db, session_id=session_uuid, tenant_id=tenant_uuid,
         )
-        tenant_settings = await get_tenant_settings(db, tenant_uuid)
     log.info(
         "engine.config.fetched",
         question_count=len(session_config.stage.questions),
@@ -306,860 +988,12 @@ async def _run_entrypoint(
         candidate_name=session_config.candidate.name,
         job_title=session_config.job_title,
     )
-
-    # --- Interview Engine v2 cutover branch (additive; v1 path below unchanged) ---
-    # The new engine owns its own connect/turn-loop, so we branch before the legacy
-    # ctx.connect(). Selection resolved in build_session_config
-    # (job.interview_engine_version or the global default). Default 'v1' => fall through.
-    # Imported through the v2 public API: should_run_v2 is pure; `run` resolves lazily
-    # (PEP-562 __getattr__) so livekit loads only when v2 actually runs.
-    from app.modules.interview_engine_v2 import run as run_v2, should_run_v2
-
-    if should_run_v2(session_config):
-        log.info("engine.v2.selected")
-        await run_v2(
-            ctx,
-            session_config,
-            tenant_id=tenant_uuid,
-            correlation_id=correlation_id,
-        )
-        return
-    # --- end v2 branch ---
-
-    # Bug 2 fix: connect to the room and wait for the candidate BEFORE
-    # constructing the orchestrator / starting the session. Without this,
-    # `session.start` fires `on_enter` while `room.local_participant` is
-    # still pre-connect, and `_publish_attributes` crashes with
-    # "cannot access local participant before connecting" — which kills
-    # the proactive first-question greeting.
-    #
-    # The documented pattern (https://docs.livekit.io/agents/server/job/):
-    #   await ctx.connect()
-    #   participant = await ctx.wait_for_participant()
-    #   await session.start(...)
-    await ctx.connect()
-    participant = await ctx.wait_for_participant()
-    log.info(
-        "engine.participant.joined",
-        participant_identity=getattr(participant, "identity", None),
-    )
-
-    # --- StateEngine: ledger + queue + claims + lifecycle ---
-    state_engine = StateEngine(
-        session_config=session_config,
-        config=StateEngineConfig(
-            claims_pool_max=settings.engine_claims_pool_max,
-            # Tenant-level knockout policy override (close_polite by
-            # default since migration 0030; record_only kept for tenants
-            # that want to keep collecting data after a hard-requirement
-            # failure).
-            knockout_policy=tenant_settings.engine_knockout_policy,
-        ),
-    )
-    persona_name = resolve_persona_name(
-        tenant_settings=tenant_settings, settings=settings,
-    )
-    state_engine.set_persona_name(persona_name)
-
-    # --- Judge + Speaker: load prompts ---
-    # Judge keeps its single system prompt at construction time. Speaker
-    # composes its prompt per-call from engine/speaker/_preamble +
-    # engine/speaker/<instruction_kind>; per-call hashes flow into each
-    # speaker.call audit event. The session-level envelope captures the
-    # preamble hash under task_prompt_hashes["speaker_preamble"] as the
-    # stable proxy for "this session ran on the vN speaker prompt set".
-    #
-    # Version selection: ENGINE_JUDGE_PROMPT_VERSION (default v2) and
-    # ENGINE_SPEAKER_PROMPT_VERSION (default v2). Rollback: set to v1
-    # and restart the engine container — v1 files remain in repo as the
-    # fallback path.
-    judge_loader = PromptLoader(version=settings.engine_judge_prompt_version)
-    try:
-        judge_prompt = judge_loader.get("engine/judge.system")
-    except FileNotFoundError:
-        judge_prompt = "(engine/judge.system prompt not yet authored)"
-
-    judge_hash = "sha256:" + hashlib.sha256(judge_prompt.encode("utf-8")).hexdigest()
-
-    speaker_loader = PromptLoader(version=settings.engine_speaker_prompt_version)
-    try:
-        speaker_preamble_body = speaker_loader.get("engine/speaker/_preamble")
-    except FileNotFoundError:
-        speaker_preamble_body = "(engine/speaker/_preamble prompt not yet authored)"
-    speaker_preamble_hash = "sha256:" + hashlib.sha256(
-        speaker_preamble_body.encode("utf-8"),
-    ).hexdigest()
-
-    openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
-
-    judge_service = JudgeService(
-        openai_client=openai_client,
-        model=settings.engine_judge_model,
-        system_prompt=judge_prompt,
-        system_prompt_hash=judge_hash,
-        next_pending_question_resolver=state_engine.next_pending_question,
-        prompt_version=settings.engine_judge_prompt_version,
-        total_budget_ms=settings.engine_judge_total_budget_ms,
-        retry_wait_ms=settings.engine_judge_retry_wait_ms,
-    )
-    speaker_service = SpeakerService(
-        openai_client=openai_client,
-        model=settings.engine_speaker_model,
-        loader=speaker_loader,
-    )
-
-    attr_pub = AttributePublisher(room=ctx.room)
-
-    event_sink: EventLogSink | None = build_sink_from_settings()
-    event_collector = EventCollector(
-        session_id=session_id,
-        tenant_id=tenant_id_str,
+    await run(
+        ctx,
+        session_config,
+        tenant_id=tenant_uuid,
         correlation_id=correlation_id,
-        # Controller prompt hash is no longer the placeholder system
-        # prompt; the orchestrator is the controller now. We keep the
-        # field stable in the envelope by hashing the judge prompt as a
-        # proxy for the controller (judge is the controller's brain).
-        controller_prompt_hash=judge_hash,
-        task_prompt_hashes={
-            "judge": judge_hash,
-            # Speaker now composes prompts per-call (preamble + per-action
-            # body). The preamble hash is the stable session-level proxy;
-            # per-call body hashes flow into individual speaker.call events.
-            "speaker_preamble": speaker_preamble_hash,
-        },
-        model_versions={
-            "llm": ai_config.interview_llm_model,
-            # Prefix with provider so the audit envelope distinguishes
-            # sarvam/saaras:v3 from deepgram/nova-3 cleanly. Same pattern
-            # for TTS: sarvam/bulbul:v3 vs openai/gpt-4o-mini-tts vs
-            # cartesia/sonic-2.
-            "stt": f"{ai_config.interview_stt_provider}/{ai_config.interview_stt_model}",
-            "tts": f"{ai_config.interview_tts_provider}/{ai_config.interview_tts_model}",
-            "judge": settings.engine_judge_model,
-            "speaker": settings.engine_speaker_model,
-            "turn_detector_unlikely_threshold": (
-                f"{ai_config.interview_turn_detector_unlikely_threshold}"
-                if ai_config.interview_turn_detector_unlikely_threshold is not None
-                else "null"
-            ),
-            "noise_cancellation": ai_config.interview_noise_cancellation,
-            "nc_enhancement_level": f"{ai_config.interview_nc_enhancement_level}",
-            "vad_provider": "ai_coustics",
-        },
-        redaction_mode=settings.engine_event_log_redaction,
     )
-    log.info(
-        "engine.event_log.opened",
-        sink=settings.engine_event_log_sink,
-        redaction=settings.engine_event_log_redaction,
-    )
-
-    tts_plugin = build_tts_plugin()
-
-    orchestrator = InterviewOrchestrator(
-        session_config=session_config,
-        tenant_settings=tenant_settings,
-        state_engine=state_engine,
-        judge=judge_service,
-        speaker=speaker_service,
-        attr_publisher=attr_pub,
-        event_collector=event_collector,
-        correlation_id=correlation_id,
-        config=OrchestratorConfig(
-            checkpoint_turns=settings.engine_checkpoint_turns,
-            checkpoint_seconds=settings.engine_checkpoint_seconds,
-            session_ended_message=settings.engine_session_ended_message,
-            continuation_enabled=settings.engine_continuation_enabled,
-            continuation_min_word_count=(
-                settings.engine_continuation_min_word_count
-            ),
-            continuation_consecutive_abort_cap=(
-                settings.engine_continuation_consecutive_abort_cap
-            ),
-        ),
-        tenant_id=str(tenant_uuid),
-    )
-
-    agent = StructuredInterviewAgent(
-        orchestrator=orchestrator,
-        instructions="(see Speaker prompt — agent has no top-level instructions)",
-    )
-
-    stt_plugin, keyterm_extraction = build_stt_plugin_for_session(
-        session_config=session_config,
-    )
-    event_collector.append(
-        kind=AUDIO_STT_KEYTERMS_APPLIED,
-        payload=STTKeytermsAppliedPayload(
-            provider=ai_config.interview_stt_provider,
-            count=len(keyterm_extraction.terms),
-            terms=keyterm_extraction.terms,
-            sources=keyterm_extraction.sources,
-        ).model_dump(mode="json"),
-        wall_ms=int(time.time() * 1000),
-    )
-
-    session = AgentSession(
-        stt=stt_plugin,
-        llm=build_llm_plugin(),
-        tts=tts_plugin,
-        vad=build_vad(),
-        turn_handling=TurnHandlingOptions(
-            turn_detection=build_turn_detector(),
-            # Disabled: the structured agent drives every turn through
-            # Judge → State → Speaker. Framework-level preemption would
-            # only race the orchestrator.
-            preemptive_generation={"enabled": False},
-            endpointing={
-                "mode": settings.engine_endpointing_mode,
-                "min_delay": settings.engine_endpointing_min_delay,
-                "max_delay": settings.engine_endpointing_max_delay,
-            },
-            interruption=build_interruption_options(),
-        ),
-    )
-
-    _wire_session_observability(
-        session,
-        collector=event_collector,
-        log_verbose_content=settings.engine_log_user_transcripts,
-        log_audio_events=settings.engine_log_audio_events,
-    )
-
-    _wire_close_handler(
-        session,
-        agent,
-        orchestrator=orchestrator,
-        tenant_uuid=tenant_uuid,
-        correlation_id=correlation_id,
-        collector=event_collector,
-        sink=event_sink,
-    )
-    _wire_participant_disconnect(ctx, agent)
-
-    nc_filter = build_noise_cancellation()
-    await session.start(
-        agent=agent,
-        room=ctx.room,
-        room_options=room_io.RoomOptions(
-            audio_input=room_io.AudioInputOptions(
-                noise_cancellation=nc_filter,
-            ),
-            # When the agent ends the interview, delete the room so the
-            # candidate is disconnected immediately (DisconnectReason.ROOM_DELETED)
-            # rather than being left alone in the room until they manually exit.
-            # The deletion happens at session-end (after drain), so the closing
-            # line plays fully before the candidate is removed.
-            delete_room_on_close=True,
-        ),
-    )
-
-
-def _wire_session_observability(
-    session: AgentSession,
-    *,
-    collector: EventCollector,
-    log_verbose_content: bool,
-    log_audio_events: bool,
-) -> None:
-    """Attach EventCollector + structlog listeners. PII gating preserved.
-
-    The orchestrator owns the structured-engine transcript (it captures
-    candidate utterances on-turn and agent utterances after Speaker
-    completes), so the conversation_item_added handler no longer
-    rebuilds a transcript list — it only writes to the audit envelope.
-    """
-    state: dict[str, float | None] = {
-        "t0_monotonic": None,
-        "last_usage_emit_at": None,
-    }
-
-    def _ts(ev_created_at: float) -> dict[str, int]:
-        now = time.monotonic()
-        if state["t0_monotonic"] is None:
-            state["t0_monotonic"] = now
-        elapsed_ms = int((now - state["t0_monotonic"]) * 1000)
-        return {
-            "elapsed_ms": elapsed_ms,
-            "wall_ms": int(ev_created_at * 1000),
-        }
-
-    def _emit(kind: str, payload: dict[str, object], ev_created_at: float) -> None:
-        wall_ms = int(ev_created_at * 1000)
-        collector.append(kind=kind, payload=dict(payload), wall_ms=wall_ms)
-        if log_audio_events:
-            log.info(kind, **payload, **_ts(ev_created_at))
-
-    @session.on("user_state_changed")
-    def _on_user_state(ev: UserStateChangedEvent) -> None:
-        # Audit-only: every user-state transition lands in the audit
-        # envelope. The orchestrator no longer mirrors any of these
-        # (the post-Judge resumption gate that used to consume
-        # listening→speaking transitions was deleted in Task 12).
-        _emit(
-            "audio.user.state",
-            {"old_state": ev.old_state, "new_state": ev.new_state},
-            ev.created_at,
-        )
-
-    @session.on("agent_state_changed")
-    def _on_agent_state(ev: AgentStateChangedEvent) -> None:
-        _emit(
-            "audio.agent.state",
-            {"old_state": ev.old_state, "new_state": ev.new_state},
-            ev.created_at,
-        )
-
-    @session.on("user_input_transcribed")
-    def _on_user_transcript(ev: UserInputTranscribedEvent) -> None:
-        payload: dict[str, object] = {
-            "is_final": ev.is_final,
-            "transcript_chars": len(ev.transcript),
-            "language": str(ev.language) if ev.language else None,
-            "speaker_id": ev.speaker_id,
-        }
-        if log_verbose_content:
-            payload["transcript"] = ev.transcript
-        _emit("audio.stt.transcribed", payload, ev.created_at)
-
-    @session.on("metrics_collected")
-    def _on_metrics(ev: MetricsCollectedEvent) -> None:
-        m = ev.metrics
-        try:
-            payload = m.model_dump(exclude={"timestamp", "metadata"})
-        except Exception:  # noqa: BLE001
-            payload = {"raw": str(m)}
-        _emit(f"audio.metrics.{m.type}", payload, ev.created_at)
-
-    @session.on("conversation_item_added")
-    def _on_conversation_item(ev: ConversationItemAddedEvent) -> None:
-        item = ev.item
-        role = getattr(item, "role", None) or getattr(item, "type", None)
-        content_text = getattr(item, "text_content", None)
-        if callable(content_text):
-            try:
-                content_text = content_text()
-            except Exception:  # noqa: BLE001
-                content_text = None
-        payload: dict[str, object] = {
-            "role": role,
-            "item_type": getattr(item, "type", None),
-        }
-        if isinstance(content_text, str):
-            payload["content_chars"] = len(content_text)
-            if log_verbose_content:
-                payload["content"] = content_text
-        _emit("llm.message.added", payload, ev.created_at)
-
-    @session.on("function_tools_executed")
-    def _on_tools_executed(ev: FunctionToolsExecutedEvent) -> None:
-        for call, output in ev.zipped():
-            payload: dict[str, object] = {
-                "tool_name": call.name,
-                "tool_call_id": getattr(call, "call_id", None),
-                "has_output": output is not None,
-                "output_is_error": (
-                    bool(getattr(output, "is_error", False)) if output else None
-                ),
-            }
-            raw_args = getattr(call, "arguments", None)
-            arg_keys: list[str] = []
-            if isinstance(raw_args, dict):
-                arg_keys = list(raw_args.keys())
-            elif isinstance(raw_args, str) and raw_args.strip():
-                try:
-                    parsed = json.loads(raw_args)
-                except (ValueError, TypeError):
-                    parsed = None
-                if isinstance(parsed, dict):
-                    arg_keys = list(parsed.keys())
-            payload["argument_keys"] = arg_keys
-            if log_verbose_content:
-                payload["arguments"] = raw_args
-                payload["output"] = (
-                    getattr(output, "output", None) if output else None
-                )
-            _emit("llm.tool.executed", payload, ev.created_at)
-
-    @session.on("agent_false_interruption")
-    def _on_false_interruption(ev: AgentFalseInterruptionEvent) -> None:
-        _emit("audio.interruption.false", {"resumed": ev.resumed}, ev.created_at)
-
-    @session.on("overlapping_speech")
-    def _on_overlap(ev: OverlappingSpeechEvent) -> None:
-        # detected_at is the canonical timestamp on OverlappingSpeechEvent per LK
-        # docs (/reference/agents/events/). Fall back to time.time() defensively
-        # if the SDK ever omits the field.
-        ev_created = getattr(ev, "detected_at", None) or time.time()
-        _emit(
-            "audio.overlap",
-            {
-                "is_interruption": ev.is_interruption,
-                "probability": getattr(ev, "probability", None),
-                "detection_delay": getattr(ev, "detection_delay", None),
-            },
-            ev_created,
-        )
-
-    usage_emit_interval_s = 30.0
-
-    @session.on("session_usage_updated")
-    def _on_usage(ev: SessionUsageUpdatedEvent) -> None:
-        last_at = state.get("last_usage_emit_at")
-        if last_at is not None and (ev.created_at - last_at) < usage_emit_interval_s:
-            return
-        state["last_usage_emit_at"] = ev.created_at
-        try:
-            usage = ev.usage.model_dump()
-        except Exception:  # noqa: BLE001
-            usage = {"raw": str(ev.usage)}
-        _emit("session.usage", usage, ev.created_at)
-
-    @session.on("speech_created")
-    def _on_speech_created(ev: SpeechCreatedEvent) -> None:
-        _emit(
-            "audio.speech.created",
-            {"source": ev.source, "user_initiated": ev.user_initiated},
-            ev.created_at,
-        )
-
-    @session.on("error")
-    def _on_error(ev: ErrorEvent) -> None:
-        payload = {
-            "source": type(ev.source).__name__,
-            "error": str(ev.error),
-            "error_type": type(ev.error).__name__,
-        }
-        log.error("audio.pipeline.error", **payload, **_ts(ev.created_at))
-        collector.append(
-            kind="audio.pipeline.error",
-            payload=payload,
-            wall_ms=int(ev.created_at * 1000),
-        )
-
-
-def _wire_close_handler(
-    session: AgentSession,
-    agent: StructuredInterviewAgent,
-    *,
-    orchestrator: InterviewOrchestrator,
-    tenant_uuid: uuid.UUID,
-    correlation_id: str,
-    collector: EventCollector,
-    sink: EventLogSink | None,
-) -> None:
-    _bg_tasks: set[asyncio.Task[None]] = set()
-
-    @session.on("close")
-    def _on_close(ev: CloseEvent) -> None:
-        task = asyncio.create_task(
-            _handle_close(
-                ev,
-                agent,
-                orchestrator=orchestrator,
-                tenant_uuid=tenant_uuid,
-                correlation_id=correlation_id,
-                collector=collector,
-                sink=sink,
-            )
-        )
-        _bg_tasks.add(task)
-        task.add_done_callback(_bg_tasks.discard)
-
-
-def _percentile_stats(values: list[int]) -> dict[str, int]:
-    """Compute p50/p95/max/n stats for an int list (true median for even n)."""
-    if not values:
-        return {"p50": 0, "p95": 0, "max": 0, "n": 0}
-    sorted_values = sorted(values)
-    n = len(sorted_values)
-    if n % 2 == 0:
-        p50 = (sorted_values[n // 2 - 1] + sorted_values[n // 2]) // 2
-    else:
-        p50 = sorted_values[n // 2]
-    p95 = sorted_values[min(n - 1, int(n * 0.95))]
-    return {"p50": p50, "p95": p95, "max": sorted_values[-1], "n": n}
-
-
-def _wire_participant_disconnect(
-    ctx: JobContext,
-    agent: StructuredInterviewAgent,
-) -> None:
-    """Mark the session as candidate_disconnected when the candidate leaves.
-
-    The CloseEvent reason path already covers normal disconnects, but
-    setting the outcome here makes the labeling deterministic when
-    close fires due to participant disconnect rather than another path.
-    """
-
-    def _on_participant_disconnected(participant: object) -> None:
-        identity = getattr(participant, "identity", "<unknown>")
-        reason = getattr(participant, "disconnect_reason", None)
-        log.info(
-            "session.participant_disconnected",
-            participant_identity=identity,
-            disconnect_reason=str(reason) if reason is not None else None,
-            already_terminating=agent._end_outcome is not None,
-        )
-        if agent._end_outcome is None:
-            agent._end_outcome = "candidate_disconnected"
-
-    ctx.room.on("participant_disconnected", _on_participant_disconnected)
-
-
-def _compute_audio_tuning_summary(
-    *,
-    events: list[dict[str, object]],
-    config_snapshot: dict[str, object],
-) -> dict[str, object]:
-    """Aggregate the EventCollector's events into a tuning summary.
-
-    Pure function — no side effects, no logging. Output shape matches the
-    `audio.tuning_summary` event documented in the audio-pipeline spec
-    (§7.1).
-
-    Pause inputs come from `audio.user.state` transitions:
-    listening→speaking deltas are between-utterance pauses (within a turn).
-    For initial implementation, between_turn_ms uses the same
-    listening→speaking deltas as a coarse proxy. A more refined
-    derivation lands when we have real session data to validate against.
-    """
-    # Pauses (between-utterance proxy)
-    pause_ms: list[int] = []
-    last_listening_at: int | None = None
-    for ev in events:
-        if ev.get("kind") != "audio.user.state":
-            continue
-        payload = ev.get("payload", {})
-        wall_ms = int(ev.get("wall_ms") or 0)
-        if isinstance(payload, dict) and payload.get("new_state") == "listening":
-            last_listening_at = wall_ms
-        elif isinstance(payload, dict) and payload.get("new_state") == "speaking" and last_listening_at is not None:
-            pause_ms.append(wall_ms - last_listening_at)
-            last_listening_at = None
-
-    pauses_block = {
-        "between_utterance_ms": _percentile_stats(pause_ms),
-        "between_turn_ms": _percentile_stats(pause_ms),  # proxy until refined
-    }
-
-    # Interruptions — derived from OverlappingSpeechEvent.is_interruption (the
-    # adaptive classifier's per-event decision) plus AgentFalseInterruptionEvent
-    # (post-hoc recovery when the agent yielded but no transcript followed).
-    overlap_events = [ev for ev in events if ev.get("kind") == "audio.overlap"]
-    true_count = sum(
-        1 for ev in overlap_events
-        if (ev.get("payload") or {}).get("is_interruption") is True
-    )
-    ignored_count = sum(
-        1 for ev in overlap_events
-        if (ev.get("payload") or {}).get("is_interruption") is False
-    )
-    false_recovered = sum(
-        1 for ev in events if ev.get("kind") == "audio.interruption.false"
-    )
-    interruptions_block = {
-        "total": len(overlap_events),
-        "true": true_count,
-        "ignored_as_backchannel": ignored_count,
-        "false_recovered": false_recovered,
-        "agent_yielded": true_count,
-    }
-
-    # Latency — pull per-component percentiles from the metrics events.
-    # Each event's payload is the LiveKit SDK's metrics object (already
-    # in seconds), so multiply by 1000 to get ms before percentile-ing.
-    def _extract_ms(events_filter: list[dict[str, object]], field: str) -> list[int]:
-        out: list[int] = []
-        for ev in events_filter:
-            payload = ev.get("payload") or {}
-            if not isinstance(payload, dict):
-                continue
-            val = payload.get(field)
-            if isinstance(val, (int, float)) and val > 0:
-                out.append(int(val * 1000))
-        return out
-
-    eou_events = [ev for ev in events if ev.get("kind") == "audio.metrics.eou_metrics"]
-    llm_events = [ev for ev in events if ev.get("kind") == "audio.metrics.llm_metrics"]
-    tts_events = [ev for ev in events if ev.get("kind") == "audio.metrics.tts_metrics"]
-
-    latency_block = {
-        "end_of_utterance_delay_ms": _percentile_stats(_extract_ms(eou_events, "end_of_utterance_delay")),
-        "transcription_delay_ms": _percentile_stats(_extract_ms(eou_events, "transcription_delay")),
-        "llm_ttft_ms": _percentile_stats(_extract_ms(llm_events, "ttft")),
-        "tts_ttfb_ms": _percentile_stats(_extract_ms(tts_events, "ttfb")),
-    }
-
-    # Conversational-continuation aggregate (2026-05-17 design). Simple
-    # counter rollup so per-session forensic tallies land alongside the
-    # audio-tuning data instead of in a separate envelope. Healthy
-    # session: 0–2 aborts. >5 aborts in 15min → investigate.
-    continuation_block = {
-        "aborts_total": sum(
-            1 for ev in events if ev.get("kind") == "turn.aborted_for_continuation"
-        ),
-        "stitches_total": sum(
-            1 for ev in events if ev.get("kind") == "turn.stitched_continuation"
-        ),
-        "loop_guard_fires": sum(
-            1 for ev in events if ev.get("kind") == "turn.loop_guard_fired"
-        ),
-        "commit_point_reached_count": sum(
-            1 for ev in events if ev.get("kind") == "state.snapshot.committed"
-        ),
-    }
-
-    return {
-        "pauses": pauses_block,
-        "interruptions": interruptions_block,
-        "latency": latency_block,
-        "continuation": continuation_block,
-        "config_snapshot": dict(config_snapshot),
-    }
-
-
-async def _handle_close(
-    ev: CloseEvent,
-    agent: StructuredInterviewAgent,
-    *,
-    orchestrator: InterviewOrchestrator,
-    tenant_uuid: uuid.UUID,
-    correlation_id: str,
-    collector: EventCollector,
-    sink: EventLogSink | None,
-) -> None:
-    """Emit session.close, persist a SessionResult via the orchestrator,
-    publish outcome, finalize the audit envelope.
-    """
-    # Resolve the canonical session outcome BEFORE emitting the
-    # session.close audit event. The orchestrator's resolver consults
-    # ``state_engine.lifecycle.last_outcome`` (set by the structured
-    # agent on knockout / completed / candidate_ended / time_expired)
-    # and falls back to mapping the LiveKit-reported close reason. This
-    # is what guarantees the audit envelope's ``controller_end_outcome``
-    # and the participant ``session_outcome`` attribute agree on the
-    # same value — previously the audit payload was reading
-    # ``agent._end_outcome``, a local mirror that nothing populated for
-    # structured-close paths, so every knockout/completed close
-    # serialized as ``controller_end_outcome: null``.
-    resolved_outcome: SessionOutcome = orchestrator.resolve_close_outcome(  # type: ignore[assignment]
-        close_reason=ev.reason.value if ev.reason is not None else None,
-    )
-    if ev.reason == CloseReason.ERROR:
-        # ERROR has highest priority. resolve_close_outcome already
-        # respects this, but mirror the override here so future readers
-        # don't have to chase the resolver's source to verify.
-        resolved_outcome = "error"
-
-    # Mirror the resolved outcome onto the agent so any later code path
-    # reading ``agent._end_outcome`` (e.g. forensic logs, retries) sees
-    # the same value the audit envelope and frontend received. The
-    # resolver is the source of truth; this assignment is bookkeeping.
-    agent._end_outcome = resolved_outcome
-
-    log.info(
-        "session.close",
-        reason=ev.reason.value,
-        has_error=bool(ev.error),
-        already_persisted=agent._persisted,
-        controller_end_outcome=resolved_outcome,
-    )
-
-    collector.append(
-        kind="session.close",
-        payload={
-            "reason": ev.reason.value,
-            "persisted": agent._persisted,
-            "has_error": bool(ev.error),
-            "controller_end_outcome": resolved_outcome,
-        },
-        wall_ms=int(time.time() * 1000),
-    )
-
-    config_snapshot = {
-        "noise_cancellation": ai_config.interview_noise_cancellation,
-        "nc_enhancement_level": ai_config.interview_nc_enhancement_level,
-        "unlikely_threshold": ai_config.interview_turn_detector_unlikely_threshold,
-        "endpointing_max_delay": settings.engine_endpointing_max_delay,
-        "vad_provider": "ai_coustics",
-    }
-    audio_summary = _compute_audio_tuning_summary(
-        events=[
-            {"kind": e.kind, "payload": e.payload, "wall_ms": e.wall_ms}
-            for e in collector.events
-        ],
-        config_snapshot=config_snapshot,
-    )
-    collector.append(
-        kind="audio.tuning_summary",
-        payload=audio_summary,
-        wall_ms=int(time.time() * 1000),
-    )
-    agent._audio_tuning_summary = audio_summary
-
-    # Outcome resolution already happened above (orchestrator.resolve_close_outcome).
-    # ``resolved_outcome`` is the single source of truth for the rest of
-    # this handler — both the SessionResult persisted by the orchestrator
-    # and the participant attribute publish read it.
-    outcome: SessionOutcome = resolved_outcome
-
-    if not agent._persisted:
-        try:
-            await _persist_session_result(
-                agent,
-                orchestrator=orchestrator,
-                tenant_uuid=tenant_uuid,
-                correlation_id=correlation_id,
-                audio_summary=audio_summary,
-                collector=collector,
-                sink=sink,
-            )
-        except Exception as exc:  # noqa: BLE001
-            log.error(
-                "session.close.persist_failed",
-                error=str(exc),
-                error_type=type(exc).__name__,
-            )
-
-    await _publish_session_outcome(agent, outcome)
-    await _finalize_event_log(
-        agent, reason="close_handler", collector=collector, sink=sink,
-    )
-
-
-async def _persist_session_result(
-    agent: StructuredInterviewAgent,
-    *,
-    orchestrator: InterviewOrchestrator,
-    tenant_uuid: uuid.UUID,
-    correlation_id: str,
-    audio_summary: dict[str, object],
-    collector: EventCollector,
-    sink: EventLogSink | None,
-) -> None:
-    """Build SessionResult via the orchestrator, finalize the audit
-    envelope, attach its sink path/uri, then persist.
-
-    Order matters: we close the audit envelope before recording the
-    SessionResult so the persisted row can carry an
-    ``audit_envelope_ref`` that points at the durable artifact.
-    """
-    if agent._persisted:
-        return
-
-    result: SessionResult = await orchestrator.on_close(
-        agent, audio_tuning_summary=audio_summary,
-    )
-
-    envelope_ref: str | None = None
-    if not agent._envelope_written and sink is not None:
-        agent._envelope_written = True
-        closed_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-        try:
-            envelope = collector.close(closed_at=closed_at)
-        except Exception as exc:  # noqa: BLE001
-            log.error(
-                "interview_engine.event_log.envelope_validation_failed",
-                reason="persist_session_result",
-                error=str(exc),
-                error_type=type(exc).__name__,
-            )
-        else:
-            try:
-                envelope_ref = await asyncio.to_thread(sink.write, envelope)
-                log.info(
-                    "interview_engine.event_log.written",
-                    reason="persist_session_result",
-                    target=envelope_ref,
-                )
-            except Exception as exc:  # noqa: BLE001
-                log.error(
-                    "interview_engine.event_log.sink_write_failed",
-                    reason="persist_session_result",
-                    error=str(exc),
-                    error_type=type(exc).__name__,
-                )
-
-    if envelope_ref is not None:
-        result = result.model_copy(update={"audit_envelope_ref": envelope_ref})
-
-    async with get_bypass_session() as db:
-        await record_session_result(
-            db,
-            session_id=uuid.UUID(result.session_id),
-            tenant_id=tenant_uuid,
-            result=result,
-            correlation_id=correlation_id,
-        )
-        await db.commit()
-    agent._persisted = True
-    log.info(
-        "interview_engine.result.persisted",
-        session_id=str(result.session_id),
-    )
-
-
-async def _publish_session_outcome(
-    agent: StructuredInterviewAgent,
-    outcome: SessionOutcome,
-) -> None:
-    try:
-        room = agent.session.room_io.room
-        await room.local_participant.set_attributes(
-            {"session_outcome": outcome},
-        )
-    except Exception as exc:  # noqa: BLE001
-        log.warning(
-            "interview_engine.outcome.publish_failed",
-            outcome=outcome,
-            error=str(exc),
-        )
-
-
-async def _finalize_event_log(
-    agent: StructuredInterviewAgent,
-    *,
-    reason: str,
-    collector: EventCollector,
-    sink: EventLogSink | None,
-) -> None:
-    """Best-effort fallback writer.
-
-    The happy-path flow finalizes the envelope inside
-    :func:`_persist_session_result` so the SessionResult can carry an
-    ``audit_envelope_ref``. If persistence raised before that point — or
-    sink was None — this fallback ensures the envelope still lands on
-    disk / S3 when possible.
-    """
-    if agent._envelope_written or sink is None:
-        return
-    agent._envelope_written = True
-    closed_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-    try:
-        envelope = collector.close(closed_at=closed_at)
-    except Exception as exc:  # noqa: BLE001
-        log.error(
-            "interview_engine.event_log.envelope_validation_failed",
-            reason=reason,
-            error=str(exc),
-            error_type=type(exc).__name__,
-        )
-        return
-    try:
-        target = await asyncio.to_thread(sink.write, envelope)
-        log.info(
-            "interview_engine.event_log.written",
-            reason=reason,
-            target=target,
-        )
-    except Exception as exc:  # noqa: BLE001
-        log.error(
-            "interview_engine.event_log.sink_write_failed",
-            reason=reason,
-            error=str(exc),
-            error_type=type(exc).__name__,
-        )
 
 
 async def _handle_entrypoint_failure(
@@ -1170,20 +1004,13 @@ async def _handle_entrypoint_failure(
     tenant_uuid: uuid.UUID,
     correlation_id: str,
 ) -> None:
-    """Single failure handler for every pre-session.start crash path.
+    """Single failure handler for every pre-`run` crash path.
 
-    Order:
-      1. Classify exception -> ErrorCode.
-      2. Transition session row to state='error' (durable truth).
-      3. Best-effort publish session_outcome='error' to the LK room.
-
-    DB transition is first so the candidate's HTTP fallback poll wins
-    even if the room/attribute publish fails. Each step is independently
-    guarded — a DB failure does NOT short-circuit the attribute publish,
-    and neither one re-raises (the caller already preserves the original
-    exception via bare `raise` after this returns). Mirrors the
-    `_handle_close` resilience pattern.
-    """
+    Order: classify -> transition session row to state='error' (durable truth) ->
+    best-effort publish session_outcome='error' to the room. DB transition is first
+    so the candidate's HTTP fallback poll wins even if the room publish fails. Each
+    step is independently guarded and neither re-raises (the caller re-raises the
+    original exception)."""
     error_code = classify_engine_exception(exc)
     log.error(
         "engine.entrypoint.failed",
@@ -1191,7 +1018,6 @@ async def _handle_entrypoint_failure(
         error_type=type(exc).__name__,
         error=str(exc),
     )
-
     try:
         async with get_bypass_session() as db:
             await transition_to_error(
@@ -1209,18 +1035,12 @@ async def _handle_entrypoint_failure(
             error=str(inner),
             error_type=type(inner).__name__,
         )
-
     await _best_effort_publish_outcome_attribute(ctx)
 
 
 async def _best_effort_publish_outcome_attribute(ctx: JobContext) -> None:
-    """Publish session_outcome='error' to the LK room if at all possible.
-
-    Tries connecting first — the failure may have happened before
-    ctx.connect() ran. Swallows every exception (logged at warning):
-    if we can't publish the attribute, the candidate's HTTP-poll
-    fallback path will surface the failure.
-    """
+    """Publish session_outcome='error' to the room if possible (connecting first,
+    since the failure may predate ctx.connect()). Swallows every exception."""
     try:
         if not ctx.room.isconnected():
             await ctx.connect()

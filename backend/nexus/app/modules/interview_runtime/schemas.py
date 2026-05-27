@@ -271,7 +271,7 @@ class SessionConfig(BaseModel):
             "Which engine core runs this session. Resolved in build_session_config "
             "as `job.interview_engine_version or ai_config.interview_engine_default_version`. "
             "The engine entrypoint (interview_engine/agent.py) branches on this: "
-            "'v1' = legacy orchestrator, 'v2' = interview_engine_v2. Default 'v1' so "
+            "'v1' = legacy orchestrator, 'v2' = interview_engine. Default 'v1' so "
             "any caller that omits it (or a pre-migration job row) stays on the legacy path."
         ),
     )
@@ -441,7 +441,7 @@ class SessionResult(BaseModel):
         default=None,
         description=(
             "v2-native per-signal final coverage state (signal_value -> "
-            "none|partial|sufficient|failed), produced by interview_engine_v2 CoverageTracker "
+            "none|partial|sufficient|failed), produced by interview_engine CoverageTracker "
             "at session close. None for v1 sessions (which fill signal_ledger). Richer v2 "
             "per-turn detail lives in the audit envelope via audit_envelope_ref."
         ),

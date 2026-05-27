@@ -46,7 +46,6 @@ KNOWN_DOMAIN_MODULES = frozenset(
         "auth",
         "candidates",
         "interview_engine",
-        "interview_engine_v2",
         "interview_runtime",
         "jd",
         "notifications",

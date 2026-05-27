@@ -6,7 +6,7 @@ that interview_runtime (the engine↔nexus wire contract) does NOT depend on the
 engine package. The old paths re-export from here (thin shims) so v1's internal
 importers stay byte-stable; when v1 is deleted in M6 the shims go with it and this
 module stands alone. Pure pydantic — no imports from interview_engine. v2's own
-coverage model lives in interview_engine_v2/coverage.py; these are the v1-emitted
+coverage model lives in interview_engine/coverage.py; these are the v1-emitted
 shapes the report builder consumes, kept optional on SessionResult.
 """
 from __future__ import annotations

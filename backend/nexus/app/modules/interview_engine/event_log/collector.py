@@ -1,119 +1,55 @@
-"""EventCollector — in-memory aggregator for the per-session envelope.
-
-Lives for the duration of a single AgentSession. Receives append()
-calls from agent.py listeners; produces a final EventLogEnvelope on
-close().
-
-Time math: t_ms is monotonic ms since the FIRST appended event (so the
-first event always has t_ms=0). wall_ms is what the caller passed in
-(LiveKit event objects expose .created_at as a unix-epoch float; agent.py
-multiplies by 1000 before handing it here).
-
-Redaction: applied at append time, not on close, so the in-memory list
-never holds content the envelope-level mode promises to drop.
-"""
+"""Accumulates v2 events + decision records and builds the per-session envelope."""
 
 from __future__ import annotations
 
-import time
-from datetime import datetime, timezone
-from typing import Any, Literal
+from datetime import UTC, datetime
+from typing import Any
 
+from app.modules.interview_engine.audit import TurnDecisionRecord
 from app.modules.interview_engine.event_log.envelope import (
     EventLogEnvelope,
     EventLogEvent,
 )
-from app.modules.interview_engine.event_log.redaction import redact_payload
 
-_RedactionMode = Literal["metadata", "full"]
+
+def _now_iso() -> str:
+    return datetime.now(UTC).isoformat()
 
 
 class EventCollector:
-    """In-memory aggregator. NOT thread-safe — agent.py runs on a single
-    asyncio event loop and only that loop appends to the collector."""
-
     def __init__(
         self,
         *,
         session_id: str,
         tenant_id: str,
         correlation_id: str,
-        controller_prompt_hash: str,
-        model_versions: dict[str, str],
-        redaction_mode: _RedactionMode,
-        task_prompt_hashes: dict[str, str] | None = None,
+        redaction_mode: str = "metadata",
     ) -> None:
         self._session_id = session_id
         self._tenant_id = tenant_id
         self._correlation_id = correlation_id
-        self._controller_prompt_hash = controller_prompt_hash
-        self._task_prompt_hashes = dict(task_prompt_hashes or {})
-        self._model_versions = dict(model_versions)
-        self._redaction_mode: _RedactionMode = redaction_mode
+        self._redaction_mode = redaction_mode
+        self._started_at = _now_iso()
         self._events: list[EventLogEvent] = []
-        # Set on first append.
-        self._t0_monotonic: float | None = None
-        self._first_wall_ms: int | None = None
 
-    def append(self, *, kind: str, payload: dict[str, Any], wall_ms: int) -> None:
-        """Record one event. Redaction is applied here, not on close."""
-        now = time.monotonic()
-        if self._t0_monotonic is None:
-            self._t0_monotonic = now
-            self._first_wall_ms = wall_ms
-        t_ms = int((now - self._t0_monotonic) * 1000)
-        redacted = redact_payload(kind, payload, mode=self._redaction_mode)
+    def record(self, kind: str, payload: dict[str, Any], *, t_ms: int, wall_ms: int) -> None:
         self._events.append(
             EventLogEvent(
-                t_ms=t_ms,
-                wall_ms=wall_ms,
-                kind=kind,
-                payload=redacted,
-                redaction=self._redaction_mode,
+                t_ms=t_ms, wall_ms=wall_ms, kind=kind, payload=payload,
+                redaction=self._redaction_mode,  # type: ignore[arg-type]
             )
         )
 
-    @property
-    def events(self) -> list[EventLogEvent]:
-        """All events appended so far, in declaration order. Read-only view (returns a shallow copy)."""
-        return list(self._events)
+    def record_decision(self, record: TurnDecisionRecord, *, t_ms: int, wall_ms: int) -> None:
+        self.record("turn.decision", record.model_dump(mode="json"), t_ms=t_ms, wall_ms=wall_ms)
 
-    def events_of_kind(self, kind: str) -> list[EventLogEvent]:
-        """Return all currently-collected events with ``kind == <kind>``.
-
-        Test helper. Not part of the production data path."""
-        return [e for e in self._events if e.kind == kind]
-
-    def set_task_prompt_hash(self, *, question_id: str, sha: str) -> None:
-        """Phase 2 will populate this per QuestionTask construction.
-
-        Phase 1 leaves it empty — the field exists in the envelope so
-        the schema is stable across phases."""
-        self._task_prompt_hashes[question_id] = sha
-
-    def close(self, *, closed_at: str) -> EventLogEnvelope:
-        """Build and return the final envelope.
-
-        ``started_at`` is the first appended event's wall time (UTC ISO-8601);
-        when no events were appended, falls back to ``closed_at``.
-        """
-        if self._first_wall_ms is None:
-            started_at = closed_at
-        else:
-            started_at = (
-                datetime.fromtimestamp(self._first_wall_ms / 1000, tz=timezone.utc)
-                .isoformat()
-                .replace("+00:00", "Z")
-            )
+    def envelope(self, *, closed_at: str | None = None) -> EventLogEnvelope:
         return EventLogEnvelope(
             session_id=self._session_id,
             tenant_id=self._tenant_id,
             correlation_id=self._correlation_id,
-            started_at=started_at,
+            started_at=self._started_at,
             closed_at=closed_at,
-            controller_prompt_hash=self._controller_prompt_hash,
-            task_prompt_hashes=self._task_prompt_hashes,
-            model_versions=self._model_versions,
-            redaction_mode=self._redaction_mode,
+            redaction_mode=self._redaction_mode,  # type: ignore[arg-type]
             events=list(self._events),
         )

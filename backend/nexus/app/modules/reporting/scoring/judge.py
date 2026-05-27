@@ -12,7 +12,7 @@ so ``reasoning={"effort": ...}`` is supported — function tools +
 reasoning_effort is explicitly rejected by gpt-5.4 on /v1/chat/completions
 with HTTP 400.
 
-Pattern mirrors ``app/modules/interview_engine_v2/brain/service.py``
+Pattern mirrors ``app/modules/interview_engine/brain/service.py``
 except the Responses API is used instead of chat.completions:
 - ``get_raw_openai_client()`` imported at module level (mockable in tests).
 - ``response.output_parsed`` for parsed model extraction.
