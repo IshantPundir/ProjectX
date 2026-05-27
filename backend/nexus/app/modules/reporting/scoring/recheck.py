@@ -69,9 +69,17 @@ async def recheck_signal(
     if parsed is None:
         log.warning("reporting.recheck.refusal", signal=signal_def.value,
                     correlation_id=correlation_id)
-        return SignalRecheckOut(evidence_quotes=[], justification="Model did not return a parse.",
-                                grade="null", state=engine_state if engine_state != "none" else "partial",  # type: ignore[arg-type]
-                                overridden=False, override_reason=None)
+        fallback_state = (  # type: ignore[assignment]
+            engine_state if engine_state != "none" else "partial"
+        )
+        return SignalRecheckOut(
+            evidence_quotes=[],
+            justification="Model did not return a parse.",
+            grade="null",
+            state=fallback_state,
+            overridden=False,
+            override_reason=None,
+        )
 
     grounded, _ungrounded = ground_quotes(parsed.evidence_quotes, transcript_block)
     return parsed.model_copy(update={"evidence_quotes": grounded})

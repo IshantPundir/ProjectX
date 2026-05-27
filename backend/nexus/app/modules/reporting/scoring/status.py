@@ -1,7 +1,7 @@
 """Deterministic per-question status badge (pure)."""
 from __future__ import annotations
 
-from app.modules.reporting.scoring.types import StatusBadge, ScoredUnit
+from app.modules.reporting.scoring.types import ScoredUnit, StatusBadge
 
 _TONE: dict[str, str] = {
     "passed": "ok", "partial": "caution", "failed_required": "danger",

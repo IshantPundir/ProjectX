@@ -155,7 +155,14 @@ async def _seed_report(
     *,
     status: str = "ready",
 ) -> SessionReport:
-    """Seed a minimal SessionReport attached to an existing session."""
+    """Seed a minimal SessionReport attached to an existing session.
+
+    Uses the new PDF-shaped JSONB layout that _row_to_read and persist_report
+    both expect:
+      dimension_scores  → scores dict (ScoreOut-shaped per key)
+      summary           → {decision, quick_summary, strengths, concerns, methodology}
+      question_scorecards / signal_scorecards → lists (may be empty)
+    """
     report = SessionReport(
         tenant_id=tenant_id,
         session_id=session_row.id,
@@ -168,23 +175,51 @@ async def _seed_report(
         overall_score=85,
         overall_coverage=0.9,
         overall_confidence="high",
+        # ScoreOut-shaped entries keyed by dimension name
         dimension_scores={
-            "technical": {
-                "name": "technical",
+            "overall": {
                 "score": 85,
-                "coverage": 0.9,
+                "tier_label": "Strong",
+                "tone": "ok",
                 "confidence": "high",
-                "note": None,
-            }
+                "coverage": 0.9,
+            },
+            "technical": {
+                "score": 85,
+                "tier_label": "Strong",
+                "tone": "ok",
+                "confidence": "high",
+                "coverage": 0.9,
+            },
+            "behavioral": {
+                "score": 80,
+                "tier_label": "Strong",
+                "tone": "ok",
+                "confidence": "medium",
+                "coverage": 0.8,
+            },
+            "communication": {
+                "score": 70,
+                "tier_label": "Meets Bar",
+                "tone": "ok",
+                "confidence": "medium",
+                "coverage": 1.0,
+            },
         },
         knockout_results=[],
         signal_scorecards=[],
         question_scorecards=[],
+        # summary houses the prose-layer fields that ReportRead unpacks
         summary={
-            "headline": "Strong candidate",
-            "strengths": ["clarity"],
-            "gaps": [],
-            "rationale": "Good overall.",
+            "decision": {
+                "headline": "Strong candidate — recommend advance.",
+                "why_positive": {"title": "Clear communicator", "body": "Answered well."},
+                "why_negative": {"title": "", "body": ""},
+            },
+            "quick_summary": "Candidate performed well overall.",
+            "strengths": [],
+            "concerns": [],
+            "methodology": {"note": "", "charity_flags": []},
         },
         generated_at=datetime.now(UTC),
     )

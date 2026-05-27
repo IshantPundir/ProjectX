@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.modules.reporting.scoring.constants import (
-    ADVANCE_THRESHOLD, MIN_COVERAGE_FOR_ADVANCE, REJECT_THRESHOLD, STATE_POINTS,
+    ADVANCE_THRESHOLD,
+    MIN_COVERAGE_FOR_ADVANCE,
+    REJECT_THRESHOLD,
+    STATE_POINTS,
 )
 from app.modules.reporting.scoring.engine_signals import KnockoutClose
 from app.modules.reporting.scoring.types import Confidence, CovState, KnockoutStatus, Verdict
@@ -42,7 +45,9 @@ def _confidence(coverage: float) -> Confidence:
     return "low"
 
 
-def score_dimension(name: str, signals: list[ScoredSignal], types: frozenset[str]) -> DimensionScore:
+def score_dimension(
+    name: str, signals: list[ScoredSignal], types: frozenset[str]
+) -> DimensionScore:
     members = [s for s in signals if s.type in types]
     total_w = sum(s.weight for s in members)
     assessed = [s for s in members if s.score is not None]
