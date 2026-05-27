@@ -1,77 +1,56 @@
 import { ApiError, apiFetch } from './client'
 
 // --- Enums (mirror app/modules/reporting/scoring/types.py) ---
-export type Verdict = 'advance' | 'borderline' | 'reject'
+export type Verdict = 'advance' | 'borderline' | 'reject'        // enum unchanged; UI-relabeled
 export type Confidence = 'high' | 'medium' | 'low'
-export type Opportunity = 'full' | 'partial' | 'none'
-export type SignalState = 'excellent' | 'meets_bar' | 'below_bar' | 'not_assessed'
-export type KnockoutStatus = 'passed' | 'failed' | 'insufficient'
-export type QuestionLevel = 'below_bar' | 'meets_bar' | 'excellent' | 'not_assessed'
+export type Severity = 'deal_breaker' | 'major' | 'moderate'
+export type StatusBadge =
+  | 'passed' | 'partial' | 'failed_required'
+  | 'not_demonstrated' | 'not_attempted' | 'not_fully_assessed'
 export type HumanDecisionValue = 'advance' | 'reject' | 'hold'
 
 // --- Response shapes (mirror reporting/schemas.py::ReportRead) ---
-export interface EvidenceOut {
-  quote: string
-  timestamp_ms: number
-  question_id: string
-  grounded: boolean
+export interface WhyColumn { title: string; body: string }
+export interface DecisionOut { headline: string; why_positive: WhyColumn; why_negative: WhyColumn }
+export interface ScoreOut {
+  score: number | null
+  tier_label: string
+  tone: string
+  confidence: Confidence
+  coverage: number
 }
-
-export interface SignalScorecard {
-  value: string
+export interface StrengthOut { title: string; detail: string }
+export interface ConcernOut { title: string; detail: string; severity: Severity }
+export interface QuestionOut {
+  seq: number
+  question_id: string
+  title: string
+  status_badge: StatusBadge
+  status_tone: string
+  question_text: string
+  candidate_quote: string
+  our_read: string
+}
+export interface MethodologyOut { note: string; charity_flags: string[] }
+export interface SignalAssessmentOut {
+  signal: string
   type: string
   weight: number
   knockout: boolean
-  state: SignalState
+  priority: string
+  engine_state: string
+  final_state: string
+  grade: string | null
   score: number | null
-  opportunity: Opportunity | null
-  evidence: EvidenceOut[]
-  covered_by: string[]
-}
-
-export interface DimensionScoreOut {
-  name: string
-  score: number | null
-  coverage: number
-  confidence: Confidence
-  note: string | null
-}
-
-export interface KnockoutResultOut {
-  signal: string
-  status: KnockoutStatus
-  reason: string
-  evidence: EvidenceOut[]
-}
-
-export interface QuestionScorecard {
-  question_id: string
-  question_text: string
-  level: QuestionLevel
-  evidence: EvidenceOut[]
-  red_flags_hit: string[]
-  probes_fired: number
-  opportunity: Opportunity | null
-}
-
-export interface SummaryOut {
-  headline: string
-  strengths: string[]
-  gaps: string[]
-  rationale: string
+  evidence: string[]
+  overridden: boolean
+  override_reason: string | null
 }
 
 export interface ScoringManifest {
   scorer_model: string | null
   reasoning_effort: string | null
-  verbosity: string | null
   prompt_version: string | null
-  prompt_cache_key: string | null
-  scorer_code_version: string | null
-  bank_id: string | null
-  signal_snapshot_id: string | null
-  n_samples: number | null
-  cache_hit_rate: number | null
   evidence_grounding_summary: Record<string, unknown> | null
   generated_at: string | null
   correlation_id: string | null
@@ -90,11 +69,14 @@ export interface ReportRead {
   overall_score: number | null
   overall_coverage: number
   overall_confidence: Confidence
-  dimension_scores: Record<string, DimensionScoreOut>
-  knockout_results: KnockoutResultOut[]
-  signal_scorecards: SignalScorecard[]
-  question_scorecards: QuestionScorecard[]
-  summary: SummaryOut
+  decision: DecisionOut
+  scores: Record<string, ScoreOut>
+  quick_summary: string
+  strengths: StrengthOut[]
+  concerns: ConcernOut[]
+  questions: QuestionOut[]
+  methodology: MethodologyOut
+  signal_assessments: SignalAssessmentOut[]
   id: string | null
   session_id: string | null
   status: 'pending' | 'generating' | 'ready' | 'failed'

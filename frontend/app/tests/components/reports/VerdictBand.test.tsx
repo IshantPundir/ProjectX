@@ -5,7 +5,7 @@ import { VerdictBand, VerdictChip } from '@/components/dashboard/reports/Verdict
 describe('VerdictBand', () => {
   it('renders the verdict label', () => {
     render(<VerdictBand verdict="reject" />)
-    expect(screen.getByText('Reject')).toBeInTheDocument()
+    expect(screen.getByText('Not Recommended')).toBeInTheDocument()
   })
   it('borderline uses the human (lavender) ink token', () => {
     render(<VerdictBand verdict="borderline" />)
@@ -17,6 +17,6 @@ describe('VerdictBand', () => {
 describe('VerdictChip', () => {
   it('renders a compact uppercase chip', () => {
     render(<VerdictChip verdict="advance" />)
-    expect(screen.getByText('ADVANCE')).toBeInTheDocument()
+    expect(screen.getByText('RECOMMENDED')).toBeInTheDocument()
   })
 })
