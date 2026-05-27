@@ -30,6 +30,7 @@ from app.modules.reporting.scoring.aggregate import (
 )
 from app.modules.reporting.scoring.constants import (
     BEHAVIORAL_TYPES,
+    FACTUAL_QUESTION_KINDS,
     TECHNICAL_TYPES,
     tier_label,
 )
@@ -82,6 +83,20 @@ def _triage_kind_by_question(envelope: dict) -> dict[str, str]:
     return out
 
 
+def _is_factual_gate_signal(signal_value: str, questions: list[dict]) -> bool:
+    """True if every bank question covering this signal is a factual gate
+    (experience_check / compliance_binary). Such gates are answered correctly
+    by a brief, clear response; the live engine already judged them, and the
+    rubric's depth anchors (employer/role/date detail) are not what the engine
+    probed for — so the post-session re-check would unfairly downgrade them.
+    We trust the engine's state for these and only re-check substantive signals.
+    """
+    covering = [q for q in questions if signal_value in q.get("signal_values", [])]
+    return bool(covering) and all(
+        q.get("question_kind") in FACTUAL_QUESTION_KINDS for q in covering
+    )
+
+
 def _narrative_ground_truth(*, job_questions, scored, verdict, overall, tech, beh,
                             comm_score, knockout_close) -> str:
     return json.dumps({
@@ -127,7 +142,11 @@ async def build_report(*, transcript, envelope, coverage_summary, questions,
     engine_states = build_engine_states(coverage_summary, signal_defs)
     knockout_close = detect_knockout_close(envelope)
 
-    reached = [d for d in signal_defs if engine_states[d.value] != "none"]
+    reached = [
+        d for d in signal_defs
+        if engine_states[d.value] != "none"
+        and not _is_factual_gate_signal(d.value, questions)
+    ]
     q_by_signal: dict[str, dict] = {}
     for q in questions:
         for sv in q.get("signal_values", []):

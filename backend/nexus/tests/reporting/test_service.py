@@ -131,3 +131,44 @@ async def test_build_report_knockout_close_is_reject():
             questions=_questions(), signal_metadata=_signal_metadata(), correlation_id="c1")
 
     assert report.verdict == "reject"
+
+
+@pytest.mark.asyncio
+async def test_factual_gate_signal_is_not_rechecked():
+    # The 4+ years experience signal is covered by an experience_check question.
+    # Even if the re-check WOULD downgrade it, build_report must keep the engine's sufficient.
+    coverage = {"4+ years total professional experience": "sufficient",
+                "Designing and implementing AI-driven workflows": "partial"}
+
+    downgrade_calls = []
+
+    async def fake_recheck(*, signal_def, engine_state, **kw):
+        downgrade_calls.append(signal_def.value)
+        # pretend the model wants to downgrade everything to 'partial'
+        return SignalRecheckOut(evidence_quotes=[], justification="", grade="thin",
+                                state="partial", overridden=True, override_reason="x")
+
+    narrative = NarrativeOut(
+        decision=DecisionOut(headline="h", why_positive=WhyColumn(title="", body=""),
+                             why_negative=WhyColumn(title="", body="")),
+        quick_summary="", strengths=[], concerns=[], questions=[],
+        methodology=MethodologyOut(note="", charity_flags=[]))
+
+    with patch("app.modules.reporting.service.recheck_signal", side_effect=fake_recheck), \
+         patch("app.modules.reporting.service.write_narrative", AsyncMock(return_value=narrative)), \
+         patch("app.modules.reporting.service.grade_communication",
+               AsyncMock(return_value=CommunicationVerdict(evidence_quotes=[], justification="",
+                                                           level="adequate"))):
+        report = await build_report(
+            transcript=[], envelope=_envelope(), coverage_summary=coverage,
+            questions=_questions(), signal_metadata=_signal_metadata(), correlation_id="c1")
+
+    # the factual experience gate was NOT passed to recheck...
+    assert "4+ years total professional experience" not in downgrade_calls
+    # ...and its final state stayed the engine's 'sufficient'
+    exp = next(sa for sa in report.signal_assessments
+               if sa.signal == "4+ years total professional experience")
+    assert exp.final_state == "sufficient"
+    assert exp.overridden is False
+    # the substantive AI-workflow signal WAS re-checked (it's a technical_scenario)
+    assert "Designing and implementing AI-driven workflows" in downgrade_calls
