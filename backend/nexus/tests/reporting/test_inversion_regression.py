@@ -29,6 +29,7 @@ def _grade(scored, knockout_close):
     base, cov = score_overall(scored)
     ceiling = signal_ceiling(scored, knockout_close=knockout_close is not None, coverage=cov)
     session = clamp_to_ceiling(base, ceiling)
+    # deterministic pre-holistic score; the ±5 holistic bound preserves the reject<borderline ordering under full build_report
     knockouts = [KnockoutResult(signal=s.value, status=knockout_status(state=s.state), reason="")
                  for s in scored if s.knockout]
     verdict = resolve_verdict(overall=session, coverage=cov, knockouts=knockouts,

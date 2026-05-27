@@ -30,10 +30,8 @@ from app.modules.reporting.scoring.aggregate import (
     score_dimension,
     score_overall,
     score_signal,
-    score_state,
     signal_ceiling,
 )
-from app.modules.reporting.scoring.holistic import score_holistic
 from app.modules.reporting.scoring.constants import (
     BEHAVIORAL_TYPES,
     FACTUAL_QUESTION_KINDS,
@@ -45,6 +43,7 @@ from app.modules.reporting.scoring.engine_signals import (
     collect_signal_evidence,
     detect_knockout_close,
 )
+from app.modules.reporting.scoring.holistic import score_holistic
 from app.modules.reporting.scoring.judge import grade_communication
 from app.modules.reporting.scoring.narrative import write_narrative
 from app.modules.reporting.scoring.recheck import recheck_signal
@@ -174,6 +173,8 @@ async def build_report(*, transcript, envelope, coverage_summary, questions,
 
     def _texture(sv: str) -> str:
         rc = recheck_results.get(sv)
+        # un-rechecked (factual gate or none-state) → "concrete" = no bluff penalty
+        # (none-state scores to None anyway)
         return rc.grade if rc else "concrete"
 
     scored = [ScoredSignal(value=d.value, type=d.type, weight=d.weight, knockout=d.knockout,
@@ -268,6 +269,8 @@ async def build_report(*, transcript, envelope, coverage_summary, questions,
         overall_confidence=confidence_from_coverage(coverage) if overall is not None else "low",
         decision=narrative.decision,
         scores={
+            # Hand-rolled (not _score_out) to carry session_score + holistic_delta;
+            # confidence guards overall-is-None explicitly.
             "overall": ScoreOut(
                 score=overall, tier_label=tier_label(overall), tone=_tone_by_score(overall),
                 confidence=confidence_from_coverage(coverage) if overall is not None else "low",
