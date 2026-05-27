@@ -1,5 +1,5 @@
-"""build_turn_detector accepts an explicit threshold override (v2) while the
-no-arg v1 call still reads AIConfig. MultilingualModel pulls livekit native deps,
+"""build_turn_detector requires an explicit threshold override (the engine passes
+engine_v2_turn_detector_unlikely_threshold). MultilingualModel pulls livekit native deps,
 so we stub it via sys.modules to capture the constructor kwargs without loading
 the real plugin (avoids the PyO3/3.13 segfault).
 """
@@ -25,12 +25,6 @@ def captured(monkeypatch):
         sys.modules.setdefault(name, types.ModuleType(name))
     monkeypatch.setitem(sys.modules, "livekit.plugins.turn_detector.multilingual", mod)
     return calls
-
-
-def test_v1_call_reads_aiconfig_default(captured):
-    from app.ai import realtime
-    realtime.build_turn_detector()  # no arg -> AIConfig default (0.5)
-    assert captured[-1] == {"unlikely_threshold": 0.5}
 
 
 def test_v2_override_used(captured):

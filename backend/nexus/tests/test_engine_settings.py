@@ -1,32 +1,5 @@
-import pytest
-
 from app.ai.config import AIConfig
 from app.config import Settings
-
-
-def test_settings_engine_fields_present(monkeypatch):
-    monkeypatch.setenv("ENGINE_JUDGE_MODEL", "gpt-5.4-mini-2026-03-17")
-    monkeypatch.setenv("ENGINE_SPEAKER_MODEL", "gpt-5.4-mini-2026-03-17")
-    monkeypatch.setenv("ENGINE_JUDGE_TOTAL_BUDGET_MS", "10000")
-    monkeypatch.setenv("ENGINE_JUDGE_RETRY_WAIT_MS", "250")
-    monkeypatch.setenv("ENGINE_SPEAKER_MAX_OUTPUT_TOKENS", "200")
-    monkeypatch.setenv("ENGINE_CHECKPOINT_TURNS", "10")
-    monkeypatch.setenv("ENGINE_CHECKPOINT_SECONDS", "30")
-    monkeypatch.setenv("ENGINE_CLAIMS_POOL_MAX", "50")
-    monkeypatch.setenv("ENGINE_JUDGE_PROMPT_VERSION", "v2")
-    monkeypatch.setenv("ENGINE_SPEAKER_PROMPT_VERSION", "v2")
-
-    s = Settings()
-    assert s.engine_judge_model == "gpt-5.4-mini-2026-03-17"
-    assert s.engine_speaker_model == "gpt-5.4-mini-2026-03-17"
-    assert s.engine_judge_total_budget_ms == 10000
-    assert s.engine_judge_retry_wait_ms == 250
-    assert s.engine_speaker_max_output_tokens == 200
-    assert s.engine_checkpoint_turns == 10
-    assert s.engine_checkpoint_seconds == 30
-    assert s.engine_claims_pool_max == 50
-    assert s.engine_judge_prompt_version == "v2"
-    assert s.engine_speaker_prompt_version == "v2"
 
 
 def test_stale_settings_removed():
@@ -36,56 +9,18 @@ def test_stale_settings_removed():
         "engine_max_probes_per_question",
         "engine_time_warning_threshold",
         "interview_engine_jwt_secret",
+        "engine_judge_model",
+        "engine_speaker_model",
+        "engine_judge_prompt_version",
+        "engine_speaker_prompt_version",
+        "engine_claims_pool_max",
+        "engine_endpointing_max_delay",
+        "interview_llm_model",
+        "interview_reasoning_effort",
+        "interview_turn_detector_unlikely_threshold",
+        "interview_engine_default_version",
     ):
         assert stale not in s
-
-
-def test_aiconfig_exposes_engine_models(monkeypatch):
-    monkeypatch.setenv("ENGINE_JUDGE_MODEL", "abc")
-    monkeypatch.setenv("ENGINE_SPEAKER_MODEL", "def")
-    cfg = AIConfig()
-    assert cfg.engine_judge_model == "abc"
-    assert cfg.engine_speaker_model == "def"
-
-
-def test_aiconfig_exposes_prompt_versions(monkeypatch):
-    """AIConfig surfaces the two prompt-version env vars added in v2."""
-    monkeypatch.setenv("ENGINE_JUDGE_PROMPT_VERSION", "v2")
-    monkeypatch.setenv("ENGINE_SPEAKER_PROMPT_VERSION", "v2")
-    cfg = AIConfig()
-    assert cfg.engine_judge_prompt_version == "v2"
-    assert cfg.engine_speaker_prompt_version == "v2"
-
-
-def test_engine_endpointing_max_delay_default_is_patient(monkeypatch):
-    """The default endpointing max delay was lowered from 6.0 → 3.0 in
-    Phase 5 (2026-05-12) to match LiveKit's documented default. Earlier
-    tuning (unlikely_threshold→0.5, min_duration→1.0s) has stabilized
-    EOU detection; long-pause tolerance is now built into orchestrator
-    coalescing logic (specs/2026-05-11-turn-continuation-coalescing-design.md).
-
-    The default lives in code, but the test asserts it explicitly so a
-    silent regression gets flagged.
-    """
-    monkeypatch.delenv("ENGINE_ENDPOINTING_MAX_DELAY", raising=False)
-    s = Settings()
-    assert s.engine_endpointing_max_delay == 3.0
-
-
-def test_interview_turn_detector_unlikely_threshold_default_is_conservative(monkeypatch):
-    """Phase 5 (2026-05-12) bumped from None -> 0.5 for the Sarvam +
-    MultilingualModel path. The product's first candidates are
-    Indian-English speakers who tend to pause mid-thought; a more
-    conservative EOU floor (only fire end-of-turn when the model is
-    confidently sure) reduces premature turn closures. The explicit
-    0.5 override (vs. the plugin's ~0.3-0.5 default range) ensures
-    deterministic behavior across sessions and tuning iterations.
-    """
-    from app.ai.config import AIConfig
-
-    monkeypatch.delenv("INTERVIEW_TURN_DETECTOR_UNLIKELY_THRESHOLD", raising=False)
-    cfg = AIConfig()
-    assert cfg.interview_turn_detector_unlikely_threshold == 0.5
 
 
 def test_settings_have_sarvam_fields():
