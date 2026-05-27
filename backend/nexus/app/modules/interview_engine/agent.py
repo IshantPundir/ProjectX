@@ -49,6 +49,13 @@ from livekit.agents import (
 from livekit.plugins.turn_detector import multilingual as _turn_detector_multilingual  # noqa: F401
 from opentelemetry.trace import set_tracer_provider as _otel_set_global_provider
 
+# Bind the Dramatiq broker to settings.redis_url FIRST (before any @dramatiq.actor
+# is imported). This MUST live in agent.py — not __main__.py — because LiveKit runs
+# each interview in a SPAWNED job subprocess that imports this module for the
+# entrypoint but never executes __main__. Without it, record_session_result's
+# report-scoring .send() in the job process falls back to Dramatiq's default broker
+# at localhost:6379 and fails. See app/brokers.py.
+from app import brokers  # noqa: F401  — side-effect: dramatiq.set_broker(redis_url)
 from app.ai.config import ai_config
 from app.ai.otel import bootstrap_tracer_provider
 from app.ai.prompts import PromptLoader
