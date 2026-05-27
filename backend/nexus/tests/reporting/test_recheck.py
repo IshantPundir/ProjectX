@@ -52,3 +52,27 @@ async def test_recheck_refusal_falls_back_to_engine_state():
                                    correlation_id="c1")
     assert res.state == "partial"        # unchanged
     assert res.overridden is False
+
+
+@pytest.mark.asyncio
+async def test_recheck_prompt_cache_key_within_64_chars():
+    long_sig = SignalDef(
+        "Experience integrating cloud business applications (Workday, NetSuite, Salesforce, ServiceNow, Marketo)",
+        "competency", 2, knockout=False, priority="required")
+    turns = [SignalTurn(candidate_quote="q", grade="thin", reasoning="r", question_id="q1")]
+    captured = {}
+    out = SignalRecheckOut(evidence_quotes=[], justification="", grade="thin",
+                           state="partial", overridden=False, override_reason=None)
+    class R:
+        output_parsed = out
+        usage = None
+    async def fake_parse(**kwargs):
+        captured["key"] = kwargs["prompt_cache_key"]
+        return R()
+    with patch("app.modules.reporting.scoring.recheck.get_raw_openai_client") as gc:
+        client = AsyncMock()
+        client.responses.parse = fake_parse
+        gc.return_value = client
+        await recheck_signal(signal_def=long_sig, evidence_turns=turns,
+                             question_context="ctx", engine_state="partial", correlation_id="c1")
+    assert len(captured["key"]) <= 64, captured["key"]

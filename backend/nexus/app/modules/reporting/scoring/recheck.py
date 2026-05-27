@@ -5,6 +5,7 @@ effort-gating via dict reasoning=, evidence grounded against the candidate's tur
 graceful refusal fallback (keep the engine's prior state)."""
 from __future__ import annotations
 
+import hashlib
 import structlog
 from opentelemetry import trace
 
@@ -47,13 +48,14 @@ async def recheck_signal(
         {"role": "system", "content": prefix},
         {"role": "user", "content": f"<turns>\n{transcript_block}\n</turns>"},
     ]
+    sig_hash = hashlib.sha256(signal_def.value.encode("utf-8")).hexdigest()[:12]
     kwargs: dict[str, object] = {
         "model": ai_config.report_scorer_model,
         "input": messages,
         "text_format": SignalRecheckOut,
         "prompt_cache_key": (
-            f"{ai_config.report_scorer_prompt_cache_key_prefix}:recheck:"
-            f"{ai_config.report_scorer_prompt_version}:{signal_def.value}:{ai_config.report_scorer_model}"
+            f"{ai_config.report_scorer_prompt_cache_key_prefix}:rc:"
+            f"{ai_config.report_scorer_prompt_version}:{sig_hash}:{ai_config.report_scorer_model}"
         ),
     }
     if ai_config.report_scorer_effort:
