@@ -30,6 +30,7 @@ def _signal_digest(scored: list[ScoredSignal]) -> str:
         {"signal": s.value, "state": s.state, "texture": s.texture,
          "must_have": s.knockout, "score": s.score}
         for s in scored
+        if s.state != "none"
     ], ensure_ascii=False)
 
 
@@ -65,11 +66,15 @@ async def score_holistic(
     if ai_config.report_scorer_effort:
         kwargs["reasoning"] = {"effort": ai_config.report_scorer_effort}
 
-    with _tracer.start_as_current_span("openai.responses.parse"):
-        set_llm_span_attributes(prompt_name="report_holistic",
-                                prompt_version=ai_config.report_scorer_prompt_version,
-                                correlation_id=correlation_id)
-        response = await get_raw_openai_client().responses.parse(**kwargs)
+    try:
+        with _tracer.start_as_current_span("openai.responses.parse"):
+            set_llm_span_attributes(prompt_name="report_holistic",
+                                    prompt_version=ai_config.report_scorer_prompt_version,
+                                    correlation_id=correlation_id)
+            response = await get_raw_openai_client().responses.parse(**kwargs)
+    except Exception:  # noqa: BLE001 — non-critical adjustment; degrade to delta 0
+        log.warning("reporting.holistic.api_error", correlation_id=correlation_id)
+        return HolisticAdjustmentOut(delta=0, justification="API error — skipped.")
 
     parsed = getattr(response, "output_parsed", None)
     if parsed is None:

@@ -27,3 +27,12 @@ async def test_score_holistic_refusal_returns_zero_delta():
         out = await score_holistic(session_score=55, scored=[], knockout_close=False,
                                    coverage=0.8, transcript_text="x", correlation_id="c1")
     assert out.delta == 0
+
+@pytest.mark.asyncio
+async def test_score_holistic_api_error_returns_zero_delta():
+    client = AsyncMock()
+    client.responses.parse = AsyncMock(side_effect=RuntimeError("boom"))
+    with patch("app.modules.reporting.scoring.holistic.get_raw_openai_client", return_value=client):
+        out = await score_holistic(session_score=55, scored=[], knockout_close=False,
+                                   coverage=0.8, transcript_text="x", correlation_id="c1")
+    assert out.delta == 0
