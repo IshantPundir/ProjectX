@@ -770,7 +770,9 @@ async def run(
                             _reflex("still_there", settings.engine_v2_unresponsive_message_2),
                             add_to_chat_ctx=False)
                         state["close_initiated"] = True
-                        await session.aclose()
+                        # Record-before-close, same as the clean terminal path: persist a
+                        # (partial) result reliably, then aclose() (deletes room/evicts).
+                        await _terminate_session()
                 finally:
                     state["responding"] = False
             except asyncio.CancelledError:
@@ -815,11 +817,14 @@ async def run(
                 log.info("engine.v2.ladder_armed",
                          t_ms=int((time.monotonic() - started_at) * 1000))
                 _pose_question(time.monotonic())
-            # Terminal CLOSE has fully drained (agent back to 'listening'): close the session
-            # so the shutdown callback fires and _finalize_and_record can await the DB write.
+            # Terminal CLOSE has fully drained (agent back to 'listening'): RECORD the
+            # result on a healthy connection FIRST, THEN close. Recording before aclose()
+            # (rather than only in the shutdown callback) keeps the durable DB write off
+            # the shutdown_process_timeout (10s) critical path — see _terminate_session.
+            # delete_room_on_close then evicts the candidate + deletes the room.
             if ns == "listening" and state.get("closing") and not state.get("close_initiated"):
                 state["close_initiated"] = True
-                asyncio.create_task(session.aclose())
+                asyncio.create_task(_terminate_session())
 
     # ---------------------------------------------------------------------------
     # _finalize_and_record: async shutdown hook (CMI-1 result path).
@@ -884,6 +889,17 @@ async def run(
             )
         except Exception:  # noqa: BLE001 — log + swallow; teardown must complete
             log.error("engine.v2.result.persist_failed", exc_info=True)
+
+    async def _terminate_session() -> None:
+        """Clean terminal-close path: persist the result on a healthy connection
+        FIRST (off the shutdown_process_timeout critical path), THEN close the
+        session — delete_room_on_close evicts the candidate + deletes the room.
+        _finalize_and_record is once-guarded, so the shutdown-callback fallback
+        (for non-clean ends: disconnect/crash) is a no-op after this runs."""
+        try:
+            await _finalize_and_record()
+        finally:
+            await session.aclose()
 
     # Register the async shutdown callback (LiveKit 1.5.x — see ctx.add_shutdown_callback docs).
     # The framework awaits all shutdown callbacks before terminating the job process (default 10s
