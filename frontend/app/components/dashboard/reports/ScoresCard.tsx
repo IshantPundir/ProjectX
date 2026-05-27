@@ -18,23 +18,26 @@ function caption(s: ScoreOut | undefined): string | undefined {
 export function ScoresCard({ report }: { report: ReportRead }) {
   const overall = report.scores.overall
   const verdictTone = verdictMeta(report.verdict).tone
+  const dims = DIMS.filter(({ key }) => report.scores[key]?.score != null)
   return (
-    <section className="rounded-xl border bg-white p-3.5" style={{ borderColor: 'var(--px-hairline)' }} aria-label="Scores">
-      <h2 className="mb-2 text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--px-fg-4)' }}>AI recommendation</h2>
+    <section className="rounded-xl border bg-white p-4" style={{ borderColor: 'var(--px-hairline)' }} aria-label="Scores">
+      <h2 className="mb-2 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'var(--px-fg-3)' }}>AI recommendation</h2>
       <VerdictBand verdict={report.verdict} />
-      <p className="mt-1 text-[11px]" style={{ color: 'var(--px-fg-2)' }}>{report.decision.headline}</p>
+      <p className="mt-1 text-[12.5px] leading-relaxed" style={{ color: 'var(--px-fg-2)' }}>{report.decision.headline}</p>
 
       <div className="my-3 flex justify-center">
         <ScoreGauge score={overall?.score ?? null} label="Overall" size={118} toneOverride={verdictTone} />
       </div>
 
-      <div className="grid grid-cols-3 gap-1.5">
-        {DIMS.map(({ key, label }) => {
-          const d = report.scores[key]
-          return <ScoreGauge key={key} score={d?.score ?? null} label={label} size={58}
-            toneOverride={d ? tierTone(d.tone) : undefined} caption={caption(d)} />
-        })}
-      </div>
+      {dims.length > 0 && (
+        <div className="flex flex-wrap justify-center gap-3">
+          {dims.map(({ key, label }) => {
+            const d = report.scores[key]
+            return <ScoreGauge key={key} score={d?.score ?? null} label={label} size={58}
+              toneOverride={d ? tierTone(d.tone) : undefined} caption={caption(d)} />
+          })}
+        </div>
+      )}
 
       <div className="mt-3 flex gap-2 border-t pt-2.5" style={{ borderColor: 'var(--px-hairline)' }}>
         <div className="flex-1">

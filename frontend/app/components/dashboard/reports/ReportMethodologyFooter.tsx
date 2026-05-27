@@ -10,13 +10,13 @@ export function ReportMethodologyFooter({ methodology, manifest }: { methodology
 
   return (
     <footer className="mt-4 border-t px-1 pt-3" style={{ borderColor: 'var(--px-hairline)' }}>
-      <p className="text-[10.5px]" style={{ color: 'var(--px-fg-3)' }}>
+      <p className="text-[12px] leading-relaxed" style={{ color: 'var(--px-fg-3)' }}>
         <span className="font-bold">About this report. </span>{methodology.note}
       </p>
       {methodology.charity_flags.map((f, i) => (
-        <p key={i} className="mt-1 text-[10px]" style={{ color: 'var(--px-fg-4)' }}>⚑ {f}</p>
+        <p key={i} className="mt-1 text-[11px]" style={{ color: 'var(--px-fg-4)' }}>⚑ {f}</p>
       ))}
-      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[9.5px]" style={{ color: 'var(--px-fg-4)' }}>
+      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[10px]" style={{ color: 'var(--px-fg-4)' }}>
         <span className="font-bold" style={{ color: 'var(--px-fg-3)' }}>Methodology</span>
         {meta.map((it, i) => <span key={i}>{it}</span>)}
       </div>

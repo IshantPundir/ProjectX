@@ -35,8 +35,8 @@ export function ReportView({
         title={title} subtitle={subtitle} verdict={report.verdict}
         canRegenerate={canRegenerate} onRegenerate={onRegenerate}
       />
-      <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-[1.85fr_1fr]">
-        <div className="space-y-3.5">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.85fr_1fr]">
+        <div className="space-y-4">
           <SessionPlaybackStub />
           <WhyContrast decision={report.decision} />
           <QuickSummary text={report.quick_summary} />
@@ -44,7 +44,7 @@ export function ReportView({
           <QuestionByQuestion questions={report.questions} />
           <SignalAuditTable assessments={report.signal_assessments} />
         </div>
-        <div className="space-y-3.5">
+        <div className="space-y-4">
           <ScoresCard report={report} />
           <HumanDecisionPanel verdict={report.verdict} decision={report.human_decision} onSubmit={onDecision} isSubmitting={isSubmitting} />
         </div>
