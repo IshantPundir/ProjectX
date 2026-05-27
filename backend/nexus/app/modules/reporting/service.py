@@ -112,6 +112,7 @@ def _narrative_ground_truth(*, job_questions, scored, verdict, overall, tech, be
             {"signal": knockout_close.signal, "quote": knockout_close.quote}
             if knockout_close else None),
         "signals": [{"signal": s.value, "type": s.type, "state": s.state,
+                     "assessed": s.state != "none",
                      "must_have": s.knockout, "priority": s.priority} for s in scored],
         "questions": [{"question_id": q.question_id, "question_text": q.question_text,
                        "candidate_said": q.candidate_quote, "status": q.status_badge}
