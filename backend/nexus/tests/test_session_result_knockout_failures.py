@@ -1,10 +1,13 @@
 """Round-trip test for SessionResult.knockout_failures."""
 from __future__ import annotations
 
-from app.modules.interview_engine.models.claims import ClaimsPoolSnapshot
-from app.modules.interview_engine.models.ledger import SignalLedgerSnapshot
-from app.modules.interview_engine.models.queue import QuestionQueueSnapshot
-from app.modules.interview_runtime import KnockoutFailure, SessionResult
+from app.modules.interview_runtime import (
+    ClaimsPoolSnapshot,
+    KnockoutFailure,
+    QuestionQueueSnapshot,
+    SessionResult,
+    SignalLedgerSnapshot,
+)
 
 
 def _make_minimal_result(**overrides) -> SessionResult:
