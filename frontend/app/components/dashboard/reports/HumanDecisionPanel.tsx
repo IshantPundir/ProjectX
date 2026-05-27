@@ -77,7 +77,7 @@ export function HumanDecisionPanel({ verdict, decision, onSubmit, isSubmitting }
             type="button"
             aria-pressed={choice === c.value}
             onClick={() => setChoice(c.value)}
-            className="rounded-md border px-3 py-1 text-[11px] font-semibold"
+            className="rounded-md border px-3 py-1 text-[11px] font-semibold transition-transform hover:scale-105 active:scale-95"
             style={{
               borderColor: choice === c.value ? 'var(--px-accent)' : 'var(--px-hairline-strong)',
               background: choice === c.value ? 'var(--px-accent)' : 'var(--px-surface)',

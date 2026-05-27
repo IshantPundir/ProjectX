@@ -29,7 +29,7 @@ export function ScoreGauge({ score, label, size = 58, toneOverride, caption }: S
   const ringStyle = { '--px-gauge-final-offset': String(finalOffset) } as CSSProperties
 
   return (
-    <div className="flex flex-col items-center text-center">
+    <div className="flex flex-col items-center text-center px-gauge">
       <svg viewBox="0 0 100 100" width={size} height={size} role="img" aria-label={aria}>
         <circle
           cx="50" cy="50" r={R} fill="none"

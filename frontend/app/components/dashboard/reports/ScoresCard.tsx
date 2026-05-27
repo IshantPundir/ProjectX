@@ -20,7 +20,7 @@ export function ScoresCard({ report }: { report: ReportRead }) {
   const verdictTone = verdictMeta(report.verdict).tone
   const dims = DIMS.filter(({ key }) => report.scores[key]?.score != null)
   return (
-    <section className="rounded-xl border bg-white p-4" style={{ borderColor: 'var(--px-hairline)' }} aria-label="Scores">
+    <section className="rounded-xl border bg-white p-4 px-card" style={{ borderColor: 'var(--px-hairline)' }} aria-label="Scores">
       <h2 className="mb-2 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'var(--px-fg-3)' }}>AI recommendation</h2>
       <VerdictBand verdict={report.verdict} />
       <p className="mt-1 text-[12.5px] leading-relaxed" style={{ color: 'var(--px-fg-2)' }}>{report.decision.headline}</p>

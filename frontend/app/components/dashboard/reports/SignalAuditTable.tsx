@@ -3,7 +3,7 @@ import type { SignalAssessmentOut } from '@/lib/api/reports'
 export function SignalAuditTable({ assessments }: { assessments: SignalAssessmentOut[] }) {
   if (!assessments.length) return null
   return (
-    <details className="rounded-xl border bg-white p-4" style={{ borderColor: 'var(--px-hairline)' }}>
+    <details className="rounded-xl border bg-white p-4 px-card" style={{ borderColor: 'var(--px-hairline)' }}>
       <summary className="cursor-pointer text-[11px] font-bold uppercase tracking-wider" style={{ color: 'var(--px-fg-3)' }}>
         Audit detail — signal by signal ({assessments.length})
       </summary>
@@ -20,7 +20,7 @@ export function SignalAuditTable({ assessments }: { assessments: SignalAssessmen
           </thead>
           <tbody>
             {assessments.map((a) => (
-              <tr key={a.signal} className="border-t align-top" style={{ borderColor: 'var(--px-hairline)' }}>
+              <tr key={a.signal} className="border-t align-top px-arow" style={{ borderColor: 'var(--px-hairline)' }}>
                 <td className="py-1 pr-2" style={{ color: 'var(--px-fg-2)' }}>{a.signal}</td>
                 <td className="py-1 pr-2" style={{ color: 'var(--px-fg-3)' }}>{a.knockout ? 'yes' : '—'}</td>
                 <td className="py-1 pr-2" style={{ color: 'var(--px-fg-3)' }}>

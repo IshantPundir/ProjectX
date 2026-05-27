@@ -3,7 +3,7 @@ import { severityMeta, TONE_BG, TONE_INK } from './report-format'
 
 export function StrengthsConcerns({ strengths, concerns }: { strengths: StrengthOut[]; concerns: ConcernOut[] }) {
   return (
-    <section className="rounded-xl border bg-white p-4" style={{ borderColor: 'var(--px-hairline)' }} aria-label="Strengths and concerns">
+    <section className="rounded-xl border bg-white p-4 px-card" style={{ borderColor: 'var(--px-hairline)' }} aria-label="Strengths and concerns">
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <div>
           <h2 className="mb-2 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'var(--px-ok)' }}>
@@ -11,7 +11,7 @@ export function StrengthsConcerns({ strengths, concerns }: { strengths: Strength
           </h2>
           <ul className="space-y-2">
             {strengths.map((s, i) => (
-              <li key={i}>
+              <li key={i} className="group px-row-slide">
                 <div className="text-[13.5px] font-semibold" style={{ color: 'var(--px-fg)' }}>{s.title}</div>
                 <p className="text-[12.5px] leading-relaxed" style={{ color: 'var(--px-fg-3)' }}>{s.detail}</p>
               </li>
@@ -26,10 +26,10 @@ export function StrengthsConcerns({ strengths, concerns }: { strengths: Strength
             {concerns.map((c, i) => {
               const sev = severityMeta(c.severity)
               return (
-                <li key={i}>
+                <li key={i} className="group px-row-slide">
                   <div className="flex items-center gap-1.5">
                     <span className="text-[13.5px] font-semibold" style={{ color: 'var(--px-fg)' }}>{c.title}</span>
-                    <span className="rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide"
+                    <span className="rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide px-chip"
                       style={{ background: TONE_BG[sev.tone], color: TONE_INK[sev.tone] }}>{sev.label}</span>
                   </div>
                   <p className="text-[12.5px] leading-relaxed" style={{ color: 'var(--px-fg-3)' }}>{c.detail}</p>

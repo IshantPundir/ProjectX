@@ -2,7 +2,7 @@ import type { DecisionOut } from '@/lib/api/reports'
 
 export function WhyContrast({ decision }: { decision: DecisionOut }) {
   return (
-    <section className="rounded-xl border bg-white p-4" style={{ borderColor: 'var(--px-hairline)' }} aria-label="Why this verdict">
+    <section className="rounded-xl border bg-white p-4 px-card" style={{ borderColor: 'var(--px-hairline)' }} aria-label="Why this verdict">
       <h2 className="mb-2 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'var(--px-fg-3)' }}>Why this verdict</h2>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <div className="rounded-lg p-3" style={{ background: 'var(--px-ok-bg)' }}>

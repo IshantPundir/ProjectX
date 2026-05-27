@@ -22,7 +22,7 @@ export function VerdictChip({ verdict }: { verdict: Verdict }) {
   const onFillWhite = meta.tone === 'danger'
   return (
     <span
-      className="inline-flex items-center rounded-md px-2.5 py-0.5 text-[11px] font-bold tracking-wide"
+      className="inline-flex items-center rounded-md px-2.5 py-0.5 text-[11px] font-bold tracking-wide px-shine"
       style={{
         background: TONE_FILL[meta.tone],
         color: onFillWhite ? '#fff' : TONE_INK[meta.tone],
