@@ -414,8 +414,9 @@ async def record_session_result(
         },
     )
 
-    # Enqueue async report scoring for v2 sessions only.
-    # Gate: coverage_summary is not None marks a v2 SessionResult (v1 leaves it None).
+    # Enqueue async report scoring once the session produced gradeable coverage.
+    # coverage_summary is None only for results with nothing to score (e.g. a
+    # session that ended before any answer was graded) — skip those.
     # Local import avoids any future circular-import risk between interview_runtime
     # and reporting (reporting.actors → reporting.service → no reverse dep).
     if result.coverage_summary is not None:
