@@ -356,6 +356,11 @@ async def record_session_result(
     Audit row written on successful first transition only — the idempotent
     silent-no-op branch does NOT write a duplicate audit entry.
 
+    On a successful first transition this function COMMITs the session row +
+    audit before returning (the durable contract), then best-effort-enqueues
+    report scoring — a broker failure there is logged, never raised, and cannot
+    roll the completion back. Callers must NOT also commit.
+
     Caller MUST be on a bypass-RLS session. The ``tenant_id`` argument
     (sourced from the LiveKit dispatch metadata in the engine, or from
     request.state in nexus's own callers) is filter-applied to every
@@ -414,21 +419,41 @@ async def record_session_result(
         },
     )
 
-    # Enqueue async report scoring once the session produced gradeable coverage.
-    # coverage_summary is None only for results with nothing to score (e.g. a
-    # session that ended before any answer was graded) — skip those.
-    # Local import avoids any future circular-import risk between interview_runtime
-    # and reporting (reporting.actors → reporting.service → no reverse dep).
+    # Commit the completion + audit DURABLY before any best-effort side-effect.
+    # The active->completed transition is the contract; nothing below may be able
+    # to roll it back. (2026-05-27 incident: the report-scoring enqueue below ran
+    # INSIDE this transaction before the caller's commit, so a broker failure threw,
+    # aborted the transaction, and left the session stuck `active` — the reaper then
+    # mislabeled a fully-completed interview `engine_unresponsive`.)
+    await db.commit()
+
+    # Best-effort: enqueue async report scoring once the session produced gradeable
+    # coverage. This is strictly downstream of the now-durable completion — a broker
+    # failure (e.g. Redis unreachable) is logged and swallowed, NEVER raised, so it
+    # can't undo the recorded result. An unscored completed session stays reportable
+    # and can be re-scored later. coverage_summary is None only for results with
+    # nothing to score (ended before any answer was graded) — skip those. Local
+    # import avoids circular-import risk (reporting.actors -> reporting.service).
     if result.coverage_summary is not None:
-        from app.modules.reporting import score_session_report  # noqa: PLC0415
-        score_session_report.send(
-            str(session_id),
-            str(tenant_id),
-            correlation_id,
-        )
-        logger.info(
-            "interview_runtime.record_session_result.report_enqueued",
-            session_id=str(session_id),
-            tenant_id=str(tenant_id),
-            correlation_id=correlation_id,
-        )
+        try:
+            from app.modules.reporting import score_session_report  # noqa: PLC0415
+
+            score_session_report.send(
+                str(session_id),
+                str(tenant_id),
+                correlation_id,
+            )
+            logger.info(
+                "interview_runtime.record_session_result.report_enqueued",
+                session_id=str(session_id),
+                tenant_id=str(tenant_id),
+                correlation_id=correlation_id,
+            )
+        except Exception:  # noqa: BLE001 — enqueue is best-effort; completion is durable
+            logger.warning(
+                "interview_runtime.record_session_result.report_enqueue_failed",
+                session_id=str(session_id),
+                tenant_id=str(tenant_id),
+                correlation_id=correlation_id,
+                exc_info=True,
+            )

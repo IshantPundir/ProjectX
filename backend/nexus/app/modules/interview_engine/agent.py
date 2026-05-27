@@ -868,6 +868,8 @@ async def run(
         )
         try:
             async with get_bypass_session() as db:
+                # record_session_result commits the completion durably itself
+                # (then best-effort-enqueues report scoring); no commit here.
                 await record_session_result(
                     db,
                     session_id=uuid.UUID(config.session_id),
@@ -875,7 +877,6 @@ async def run(
                     result=result,
                     correlation_id=correlation_id,
                 )
-                await db.commit()
             log.info(
                 "engine.v2.result.persisted",
                 session_id=config.session_id,
