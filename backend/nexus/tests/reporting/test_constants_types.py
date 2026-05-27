@@ -1,13 +1,15 @@
 from app.modules.reporting.scoring.constants import (
-    STATE_POINTS, ADVANCE_THRESHOLD, REJECT_THRESHOLD,
+    STATE_TEXTURE_POINTS, ADVANCE_THRESHOLD, REJECT_THRESHOLD,
     MIN_COVERAGE_FOR_ADVANCE, TECHNICAL_TYPES, BEHAVIORAL_TYPES, tier_label,
 )
 
 
-def test_state_points():
-    assert STATE_POINTS == {
-        "exceeded": 100, "sufficient": 70, "partial": 30, "failed": 0, "none": None,
-    }
+def test_state_texture_points_matrix():
+    assert STATE_TEXTURE_POINTS["sufficient"]["concrete"] == 75
+    assert STATE_TEXTURE_POINTS["sufficient"]["thin"] == 50
+    assert STATE_TEXTURE_POINTS["partial"]["thin"] == 25
+    assert STATE_TEXTURE_POINTS["failed"]["concrete"] == 0
+    assert "none" not in STATE_TEXTURE_POINTS
 
 
 def test_thresholds():

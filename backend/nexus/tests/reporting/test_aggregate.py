@@ -145,3 +145,18 @@ def test_verdict_reject_on_low_overall():
 def test_verdict_none_overall_is_borderline():
     assert resolve_verdict(overall=None, coverage=0.0, knockout_close=None,
                            knockouts=[]).verdict == "borderline"
+
+
+def test_ceiling_exactly_at_min_coverage_passes():
+    sigs = [ss("experience", 3, "sufficient")]
+    assert signal_ceiling(sigs, knockout_close=False, coverage=0.6) is None
+
+
+def test_ceiling_just_below_min_coverage():
+    sigs = [ss("experience", 3, "sufficient")]
+    assert signal_ceiling(sigs, knockout_close=False, coverage=0.59) == BORDERLINE_CEILING
+
+
+def test_ceiling_unassessed_must_have():
+    sigs = [ss("competency", 3, "none", knockout=True), ss("experience", 3, "sufficient")]
+    assert signal_ceiling(sigs, knockout_close=False, coverage=0.9) == BORDERLINE_CEILING
