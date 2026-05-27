@@ -10,8 +10,6 @@ per-test-transaction ``db`` fixture from conftest.py.  No LLM calls are made.
 """
 from __future__ import annotations
 
-import uuid
-
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
