@@ -333,3 +333,27 @@ def test_resolve_envelope_falls_back_to_empty(tmp_path, monkeypatch):
     monkeypatch.setattr("app.modules.reporting.actors.settings.engine_event_log_dir", str(tmp_path))
     env = _resolve_envelope(session_id="nope", stored_ref=None)
     assert env == {"events": []}
+
+
+def test_resolve_envelope_uses_stored_ref_when_not_in_config_dir(tmp_path, monkeypatch):
+    # config dir is empty (no <session_id>.json there); the absolute stored_ref exists.
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    ref = other / "abc.json"
+    ref.write_text(json.dumps({"events": [{"kind": "from_ref"}]}))
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    monkeypatch.setattr("app.modules.reporting.actors.settings.engine_event_log_dir", str(cfg))
+    env = _resolve_envelope(session_id="missing", stored_ref=str(ref))
+    assert env["events"] == [{"kind": "from_ref"}]
+
+
+def test_resolve_envelope_finds_basename_in_config_dir(tmp_path, monkeypatch):
+    # stored_ref points at a stale absolute path, but the file lives at config_dir/<basename>.
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    (cfg / "abc.json").write_text(json.dumps({"events": [{"kind": "by_basename"}]}))
+    monkeypatch.setattr("app.modules.reporting.actors.settings.engine_event_log_dir", str(cfg))
+    env = _resolve_envelope(session_id="missing",
+                            stored_ref="/old/container/path/abc.json")
+    assert env["events"] == [{"kind": "by_basename"}]

@@ -48,7 +48,8 @@ def _resolve_envelope(*, session_id: str, stored_ref: str | None) -> dict:
         candidates.append(Path(settings.engine_event_log_dir) / f"{session_id}.json")
     if stored_ref:
         candidates.append(Path(stored_ref))
-        candidates.append(Path(settings.engine_event_log_dir or "") / Path(stored_ref).name)
+        if settings.engine_event_log_dir:
+            candidates.append(Path(settings.engine_event_log_dir) / Path(stored_ref).name)
     for path in candidates:
         try:
             return json.loads(path.read_text())
