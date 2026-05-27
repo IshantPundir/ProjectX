@@ -18,13 +18,24 @@ FACTUAL_QUESTION_KINDS: frozenset[str] = frozenset({"experience_check", "complia
 # Coverage-state scoring vocabulary (additive — Task 2)
 # ---------------------------------------------------------------------------
 
-# Engine coverage state → 0..100 points.
-# `none` maps to None so it is excluded from the scoring denominator entirely
-# (a signal the candidate never touched should not drag the average; it
-# represents a coverage gap, not a graded failure).
-STATE_POINTS: dict[str, int | None] = {
-    "exceeded": 100, "sufficient": 70, "partial": 30, "failed": 0, "none": None,
+# Engine coverage state × evidence texture → 0..100 points.
+# `none` → None (excluded from the scoring denominator entirely).
+# Texture is the bluff axis: `thin` (buzzwords, no demonstrated depth) scores
+# well below `concrete` (specific, owned, mechanism shown) at the same state.
+STATE_TEXTURE_POINTS: dict[str, dict[str, int]] = {
+    "exceeded":   {"concrete": 100, "thin": 80, "null": 80},
+    "sufficient": {"concrete": 75,  "thin": 50, "null": 50},
+    "partial":    {"concrete": 40,  "thin": 25, "null": 12},
+    "failed":     {"concrete": 0,   "thin": 0,  "null": 0},
 }
+
+# Fit-aware aggregation ceilings (the score MEANS role-fit, so a must-have
+# gap caps it — this is the metric's definition, not a post-hoc clamp).
+REJECT_CEILING = 35      # failed must-have / knockout_close → score forced into reject band (<40)
+BORDERLINE_CEILING = 60  # unconfirmed must-have / low coverage → at most borderline (<65)
+
+# Bound on the Layer-2.5 holistic adjustment (±5 pts = ±0.5 on the /10 scale).
+HOLISTIC_ADJ_MAX = 5
 
 # 0-100 composite score → display tier label.
 # Bands are calibrated against the ADVANCE_THRESHOLD (65) / REJECT_THRESHOLD (40)
