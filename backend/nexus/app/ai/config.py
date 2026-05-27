@@ -13,8 +13,9 @@ added to this class as each phase lands — not speculatively in 2A.
 Per OpenAI's API: ``reasoning_effort`` is **not supported on
 non-reasoning chat models** (``*-chat-latest``). Sending it returns
 HTTP 400, which kills the call. Every ``*_effort`` property on this
-class therefore follows the same discipline as
-``interview_reasoning_effort`` (see ``app/ai/realtime.py::build_llm_plugin``):
+class therefore follows the same discipline (gate on a non-empty effort
+string before forwarding ``reasoning_effort`` — see
+``app/ai/realtime.py::build_mouth_llm_plugin``):
 
   * The property defaults to empty string ``""``.
   * Caller code MUST gate on ``if ai_config.<role>_effort:`` before
@@ -89,15 +90,7 @@ class AIConfig:
     def max_schema_retries(self) -> int:
         return self._settings.openai_max_retries
 
-    # Phase 3C.2 — Interview engine (realtime LLM/STT/TTS)
-    @property
-    def interview_llm_model(self) -> str:
-        return self._settings.interview_llm_model
-
-    @property
-    def interview_reasoning_effort(self) -> str:
-        return self._settings.interview_reasoning_effort
-
+    # Phase 3C.2 — Interview engine (realtime STT/TTS)
     @property
     def interview_stt_provider(self) -> str:
         return self._settings.interview_stt_provider
@@ -139,34 +132,12 @@ class AIConfig:
         return self._settings.interview_tts_temperature
 
     @property
-    def interview_turn_detector_unlikely_threshold(self) -> float | None:
-        return self._settings.interview_turn_detector_unlikely_threshold
-
-    @property
     def interview_noise_cancellation(self) -> NoiseCancellationMode:
         return self._settings.interview_noise_cancellation
 
     @property
     def interview_nc_enhancement_level(self) -> float:
         return self._settings.interview_nc_enhancement_level
-
-    # Phase 3D — structured agent model selection
-    @property
-    def engine_judge_model(self) -> str:
-        return self._settings.engine_judge_model
-
-    @property
-    def engine_speaker_model(self) -> str:
-        return self._settings.engine_speaker_model
-
-    # v2 prompt versioning — one env var per prompt family
-    @property
-    def engine_judge_prompt_version(self) -> str:
-        return self._settings.engine_judge_prompt_version
-
-    @property
-    def engine_speaker_prompt_version(self) -> str:
-        return self._settings.engine_speaker_prompt_version
 
     # --- Interview engine (two-plane) ---
     @property

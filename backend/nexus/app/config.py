@@ -285,48 +285,8 @@ class Settings(BaseSettings):
     # TTS efficiency), and unambiguous. Tenants can override per-session
     # via tenant_settings.engine_agent_name.
     engine_agent_name: str = "Sam"
-    # Turn detection / endpointing (forwarded to AgentSession).
-    #
-    # Tuned for technical-interview UX where candidates think
-    # mid-sentence. The framework's MultilingualModel turn detector
-    # decides when within [min_delay, max_delay] to fire EOU based on
-    # context (does the user's text look like they're done?). Minimum
-    # is the floor — even with a high "user is done" probability, the
-    # session waits at least min_delay after speech stops.
-    #
-    # min_delay 1.0s (was 0.3): extra patience for thinking pauses.
-    #   Pre-fix the candidate's "Hey. So I would like map business
-    #   systems to..." was cut after a 0.3s pause at "...to" because
-    #   STT fired is_final=True and the orchestrator advanced. The
-    #   real fix is consuming `on_user_turn_completed` (turn-detector
-    #   EOU, not STT finals) — but a longer min_delay also gives the
-    #   turn detector more signal before deciding.
-    # max_delay 3.0s (Phase 5, 2026-05-12, was 6.0): matches LiveKit's
-    #   documented default. Earlier tuning (unlikely_threshold→0.5,
-    #   min_duration→1.0s) has stablized EOU detection; long-pause
-    #   tolerance built into the orchestrator coalescing logic
-    #   (docs/superpowers/specs/2026-05-11-turn-continuation-coalescing-design.md).
-    # Endpointing tuning (2026-05-17 conversational-continuation design).
-    #
-    # mode "dynamic" (Python-only): the framework computes an EMA over the
-    #   session's pause statistics and adapts the effective delay within
-    #   [min_delay, max_delay]. Fast talker → tighter; thinker → looser.
-    #   Requires MultilingualModel or VAD-based turn detection.
-    #
-    # min_delay 0.8s (was 1.0): slight tightening for the snappy-end of the
-    #   dynamic range.
-    # max_delay 4.5s (was 3.0): headroom for thinking pauses. The canonical
-    #   failure session (engine-events/2115a63a-…json) had a 3.32s pause
-    #   that crossed the 3.0s ceiling and caused an orphan fragment turn.
-    #   4.5s swallows that pause without firing EOU.
-    engine_endpointing_mode: Literal["fixed", "dynamic"] = "dynamic"
-    engine_endpointing_min_delay: float = 0.8
-    engine_endpointing_max_delay: float = 4.5
 
-    # --- Interview engine v2 (two-plane) — EOU / turn-taking knobs ---
-    # Isolated from the v1 engine_endpointing_* / interview_turn_detector_*
-    # knobs so retuning v2 on talk-tests never changes v1 behavior (master §3
-    # "M3 must not break v1").
+    # --- Interview engine — EOU / turn-taking knobs ---
     #
     # unlikely_threshold = None => use the MultilingualModel's DOCUMENTED DEFAULT
     # (the docs say the detector "has no configuration"; English true-positive
@@ -405,29 +365,6 @@ class Settings(BaseSettings):
         "Mm-hmm.",
     ]
 
-    # Conversational continuation — pre-Speaker cancellation watcher.
-    # See docs/superpowers/specs/2026-05-17-conversational-continuation-design.md
-    #
-    # The watcher subscribes to ``user_input_transcribed`` during an
-    # in-flight turn. When STT delivers a final transcript with at least
-    # ``engine_continuation_min_word_count`` words AND the agent has not
-    # yet started speaking (commit_event not set), the in-flight Judge
-    # task is cancelled, the State Engine is rolled back to the pre-turn
-    # snapshot, and the candidate's text is buffered for stitching into
-    # the next turn.
-    #
-    # Trigger switched from VAD-based (sustained user_state speaking) to
-    # STT-based (is_final=True + word-count gate) on 2026-05-17 after
-    # session 7970e91c showed VAD-triggered aborts on non-speech sounds
-    # and brief filler interjections.
-    #
-    # ``engine_continuation_enabled`` is the kill switch. Set to False to
-    # disable the entire mechanism (orchestrator behaves identically to
-    # the pre-2026-05-17 code path) — useful for emergency rollback
-    # without a code deploy.
-    engine_continuation_enabled: bool = True
-    engine_continuation_min_word_count: int = 2
-    engine_continuation_consecutive_abort_cap: int = 3
     # Phase 3D — audio pipeline tuning (LK Cloud locked, 2026-05-06)
     # Architecture is locked to LK Cloud + ai-coustics exclusively.
     # "off" and "krisp_nc" are no longer valid values.
@@ -437,10 +374,6 @@ class Settings(BaseSettings):
     # Passed as `enhancement_level` to the ai_coustics plugin (0.0 = off, 1.0 = max).
     interview_nc_enhancement_level: float = 0.5
 
-    # Observability
-    engine_log_audio_events: bool = True
-    engine_log_user_transcripts: bool = False
-
     # Stuck-session reaper. Sweeps state='active' sessions whose
     # state_changed_at is older than reaper_stuck_threshold_seconds and
     # transitions them to state='error' with error_code='engine_unresponsive'.
@@ -448,47 +381,6 @@ class Settings(BaseSettings):
     reaper_enabled: bool = True
     reaper_interval_seconds: int = 300   # how often the scheduler ticks
     reaper_stuck_threshold_seconds: int = 900  # 15 min — typical AI screen is 30 min
-
-    # Phase 2 (engine redesign — controller cutover) — idle-nudge timing.
-    # 30/30/30 chosen to balance against thinking pauses on hard technical
-    # questions while still detecting a candidate who walked away within
-    # ~90s. Tunable per-deploy without redeploy.
-    engine_idle_first_nudge_seconds: float = 30.0
-    engine_idle_second_nudge_seconds: float = 30.0
-    engine_idle_give_up_seconds: float = 30.0
-
-    # Phase 2 — task watchdog overhead. Padding on `estimated_minutes * 60`
-    # so a clean task on the wire (one that fires its terminal tool right
-    # at the budget boundary) doesn't trip the timer mid-tool-call.
-    engine_task_budget_overhead_seconds: float = 5.0
-
-    # Phase 2 — closing TTS drain timeout. Bounds how long the controller
-    # waits for the closing line to play before forcing shutdown. Avoids
-    # deadlocking teardown on a stuck TTS pipeline.
-    engine_closing_drain_timeout_seconds: float = 8.0
-
-    # Phase 3D (structured agent) — judge + speaker model selection and tuning.
-    # Judge: async LLM that decides next action each turn.
-    # Speaker: streaming Responses API LLM that generates candidate-facing text.
-    engine_judge_model: str = "gpt-5.4-mini-2026-03-17"
-    engine_speaker_model: str = "gpt-5.4-nano-2026-03-17"
-    # Total wall-clock budget (ms) the judge is allowed before fallback kicks in.
-    engine_judge_total_budget_ms: int = 10000
-    # Wait between judge retry attempts (ms).
-    engine_judge_retry_wait_ms: int = 250
-    # Max tokens the speaker may emit in a single turn.
-    engine_speaker_max_output_tokens: int = 200
-    # Checkpoint cadence — persist state every N turns or every M seconds,
-    # whichever fires first.
-    engine_checkpoint_turns: int = 10
-    engine_checkpoint_seconds: int = 30
-    # Maximum number of candidate utterance claims to keep in the pool.
-    engine_claims_pool_max: int = 50
-    # Prompt version tags — controls which versioned prompt file is loaded.
-    # Default v2 (shipped 2026-05-17). Rollback: set to v1 and restart
-    # the engine container — v1 files remain in repo for one sprint.
-    engine_judge_prompt_version: str = "v2"
-    engine_speaker_prompt_version: str = "v2"
 
     # --- Interview engine (two-plane) — model map ---
     # Brain (Control Plane) — FAST model + reasoning-FIRST FIELD for coherence, NO
@@ -554,19 +446,13 @@ class Settings(BaseSettings):
     # Blank -> the mouth falls back to engine_agent_name.
     engine_mouth_persona_name: str = "Arjun"
 
-    # Canned terminal message override. None = use PersonaSpec.fallback_session_ended
-    # (Arjun-voiced default with {comma_name} that omits the comma when no name is
-    # present). Set to a literal string to override for a specific tenant / env.
-    engine_session_ended_message: str | None = None
-
     # Phase 1 (engine redesign) — event log sink config. The engine writes a
     # per-session JSON envelope at session close; the sink chosen here decides
-    # where it lands. Production runs `metadata` redaction (no PII content);
-    # `full` is consent-gated audit replay only and must never be the default.
-    # `none` disables the writer entirely (smoke tests, ephemeral envs).
+    # where it lands. `none` disables the writer entirely (smoke tests,
+    # ephemeral envs). Envelope redaction defaults to `metadata` (no PII
+    # content) in EventCollector — the engine never overrides it.
     engine_event_log_sink: Literal["local", "s3", "none"] = "local"
     engine_event_log_dir: str = "/tmp/engine-events"
-    engine_event_log_redaction: Literal["metadata", "full"] = "metadata"
     aws_s3_bucket_engine_events: str = ""
 
     @field_validator("aws_s3_bucket_engine_events")
@@ -579,28 +465,6 @@ class Settings(BaseSettings):
                 "ENGINE_EVENT_LOG_SINK=s3. Provide an S3 bucket name."
             )
         return v
-
-    # Realtime model selection — env-driven, mirrors the JD/question-bank
-    # convention. Consumed by AIConfig (in app/ai/config.py) and the
-    # plugin factories in app/ai/realtime.py.
-    #
-    # ``interview_reasoning_effort`` is forwarded to ``openai.LLM`` only
-    # when non-empty (see ``app/ai/realtime.py::build_llm_plugin``). Per
-    # OpenAI's API docs, ``reasoning_effort`` is **not supported for
-    # non-reasoning chat models** — sending it to ``*-chat-latest`` returns
-    # HTTP 400. Default is empty so the param is omitted, which is the
-    # correct contract for the default chat model below.
-    #
-    # When switching to a reasoning model (e.g. ``gpt-5.1``, ``o3``,
-    # ``o4-mini``, ``gpt-5-pro``), set ``INTERVIEW_REASONING_EFFORT`` to
-    # one of the model's documented values (``none|minimal|low|medium|
-    # high|xhigh`` — each model's allowed subset is in OpenAI's docs).
-    # Lower effort = lower first-token latency; ``low`` is a good default
-    # for the realtime conversational pipeline since the InterviewStateMachine
-    # — not the LLM — drives probe selection / signal detection / mandatory
-    # coverage. The LLM's job is to be a fluent conversationalist.
-    interview_llm_model: str = "gpt-5.3-chat-latest"
-    interview_reasoning_effort: str = ""
 
     # ───────── STT (realtime) — provider-switchable ─────────
     # Default ``deepgram`` (nova-3, en-IN) with per-session keyterm
@@ -643,22 +507,6 @@ class Settings(BaseSettings):
     # Aligned to PersonaSpec.tts_*_recommended for Arjun (P4.3).
     interview_tts_pace: float = 0.95
     interview_tts_temperature: float = 0.6
-
-    # End-of-utterance confidence floor for the multilingual turn-detector
-    # plugin. None lets the plugin's per-language tuned defaults (~0.3-0.5)
-    # apply. Phase 2 P2.2 (2026-05-08) dropped the explicit 0.15 override:
-    # 0.15 was *more eager* than the language-tuned defaults, which made
-    # the agent commit turn-end on lower-confidence EOU signals — the
-    # opposite of what we want for candidates who pause mid-thought.
-    # Letting the plugin choose is both more patient AND more accurate.
-    # Set explicitly only when you have a tuning reason. Range: 0.0 – 1.0.
-    # Phase 5 (2026-05-12): bumped from None -> 0.5 for the Sarvam +
-    # MultilingualModel path. The product's first candidates are
-    # Indian-English speakers who tend to pause mid-thought; a more
-    # conservative EOU floor (only fire end-of-turn when the model is
-    # confidently sure) reduces premature turn closures. Tune empirically
-    # from real session audio.tuning_summary data.
-    interview_turn_detector_unlikely_threshold: float | None = 0.5
 
     # Frontend base URL — used to build invite/confirmation links in emails.
     # Previously hardcoded with a `debug ? localhost : app.projectx.com`

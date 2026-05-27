@@ -115,40 +115,13 @@ def _build_stt_deepgram(*, keyterms: list[str] | None = None) -> "_BaseSTT":
     return deepgram.STT(**kwargs)
 
 
-def build_llm_plugin() -> "LLM":
-    """Construct the realtime OpenAI LLM plugin from AIConfig.
-
-    ``reasoning_effort`` is forwarded only when ``AIConfig.interview_reasoning_effort``
-    is non-empty. Per OpenAI's API contract, ``reasoning_effort`` is rejected
-    by non-reasoning chat models (``*-chat-latest``) — sending it returns
-    HTTP 400, which kills every LLM turn in the realtime pipeline. Reasoning
-    models (``gpt-5.1``, ``o3``, ``o4-mini``, ``gpt-5-pro``, …) accept the
-    parameter and benefit from the latency tuning it enables.
-    """
-    from livekit.plugins import openai
-
-    kwargs: dict[str, object] = {"model": ai_config.interview_llm_model}
-    if ai_config.interview_reasoning_effort:
-        kwargs["reasoning_effort"] = ai_config.interview_reasoning_effort
-
-    logger.info(
-        "ai.realtime.llm.built",
-        provider="openai",
-        model=ai_config.interview_llm_model,
-        reasoning_effort=ai_config.interview_reasoning_effort or None,
-    )
-    return openai.LLM(**kwargs)
-
-
 def build_mouth_llm_plugin() -> "LLM":
     """Construct the realtime OpenAI LLM plugin for the v2 *mouth* (Conversation Plane).
 
     Reads `AIConfig.engine_mouth_model` + `engine_mouth_prompt_cache_key` (R6 — explicit,
     stable cache routing for the byte-stable persona prefix). `reasoning_effort` is
-    forwarded ONLY when `engine_mouth_effort` is non-empty (same contract as
-    `build_llm_plugin`: non-reasoning chat models reject the param with HTTP 400, which
-    would kill every mouth turn). Kept separate from `build_llm_plugin` (v1 reads
-    `interview_llm_model` and sends no cache key) so the v1 path stays byte-identical.
+    forwarded ONLY when `engine_mouth_effort` is non-empty: non-reasoning chat models
+    reject the param with HTTP 400, which would kill every mouth turn.
     """
     from livekit.plugins import openai
 
@@ -262,11 +235,8 @@ def _build_tts_cartesia() -> "_BaseTTS":
     )
 
 
-_USE_AICONFIG_THRESHOLD = object()  # module-level sentinel
-
-
 def build_turn_detector(
-    unlikely_threshold: "float | None | object" = _USE_AICONFIG_THRESHOLD,
+    unlikely_threshold: "float | None",
 ) -> "TurnDetectionMode":
     """Construct the LiveKit multilingual turn-detector model.
 
@@ -277,21 +247,12 @@ def build_turn_detector(
     answer, or in noisy environments where stray sound bursts can
     prematurely trigger end-of-turn.
 
-    The threshold is sourced from `AIConfig.interview_turn_detector_unlikely_threshold`
-    (env: `INTERVIEW_TURN_DETECTOR_UNLIKELY_THRESHOLD`). Phase 5 (2026-05-12)
-    sets the default to 0.5 for the Sarvam + MultilingualModel path. Override
-    only when you have real session data to tune against.
-
-    `unlikely_threshold`: omit (sentinel) to read
-    `AIConfig.interview_turn_detector_unlikely_threshold` — the v1 path, byte-for-byte
-    unchanged. Pass an explicit float (or None for the model default) to override —
-    the v2 engine passes `AIConfig.engine_v2_turn_detector_unlikely_threshold` so it
-    tunes EOU independently of v1.
+    `unlikely_threshold` is required: pass an explicit float to raise the
+    EOU floor, or `None` for the model's per-language tuned default. The
+    engine passes `AIConfig.engine_v2_turn_detector_unlikely_threshold`.
     """
     from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
-    if unlikely_threshold is _USE_AICONFIG_THRESHOLD:
-        unlikely_threshold = ai_config.interview_turn_detector_unlikely_threshold
     if unlikely_threshold is None:
         return MultilingualModel()
     return MultilingualModel(unlikely_threshold=unlikely_threshold)
