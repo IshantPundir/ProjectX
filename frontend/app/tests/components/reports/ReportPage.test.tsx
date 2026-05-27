@@ -12,10 +12,33 @@ vi.mock('@/lib/hooks/use-me', () => ({ useMe: () => ({ data: { is_super_admin: f
 import ReportPage from '@/app/(dashboard)/reports/session/[sessionId]/page'
 
 const READY = {
-  verdict: 'reject', verdict_reason: 'failed', overall_score: 36, overall_coverage: 0.7,
-  overall_confidence: 'medium', dimension_scores: {}, knockout_results: [], signal_scorecards: [],
-  question_scorecards: [], summary: { headline: 'h', strengths: [], gaps: [], rationale: '' },
-  status: 'ready', id: 'r1', session_id: 's1', version: 1, scoring_manifest: null, human_decision: null,
+  verdict: 'reject',
+  verdict_reason: 'failed',
+  overall_score: 36,
+  overall_coverage: 0.7,
+  overall_confidence: 'medium',
+  decision: {
+    headline: 'Not recommended for this role.',
+    why_positive: { title: 'Some positives', body: 'Met the experience bar.' },
+    why_negative: { title: 'Core concerns', body: 'Technical depth was not demonstrated.' },
+  },
+  scores: {
+    overall: { score: 36, tier_label: 'Below Bar', tone: 'danger', confidence: 'medium', coverage: 0.7 },
+  },
+  quick_summary: 'Candidate did not meet the requirements.',
+  strengths: [],
+  concerns: [],
+  questions: [],
+  methodology: { note: 'Interview completed normally.', charity_flags: [] },
+  signal_assessments: [],
+  status: 'ready',
+  id: 'r1',
+  session_id: 's1',
+  version: 1,
+  engine_version: 'v2',
+  scoring_manifest: null,
+  human_decision: null,
+  generated_at: '2026-05-28T00:00:00Z',
 }
 
 afterEach(() => vi.unstubAllGlobals())
@@ -24,7 +47,7 @@ describe('ReportPage', () => {
   it('renders the ready report', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => READY } as Response))
     renderWithProviders(<ReportPage />)
-    expect((await screen.findAllByText('Reject')).length).toBeGreaterThan(0)
+    expect((await screen.findAllByText('Not Recommended')).length).toBeGreaterThan(0)
   })
 
   it('renders the empty state on 404', async () => {
