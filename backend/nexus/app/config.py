@@ -584,5 +584,9 @@ class Settings(BaseSettings):
     # prefix on a prompt-family change to avoid cross-version cache pollution.
     report_scorer_prompt_cache_key_prefix: str = "judge"
 
+    # ``openai_report_narrative_model`` — model for the prose-only narrative layer.
+    openai_report_narrative_model: str = "gpt-5.4"
+    openai_report_narrative_effort: str = "low"
+
 
 settings = Settings()

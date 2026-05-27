@@ -149,6 +149,49 @@ class ReportIndexPage(BaseModel):
     limit: int
 
 
+class WhyColumn(BaseModel):
+    title: str
+    body: str
+
+
+class DecisionOut(BaseModel):
+    headline: str
+    why_positive: WhyColumn
+    why_negative: WhyColumn
+
+
+class StrengthOut(BaseModel):
+    title: str
+    detail: str
+
+
+class ConcernOut(BaseModel):
+    title: str
+    detail: str
+    severity: Literal["deal_breaker", "major", "moderate"]
+
+
+class QuestionNarrative(BaseModel):
+    question_id: str
+    candidate_quote: str          # cleaned, readable; meaning preserved
+    our_read: str
+
+
+class MethodologyOut(BaseModel):
+    note: str
+    charity_flags: list[str] = Field(default_factory=list)
+
+
+class NarrativeOut(BaseModel):
+    """Prose-only LLM output. Contains NO scores/verdict."""
+    decision: DecisionOut
+    quick_summary: str
+    strengths: list[StrengthOut] = Field(default_factory=list)
+    concerns: list[ConcernOut] = Field(default_factory=list)
+    questions: list[QuestionNarrative] = Field(default_factory=list)
+    methodology: MethodologyOut
+
+
 class ReportRead(BaseModel):
     """Recruiter-facing report serialization (mirrors session_reports columns)."""
 

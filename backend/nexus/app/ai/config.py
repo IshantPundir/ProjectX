@@ -274,5 +274,13 @@ class AIConfig:
     def report_scorer_prompt_cache_key_prefix(self) -> str:
         return self._settings.report_scorer_prompt_cache_key_prefix
 
+    @property
+    def report_narrative_model(self) -> str:
+        return self._settings.openai_report_narrative_model
+
+    @property
+    def report_narrative_effort(self) -> str:
+        return self._settings.openai_report_narrative_effort
+
 
 ai_config = AIConfig(settings)
