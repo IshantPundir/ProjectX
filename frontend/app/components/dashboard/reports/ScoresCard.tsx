@@ -25,8 +25,16 @@ export function ScoresCard({ report }: { report: ReportRead }) {
       <VerdictBand verdict={report.verdict} />
       <p className="mt-1 text-[12.5px] leading-relaxed" style={{ color: 'var(--px-fg-2)' }}>{report.decision.headline}</p>
 
-      <div className="my-3 flex justify-center">
+      <div className="my-3 flex flex-col items-center">
         <ScoreGauge score={overall?.score ?? null} label="Overall" size={118} toneOverride={verdictTone} />
+        {overall?.session_score != null && (overall.holistic_delta ?? 0) !== 0 && (
+          <div className="mt-1 text-[10px]" style={{ color: 'var(--px-fg-4)' }}
+               title="Deterministic session score, plus a bounded holistic adjustment. See methodology.">
+            Session score {(overall.session_score / 10).toFixed(1)}
+            {' · holistic '}{(overall.holistic_delta as number) > 0 ? '+' : ''}
+            {((overall.holistic_delta as number) / 10).toFixed(1)}
+          </div>
+        )}
       </div>
 
       {dims.length > 0 && (
