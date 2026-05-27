@@ -50,10 +50,6 @@ class JobPosting(Base):
     salary_currency: Mapped[str | None] = mapped_column(Text)
     travel_required: Mapped[str | None] = mapped_column(Text)
     start_date_pref: Mapped[str | None] = mapped_column(Text)
-    interview_engine_version: Mapped[str | None] = mapped_column(
-        Text, nullable=True, default=None,
-        doc="v2 engine opt-in: NULL inherits the global default; 'v1'/'v2' overrides it.",
-    )
     created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     updated_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("NOW()"))

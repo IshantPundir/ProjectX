@@ -170,8 +170,7 @@ async def list_report_index(
 ) -> Any:
     """Paginated list of completed sessions that are reportable.
 
-    A session appears when it is `completed` AND (already has a report OR runs
-    the v2 engine, i.e. is scoreable). Tenant-scoped by an explicit
+    A session appears when it is `completed`. Tenant-scoped by an explicit
     `s.tenant_id` filter (works in tests where RLS is disabled) plus RLS in
     prod. RBAC: reports.view or super-admin.
     """
@@ -187,7 +186,6 @@ async def list_report_index(
         LEFT JOIN session_reports sr ON sr.session_id = s.id
         WHERE s.tenant_id = :tenant_id
           AND s.state = 'completed'
-          AND (sr.id IS NOT NULL OR j.interview_engine_version = 'v2')
     """
     params: dict[str, Any] = {"tenant_id": str(tenant_id)}
 

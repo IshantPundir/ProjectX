@@ -490,11 +490,7 @@ class Settings(BaseSettings):
     engine_judge_prompt_version: str = "v2"
     engine_speaker_prompt_version: str = "v2"
 
-    # --- Interview engine v2 (two-plane) — selection + model map ---
-    # Selection: per-job override (job_postings.interview_engine_version) falls
-    # back to this global default. 'v1' keeps every session on the legacy engine.
-    interview_engine_default_version: Literal["v1", "v2"] = "v1"
-
+    # --- Interview engine (two-plane) — model map ---
     # Brain (Control Plane) — FAST model + reasoning-FIRST FIELD for coherence, NO
     # extended-thinking penalty. gpt-5 (a reasoning model) paid ~8-10s thinking
     # latency even at low effort and timed out the 6s budget EVERY turn (live

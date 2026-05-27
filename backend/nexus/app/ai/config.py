@@ -168,11 +168,7 @@ class AIConfig:
     def engine_speaker_prompt_version(self) -> str:
         return self._settings.engine_speaker_prompt_version
 
-    # --- Interview engine v2 (two-plane) ---
-    @property
-    def interview_engine_default_version(self) -> str:
-        return self._settings.interview_engine_default_version
-
+    # --- Interview engine (two-plane) ---
     @property
     def engine_brain_model(self) -> str:
         return self._settings.engine_brain_model
