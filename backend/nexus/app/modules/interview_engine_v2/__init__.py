@@ -26,6 +26,7 @@ from app.modules.interview_engine_v2.selection import should_run_v2
 
 if TYPE_CHECKING:  # static-only; never imported at runtime (keeps livekit out of nexus)
     from app.modules.interview_engine_v2.agent import run as run  # noqa: F401
+    from app.modules.interview_engine_v2.agent import server as server  # noqa: F401
 
 __all__ = [
     "Directive",
@@ -35,6 +36,7 @@ __all__ = [
     "TurnDecisionRecord",
     "should_run_v2",
     "run",
+    "server",
 ]
 
 
@@ -43,4 +45,8 @@ def __getattr__(name: str) -> Any:  # PEP 562 — lazy livekit-bearing export
         from app.modules.interview_engine_v2.agent import run
 
         return run
+    if name == "server":
+        from app.modules.interview_engine_v2.agent import server
+
+        return server
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

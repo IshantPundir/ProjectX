@@ -22,6 +22,7 @@ inside the engine container, so the FastAPI/nexus process never loads livekit.
 from __future__ import annotations
 
 import asyncio
+import json
 import random
 import time
 import uuid
@@ -33,18 +34,23 @@ from datetime import UTC, datetime
 import structlog
 from livekit.agents import (
     Agent,
+    AgentServer,
     AgentSession,
     ChatContext,
     ChatMessage,
     JobContext,
+    JobProcess,
     MetricsCollectedEvent,
     StopResponse,
     TurnHandlingOptions,
     UserStateChangedEvent,
     room_io,
 )
+from livekit.plugins.turn_detector import multilingual as _turn_detector_multilingual  # noqa: F401
+from opentelemetry.trace import set_tracer_provider as _otel_set_global_provider
 
 from app.ai.config import ai_config
+from app.ai.otel import bootstrap_tracer_provider
 from app.ai.prompts import PromptLoader
 from app.ai.realtime import (
     build_interruption_options,
@@ -89,12 +95,30 @@ from app.modules.interview_engine_v2.turn_taking.pacing import (
 from app.modules.interview_runtime import (
     SessionConfig,
     TranscriptEntry,
+    build_session_config,
     record_session_result,
 )
+from app.modules.session import classify_engine_exception, transition_to_error
 
 log = structlog.get_logger("interview_engine_v2")
 
 _KEYTERM_CAP = 50
+
+
+server = AgentServer(host="0.0.0.0", port=8081)
+
+
+def prewarm(proc: JobProcess) -> None:
+    """Process-startup hook: bootstrap an OTel TracerProvider so livekit-agents'
+    built-in spans ship to whatever OTLP endpoint the operator configures.
+    Production-safe default: no env vars set -> spans go nowhere."""
+    provider = bootstrap_tracer_provider()
+    _otel_set_global_provider(provider)
+    proc.userdata["otel_provider"] = provider
+    log.info("engine.otel.bootstrapped", service_name=settings.otel_service_name)
+
+
+server.setup_fnc = prewarm
 
 
 def assemble_v2_keyterms(*, candidate_first_name: str, bank_keyterms: list[str]) -> list[str]:
@@ -913,3 +937,119 @@ async def run(
         )
         # CMI-3: the talk-test reads these numbers (incl. the `perceived` block) from the logs.
         log.info("engine.v2.audio_tuning_summary", **summary)
+
+
+@server.rtc_session(agent_name=settings.engine_agent_name)
+async def entrypoint(ctx: JobContext) -> None:
+    """Per-session entrypoint. Parses dispatch metadata, binds the log context,
+    then runs the engine; any pre-run crash is funneled to the failure handler."""
+    metadata = json.loads(ctx.job.metadata or "{}")
+    session_id_str = metadata["session_id"]
+    tenant_id_str = metadata["tenant_id"]
+    correlation_id = metadata.get("correlation_id", session_id_str)
+    session_uuid = uuid.UUID(session_id_str)
+    tenant_uuid = uuid.UUID(tenant_id_str)
+
+    structlog.contextvars.bind_contextvars(
+        session_id=session_id_str,
+        tenant_id=tenant_id_str,
+        correlation_id=correlation_id,
+    )
+    log.info("engine.dispatch.received", agent_name=settings.engine_agent_name)
+
+    try:
+        await _run_entrypoint(ctx, session_uuid, tenant_uuid, correlation_id)
+    except Exception as exc:
+        await _handle_entrypoint_failure(
+            exc=exc,
+            ctx=ctx,
+            session_id=session_uuid,
+            tenant_uuid=tenant_uuid,
+            correlation_id=correlation_id,
+        )
+        raise  # preserves LiveKit's "job crashed" log
+
+
+async def _run_entrypoint(
+    ctx: JobContext,
+    session_uuid: uuid.UUID,
+    tenant_uuid: uuid.UUID,
+    correlation_id: str,
+) -> None:
+    """Fetch the SessionConfig and run the engine (unconditional — single engine)."""
+    async with get_bypass_session() as db:
+        session_config = await build_session_config(
+            db, session_id=session_uuid, tenant_id=tenant_uuid,
+        )
+    log.info(
+        "engine.config.fetched",
+        question_count=len(session_config.stage.questions),
+        stage_type=session_config.stage.stage_type,
+        candidate_name=session_config.candidate.name,
+        job_title=session_config.job_title,
+    )
+    await run(
+        ctx,
+        session_config,
+        tenant_id=tenant_uuid,
+        correlation_id=correlation_id,
+    )
+
+
+async def _handle_entrypoint_failure(
+    *,
+    exc: Exception,
+    ctx: JobContext,
+    session_id: uuid.UUID,
+    tenant_uuid: uuid.UUID,
+    correlation_id: str,
+) -> None:
+    """Single failure handler for every pre-`run` crash path.
+
+    Order: classify -> transition session row to state='error' (durable truth) ->
+    best-effort publish session_outcome='error' to the room. DB transition is first
+    so the candidate's HTTP fallback poll wins even if the room publish fails. Each
+    step is independently guarded and neither re-raises (the caller re-raises the
+    original exception)."""
+    error_code = classify_engine_exception(exc)
+    log.error(
+        "engine.entrypoint.failed",
+        error_code=error_code,
+        error_type=type(exc).__name__,
+        error=str(exc),
+    )
+    try:
+        async with get_bypass_session() as db:
+            await transition_to_error(
+                db,
+                session_id=session_id,
+                tenant_id=tenant_uuid,
+                error_code=error_code,
+                correlation_id=correlation_id,
+                reason="engine_entrypoint",
+            )
+            await db.commit()
+    except Exception as inner:  # noqa: BLE001
+        log.error(
+            "engine.entrypoint.db_transition_failed",
+            error=str(inner),
+            error_type=type(inner).__name__,
+        )
+    await _best_effort_publish_outcome_attribute(ctx)
+
+
+async def _best_effort_publish_outcome_attribute(ctx: JobContext) -> None:
+    """Publish session_outcome='error' to the room if possible (connecting first,
+    since the failure may predate ctx.connect()). Swallows every exception."""
+    try:
+        if not ctx.room.isconnected():
+            await ctx.connect()
+        await ctx.room.local_participant.set_attributes(
+            {"session_outcome": "error"},
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "engine.entrypoint.outcome_publish_failed",
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
