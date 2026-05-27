@@ -18,6 +18,8 @@ export interface ScoreOut {
   tone: string
   confidence: Confidence
   coverage: number
+  session_score?: number | null
+  holistic_delta?: number | null
 }
 export interface StrengthOut { title: string; detail: string }
 export interface ConcernOut { title: string; detail: string; severity: Severity }
