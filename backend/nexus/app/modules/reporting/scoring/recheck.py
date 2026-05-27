@@ -6,6 +6,7 @@ graceful refusal fallback (keep the engine's prior state)."""
 from __future__ import annotations
 
 import hashlib
+
 import structlog
 from opentelemetry import trace
 
