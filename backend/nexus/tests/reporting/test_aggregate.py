@@ -50,7 +50,7 @@ def test_knockout_status():
     assert knockout_status(state="failed") == "failed"
     assert knockout_status(state="sufficient") == "passed"
     assert knockout_status(state="exceeded") == "passed"
-    assert knockout_status(state="partial") == "failed"     # partial must-have = not met
+    assert knockout_status(state="partial") == "insufficient"   # partial must-have = couldn't confirm → human review
     assert knockout_status(state="none") == "insufficient"
 
 

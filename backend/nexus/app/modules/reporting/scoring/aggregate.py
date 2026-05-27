@@ -74,10 +74,12 @@ def score_overall(signals: list[ScoredSignal]) -> tuple[int | None, float]:
 
 def knockout_status(*, state: CovState) -> KnockoutStatus:
     if state == "none":
-        return "insufficient"
-    if state in ("failed", "partial"):     # a partially-shown must-have is not met
-        return "failed"
-    return "passed"                        # sufficient | exceeded
+        return "insufficient"      # never assessed → couldn't confirm the must-have
+    if state == "failed":
+        return "failed"            # genuine absence/disclaim of a must-have → hard knockout reject
+    if state == "partial":
+        return "insufficient"      # engaged but didn't establish depth → couldn't confirm
+    return "passed"                # sufficient | exceeded
 
 
 @dataclass(frozen=True)
