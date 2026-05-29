@@ -18,17 +18,17 @@ describe('eyeGazeOffset (signed eye direction)', () => {
     })
     expect(e).toEqual({ h: 0, v: 0 })
   })
-  it('reads positive h (candidate right): left eye IN + right eye OUT', () => {
-    const e = eyeGazeOffset({
-      inLeft: 0.8, outLeft: 0, upLeft: 0, downLeft: 0,
-      inRight: 0, outRight: 0.8, upRight: 0, downRight: 0,
-    })
-    expect(e.h).toBeGreaterThan(0.5)
-  })
-  it('reads negative h (candidate left): left eye OUT + right eye IN', () => {
+  it('reads positive h (candidate right): left eye OUT + right eye IN', () => {
     const e = eyeGazeOffset({
       inLeft: 0, outLeft: 0.8, upLeft: 0, downLeft: 0,
       inRight: 0.8, outRight: 0, upRight: 0, downRight: 0,
+    })
+    expect(e.h).toBeGreaterThan(0.5)
+  })
+  it('reads negative h (candidate left): left eye IN + right eye OUT', () => {
+    const e = eyeGazeOffset({
+      inLeft: 0.8, outLeft: 0, upLeft: 0, downLeft: 0,
+      inRight: 0, outRight: 0.8, upRight: 0, downRight: 0,
     })
     expect(e.h).toBeLessThan(-0.5)
   })

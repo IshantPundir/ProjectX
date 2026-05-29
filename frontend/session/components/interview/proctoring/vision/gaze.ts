@@ -41,12 +41,14 @@ export interface EyeGaze {
 
 /**
  * Combine MediaPipe per-eye look blendshapes into a SIGNED eye-gaze direction.
- * Left eye looking IN (toward the nose) = looking to the candidate's right;
- * right eye looking IN = looking to the left — hence the cross-combination.
+ * h>0 = candidate looking to their right, v>0 = down. MediaPipe's eyeLook*
+ * Left/Right names are mirror-relative to the subject, so the horizontal sign
+ * is set EMPIRICALLY (verified in-app) so the dot moves consistently with head
+ * yaw under the mirrored self-view: candidate's right = left-eye OUT + right-eye IN.
  */
 export function eyeGazeOffset(s: EyeGazeScores): EyeGaze {
-  const right = (s.inLeft + s.outRight) / 2
-  const left = (s.outLeft + s.inRight) / 2
+  const right = (s.outLeft + s.inRight) / 2
+  const left = (s.inLeft + s.outRight) / 2
   const down = (s.downLeft + s.downRight) / 2
   const up = (s.upLeft + s.upRight) / 2
   return { h: right - left, v: down - up }
