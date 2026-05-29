@@ -11,6 +11,6 @@ export const NUDGE_LABEL: Record<VisionNudgeKind, string> = {
 /** Sustained-condition duration before a nudge fires (ms). Tune via overlay. */
 export const NUDGE_SUSTAIN_MS: Record<VisionNudgeKind, number> = {
   face_not_visible: 2500,
-  multiple_faces: 2000,
-  looking_away_sustained: 4000,
+  multiple_faces: 500,
+  looking_away_sustained: 1000,
 }
