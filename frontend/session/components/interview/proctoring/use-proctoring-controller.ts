@@ -10,6 +10,7 @@ import {
   type ProctoringKind,
 } from '@/lib/api/candidate-session'
 import { isHard, VIOLATION_LABEL, type ProctoringTermination } from './violation-kinds'
+import { NUDGE_LABEL, type VisionNudgeKind } from './nudge-kinds'
 
 export interface BorderFlash {
   tone: 'hard' | 'soft'
@@ -24,6 +25,7 @@ export interface UseProctoringControllerArgs {
 
 export interface ProctoringController {
   report: (kind: ProctoringKind) => Promise<void>
+  nudge: (kind: VisionNudgeKind) => void
   flash: BorderFlash | null
 }
 
@@ -84,5 +86,16 @@ export function useProctoringController({
     [token, config.soft_violation_limit, terminate],
   )
 
-  return { report, flash }
+  const nudge = useCallback(
+    (kind: VisionNudgeKind) => {
+      if (terminatedRef.current) return
+      // Advisory only (design D1): soft flash + gentle toast, NO POST, NO terminate.
+      flashKey.current += 1
+      setFlash({ tone: 'soft', key: flashKey.current })
+      toast.warning(`Reminder: ${NUDGE_LABEL[kind]}.`)
+    },
+    [],
+  )
+
+  return { report, nudge, flash }
 }
