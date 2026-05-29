@@ -58,21 +58,21 @@ describe('signalQuality', () => {
   })
 })
 
-describe('poseToGazePoint (approximate dev pointer)', () => {
+describe('poseToGazePoint (approximate dev pointer, mirrored selfie view)', () => {
   it('centers at 0.5,0.5 for a forward pose', () => {
     expect(poseToGazePoint({ yaw: 0, pitch: 0, roll: 0 })).toEqual({ x: 0.5, y: 0.5 })
   })
-  it('moves right for positive yaw and down for positive pitch', () => {
+  it('mirrors horizontally: positive yaw -> screen left, and down for positive pitch', () => {
     const p = poseToGazePoint({ yaw: 15, pitch: 12.5, roll: 0 })
-    expect(p.x).toBeGreaterThan(0.5)
+    expect(p.x).toBeLessThan(0.5)
     expect(p.y).toBeGreaterThan(0.5)
   })
-  it('moves left for negative yaw and up for negative pitch', () => {
+  it('mirrors horizontally: negative yaw -> screen right, and up for negative pitch', () => {
     const p = poseToGazePoint({ yaw: -15, pitch: -12.5, roll: 0 })
-    expect(p.x).toBeLessThan(0.5)
+    expect(p.x).toBeGreaterThan(0.5)
     expect(p.y).toBeLessThan(0.5)
   })
   it('clamps to [0,1] for extreme poses', () => {
-    expect(poseToGazePoint({ yaw: 90, pitch: -90, roll: 0 })).toEqual({ x: 1, y: 0 })
+    expect(poseToGazePoint({ yaw: 90, pitch: -90, roll: 0 })).toEqual({ x: 0, y: 0 })
   })
 })

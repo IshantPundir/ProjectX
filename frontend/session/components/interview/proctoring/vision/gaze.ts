@@ -41,12 +41,13 @@ function clamp01(v: number): number {
 /**
  * Map head pose to an APPROXIMATE normalized gaze point {x,y} in [0,1], for the
  * dev debug pointer ONLY (NOT calibrated; head-pose-primary, consistent with
- * D5). yaw>0 (head turned candidate's right) -> x>0.5; pitch>0 (down) -> y>0.5.
- * Signs/ranges are tunable — flip a range sign if the dot feels mirrored.
+ * D5). Horizontal is MIRRORED to match the selfie (mirrored) self-view: yaw>0
+ * (head turned candidate's right) -> x<0.5 (screen left). pitch>0 (down) ->
+ * y>0.5. Ranges are tunable.
  */
 export function poseToGazePoint(pose: HeadPose): { x: number; y: number } {
   return {
-    x: clamp01(0.5 + pose.yaw / (2 * GAZE_YAW_RANGE)),
+    x: clamp01(0.5 - pose.yaw / (2 * GAZE_YAW_RANGE)),
     y: clamp01(0.5 + pose.pitch / (2 * GAZE_PITCH_RANGE)),
   }
 }
