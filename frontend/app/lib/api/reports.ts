@@ -119,6 +119,27 @@ export type ReportEnvelope =
   | { state: 'pending'; status: 'pending' | 'generating' }
   | { state: 'noReport' }
 
+// --- Session recording playback ---
+export type RecordingStatus = 'absent' | 'recording' | 'ready' | 'failed'
+
+export interface RecordingTranscriptSegment {
+  role: string
+  text: string
+  /** Milliseconds since interview start (engine timeline). */
+  t_ms: number
+}
+
+export interface RecordingPlayback {
+  status: RecordingStatus
+  /** Short-lived presigned GET URL; only present when status === 'ready'. */
+  signed_url: string | null
+  expires_at: string | null
+  duration_seconds: number | null
+  /** Add to a transcript t_ms to map it onto the video timeline. */
+  offset_ms: number
+  transcript: RecordingTranscriptSegment[]
+}
+
 export const reportsApi = {
   /**
    * GET /api/reports/session/{sessionId}.
@@ -173,4 +194,20 @@ export const reportsApi = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+
+  /**
+   * GET /api/reports/session/{sessionId}/recording.
+   * Returns playback status + (when ready) a short-lived signed URL and the
+   * timestamped transcript. Pull-based: the backend reconciles egress status
+   * on read, so poll while `status === 'recording'`.
+   */
+  getRecording: (
+    token: string,
+    sessionId: string,
+    opts?: { signal?: AbortSignal },
+  ): Promise<RecordingPlayback> =>
+    apiFetch<RecordingPlayback>(
+      `/api/reports/session/${sessionId}/recording`,
+      { token, signal: opts?.signal },
+    ),
 }

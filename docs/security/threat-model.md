@@ -223,3 +223,65 @@ Recruiter-facing UI copy must reflect this: proctoring flags are inputs to a
 human decision, not final verdicts. The borderline-candidate invariant (no
 auto-advancement or auto-rejection without human sign-off) remains in force
 regardless of proctoring outcome.
+
+---
+
+## Session recording (LiveKit Egress → object storage) — 2026-05-28
+
+Wires the previously-anticipated Egress recording pipeline (see the "Audio
+pipeline" section's deferred Egress row). The whole interview is captured as
+one MP4 — candidate camera full-frame + mixed candidate/agent audio — via a
+RoomComposite egress, uploaded by LiveKit Cloud Egress directly to a private
+S3-compatible bucket (Cloudflare R2 at MVP), and streamed back to the report
+page via a short-lived presigned GET URL minted by Nexus.
+
+### New external service in the data path
+
+- **Cloudflare R2** (object storage) becomes a sub-processor holding candidate
+  PII (interview video + audio). The S3-protocol abstraction (`app/storage/`)
+  means R2 is swappable for AWS S3 / Supabase Storage by config; any swap
+  changes the sub-processor and requires a DPA + sub-processor-list update.
+- **LiveKit Cloud Egress** composites + transcodes the recording in LiveKit's
+  cloud (already a sub-processor for the media plane; egress extends what it
+  processes to include the candidate's video frames).
+
+### Trust boundaries
+
+| Boundary | Risk | STRIDE | Mitigation |
+|---|---|---|---|
+| Room media → LiveKit Egress | Egress captures candidate video + both audio tracks (post-denoising). | I (disclosure via recording) | Consent is timestamped before `/start`, so recording begins post-consent (AIVIA). Egress starts only for sessions that reach `active`. |
+| Egress → R2 bucket | Recording written to object storage with long-lived S3 credentials. | I, T | Bucket is **private** (no public read). S3 API token is server-only (`RECORDING_STORAGE_*`), treated with DB-credential sensitivity, and scoped to the recordings bucket. Object keys are tenant-prefixed (`recordings/{tenant_id}/{session_id}.mp4`). |
+| R2 → recruiter browser | A recording URL could leak candidate PII if long-lived or shared. | I | Access is **signed-URL-only**, minted per-request by Nexus under the caller's tenant scope (RLS-bound session + explicit `tenant_id` filter + `reports.view` RBAC). TTL is short (default 1h). Signed URLs are never logged. |
+| Cross-tenant read | Tenant A requesting tenant B's recording. | E (elevation) | The read service filters `sessions` by `(id, tenant_id)`; a mismatch returns 0 rows → 404 before any URL is minted. Covered by `test_session_recording.py::test_cross_tenant_access_raises_not_found`. |
+
+### Residual threats (accepted)
+
+- A recruiter with `reports.view` can download the signed URL and redistribute
+  the file out of band. This is inherent to any human-review workflow and is
+  governed by the same access policy as the report itself.
+- R2 has no S3 object versioning / MFA-delete (the root CLAUDE.md DR standard
+  for the recording bucket). At enterprise the recording bucket moves to AWS S3
+  (regaining versioning + MFA-delete); the S3-protocol code ports as config.
+  Tracked as a pre-enterprise gap.
+
+### Logging / PII discipline
+
+- No signed URLs, object keys with tenant context, or egress internals in
+  structured logs. Recording-start failures log `session_id` only (the bucket/
+  endpoint could appear in raw exception text, so `exc_info` is kept out of the
+  message fields).
+
+### Availability posture
+
+- Recording is **best-effort**: a failed egress start is caught and the
+  interview proceeds (candidate-session availability target is 99.95%). The
+  failure is recorded as `recording_status='failed'` and surfaced honestly on
+  the report page ("recording unavailable"); transcript + scores are
+  unaffected.
+
+### When this section needs updating
+
+- Storage provider swap (R2 → AWS S3 / Supabase Storage / other).
+- Adding an inbound LiveKit Egress webhook (currently pull-based reconcile, so
+  no public webhook surface exists yet).
+- Any change to who can access a recording (RBAC gate beyond `reports.view`).

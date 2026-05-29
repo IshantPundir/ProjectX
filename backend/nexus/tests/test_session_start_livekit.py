@@ -244,3 +244,58 @@ async def test_otp_required_unmet_does_not_call_livekit(db, livekit_stubs):
         )
 
     livekit_stubs["dispatch_agent"].assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Session recording (RoomComposite egress) — best-effort wiring
+# ---------------------------------------------------------------------------
+
+async def test_start_attaches_auto_egress_and_marks_recording(db, livekit_stubs):
+    """Happy path attaches auto-egress at room creation and stamps recording."""
+    session_id, jti = await _seed_consented_session(db)
+
+    await session_service.start_session(
+        db, session_id=session_id, jti=jti,
+        ip_address="127.0.0.1", user_agent="ua",
+    )
+
+    # create_room was called with an egress config (auto egress).
+    _, kwargs = livekit_stubs["create_room"].await_args
+    assert kwargs.get("egress") is not None
+
+    sess = (await db.execute(
+        select(SessionRow).where(SessionRow.id == session_id)
+    )).scalar_one()
+    assert sess.recording_status == "recording"
+    assert sess.recording_s3_key.startswith("recordings/")
+    assert sess.recording_s3_key.endswith(f"{session_id}.mp4")
+    assert sess.recording_started_at is not None
+
+
+async def test_recording_setup_failure_is_non_fatal(db, livekit_stubs, monkeypatch):
+    """If egress setup fails, the session still goes active (availability over
+    recording completeness); status is marked 'failed' for the report."""
+    monkeypatch.setattr(
+        session_service, "build_room_egress",
+        lambda **kw: (_ for _ in ()).throw(RuntimeError("egress config bad")),
+    )
+    session_id, jti = await _seed_consented_session(db)
+
+    resp = await session_service.start_session(
+        db, session_id=session_id, jti=jti,
+        ip_address="127.0.0.1", user_agent="ua",
+    )
+
+    assert resp.session_id == session_id  # interview proceeds
+    # Room was still created (without egress) so the interview can run.
+    livekit_stubs["create_room"].assert_awaited()
+    sess = (await db.execute(
+        select(SessionRow).where(SessionRow.id == session_id)
+    )).scalar_one()
+    assert sess.state == SessionState.ACTIVE.value
+    assert sess.recording_status == "failed"
+    # Token was still consumed — the interview is live regardless.
+    token = (await db.execute(
+        select(CandidateSessionToken).where(CandidateSessionToken.jti == jti)
+    )).scalar_one()
+    assert token.used_at is not None

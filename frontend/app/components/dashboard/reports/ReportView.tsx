@@ -10,7 +10,7 @@ import { ReportMethodologyFooter } from './ReportMethodologyFooter'
 import { ReportTopBar } from './ReportTopBar'
 import './report.css'
 import { ScoresCard } from './ScoresCard'
-import { SessionPlaybackStub } from './SessionPlaybackStub'
+import { SessionPlayback } from './SessionPlayback'
 import { SignalAuditTable } from './SignalAuditTable'
 import { StrengthsConcerns } from './StrengthsConcerns'
 import { WhyContrast } from './WhyContrast'
@@ -41,7 +41,7 @@ export function ReportView({
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.85fr_1fr]">
         <div className="space-y-4">
           {[
-            <SessionPlaybackStub key="p" />,
+            <SessionPlayback key="p" sessionId={report.session_id} />,
             <WhyContrast key="w" decision={report.decision} />,
             <QuickSummary key="s" text={report.quick_summary} />,
             <StrengthsConcerns key="sc" strengths={report.strengths} concerns={report.concerns} />,

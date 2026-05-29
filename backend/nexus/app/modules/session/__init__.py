@@ -1,16 +1,22 @@
 """Session module — candidate interview session lifecycle."""
 from app.modules.session.errors import SessionNotFoundError
 from app.modules.session.models import CandidateSessionToken, Session
+from app.modules.session.recording import (
+    RecordingPlayback,
+    get_session_recording_playback,
+)
 from app.modules.session.schemas import SessionState
 from app.modules.session.state_machine import transition
 
 __all__ = [
     "CandidateSessionToken",
     "ErrorCode",
+    "RecordingPlayback",
     "Session",
     "SessionNotFoundError",
     "SessionState",
     "classify_engine_exception",
+    "get_session_recording_playback",
     "transition",
     "transition_to_error",
 ]

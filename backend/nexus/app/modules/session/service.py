@@ -46,10 +46,12 @@ from app.modules.session.errors import (
     TokenAlreadyUsedError,
 )
 from app.modules.session.livekit import (
+    build_room_egress,
     cancel_room,
     create_room,
     dispatch_agent,
     mint_candidate_lk_token,
+    recording_object_key,
 )
 from app.modules.session.otp import generate_code, hash_code, verify_code
 from app.modules.session.error_codes import ErrorCode
@@ -481,11 +483,47 @@ async def start_session(
         name=candidate.name or "",
         ttl_minutes=duration_minutes + 10,
     )
+    # Pre-create the room with our short empty_timeout instead of letting
+    # agent_dispatch auto-create it with LiveKit's 5-minute default. When
+    # recording is enabled, attach auto-egress so LiveKit starts the
+    # recording when the first participant joins (no empty-room race).
+    #
+    # Recording is BEST-EFFORT: if the egress config is rejected, we retry
+    # room creation WITHOUT it so the interview still proceeds (candidate
+    # availability outranks recording completeness). A non-egress room
+    # failure (e.g. LiveKit outage) still raises → AgentDispatchFailedError,
+    # token preserved, candidate can retry.
+    recording_requested = False
+    recording_key: str | None = None
     try:
-        # Pre-create the room with our short empty_timeout instead of
-        # letting agent_dispatch auto-create it with LiveKit's 5-minute
-        # default. See app/modules/session/livekit.py::create_room.
-        await create_room(room_name=room_name)
+        egress_cfg = None
+        if settings.recording_enabled:
+            try:
+                egress_cfg, recording_key = build_room_egress(
+                    tenant_id=sess.tenant_id, session_id=sess.id
+                )
+            except Exception:
+                log.warning(
+                    "session.recording_config_failed",
+                    session_id=str(sess.id),
+                    exc_info=True,
+                )
+                egress_cfg = None
+        try:
+            await create_room(room_name=room_name, egress=egress_cfg)
+            recording_requested = egress_cfg is not None
+        except Exception:
+            if egress_cfg is None:
+                raise
+            # Egress config may be the culprit — retry plain so the interview
+            # still works; recording is stamped 'failed' below.
+            log.warning(
+                "session.recording_room_create_failed",
+                session_id=str(sess.id),
+                exc_info=True,
+            )
+            await create_room(room_name=room_name)
+            recording_requested = False
         await dispatch_agent(
             room_name=room_name,
             session_id=sess.id,
@@ -547,6 +585,20 @@ async def start_session(
         resource_id=sess.id,
         payload={"jti": str(jti), "ip": ip_address},
     )
+
+    # Stamp recording state decided during room provisioning above. The egress
+    # itself is started by LiveKit when the first participant joins (auto
+    # egress); the egress id is filled in later by pull-based reconcile on the
+    # report-page read. Consent is timestamped before /start, so recording is
+    # post-consent (AIVIA-compliant).
+    if settings.recording_enabled:
+        sess.recording_status = "recording" if recording_requested else "failed"
+        sess.recording_s3_key = recording_key or recording_object_key(
+            tenant_id=sess.tenant_id, session_id=sess.id
+        )
+        if recording_requested:
+            sess.recording_started_at = datetime.now(UTC)
+        await db.flush()
 
     proctoring = await _build_proctoring_config(db, sess.tenant_id)
 

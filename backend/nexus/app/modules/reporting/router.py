@@ -32,6 +32,10 @@ from app.modules.reporting.schemas import (
     ReportIndexPage,
     ReportRead,
 )
+from app.modules.session import (
+    SessionNotFoundError,
+    get_session_recording_playback,
+)
 
 router = APIRouter(prefix="/api/reports", tags=["reporting"])
 
@@ -170,6 +174,38 @@ async def get_report_by_session(
         )
 
     return _row_to_read(row).model_dump(mode="json")
+
+
+# ---------------------------------------------------------------------------
+# GET /api/reports/session/{session_id}/recording
+#
+# Session-recording playback for the report page's player. Pull-based: if the
+# recording is still processing, this polls LiveKit and advances the row.
+# Returns a short-lived presigned URL only when ready. Same reports.view gate
+# as the report itself — anyone who can see the report can see the recording.
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/session/{session_id}/recording",
+    summary="Get the session recording playback (signed URL + transcript)",
+)
+async def get_session_recording_endpoint(
+    session_id: uuid_mod.UUID,
+    db: AsyncSession = Depends(get_tenant_db),
+    user: UserContext = Depends(get_current_user_roles),
+) -> Any:
+    """Return `{status, signed_url?, expires_at?, duration_seconds?, offset_ms,
+    transcript[]}` for a session's recording. RBAC: reports.view or super-admin.
+    """
+    _require_reports_view(user)
+    try:
+        playback = await get_session_recording_playback(
+            db, session_id=session_id, tenant_id=user.user.tenant_id
+        )
+    except SessionNotFoundError:
+        raise HTTPException(status_code=404, detail="Session not found") from None
+    return playback.model_dump(mode="json")
 
 
 # ---------------------------------------------------------------------------

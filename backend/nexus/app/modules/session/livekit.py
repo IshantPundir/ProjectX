@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from dataclasses import dataclass
 from datetime import timedelta
 
 from livekit import api as livekit_api
@@ -70,7 +71,9 @@ def mint_candidate_lk_token(
     return token.to_jwt()
 
 
-async def create_room(*, room_name: str) -> None:
+async def create_room(
+    *, room_name: str, egress: livekit_api.RoomEgress | None = None
+) -> None:
     """Pre-create the LiveKit room with an explicit ``empty_timeout``.
 
     LiveKit auto-creates rooms on first dispatch with its default
@@ -84,15 +87,21 @@ async def create_room(*, room_name: str) -> None:
     OTel batch exporters to drain after the conversation ends.
     Idempotent on the LiveKit side — calling create with an existing
     name updates the timeouts in-place.
+
+    When ``egress`` is provided, it configures **auto egress**: LiveKit
+    starts the recording automatically when the first participant joins
+    (no empty-room race) and stops it when the room empties. See
+    ``build_room_egress``.
     """
+    kwargs: dict = {
+        "name": room_name,
+        "empty_timeout": settings.livekit_room_empty_timeout_seconds,
+    }
+    if egress is not None:
+        kwargs["egress"] = egress
     lk = _lk_client()
     try:
-        await lk.room.create_room(
-            livekit_api.CreateRoomRequest(
-                name=room_name,
-                empty_timeout=settings.livekit_room_empty_timeout_seconds,
-            )
-        )
+        await lk.room.create_room(livekit_api.CreateRoomRequest(**kwargs))
     finally:
         await lk.aclose()
 
@@ -133,6 +142,135 @@ async def dispatch_agent(
         )
     finally:
         await lk.aclose()
+
+
+# --- Session recording (RoomComposite Auto Egress → S3-compatible store) ---
+
+
+@dataclass(frozen=True)
+class EgressSnapshot:
+    """Normalized egress state — keeps the LiveKit SDK enum out of callers.
+
+    ``status`` is one of: 'recording' (starting/active/ending), 'ready'
+    (complete), 'failed' (failed/aborted/limit). ``egress_id``/``key``/
+    ``duration_seconds``/``size_bytes`` are populated as they become known.
+    """
+
+    status: str
+    egress_id: str | None
+    key: str | None
+    duration_seconds: int | None
+    size_bytes: int | None
+
+
+def recording_object_key(*, tenant_id: uuid.UUID, session_id: uuid.UUID) -> str:
+    """Deterministic, tenant-prefixed object key for a session recording.
+
+    Tenant prefix gives per-tenant isolation in the bucket and makes
+    lifecycle / retention rules expressible per tenant.
+    """
+    return f"{settings.recording_key_prefix}/{tenant_id}/{session_id}.mp4"
+
+
+def _build_recording_file_output(key: str) -> livekit_api.EncodedFileOutput:
+    """Build the MP4 + S3 upload target from provider-agnostic settings.
+
+    The S3Upload speaks the S3 protocol, so the same code targets Cloudflare
+    R2, AWS S3, Supabase Storage, or MinIO — only the settings differ.
+    """
+    return livekit_api.EncodedFileOutput(
+        file_type=livekit_api.EncodedFileType.MP4,
+        filepath=key,
+        s3=livekit_api.S3Upload(
+            access_key=settings.recording_storage_access_key_id,
+            secret=settings.recording_storage_secret_access_key,
+            bucket=settings.recording_storage_bucket,
+            region=settings.recording_storage_region,
+            endpoint=settings.recording_storage_endpoint_url,
+            force_path_style=settings.recording_storage_force_path_style,
+        ),
+    )
+
+
+def build_room_egress(
+    *, tenant_id: uuid.UUID, session_id: uuid.UUID
+) -> tuple[livekit_api.RoomEgress, str]:
+    """Build an auto-egress config + the object key for a session recording.
+
+    Attaching this to ``create_room`` makes LiveKit start a RoomComposite
+    egress automatically when the first participant joins — one MP4 with the
+    candidate camera full-frame (single video publisher under the configured
+    layout) + mixed candidate/agent audio — and stop it when the room empties.
+    No ``room_name`` is set on the inner request: the room being created
+    supplies it.
+
+    Pure (no I/O); returns the config to attach and the deterministic key.
+    """
+    key = recording_object_key(tenant_id=tenant_id, session_id=session_id)
+    room_req = livekit_api.RoomCompositeEgressRequest(
+        layout=settings.recording_egress_layout,
+        audio_only=False,
+        file_outputs=[_build_recording_file_output(key)],
+        preset=getattr(
+            livekit_api.EncodingOptionsPreset, settings.recording_egress_preset
+        ),
+    )
+    return livekit_api.RoomEgress(room=room_req), key
+
+
+def _normalize_egress_status(info: livekit_api.EgressInfo) -> str:
+    complete = {livekit_api.EgressStatus.EGRESS_COMPLETE}
+    failed = {
+        livekit_api.EgressStatus.EGRESS_FAILED,
+        livekit_api.EgressStatus.EGRESS_ABORTED,
+        livekit_api.EgressStatus.EGRESS_LIMIT_REACHED,
+    }
+    if info.status in complete:
+        return "ready"
+    if info.status in failed:
+        return "failed"
+    return "recording"
+
+
+async def get_recording_status(room_name: str) -> EgressSnapshot | None:
+    """Poll LiveKit for a room's egress state (pull-based reconcile).
+
+    Looks up the egress by room name (auto-egress assigns the id only once it
+    starts). Returns None if LiveKit has no egress for the room yet. On
+    completion the file result carries duration (ns → seconds) and size.
+    """
+    lk = _lk_client()
+    try:
+        resp = await lk.egress.list_egress(
+            livekit_api.ListEgressRequest(room_name=room_name)
+        )
+    finally:
+        await lk.aclose()
+
+    if not resp.items:
+        return None
+    # One room-composite egress per room in our flow; if more, take the
+    # latest by start time.
+    info = sorted(resp.items, key=lambda i: i.started_at or 0)[-1]
+    status = _normalize_egress_status(info)
+
+    key: str | None = None
+    duration_seconds: int | None = None
+    size_bytes: int | None = None
+    if info.file_results:
+        f = info.file_results[0]
+        key = f.filename or None
+        # LiveKit reports duration in nanoseconds.
+        duration_seconds = int(f.duration / 1_000_000_000) if f.duration else None
+        size_bytes = int(f.size) if f.size else None
+
+    return EgressSnapshot(
+        status=status,
+        egress_id=info.egress_id or None,
+        key=key,
+        duration_seconds=duration_seconds,
+        size_bytes=size_bytes,
+    )
 
 
 async def cancel_room(room_name: str) -> None:

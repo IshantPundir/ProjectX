@@ -9,7 +9,7 @@ ORM mirrors are gone.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, Text
 from sqlalchemy import text as sql_text
 from sqlalchemy.dialects.postgresql import INET, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -58,7 +58,17 @@ class Session(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     livekit_room_name: Mapped[str | None] = mapped_column(Text)
+    # --- Session recording (LiveKit Egress → S3-compatible object store) ---
+    # recording_s3_key predates this block (0024 stub); the rest are 0050.
     recording_s3_key: Mapped[str | None] = mapped_column(Text)
+    recording_status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=sql_text("'absent'")
+    )
+    recording_egress_id: Mapped[str | None] = mapped_column(Text)
+    recording_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    recording_ready_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    recording_duration_seconds: Mapped[int | None] = mapped_column(Integer)
+    recording_bytes: Mapped[int | None] = mapped_column(BigInteger)
     raw_result_json: Mapped[dict | None] = mapped_column(JSONB)
     knockout_failures: Mapped[list[dict]] = mapped_column(
         JSONB,

@@ -1,16 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import { SessionPlaybackStub, VerbalContentOnlyBadge } from '@/components/dashboard/reports/SessionPlaybackStub'
+import { VerbalContentOnlyBadge } from '@/components/dashboard/reports/SessionPlayback'
 import { ReportMethodologyFooter } from '@/components/dashboard/reports/ReportMethodologyFooter'
 import { ReportTopBar } from '@/components/dashboard/reports/ReportTopBar'
 import { makeReport } from './_fixture'
 
 describe('report presentational components', () => {
-  it('SessionPlaybackStub names the future recording feature', () => {
-    render(<SessionPlaybackStub />)
-    expect(screen.getByText(/session playback/i)).toBeInTheDocument()
-    expect(screen.getByText(/recording/i)).toBeInTheDocument()
-  })
   it('VerbalContentOnlyBadge states no facial/affect scoring', () => {
     render(<VerbalContentOnlyBadge />)
     expect(screen.getByText(/no facial/i)).toBeInTheDocument()

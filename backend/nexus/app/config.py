@@ -253,6 +253,42 @@ class Settings(BaseSettings):
     aws_region: str = "us-east-1"
     resume_upload_url_ttl_seconds: int = 300
 
+    # --- Session recording (LiveKit Egress → S3-compatible object storage) ---
+    # Provider-agnostic by design: any S3-compatible store works (Cloudflare
+    # R2, AWS S3, Supabase Storage, MinIO, Backblaze B2). Switching providers
+    # is a config change only — code never names a vendor. See
+    # app/storage/ for the ObjectStorage abstraction.
+    #
+    # The recording captures the whole interview (RoomComposite egress:
+    # candidate camera full-frame + mixed candidate/agent audio) as one MP4,
+    # uploaded straight from LiveKit Cloud Egress to the bucket below, and
+    # served back to the report page via a short-lived presigned GET URL.
+    recording_enabled: bool = True
+    # Empty endpoint = AWS S3 regional endpoints (region is then required).
+    # R2: https://<account_id>.r2.cloudflarestorage.com
+    recording_storage_endpoint_url: str = ""
+    # R2 uses the literal "auto"; AWS S3 uses a real region (e.g. us-east-1).
+    recording_storage_region: str = "auto"
+    recording_storage_bucket: str = ""
+    # Server-only credentials — treat with DB-credential sensitivity. Never
+    # exposed to the browser; only the backend and LiveKit Egress hold them.
+    recording_storage_access_key_id: str = ""
+    recording_storage_secret_access_key: str = ""
+    # Non-AWS S3 providers require path-style addressing (bucket in the path,
+    # not as a subdomain). AWS S3 can keep this true too.
+    recording_storage_force_path_style: bool = True
+    # Presigned playback URL lifetime. Short by default — the recruiter's
+    # browser refetches when it expires. Recording is candidate PII, so the
+    # bucket stays private and access is signed-URL-only.
+    recording_signed_url_ttl_seconds: int = 3600
+    # Object key prefix; final key is {prefix}/{tenant_id}/{session_id}.mp4.
+    recording_key_prefix: str = "recordings"
+    # Egress compositing/encoding. layout: speaker | grid | single-speaker
+    # (one video publisher → full-frame candidate). preset: a LiveKit
+    # EncodingOptionsPreset name (H264_720P_30 is a good size/quality balance).
+    recording_egress_layout: str = "speaker"
+    recording_egress_preset: str = "H264_720P_30"
+
     # Observability
     sentry_dsn: str = ""
 
