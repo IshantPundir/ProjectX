@@ -11,16 +11,6 @@ export interface HeadPose {
   roll: number
 }
 
-/** Iris look-direction, each 0..1, from MediaPipe blendshapes. */
-export interface IrisOffset {
-  in: number
-  out: number
-  /** reserved: vertical iris not used in the lateral tie-break (vertical gaze is pitch-driven) */
-  up: number
-  /** reserved: vertical iris not used in the lateral tie-break (vertical gaze is pitch-driven) */
-  down: number
-}
-
 /** One detection tick's distilled signals (what the hook exposes). */
 export interface VisionSignals {
   faceCount: number

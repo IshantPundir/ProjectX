@@ -6,7 +6,7 @@ import { Track } from 'livekit-client'
 
 import { createFaceLandmarker, blendshape } from './vision/face-landmarker'
 import { matrixToHeadPose } from './vision/head-pose'
-import { classifyGazeZone, blinkScore, isBlinking, signalQuality, poseToGazePoint } from './vision/gaze'
+import { classifyGazeZone, blinkScore, isBlinking, signalQuality, poseToGazePoint, eyeGazeOffset } from './vision/gaze'
 import { ReadingAccumulator } from './vision/reading'
 import type { VisionSignals } from './vision/types'
 import { NUDGE_SUSTAIN_MS, type VisionNudgeKind } from './nudge-kinds'
@@ -89,20 +89,27 @@ export function useVisionGuard({ armed, onNudge }: UseVisionGuardArgs): VisionGu
       const cats = res.faceBlendshapes?.[0]?.categories
       const mtx = res.facialTransformationMatrixes?.[0]?.data
       const pose = faceCount > 0 && mtx ? matrixToHeadPose(mtx) : null
-      const iris = {
-        in: Math.max(blendshape(cats, 'eyeLookInLeft'), blendshape(cats, 'eyeLookInRight')),
-        out: Math.max(blendshape(cats, 'eyeLookOutLeft'), blendshape(cats, 'eyeLookOutRight')),
-        up: Math.max(blendshape(cats, 'eyeLookUpLeft'), blendshape(cats, 'eyeLookUpRight')),
-        down: Math.max(blendshape(cats, 'eyeLookDownLeft'), blendshape(cats, 'eyeLookDownRight')),
-      }
+      // Signed eye-gaze (h: + = candidate's right, v: + = down) from the per-eye
+      // look blendshapes — co-primary with head pose so eye-only reading (phone
+      // near the screen, still head) is detectable.
+      const eye = eyeGazeOffset({
+        inLeft: blendshape(cats, 'eyeLookInLeft'),
+        outLeft: blendshape(cats, 'eyeLookOutLeft'),
+        upLeft: blendshape(cats, 'eyeLookUpLeft'),
+        downLeft: blendshape(cats, 'eyeLookDownLeft'),
+        inRight: blendshape(cats, 'eyeLookInRight'),
+        outRight: blendshape(cats, 'eyeLookOutRight'),
+        upRight: blendshape(cats, 'eyeLookUpRight'),
+        downRight: blendshape(cats, 'eyeLookDownRight'),
+      })
       const ear = cats ? blinkScore(blendshape(cats, 'eyeBlinkLeft'), blendshape(cats, 'eyeBlinkRight')) : null
       const quality = signalQuality({
         faceConfidence: faceCount > 0 ? 1 : 0,
         brightness: 0.5, // Plan A: brightness/glare proxies refined in Plan B
         eyeGlare: 0,
       })
-      const zone = pose ? classifyGazeZone(pose, iris) : null
-      const gazePoint = pose ? poseToGazePoint(pose) : null
+      const zone = pose ? classifyGazeZone(pose, eye) : null
+      const gazePoint = pose ? poseToGazePoint(pose, eye) : null
       if (zone) accumulator.push(zone, now)
       if (gazePoint) gazeTrail.current = [...gazeTrail.current, gazePoint].slice(-GAZE_TRAIL_MAX)
 
