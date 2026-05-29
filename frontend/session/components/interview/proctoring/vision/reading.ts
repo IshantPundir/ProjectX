@@ -19,6 +19,11 @@ interface Sample {
 export class ReadingAccumulator {
   private samples: Sample[] = []
 
+  /**
+   * Append a sample and prune anything older than the rolling window.
+   * Assumes `t` is monotonically non-decreasing (caller passes
+   * performance.now() per frame); the prune pivot is the newest timestamp.
+   */
   push(zone: GazeZone, t: number): void {
     this.samples.push({ zone, t })
     const cutoff = t - WINDOW_MS

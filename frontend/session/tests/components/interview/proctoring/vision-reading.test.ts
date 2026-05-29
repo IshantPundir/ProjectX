@@ -31,4 +31,12 @@ describe('ReadingAccumulator', () => {
     acc.push('center', 10000) // 10s later — old sample pruned
     expect(acc.offScreenRatio()).toBe(0)
   })
+
+  it('does not flag sustained off-screen gaze without left-right scanning', () => {
+    const acc = new ReadingAccumulator()
+    // Entire window off-screen (down_away only) — no left/right alternation
+    for (let t = 0; t < 5500; t += 200) acc.push('down_away', t)
+    expect(acc.offScreenRatio()).toBeGreaterThan(0.6) // ratio condition passes
+    expect(acc.isReading()).toBe(false) // direction-change guard must block it
+  })
 })
