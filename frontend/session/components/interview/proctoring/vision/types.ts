@@ -26,6 +26,10 @@ export interface VisionSignals {
   faceCount: number
   pose: HeadPose | null
   gazeZone: GazeZone | null
+  /** Approximate normalized {x,y} in [0,1] for the dev gaze pointer (uncalibrated). */
+  gazePoint: { x: number; y: number } | null
+  /** Recent gaze points (oldest→newest) for the dev fading-trail viz. */
+  gazeTrail: { x: number; y: number }[]
   blinking: boolean
   earValue: number | null
   quality: SignalQuality

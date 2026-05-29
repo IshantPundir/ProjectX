@@ -10,6 +10,11 @@ const BLINK_CUTOFF = 0.4 // averaged eyeBlink blendshape
 const DARK_CUTOFF = 0.12 // normalized eye-region brightness
 const GLARE_CUTOFF = 0.7 // normalized specular brightness in eye region
 
+// Debug-overlay gaze-pointer mapping: degrees of head rotation that map to the
+// screen edge (tune via the overlay). Approximate/uncalibrated by design.
+const GAZE_YAW_RANGE = 30 // deg yaw -> half screen width
+const GAZE_PITCH_RANGE = 25 // deg pitch -> half screen height
+
 /**
  * Head-pose-PRIMARY gaze zone with iris as a tie-breaker (spec §7②, D5).
  * Iris is only consulted when the head pose is borderline, so glasses-
@@ -27,6 +32,23 @@ export function classifyGazeZone(pose: HeadPose, iris: IrisOffset): GazeZone {
     }
   }
   return 'center'
+}
+
+function clamp01(v: number): number {
+  return v < 0 ? 0 : v > 1 ? 1 : v
+}
+
+/**
+ * Map head pose to an APPROXIMATE normalized gaze point {x,y} in [0,1], for the
+ * dev debug pointer ONLY (NOT calibrated; head-pose-primary, consistent with
+ * D5). yaw>0 (head turned candidate's right) -> x>0.5; pitch>0 (down) -> y>0.5.
+ * Signs/ranges are tunable — flip a range sign if the dot feels mirrored.
+ */
+export function poseToGazePoint(pose: HeadPose): { x: number; y: number } {
+  return {
+    x: clamp01(0.5 + pose.yaw / (2 * GAZE_YAW_RANGE)),
+    y: clamp01(0.5 + pose.pitch / (2 * GAZE_PITCH_RANGE)),
+  }
 }
 
 /**

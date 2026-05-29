@@ -4,6 +4,7 @@ import {
   blinkScore,
   isBlinking,
   signalQuality,
+  poseToGazePoint,
 } from '@/components/interview/proctoring/vision/gaze'
 
 const ZERO_IRIS = { in: 0, out: 0, up: 0, down: 0 }
@@ -54,5 +55,24 @@ describe('signalQuality', () => {
   })
   it('is good in clean conditions', () => {
     expect(signalQuality({ faceConfidence: 0.9, brightness: 0.5, eyeGlare: 0.1 })).toBe('good')
+  })
+})
+
+describe('poseToGazePoint (approximate dev pointer)', () => {
+  it('centers at 0.5,0.5 for a forward pose', () => {
+    expect(poseToGazePoint({ yaw: 0, pitch: 0, roll: 0 })).toEqual({ x: 0.5, y: 0.5 })
+  })
+  it('moves right for positive yaw and down for positive pitch', () => {
+    const p = poseToGazePoint({ yaw: 15, pitch: 12.5, roll: 0 })
+    expect(p.x).toBeGreaterThan(0.5)
+    expect(p.y).toBeGreaterThan(0.5)
+  })
+  it('moves left for negative yaw and up for negative pitch', () => {
+    const p = poseToGazePoint({ yaw: -15, pitch: -12.5, roll: 0 })
+    expect(p.x).toBeLessThan(0.5)
+    expect(p.y).toBeLessThan(0.5)
+  })
+  it('clamps to [0,1] for extreme poses', () => {
+    expect(poseToGazePoint({ yaw: 90, pitch: -90, roll: 0 })).toEqual({ x: 1, y: 0 })
   })
 })

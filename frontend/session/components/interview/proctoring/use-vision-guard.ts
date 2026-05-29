@@ -6,14 +6,16 @@ import { Track } from 'livekit-client'
 
 import { createFaceLandmarker, blendshape } from './vision/face-landmarker'
 import { matrixToHeadPose } from './vision/head-pose'
-import { classifyGazeZone, blinkScore, isBlinking, signalQuality } from './vision/gaze'
+import { classifyGazeZone, blinkScore, isBlinking, signalQuality, poseToGazePoint } from './vision/gaze'
 import { ReadingAccumulator } from './vision/reading'
 import type { VisionSignals } from './vision/types'
 import { NUDGE_SUSTAIN_MS, type VisionNudgeKind } from './nudge-kinds'
 
+const GAZE_TRAIL_MAX = 24 // recent gaze points kept for the dev fading trail
+
 const EMPTY: VisionSignals = {
-  faceCount: 0, pose: null, gazeZone: null, blinking: false,
-  earValue: null, quality: 'unscorable', fps: 0,
+  faceCount: 0, pose: null, gazeZone: null, gazePoint: null, gazeTrail: [],
+  blinking: false, earValue: null, quality: 'unscorable', fps: 0,
 }
 
 export interface UseVisionGuardArgs {
@@ -39,6 +41,7 @@ export function useVisionGuard({ armed, onNudge }: UseVisionGuardArgs): VisionGu
   const [signals, setSignals] = useState<VisionSignals>(EMPTY)
   const reading = useRef(new ReadingAccumulator())
   const since = useRef<Partial<Record<VisionNudgeKind, number>>>({})
+  const gazeTrail = useRef<{ x: number; y: number }[]>([])
 
   const maybeNudge = useCallback(
     (kind: VisionNudgeKind, active: boolean, now: number) => {
@@ -99,11 +102,13 @@ export function useVisionGuard({ armed, onNudge }: UseVisionGuardArgs): VisionGu
         eyeGlare: 0,
       })
       const zone = pose ? classifyGazeZone(pose, iris) : null
+      const gazePoint = pose ? poseToGazePoint(pose) : null
       if (zone) accumulator.push(zone, now)
+      if (gazePoint) gazeTrail.current = [...gazeTrail.current, gazePoint].slice(-GAZE_TRAIL_MAX)
 
       setSignals({
-        faceCount, pose, gazeZone: zone, blinking: ear !== null && isBlinking(ear),
-        earValue: ear, quality, fps,
+        faceCount, pose, gazeZone: zone, gazePoint, gazeTrail: gazeTrail.current,
+        blinking: ear !== null && isBlinking(ear), earValue: ear, quality, fps,
       })
 
       maybeNudge('face_not_visible', faceCount === 0, now)
@@ -128,6 +133,7 @@ export function useVisionGuard({ armed, onNudge }: UseVisionGuardArgs): VisionGu
       setSignals(EMPTY)
       accumulator.reset()
       since.current = {}
+      gazeTrail.current = []
     }
   // participantRef is intentionally omitted: it's a stable ref, not a dep.
   }, [armed, maybeNudge])
