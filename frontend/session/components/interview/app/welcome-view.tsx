@@ -47,6 +47,7 @@ export function WelcomeView({
             <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-px-fg-3">
               <li>Stay in fullscreen for the whole interview.</li>
               <li>Don&apos;t switch tabs or leave this window.</li>
+              <li>Your camera is monitored automatically (face and eye-position checks) during the interview.</li>
               <li>Keyboard use and developer tools are detected.</li>
               <li>Repeated or serious violations will end your interview.</li>
             </ul>
