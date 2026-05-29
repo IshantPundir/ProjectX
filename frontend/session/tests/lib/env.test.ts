@@ -3,6 +3,29 @@ import { z } from 'zod'
 
 import { envSchema } from '@/lib/env'
 
+describe('NEXT_PUBLIC_PROCTORING_DEBUG', () => {
+  it("defaults to false when unset", () => {
+    const parsed = envSchema.parse({ NEXT_PUBLIC_API_URL: 'https://x.test' })
+    expect(parsed.NEXT_PUBLIC_PROCTORING_DEBUG).toBe(false)
+  })
+
+  it("is true only for the literal '1'", () => {
+    const parsed = envSchema.parse({
+      NEXT_PUBLIC_API_URL: 'https://x.test',
+      NEXT_PUBLIC_PROCTORING_DEBUG: '1',
+    })
+    expect(parsed.NEXT_PUBLIC_PROCTORING_DEBUG).toBe(true)
+  })
+
+  it("is false for any other string", () => {
+    const parsed = envSchema.parse({
+      NEXT_PUBLIC_API_URL: 'https://x.test',
+      NEXT_PUBLIC_PROCTORING_DEBUG: 'true',
+    })
+    expect(parsed.NEXT_PUBLIC_PROCTORING_DEBUG).toBe(false)
+  })
+})
+
 describe('envSchema', () => {
   it('accepts a valid http URL', () => {
     const parsed = envSchema.parse({

@@ -9,6 +9,12 @@ import { z } from 'zod'
  */
 export const envSchema = z.object({
   NEXT_PUBLIC_API_URL: z.string().url(),
+  // Dev-only flag. The VisionDebugOverlay renders only when this is true.
+  // Treated as a strict opt-in: only the literal "1" enables it.
+  NEXT_PUBLIC_PROCTORING_DEBUG: z
+    .string()
+    .optional()
+    .transform((v) => v === '1'),
 })
 
 export type Env = z.infer<typeof envSchema>
@@ -20,4 +26,5 @@ export type Env = z.infer<typeof envSchema>
  */
 export const env: Env = envSchema.parse({
   NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
+  NEXT_PUBLIC_PROCTORING_DEBUG: process.env.NEXT_PUBLIC_PROCTORING_DEBUG,
 })
