@@ -9,6 +9,13 @@ const endMock = vi.fn()
 vi.mock('@livekit/components-react', () => ({
   useVoiceAssistant: () => ({ state: voiceState }),
   useSessionContext: () => ({ end: endMock }),
+  useLocalParticipant: () => ({
+    localParticipant: { getTrackPublication: () => undefined },
+  }),
+}))
+vi.mock('@/components/interview/proctoring/vision/face-landmarker', () => ({
+  createFaceLandmarker: vi.fn().mockResolvedValue({ detectForVideo: vi.fn(), close: vi.fn() }),
+  blendshape: () => 0,
 }))
 vi.mock('sonner', () => ({ toast: { warning: vi.fn(), error: vi.fn() } }))
 
@@ -58,5 +65,14 @@ describe('ProctoringGuard composition', () => {
     })
     expect(onTerminated).not.toHaveBeenCalled()
     expect(screen.getByText('live interview')).toBeInTheDocument()
+  })
+
+  it('does not render the vision debug overlay when the debug flag is off', () => {
+    render(
+      <ProctoringGuard token="t" config={{ enabled: true, soft_violation_limit: 3, fullscreen_grace_seconds: 10 }} onTerminated={vi.fn()}>
+        <div>child</div>
+      </ProctoringGuard>,
+    )
+    expect(screen.queryByTestId('vision-debug-overlay')).toBeNull()
   })
 })

@@ -10,10 +10,13 @@ import { useFocusGuard } from './use-focus-guard'
 import { useKeyboardGuard } from './use-keyboard-guard'
 import { useDevtoolsGuard } from './use-devtools-guard'
 import { useFullscreenGuard } from './use-fullscreen-guard'
+import { useVisionGuard } from './use-vision-guard'
 import { ViolationBorder } from './ViolationBorder'
+import { VisionDebugOverlay } from './VisionDebugOverlay'
 import { FullscreenGraceOverlay } from './FullscreenGraceOverlay'
 import { FocusGraceOverlay } from './FocusGraceOverlay'
 import type { ProctoringTermination } from './violation-kinds'
+import { env } from '@/lib/env'
 
 const ARM_SETTLE_MS = 800
 
@@ -65,6 +68,7 @@ export function ProctoringGuard({
     graceSeconds: cfg.fullscreen_grace_seconds,
     onViolation: controller.report,
   })
+  const vision = useVisionGuard({ armed: enforce, onNudge: controller.nudge })
 
   return (
     <>
@@ -74,6 +78,9 @@ export function ProctoringGuard({
         <FullscreenGraceOverlay secondsLeft={fs.secondsLeft} onReturn={fs.returnToFullscreen} />
       )}
       {cfg.enabled && focus.showOverlay && <FocusGraceOverlay secondsLeft={focus.secondsLeft} />}
+      {cfg.enabled && env.NEXT_PUBLIC_PROCTORING_DEBUG && (
+        <VisionDebugOverlay signals={vision.signals} />
+      )}
     </>
   )
 }
