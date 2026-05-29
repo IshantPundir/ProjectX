@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   classifyGazeZone,
-  eyeAspectRatio,
+  blinkScore,
   isBlinking,
   signalQuality,
 } from '@/components/interview/proctoring/vision/gaze'
@@ -24,11 +24,17 @@ describe('classifyGazeZone (head-pose-primary)', () => {
   it('escalates a borderline head pose to off-screen when iris agrees', () => {
     expect(classifyGazeZone({ yaw: 12, pitch: 0, roll: 0 }, { ...ZERO_IRIS, out: 0.8 })).toBe('right')
   })
+  it('escalates a borderline negative head pose to left when iris agrees', () => {
+    expect(classifyGazeZone({ yaw: -12, pitch: 0, roll: 0 }, { ...ZERO_IRIS, in: 0.8 })).toBe('left')
+  })
+  it('stays center on a borderline head pose when the iris signal is weak (false-positive guard)', () => {
+    expect(classifyGazeZone({ yaw: 12, pitch: 0, roll: 0 }, { ...ZERO_IRIS, out: 0.3 })).toBe('center')
+  })
 })
 
-describe('eyeAspectRatio / isBlinking', () => {
-  it('eyeAspectRatio averages the two eye blink blendshapes', () => {
-    expect(eyeAspectRatio(0.9, 0.7)).toBeCloseTo(0.8)
+describe('blinkScore / isBlinking', () => {
+  it('blinkScore averages the two eye blink blendshapes', () => {
+    expect(blinkScore(0.9, 0.7)).toBeCloseTo(0.8)
   })
   it('isBlinking is true above the blink threshold', () => {
     expect(isBlinking(0.6)).toBe(true)

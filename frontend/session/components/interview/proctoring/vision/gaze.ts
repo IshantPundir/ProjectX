@@ -29,7 +29,12 @@ export function classifyGazeZone(pose: HeadPose, iris: IrisOffset): GazeZone {
   return 'center'
 }
 
-export function eyeAspectRatio(blinkLeft: number, blinkRight: number): number {
+/**
+ * Average of the two eye-blink blendshape scores (0 = open, 1 = closed).
+ * Named blinkScore because the inputs are MediaPipe blink blendshapes, NOT
+ * the classical geometric Eye Aspect Ratio (which has the opposite polarity).
+ */
+export function blinkScore(blinkLeft: number, blinkRight: number): number {
   return (blinkLeft + blinkRight) / 2
 }
 

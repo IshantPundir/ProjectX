@@ -15,6 +15,8 @@ export function matrixToHeadPose(data: number[] | Float32Array): HeadPose {
   if (!data || data.length < 16) return { yaw: 0, pitch: 0, roll: 0 }
   const m = (row: number, col: number) => data[col * 4 + row]
   // Rotation submatrix R (3x3). Standard ZYX Euler extraction.
+  // Variable names follow physical head axes — yaw = Y-axis (left/right turn),
+  // pitch = X-axis (up/down), roll = Z-axis (tilt) — not the robotics ZYX label convention.
   const r00 = m(0, 0), r10 = m(1, 0), r20 = m(2, 0)
   const r21 = m(2, 1), r22 = m(2, 2)
   const yaw = Math.atan2(-r20, Math.hypot(r21, r22)) * RAD2DEG

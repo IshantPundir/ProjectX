@@ -15,7 +15,9 @@ export interface HeadPose {
 export interface IrisOffset {
   in: number
   out: number
+  /** reserved: vertical iris not used in the lateral tie-break (vertical gaze is pitch-driven) */
   up: number
+  /** reserved: vertical iris not used in the lateral tie-break (vertical gaze is pitch-driven) */
   down: number
 }
 
