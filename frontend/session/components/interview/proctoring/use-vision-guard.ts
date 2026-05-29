@@ -68,6 +68,7 @@ export function useVisionGuard({ armed, onNudge }: UseVisionGuardArgs): VisionGu
 
     const tick = () => {
       if (cancelled || !landmarker) return
+      if (video.readyState < 2) { raf = requestAnimationFrame(tick); return } // wait for a decoded frame
       const now = performance.now()
       const fps = 1000 / Math.max(1, now - last)
       last = now

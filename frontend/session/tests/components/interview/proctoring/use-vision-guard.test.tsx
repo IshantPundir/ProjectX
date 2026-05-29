@@ -1,4 +1,4 @@
-import { renderHook, act, waitFor } from '@testing-library/react'
+import { renderHook, act } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // --- Mock the MediaPipe loader so no real WASM/model is needed ---
@@ -41,6 +41,10 @@ beforeEach(() => {
     return setTimeout(() => cb(performance.now()), 16) as unknown as number
   })
   vi.stubGlobal('cancelAnimationFrame', (id: number) => clearTimeout(id))
+  Object.defineProperty(HTMLMediaElement.prototype, 'readyState', {
+    get: () => 4, // HAVE_ENOUGH_DATA
+    configurable: true,
+  })
 })
 
 afterEach(() => {
@@ -48,6 +52,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
   vi.useRealTimers()
   detectForVideo.mockReset()
+  delete (HTMLMediaElement.prototype as unknown as { readyState?: unknown }).readyState
 })
 
 describe('useVisionGuard', () => {
@@ -98,5 +103,29 @@ describe('useVisionGuard', () => {
     })
 
     expect(onNudge).toHaveBeenCalledWith('multiple_faces')
+  })
+
+  it('fires looking_away_sustained when gaze scans off-screen past the sustain window', async () => {
+    const c = Math.cos(Math.PI / 6), s = Math.sin(Math.PI / 6) // 30deg
+    const RIGHT = [c, 0, -s, 0,  0, 1, 0, 0,  s, 0, c, 0,  0, 0, 0, 1] // yaw +30 -> 'right'
+    const LEFT  = [c, 0,  s, 0,  0, 1, 0, 0, -s, 0, c, 0,  0, 0, 0, 1] // yaw -30 -> 'left'
+    let flip = false
+    detectForVideo.mockImplementation(() => {
+      flip = !flip
+      return {
+        faceLandmarks: [[]],
+        faceBlendshapes: [{ categories: [] }],
+        facialTransformationMatrixes: [{ data: flip ? RIGHT : LEFT }],
+      }
+    })
+    const onNudge = vi.fn()
+    renderHook(() => useVisionGuard({ armed: true, onNudge }))
+    await act(async () => {
+      await Promise.resolve()
+      // ReadingAccumulator needs span>=3000ms to start flagging isReading(),
+      // then maybeNudge needs 4000ms of sustained isReading(). Total: ~7000ms+.
+      vi.advanceTimersByTime(8000)
+    })
+    expect(onNudge).toHaveBeenCalledWith('looking_away_sustained')
   })
 })
