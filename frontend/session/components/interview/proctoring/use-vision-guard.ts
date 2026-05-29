@@ -12,13 +12,6 @@ import { NUDGE_SUSTAIN_MS, type VisionNudgeKind } from './nudge-kinds'
 
 const GAZE_TRAIL_MAX = 24 // recent gaze points kept for the dev fading trail
 
-// When several warning conditions hold at once, the highest-priority one wins.
-const WARNING_PRIORITY: VisionNudgeKind[] = [
-  'multiple_faces',
-  'face_not_visible',
-  'looking_away_sustained',
-]
-
 const EMPTY: VisionSignals = {
   faceCount: 0, pose: null, gazeZone: null, gazePoint: null, gazeTrail: [],
   blinking: false, earValue: null, quality: 'unscorable', fps: 0,
@@ -26,28 +19,28 @@ const EMPTY: VisionSignals = {
 
 export interface UseVisionGuardArgs {
   armed: boolean
+  /** Fired once per sustained occurrence (rising edge), re-armed when the
+   * condition clears. Wired to the proctoring controller's report() so vision
+   * violations count toward the shared soft-violation limit. */
+  onViolation: (kind: VisionNudgeKind) => void
 }
 
 export interface VisionGuardState {
   signals: VisionSignals
-  /** Currently-active sustained warning to surface to the candidate (deterrent), or null. */
-  warning: VisionNudgeKind | null
 }
 
-export function useVisionGuard({ armed }: UseVisionGuardArgs): VisionGuardState {
+export function useVisionGuard({ armed, onViolation }: UseVisionGuardArgs): VisionGuardState {
   const { localParticipant } = useLocalParticipant()
-  // Stable ref so the detection-loop effect doesn't restart when the LiveKit
-  // participant object identity changes (test re-renders / SDK reconnect).
+  // Stable refs so the detection-loop effect doesn't restart when the LiveKit
+  // participant identity or the onViolation callback identity changes.
   const participantRef = useRef(localParticipant)
+  const onViolationRef = useRef(onViolation)
   useEffect(() => {
     participantRef.current = localParticipant
+    onViolationRef.current = onViolation
   })
 
   const [signals, setSignals] = useState<VisionSignals>(EMPTY)
-  const [warning, setWarning] = useState<VisionNudgeKind | null>(null)
-  // When each warning condition first became continuously true (debounce clock).
-  const since = useRef<Partial<Record<VisionNudgeKind, number>>>({})
-  const gazeTrail = useRef<{ x: number; y: number }[]>([])
 
   useEffect(() => {
     if (!armed) return
@@ -55,6 +48,25 @@ export function useVisionGuard({ armed }: UseVisionGuardArgs): VisionGuardState 
     let raf = 0
     let landmarker: { detectForVideo: (v: HTMLVideoElement, t: number) => unknown; close: () => void } | null = null
     let last = performance.now()
+    // Debounce state lives for one armed session (resets on re-arm).
+    let trail: { x: number; y: number }[] = []
+    const since: Partial<Record<VisionNudgeKind, number>> = {}
+    const fired = new Set<VisionNudgeKind>()
+
+    // One violation per sustained occurrence: fire on the rising edge once the
+    // condition has held past its window, then re-arm only after it clears.
+    const maybeFire = (kind: VisionNudgeKind, active: boolean, now: number) => {
+      if (!active) {
+        delete since[kind]
+        fired.delete(kind)
+        return
+      }
+      since[kind] ??= now
+      if (!fired.has(kind) && now - since[kind]! >= NUDGE_SUSTAIN_MS[kind]) {
+        fired.add(kind)
+        onViolationRef.current(kind)
+      }
+    }
 
     const video = document.createElement('video')
     video.muted = true
@@ -78,10 +90,9 @@ export function useVisionGuard({ armed }: UseVisionGuardArgs): VisionGuardState 
       const faceCount = res.facialTransformationMatrixes?.length ?? 0
       const cats = res.faceBlendshapes?.[0]?.categories
       const mtx = res.facialTransformationMatrixes?.[0]?.data
-      // HEAD-POSE-ONLY gaze: the live plane is a coarse DETERRENT, not the
-      // authoritative detector (that's the server-side report model). Iris was
-      // removed — it added fragility (glasses/noise) for accuracy we don't need
-      // live.
+      // HEAD-POSE-ONLY gaze: the live plane is a coarse DETERRENT (the accurate,
+      // eye-aware gaze is the server-side report model). No iris — it added
+      // fragility for accuracy we don't need live.
       const pose = faceCount > 0 && mtx ? matrixToHeadPose(mtx) : null
       const ear = cats ? blinkScore(blendshape(cats, 'eyeBlinkLeft'), blendshape(cats, 'eyeBlinkRight')) : null
       const quality = signalQuality({
@@ -91,34 +102,17 @@ export function useVisionGuard({ armed }: UseVisionGuardArgs): VisionGuardState 
       })
       const zone = pose ? classifyGazeZone(pose) : null
       const gazePoint = pose ? poseToGazePoint(pose) : null
-      if (gazePoint) gazeTrail.current = [...gazeTrail.current, gazePoint].slice(-GAZE_TRAIL_MAX)
+      if (gazePoint) trail = [...trail, gazePoint].slice(-GAZE_TRAIL_MAX)
 
       setSignals({
-        faceCount, pose, gazeZone: zone, gazePoint, gazeTrail: gazeTrail.current,
+        faceCount, pose, gazeZone: zone, gazePoint, gazeTrail: trail,
         blinking: ear !== null && isBlinking(ear), earValue: ear, quality, fps,
       })
 
-      // Sustained-condition warning state machine: a condition must hold
-      // continuously past its sustain window before it surfaces (debounce), and
-      // clears the moment the candidate corrects.
-      const conds: Record<VisionNudgeKind, boolean> = {
-        multiple_faces: faceCount >= 2,
-        face_not_visible: faceCount === 0,
-        looking_away_sustained: zone !== null && zone !== 'center',
-      }
-      for (const kind of WARNING_PRIORITY) {
-        if (conds[kind]) since.current[kind] ??= now
-        else delete since.current[kind]
-      }
-      let active: VisionNudgeKind | null = null
-      for (const kind of WARNING_PRIORITY) {
-        const start = since.current[kind]
-        if (start !== undefined && now - start >= NUDGE_SUSTAIN_MS[kind]) {
-          active = kind
-          break
-        }
-      }
-      setWarning(active)
+      // Rising-edge violation events → the proctoring controller (soft, counted).
+      maybeFire('multiple_faces', faceCount >= 2, now)
+      maybeFire('face_not_visible', faceCount === 0, now)
+      maybeFire('looking_away_sustained', zone !== null && zone !== 'center', now)
 
       raf = requestAnimationFrame(tick)
     }
@@ -136,11 +130,8 @@ export function useVisionGuard({ armed }: UseVisionGuardArgs): VisionGuardState 
       if (track) track.detach(video)
       landmarker?.close()
       setSignals(EMPTY)
-      setWarning(null)
-      since.current = {}
-      gazeTrail.current = []
     }
   }, [armed])
 
-  return { signals, warning }
+  return { signals }
 }

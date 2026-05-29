@@ -22,6 +22,13 @@ VIOLATION_SEVERITY: dict[str, Severity] = {
     "devtools": "hard",
     "fullscreen_exit": "soft",
     "keyboard": "soft",
+    # Vision proctoring (client MediaPipe). All SOFT — they accumulate toward the
+    # shared soft-violation limit and terminate on escalation, never instantly.
+    # Coarse head-pose gaze is higher-false-positive than the behavioral signals,
+    # so soft (counted) rather than hard (instant) is deliberate. See spec D1.
+    "multiple_faces": "soft",
+    "face_not_visible": "soft",
+    "looking_away_sustained": "soft",
 }
 
 

@@ -60,6 +60,11 @@ export type ProctoringKind =
   | 'devtools'
   | 'fullscreen_exit'
   | 'keyboard'
+  // Vision proctoring (client MediaPipe). Soft violations — counted toward the
+  // shared soft limit, backend terminates on escalation (same path as above).
+  | 'multiple_faces'
+  | 'face_not_visible'
+  | 'looking_away_sustained'
 
 export interface ProctoringConfig {
   enabled: boolean

@@ -54,34 +54,46 @@ afterEach(() => {
 
 describe('useVisionGuard', () => {
   it('does nothing when not armed', () => {
-    renderHook(() => useVisionGuard({ armed: false }))
+    const onViolation = vi.fn()
+    renderHook(() => useVisionGuard({ armed: false, onViolation }))
     expect(detectForVideo).not.toHaveBeenCalled()
+    expect(onViolation).not.toHaveBeenCalled()
   })
 
-  it('reports a single forward-facing face as center gaze with no warning', async () => {
+  it('reports a single forward-facing face as center gaze with no violation', async () => {
     detectForVideo.mockReturnValue(frame([IDENT]))
-    const { result } = renderHook(() => useVisionGuard({ armed: true }))
+    const onViolation = vi.fn()
+    const { result } = renderHook(() => useVisionGuard({ armed: true, onViolation }))
     await act(async () => { await Promise.resolve() })
-    await act(async () => { vi.advanceTimersByTime(300) })
-    expect(result.current.signals.faceCount).toBe(1)
+    await act(async () => { vi.advanceTimersByTime(800) })
     expect(result.current.signals.gazeZone).toBe('center')
-    expect(result.current.warning).toBeNull()
+    expect(onViolation).not.toHaveBeenCalled()
   })
 
-  it('warns multiple_faces once a second face persists past the sustain window', async () => {
+  it('fires multiple_faces once a second face persists past the sustain window', async () => {
     detectForVideo.mockReturnValue(frame([IDENT, IDENT]))
-    const { result } = renderHook(() => useVisionGuard({ armed: true }))
+    const onViolation = vi.fn()
+    renderHook(() => useVisionGuard({ armed: true, onViolation }))
     await act(async () => { await Promise.resolve() })
-    await act(async () => { vi.advanceTimersByTime(2500) })
-    expect(result.current.warning).toBe('multiple_faces')
+    await act(async () => { vi.advanceTimersByTime(1000) })
+    expect(onViolation).toHaveBeenCalledWith('multiple_faces')
   })
 
-  it('warns looking_away_sustained when the head stays turned off-screen', async () => {
+  it('fires looking_away_sustained when the head stays turned off-screen', async () => {
     detectForVideo.mockReturnValue(frame([RIGHT]))
-    const { result } = renderHook(() => useVisionGuard({ armed: true }))
+    const onViolation = vi.fn()
+    renderHook(() => useVisionGuard({ armed: true, onViolation }))
     await act(async () => { await Promise.resolve() })
-    await act(async () => { vi.advanceTimersByTime(4500) })
-    expect(result.current.signals.gazeZone).toBe('right')
-    expect(result.current.warning).toBe('looking_away_sustained')
+    await act(async () => { vi.advanceTimersByTime(1500) })
+    expect(onViolation).toHaveBeenCalledWith('looking_away_sustained')
+  })
+
+  it('fires only once for a single sustained occurrence (no per-frame spam)', async () => {
+    detectForVideo.mockReturnValue(frame([IDENT, IDENT]))
+    const onViolation = vi.fn()
+    renderHook(() => useVisionGuard({ armed: true, onViolation }))
+    await act(async () => { await Promise.resolve() })
+    await act(async () => { vi.advanceTimersByTime(5000) })
+    expect(onViolation).toHaveBeenCalledTimes(1)
   })
 })

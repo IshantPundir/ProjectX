@@ -95,6 +95,13 @@ ProctoringKind = Literal[
     "devtools",
     "fullscreen_exit",
     "keyboard",
+    # Vision proctoring (client MediaPipe, head-pose-coarse). Soft violations:
+    # they count toward the shared soft-violation limit and the backend
+    # terminates on escalation, same as the behavioral soft kinds. Coarse/
+    # higher-false-positive than the behavioral signals — see spec D1.
+    "multiple_faces",
+    "face_not_visible",
+    "looking_away_sustained",
 ]
 
 

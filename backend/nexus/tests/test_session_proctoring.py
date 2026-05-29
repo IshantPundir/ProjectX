@@ -62,3 +62,35 @@ def test_soft_over_limit_terminates_with_threshold_outcome():
 def test_classify_severity_rejects_unknown_kind():
     with pytest.raises(KeyError):
         classify_severity("nope")
+
+
+@pytest.mark.parametrize(
+    "kind", ["multiple_faces", "face_not_visible", "looking_away_sustained"]
+)
+def test_vision_kinds_are_soft(kind):
+    # Vision proctoring kinds accumulate toward the soft limit, never instant-kill.
+    assert classify_severity(kind) == "soft"
+
+
+@pytest.mark.parametrize(
+    "kind", ["multiple_faces", "face_not_visible", "looking_away_sustained"]
+)
+def test_vision_kind_below_limit_does_not_terminate(kind):
+    terminal, outcome = decide_termination(
+        kind=kind, soft_count_including_new=2, soft_limit=3
+    )
+    assert terminal is False
+    assert outcome is None
+
+
+@pytest.mark.parametrize(
+    "kind", ["multiple_faces", "face_not_visible", "looking_away_sustained"]
+)
+def test_vision_kind_over_limit_terminates_via_shared_counter(kind):
+    # A vision violation that pushes the SHARED soft count past the limit ends the
+    # session with the same threshold outcome as a behavioral soft escalation.
+    terminal, outcome = decide_termination(
+        kind=kind, soft_count_including_new=4, soft_limit=3
+    )
+    assert terminal is True
+    assert outcome == "soft_threshold_exceeded"
