@@ -39,7 +39,10 @@ export function proxy(request: NextRequest) {
 
   const cspHeader = [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDev ? " 'unsafe-eval'" : ""}`,
+    // 'wasm-unsafe-eval' enables MediaPipe tasks-vision WASM compilation
+    // (same-origin /mediapipe/wasm). Narrower than 'unsafe-eval'. See
+    // docs/superpowers/specs/2026-05-29-vision-proctoring-design.md §5.
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic' 'wasm-unsafe-eval'${isDev ? " 'unsafe-eval'" : ""}`,
     `style-src 'self' ${isDev ? "'unsafe-inline'" : `'nonce-${nonce}'`}`,
     "img-src 'self' data: blob:",
     "media-src 'self' blob: mediastream:",

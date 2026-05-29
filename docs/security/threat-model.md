@@ -285,3 +285,9 @@ page via a short-lived presigned GET URL minted by Nexus.
 - Adding an inbound LiveKit Egress webhook (currently pull-based reconcile, so
   no public webhook surface exists yet).
 - Any change to who can access a recording (RBAC gate beyond `reports.view`).
+
+---
+
+## Vision proctoring — MediaPipe WASM (2026-05-29)
+
+The candidate session surface now compiles same-origin WASM (`/mediapipe/wasm/`) for face-landmark proctoring via MediaPipe tasks-vision; `'wasm-unsafe-eval'` has been added to the `script-src` CSP directive in `proxy.ts` (narrower than `'unsafe-eval'`; does not re-enable JS eval; assets are self-hosted under `public/mediapipe/` — no CDN). See `docs/superpowers/specs/2026-05-29-vision-proctoring-design.md §5`.
