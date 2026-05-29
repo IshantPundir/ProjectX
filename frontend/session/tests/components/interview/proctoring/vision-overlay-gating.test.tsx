@@ -17,7 +17,10 @@ vi.mock('@livekit/components-react', () => ({
   }),
 }))
 vi.mock('@/components/interview/proctoring/vision/face-landmarker', () => ({
-  createFaceLandmarker: vi.fn().mockResolvedValue({ detectForVideo: vi.fn(), close: vi.fn() }),
+  createFaceLandmarker: vi.fn().mockResolvedValue({
+    detectForVideo: vi.fn(() => ({ facialTransformationMatrixes: [], faceBlendshapes: [] })),
+    close: vi.fn(),
+  }),
   blendshape: () => 0,
 }))
 vi.mock('sonner', () => ({ toast: { warning: vi.fn(), error: vi.fn() } }))

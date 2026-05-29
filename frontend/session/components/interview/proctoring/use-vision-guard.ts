@@ -1,17 +1,23 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useLocalParticipant } from '@livekit/components-react'
 import { Track } from 'livekit-client'
 
 import { createFaceLandmarker, blendshape } from './vision/face-landmarker'
 import { matrixToHeadPose } from './vision/head-pose'
-import { classifyGazeZone, blinkScore, isBlinking, signalQuality, poseToGazePoint, eyeGazeOffset } from './vision/gaze'
-import { ReadingAccumulator } from './vision/reading'
+import { classifyGazeZone, blinkScore, isBlinking, signalQuality, poseToGazePoint } from './vision/gaze'
 import type { VisionSignals } from './vision/types'
 import { NUDGE_SUSTAIN_MS, type VisionNudgeKind } from './nudge-kinds'
 
 const GAZE_TRAIL_MAX = 24 // recent gaze points kept for the dev fading trail
+
+// When several warning conditions hold at once, the highest-priority one wins.
+const WARNING_PRIORITY: VisionNudgeKind[] = [
+  'multiple_faces',
+  'face_not_visible',
+  'looking_away_sustained',
+]
 
 const EMPTY: VisionSignals = {
   faceCount: 0, pose: null, gazeZone: null, gazePoint: null, gazeTrail: [],
@@ -20,43 +26,28 @@ const EMPTY: VisionSignals = {
 
 export interface UseVisionGuardArgs {
   armed: boolean
-  onNudge: (kind: VisionNudgeKind) => void
 }
 
 export interface VisionGuardState {
   signals: VisionSignals
+  /** Currently-active sustained warning to surface to the candidate (deterrent), or null. */
+  warning: VisionNudgeKind | null
 }
 
-export function useVisionGuard({ armed, onNudge }: UseVisionGuardArgs): VisionGuardState {
+export function useVisionGuard({ armed }: UseVisionGuardArgs): VisionGuardState {
   const { localParticipant } = useLocalParticipant()
   // Stable ref so the detection-loop effect doesn't restart when the LiveKit
-  // participant object identity changes (e.g. test re-renders, SDK reconnect).
-  const participantRef = useRef(localParticipant)
-  // Keep the ref current without re-running the detection effect when the
   // participant object identity changes (test re-renders / SDK reconnect).
+  const participantRef = useRef(localParticipant)
   useEffect(() => {
     participantRef.current = localParticipant
   })
 
   const [signals, setSignals] = useState<VisionSignals>(EMPTY)
-  const reading = useRef(new ReadingAccumulator())
+  const [warning, setWarning] = useState<VisionNudgeKind | null>(null)
+  // When each warning condition first became continuously true (debounce clock).
   const since = useRef<Partial<Record<VisionNudgeKind, number>>>({})
   const gazeTrail = useRef<{ x: number; y: number }[]>([])
-
-  const maybeNudge = useCallback(
-    (kind: VisionNudgeKind, active: boolean, now: number) => {
-      if (!active) { delete since.current[kind]; return }
-      const start = since.current[kind] ?? now
-      since.current[kind] = start
-      if (now - start >= NUDGE_SUSTAIN_MS[kind]) {
-        onNudge(kind)
-        // Push the next-fire window far forward to avoid repeated firings
-        // until the condition clears and restarts.
-        since.current[kind] = now + 1e9
-      }
-    },
-    [onNudge],
-  )
 
   useEffect(() => {
     if (!armed) return
@@ -64,7 +55,6 @@ export function useVisionGuard({ armed, onNudge }: UseVisionGuardArgs): VisionGu
     let raf = 0
     let landmarker: { detectForVideo: (v: HTMLVideoElement, t: number) => unknown; close: () => void } | null = null
     let last = performance.now()
-    const accumulator = reading.current
 
     const video = document.createElement('video')
     video.muted = true
@@ -88,29 +78,19 @@ export function useVisionGuard({ armed, onNudge }: UseVisionGuardArgs): VisionGu
       const faceCount = res.facialTransformationMatrixes?.length ?? 0
       const cats = res.faceBlendshapes?.[0]?.categories
       const mtx = res.facialTransformationMatrixes?.[0]?.data
+      // HEAD-POSE-ONLY gaze: the live plane is a coarse DETERRENT, not the
+      // authoritative detector (that's the server-side report model). Iris was
+      // removed — it added fragility (glasses/noise) for accuracy we don't need
+      // live.
       const pose = faceCount > 0 && mtx ? matrixToHeadPose(mtx) : null
-      // Signed eye-gaze (h: + = candidate's right, v: + = down) from the per-eye
-      // look blendshapes — co-primary with head pose so eye-only reading (phone
-      // near the screen, still head) is detectable.
-      const eye = eyeGazeOffset({
-        inLeft: blendshape(cats, 'eyeLookInLeft'),
-        outLeft: blendshape(cats, 'eyeLookOutLeft'),
-        upLeft: blendshape(cats, 'eyeLookUpLeft'),
-        downLeft: blendshape(cats, 'eyeLookDownLeft'),
-        inRight: blendshape(cats, 'eyeLookInRight'),
-        outRight: blendshape(cats, 'eyeLookOutRight'),
-        upRight: blendshape(cats, 'eyeLookUpRight'),
-        downRight: blendshape(cats, 'eyeLookDownRight'),
-      })
       const ear = cats ? blinkScore(blendshape(cats, 'eyeBlinkLeft'), blendshape(cats, 'eyeBlinkRight')) : null
       const quality = signalQuality({
         faceConfidence: faceCount > 0 ? 1 : 0,
         brightness: 0.5, // Plan A: brightness/glare proxies refined in Plan B
         eyeGlare: 0,
       })
-      const zone = pose ? classifyGazeZone(pose, eye) : null
-      const gazePoint = pose ? poseToGazePoint(pose, eye) : null
-      if (zone) accumulator.push(zone, now)
+      const zone = pose ? classifyGazeZone(pose) : null
+      const gazePoint = pose ? poseToGazePoint(pose) : null
       if (gazePoint) gazeTrail.current = [...gazeTrail.current, gazePoint].slice(-GAZE_TRAIL_MAX)
 
       setSignals({
@@ -118,9 +98,27 @@ export function useVisionGuard({ armed, onNudge }: UseVisionGuardArgs): VisionGu
         blinking: ear !== null && isBlinking(ear), earValue: ear, quality, fps,
       })
 
-      maybeNudge('face_not_visible', faceCount === 0, now)
-      maybeNudge('multiple_faces', faceCount >= 2, now)
-      maybeNudge('looking_away_sustained', accumulator.isReading(), now)
+      // Sustained-condition warning state machine: a condition must hold
+      // continuously past its sustain window before it surfaces (debounce), and
+      // clears the moment the candidate corrects.
+      const conds: Record<VisionNudgeKind, boolean> = {
+        multiple_faces: faceCount >= 2,
+        face_not_visible: faceCount === 0,
+        looking_away_sustained: zone !== null && zone !== 'center',
+      }
+      for (const kind of WARNING_PRIORITY) {
+        if (conds[kind]) since.current[kind] ??= now
+        else delete since.current[kind]
+      }
+      let active: VisionNudgeKind | null = null
+      for (const kind of WARNING_PRIORITY) {
+        const start = since.current[kind]
+        if (start !== undefined && now - start >= NUDGE_SUSTAIN_MS[kind]) {
+          active = kind
+          break
+        }
+      }
+      setWarning(active)
 
       raf = requestAnimationFrame(tick)
     }
@@ -138,12 +136,11 @@ export function useVisionGuard({ armed, onNudge }: UseVisionGuardArgs): VisionGu
       if (track) track.detach(video)
       landmarker?.close()
       setSignals(EMPTY)
-      accumulator.reset()
+      setWarning(null)
       since.current = {}
       gazeTrail.current = []
     }
-  // participantRef is intentionally omitted: it's a stable ref, not a dep.
-  }, [armed, maybeNudge])
+  }, [armed])
 
-  return { signals }
+  return { signals, warning }
 }
