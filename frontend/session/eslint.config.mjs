@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Vendored / generated — not project code:
+    "public/mediapipe/**",
+    "coverage/**",
   ]),
   {
     // These files carry intentional eslint-disable-next-line directives for rules

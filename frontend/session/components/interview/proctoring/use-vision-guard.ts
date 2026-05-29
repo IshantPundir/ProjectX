@@ -30,7 +30,11 @@ export function useVisionGuard({ armed, onNudge }: UseVisionGuardArgs): VisionGu
   // Stable ref so the detection-loop effect doesn't restart when the LiveKit
   // participant object identity changes (e.g. test re-renders, SDK reconnect).
   const participantRef = useRef(localParticipant)
-  participantRef.current = localParticipant
+  // Keep the ref current without re-running the detection effect when the
+  // participant object identity changes (test re-renders / SDK reconnect).
+  useEffect(() => {
+    participantRef.current = localParticipant
+  })
 
   const [signals, setSignals] = useState<VisionSignals>(EMPTY)
   const reading = useRef(new ReadingAccumulator())
@@ -57,6 +61,7 @@ export function useVisionGuard({ armed, onNudge }: UseVisionGuardArgs): VisionGu
     let raf = 0
     let landmarker: { detectForVideo: (v: HTMLVideoElement, t: number) => unknown; close: () => void } | null = null
     let last = performance.now()
+    const accumulator = reading.current
 
     const video = document.createElement('video')
     video.muted = true
@@ -94,7 +99,7 @@ export function useVisionGuard({ armed, onNudge }: UseVisionGuardArgs): VisionGu
         eyeGlare: 0,
       })
       const zone = pose ? classifyGazeZone(pose, iris) : null
-      if (zone) reading.current.push(zone, now)
+      if (zone) accumulator.push(zone, now)
 
       setSignals({
         faceCount, pose, gazeZone: zone, blinking: ear !== null && isBlinking(ear),
@@ -103,7 +108,7 @@ export function useVisionGuard({ armed, onNudge }: UseVisionGuardArgs): VisionGu
 
       maybeNudge('face_not_visible', faceCount === 0, now)
       maybeNudge('multiple_faces', faceCount >= 2, now)
-      maybeNudge('looking_away_sustained', reading.current.isReading(), now)
+      maybeNudge('looking_away_sustained', accumulator.isReading(), now)
 
       raf = requestAnimationFrame(tick)
     }
@@ -121,11 +126,10 @@ export function useVisionGuard({ armed, onNudge }: UseVisionGuardArgs): VisionGu
       if (track) track.detach(video)
       landmarker?.close()
       setSignals(EMPTY)
-      reading.current.reset()
+      accumulator.reset()
       since.current = {}
     }
   // participantRef is intentionally omitted: it's a stable ref, not a dep.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [armed, maybeNudge])
 
   return { signals }
