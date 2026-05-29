@@ -18,6 +18,12 @@ vi.mock('@/components/interview/proctoring/vision/face-landmarker', () => ({
   blendshape: () => 0,
 }))
 vi.mock('sonner', () => ({ toast: { warning: vi.fn(), error: vi.fn() } }))
+// Pin the debug flag OFF explicitly so this negative case is deterministic
+// regardless of an ambient NEXT_PUBLIC_PROCTORING_DEBUG in .env.local (Vitest
+// loads .env.local). The positive render case lives in vision-overlay-gating.test.tsx.
+vi.mock('@/lib/env', () => ({
+  env: { NEXT_PUBLIC_API_URL: 'http://localhost:8000', NEXT_PUBLIC_PROCTORING_DEBUG: false },
+}))
 
 afterEach(() => {
   vi.restoreAllMocks()
