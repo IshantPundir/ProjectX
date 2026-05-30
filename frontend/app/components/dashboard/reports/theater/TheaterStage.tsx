@@ -17,10 +17,7 @@ export function TheaterStage({
 }) {
   if (!signedUrl) {
     return (
-      <div
-        className="absolute inset-0 grid place-items-center text-[12px]"
-        style={{ color: 'rgba(224,235,242,0.7)' }}
-      >
+      <div className="absolute inset-0 grid place-items-center text-[12px] text-[rgba(224,235,242,0.7)]">
         Recording unavailable.
       </div>
     )

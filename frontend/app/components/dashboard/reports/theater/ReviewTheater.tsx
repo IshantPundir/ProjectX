@@ -84,6 +84,7 @@ export function ReviewTheater({
   const videoRef = useRef<HTMLVideoElement>(null)
   const ctrl = useVideoController(videoRef, !!signedUrl, offsetMs, st.seekRef, st.setCurrentMs)
   const ctrlRef = useRef(ctrl)
+  // keep the controller ref current — no dep array on purpose (runs after every render)
   useEffect(() => {
     ctrlRef.current = ctrl
   })
@@ -111,10 +112,12 @@ export function ReviewTheater({
     }
     root.addEventListener('pointermove', show)
     root.addEventListener('pointerdown', show)
+    root.addEventListener('pointerenter', show)
     show()
     return () => {
       root.removeEventListener('pointermove', show)
       root.removeEventListener('pointerdown', show)
+      root.removeEventListener('pointerenter', show)
       window.clearTimeout(timer)
     }
   }, [open])
@@ -123,6 +126,7 @@ export function ReviewTheater({
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement) return
       const c = ctrlRef.current
       if (e.key === ' ') {
         e.preventDefault()

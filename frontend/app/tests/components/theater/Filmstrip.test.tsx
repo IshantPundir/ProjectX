@@ -35,7 +35,8 @@ describe('Filmstrip', () => {
   it('shows a tone placeholder (Q number, no img) when thumbnailUrl is null', () => {
     render(<Filmstrip markers={[marker({ thumbnailUrl: null })]} activeQuestionId={null} onSelect={vi.fn()} />)
     expect(screen.queryByRole('img')).toBeNull()
-    expect(screen.getAllByText('Q1').length).toBeGreaterThan(0)
+    // Q1 renders twice: the thumbnail-area placeholder + the body label row
+    expect(screen.getAllByText('Q1')).toHaveLength(2)
   })
 
   it('marks a card non-seekable when askedAtMs is null', () => {
