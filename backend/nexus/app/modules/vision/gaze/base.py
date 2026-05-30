@@ -2,9 +2,9 @@
 """The gaze-estimation seam.
 
 `GazeEstimator` is the ONLY thing the analysis pipeline depends on. The v1
-implementation (gaze/l2cs.py) wraps L2CS-Net with NON-COMMERCIAL Gaze360
-weights (spec §16.8); a clean-weights or MediaPipe estimator implements the
-same Protocol and drops in with no downstream change.
+implementation (gaze/mobilegaze.py) wraps MobileGaze (ONNX) with NON-COMMERCIAL
+Gaze360 weights (spec §16.8); a clean-weights or MediaPipe estimator implements
+the same Protocol and drops in with no downstream change.
 
 Angle convention (pin it — downstream baseline math depends on it):
   pitch: radians, POSITIVE = looking DOWN.

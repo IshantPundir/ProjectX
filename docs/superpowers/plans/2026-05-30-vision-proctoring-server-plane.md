@@ -2,17 +2,17 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the post-session vision-proctoring pipeline — offline L2CS-Net gaze + multi-face analysis on the R2 recording, producing a `session_proctoring_analysis` row, surfaced as a "Proctoring & Integrity" panel on the recruiter report page (evidence for human review, never auto-rejects).
+**Goal:** Build the post-session vision-proctoring pipeline — offline MobileGaze (ONNX) gaze + multi-face analysis on the R2 recording, producing a `session_proctoring_analysis` row, surfaced as a "Proctoring & Integrity" panel on the recruiter report page (evidence for human review, never auto-rejects).
 
-**Architecture:** A new `app/modules/vision/` module. A Dramatiq actor on a dedicated `vision` queue (run by a new `nexus-vision-worker` service from a torch-bearing image) downloads the recording, samples frames with ffmpeg, runs an L2CS gaze estimator behind a swappable `GazeEstimator` interface, derives self-baseline gaze zones + reading/down-glance/off-screen detectors + multi-face intervals via pure functions, computes a transparent 3-tier band, and persists features only (no frames) to a new tenant-scoped table. The recruiter report page reads it via a sibling endpoint and renders a right-sidebar panel with jump-to-timestamp into the existing recording player.
+**Architecture:** A new `app/modules/vision/` module. A Dramatiq actor on a dedicated `vision` queue (run by a new `nexus-vision-worker` ONNX image) downloads the recording, samples frames with ffmpeg, runs a MobileGaze ONNX gaze estimator behind a swappable `GazeEstimator` interface, derives self-baseline gaze zones + reading/down-glance/off-screen detectors + multi-face intervals via pure functions, computes a transparent 3-tier band, and persists features only (no frames) to a new tenant-scoped table. The recruiter report page reads it via a sibling endpoint and renders a right-sidebar panel with jump-to-timestamp into the existing recording player.
 
-**Tech Stack:** Python 3.13, FastAPI, SQLAlchemy async (asyncpg), Alembic, Dramatiq+Redis, `l2cs` (L2CS-Net) + torch + opencv + ffmpeg (vision worker only), boto3 (R2), Next.js 16 + TanStack Query + `components/px/` primitives.
+**Tech Stack:** Python 3.13, FastAPI, SQLAlchemy async (asyncpg), Alembic, Dramatiq+Redis, **MobileGaze** (`yakhyo/gaze-estimation`, MIT) via `onnxruntime` + `uniface` RetinaFace + opencv + ffmpeg (vision worker only — no torch), boto3 (R2), Next.js 16 + TanStack Query + `components/px/` primitives.
 
 **Spec:** `docs/superpowers/specs/2026-05-29-vision-proctoring-design.md` §16 (authoritative) + §15b (model decision).
 
 **Key constraints (do not violate):**
-- The gaze model (L2CS Gaze360 weights) is **non-commercial / dev-POC only**. It sits behind `GazeEstimator` so clean weights swap in later. Do NOT close the "replace NC weights before GA" item.
-- **Heavy imports (l2cs / cv2 / torch) are LAZY** — done inside function bodies, never at module top level — so the lean `nexus` API image can import `vision/actors.py` to call `.send()` without those deps installed (mirrors `app/ai/realtime.py`).
+- The gaze model (MobileGaze `resnet34_gaze.onnx`, Gaze360-trained) is **non-commercial / dev-POC only**. It sits behind `GazeEstimator` so clean weights swap in later. Do NOT close the "replace NC weights before GA" item.
+- **Heavy imports (onnxruntime / cv2 / uniface / numpy) are LAZY** — done inside function bodies, never at module top level — so the lean `nexus` API image can import `vision/actors.py` to call `.send()` without those deps installed (mirrors `app/ai/realtime.py`).
 - New tenant-scoped table MUST carry the canonical `tenant_isolation` + `service_bypass` RLS pair and be registered in `_TENANT_SCOPED_TABLES` (`app/main.py`).
 - `detectors.py` must import only stdlib (no cv2/torch/numpy) so its unit tests run in the standard test image.
 - Backend commands run in Docker: `docker compose run --rm nexus <cmd>` (e.g. `pytest`). Frontend in `frontend/app`: `npm run test`.
@@ -24,7 +24,7 @@
 **Backend — new `backend/nexus/app/modules/vision/`:**
 - `__init__.py` — public API (`__all__`): `analyze_session_proctoring`, `get_session_proctoring_analysis`, `ProctoringAnalysisRead`, `SessionProctoringAnalysis`.
 - `gaze/base.py` — `FaceGaze` dataclass + `GazeEstimator` Protocol (the swap seam).
-- `gaze/l2cs.py` — `L2CSGazeEstimator` (lazy `l2cs`/`cv2`/`torch` imports).
+- `gaze/mobilegaze.py` — `MobileGazeEstimator` (MobileGaze ONNX; lazy `onnxruntime`/`cv2`/`uniface` imports).
 - `detectors.py` — pure functions (stdlib only): baseline, zone classify, off-screen / reading-sweep / down-glance / multi-face detectors, heatmap, band, `analyze_observations`.
 - `analysis.py` — `run_analysis(...)`: download → ffmpeg-sample → estimate → `analyze_observations`. Lazy heavy imports.
 - `models.py` — `SessionProctoringAnalysis` ORM.
@@ -269,9 +269,9 @@ Expected: FAIL — `ModuleNotFoundError: app.modules.vision.gaze.base`
 """The gaze-estimation seam.
 
 `GazeEstimator` is the ONLY thing the analysis pipeline depends on. The v1
-implementation (gaze/l2cs.py) wraps L2CS-Net with NON-COMMERCIAL Gaze360
-weights (spec §16.8); a clean-weights or MediaPipe estimator implements the
-same Protocol and drops in with no downstream change.
+implementation (gaze/mobilegaze.py) wraps MobileGaze (ONNX) with NON-COMMERCIAL
+Gaze360 weights (spec §16.8); a clean-weights or MediaPipe estimator implements
+the same Protocol and drops in with no downstream change.
 
 Angle convention (pin it — downstream baseline math depends on it):
   pitch: radians, POSITIVE = looking DOWN.
@@ -1156,46 +1156,95 @@ git commit -m "feat(storage): add download_to_path for offline analysis"
 
 ---
 
-## Task 8: `L2CSGazeEstimator` (lazy heavy imports)
+## Task 8: `MobileGazeEstimator` (MobileGaze ONNX, lazy heavy imports) + estimator config
+
+**Model choice (revised 2026-05-30):** we use **MobileGaze** (`yakhyo/gaze-estimation`, MIT — a maintained L2CS-Net reimplementation) via **ONNX** (`onnxruntime`, **no torch**) instead of the original `l2cs` pip package. Face detection = `uniface` **RetinaFace** (ONNX, auto-downloads its model). v1 weights = `resnet34_gaze.onnx` (from the repo's releases). **Licensing is unchanged:** those weights are Gaze360-trained = NON-COMMERCIAL, dev/POC only (spec §16.8). The `GazeEstimator` seam (Task 2) is untouched.
 
 **Files:**
-- Create: `app/modules/vision/gaze/l2cs.py`
-- Test: `tests/vision/test_gaze_l2cs_lazy.py`
+- Modify: `app/config.py` (3 estimator fields + 1 default change), `app/modules/vision/config.py` (3 properties), `tests/vision/test_vision_config.py` (extend)
+- Create: `app/modules/vision/gaze/mobilegaze.py`
+- Test: `tests/vision/test_gaze_mobilegaze_lazy.py`
 
-No real model test (manual per D9). The only automated guard: importing the module does NOT import torch/l2cs (keeps the lean image safe).
+No real-model test (manual per D9). Automated guard: importing the wrapper module must NOT import onnxruntime/cv2/uniface (keeps the lean nexus image safe).
 
-- [ ] **Step 1: Write the failing test**
+> **External-API adaptation point:** the `uniface` RetinaFace API and the `resnet34_gaze.onnx` output names are external. The code below targets the documented API (`from uniface.detection import RetinaFace`; `detector.detect(img)` → list of objects with `.bbox`/`.confidence`; ONNX outputs decoded by name). After writing it, run a quick `docker compose run --rm nexus-vision-worker python -c "from uniface.detection import RetinaFace; print('ok')"` (once Task 15's image exists) to confirm the import path, and adapt if the installed version differs. Do NOT block the lazy-import test on this — that test doesn't import the heavy deps.
+
+- [ ] **Step 1: Extend the estimator config**
+
+In `app/config.py`, change the existing `vision_gaze_arch` default and add three fields (in the same Vision block from Task 1):
 
 ```python
-# tests/vision/test_gaze_l2cs_lazy.py
+    vision_gaze_arch: str = "resnet34"  # changed from "ResNet50" — matches resnet34_gaze.onnx
+    vision_gaze_input_size: int = 448
+    # Sign mapping from the model's pitch/yaw to our convention (pitch+ = down,
+    # yaw+ = camera-right). Flip to -1 during manual calibration (D9) if
+    # looking-down is not classified as the 'down' zone / left-right is mirrored.
+    vision_gaze_pitch_sign: int = 1
+    vision_gaze_yaw_sign: int = 1
+```
+
+In `app/modules/vision/config.py`, add three properties to `VisionConfig`:
+
+```python
+    @property
+    def gaze_input_size(self) -> int:
+        return self._s.vision_gaze_input_size
+
+    @property
+    def gaze_pitch_sign(self) -> int:
+        return self._s.vision_gaze_pitch_sign
+
+    @property
+    def gaze_yaw_sign(self) -> int:
+        return self._s.vision_gaze_yaw_sign
+```
+
+Extend `tests/vision/test_vision_config.py::test_vision_config_defaults` with:
+
+```python
+    assert cfg.gaze_input_size == 448
+    assert cfg.gaze_arch == "resnet34"
+    assert cfg.gaze_pitch_sign in (1, -1)
+```
+
+Run: `docker compose run --rm nexus pytest tests/vision/test_vision_config.py -v` → Expected: PASS.
+
+- [ ] **Step 2: Write the failing lazy-import test**
+
+```python
+# tests/vision/test_gaze_mobilegaze_lazy.py
 import sys
 
 
-def test_importing_module_does_not_import_torch_or_l2cs():
-    # Importing the wrapper module must stay light — heavy deps load only when
-    # an estimator is constructed (inside the vision worker image).
-    for mod in ("torch", "l2cs", "cv2"):
+def test_importing_module_does_not_import_heavy_deps():
+    # Importing the wrapper must stay light — onnxruntime/cv2/uniface load only
+    # when an estimator is constructed (inside the vision-worker image).
+    for mod in ("onnxruntime", "cv2", "uniface"):
         sys.modules.pop(mod, None)
     import importlib
-    import app.modules.vision.gaze.l2cs as m
+    import app.modules.vision.gaze.mobilegaze as m
     importlib.reload(m)
-    assert "torch" not in sys.modules
-    assert "l2cs" not in sys.modules
-    assert hasattr(m, "L2CSGazeEstimator")
+    assert "onnxruntime" not in sys.modules
+    assert "cv2" not in sys.modules
+    assert "uniface" not in sys.modules
+    assert hasattr(m, "MobileGazeEstimator")
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+Run: `docker compose run --rm nexus pytest tests/vision/test_gaze_mobilegaze_lazy.py -v` → Expected: FAIL (`ModuleNotFoundError: app.modules.vision.gaze.mobilegaze`).
 
-Run: `docker compose run --rm nexus pytest tests/vision/test_gaze_l2cs_lazy.py -v`
-Expected: FAIL — `ModuleNotFoundError: app.modules.vision.gaze.l2cs`
-
-- [ ] **Step 3: Write `gaze/l2cs.py`**
+- [ ] **Step 3: Write `gaze/mobilegaze.py`**
 
 ```python
-# app/modules/vision/gaze/l2cs.py
-"""L2CS-Net gaze estimator (v1). Gaze360 weights are NON-COMMERCIAL — dev/POC
-only (spec §16.8). Heavy deps (torch/l2cs/cv2) import LAZILY in __init__ so the
-lean nexus API image can import the module graph without them installed.
+# app/modules/vision/gaze/mobilegaze.py
+"""MobileGaze (yakhyo/gaze-estimation, MIT) ONNX gaze estimator (v1).
+
+`resnet34_gaze.onnx` is Gaze360-trained = NON-COMMERCIAL, dev/POC only
+(spec §16.8). Heavy deps (onnxruntime / cv2 / numpy / uniface) import LAZILY in
+__init__ so the lean nexus API image can import the module graph without them.
+
+Pipeline (mirrors the MobileGaze ONNX inference): RetinaFace detect → per-face
+crop → BGR->RGB, resize to input_size², /255, ImageNet-normalize, CHW, batch →
+ONNX → 90-bin softmax expectation (×4 − 180) → degrees → radians.
 """
 from __future__ import annotations
 
@@ -1203,58 +1252,101 @@ import structlog
 
 from app.modules.vision.gaze.base import FaceGaze
 
-log = structlog.get_logger("vision.gaze.l2cs")
+log = structlog.get_logger("vision.gaze.mobilegaze")
 
 
-class L2CSGazeEstimator:
-    """Wraps the `l2cs` Pipeline. One instance per worker process (model load
-    is expensive). `estimate` returns one FaceGaze per detected face.
+class MobileGazeEstimator:
+    """One instance per worker process (model load + detector init are costly).
+    `estimate` returns one FaceGaze per detected face.
     """
 
-    def __init__(self, *, weights_path: str, arch: str = "ResNet50", device: str = "cpu") -> None:
+    def __init__(
+        self,
+        *,
+        weights_path: str,
+        input_size: int = 448,
+        pitch_sign: int = 1,
+        yaw_sign: int = 1,
+    ) -> None:
         # Lazy — only the vision-worker image has these installed.
-        import torch  # noqa: PLC0415
-        from l2cs import Pipeline  # noqa: PLC0415
+        import numpy as np  # noqa: PLC0415
+        import onnxruntime as ort  # noqa: PLC0415
+        from uniface.detection import RetinaFace  # noqa: PLC0415
 
-        self._pipeline = Pipeline(
-            weights=weights_path,
-            arch=arch,
-            device=torch.device(device),
-        )
-        log.info("vision.gaze.l2cs.loaded", arch=arch, device=device)
+        self._np = np
+        self._session = ort.InferenceSession(weights_path, providers=["CPUExecutionProvider"])
+        self._input_name = self._session.get_inputs()[0].name
+        self._output_names = [o.name for o in self._session.get_outputs()]
+        self._detector = RetinaFace()
+        self._size = (input_size, input_size)
+        self._pitch_sign = pitch_sign
+        self._yaw_sign = yaw_sign
+        self._mean = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(3, 1, 1)
+        self._std = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(3, 1, 1)
+        self._idx = np.arange(90, dtype=np.float32)
+        log.info("vision.gaze.mobilegaze.loaded", outputs=self._output_names, input_size=input_size)
+
+    def _preprocess(self, crop_bgr):
+        import cv2  # noqa: PLC0415
+
+        np = self._np
+        img = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
+        img = cv2.resize(img, self._size).astype(np.float32) / 255.0
+        img = np.transpose(img, (2, 0, 1))
+        img = (img - self._mean) / self._std
+        return np.expand_dims(img, 0).astype(np.float32)
+
+    def _decode(self, logits):
+        """90-bin softmax expectation → radians (binwidth 4°, offset 180°)."""
+        np = self._np
+        e = np.exp(logits - logits.max(axis=1, keepdims=True))
+        probs = e / e.sum(axis=1, keepdims=True)
+        deg = float((probs * self._idx).sum(axis=1)[0] * 4.0 - 180.0)
+        return float(np.radians(deg))
+
+    def _split_yaw_pitch(self, outs):
+        """Map outputs to (yaw_logits, pitch_logits). Prefer output NAMES (robust
+        to export order); fall back to L2CS/MobileGaze [pitch, yaw] order.
+        VERIFY the sign/zone mapping in the manual D9 test.
+        """
+        named = dict(zip(self._output_names, outs, strict=False))
+        yaw_k = next((k for k in self._output_names if "yaw" in k.lower()), None)
+        pitch_k = next((k for k in self._output_names if "pitch" in k.lower()), None)
+        if yaw_k is not None and pitch_k is not None:
+            return named[yaw_k], named[pitch_k]
+        return outs[1], outs[0]  # fallback: [pitch, yaw]
 
     def estimate(self, frame_bgr) -> list[FaceGaze]:
-        # l2cs raises when it finds no face; treat that as "no faces".
-        try:
-            res = self._pipeline.step(frame_bgr)
-        except ValueError:
-            return []
+        h, w = frame_bgr.shape[:2]
+        faces = self._detector.detect(frame_bgr)
         out: list[FaceGaze] = []
-        bboxes = getattr(res, "bboxes", []) or []
-        pitches = getattr(res, "pitch", []) or []
-        yaws = getattr(res, "yaw", []) or []
-        scores = getattr(res, "scores", []) or []
-        for i, bbox in enumerate(bboxes):
+        for f in faces:
+            x1, y1, x2, y2 = (int(v) for v in f.bbox[:4])
+            x1, y1 = max(0, x1), max(0, y1)
+            x2, y2 = min(w, x2), min(h, y2)
+            if x2 <= x1 or y2 <= y1:
+                continue
+            inp = self._preprocess(frame_bgr[y1:y2, x1:x2])
+            outs = self._session.run(self._output_names, {self._input_name: inp})
+            yaw_logits, pitch_logits = self._split_yaw_pitch(outs)
             out.append(
                 FaceGaze(
-                    bbox=tuple(float(v) for v in bbox[:4]),
-                    pitch=float(pitches[i]),
-                    yaw=float(yaws[i]),
-                    score=float(scores[i]) if i < len(scores) else 1.0,
+                    bbox=(float(x1), float(y1), float(x2), float(y2)),
+                    pitch=self._decode(pitch_logits) * self._pitch_sign,
+                    yaw=self._decode(yaw_logits) * self._yaw_sign,
+                    score=float(getattr(f, "confidence", 1.0)),
                 )
             )
         return out
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+Run: `docker compose run --rm nexus pytest tests/vision/test_gaze_mobilegaze_lazy.py -v` → Expected: PASS.
 
-Run: `docker compose run --rm nexus pytest tests/vision/test_gaze_l2cs_lazy.py -v` → Expected: PASS
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add app/modules/vision/gaze/l2cs.py tests/vision/test_gaze_l2cs_lazy.py
-git commit -m "feat(vision): L2CSGazeEstimator wrapper (lazy heavy imports)"
+git add app/config.py app/modules/vision/config.py app/modules/vision/gaze/mobilegaze.py tests/vision/test_vision_config.py tests/vision/test_gaze_mobilegaze_lazy.py
+git commit -m "feat(vision): MobileGazeEstimator (ONNX, no torch) + estimator config"
 ```
 
 ---
@@ -1448,7 +1540,7 @@ Expected: FAIL — `ModuleNotFoundError: app.modules.vision.actors`
 
 - [ ] **Step 3: Write `app/modules/vision/actors.py`**
 
-Top-level imports stay light (no torch/cv2/l2cs). `run_analysis` and `L2CSGazeEstimator` are imported lazily inside `_run`.
+Top-level imports stay light (no onnxruntime/cv2/uniface). `run_analysis` and `MobileGazeEstimator` are imported lazily inside `_run`.
 
 ```python
 # app/modules/vision/actors.py
@@ -1535,7 +1627,7 @@ async def _persist(db, session_id: str, tenant_id: str, *, status: str, result=N
         row.gaze_signal_quality = result.gaze_signal_quality
         row.unscorable_pct = result.unscorable_pct
         row.model_versions = {
-            "gaze": "l2cs-gaze360",
+            "gaze": "mobilegaze-gaze360",
             "weights_path": vision_config.gaze_weights_path,
             "arch": vision_config.gaze_arch,
             "pipeline": "v1",
@@ -1560,10 +1652,13 @@ async def _run(session_id: str, tenant_id: str) -> None:
 
     # Phase 2: heavy work OUTSIDE the DB transaction.
     try:
-        from app.modules.vision.gaze.l2cs import L2CSGazeEstimator  # noqa: PLC0415
+        from app.modules.vision.gaze.mobilegaze import MobileGazeEstimator  # noqa: PLC0415
 
-        estimator = L2CSGazeEstimator(
-            weights_path=vision_config.gaze_weights_path, arch=vision_config.gaze_arch,
+        estimator = MobileGazeEstimator(
+            weights_path=vision_config.gaze_weights_path,
+            input_size=vision_config.gaze_input_size,
+            pitch_sign=vision_config.gaze_pitch_sign,
+            yaw_sign=vision_config.gaze_yaw_sign,
         )
         with tempfile.TemporaryDirectory() as tmp:
             dest = os.path.join(tmp, "recording.mp4")
@@ -1750,7 +1845,7 @@ Expected: FAIL — `ImportError`
 # app/modules/vision/__init__.py
 """Vision proctoring (server plane) — public API.
 
-Heavy deps (torch/l2cs/cv2) are imported lazily inside the actor/estimator, so
+Heavy deps (onnxruntime/cv2/uniface) are imported lazily inside the actor/estimator, so
 importing this package in the lean nexus API process is safe.
 """
 from app.modules.vision.actors import analyze_session_proctoring
@@ -1961,26 +2056,30 @@ from app.modules.vision import actors as _vision_actors  # noqa: F401, E402
 
 - [ ] **Step 2: Add the vision dependency group to `pyproject.toml`**
 
-Add an optional group so the lean images don't pull torch:
+Add an optional group (ONNX inference — **no torch**, so the image stays far lighter than a torch build):
 
 ```toml
 [project.optional-dependencies]
 vision = [
-    "l2cs @ git+https://github.com/edavalosanaya/L2CS-Net.git@main",
+    "onnxruntime>=1.17",
     "opencv-python-headless>=4.9",
-    "torch>=2.2",
+    "numpy>=1.26",
+    "uniface[cpu]>=0.1",
 ]
 ```
+
+> Verify the exact `uniface` extras/version against PyPI when implementing (the package provides RetinaFace ONNX face detection and auto-downloads its model on first use). If `uniface[cpu]` doesn't resolve, use plain `uniface` + `onnxruntime`.
 
 - [ ] **Step 3: Create `Dockerfile.vision`**
 
 ```dockerfile
 # Dockerfile.vision — image for the nexus-vision-worker only.
-# Heavier than the lean nexus image (torch + l2cs + opencv + ffmpeg).
+# ONNX gaze inference (onnxruntime + uniface RetinaFace + opencv + ffmpeg).
+# No torch — much lighter than a torch build.
 FROM python:3.13-slim
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg libgl1 libglib2.0-0 git \
+    && apt-get install -y --no-install-recommends ffmpeg libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -1995,7 +2094,15 @@ CMD ["dramatiq", "app.worker", "--processes", "1", "--threads", "2", "-Q", "visi
 
 - [ ] **Step 4: Add the `nexus-vision-worker` service to `docker-compose.yml`**
 
-Append under `services:` (mirror `nexus-worker`'s env, but build from `Dockerfile.vision`, mount the weights, and pin `VISION_GAZE_WEIGHTS_PATH`):
+First, **download the v1 weights** to a host path (operator step, one-time — these are the NON-COMMERCIAL Gaze360 weights, dev/POC only):
+```bash
+mkdir -p backend/nexus/models
+curl -L -o backend/nexus/models/resnet34_gaze.onnx \
+  https://github.com/yakhyo/gaze-estimation/releases/download/weights/resnet34_gaze.onnx
+```
+(Add `backend/nexus/models/` to `.gitignore` — do NOT commit the weights.)
+
+Append under `services:` (mirror `nexus-worker`'s env, but build from `Dockerfile.vision`, mount the weights + a uniface model cache, and pin `VISION_GAZE_WEIGHTS_PATH`):
 
 ```yaml
   nexus-vision-worker:
@@ -2008,7 +2115,9 @@ Append under `services:` (mirror `nexus-worker`'s env, but build from `Dockerfil
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@host.docker.internal:54322/postgres
       - REDIS_URL=redis://redis:6379/0
-      - VISION_GAZE_WEIGHTS_PATH=/weights/L2CSNet_gaze360.pkl
+      - VISION_GAZE_WEIGHTS_PATH=/weights/resnet34_gaze.onnx
+      # uniface auto-downloads its RetinaFace model here (persisted via the volume below).
+      - UNIFACE_CACHE_DIR=/uniface-cache
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -2016,20 +2125,24 @@ Append under `services:` (mirror `nexus-worker`'s env, but build from `Dockerfil
         condition: service_healthy
     volumes:
       - .:/app
-      # Mount the NON-COMMERCIAL Gaze360 weights read-only (dev/POC only).
-      - ./tmp/L2CSNet-20260529T105849Z-3-001/L2CSNet/Gaze360:/weights:ro
+      # Mount the NON-COMMERCIAL Gaze360 ONNX weights read-only (dev/POC only).
+      - ./models:/weights:ro
+      - uniface-cache:/uniface-cache
     command: dramatiq app.worker --processes 1 --threads 2 -Q vision
 ```
 
+Add `uniface-cache:` to the top-level `volumes:` block in `docker-compose.yml` (alongside `redisdata`, `hf-cache`).
+
 - [ ] **Step 5: Verify the service starts + commit**
 
-Run: `docker compose build nexus-vision-worker` → Expected: builds (torch + l2cs install).
+Run: `docker compose build nexus-vision-worker` → Expected: builds (onnxruntime + uniface install; no torch).
 Run: `docker compose up -d nexus-vision-worker && docker compose logs --tail=20 nexus-vision-worker` → Expected: worker boots, connects to Redis, registers the `vision` queue (no traceback).
-Run (regression — lean image still imports the actor for `.send()` without torch): `docker compose run --rm nexus python -c "import app.modules.vision; import app.modules.session.recording; print('ok')"` → Expected: prints `ok`.
+Run (confirm the external APIs resolve in the image): `docker compose run --rm nexus-vision-worker python -c "from uniface.detection import RetinaFace; import onnxruntime; print('ok')"` → Expected: prints `ok` (adapt the `MobileGazeEstimator` import path in Task 8 if this differs).
+Run (regression — lean image still imports the actor for `.send()` without onnxruntime/torch): `docker compose run --rm nexus python -c "import app.modules.vision; import app.modules.session.recording; print('ok')"` → Expected: prints `ok`.
 
 ```bash
-git add app/worker.py pyproject.toml Dockerfile.vision docker-compose.yml
-git commit -m "feat(vision): nexus-vision-worker service + vision deps (-Q vision)"
+git add app/worker.py pyproject.toml Dockerfile.vision docker-compose.yml .gitignore
+git commit -m "feat(vision): nexus-vision-worker service + ONNX vision deps (-Q vision)"
 ```
 
 ---
