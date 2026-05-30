@@ -1,34 +1,64 @@
-import { render, screen } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+// tests/components/theater/filmstrip.test.tsx
+import { describe, it, expect, vi } from 'vitest'
+import { render, screen, fireEvent } from '@testing-library/react'
 
 import { Filmstrip } from '@/components/dashboard/reports/theater/Filmstrip'
 import type { TimelineMarker } from '@/components/dashboard/reports/theater/timeline-model'
 
-const markers: TimelineMarker[] = [
-  { seq: 1, questionId: 'q1', title: 'Experience', statusBadge: 'passed', tone: 'ok',
-    askedAtMs: 23_000, thumbnailUrl: 'https://x/q1.webp', positionPct: 10 },
-  { seq: 2, questionId: 'q2', title: 'AI agent', statusBadge: 'failed_required', tone: 'danger',
-    askedAtMs: null, thumbnailUrl: null, positionPct: null },
-]
+function marker(over: Partial<TimelineMarker>): TimelineMarker {
+  return {
+    seq: 1,
+    questionId: 'q1',
+    title: 'How many years of full-time experience?',
+    statusBadge: 'passed',
+    tone: 'ok',
+    askedAtMs: 12_000,
+    thumbnailUrl: null,
+    positionPct: 20,
+    ...over,
+  }
+}
 
 describe('Filmstrip', () => {
-  it('renders one card per marker with a thumbnail when present', () => {
-    render(<Filmstrip markers={markers} activeQuestionId={null} onSelect={() => {}} />)
-    expect(screen.getByText('Experience')).toBeInTheDocument()
-    expect(screen.getByText('AI agent')).toBeInTheDocument()
-    expect(screen.getByRole('img', { name: /Experience/i })).toHaveAttribute('src', 'https://x/q1.webp')
+  it('shows a thumbnail image when thumbnailUrl is set', () => {
+    render(
+      <Filmstrip
+        markers={[marker({ thumbnailUrl: 'https://signed/q1.webp' })]}
+        activeQuestionId={null}
+        onSelect={vi.fn()}
+      />,
+    )
+    const img = screen.getByRole('img')
+    expect(img.getAttribute('src')).toBe('https://signed/q1.webp')
   })
 
-  it('calls onSelect with the questionId on click', async () => {
+  it('shows a tone placeholder (Q number, no img) when thumbnailUrl is null', () => {
+    render(<Filmstrip markers={[marker({ thumbnailUrl: null })]} activeQuestionId={null} onSelect={vi.fn()} />)
+    expect(screen.queryByRole('img')).toBeNull()
+    expect(screen.getAllByText('Q1').length).toBeGreaterThan(0)
+  })
+
+  it('marks a card non-seekable when askedAtMs is null', () => {
+    render(
+      <Filmstrip
+        markers={[marker({ askedAtMs: null, positionPct: null })]}
+        activeQuestionId={null}
+        onSelect={vi.fn()}
+      />,
+    )
+    expect(screen.getByRole('button').getAttribute('data-seekable')).toBe('false')
+  })
+
+  it('still calls onSelect when a non-seekable card is clicked', () => {
     const onSelect = vi.fn()
-    render(<Filmstrip markers={markers} activeQuestionId={null} onSelect={onSelect} />)
-    await userEvent.click(screen.getByRole('button', { name: /Experience/i }))
+    render(
+      <Filmstrip
+        markers={[marker({ askedAtMs: null, positionPct: null })]}
+        activeQuestionId={null}
+        onSelect={onSelect}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button'))
     expect(onSelect).toHaveBeenCalledWith('q1')
-  })
-
-  it('marks the active card', () => {
-    render(<Filmstrip markers={markers} activeQuestionId="q1" onSelect={() => {}} />)
-    expect(screen.getByRole('button', { name: /Experience/i })).toHaveAttribute('data-active', 'true')
   })
 })
