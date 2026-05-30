@@ -16,7 +16,7 @@ export function NodeTrack({
   onSeekMs: (ms: number) => void
 }) {
   return (
-    <div className="relative mx-1 mt-2 h-2 rounded" style={{ background: 'rgba(20,40,60,0.1)' }}>
+    <div className="relative mx-1 mt-2 h-2 rounded" style={{ background: 'rgba(255,255,255,0.14)' }}>
       {/* played portion */}
       <div
         className="absolute left-0 top-0 bottom-0 rounded"

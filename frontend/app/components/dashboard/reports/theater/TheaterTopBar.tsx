@@ -24,7 +24,7 @@ export function TheaterTopBar({
     { key: 'communication', label: 'Comms' },
   ]
   return (
-    <div className="theater-glass m-3 mb-0 flex items-center gap-4 rounded-2xl px-4 py-2">
+    <div className="theater-glass flex items-center gap-4 rounded-2xl px-4 py-2">
       <div className="min-w-0">
         <div className="truncate text-[13.5px] font-bold" style={{ color: 'var(--px-fg)' }}>
           {candidateName || 'Candidate'}

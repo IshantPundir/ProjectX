@@ -1,6 +1,7 @@
+// components/dashboard/reports/theater/ReviewTheater.tsx
 'use client'
 
-import { useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { Dialog, DialogContent } from '@/components/px'
 import type { ReportRead } from '@/lib/api/reports'
@@ -10,12 +11,20 @@ import { SessionTimeline } from './SessionTimeline'
 import { TheaterStage } from './TheaterStage'
 import { TheaterTopBar } from './TheaterTopBar'
 import { ThisMomentPanel } from './ThisMomentPanel'
-import { buildFlagMarkers, buildQuestionMarkers, densityBuckets } from './timeline-model'
+import { VideoControls } from './VideoControls'
+import {
+  buildFlagMarkers,
+  buildQuestionMarkers,
+  densityBucketsForKinds,
+} from './timeline-model'
 import { useTheaterState } from './useTheaterState'
+import { useVideoController } from './useVideoController'
 import './theater.css'
 
-const TOP_FLAGS = 6
 const DENSITY_BUCKETS = 48
+const DOWN_KINDS = ['down_glance']
+const OFF_KINDS = ['off_screen_sustained', 'reading_sweep', 'multiple_faces']
+const HIDE_AFTER_MS = 2500
 
 export function ReviewTheater({
   open,
@@ -37,26 +46,102 @@ export function ReviewTheater({
   const { data: proc } = useSessionProctoring(open ? sessionId : '')
 
   const durationMs = (rec?.duration_seconds ?? 0) * 1000
-  const flaggedRaw = proc && proc.status === 'ready' ? proc.flagged_intervals : []
+  const signedUrl = rec?.status === 'ready' ? rec.signed_url : null
+  const offsetMs = rec?.offset_ms ?? 0
+  const flaggedRaw = useMemo(
+    () => (proc && proc.status === 'ready' ? proc.flagged_intervals : []),
+    [proc],
+  )
   const riskBand = proc && proc.status === 'ready' ? proc.risk_band : null
 
   const markers = useMemo(
     () => buildQuestionMarkers(report.questions, durationMs),
     [report.questions, durationMs],
   )
+  // all flags are clickable ticks; only the top-N carry thumbnails from the API
   const flags = useMemo(
-    () => buildFlagMarkers(flaggedRaw, durationMs, TOP_FLAGS),
+    () => buildFlagMarkers(flaggedRaw, durationMs, flaggedRaw.length),
     [flaggedRaw, durationMs],
   )
-  const buckets = useMemo(
-    () => (flaggedRaw.length ? densityBuckets(flaggedRaw, durationMs, DENSITY_BUCKETS) : []),
+  const downBuckets = useMemo(
+    () =>
+      flaggedRaw.length
+        ? densityBucketsForKinds(flaggedRaw, durationMs, DENSITY_BUCKETS, DOWN_KINDS)
+        : [],
+    [flaggedRaw, durationMs],
+  )
+  const offBuckets = useMemo(
+    () =>
+      flaggedRaw.length
+        ? densityBucketsForKinds(flaggedRaw, durationMs, DENSITY_BUCKETS, OFF_KINDS)
+        : [],
     [flaggedRaw, durationMs],
   )
 
   const st = useTheaterState({ markers, questions: report.questions, durationMs })
 
-  // When opened from a proctoring "jump to" row, pre-select that flag (which
-  // also seeks the video) once the flags have loaded. Runs once per open.
+  // custom video transport (replaces native controls)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const ctrl = useVideoController(videoRef, !!signedUrl, offsetMs, st.seekRef, st.setCurrentMs)
+  const ctrlRef = useRef(ctrl)
+  useEffect(() => {
+    ctrlRef.current = ctrl
+  })
+
+  // fullscreen targets the theater root
+  const shellRef = useRef<HTMLDivElement>(null)
+  const toggleFullscreen = useCallback(() => {
+    const el = shellRef.current
+    if (!el) return
+    if (document.fullscreenElement) void document.exitFullscreen?.()
+    else void el.requestFullscreen?.()
+  }, [])
+
+  // auto-hide the control bar on pointer idle
+  const [controlsVisible, setControlsVisible] = useState(true)
+  useEffect(() => {
+    if (!open) return
+    const root = shellRef.current
+    if (!root) return
+    let timer = 0
+    const show = () => {
+      setControlsVisible(true)
+      window.clearTimeout(timer)
+      timer = window.setTimeout(() => setControlsVisible(false), HIDE_AFTER_MS)
+    }
+    root.addEventListener('pointermove', show)
+    root.addEventListener('pointerdown', show)
+    show()
+    return () => {
+      root.removeEventListener('pointermove', show)
+      root.removeEventListener('pointerdown', show)
+      window.clearTimeout(timer)
+    }
+  }, [open])
+
+  // keyboard shortcuts (read ctrl through a ref so listeners don't rebind each tick)
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => {
+      const c = ctrlRef.current
+      if (e.key === ' ') {
+        e.preventDefault()
+        c.togglePlay()
+      } else if (e.key === 'ArrowRight') {
+        c.seekToSec(c.currentSec + 5)
+      } else if (e.key === 'ArrowLeft') {
+        c.seekToSec(Math.max(0, c.currentSec - 5))
+      } else if (e.key === 'f' || e.key === 'F') {
+        toggleFullscreen()
+      } else if (e.key === 'm' || e.key === 'M') {
+        c.toggleMute()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, toggleFullscreen])
+
+  // pre-select a flag when opened from a proctoring "jump to" row
   const { selectFlag } = st
   const appliedFlagRef = useRef(false)
   useEffect(() => {
@@ -69,47 +154,59 @@ export function ReviewTheater({
   }, [initialFlagStartMs, flags, selectFlag])
 
   const integrityCaption = useMemo(() => {
+    const riskText =
+      riskBand === 'high' ? '⚠ HIGH RISK' : riskBand === 'medium' ? '⚠ MEDIUM RISK' : '⚠ INTEGRITY'
     const s = proc && proc.status === 'ready' ? proc.detector_summary : null
-    if (!s) return ''
-    return `${Math.round(s.off_screen_pct * 100)}% off-screen · ${s.down_glance_count} down-glances`
-  }, [proc])
+    if (!s) return riskText
+    return `${riskText} · ${Math.round(s.off_screen_pct * 100)}% off-screen · ${s.down_glance_count} down-glances`
+  }, [proc, riskBand])
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose() }}>
       <DialogContent showCloseButton={false} widthClass="" className="theater-shell">
-        <TheaterTopBar
-          report={report}
-          candidateName={candidateName}
-          subtitle={subtitle}
-          riskBand={riskBand}
-          onClose={onClose}
-        />
-        <div className="flex min-h-0 flex-1 gap-3 px-3 pt-3">
-          <div className="min-w-0 flex-1">
-            <TheaterStage
-              signedUrl={rec?.status === 'ready' ? rec.signed_url : null}
-              offsetMs={rec?.offset_ms ?? 0}
-              seekApiRef={st.seekRef}
-              onCurrentMs={st.setCurrentMs}
+        <div ref={shellRef} className="theater-root">
+          <TheaterStage
+            videoRef={videoRef}
+            signedUrl={signedUrl}
+            playing={ctrl.playing}
+            onTogglePlay={ctrl.togglePlay}
+          />
+
+          <div className="theater-topbar-slot">
+            <TheaterTopBar
+              report={report}
+              candidateName={candidateName}
+              subtitle={subtitle}
+              riskBand={riskBand}
+              onClose={onClose}
             />
           </div>
-          <div className="w-[260px] flex-none">
+
+          <div className="theater-moment-slot">
             <ThisMomentPanel selection={st.selection} decision={report.decision} onJump={st.seekMs} />
           </div>
-        </div>
-        <div className="p-3">
-          <SessionTimeline
-            markers={markers}
-            flags={flags}
-            buckets={buckets}
-            riskBand={riskBand}
-            integrityCaption={integrityCaption}
-            playheadPct={st.playheadPct}
-            activeQuestionId={st.activeId}
-            onSelectQuestion={st.selectQuestion}
-            onSeekMs={st.seekMs}
-            onSelectFlag={st.selectFlag}
-          />
+
+          <div className="theater-bottom">
+            {signedUrl && (
+              <VideoControls
+                controller={ctrl}
+                visible={controlsVisible}
+                onToggleFullscreen={toggleFullscreen}
+              />
+            )}
+            <SessionTimeline
+              markers={markers}
+              flags={flags}
+              downBuckets={downBuckets}
+              offBuckets={offBuckets}
+              integrityCaption={integrityCaption}
+              playheadPct={st.playheadPct}
+              activeQuestionId={st.activeId}
+              onSelectQuestion={st.selectQuestion}
+              onSeekMs={st.seekMs}
+              onSelectFlag={st.selectFlag}
+            />
+          </div>
         </div>
       </DialogContent>
     </Dialog>

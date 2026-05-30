@@ -26,7 +26,7 @@ export function ThisMomentPanel({
   onJump: (ms: number) => void
 }) {
   return (
-    <div className="theater-glass flex h-full flex-col rounded-2xl p-4">
+    <div className="theater-glass flex max-h-full flex-col overflow-y-auto rounded-2xl p-4">
       <div className="mb-2 flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wide" style={{ color: 'var(--px-fg-4)' }}>
         <span className="h-1.5 w-1.5 rounded-full" style={{ background: 'var(--px-accent)' }} />
         This moment
