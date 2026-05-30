@@ -85,3 +85,13 @@ class S3CompatibleStorage:
     async def download_to_path(self, key: str, dest_path: str) -> None:
         client = self._client()
         await asyncio.to_thread(client.download_file, self._bucket, key, dest_path)
+
+    async def upload_bytes(self, key: str, data: bytes, *, content_type: str) -> None:
+        client = self._client()
+        await asyncio.to_thread(
+            client.put_object,
+            Bucket=self._bucket,
+            Key=key,
+            Body=data,
+            ContentType=content_type,
+        )
