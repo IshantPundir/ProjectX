@@ -36,6 +36,7 @@ from app.modules.session import (
     SessionNotFoundError,
     get_session_recording_playback,
 )
+from app.modules.vision import get_session_proctoring_analysis
 
 router = APIRouter(prefix="/api/reports", tags=["reporting"])
 
@@ -206,6 +207,36 @@ async def get_session_recording_endpoint(
     except SessionNotFoundError:
         raise HTTPException(status_code=404, detail="Session not found") from None
     return playback.model_dump(mode="json")
+
+
+# ---------------------------------------------------------------------------
+# GET /api/reports/session/{session_id}/proctoring
+#
+# Post-session vision proctoring analysis for the report page's integrity
+# panel. Pull-based: returns status='absent' when no analysis row exists yet.
+# Same reports.view gate as the recording endpoint — anyone who can see the
+# report can see the proctoring panel.
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/session/{session_id}/proctoring",
+    summary="Get the post-session vision proctoring analysis (evidence for review)",
+)
+async def get_session_proctoring_endpoint(
+    session_id: uuid_mod.UUID,
+    db: AsyncSession = Depends(get_tenant_db),
+    user: UserContext = Depends(get_current_user_roles),
+) -> Any:
+    """Return `{status, risk_band?, detector_summary?, gaze_heatmap?,
+    flagged_intervals[], gaze_signal_quality?, unscorable_pct?}`. Evidence for
+    human review — never an auto-decision. RBAC: reports.view or super-admin.
+    """
+    _require_reports_view(user)
+    analysis = await get_session_proctoring_analysis(
+        db, session_id=session_id, tenant_id=user.user.tenant_id
+    )
+    return analysis.model_dump(mode="json")
 
 
 # ---------------------------------------------------------------------------
