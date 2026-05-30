@@ -51,3 +51,25 @@ def test_all_unscorable_is_insufficient_data():
     assert res.risk_band == "insufficient_data"
     assert res.gaze_signal_quality in ("unscorable", "low-light")
     assert res.unscorable_pct > 0.6
+
+
+def test_transient_multi_face_does_not_force_high_band():
+    # Mostly centered + a SINGLE spurious 2-face frame (no sustained interval).
+    # The raw peak max_faces is still reported, but a one-frame blip must NOT
+    # drive the band to "high" — only a SUSTAINED second face should.
+    obs = [_o(t, 1, 1) for t in range(0, 10001, 200)]
+    obs[10] = _o(2000, 1, 1, faces=2)  # one isolated frame with 2 faces
+    res = analyze_observations(obs, **CFG)
+    assert res.detector_summary["max_faces"] == 2
+    assert res.detector_summary["multi_face_intervals"] == []  # not sustained
+    assert res.risk_band == "low"
+
+
+def test_sustained_multi_face_bands_high():
+    # A SUSTAINED 2-face interval (> multi_face_min_ms) must band "high".
+    obs = [_o(t, 1, 1) for t in range(0, 5001, 200)]                  # centered
+    obs += [_o(t, 1, 1, faces=2) for t in range(5200, 7501, 200)]    # ~2.3s of 2 faces
+    obs += [_o(t, 1, 1) for t in range(7700, 9001, 200)]
+    res = analyze_observations(obs, **CFG)
+    assert len(res.detector_summary["multi_face_intervals"]) >= 1
+    assert res.risk_band == "high"

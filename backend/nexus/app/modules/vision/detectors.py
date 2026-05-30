@@ -312,9 +312,13 @@ def analyze_observations(
     }
 
     # --- Transparent 3-tier band (spec §16.5) ---
+    # Multi-face contributes to "high" only when SUSTAINED (a debounced
+    # `multi_face_intervals` entry), never on the raw single-frame peak
+    # `max_faces` — a one-frame spurious second-face detection must not flip a
+    # session to high. `max_faces` is kept in the summary as informational.
     if unscorable_pct > max_unscorable_pct:
         band = "insufficient_data"
-    elif (off_pct >= band_high_off_screen_pct or max_faces >= 2
+    elif (off_pct >= band_high_off_screen_pct or len(faces) >= 1
           or len(downs) >= band_high_down_glances):
         band = "high"
     elif off_pct >= band_medium_off_screen_pct or len(reads) >= 1 or len(downs) >= 3:

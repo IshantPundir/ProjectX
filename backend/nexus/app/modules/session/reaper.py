@@ -37,9 +37,16 @@ _REAPER_LOCK_KEY = "stuck_session_reaper"
 async def run_stuck_session_reaper() -> None:
     """One tick of the stuck-session sweeper."""
     async with get_bypass_session() as db:
+        # Single-flight across replicas via a TRANSACTION-scoped advisory lock.
+        # `pg_try_advisory_xact_lock` is held only for the current transaction and
+        # is auto-released when get_bypass_session()'s `session.begin()` block
+        # commits (or rolls back) at exit. This avoids the session-level
+        # `pg_advisory_lock` + manual unlock pattern, which required a manual
+        # `db.commit()` mid-run that closed the begin()-managed transaction and
+        # then raised `InvalidRequestError` on the finally-block unlock.
         acquired = (
             await db.execute(
-                sql_text("SELECT pg_try_advisory_lock(hashtext(:k))"),
+                sql_text("SELECT pg_try_advisory_xact_lock(hashtext(:k))"),
                 {"k": _REAPER_LOCK_KEY},
             )
         ).scalar_one()
@@ -47,53 +54,48 @@ async def run_stuck_session_reaper() -> None:
             log.debug("reaper.lock.contended")
             return
 
-        try:
-            cutoff = datetime.now(UTC) - timedelta(
-                seconds=settings.reaper_stuck_threshold_seconds
-            )
-            # Last sign of life: a fresh engine heartbeat keeps a long-but-live
-            # interview safe; NULL (never connected) falls back to state_changed_at.
-            last_sign_of_life = func.coalesce(
-                SessionRow.last_engine_heartbeat_at, SessionRow.state_changed_at
-            )
-            stuck = (
-                await db.execute(
-                    select(SessionRow.id, SessionRow.tenant_id).where(
-                        SessionRow.state == "active",
-                        last_sign_of_life < cutoff,
-                        SessionRow.agent_completed_at.is_(None),
-                    )
-                )
-            ).all()
-
-            transitioned = 0
-            for row in stuck:
-                won = await transition_to_error(
-                    db,
-                    session_id=row.id,
-                    tenant_id=row.tenant_id,
-                    error_code="engine_unresponsive",
-                    correlation_id=f"reaper-{row.id}",
-                    reason="reaper",
-                )
-                if won:
-                    transitioned += 1
-            await db.commit()
-
-            # Log at INFO when work happened, DEBUG on idle ticks. At a
-            # 5-min interval, idle-tick INFO would be ~288 lines/day per
-            # replica of pure noise — the no-op case isn't worth filtering
-            # downstream.
-            log_fn = log.info if stuck else log.debug
-            log_fn(
-                "reaper.tick",
-                stuck_found=len(stuck),
-                transitioned=transitioned,
-                threshold_seconds=settings.reaper_stuck_threshold_seconds,
-            )
-        finally:
+        cutoff = datetime.now(UTC) - timedelta(
+            seconds=settings.reaper_stuck_threshold_seconds
+        )
+        # Last sign of life: a fresh engine heartbeat keeps a long-but-live
+        # interview safe; NULL (never connected) falls back to state_changed_at.
+        last_sign_of_life = func.coalesce(
+            SessionRow.last_engine_heartbeat_at, SessionRow.state_changed_at
+        )
+        stuck = (
             await db.execute(
-                sql_text("SELECT pg_advisory_unlock(hashtext(:k))"),
-                {"k": _REAPER_LOCK_KEY},
+                select(SessionRow.id, SessionRow.tenant_id).where(
+                    SessionRow.state == "active",
+                    last_sign_of_life < cutoff,
+                    SessionRow.agent_completed_at.is_(None),
+                )
             )
-            await db.commit()
+        ).all()
+
+        transitioned = 0
+        for row in stuck:
+            won = await transition_to_error(
+                db,
+                session_id=row.id,
+                tenant_id=row.tenant_id,
+                error_code="engine_unresponsive",
+                correlation_id=f"reaper-{row.id}",
+                reason="reaper",
+            )
+            if won:
+                transitioned += 1
+
+        # get_bypass_session()'s `session.begin()` commits on clean exit (and
+        # rolls back on exception); the xact-scoped advisory lock releases with
+        # it. No manual commit or unlock is needed.
+        #
+        # Log at INFO when work happened, DEBUG on idle ticks. At a 5-min
+        # interval, idle-tick INFO would be ~288 lines/day per replica of pure
+        # noise — the no-op case isn't worth filtering downstream.
+        log_fn = log.info if stuck else log.debug
+        log_fn(
+            "reaper.tick",
+            stuck_found=len(stuck),
+            transitioned=transitioned,
+            threshold_seconds=settings.reaper_stuck_threshold_seconds,
+        )

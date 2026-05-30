@@ -43,7 +43,14 @@ ENV HF_HOME=/app/.cache/huggingface
 # ENVIRONMENT=test bypasses Settings-level required-secret validators —
 # real secrets arrive at runtime via compose env_file.
 RUN ENVIRONMENT=test python -m app.modules.interview_engine download-files \
-    && chown -R nexus:nexus /app/.cache
+    && chown -R nexus:nexus /app/.cache \
+    && rm -rf /tmp/dramatiq-prometheus /tmp/dramatiq-prometheus.lock
+# ^ The download-files step above imports the broker chain, whose dramatiq
+#   Prometheus middleware runs `os.makedirs("/tmp/dramatiq-prometheus")` AT
+#   IMPORT TIME — as root, during the build — baking a root-owned dir into the
+#   image that the non-root `nexus` runtime user then cannot write (the worker
+#   logged repeated PermissionError on its metrics .db files). Removing the
+#   build-time artifact lets the runtime process recreate it nexus-owned.
 
 USER nexus
 
