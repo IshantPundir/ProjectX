@@ -1,41 +1,277 @@
 /* components/dashboard/reports/theater/theater.css
-   Light, calm frosted-glass styling for the Review Theater. Tokens from app/theme.css. */
+   Dark, immersive frosted-glass styling for the Review Theater.
+   Foreground tokens are overridden scoped to .theater-root so every
+   var(--px-fg*) reference flips light-on-dark automatically. Tone tokens
+   (--px-ok/caution/danger) are intentionally left vivid. */
 
-/* Light frosted backdrop when the theater dialog is open (scoped via :has). */
+/* Dimmed, blurred page behind the near-full overlay. */
 .px-dialog-backdrop:has(.theater-shell) {
-  background: rgba(231, 238, 242, 0.55);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  background: rgba(8, 14, 20, 0.62);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
 .theater-shell {
-  width: min(1160px, 95vw);
-  height: min(760px, 92vh);
-  max-width: 95vw;
+  width: 96vw;
+  height: 94vh;
+  max-width: 96vw;
+  max-height: 94vh;
   padding: 0;
+  overflow: hidden;
+  border-radius: 22px;
+  background: #000;
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.6);
+}
+
+/* The single positioned root that holds the video + all overlays. */
+.theater-root {
+  position: relative;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  border-radius: inherit;
+  background: #000;
+
+  /* light-on-dark foreground tokens, scoped to the theater only */
+  --px-fg: #eef4f8;
+  --px-fg-3: rgba(224, 235, 242, 0.74);
+  --px-fg-4: rgba(224, 235, 242, 0.5);
+  --px-hairline: rgba(255, 255, 255, 0.16);
+}
+
+/* Dark frosted panel (was light in the old theater). */
+.theater-glass {
+  background: rgba(16, 23, 30, 0.55);
+  backdrop-filter: blur(18px) saturate(120%);
+  -webkit-backdrop-filter: blur(18px) saturate(120%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+}
+
+/* --- overlay slots --- */
+.theater-topbar-slot {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  right: 14px;
+  z-index: 30;
+}
+.theater-moment-slot {
+  position: absolute;
+  top: 50%;
+  right: 16px;
+  transform: translateY(-50%);
+  width: 300px;
+  max-height: 56%;
+  z-index: 30;
+}
+.theater-bottom {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 14px;
+  z-index: 20;
   display: flex;
   flex-direction: column;
+  gap: 8px;
+}
+
+/* --- video scrims (legibility over any frame) --- */
+.theater-scrim-top {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 150px;
+  z-index: 10;
+  pointer-events: none;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0));
+}
+.theater-scrim-bottom {
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 320px;
+  z-index: 10;
+  pointer-events: none;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0));
+}
+
+/* --- center play overlay --- */
+.theater-centerplay {
+  color: #fff;
+  background: rgba(20, 28, 36, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.theater-centerplay:hover {
+  transform: translate(-50%, -50%) scale(1.06);
+  background: rgba(30, 40, 50, 0.62);
+}
+
+/* --- control bar --- */
+.theater-controls {
+  transition: opacity 0.25s ease;
+}
+.theater-controls[data-visible='false'] {
+  opacity: 0;
+  pointer-events: none;
+}
+.theater-playbtn {
+  color: #0c1116;
+  background: var(--px-accent);
+  transition: transform 0.12s ease;
+}
+.theater-playbtn:hover {
+  transform: scale(1.06);
+}
+.theater-ctrlbtn {
+  color: var(--px-fg-3);
+  border-radius: 8px;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+.theater-ctrlbtn:hover {
+  color: var(--px-fg);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* scrubber: a styled track with buffered + played fills, a transparent
+   range input on top capturing pointer/keyboard. */
+.theater-scrub {
+  height: 18px;
+  display: flex;
+  align-items: center;
+}
+.theater-scrub-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 4px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
   overflow: hidden;
-  background: linear-gradient(160deg, #f3f8fa, #e9f1f4);
-  border-radius: 18px;
+}
+.theater-scrub-buf {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.28);
+}
+.theater-scrub-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: var(--px-accent);
+}
+.theater-scrub-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  margin: 0;
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+}
+.theater-scrub-input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 12px;
+  width: 12px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.35);
+}
+.theater-scrub-input::-moz-range-thumb {
+  height: 12px;
+  width: 12px;
+  border: none;
+  border-radius: 50%;
+  background: #fff;
+}
+.theater-vol {
+  width: 72px;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+  cursor: pointer;
+}
+.theater-vol::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 11px;
+  width: 11px;
+  border-radius: 50%;
+  background: #fff;
+}
+.theater-vol::-moz-range-thumb {
+  height: 11px;
+  width: 11px;
+  border: none;
+  border-radius: 50%;
+  background: #fff;
 }
 
-.theater-glass {
-  background: rgba(255, 255, 255, 0.66);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border: 1px solid rgba(255, 255, 255, 0.85);
-  box-shadow: 0 8px 30px rgba(20, 40, 60, 0.12);
+/* --- filmstrip cards --- */
+.theater-card {
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
-
-.theater-card { cursor: pointer; transition: transform 0.15s ease, box-shadow 0.15s ease; }
-.theater-card:hover { transform: translateY(-2px); }
+.theater-card:hover {
+  transform: translateY(-2px);
+}
 .theater-card[data-active='true'] {
-  outline: 2px solid var(--px-caution);
+  outline: 2px solid var(--px-accent);
   outline-offset: 1px;
 }
+.theater-card[data-seekable='false'] {
+  opacity: 0.62;
+  cursor: default;
+}
+.theater-card[data-seekable='false']:hover {
+  transform: none;
+}
+.theater-strip {
+  scrollbar-width: thin;
+}
 
-.theater-node { transition: width 0.12s ease, height 0.12s ease; }
-.theater-node[data-active='true'] { box-shadow: 0 0 0 4px rgba(189, 138, 22, 0.2); }
+/* --- node track --- */
+.theater-node {
+  transition: width 0.12s ease, height 0.12s ease;
+}
+.theater-node[data-active='true'] {
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.22);
+}
 
-.theater-strip { scrollbar-width: thin; }
+/* --- integrity flag ticks + hover thumbnail --- */
+.theater-flagtick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  transform: translateX(-50%);
+  cursor: pointer;
+  border: none;
+  padding: 0;
+}
+.theater-flagtip {
+  position: absolute;
+  bottom: 150%;
+  left: 50%;
+  transform: translateX(-50%);
+  display: none;
+  width: 132px;
+  border-radius: 8px;
+  overflow: hidden;
+  z-index: 40;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+.theater-flagtick:hover .theater-flagtip {
+  display: block;
+}
