@@ -1,6 +1,7 @@
 # app/modules/vision/service.py
 from __future__ import annotations
 
+import contextlib
 import uuid
 
 from sqlalchemy import select
@@ -30,10 +31,8 @@ async def attach_flag_thumbnails(
         f2 = dict(f)
         key = by_start.get(str(f.get("start_ms")))
         if key:
-            try:
+            with contextlib.suppress(Exception):
                 f2["thumbnail_url"] = await storage.presign_get_url(key, ttl_seconds=ttl)
-            except Exception:  # noqa: BLE001
-                pass
         out.append(f2)
     return out
 

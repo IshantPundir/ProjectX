@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_tenant_db
 from app.modules.audit import log_event
 from app.modules.auth import UserContext, get_current_user_roles
@@ -36,7 +37,6 @@ from app.modules.session import (
     SessionNotFoundError,
     get_session_recording_playback,
 )
-from app.config import settings
 from app.modules.vision import (
     get_session_proctoring_analysis,
     get_session_timeline_thumbnails,
