@@ -1389,21 +1389,18 @@ Expected: FAIL — `ModuleNotFoundError: app.modules.vision.analysis`
 
 ```python
 # app/modules/vision/analysis.py
-"""Offline analysis orchestration: download recording → sample frames →
-GazeEstimator → FrameObservations → analyze_observations. Heavy I/O deps
-(cv2) import lazily; `observations_from_estimates` is pure + unit-tested.
+"""Offline analysis orchestration: sample frames from a local recording →
+GazeEstimator → FrameObservations → analyze_observations. The actor owns the
+async R2 download; this module is sync + CPU-bound. The heavy frame-decode dep
+(cv2) imports lazily; `observations_from_estimates` is pure + unit-tested.
 """
 from __future__ import annotations
-
-import os
-import tempfile
 
 import structlog
 
 from app.modules.vision.config import vision_config
 from app.modules.vision.detectors import AnalysisResult, FrameObservation, analyze_observations
 from app.modules.vision.gaze.base import FaceGaze, GazeEstimator
-from app.storage import get_object_storage
 
 log = structlog.get_logger("vision.analysis")
 
@@ -1481,7 +1478,7 @@ def run_analysis(estimator: GazeEstimator, *, local_video_path: str) -> tuple[An
     return result, len(obs)
 ```
 
-`analysis.py` no longer imports storage/tempfile/os — drop the now-unused `import os`, `import tempfile`, and `from app.storage import get_object_storage` from its header (keep `structlog`, config, detectors, gaze imports). The actor owns the download.
+Note: `analysis.py` does NOT import storage/tempfile/os — the actor (Task 10) owns the async R2 download and passes a local path. Header imports are only `structlog`, config, detectors, and gaze (as shown above). `_sample_frames` imports `cv2` lazily.
 
 - [ ] **Step 4: Run test to verify it passes**
 
