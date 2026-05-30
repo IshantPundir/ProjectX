@@ -283,6 +283,10 @@ class Settings(BaseSettings):
     recording_signed_url_ttl_seconds: int = 3600
     # Object key prefix; final key is {prefix}/{tenant_id}/{session_id}.mp4.
     recording_key_prefix: str = "recordings"
+    # Object key prefix for derived timeline thumbnails; final key is
+    # {prefix}/{tenant_id}/{session_id}/{kind}_{ref}.webp. Same private
+    # recording bucket + signed-URL TTL as the recording itself.
+    thumbnail_key_prefix: str = "thumbnails"
     # Egress compositing/encoding. layout: speaker | grid | single-speaker
     # (one video publisher → full-frame candidate). preset: a LiveKit
     # EncodingOptionsPreset name (H264_720P_30 is a good size/quality balance).
@@ -610,6 +614,10 @@ class Settings(BaseSettings):
     vision_band_high_down_glances: int = 12
     # Frame is unscorable above this fraction → band = insufficient_data.
     vision_max_unscorable_pct: float = 0.6
+    # --- timeline thumbnails (Report Review Theater) ---
+    vision_thumbnail_width_px: int = 320
+    vision_thumbnail_webp_quality: int = 80
+    vision_thumbnail_top_flag_count: int = 6
 
     # --- Reporting — offline report scorer (Phase 3D+ post-session) ---
     # The report scorer is an async LLM judge that runs after a session

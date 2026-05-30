@@ -71,6 +71,8 @@ _TENANT_SCOPED_TABLES: tuple[str, ...] = (
     "session_reports",
     # Phase 3D vision — post-session proctoring analysis (migration 0051).
     "session_proctoring_analysis",
+    # Report Review Theater — derived timeline thumbnails (migration 0052).
+    "session_timeline_thumbnails",
 )
 
 

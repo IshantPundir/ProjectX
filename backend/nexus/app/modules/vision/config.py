@@ -90,5 +90,18 @@ class VisionConfig:
     def gaze_yaw_sign(self) -> int:
         return self._s.vision_gaze_yaw_sign
 
+    # --- timeline thumbnails (Report Review Theater) ---
+    @property
+    def thumbnail_width_px(self) -> int:
+        return self._s.vision_thumbnail_width_px
+
+    @property
+    def thumbnail_webp_quality(self) -> int:
+        return self._s.vision_thumbnail_webp_quality
+
+    @property
+    def thumbnail_top_flag_count(self) -> int:
+        return self._s.vision_thumbnail_top_flag_count
+
 
 vision_config = VisionConfig(settings)
