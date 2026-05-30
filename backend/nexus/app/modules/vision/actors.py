@@ -122,8 +122,9 @@ async def _persist_timeline_thumbnails(
 ) -> None:
     """Best-effort: extract question + top-flag frames, upload to R2, upsert rows.
 
-    Never raises into the proctoring result path — a thumbnail failure must not
-    fail the gaze analysis. Keys are deterministic, so re-runs overwrite the
+    grab + upload failures are swallowed here; the caller (_run) additionally
+    wraps the whole step so an unexpected DB error cannot fail the already-
+    committed gaze result. Keys are deterministic, so re-runs overwrite the
     same R2 objects and refresh the same rows.
     """
     sid = uuid.UUID(session_id)
@@ -136,7 +137,10 @@ async def _persist_timeline_thumbnails(
     for flag in select_flag_targets(
         flagged_intervals, top_n=vision_config.thumbnail_top_flag_count
     ):
-        start = int(flag.get("start_ms") or 0)
+        start = flag.get("start_ms")
+        if not start:
+            continue
+        start = int(start)
         targets.append(("flag", str(start), start))
 
     if not targets:
@@ -154,13 +158,14 @@ async def _persist_timeline_thumbnails(
         return
 
     prefix = settings.thumbnail_key_prefix
+    storage = get_object_storage()
     for kind, ref_id, t_ms in targets:
         blob = frames.get(t_ms)
         if not blob:
             continue
         key = f"{prefix}/{tenant_id}/{session_id}/{kind}_{ref_id}.webp"
         try:
-            await get_object_storage().upload_bytes(key, blob, content_type="image/webp")
+            await storage.upload_bytes(key, blob, content_type="image/webp")
         except Exception:  # noqa: BLE001
             log.warning("vision.thumbnails.upload_failed",
                         session_id=session_id, key=key, exc_info=True)
@@ -223,21 +228,28 @@ async def _run(session_id: str, tenant_id: str) -> None:
                 await _persist(db, session_id, tenant_id,
                                status=final_status, result=result, frames=frames)
                 await db.commit()
-            async with get_bypass_session() as db:
-                await db.execute(text(f"SET LOCAL app.current_tenant = '{safe_tid}'"))
-                sess_row = (await db.execute(
-                    select(Session).where(
-                        Session.id == uuid.UUID(session_id),
-                        Session.tenant_id == uuid.UUID(tenant_id),
+            # Thumbnails are best-effort: the gaze result is already committed
+            # above, so a thumbnail failure (grab, upload, or DB) must never
+            # propagate to the actor's failure handler or burn a retry.
+            try:
+                async with get_bypass_session() as db:
+                    await db.execute(text(f"SET LOCAL app.current_tenant = '{safe_tid}'"))
+                    sess_row = (await db.execute(
+                        select(Session).where(
+                            Session.id == uuid.UUID(session_id),
+                            Session.tenant_id == uuid.UUID(tenant_id),
+                        )
+                    )).scalar_one_or_none()
+                    transcript = list(sess_row.transcript or []) if sess_row else []
+                    await _persist_timeline_thumbnails(
+                        db, session_id=session_id, tenant_id=tenant_id,
+                        local_video_path=dest, transcript=transcript,
+                        flagged_intervals=result.flagged_intervals or [],
                     )
-                )).scalar_one_or_none()
-                transcript = list(sess_row.transcript or []) if sess_row else []
-                await _persist_timeline_thumbnails(
-                    db, session_id=session_id, tenant_id=tenant_id,
-                    local_video_path=dest, transcript=transcript,
-                    flagged_intervals=result.flagged_intervals or [],
-                )
-                await db.commit()
+                    await db.commit()
+            except Exception:  # noqa: BLE001 — best-effort; gaze result already durable
+                log.warning("vision.thumbnails.step_failed",
+                            session_id=session_id, exc_info=True)
     except Exception as exc:  # noqa: BLE001
         log.error("vision.actor.failed", session_id=session_id, exc_info=exc)
         async with get_bypass_session() as db:
