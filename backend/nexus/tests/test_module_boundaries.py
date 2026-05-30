@@ -58,6 +58,7 @@ KNOWN_DOMAIN_MODULES = frozenset(
         "session",
         "settings",
         "tenant_settings",
+        "vision",
     }
 )
 
