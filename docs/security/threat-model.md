@@ -291,3 +291,96 @@ page via a short-lived presigned GET URL minted by Nexus.
 ## Vision proctoring — MediaPipe WASM (2026-05-29)
 
 The candidate session surface now compiles same-origin WASM (`/mediapipe/wasm/`) for face-landmark proctoring via MediaPipe tasks-vision; `'wasm-unsafe-eval'` has been added to the `script-src` CSP directive in `proxy.ts` (narrower than `'unsafe-eval'`; does not re-enable JS eval; assets are self-hosted under `public/mediapipe/` — no CDN). See `docs/superpowers/specs/2026-05-29-vision-proctoring-design.md §5`.
+
+---
+
+## Vision proctoring — server-plane analysis (2026-05-30)
+
+> **Spec reference:** `docs/superpowers/specs/2026-05-29-vision-proctoring-design.md` §16
+> **DPIA:** `docs/security/2026-05-30-vision-proctoring-dpia.md`
+
+Post-session offline analysis: after the R2 recording reaches `recording_status='ready'`, a Dramatiq actor on the dedicated `vision` queue (`nexus-vision-worker` image) downloads the recording, samples frames via ffmpeg, runs the MobileGaze ONNX gaze estimator + uniface RetinaFace face detector, derives gaze features and a 3-tier integrity band, and persists the features-only result to `session_proctoring_analysis`. The recruiter reads it via `GET /api/reports/session/{id}/proctoring` as evidence for human review.
+
+### Data flow
+
+```
+R2 recording
+    │  private bucket; S3-protocol presigned-GET minted by nexus-vision-worker
+    ▼
+nexus-vision-worker (in-VPC, no new external sub-processor)
+    │  ffmpeg frame sample → MobileGaze ONNX gaze + uniface RetinaFace
+    │  pure-function detectors → risk band + heatmap + flagged intervals
+    │  discard all frames/crops immediately after per-frame inference
+    ▼
+session_proctoring_analysis (Postgres, tenant-scoped)
+    │  canonical tenant_isolation + service_bypass RLS pair
+    │  registered in _TENANT_SCOPED_TABLES (boot assertion)
+    ▼
+GET /api/reports/session/{id}/proctoring
+    │  reports.view RBAC gate + session load filtered by (id, tenant_id)
+    ▼
+ProctoringIntegrityPanel (frontend/app report page)
+    │  "for review, not a decision" label — never auto-rejects
+```
+
+### Trust boundaries
+
+| Boundary | Element | STRIDE | Mitigation |
+|---|---|---|---|
+| R2 → vision-worker download | Worker presigns and downloads the recording. Recording bucket credentials (`RECORDING_STORAGE_*`) are server-only secrets. | I (credential leakage → recording exfil) | Same credential-sensitivity policy as DB creds (root CLAUDE.md). Bucket is private. Object keys are tenant-prefixed. |
+| Worker → Postgres (bypass-RLS) | Actor uses `get_bypass_db` (bypass-RLS session) because the worker has no Supabase user context. | E (cross-tenant read) | Every query in the actor **also** filters by the explicit `tenant_id` from the Dramatiq message (belt-and-suspenders: bypass-RLS + explicit-tenant filter, same pattern as `interview_runtime.service`). Cross-tenant query returns 0 rows before any write. |
+| Postgres `session_proctoring_analysis` → recruiter | The `ProctoringAnalysis` response includes `risk_band` + flagged intervals. | I (false positive misleads recruiter) | Band is labelled "for review, not a decision" in the UI (spec §16.5). `insufficient_data` band suppresses confident flags when `unscorable_pct` is high. Human sign-off required on all hiring decisions. |
+| Dramatiq `vision` queue → worker | The queue message carries `session_id` + `tenant_id`. | T (forged message triggers spurious analysis) | A forged message can only produce an analysis row for a session_id+tenant_id pair that exists (queries return 0 rows otherwise). The actor is idempotent: if a row already exists in a terminal/active state, it exits without side effects. |
+| Model weights file (`resnet34_gaze.onnx`) | Loaded by the worker at startup from a mounted path. | T (supply-chain / tampered weights) | `model_versions.weights_hash` is persisted per result row for audit. The hash should be pinned in the deployment manifest and checked at worker startup. |
+
+### Tenant isolation specifics
+
+- The actor reads under bypass-RLS to avoid requiring a user context, but
+  **every query is also filtered by the explicit `tenant_id`** passed in the
+  Dramatiq message. This is the same dual-layer pattern used by
+  `interview_runtime.service`.
+- The result table carries the canonical `tenant_isolation` (USING + WITH
+  CHECK, `NULLIF(…)::uuid`) + `service_bypass` RLS pair from migration 0051,
+  and is registered in `_TENANT_SCOPED_TABLES` so the boot-time
+  `_assert_rls_completeness` check covers it.
+- A cross-tenant `GET /api/reports/session/{id}/proctoring` request returns
+  404 (session not found) before any analysis row is read.
+
+### No new external sub-processors
+
+All vision computation is in-house (the `nexus-vision-worker` container in
+the same infra as the Nexus API). The only external storage service in the
+data path is Cloudflare R2, which is an already-registered sub-processor
+(existing recording pipeline; see §Session recording above).
+
+### Stored data classification
+
+`session_proctoring_analysis` stores **derived features only** — no raw
+frames, no face crops, no biometric templates. Fields: `risk_band`,
+`detector_summary`, `gaze_heatmap`, `flagged_intervals`,
+`gaze_signal_quality`, `unscorable_pct`, `model_versions`. The link to the
+candidate is the `session_id` FK only.
+
+### Residual threats (accepted)
+
+- **NC model weights in dev/POC.** The `resnet34_gaze.onnx` weights are
+  Gaze360-trained and non-commercial. An analysis result produced with these
+  weights is not legally cleared for use with paying tenants. The
+  `proctoring_vision_enabled` flag defaults to OFF to prevent accidental
+  production use before the weights are replaced. Tracked as an open GA
+  blocker in the DPIA.
+- **Demographic performance gaps.** Gaze/face models have documented accuracy
+  disparities across skin tones and eyewear. `insufficient_data` band +
+  `gaze_signal_quality` field mitigate confident flags on degraded frames;
+  human-review-only (never auto-reject) is the primary safeguard. Bias-review
+  obligation documented in the DPIA.
+
+### When this section needs updating
+
+- Gaze-model weights replaced (new weights hash must be pinned in the
+  deployment manifest and the GA-blocker item in the DPIA closed).
+- Analysis extended to liveness / synthetic-feed detection (pass 2 — adds new
+  processing purposes requiring DPIA revision).
+- Worker moved outside the current infra boundary (e.g. tenant-VPC enterprise
+  deployment), which would add a new network trust boundary.
+- Any change to the `vision` queue access model (currently internal only).
