@@ -122,6 +122,27 @@ async def _reconcile(db: AsyncSession, sess: Session) -> None:
     await db.flush()
 
 
+def _enqueue_vision_analysis(session_id: str, tenant_id: str) -> None:
+    # Imported here (not module top) to keep the import graph obviously light
+    # and to make monkeypatching in tests trivial.
+    from app.modules.vision import analyze_session_proctoring
+
+    analyze_session_proctoring.send(session_id, tenant_id)
+
+
+def _maybe_enqueue_vision(sess: Session) -> None:
+    """Best-effort: enqueue post-session vision analysis once the recording is
+    ready. The actor is idempotent (its own status row), so re-enqueue on every
+    report read is safe. Never raises into the playback path.
+    """
+    if sess.recording_status != "ready" or not sess.recording_s3_key:
+        return
+    try:
+        _enqueue_vision_analysis(str(sess.id), str(sess.tenant_id))
+    except Exception:  # noqa: BLE001
+        log.warning("recording.vision_enqueue_failed", session_id=str(sess.id), exc_info=True)
+
+
 async def get_session_recording_playback(
     db: AsyncSession, *, session_id: UUID, tenant_id: UUID
 ) -> RecordingPlayback:
@@ -142,6 +163,7 @@ async def get_session_recording_playback(
         raise SessionNotFoundError()
 
     await _reconcile(db, sess)
+    _maybe_enqueue_vision(sess)
 
     transcript = _build_transcript(sess.transcript)
 
