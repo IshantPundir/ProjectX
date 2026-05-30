@@ -577,6 +577,34 @@ class Settings(BaseSettings):
     def _strip_candidate_session_trailing_slash(cls, v: str) -> str:
         return v.rstrip("/")
 
+    # --- Vision proctoring (server plane, Phase 3D vision) ---
+    # Gaze model behind the swappable GazeEstimator seam. The Gaze360 weights
+    # are NON-COMMERCIAL (dev/POC only) — see spec §16.8. Swap path = env change.
+    vision_gaze_weights_path: str = ""
+    vision_gaze_arch: str = "ResNet50"
+    vision_sample_fps: float = 5.0
+    # Self-baseline zone thresholds (degrees of deviation from the per-session
+    # baseline gaze direction).
+    vision_zone_yaw_deg: float = 15.0
+    vision_zone_pitch_deg: float = 12.0
+    vision_far_off_deg: float = 35.0
+    # Sustained off-screen flag: minimum continuous off-center duration (ms).
+    vision_off_screen_min_ms: int = 2000
+    # Down-glance: a brief pitch-down excursion between 300ms and 4000ms.
+    vision_down_glance_min_ms: int = 300
+    vision_down_glance_max_ms: int = 4000
+    # Reading-sweep: ≥ this many L/R reversals within the window (ms).
+    vision_reading_window_ms: int = 4000
+    vision_reading_min_reversals: int = 4
+    # Multi-face: sustained ≥2 faces for ≥ this many ms.
+    vision_multi_face_min_ms: int = 1500
+    # Band thresholds (fractions of session / counts).
+    vision_band_high_off_screen_pct: float = 0.25
+    vision_band_medium_off_screen_pct: float = 0.10
+    vision_band_high_down_glances: int = 12
+    # Frame is unscorable above this fraction → band = insufficient_data.
+    vision_max_unscorable_pct: float = 0.6
+
     # --- Reporting — offline report scorer (Phase 3D+ post-session) ---
     # The report scorer is an async LLM judge that runs after a session
     # completes and produces the per-candidate evaluation report.
