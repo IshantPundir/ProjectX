@@ -1,16 +1,17 @@
 'use client'
 
-import type { CSSProperties } from 'react'
+import { useRef, type CSSProperties } from 'react'
 
 import type { HumanDecisionValue, ReportRead } from '@/lib/api/reports'
 import { HumanDecisionPanel } from './HumanDecisionPanel'
+import { ProctoringIntegrityPanel } from './ProctoringIntegrityPanel'
 import { QuestionByQuestion } from './QuestionByQuestion'
 import { QuickSummary } from './QuickSummary'
 import { ReportMethodologyFooter } from './ReportMethodologyFooter'
 import { ReportTopBar } from './ReportTopBar'
 import './report.css'
 import { ScoresCard } from './ScoresCard'
-import { SessionPlayback } from './SessionPlayback'
+import { SessionPlayback, type PlaybackSeekApi } from './SessionPlayback'
 import { SignalAuditTable } from './SignalAuditTable'
 import { StrengthsConcerns } from './StrengthsConcerns'
 import { WhyContrast } from './WhyContrast'
@@ -31,6 +32,9 @@ export function ReportView({
   report, candidateName, candidateId, title = 'Interview', subtitle = '',
   canRegenerate, onRegenerate, onDecision, isSubmitting,
 }: Props) {
+  const seekApiRef = useRef<PlaybackSeekApi | null>(null)
+  const handleSeek = (ms: number) => seekApiRef.current?.seekToMs(ms)
+
   return (
     <div className="mx-auto max-w-[1400px] px-6 pb-10 pt-5">
       <ReportTopBar
@@ -41,7 +45,7 @@ export function ReportView({
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.85fr_1fr]">
         <div className="space-y-4">
           {[
-            <SessionPlayback key="p" sessionId={report.session_id} />,
+            <SessionPlayback key="p" sessionId={report.session_id} seekApiRef={seekApiRef} />,
             <WhyContrast key="w" decision={report.decision} />,
             <QuickSummary key="s" text={report.quick_summary} />,
             <StrengthsConcerns key="sc" strengths={report.strengths} concerns={report.concerns} />,
@@ -54,6 +58,7 @@ export function ReportView({
         <div className="space-y-4">
           {[
             <ScoresCard key="scores" report={report} />,
+            <ProctoringIntegrityPanel key="proctoring" sessionId={report.session_id} onSeek={handleSeek} />,
             <HumanDecisionPanel key="decision" verdict={report.verdict} decision={report.human_decision} onSubmit={onDecision} isSubmitting={isSubmitting} />,
           ].map((node, i) => (
             <div key={node.key} className="px-reveal" style={{ '--px-stagger': i } as CSSProperties}>{node}</div>

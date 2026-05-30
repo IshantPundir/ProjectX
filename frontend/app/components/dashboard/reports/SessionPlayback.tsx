@@ -1,9 +1,14 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import type { MutableRefObject } from 'react'
 
 import type { RecordingTranscriptSegment } from '@/lib/api/reports'
 import { useSessionRecording } from '@/lib/hooks/use-session-recording'
+
+export interface PlaybackSeekApi {
+  seekToMs: (ms: number) => void
+}
 
 /**
  * Index of the transcript segment that is "active" at `currentMs`, i.e. the
@@ -49,7 +54,13 @@ function PlaceholderFrame({ emoji, title, hint }: { emoji: string; title: string
  * Verbal-content-only scoring is unchanged — the recording is for human
  * review, not automated facial/affect analysis (see the badge).
  */
-export function SessionPlayback({ sessionId }: { sessionId: string | null }) {
+export function SessionPlayback({
+  sessionId,
+  seekApiRef,
+}: {
+  sessionId: string | null
+  seekApiRef?: MutableRefObject<PlaybackSeekApi | null>
+}) {
   const enabled = !!sessionId
   const { data, isLoading } = useSessionRecording(sessionId ?? '')
 
@@ -79,6 +90,22 @@ export function SessionPlayback({ sessionId }: { sessionId: string | null }) {
     v.currentTime = Math.max(0, (seg.t_ms + offsetMs) / 1000)
     void v.play?.()
   }
+
+  // Register an imperative ms-based seek handle for the proctoring panel.
+  useEffect(() => {
+    if (!seekApiRef) return
+    seekApiRef.current = {
+      seekToMs: (ms: number) => {
+        const v = videoRef.current
+        if (!v) return
+        v.currentTime = Math.max(0, (ms + offsetMs) / 1000)
+        void v.play?.()
+      },
+    }
+    return () => {
+      if (seekApiRef) seekApiRef.current = null
+    }
+  }, [seekApiRef, offsetMs])
 
   let frame: React.ReactNode
   if (!enabled || isLoading) {
