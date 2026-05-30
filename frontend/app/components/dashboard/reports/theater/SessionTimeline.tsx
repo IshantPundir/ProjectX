@@ -1,6 +1,5 @@
 'use client'
 
-import type { RiskBand } from '@/lib/api/reports'
 import { Filmstrip } from './Filmstrip'
 import { IntegrityLane } from './IntegrityLane'
 import { NodeTrack } from './NodeTrack'
@@ -9,8 +8,8 @@ import type { FlagMarker, TimelineMarker } from './timeline-model'
 export function SessionTimeline({
   markers,
   flags,
-  buckets,
-  riskBand,
+  downBuckets,
+  offBuckets,
   integrityCaption,
   playheadPct,
   activeQuestionId,
@@ -20,8 +19,8 @@ export function SessionTimeline({
 }: {
   markers: TimelineMarker[]
   flags: FlagMarker[]
-  buckets: number[]
-  riskBand: RiskBand | null
+  downBuckets: number[]
+  offBuckets: number[]
   integrityCaption: string
   playheadPct: number
   activeQuestionId: string | null
@@ -39,9 +38,9 @@ export function SessionTimeline({
         onSeekMs={onSeekMs}
       />
       <IntegrityLane
-        buckets={buckets}
+        downBuckets={downBuckets}
+        offBuckets={offBuckets}
         flags={flags}
-        riskBand={riskBand}
         caption={integrityCaption}
         onSelectFlag={onSelectFlag}
       />
