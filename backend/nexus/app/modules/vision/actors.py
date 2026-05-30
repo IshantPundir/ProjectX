@@ -15,11 +15,17 @@ import dramatiq
 import structlog
 from sqlalchemy import select, text
 
+from app.config import settings
 from app.database import get_bypass_session
+from app.modules.interview_runtime import question_asked_at_ms
 from app.modules.session.models import Session
-from app.modules.vision.analysis import run_analysis  # light: no cv2/torch at import
+from app.modules.vision.analysis import (  # light: cv2 imports lazily inside grab_thumbnails
+    grab_thumbnails,
+    run_analysis,
+    select_flag_targets,
+)
 from app.modules.vision.config import vision_config
-from app.modules.vision.models import SessionProctoringAnalysis
+from app.modules.vision.models import SessionProctoringAnalysis, SessionTimelineThumbnail
 from app.storage import get_object_storage
 
 # NOTE: run_analysis is re-exported here so tests can monkeypatch
@@ -110,6 +116,77 @@ async def _persist(
         }
 
 
+async def _persist_timeline_thumbnails(
+    db, *, session_id: str, tenant_id: str, local_video_path: str,
+    transcript: list[dict], flagged_intervals: list[dict],
+) -> None:
+    """Best-effort: extract question + top-flag frames, upload to R2, upsert rows.
+
+    grab + upload failures are swallowed here; the caller (_run) additionally
+    wraps the whole step so an unexpected DB error cannot fail the already-
+    committed gaze result. Keys are deterministic, so re-runs overwrite the
+    same R2 objects and refresh the same rows.
+    """
+    sid = uuid.UUID(session_id)
+    tid = uuid.UUID(tenant_id)
+
+    q_times = question_asked_at_ms(transcript)
+    targets: list[tuple[str, str, int]] = [
+        ("question", qid, t_ms) for qid, t_ms in q_times.items()
+    ]
+    for flag in select_flag_targets(
+        flagged_intervals, top_n=vision_config.thumbnail_top_flag_count
+    ):
+        start = flag.get("start_ms")
+        if start is None:
+            continue
+        start = int(start)
+        targets.append(("flag", str(start), start))
+
+    if not targets:
+        return
+
+    unique_ms = sorted({t_ms for _, _, t_ms in targets})
+    try:
+        frames = grab_thumbnails(
+            local_video_path, unique_ms,
+            width=vision_config.thumbnail_width_px,
+            webp_quality=vision_config.thumbnail_webp_quality,
+        )
+    except Exception:  # noqa: BLE001 — thumbnails are non-critical
+        log.warning("vision.thumbnails.grab_failed", session_id=session_id, exc_info=True)
+        return
+
+    prefix = settings.thumbnail_key_prefix
+    storage = get_object_storage()
+    for kind, ref_id, t_ms in targets:
+        blob = frames.get(t_ms)
+        if not blob:
+            continue
+        key = f"{prefix}/{tenant_id}/{session_id}/{kind}_{ref_id}.webp"
+        try:
+            await storage.upload_bytes(key, blob, content_type="image/webp")
+        except Exception:  # noqa: BLE001
+            log.warning("vision.thumbnails.upload_failed",
+                        session_id=session_id, key=key, exc_info=True)
+            continue
+        existing = (await db.execute(
+            select(SessionTimelineThumbnail).where(
+                SessionTimelineThumbnail.session_id == sid,
+                SessionTimelineThumbnail.tenant_id == tid,
+                SessionTimelineThumbnail.kind == kind,
+                SessionTimelineThumbnail.ref_id == ref_id,
+            )
+        )).scalar_one_or_none()
+        if existing is None:
+            db.add(SessionTimelineThumbnail(
+                tenant_id=tid, session_id=sid, kind=kind, ref_id=ref_id,
+                t_ms=t_ms, s3_key=key))
+        else:
+            existing.t_ms = t_ms
+            existing.s3_key = key
+
+
 async def _run(session_id: str, tenant_id: str) -> None:
     safe_tid = str(uuid.UUID(tenant_id))
 
@@ -141,7 +218,38 @@ async def _run(session_id: str, tenant_id: str) -> None:
             dest = os.path.join(tmp, "recording.mp4")
             await get_object_storage().download_to_path(recording_key, dest)
             result, frames = run_analysis(estimator, local_video_path=dest)
-        final_status = "unscorable" if result.risk_band == "insufficient_data" else "ready"
+            final_status = (
+                "unscorable" if result.risk_band == "insufficient_data" else "ready"
+            )
+            # Persist gaze features first (own transaction), then thumbnails
+            # (best-effort) — both while the recording is still on local disk.
+            async with get_bypass_session() as db:
+                await db.execute(text(f"SET LOCAL app.current_tenant = '{safe_tid}'"))
+                await _persist(db, session_id, tenant_id,
+                               status=final_status, result=result, frames=frames)
+                await db.commit()
+            # Thumbnails are best-effort: the gaze result is already committed
+            # above, so a thumbnail failure (grab, upload, or DB) must never
+            # propagate to the actor's failure handler or burn a retry.
+            try:
+                async with get_bypass_session() as db:
+                    await db.execute(text(f"SET LOCAL app.current_tenant = '{safe_tid}'"))
+                    sess_row = (await db.execute(
+                        select(Session).where(
+                            Session.id == uuid.UUID(session_id),
+                            Session.tenant_id == uuid.UUID(tenant_id),
+                        )
+                    )).scalar_one_or_none()
+                    transcript = list(sess_row.transcript or []) if sess_row else []
+                    await _persist_timeline_thumbnails(
+                        db, session_id=session_id, tenant_id=tenant_id,
+                        local_video_path=dest, transcript=transcript,
+                        flagged_intervals=result.flagged_intervals or [],
+                    )
+                    await db.commit()
+            except Exception:  # noqa: BLE001 — best-effort; gaze result already durable
+                log.warning("vision.thumbnails.step_failed",
+                            session_id=session_id, exc_info=True)
     except Exception as exc:  # noqa: BLE001
         log.error("vision.actor.failed", session_id=session_id, exc_info=exc)
         async with get_bypass_session() as db:
@@ -150,12 +258,8 @@ async def _run(session_id: str, tenant_id: str) -> None:
             await db.commit()
         raise
 
-    # Phase 3: persist results (own transaction).
-    async with get_bypass_session() as db:
-        await db.execute(text(f"SET LOCAL app.current_tenant = '{safe_tid}'"))
-        await _persist(db, session_id, tenant_id, status=final_status, result=result, frames=frames)
-        await db.commit()
-    log.info("vision.actor.done", session_id=session_id, band=result.risk_band, frames=frames)
+    log.info("vision.actor.done", session_id=session_id,
+             band=result.risk_band, frames=frames)
 
 
 @dramatiq.actor(max_retries=2, min_backoff=5_000, max_backoff=120_000, queue_name="vision")

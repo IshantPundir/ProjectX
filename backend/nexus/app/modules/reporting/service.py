@@ -139,6 +139,9 @@ async def build_report(*, transcript, envelope, coverage_summary, questions,
 
     Layer 3 (LLM narrative): hand the final, fixed numbers to the prose writer.
     """
+    from app.modules.interview_runtime import question_asked_at_ms
+    asked_at = question_asked_at_ms(transcript)
+
     signal_defs = [
         SignalDef(value=m["value"], type=m["type"], weight=m["weight"],
                   knockout=m["knockout"], priority=m["priority"])
@@ -224,7 +227,8 @@ async def build_report(*, transcript, envelope, coverage_summary, questions,
         q_out.append(QuestionOut(
             seq=i + 1, question_id=u.question_id, title=q.get("text", "")[:60],
             status_badge=badge, status_tone=tone,
-            question_text=q.get("text", ""), candidate_quote=u.candidate_answer))
+            question_text=q.get("text", ""), candidate_quote=u.candidate_answer,
+            asked_at_ms=asked_at.get(u.question_id)))
 
     scored_by_value = {s.value: s for s in scored}
     signal_assessments = [SignalAssessmentOut(

@@ -78,7 +78,10 @@ from app.modules.interview_engine.coverage import CoverageTracker
 from app.modules.interview_engine.directive import Directive, DirectiveAct, DirectiveTone
 from app.modules.interview_engine.event_log.collector import EventCollector
 from app.modules.interview_engine.event_log.sink import LocalFileSink
-from app.modules.interview_engine.mouth.input_builder import is_question_bearing
+from app.modules.interview_engine.mouth.input_builder import (
+    is_question_bearing,
+    question_id_for_agent_line,
+)
 from app.modules.interview_engine.mouth.service import ConversationPlane
 from app.modules.interview_engine.result_builder import build_v2_session_result
 from app.modules.interview_engine.triage import TriagePlane
@@ -395,7 +398,10 @@ class _MouthAgent(Agent):
         if text.strip():
             self._pending_answer.append(text)        # accumulate fragments for this answer episode
             self._result_transcript.append(
-                TranscriptEntry(role="candidate", text=text, timestamp_ms=self._t_ms()))
+                TranscriptEntry(
+                    role="candidate", text=text, timestamp_ms=self._t_ms(),
+                    question_id=self._brain.active_question_id,
+                ))
         word_count = len([w for w in text.split() if w])
         backchannel = is_backchannel(text, min_words=settings.engine_v2_backchannel_min_words)
 
@@ -554,7 +560,11 @@ class _MouthAgent(Agent):
         spoken = "".join(spoken_parts).strip()
         if spoken:
             self._result_transcript.append(
-                TranscriptEntry(role="agent", text=spoken, timestamp_ms=self._t_ms()))
+                TranscriptEntry(
+                    role="agent", text=spoken, timestamp_ms=self._t_ms(),
+                    question_id=question_id_for_agent_line(
+                        directive.act, self._brain.active_question_id),
+                ))
             # For question-bearing acts, record the leading connective so the next turn avoids it.
             # LEXICAL slice for variety-tracking only — NOT intent/semantic classification (no ban).
             if is_question_bearing(directive.act):

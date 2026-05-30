@@ -47,3 +47,9 @@ class ObjectStorage(Protocol):
     async def download_to_path(self, key: str, dest_path: str) -> None:
         """Download the object to a local filesystem path (overwrites)."""
         ...
+
+    async def upload_bytes(self, key: str, data: bytes, *, content_type: str) -> None:
+        """Upload raw bytes to ``key`` (overwrites). Server-side only — the bytes
+        never transit the browser. Used for derived media (e.g. timeline
+        thumbnails extracted from the recording)."""
+        ...

@@ -31,6 +31,18 @@ def is_question_bearing(act: DirectiveAct) -> bool:
     return act in _QUESTION_BEARING
 
 
+def question_id_for_agent_line(
+    act: DirectiveAct, active_question_id: str | None
+) -> str | None:
+    """The question_id to stamp on an agent transcript line.
+
+    Returns the active bank question id when the act puts a question on the
+    floor (ASK/PROBE/ACK_ADVANCE/CLARIFY/REDIRECT), else None — so fillers,
+    holds, reassurances and the close are not mis-attributed to a question.
+    """
+    return active_question_id if is_question_bearing(act) else None
+
+
 def build_mouth_messages(
     *,
     directive: Directive,
