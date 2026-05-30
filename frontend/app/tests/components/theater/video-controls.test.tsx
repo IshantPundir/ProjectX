@@ -28,6 +28,7 @@ function makeController(over: Partial<VideoController> = {}): VideoController {
     volume: 1,
     muted: false,
     rate: 1,
+    isFullscreen: false,
     togglePlay: vi.fn(),
     seekToSec: vi.fn(),
     setVolume: vi.fn(),
@@ -61,7 +62,50 @@ describe('VideoControls', () => {
   it('calls onToggleFullscreen', () => {
     const fs = vi.fn()
     render(<VideoControls controller={makeController()} visible onToggleFullscreen={fs} />)
-    fireEvent.click(screen.getByLabelText('Fullscreen'))
+    fireEvent.click(screen.getByLabelText('Enter fullscreen'))
     expect(fs).toHaveBeenCalledOnce()
+  })
+
+  it('calls toggleMute when the mute button is clicked', () => {
+    const c = makeController()
+    render(<VideoControls controller={c} visible onToggleFullscreen={vi.fn()} />)
+    fireEvent.click(screen.getByLabelText('Mute'))
+    expect(c.toggleMute).toHaveBeenCalledOnce()
+  })
+
+  it('calls cycleRate when the speed button is clicked', () => {
+    const c = makeController()
+    render(<VideoControls controller={c} visible onToggleFullscreen={vi.fn()} />)
+    fireEvent.click(screen.getByLabelText('Playback speed: 1×'))
+    expect(c.cycleRate).toHaveBeenCalledOnce()
+  })
+
+  it('calls setVolume when the volume slider changes', () => {
+    const c = makeController()
+    render(<VideoControls controller={c} visible onToggleFullscreen={vi.fn()} />)
+    fireEvent.change(screen.getByLabelText('Volume'), { target: { value: '0.5' } })
+    expect(c.setVolume).toHaveBeenCalledWith(0.5)
+  })
+
+  it('shows the unmute control and forces the volume slider to 0 when muted', () => {
+    const c = makeController({ muted: true, volume: 0.7 })
+    render(<VideoControls controller={c} visible onToggleFullscreen={vi.fn()} />)
+    expect(screen.getByLabelText('Unmute')).toBeTruthy()
+    expect((screen.getByLabelText('Volume') as HTMLInputElement).value).toBe('0')
+  })
+
+  it('reflects the visible prop on the data-visible attribute', () => {
+    const { container, rerender } = render(
+      <VideoControls controller={makeController()} visible={false} onToggleFullscreen={vi.fn()} />,
+    )
+    expect((container.firstChild as HTMLElement).getAttribute('data-visible')).toBe('false')
+    rerender(<VideoControls controller={makeController()} visible onToggleFullscreen={vi.fn()} />)
+    expect((container.firstChild as HTMLElement).getAttribute('data-visible')).toBe('true')
+  })
+
+  it('labels the fullscreen button by state', () => {
+    const c = makeController({ isFullscreen: true })
+    render(<VideoControls controller={c} visible onToggleFullscreen={vi.fn()} />)
+    expect(screen.getByLabelText('Exit fullscreen')).toBeTruthy()
   })
 })

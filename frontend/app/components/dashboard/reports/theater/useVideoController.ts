@@ -29,6 +29,7 @@ export interface VideoController {
   volume: number
   muted: boolean
   rate: number
+  isFullscreen: boolean
   togglePlay: () => void
   seekToSec: (sec: number) => void
   setVolume: (v: number) => void
@@ -57,6 +58,7 @@ export function useVideoController(
   const [volume, setVolumeState] = useState(1)
   const [muted, setMuted] = useState(false)
   const [rate, setRate] = useState(1)
+  const [isFullscreen, setIsFullscreen] = useState(false)
 
   useEffect(() => {
     const v = videoRef.current
@@ -100,6 +102,13 @@ export function useVideoController(
       v.removeEventListener('ratechange', onRate)
     }
   }, [videoRef, enabled, offsetMs, onCurrentMs])
+
+  useEffect(() => {
+    const onFs = () => setIsFullscreen(document.fullscreenElement != null)
+    document.addEventListener('fullscreenchange', onFs)
+    onFs()
+    return () => document.removeEventListener('fullscreenchange', onFs)
+  }, [])
 
   // ms-based seek used by question/flag jumps (kept identical to old TheaterStage)
   useEffect(() => {
@@ -163,6 +172,7 @@ export function useVideoController(
     volume,
     muted,
     rate,
+    isFullscreen,
     togglePlay,
     seekToSec,
     setVolume,

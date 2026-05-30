@@ -61,7 +61,7 @@ export function VideoControls({
       <button
         type="button"
         onClick={c.cycleRate}
-        aria-label="Playback speed"
+        aria-label={`Playback speed: ${c.rate}×`}
         className="theater-ctrlbtn flex-none text-[11px] font-bold tabular-nums"
       >
         {c.rate}×
@@ -90,7 +90,7 @@ export function VideoControls({
       <button
         type="button"
         onClick={onToggleFullscreen}
-        aria-label="Fullscreen"
+        aria-label={c.isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
         className="theater-ctrlbtn grid h-7 w-7 flex-none place-items-center"
       >
         <Maximize className="h-4 w-4" />
