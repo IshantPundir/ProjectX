@@ -117,7 +117,6 @@ def _runs(obs, base, thresholds, predicate):
             if run_start is not None:
                 yield (run_start, o.t_ms, members)
                 run_start = None
-        prev_close = o.t_ms  # noqa: F841
     if run_start is not None and last_t is not None:
         yield (run_start, last_t, members)
 
