@@ -11,7 +11,7 @@ import {
 
 import type { PlaybackSeekApi } from '../SessionPlayback'
 
-const RATES = [1, 1.5, 2]
+const RATES = [1, 1.5, 2] as const
 
 export function clockFromSec(sec: number): string {
   if (!Number.isFinite(sec) || sec < 0) sec = 0
@@ -39,7 +39,10 @@ export interface VideoController {
 /** Owns transport state for the theater's custom controls. Attaches listeners to
  * the <video> once it exists (gated by `enabled`), exposes the ms-based seek API
  * the rest of the theater uses (questions/flags) via `seekApiRef`, and reports
- * the engine-relative playhead through `onCurrentMs`. */
+ * the engine-relative playhead through `onCurrentMs`.
+ *
+ * @param onCurrentMs Must be render-stable (a useState setter or useCallback-wrapped fn);
+ * an inline arrow would re-attach all media listeners on every parent render. */
 export function useVideoController(
   videoRef: RefObject<HTMLVideoElement | null>,
   enabled: boolean,
@@ -148,7 +151,7 @@ export function useVideoController(
   const cycleRate = useCallback(() => {
     const v = videoRef.current
     if (!v) return
-    const idx = RATES.indexOf(v.playbackRate)
+    const idx = (RATES as readonly number[]).indexOf(v.playbackRate)
     v.playbackRate = RATES[(idx + 1) % RATES.length] ?? 1
   }, [videoRef])
 

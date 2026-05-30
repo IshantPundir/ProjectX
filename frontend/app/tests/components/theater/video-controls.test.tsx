@@ -12,5 +12,6 @@ describe('clockFromSec', () => {
   it('guards NaN/negative to 0:00', () => {
     expect(clockFromSec(NaN)).toBe('0:00')
     expect(clockFromSec(-5)).toBe('0:00')
+    expect(clockFromSec(Infinity)).toBe('0:00')
   })
 })
