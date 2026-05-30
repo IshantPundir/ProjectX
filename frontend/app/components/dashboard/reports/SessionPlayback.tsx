@@ -1,12 +1,13 @@
 'use client'
 
-import { useState, type MutableRefObject } from 'react'
+import { useState } from 'react'
 
 import type { ReportRead } from '@/lib/api/reports'
 import { verdictMeta, TONE_BG, TONE_INK } from './report-format'
 import { ReviewTheater } from './theater/ReviewTheater'
 
 // Re-exported for back-compat: the pure helper + seek-api type now live in the theater model.
+// `PlaybackSeekApi` is still consumed by ReportView (its ProctoringIntegrityPanel seek ref).
 export { activeSegmentIndex } from './theater/timeline-model'
 export interface PlaybackSeekApi {
   seekToMs: (ms: number) => void
@@ -17,19 +18,16 @@ const CARD = 'rounded-xl border bg-white p-3.5'
 /**
  * Report-page session playback ENTRY: a poster with a Play button. Clicking it
  * opens the immersive Review Theater (glass popup + scannable session timeline).
- * `seekApiRef` is accepted for back-compat but unused — the theater owns its
- * own video + seek.
+ * The theater owns its own video + seek.
  */
 export function SessionPlayback({
   report,
   candidateName,
   subtitle,
-  seekApiRef: _seekApiRef,
 }: {
   report: ReportRead
   candidateName: string
   subtitle: string
-  seekApiRef?: MutableRefObject<PlaybackSeekApi | null>
 }) {
   const [open, setOpen] = useState(false)
   const v = verdictMeta(report.verdict)
