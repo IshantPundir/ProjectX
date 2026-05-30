@@ -1,0 +1,44 @@
+# Dockerfile.vision — image for the nexus-vision-worker only.
+# ONNX gaze inference (onnxruntime + uniface RetinaFace + opencv + ffmpeg).
+# No torch — much lighter than a torch build.
+#
+# Only differences from the main Dockerfile:
+#   - apt packages include ffmpeg + libgl1 + libglib2.0-0 (opencv runtime deps)
+#   - pip installs .[vision] instead of .[dev]
+#   - CMD runs dramatiq on the -Q vision queue
+#   - No HF model pre-download step (vision worker has no livekit/HF models)
+
+# --- Stage 1: Build dependencies ---
+FROM python:3.13-slim AS deps
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc \
+        libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml ./
+RUN pip install --no-cache-dir ".[vision]"
+
+# --- Stage 2: Production image ---
+FROM python:3.13-slim AS runner
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libpq5 \
+        ffmpeg \
+        libgl1 \
+        libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --system --gid 1001 nexus && \
+    useradd --system --uid 1001 --gid nexus nexus
+
+COPY --from=deps /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
+COPY --from=deps /usr/local/bin /usr/local/bin
+
+COPY . .
+
+USER nexus
+
+CMD ["dramatiq", "app.worker", "--processes", "1", "--threads", "2", "-Q", "vision"]

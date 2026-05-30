@@ -32,3 +32,8 @@ htmlcov/
 # Docker
 *.log
 engine-events/*.json
+
+# Vision worker — NON-COMMERCIAL Gaze360 ONNX weights (dev/POC only).
+# Download manually: mkdir -p models && curl -L -o models/resnet34_gaze.onnx \
+#   https://github.com/yakhyo/gaze-estimation/releases/download/weights/resnet34_gaze.onnx
+models/

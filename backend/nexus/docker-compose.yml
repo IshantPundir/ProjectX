@@ -110,6 +110,39 @@ services:
       start_period: 30s
     command: python -m app.modules.interview_engine start
 
+  nexus-vision-worker:
+    # Phase 3D vision — dedicated ONNX gaze-inference worker.
+    # Runs on the -Q vision queue only; does NOT process default/jd/bank queues.
+    # Built from Dockerfile.vision (onnxruntime + uniface + opencv + ffmpeg; no torch).
+    build:
+      context: .
+      dockerfile: Dockerfile.vision
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@host.docker.internal:54322/postgres
+      - REDIS_URL=redis://redis:6379/0
+      # NON-COMMERCIAL Gaze360 ONNX weights (dev/POC only — swap before GA).
+      # Mounted read-only from ./models/ on the host (see Step 5 download command).
+      - VISION_GAZE_WEIGHTS_PATH=/weights/resnet34_gaze.onnx
+      # uniface auto-downloads its RetinaFace ONNX model here on first run.
+      # Persisted via the uniface-cache named volume so restarts don't re-download.
+      - UNIFACE_CACHE_DIR=/uniface-cache
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app
+      # NON-COMMERCIAL weights — mounted read-only. Must be downloaded manually:
+      #   mkdir -p models && curl -L -o models/resnet34_gaze.onnx \
+      #     https://github.com/yakhyo/gaze-estimation/releases/download/weights/resnet34_gaze.onnx
+      - ./models:/weights:ro
+      - uniface-cache:/uniface-cache
+    command: dramatiq app.worker --processes 1 --threads 2 -Q vision
+
   redis:
     image: redis:7-alpine
     ports:
@@ -127,3 +160,4 @@ services:
 volumes:
   redisdata:
   hf-cache:
+  uniface-cache:

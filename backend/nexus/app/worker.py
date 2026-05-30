@@ -67,6 +67,9 @@ from app.modules.ats import actors as _ats_actors  # noqa: F401, E402
 # Phase 3D reporting — post-session score_session_report actor.
 from app.modules.reporting import actors as _reporting_actors  # noqa: F401, E402
 
+# Phase 3D vision — post-session proctoring analysis actor (vision queue).
+from app.modules.vision import actors as _vision_actors  # noqa: F401, E402
+
 # Flush OTel batched spans on worker exit.
 atexit.register(_otel_provider.shutdown)
 
