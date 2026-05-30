@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from app.modules.interview_runtime import question_asked_at_ms
 
 
@@ -6,9 +8,11 @@ def test_picks_earliest_agent_timestamp_per_question():
         {"role": "agent", "text": "Q1?", "timestamp_ms": 1000, "question_id": "q1"},
         {"role": "candidate", "text": "...", "timestamp_ms": 1500, "question_id": "q1"},
         {"role": "agent", "text": "probe q1", "timestamp_ms": 2000, "question_id": "q1"},
+        # earlier timestamp appearing LATER in the list must still win (out-of-order guard):
+        {"role": "agent", "text": "resend q1", "timestamp_ms": 500, "question_id": "q1"},
         {"role": "agent", "text": "Q2?", "timestamp_ms": 3000, "question_id": "q2"},
     ]
-    assert question_asked_at_ms(transcript) == {"q1": 1000, "q2": 3000}
+    assert question_asked_at_ms(transcript) == {"q1": 500, "q2": 3000}
 
 
 def test_ignores_candidate_and_untagged_lines():
