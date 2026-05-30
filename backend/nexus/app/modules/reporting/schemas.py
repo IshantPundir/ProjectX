@@ -144,6 +144,8 @@ class QuestionOut(BaseModel):
     question_text: str
     candidate_quote: str
     our_read: str = ""
+    asked_at_ms: int | None = None       # ms since session start (None for legacy sessions)
+    thumbnail_url: str | None = None     # presigned R2 GET, attached at read time only
 
 
 class SignalAssessmentOut(BaseModel):
