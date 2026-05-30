@@ -72,3 +72,120 @@ def classify_zone(
     if horiz and (not vert or abs(dyaw) - zone_yaw_deg >= abs(dpitch) - zone_pitch_deg):
         return "right" if dyaw > 0 else "left"
     return "down" if dpitch > 0 else "up"
+
+
+@dataclass(frozen=True)
+class Interval:
+    start_ms: int
+    end_ms: int
+    kind: str
+    confidence: float = 0.6
+    max_faces: int = 1
+
+    @property
+    def duration_ms(self) -> int:
+        return self.end_ms - self.start_ms
+
+
+def _zone(o: FrameObservation, base, thresholds) -> str | None:
+    if not _scorable(o):
+        return None
+    return classify_zone(o.yaw, o.pitch, base[0], base[1], **thresholds)
+
+
+def _runs(obs, base, thresholds, predicate):
+    """Yield (start_ms, end_ms, members) for maximal runs where predicate(zone) holds.
+
+    A run ends at the first frame failing the predicate; end_ms is that frame's
+    t_ms (so a single trailing centered frame closes the interval cleanly).
+    Unscorable frames neither extend nor break a run — they are skipped.
+    """
+    run_start = None
+    last_t = None
+    members = 0
+    for o in obs:
+        z = _zone(o, base, thresholds)
+        if z is None:
+            continue
+        if predicate(z):
+            if run_start is None:
+                run_start = o.t_ms
+                members = 0
+            members += 1
+            last_t = o.t_ms
+        else:
+            if run_start is not None:
+                yield (run_start, o.t_ms, members)
+                run_start = None
+        prev_close = o.t_ms  # noqa: F841
+    if run_start is not None and last_t is not None:
+        yield (run_start, last_t, members)
+
+
+def detect_off_screen_intervals(obs, base, *, min_ms, thresholds) -> list[Interval]:
+    off = lambda z: z != "center"  # noqa: E731
+    out = []
+    for start, end, _ in _runs(obs, base, thresholds, off):
+        if end - start >= min_ms:
+            out.append(Interval(start, end, "off_screen_sustained", confidence=0.65))
+    return out
+
+
+def detect_down_glances(obs, base, *, min_ms, max_ms, thresholds) -> list[Interval]:
+    is_down = lambda z: z == "down"  # noqa: E731
+    out = []
+    for start, end, _ in _runs(obs, base, thresholds, is_down):
+        dur = end - start
+        if min_ms <= dur <= max_ms:
+            out.append(Interval(start, end, "down_glance", confidence=0.6))
+    return out
+
+
+def detect_reading_sweeps(obs, base, *, window_ms, min_reversals, thresholds) -> list[Interval]:
+    """Flag windows with >= min_reversals left<->right horizontal direction changes.
+
+    Reading a second screen/notes shows rhythmic horizontal scanning; idle
+    glancing does not. We slide non-overlapping windows of window_ms and count
+    sign changes of the horizontal deviation among scorable frames.
+    """
+    scor = [o for o in obs if _scorable(o)]
+    out: list[Interval] = []
+    if not scor:
+        return out
+    i = 0
+    n = len(scor)
+    while i < n:
+        w_start = scor[i].t_ms
+        j = i
+        signs: list[int] = []
+        while j < n and scor[j].t_ms - w_start < window_ms:
+            dyaw = math.degrees(scor[j].yaw - base[0])
+            if abs(dyaw) > thresholds["zone_yaw_deg"]:
+                signs.append(1 if dyaw > 0 else -1)
+            j += 1
+        reversals = sum(1 for a, b in zip(signs, signs[1:]) if a != b)
+        if reversals >= min_reversals:
+            out.append(Interval(w_start, scor[j - 1].t_ms, "reading_sweep", confidence=0.55))
+        i = j if j > i else i + 1
+    return out
+
+
+def detect_multi_face_intervals(obs, *, min_ms) -> list[Interval]:
+    out: list[Interval] = []
+    run_start = None
+    last_t = None
+    peak = 0
+    for o in obs:
+        if o.faces >= 2:
+            if run_start is None:
+                run_start = o.t_ms
+                peak = 0
+            peak = max(peak, o.faces)
+            last_t = o.t_ms
+        else:
+            if run_start is not None and last_t is not None and last_t - run_start >= min_ms:
+                out.append(Interval(run_start, last_t, "multiple_faces", confidence=0.7, max_faces=peak))
+            run_start = None
+    if run_start is not None and last_t is not None and last_t - run_start >= min_ms:
+        out.append(Interval(run_start, last_t, "multiple_faces", confidence=0.7, max_faces=peak))
+    return out
