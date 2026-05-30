@@ -69,6 +69,8 @@ _TENANT_SCOPED_TABLES: tuple[str, ...] = (
     "ats_sync_logs",
     # Phase 3D reporting — post-session evaluation report (migration 0047).
     "session_reports",
+    # Phase 3D vision — post-session proctoring analysis (migration 0051).
+    "session_proctoring_analysis",
 )
 
 
