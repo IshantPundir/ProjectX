@@ -51,11 +51,15 @@ async def get_session_proctoring_analysis(
     ).scalar_one_or_none()
     if row is None:
         return ProctoringAnalysisRead(status="absent")
-    flagged = await attach_flag_thumbnails(
-        row.flagged_intervals or [],
-        await get_session_timeline_thumbnails(
-            db, session_id=session_id, tenant_id=tenant_id),
-    )
+    # Thumbnails are best-effort: a failure here degrades to plain
+    # flagged_intervals — it must never fail the proctoring read.
+    flagged = row.flagged_intervals or []
+    with contextlib.suppress(Exception):
+        flagged = await attach_flag_thumbnails(
+            flagged,
+            await get_session_timeline_thumbnails(
+                db, session_id=session_id, tenant_id=tenant_id),
+        )
     return ProctoringAnalysisRead(
         status=row.status,
         risk_band=row.risk_band,

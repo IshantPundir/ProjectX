@@ -138,7 +138,7 @@ async def _persist_timeline_thumbnails(
         flagged_intervals, top_n=vision_config.thumbnail_top_flag_count
     ):
         start = flag.get("start_ms")
-        if not start:
+        if start is None:
             continue
         start = int(start)
         targets.append(("flag", str(start), start))
