@@ -6,7 +6,10 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.vision.models import SessionProctoringAnalysis
+from app.modules.vision.models import (
+    SessionProctoringAnalysis,
+    SessionTimelineThumbnail,
+)
 from app.modules.vision.schemas import ProctoringAnalysisRead
 
 
@@ -33,3 +36,15 @@ async def get_session_proctoring_analysis(
         gaze_signal_quality=row.gaze_signal_quality,
         unscorable_pct=float(row.unscorable_pct) if row.unscorable_pct is not None else None,
     )
+
+
+async def get_session_timeline_thumbnails(
+    db: AsyncSession, *, session_id: uuid.UUID, tenant_id: uuid.UUID
+) -> list[SessionTimelineThumbnail]:
+    """Tenant-scoped: all timeline thumbnail rows for a session (questions + flags)."""
+    return list((await db.execute(
+        select(SessionTimelineThumbnail).where(
+            SessionTimelineThumbnail.session_id == session_id,
+            SessionTimelineThumbnail.tenant_id == tenant_id,
+        )
+    )).scalars().all())
