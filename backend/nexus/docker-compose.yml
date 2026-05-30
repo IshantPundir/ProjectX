@@ -88,9 +88,12 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - .:/app
-      # Persist the HuggingFace / silero model cache across container
-      # recreations.
-      - hf-cache:/app/.cache/huggingface
+      # Model files (HF turn-detector, etc.) are baked into the image at
+      # /opt/hf-cache (see Dockerfile HF_HOME) and are deliberately NOT
+      # volume-mounted here. A volume over the cache previously drifted
+      # stale across a plugin upgrade and shadowed the image's freshly-built
+      # models, breaking turn-detector init with
+      # "Could not find file model_q8.onnx".
       # Persist per-session event-log envelopes (one JSON per session)
       # to the host so they survive container restarts and are readable
       # via `jq`/scripts. Default sink path = ENGINE_EVENT_LOG_DIR
@@ -159,4 +162,3 @@ services:
 
 volumes:
   redisdata:
-  hf-cache:

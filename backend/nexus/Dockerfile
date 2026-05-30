@@ -23,10 +23,16 @@ COPY --from=deps /usr/local/bin /usr/local/bin
 
 COPY . .
 
-# HF_HOME tells huggingface_hub where to cache model files. Set as a
-# permanent ENV so both the build-time download-files step below and the
-# runtime nexus-engine process use the same path.
-ENV HF_HOME=/app/.cache/huggingface
+# HF_HOME tells huggingface_hub where to cache model files. It MUST live
+# OUTSIDE /app: the compose dev services bind-mount the source tree at
+# `.:/app` for hot-reload, which would otherwise shadow a /app/.cache and
+# hide the models baked in below. /opt is never bind-mounted nor volume-
+# mounted, so the IMAGE is the single source of truth for model files.
+# (A named volume over the cache previously drifted stale across a plugin
+# upgrade — it held only the old turn-detector revision and shadowed the
+# image's freshly-built one, breaking init with "Could not find file
+# model_q8.onnx".) Mirrors the vision worker's UNIFACE_CACHE_DIR=/opt/... .
+ENV HF_HOME=/opt/hf-cache
 
 # Pre-download AI plugin model files at build time so nexus-engine doesn't
 # need network access on first dispatch. Especially load-bearing for the
@@ -42,8 +48,9 @@ ENV HF_HOME=/app/.cache/huggingface
 #
 # ENVIRONMENT=test bypasses Settings-level required-secret validators —
 # real secrets arrive at runtime via compose env_file.
-RUN ENVIRONMENT=test python -m app.modules.interview_engine download-files \
-    && chown -R nexus:nexus /app/.cache \
+RUN mkdir -p /opt/hf-cache \
+    && ENVIRONMENT=test python -m app.modules.interview_engine download-files \
+    && chown -R nexus:nexus /opt/hf-cache \
     && rm -rf /tmp/dramatiq-prometheus /tmp/dramatiq-prometheus.lock
 # ^ The download-files step above imports the broker chain, whose dramatiq
 #   Prometheus middleware runs `os.makedirs("/tmp/dramatiq-prometheus")` AT

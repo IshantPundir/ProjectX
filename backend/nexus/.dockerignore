@@ -8,3 +8,7 @@ __pycache__
 .ruff_cache
 .pytest_cache
 .venv
+# Local HF/model cache must never enter the build context — models are
+# downloaded into the image at /opt/hf-cache by the Dockerfile, not copied
+# from the host. Keeps the context small and avoids stale-model bleed-in.
+.cache
