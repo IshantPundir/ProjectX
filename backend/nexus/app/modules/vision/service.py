@@ -6,11 +6,36 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.modules.vision.models import (
     SessionProctoringAnalysis,
     SessionTimelineThumbnail,
 )
 from app.modules.vision.schemas import ProctoringAnalysisRead
+from app.storage import get_object_storage
+
+
+async def attach_flag_thumbnails(
+    flagged_intervals: list[dict], thumbs: list
+) -> list[dict]:
+    """Return a copy of flagged_intervals with thumbnail_url attached where a
+    'flag' thumbnail matches by start_ms. Best-effort presign."""
+    by_start = {t.ref_id: t.s3_key for t in thumbs if t.kind == "flag"}
+    if not by_start:
+        return flagged_intervals
+    storage = get_object_storage()
+    ttl = settings.recording_signed_url_ttl_seconds
+    out: list[dict] = []
+    for f in flagged_intervals:
+        f2 = dict(f)
+        key = by_start.get(str(f.get("start_ms")))
+        if key:
+            try:
+                f2["thumbnail_url"] = await storage.presign_get_url(key, ttl_seconds=ttl)
+            except Exception:  # noqa: BLE001
+                pass
+        out.append(f2)
+    return out
 
 
 async def get_session_proctoring_analysis(
@@ -27,12 +52,17 @@ async def get_session_proctoring_analysis(
     ).scalar_one_or_none()
     if row is None:
         return ProctoringAnalysisRead(status="absent")
+    flagged = await attach_flag_thumbnails(
+        row.flagged_intervals or [],
+        await get_session_timeline_thumbnails(
+            db, session_id=session_id, tenant_id=tenant_id),
+    )
     return ProctoringAnalysisRead(
         status=row.status,
         risk_band=row.risk_band,
         detector_summary=row.detector_summary,
         gaze_heatmap=row.gaze_heatmap,
-        flagged_intervals=row.flagged_intervals or [],
+        flagged_intervals=flagged,
         gaze_signal_quality=row.gaze_signal_quality,
         unscorable_pct=float(row.unscorable_pct) if row.unscorable_pct is not None else None,
     )
