@@ -1,9 +1,11 @@
 # Vision-Based Proctoring — Design
 
-- **Date:** 2026-05-29
-- **Status:** Approved (brainstorm) → pending implementation plan
+- **Date:** 2026-05-29 (live plane); **server plane v1 design 2026-05-30**
+- **Status:** Live plane (Plan A) shipped to local `main`. **Server plane (Plan B+C merged) — approved brainstorm 2026-05-30, pending implementation plan.**
 - **Extends:** `2026-05-21-candidate-session-proctoring-design.md` (the behavioral proctoring layer + migration `0043`)
 - **Surfaces touched:** `frontend/session` (live plane), `backend/nexus` (authoritative plane + new module), `frontend/app` report page (review surface)
+
+> **Reading guide.** §§1–14 are the original 2026-05-29 design; some of it (esp. §7 detector suite, §2 in-scope list) was written for an earlier MediaPipe-on-the-server idea and a broader v1. **§16 is the authoritative spec for the server-plane v1 being built now** (post-session L2CS-Net analysis + report surfacing). Where §16 and the older sections disagree, **§16 wins.** §15 records what already shipped (live plane); §16 records the model-choice research + the locked server-plane v1 decisions.
 
 ---
 
@@ -24,6 +26,8 @@ enterprise-grade: secure, auditable, cost-controlled, and defensible.
 ---
 
 ## 2. Scope
+
+> ⚠️ **Server-plane v1 narrows this list.** The server pass being built now is **gaze (②) + multi-face (① count) + heatmap + report surfacing only**; synthetic-feed (③) and tamper (④) are deferred to pass 2. The live-plane items already shipped. **See §16.1 for the locked server-plane v1 scope.**
 
 ### In scope (v1)
 - **① Someone else present / helping** — multi-face count + off-screen-person gaze.
@@ -52,7 +56,7 @@ enterprise-grade: secure, auditable, cost-controlled, and defensible.
 | D1 | **~~Evidence + flag only; vision never auto-terminates.~~ REVISED 2026-05-29 (see §15):** the **server** plane stays evidence-for-human-review (never auto-rejects a candidate). The **live** plane now treats vision warnings (multiple-faces / face-not-visible / looking-away) as **SOFT violations** that count toward the shared soft-violation limit and **terminate the session on escalation**, exactly like the behavioral soft kinds. | Operator chose real-time enforcement over flag-only after live testing. Termination ends a *session* (then human-reviewed), not an auto-reject — same posture as the existing behavioral proctoring. **Tradeoff:** coarse head-pose gaze has higher false-positives than behavioral signals, so legit candidates can be terminated; soft (counted, not instant) + tunable windows partially mitigate. |
 | D2 | **Server-side post-session re-analysis on the R2 recording is the authoritative source of truth.** | Most robust answer to "detect *any kind* of tampering" — candidate can't tamper with pixels they never had. R2 egress is $0; sparse-frame compute is cheap (~$30–80/mo @ 500/day). |
 | D3 | **Client live plane is non-authoritative** — hardened behavioral guards + lightweight MediaPipe advisory nudges + dev debug overlay. | Real-time deterrence + UX without trusting a spoofable client; smallest live attack surface for *evidence*. |
-| D4 | **Vision compute = dedicated `vision-worker` service (B1).** Own Docker image (mediapipe + opencv + ffmpeg), own Dramatiq queue. | Keeps `nexus` image lean; isolates heavy native deps (existing PyO3/3.13 segfault caution with livekit deps); scales/cost-optimizes independently (spot instances OK). |
+| D4 | **Vision compute = dedicated `vision-worker` service (B1).** Own Docker image, own Dramatiq queue (`vision`). **REVISED 2026-05-30 (see §16.9):** image is **torch + l2cs + face-detection + opencv + ffmpeg** (no mediapipe server-side — L2CS's RetinaFace serves both gaze and face-count). | Keeps `nexus` image lean; isolates heavy native deps (existing PyO3/3.13 segfault caution with livekit deps); scales/cost-optimizes independently (spot instances OK). |
 | D5 | **Gaze = calibration-free coarse zones. REVISED 2026-05-29 (see §15): live gaze is HEAD-POSE-ONLY** (iris influence tried then reverted — fragile with glasses/noise; sign/mirror bugs). Iris/eye-aware gaze is deferred to the **server** plane. | Zero friction; robust to poor webcams/dark rooms/glasses. The live plane is a coarse deterrent, not the accurate detector — so eye-aware precision isn't needed live and added more fragility than value. |
 | D6 | **Store features only — never raw frames or biometric templates.** Raw video = the already-consented R2 recording; reviewer seeks into it by timestamp. | Privacy-preserving consensus; minimizes biometric-data surface (BIPA/GDPR). |
 | D7 | **Vision default-ON in dev** (`proctoring_vision_enabled` flag exists, defaults `true`). **Action item: flip to OFF/opt-in before production.** | Solo dev, dev stage — opt-in gating added pre-prod. See §10 action items. |
@@ -137,6 +141,8 @@ Audit + fix the known bypasses in `components/interview/proctoring/`:
 ---
 
 ## 7. Detector Suite
+
+> ⚠️ **STALE for the server plane.** This section was written for a MediaPipe-on-the-server idea with liveness + tamper in v1. The server-plane v1 being built now uses **L2CS-Net self-baseline gaze** and defers liveness (③) + tamper (④). **See §16 (authoritative).** Retained for historical context + the pass-2 backlog.
 
 All detectors emit a **confidence** and contribute to a combined **risk score** + **risk band**
 (`low`/`elevated`/`high`/`insufficient_data`). Never a verdict.
@@ -311,4 +317,112 @@ Plan A (live client plane) was implemented and **merged to local `main`** (not p
 
 - **The accurate gaze upgrade — forward path (deep research, 2026-05-29).** Calibration-free *pixel* gaze on a commodity webcam is impossible (~4.3° / ~4.7 cm person-independent ceiling; every better figure needs few-shot calibration, a mobile front-cam, or depth hardware). Coarse region-level is sufficient for proctoring. The real accuracy lives **server-side (Plan B-plus):** an appearance-based gaze-direction CNN — **L2CS-Net** (MIT code) or **3DGazeNet** (ECCV 2024, best calibration-free cross-domain) — + **implicit/auto-calibration** (SalGaze saliency / FAZE few-shot from known on-screen targets: the question text, the interviewer tile) + temporal smoothing, run offline on the 720p recording. Direction → screen needs camera-on-top + screen-size geometry (browser screen-geometry acquisition is an unsolved engineering unknown). **Weight-licensing gate:** pretrained gaze weights (Gaze360/MPIIGaze) carry research/non-commercial dataset terms — not auto-cleared for commercial use; verify before shipping.
 
-- **Shipped vs still future.** Shipped: the live client plane only — head-pose gaze + multi-face + **soft-violation termination** + dev debug overlay + candidate consent disclosure. Still future (Plan B/C): the §6 `vision-worker`, §7④ tamper reconciliation, §8 `session_proctoring_analysis` table, §9 report heatmap surfacing. The §10 pre-production action items still stand.
+- **Shipped vs still future.** Shipped: the live client plane only — head-pose gaze + multi-face + **soft-violation termination** + dev debug overlay + candidate consent disclosure. Still future (Plan B/C): the `vision-worker`, the `session_proctoring_analysis` table, the report heatmap surfacing — **now fully specced in §16** (tamper reconciliation + liveness + learned risk-scoring pushed to a pass 2). The §10 pre-production action items still stand.
+
+---
+
+## 15b. Model-choice research (2026-05-30)
+
+Before committing to a server-side gaze model, ran a focused multi-source web research pass (the deep-research workflow itself failed mid-run; redone directly). **Headline: "use a newer model" is the wrong axis — the gating constraint is the training *data*, and it is identical for old and new models.**
+
+- **Datasets are nearly all non-commercial.** Gaze360 (L2CS-Net's weights) is research-only and explicitly forbids "models trained on dataset" in commercial apps; MPIIGaze/MPIIFaceGaze and ETH-XGaze are CC-BY-**NC**-SA; EYEDIAP and GazeCapture are research-only. GazeFollow is CC-BY (commercial-OK) but is a *gaze-following* dataset, not gaze-direction. **Therefore every released gaze-direction weight (L2CS-Net, MobileGaze, 3DGazeNet, MAGE, GazeSymCAT) is NC-tainted — upgrading the model does not clear the licensing gate (resolves Gate #1).**
+- **Code licenses:** L2CS-Net MIT, `yakhyo/gaze-estimation` (MobileGaze, a cleaner modern L2CS-style reimpl, ResNet/MobileNet/MobileOne + ONNX) MIT, Gaze-LLE MIT. **3DGazeNet has NO license file → all-rights-reserved, the riskiest of the set.**
+- **Gaze-LLE (CVPR 2025, frozen DINOv2/Apache-2.0) is the wrong task.** It does gaze-*following* (where in the *visible frame* a person looks → 64×64 heatmap + in/out-of-frame score). In a webcam interview the screen/phone is off-frame, so everything reads "out of frame" — it cannot distinguish screen vs phone. Not usable for screen-region gaze.
+- **Newer direction models only shave ~1–2° of benchmark angular error** (e.g. ETH-XGaze ~3.6°, Gaze360 ~9°). For our **coarse** zone/reading/off-screen target that delta is invisible. **L2CS-Net is therefore NOT meaningfully outdated for coarse proctoring.**
+- **Commercially-clean alternative (for later):** MediaPipe Face Landmarker is Apache-2.0 and exposes `eyeLook{Up,Down,In,Out}` blendshapes (eye-direction) + iris + head pose — zero dataset taint, no retrain. Lower accuracy ceiling than an appearance CNN. The other clean path is retraining the MIT MobileGaze/L2CS architecture on synthetic data (UnityEyes / NVGaze / UE-rendered).
+
+**Decision (operator, 2026-05-30): ship L2CS-Net + the pre-fetched Gaze360 `.pkl` weights for v1.** Install `pip install git+https://github.com/edavalosanaya/L2CS-Net.git@main`; `from l2cs import Pipeline, render`; experiment at `tmp/glaze_live.py`; weights at `tmp/L2CSNet-…/Gaze360/L2CSNet_gaze360.pkl`. **Baked-in caveats:** (1) the gaze model sits behind a thin `GazeEstimator` interface so retrained-clean-weights / MediaPipe drop in with no downstream change; (2) **"replace the NC Gaze360 weights before commercial GA" remains an OPEN pre-production action item** — these weights are dev/POC only and are legally unsafe to ship to a paying tenant (see §16.8).
+
+---
+
+## 16. Server-Plane v1 — Post-Session Vision Analysis (AUTHORITATIVE)
+
+This section supersedes the older §6–§9 detail for the work being built now. It merges the former "Plan B" (server analysis pipeline) and "Plan C" (report surfacing) into one feature. Brainstorm approved 2026-05-30.
+
+### 16.1 v1 scope (locked)
+
+**In:** offline L2CS-Net gaze on the R2 recording → **self-baseline** coarse zones + reading-sweep + down-glances + sustained-off-screen; **multi-face count**; **yaw×pitch heatmap** + off-screen-% timeline; a **coarse 3-tier integrity band** from transparent thresholds; **report surfacing** with jump-to-timestamp. The server plane is **evidence for human review — it never auto-rejects a candidate** (the live plane's soft-violation termination is a separate, already-shipped mechanism; see §15).
+
+**Deferred to pass 2 (NOT in v1):** liveness / synthetic-feed detection (former §2③), tamper reconciliation (former §2④, §7④), and any *learned* composite risk-scoring beyond the simple-threshold band. (The live plane already emits virtual-camera device labels; nothing server-side consumes them in v1.)
+
+### 16.2 Gaze model behind a swappable seam (Gate #1 resolved)
+
+- `app/modules/vision/gaze/base.py` — `GazeEstimator` protocol: `estimate(frame_bgr) -> list[FaceGaze]` where `FaceGaze = {bbox, pitch, yaw, score}`. Angles in radians, camera frame, sign convention pinned and documented in the protocol docstring.
+- `app/modules/vision/gaze/l2cs.py` — wraps the `l2cs` `Pipeline` (Gaze360 weights, `arch='ResNet50'`, CPU). L2CS's built-in **RetinaFace** detector yields per-face gaze **and** the multi-face count — **one detector serves both gaze and face-count; no MediaPipe server-side** (simplifies the §6.1/D4 image).
+- The `.pkl` weights path + model id come from `AIConfig`/env, never hardcoded — consistent with the project's "model swap = env change" rule. **This interface is the clean-weights swap point** (retrained synthetic-data weights, or a MediaPipe estimator, drop in with zero downstream change). NC-weights replacement before GA is tracked in §16.8.
+
+### 16.3 Self-baseline gaze → signals (Gate #2 resolved)
+
+We do **not** map gaze to absolute screen pixels (needs browser-unavailable extrinsics + screen size — deferred indefinitely). Instead, **per session**:
+
+1. **Baseline** = the mode (densest cluster) of (yaw, pitch) over the whole session ≈ "looking at the screen." Robust to where the camera sits relative to the screen and to per-candidate head posture.
+2. **Zones** = coarse deviations from baseline: `center` (on-screen) / `left` / `right` / `up` / `down` / `far_off`. `down` beyond a pitch threshold is the phone/notes tell.
+3. **Temporal smoothing** over a short rolling window (debounce; suppress single-frame flips); track a per-frame confidence and mark low-confidence frames `unscorable` (carry `unscorable_pct`).
+4. **Derived detectors** (pure functions in `detectors.py`, unit-tested on synthetic angle streams):
+   - `off_screen_sustained` — outside `center` beyond a threshold for ≥ N s.
+   - `reading_sweep` — rhythmic horizontal yaw oscillation (line-scan signature).
+   - `down_glances` — repeated brief pitch-down excursions (count + timestamps).
+   - `multi_face_intervals` — ≥2 faces sustained > debounce window.
+5. **Heatmap** = 5×5 yaw×pitch occupancy grid (relative to baseline) + an off-screen-% timeline.
+
+### 16.4 Pipeline / actor
+
+`@dramatiq.actor(queue_name="vision")` `analyze_session_proctoring(session_id, tenant_id)`:
+1. Acquire a session via the bypass helper, then `SET LOCAL app.current_tenant`; **every query also filters by the explicit `tenant_id`** (same belt-and-suspenders pattern as `interview_runtime.service`). Idempotency: skip if a row already exists in a terminal/active state (status column, unique on `session_id`).
+2. Presign + download the R2 recording; `ffmpeg` sample frames at **~5 fps**.
+3. Per frame → `GazeEstimator.estimate` → primary face (largest bbox) pitch/yaw + face count; accumulate.
+4. Post-process (§16.3) → zones, detectors, heatmap, flagged intervals, `gaze_signal_quality`, `unscorable_pct`.
+5. Thresholds → 3-tier `risk_band` (§16.5). Persist **features only** (no frames). status → `ready` (or `failed` / `unscorable`).
+- CPU inference is fine offline for MVP (a ~20-min session ≈ a few minutes wall-clock). Retry-safe; permanent-vs-transient error classification per existing actor discipline.
+
+### 16.5 Risk band (transparent, not learned)
+
+`risk_band ∈ {low, medium, high, insufficient_data}`, computed by **simple documented thresholds** over the detector summary (e.g. off-screen-% and multi-face dominate; down-glance count and reading-sweep contribute). **Labelled in the UI "for review, not a decision."** `insufficient_data` when `unscorable_pct` is too high — a reviewer never sees a confident band built on unseeable frames. (A *learned* score replaces these thresholds in pass 2.)
+
+### 16.6 Data model
+
+New tenant-scoped table **`session_proctoring_analysis`** — **next free migration number (≥ 0051; 0050 is `session_recording`)**, with a rollback down-script:
+- `id`, `tenant_id`, `session_id` (FK `sessions` ON DELETE CASCADE, **UNIQUE**), `status` (`pending`/`running`/`ready`/`failed`/`unscorable`)
+- `risk_band` (text)
+- `detector_summary` (JSONB) — `{off_screen_pct, down_glance_count, reading_sweep_intervals, max_faces, multi_face_intervals:[…]}`
+- `gaze_heatmap` (JSONB) — 5×5 occupancy grid + off-screen-% timeline
+- `flagged_intervals` (JSONB) — `[{start_ms, end_ms, kind, confidence}]`
+- `gaze_signal_quality` (text: good / glasses-degraded / low-light / unscorable), `unscorable_pct` (numeric)
+- `model_versions` (JSONB — gaze model id + weights hash + pipeline version, for EEOC auditability), timestamps
+- **RLS:** canonical `tenant_isolation` (USING + WITH CHECK, `NULLIF(...)::uuid`) + `service_bypass` pair; `GRANT … TO nexus_app`; **register in `_TENANT_SCOPED_TABLES`** so the `_assert_rls_completeness` boot check covers it.
+- **Never stored:** raw frames, face crops, biometric templates (D6).
+- **Tenant config:** `proctoring_vision_enabled` (default flips to OFF/opt-in pre-prod — §16.8).
+
+### 16.7 Trigger & report surfacing
+
+- **Trigger:** in `app/modules/session/recording.py` right after `_reconcile` flips `recording_status → 'ready'` (~`recording.py:144`), enqueue `analyze_session_proctoring(session_id, tenant_id)` if no prior analysis row. Pull-based, matching how recording readiness is already discovered on report-page read.
+- **Read API:** sibling endpoint `GET /api/reports/session/{id}/proctoring`; `useSessionProctoring(sessionId)` hook in `frontend/app` mirroring `use-session-recording.ts`.
+- **UI:** **right-sidebar** `ProctoringIntegrityPanel` in `ReportView` — compact: band badge + `gaze_signal_quality` + top flagged moments. An **"expand"** opens a dialog/drawer with the full detector breakdown, the heatmap (needs the room), and the full flagged-moments list. **Jump-to-timestamp** anywhere fires an `onSeek(ms)` lifted to `ReportView`, which seeks the existing `SessionPlayback` `videoRef` (scrolls it into view). Never shows auto pass/fail.
+
+### 16.8 Pre-production action items (server plane — kept OPEN)
+
+In addition to the §10 items (flip `proctoring_vision_enabled` → opt-in; DPIA + bias-review under `docs/security/`; BIPA/GDPR biometric consent):
+- **Replace the NC Gaze360 weights before commercial GA.** The L2CS Gaze360 `.pkl` is non-commercial; it is the v1 dev/POC estimator only. Swap to clean weights (retrained MIT architecture on synthetic data) or the Apache-2.0 MediaPipe estimator via the `GazeEstimator` seam (§16.2) before shipping to a paying tenant. **Do not close this item by shipping NC weights.**
+
+### 16.9 Module boundaries (server plane)
+
+**Backend — new `app/modules/vision/`:**
+- `gaze/base.py` (`GazeEstimator` protocol), `gaze/l2cs.py` (L2CS impl)
+- `detectors.py` (pure self-baseline zone/reading/down-glance/off-screen/multi-face logic + band thresholds)
+- `analysis.py` (frame sampling + orchestration), `actors.py` (`analyze_session_proctoring`)
+- `models.py` (`SessionProctoringAnalysis` ORM), `service.py` (report read), `schemas.py`
+- New `nexus-vision-worker` compose service + own image (**torch + l2cs + face-detection + opencv + ffmpeg**; no mediapipe) running `dramatiq app.worker -Q vision`.
+- New migration (≥0051) for the table; enqueue hook in `session/recording.py`; report-read endpoint in the reporting router.
+
+**Frontend (`frontend/app`):** `ProctoringIntegrityPanel` + expand dialog, `useSessionProctoring` hook, `onSeek` lift in `ReportView` → `SessionPlayback`.
+
+### 16.10 Testing (manual-first, per D9)
+
+- **Pure-logic unit tests** (no video) on `detectors.py`: baseline estimation, zone classification, reading-sweep / down-glance / off-screen detectors, band thresholds — fed synthetic angle/face-count streams.
+- **`analyze_session_proctoring` idempotency** test; **mandatory cross-tenant RLS test** on `session_proctoring_analysis` (cross-tenant read → 0 rows).
+- **Frontend:** panel render (mocked hook), band labelling present, jump-to-timestamp seek wiring.
+- **Manual eval:** self-recorded sessions (look away, hold phone, second person, glasses, dark) → run the actor → eyeball the report. Bands ship **advisory** until thresholds are tuned on real recordings.
+
+### 16.11 Build order
+
+Backend-first: migration + table + RLS (+ register) → `GazeEstimator` + L2CS wrapper → `detectors.py` (TDD, pure) → `analysis.py` + actor + `vision-worker` service → enqueue trigger → read endpoint → `frontend/app` panel + seek wiring.
