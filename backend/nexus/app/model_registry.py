@@ -11,15 +11,21 @@ this, so every process ends up with a complete, configured registry. The default
 `app/worker.py` imports enough actor modules to pull the full model set in
 transitively, but calling this is the robust, order-independent way.
 
-When you add a new model module, add it here — the single source of truth.
+When you add a new model module, add it to the body below — the single source of
+truth.
 """
+
+from app.database import Base
 
 
 def configure_all_models() -> None:
-    """Import all ORM model modules and run `Base.registry.configure()`."""
-    # noqa block: these are side-effect imports (register ORM tables); ordering
-    # is irrelevant and isort grouping does not meaningfully apply.
-    import app.modules.audit.models  # noqa: F401, I001
+    """Import all ORM model modules and run `Base.registry.configure()`.
+
+    These are side-effect imports (each registers its ORM tables on the shared
+    declarative `Base`); the local-import style keeps them out of this module's
+    public import surface and avoids import cycles at module load.
+    """
+    import app.modules.audit.models  # noqa: F401
     import app.modules.auth.models  # noqa: F401
     import app.modules.candidates.models  # noqa: F401
     import app.modules.jd.models  # noqa: F401
@@ -31,7 +37,5 @@ def configure_all_models() -> None:
     import app.modules.session.models  # noqa: F401
     import app.modules.tenant_settings.models  # noqa: F401
     import app.modules.vision.models  # noqa: F401
-
-    from app.database import Base
 
     Base.registry.configure()

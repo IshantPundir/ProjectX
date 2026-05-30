@@ -12,15 +12,23 @@ Why a separate entrypoint (not `app.worker`)?
   and crash at runtime with ModuleNotFoundError. Registering the vision actor
   ONLY here means only this process declares + consumes the "vision" queue.
 
-Mirrors `app/worker.py`'s broker/structlog/OTel bootstrap; it just imports a
-different (single) actor module.
+Import-ordering note: `app.brokers` initializes the global Dramatiq broker and
+MUST be imported before any actor module so `@dramatiq.actor` binds to the right
+broker. Standard alphabetical import order satisfies this (`app` sorts before
+`app.modules.vision`), so no deferred/`# noqa: E402` imports are needed. The two
+imported-for-side-effect modules (`brokers`, `actors`) carry `# noqa: F401`.
 """
 
 import atexit
 
 import structlog
+from opentelemetry import trace
 
+from app import brokers  # noqa: F401  (side effect: init broker before actor import)
+from app.ai.otel import bootstrap_tracer_provider
 from app.config import settings
+from app.model_registry import configure_all_models
+from app.modules.vision import actors  # noqa: F401  (side effect: register vision actor)
 
 # --- structlog init (mirrors app/worker.py) ---
 structlog.configure(
@@ -32,34 +40,17 @@ structlog.configure(
         if settings.debug
         else structlog.processors.JSONRenderer(),
     ],
-    wrapper_class=structlog.make_filtering_bound_logger(
-        10 if settings.debug else 20
-    ),
+    wrapper_class=structlog.make_filtering_bound_logger(10 if settings.debug else 20),
 )
 
 # --- OpenTelemetry init (mirrors app/worker.py) ---
-# I001/E402 are suppressed throughout: this bootstrap intentionally defers all
-# imports until after the structlog/OTel setup runs, so import-sorting and
-# "imports at top of file" do not apply (same deferred-import pattern as
-# app/worker.py).
-from opentelemetry import trace  # noqa: E402, I001
-from app.ai.otel import bootstrap_tracer_provider  # noqa: E402, I001
-
 _otel_provider = bootstrap_tracer_provider()
 trace.set_tracer_provider(_otel_provider)
-
-# Broker setup — MUST be imported before any actor module.
-from app import brokers  # noqa: F401, E402, I001
-
-# The ONLY actor this worker registers/consumes — the vision proctoring queue.
-from app.modules.vision import actors as _vision_actors  # noqa: F401, E402
 
 # Configure the FULL ORM mapper registry. This process registers only the vision
 # actor (+ Session), but `SessionProctoringAnalysis` has FKs to `clients` /
 # `sessions`; without importing every model + configure(), the first query fails
 # with NoReferencedTableError. Shared with app/main.py — single source of truth.
-from app.model_registry import configure_all_models  # noqa: E402
-
 configure_all_models()
 
 # Flush OTel batched spans on worker exit.
