@@ -28,3 +28,20 @@ async def test_returns_empty_for_session_with_no_thumbnails(db):
     rows = await get_session_timeline_thumbnails(
         db, session_id=sess.id, tenant_id=tenant_id)
     assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_does_not_return_other_tenants_rows(db):
+    # Tenant A's session has a thumbnail; querying it as Tenant B returns nothing.
+    sess_a, tenant_a = await seed_minimal_session(db)
+    _sess_b, tenant_b = await seed_minimal_session(db)
+    db.add(SessionTimelineThumbnail(
+        tenant_id=tenant_a, session_id=sess_a.id,
+        kind="question", ref_id="q1", t_ms=1000,
+        s3_key="thumbs/a/s/question_q1.webp"))
+    await db.flush()
+
+    # Same session_id, wrong tenant → no rows (application-layer tenant filter).
+    rows = await get_session_timeline_thumbnails(
+        db, session_id=sess_a.id, tenant_id=tenant_b)
+    assert rows == []
