@@ -61,6 +61,72 @@ def _sample_frames(video_path: str, fps: float):
         cap.release()
 
 
+# Severity ordering for proctoring flags (higher = more serious). Decides which
+# flags earn a timeline thumbnail when there are more than top_n.
+_FLAG_SEVERITY: dict[str, int] = {
+    "multiple_faces": 3,
+    "off_screen_sustained": 2,
+    "reading_sweep": 1,
+    "down_glance": 0,
+}
+
+
+def select_flag_targets(flagged_intervals: list[dict], *, top_n: int) -> list[dict]:
+    """Return the top-N most serious flags (by severity, then confidence, then
+    earliest start), each as the original interval dict. Pure — no I/O."""
+    ranked = sorted(
+        flagged_intervals,
+        key=lambda f: (
+            _FLAG_SEVERITY.get(f.get("kind", ""), 0),
+            float(f.get("confidence") or 0.0),
+            -int(f.get("start_ms") or 0),
+        ),
+        reverse=True,
+    )
+    return ranked[: max(0, top_n)]
+
+
+def _target_frame_index(t_ms: int, src_fps: float, frame_count: int) -> int:
+    """Frame index nearest a timestamp, clamped to [0, frame_count-1] (no upper
+    clamp when frame_count is 0/unknown). Pure — no cv2."""
+    idx = int(round((t_ms / 1000.0) * src_fps))
+    if frame_count:
+        idx = min(idx, frame_count - 1)
+    return max(idx, 0)
+
+
+def grab_thumbnails(
+    video_path: str, targets_ms: list[int], *, width: int, webp_quality: int
+) -> dict[int, bytes]:
+    """For each target timestamp, seek to the nearest frame, resize to ``width``
+    (preserving aspect), encode WebP. Returns {target_ms: webp_bytes}; targets
+    whose frame cannot be read are omitted. Reuses the recording the proctoring
+    pass already downloaded — one seek per target, no full re-decode."""
+    import cv2  # noqa: PLC0415  — lazy: heavy native dep, vision image only
+
+    cap = cv2.VideoCapture(video_path)
+    src_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    out: dict[int, bytes] = {}
+    try:
+        for t_ms in targets_ms:
+            idx = _target_frame_index(t_ms, src_fps, frame_count)
+            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                continue
+            h, w = frame.shape[:2]
+            if w > width and w > 0:
+                new_h = max(1, int(round(h * (width / w))))
+                frame = cv2.resize(frame, (width, new_h), interpolation=cv2.INTER_AREA)
+            ok, buf = cv2.imencode(".webp", frame, [cv2.IMWRITE_WEBP_QUALITY, webp_quality])
+            if ok:
+                out[t_ms] = bytes(buf.tobytes())
+    finally:
+        cap.release()
+    return out
+
+
 def run_analysis(estimator: GazeEstimator, *, local_video_path: str) -> tuple[AnalysisResult, int]:
     """Sample frames from a LOCAL file, estimate, analyze. Returns (result, frames).
 
