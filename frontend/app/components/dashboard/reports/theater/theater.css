@@ -37,6 +37,15 @@
   --px-fg-3: rgba(224, 235, 242, 0.74);
   --px-fg-4: rgba(224, 235, 242, 0.5);
   --px-hairline: rgba(255, 255, 255, 0.16);
+
+  /* Tone INK tokens are dark-on-light by design (e.g. --px-danger #8A2733);
+     on dark glass they read as near-black. Remap each to its vivid -fill
+     variant so verdict/risk chips, why-positive/negative titles, and filmstrip
+     status labels stay legible. TONE_INK/TONE_BG consumers resolve through these. */
+  --px-ok: var(--px-ok-fill);
+  --px-caution: var(--px-caution-fill);
+  --px-danger: var(--px-danger-fill);
+  --px-human: var(--px-human-fill);
 }
 
 /* Dark frosted panel (was light in the old theater). */
