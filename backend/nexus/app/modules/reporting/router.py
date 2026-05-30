@@ -36,7 +36,12 @@ from app.modules.session import (
     SessionNotFoundError,
     get_session_recording_playback,
 )
-from app.modules.vision import get_session_proctoring_analysis
+from app.config import settings
+from app.modules.vision import (
+    get_session_proctoring_analysis,
+    get_session_timeline_thumbnails,
+)
+from app.storage import get_object_storage
 
 router = APIRouter(prefix="/api/reports", tags=["reporting"])
 
@@ -113,6 +118,33 @@ def _row_to_read(row: SessionReport) -> ReportRead:
     )
 
 
+async def _attach_question_thumbnails(
+    *, db: AsyncSession, report: ReportRead, session_id: Any, tenant_id: Any
+) -> None:
+    """Presign per-question timeline thumbnails and attach by question_id.
+    Best-effort: a lookup/presign failure leaves thumbnail_url as None."""
+    if not report.questions:
+        return
+    try:
+        thumbs = await get_session_timeline_thumbnails(
+            db, session_id=session_id, tenant_id=tenant_id)
+    except Exception:  # noqa: BLE001
+        return
+    by_qid = {t.ref_id: t.s3_key for t in thumbs if t.kind == "question"}
+    if not by_qid:
+        return
+    storage = get_object_storage()
+    ttl = settings.recording_signed_url_ttl_seconds
+    for q in report.questions:
+        key = by_qid.get(q.question_id)
+        if not key:
+            continue
+        try:
+            q.thumbnail_url = await storage.presign_get_url(key, ttl_seconds=ttl)
+        except Exception:  # noqa: BLE001
+            continue
+
+
 def _require_reports_view(user: UserContext) -> None:
     """Raise 403 if the caller lacks reports.view and is not super-admin."""
     if "reports.view" not in user.all_permissions() and not user.is_super_admin:
@@ -174,7 +206,10 @@ async def get_report_by_session(
             content={"status": row.status},
         )
 
-    return _row_to_read(row).model_dump(mode="json")
+    read = _row_to_read(row)
+    await _attach_question_thumbnails(
+        db=db, report=read, session_id=session_id, tenant_id=tenant_id)
+    return read.model_dump(mode="json")
 
 
 # ---------------------------------------------------------------------------
@@ -345,7 +380,10 @@ async def get_report_by_id(
     if row is None:
         raise HTTPException(status_code=404, detail="Report not found")
 
-    return _row_to_read(row).model_dump(mode="json")
+    read = _row_to_read(row)
+    await _attach_question_thumbnails(
+        db=db, report=read, session_id=row.session_id, tenant_id=tenant_id)
+    return read.model_dump(mode="json")
 
 
 # ---------------------------------------------------------------------------
