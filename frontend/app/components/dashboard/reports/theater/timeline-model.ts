@@ -94,6 +94,31 @@ export function densityBuckets(
   return out.map((v) => v / max)
 }
 
+export function clamp01(v: number): number {
+  return Math.min(1, Math.max(0, v))
+}
+
+/** Perceptual brightening of a normalized density so a single hit stays visible
+ * on dark glass. g < 1 lifts small values; 0 and 1 are fixed points. */
+export function gamma(v: number, g = 0.45): number {
+  return Math.pow(clamp01(v), g)
+}
+
+/** densityBuckets restricted to a set of flag kinds (one proctoring sub-lane). */
+export function densityBucketsForKinds(
+  flagged: ProctoringFlaggedInterval[],
+  durationMs: number,
+  buckets: number,
+  kinds: string[],
+): number[] {
+  const set = new Set(kinds)
+  return densityBuckets(
+    flagged.filter((f) => set.has(f.kind)),
+    durationMs,
+    buckets,
+  )
+}
+
 /** The latest question whose asked_at_ms <= currentMs (markers with null are ignored). */
 export function activeQuestionId(markers: TimelineMarker[], currentMs: number): string | null {
   let id: string | null = null
