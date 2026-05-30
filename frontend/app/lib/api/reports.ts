@@ -140,6 +140,41 @@ export interface RecordingPlayback {
   transcript: RecordingTranscriptSegment[]
 }
 
+export type ProctoringStatus =
+  | 'absent' | 'pending' | 'running' | 'ready' | 'failed' | 'unscorable'
+export type RiskBand = 'low' | 'medium' | 'high' | 'insufficient_data'
+
+export interface ProctoringFlaggedInterval {
+  start_ms: number
+  end_ms: number
+  kind: string
+  confidence: number
+}
+
+export interface ProctoringDetectorSummary {
+  off_screen_pct: number
+  down_glance_count: number
+  reading_sweep_intervals: number
+  max_faces: number
+  multi_face_intervals: { start_ms: number; end_ms: number; max_faces: number }[]
+}
+
+export interface ProctoringHeatmap {
+  grid: number[][]
+  scorable_frames?: number
+  off_screen_timeline: number[]
+}
+
+export interface ProctoringAnalysis {
+  status: ProctoringStatus
+  risk_band: RiskBand | null
+  detector_summary: ProctoringDetectorSummary | null
+  gaze_heatmap: ProctoringHeatmap | null
+  flagged_intervals: ProctoringFlaggedInterval[]
+  gaze_signal_quality: string | null
+  unscorable_pct: number | null
+}
+
 export const reportsApi = {
   /**
    * GET /api/reports/session/{sessionId}.
@@ -208,6 +243,16 @@ export const reportsApi = {
   ): Promise<RecordingPlayback> =>
     apiFetch<RecordingPlayback>(
       `/api/reports/session/${sessionId}/recording`,
+      { token, signal: opts?.signal },
+    ),
+
+  getProctoring: (
+    token: string,
+    sessionId: string,
+    opts?: { signal?: AbortSignal },
+  ): Promise<ProctoringAnalysis> =>
+    apiFetch<ProctoringAnalysis>(
+      `/api/reports/session/${sessionId}/proctoring`,
       { token, signal: opts?.signal },
     ),
 }
