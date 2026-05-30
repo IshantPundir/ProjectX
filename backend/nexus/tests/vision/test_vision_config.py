@@ -18,3 +18,6 @@ def test_vision_config_defaults():
     assert cfg.off_screen_min_ms == 2000
     assert cfg.sample_fps == 5.0
     assert 0.0 < cfg.band_high_off_screen_pct <= 1.0
+    assert cfg.gaze_input_size == 448
+    assert cfg.gaze_arch == "resnet34"
+    assert cfg.gaze_pitch_sign in (1, -1)

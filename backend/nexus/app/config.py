@@ -581,7 +581,13 @@ class Settings(BaseSettings):
     # Gaze model behind the swappable GazeEstimator seam. The Gaze360 weights
     # are NON-COMMERCIAL (dev/POC only) — see spec §16.8. Swap path = env change.
     vision_gaze_weights_path: str = ""
-    vision_gaze_arch: str = "ResNet50"
+    vision_gaze_arch: str = "resnet34"  # changed from "ResNet50" — matches resnet34_gaze.onnx
+    vision_gaze_input_size: int = 448
+    # Sign mapping from the model's pitch/yaw to our convention (pitch+ = down,
+    # yaw+ = camera-right). Flip to -1 during manual calibration (D9) if
+    # looking-down is not classified as the 'down' zone / left-right is mirrored.
+    vision_gaze_pitch_sign: int = 1
+    vision_gaze_yaw_sign: int = 1
     vision_sample_fps: float = 5.0
     # Self-baseline zone thresholds (degrees of deviation from the per-session
     # baseline gaze direction).

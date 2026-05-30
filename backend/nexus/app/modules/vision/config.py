@@ -78,5 +78,17 @@ class VisionConfig:
     def max_unscorable_pct(self) -> float:
         return self._s.vision_max_unscorable_pct
 
+    @property
+    def gaze_input_size(self) -> int:
+        return self._s.vision_gaze_input_size
+
+    @property
+    def gaze_pitch_sign(self) -> int:
+        return self._s.vision_gaze_pitch_sign
+
+    @property
+    def gaze_yaw_sign(self) -> int:
+        return self._s.vision_gaze_yaw_sign
+
 
 vision_config = VisionConfig(settings)
