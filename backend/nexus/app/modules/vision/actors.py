@@ -27,13 +27,20 @@ from app.storage import get_object_storage
 
 log = structlog.get_logger("vision.actor")
 
-_TERMINAL = {"ready", "running"}
+# Genuinely-finished SUCCESS states. A row in one of these is never re-analyzed.
+# A 'running'/'failed'/'pending' row is RECLAIMED and re-analyzed — so Dramatiq's
+# own retries (and a re-enqueue after a worker crash) actually re-run, instead of
+# being silently swallowed by the idempotency gate.
+_DONE = {"ready", "unscorable"}
 
 
 async def _load_state(db, session_id: str, tenant_id: str):
-    """Return (status, recording_key). Creates a 'pending' row if none exists.
-
-    status is None when the session has no usable recording.
+    """Return ``(action, recording_key)`` where action is:
+      "skip" — an existing row is already done (ready/unscorable); do nothing.
+      "run"  — (re)analyze; recording_key is the R2 object key. A pre-existing
+               running/failed/pending row is RECLAIMED to 'running' (not
+               duplicated) so retries/crash-recovery re-run cleanly.
+      "none" — the session has no usable recording yet; do nothing.
     """
     sid = uuid.UUID(session_id)
     tid = uuid.UUID(tenant_id)
@@ -45,8 +52,8 @@ async def _load_state(db, session_id: str, tenant_id: str):
             )
         )
     ).scalar_one_or_none()
-    if existing is not None:
-        return existing.status, None
+    if existing is not None and existing.status in _DONE:
+        return "skip", None
 
     sess = (
         await db.execute(
@@ -54,21 +61,20 @@ async def _load_state(db, session_id: str, tenant_id: str):
         )
     ).scalar_one_or_none()
     if sess is None or sess.recording_status != "ready" or not sess.recording_s3_key:
-        return None, None
+        return "none", None
 
-    db.add(SessionProctoringAnalysis(tenant_id=tid, session_id=sid, status="running"))
-    return "running", sess.recording_s3_key
+    if existing is not None:
+        # Reclaim a crashed/failed/pending row — re-drive it rather than insert
+        # a duplicate (session_id is UNIQUE).
+        existing.status = "running"
+        existing.error = None
+    else:
+        db.add(SessionProctoringAnalysis(tenant_id=tid, session_id=sid, status="running"))
+    return "run", sess.recording_s3_key
 
 
 async def _persist(
-    db,
-    session_id: str,
-    tenant_id: str,
-    *,
-    status: str,
-    result=None,
-    frames=0,
-    error=None,
+    db, session_id: str, tenant_id: str, *, status: str, result=None, frames=0, error=None
 ):
     sid = uuid.UUID(session_id)
     tid = uuid.UUID(tenant_id)
@@ -79,7 +85,13 @@ async def _persist(
                 SessionProctoringAnalysis.tenant_id == tid,
             )
         )
-    ).scalar_one()
+    ).scalar_one_or_none()
+    if row is None:
+        # Phase-1 insert never committed (rare: DB error between create + commit).
+        # Don't raise here — that would mask the original exception on the error
+        # path. The re-enqueue will recreate the row.
+        log.warning("vision.actor.persist_no_row", session_id=session_id)
+        return
     row.status = status
     row.error = error
     row.frames_analyzed = frames
@@ -101,18 +113,19 @@ async def _persist(
 async def _run(session_id: str, tenant_id: str) -> None:
     safe_tid = str(uuid.UUID(tenant_id))
 
-    # Phase 1: idempotency gate + create 'running' row (own transaction).
+    # Phase 1: idempotency gate + claim/reclaim a 'running' row (own transaction).
     async with get_bypass_session() as db:
         await db.execute(text(f"SET LOCAL app.current_tenant = '{safe_tid}'"))
-        status, recording_key = await _load_state(db, session_id, tenant_id)
+        action, recording_key = await _load_state(db, session_id, tenant_id)
         await db.commit()
 
-    if status in _TERMINAL and recording_key is None:
-        log.info("vision.actor.skip", session_id=session_id, status=status)
+    if action == "skip":
+        log.info("vision.actor.skip_already_done", session_id=session_id)
         return
-    if recording_key is None:
+    if action == "none":
         log.info("vision.actor.no_recording", session_id=session_id)
         return
+    # action == "run" → recording_key is set; proceed.
 
     # Phase 2: heavy work OUTSIDE the DB transaction.
     try:
@@ -140,9 +153,7 @@ async def _run(session_id: str, tenant_id: str) -> None:
     # Phase 3: persist results (own transaction).
     async with get_bypass_session() as db:
         await db.execute(text(f"SET LOCAL app.current_tenant = '{safe_tid}'"))
-        await _persist(
-            db, session_id, tenant_id, status=final_status, result=result, frames=frames
-        )
+        await _persist(db, session_id, tenant_id, status=final_status, result=result, frames=frames)
         await db.commit()
     log.info("vision.actor.done", session_id=session_id, band=result.risk_band, frames=frames)
 
