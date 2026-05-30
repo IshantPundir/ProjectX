@@ -162,7 +162,7 @@ def detect_reading_sweeps(obs, base, *, window_ms, min_reversals, thresholds) ->
             if abs(dyaw) > thresholds["zone_yaw_deg"]:
                 signs.append(1 if dyaw > 0 else -1)
             j += 1
-        reversals = sum(1 for a, b in zip(signs, signs[1:]) if a != b)
+        reversals = sum(1 for a, b in zip(signs, signs[1:], strict=False) if a != b)
         if reversals >= min_reversals:
             out.append(Interval(w_start, scor[j - 1].t_ms, "reading_sweep", confidence=0.55))
         i = j if j > i else i + 1
@@ -183,8 +183,150 @@ def detect_multi_face_intervals(obs, *, min_ms) -> list[Interval]:
             last_t = o.t_ms
         else:
             if run_start is not None and last_t is not None and last_t - run_start >= min_ms:
-                out.append(Interval(run_start, last_t, "multiple_faces", confidence=0.7, max_faces=peak))
+                out.append(
+                    Interval(run_start, last_t, "multiple_faces", confidence=0.7, max_faces=peak)
+                )
             run_start = None
     if run_start is not None and last_t is not None and last_t - run_start >= min_ms:
-        out.append(Interval(run_start, last_t, "multiple_faces", confidence=0.7, max_faces=peak))
+        out.append(
+            Interval(run_start, last_t, "multiple_faces", confidence=0.7, max_faces=peak)
+        )
     return out
+
+
+@dataclass(frozen=True)
+class AnalysisResult:
+    risk_band: str
+    detector_summary: dict
+    gaze_heatmap: dict
+    flagged_intervals: list[dict]
+    gaze_signal_quality: str
+    unscorable_pct: float
+
+
+def _build_heatmap(obs, base, thresholds, *, grid=5) -> dict:
+    """5x5 yaw×pitch occupancy (relative to baseline) + off-screen-% timeline.
+
+    Cell extent = ±far_off_deg across the grid; out-of-range clamps to edge.
+    Timeline buckets the session into 30 slots of off-center fraction.
+    """
+    span = thresholds["far_off_deg"]
+    cells = [[0 for _ in range(grid)] for _ in range(grid)]
+    scorable = 0
+    for o in obs:
+        if not _scorable(o):
+            continue
+        scorable += 1
+        dx = math.degrees(o.yaw - base[0])
+        dy = math.degrees(o.pitch - base[1])
+        cx = min(grid - 1, max(0, int((dx + span) / (2 * span) * grid)))
+        cy = min(grid - 1, max(0, int((dy + span) / (2 * span) * grid)))
+        cells[cy][cx] += 1
+
+    slots = 30
+    if obs:
+        t0, t1 = obs[0].t_ms, max(o.t_ms for o in obs)
+    else:
+        t0 = t1 = 0
+    span_ms = max(1, t1 - t0)
+    buckets = [[0, 0] for _ in range(slots)]  # [off_count, total]
+    for o in obs:
+        if not _scorable(o):
+            continue
+        idx = min(slots - 1, int((o.t_ms - t0) / span_ms * slots))
+        z = classify_zone(o.yaw, o.pitch, base[0], base[1], **thresholds)
+        buckets[idx][1] += 1
+        if z != "center":
+            buckets[idx][0] += 1
+    timeline = [round(b[0] / b[1], 3) if b[1] else 0.0 for b in buckets]
+    return {"grid": cells, "scorable_frames": scorable, "off_screen_timeline": timeline}
+
+
+def _signal_quality(unscorable_pct: float) -> str:
+    if unscorable_pct > 0.6:
+        return "unscorable"
+    if unscorable_pct > 0.25:
+        return "low-light"
+    return "good"
+
+
+def analyze_observations(
+    obs: list[FrameObservation],
+    *,
+    zone_yaw_deg: float,
+    zone_pitch_deg: float,
+    far_off_deg: float,
+    off_screen_min_ms: int,
+    down_glance_min_ms: int,
+    down_glance_max_ms: int,
+    reading_window_ms: int,
+    reading_min_reversals: int,
+    multi_face_min_ms: int,
+    band_high_off_screen_pct: float,
+    band_medium_off_screen_pct: float,
+    band_high_down_glances: int,
+    max_unscorable_pct: float,
+) -> AnalysisResult:
+    thresholds = dict(
+        zone_yaw_deg=zone_yaw_deg, zone_pitch_deg=zone_pitch_deg, far_off_deg=far_off_deg
+    )
+    total = len(obs)
+    scorable = [o for o in obs if _scorable(o)]
+    unscorable_pct = round(1 - (len(scorable) / total), 3) if total else 1.0
+
+    base = estimate_baseline(obs)
+
+    off = detect_off_screen_intervals(obs, base, min_ms=off_screen_min_ms, thresholds=thresholds)
+    downs = detect_down_glances(
+        obs, base, min_ms=down_glance_min_ms, max_ms=down_glance_max_ms, thresholds=thresholds
+    )
+    reads = detect_reading_sweeps(
+        obs, base, window_ms=reading_window_ms, min_reversals=reading_min_reversals,
+        thresholds=thresholds
+    )
+    faces = detect_multi_face_intervals(obs, min_ms=multi_face_min_ms)
+
+    # Off-screen % over scorable frames.
+    off_frames = sum(
+        1 for o in scorable
+        if classify_zone(o.yaw, o.pitch, base[0], base[1], **thresholds) != "center"
+    )
+    off_pct = round(off_frames / len(scorable), 3) if scorable else 0.0
+    max_faces = max((o.faces for o in obs), default=0)
+
+    intervals = sorted(off + downs + reads + faces, key=lambda i: i.start_ms)
+    flagged = [
+        {"start_ms": i.start_ms, "end_ms": i.end_ms, "kind": i.kind, "confidence": i.confidence}
+        for i in intervals
+    ]
+
+    summary = {
+        "off_screen_pct": off_pct,
+        "down_glance_count": len(downs),
+        "reading_sweep_intervals": len(reads),
+        "max_faces": max_faces,
+        "multi_face_intervals": [
+            {"start_ms": i.start_ms, "end_ms": i.end_ms, "max_faces": i.max_faces}
+            for i in faces
+        ],
+    }
+
+    # --- Transparent 3-tier band (spec §16.5) ---
+    if unscorable_pct > max_unscorable_pct:
+        band = "insufficient_data"
+    elif (off_pct >= band_high_off_screen_pct or max_faces >= 2
+          or len(downs) >= band_high_down_glances):
+        band = "high"
+    elif off_pct >= band_medium_off_screen_pct or len(reads) >= 1 or len(downs) >= 3:
+        band = "medium"
+    else:
+        band = "low"
+
+    return AnalysisResult(
+        risk_band=band,
+        detector_summary=summary,
+        gaze_heatmap=_build_heatmap(obs, base, thresholds),
+        flagged_intervals=flagged,
+        gaze_signal_quality=_signal_quality(unscorable_pct),
+        unscorable_pct=unscorable_pct,
+    )
