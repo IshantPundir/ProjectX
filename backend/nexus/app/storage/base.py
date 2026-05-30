@@ -43,3 +43,7 @@ class ObjectStorage(Protocol):
     async def head(self, key: str) -> ObjectMeta | None:
         """Return object metadata, or None if the object does not exist."""
         ...
+
+    async def download_to_path(self, key: str, dest_path: str) -> None:
+        """Download the object to a local filesystem path (overwrites)."""
+        ...

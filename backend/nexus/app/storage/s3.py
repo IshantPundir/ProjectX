@@ -81,3 +81,7 @@ class S3CompatibleStorage:
             size_bytes=int(resp.get("ContentLength", 0)),
             content_type=resp.get("ContentType"),
         )
+
+    async def download_to_path(self, key: str, dest_path: str) -> None:
+        client = self._client()
+        await asyncio.to_thread(client.download_file, self._bucket, key, dest_path)
