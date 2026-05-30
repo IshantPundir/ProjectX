@@ -31,11 +31,13 @@ export function makeReport(overrides: Partial<ReportRead> = {}): ReportRead {
         status_badge: 'passed', status_tone: 'ok',
         question_text: 'How many years of experience do you have?',
         candidate_quote: 'Around six years.', our_read: 'Comfortably clears the four-year minimum.',
+        asked_at_ms: null, thumbnail_url: null,
       },
       {
         seq: 2, question_id: 'q2', title: 'API rate limits', status_badge: 'partial', status_tone: 'caution',
         question_text: 'How would you handle API rate limits?',
         candidate_quote: 'Track the call count and handle errors.', our_read: 'Right concerns, thin on strategy.',
+        asked_at_ms: null, thumbnail_url: null,
       },
     ],
     methodology: {

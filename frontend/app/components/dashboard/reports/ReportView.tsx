@@ -45,7 +45,7 @@ export function ReportView({
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.85fr_1fr]">
         <div className="space-y-4">
           {[
-            <SessionPlayback key="p" sessionId={report.session_id} seekApiRef={seekApiRef} />,
+            <SessionPlayback key="p" report={report} candidateName={candidateName} subtitle={title} />,
             <WhyContrast key="w" decision={report.decision} />,
             <QuickSummary key="s" text={report.quick_summary} />,
             <StrengthsConcerns key="sc" strengths={report.strengths} concerns={report.concerns} />,

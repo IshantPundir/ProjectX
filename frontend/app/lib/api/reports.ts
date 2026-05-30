@@ -32,6 +32,10 @@ export interface QuestionOut {
   question_text: string
   candidate_quote: string
   our_read: string
+  /** ms since session start; null for legacy sessions (engine tagged it). */
+  asked_at_ms: number | null
+  /** Presigned R2 GET for the question's video frame; null until generated. */
+  thumbnail_url: string | null
 }
 export interface MethodologyOut { note: string; charity_flags: string[] }
 export interface SignalAssessmentOut {
@@ -149,6 +153,8 @@ export interface ProctoringFlaggedInterval {
   end_ms: number
   kind: string
   confidence: number
+  /** Presigned R2 GET for the flag's video frame; present only for top flags. */
+  thumbnail_url?: string | null
 }
 
 export interface ProctoringDetectorSummary {
