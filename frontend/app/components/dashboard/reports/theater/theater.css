@@ -1,0 +1,41 @@
+/* components/dashboard/reports/theater/theater.css
+   Light, calm frosted-glass styling for the Review Theater. Tokens from app/theme.css. */
+
+/* Light frosted backdrop when the theater dialog is open (scoped via :has). */
+.px-dialog-backdrop:has(.theater-shell) {
+  background: rgba(231, 238, 242, 0.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.theater-shell {
+  width: min(1160px, 95vw);
+  height: min(760px, 92vh);
+  max-width: 95vw;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: linear-gradient(160deg, #f3f8fa, #e9f1f4);
+  border-radius: 18px;
+}
+
+.theater-glass {
+  background: rgba(255, 255, 255, 0.66);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  box-shadow: 0 8px 30px rgba(20, 40, 60, 0.12);
+}
+
+.theater-card { cursor: pointer; transition: transform 0.15s ease, box-shadow 0.15s ease; }
+.theater-card:hover { transform: translateY(-2px); }
+.theater-card[data-active='true'] {
+  outline: 2px solid var(--px-caution);
+  outline-offset: 1px;
+}
+
+.theater-node { transition: width 0.12s ease, height 0.12s ease; }
+.theater-node[data-active='true'] { box-shadow: 0 0 0 4px rgba(189, 138, 22, 0.2); }
+
+.theater-strip { scrollbar-width: thin; }
