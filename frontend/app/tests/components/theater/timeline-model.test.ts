@@ -109,8 +109,10 @@ describe('gamma', () => {
   it('keeps 0 and 1 fixed and brightens mid values', () => {
     expect(gamma(0)).toBe(0)
     expect(gamma(1)).toBe(1)
-    // gamma < 1 raises small inputs (0.25 ** 0.45 ≈ 0.53)
-    expect(gamma(0.25)).toBeGreaterThan(0.25)
+    expect(gamma(-1)).toBe(0)
+    expect(gamma(2)).toBe(1)
+    // gamma < 1 raises small inputs (0.25 ** 0.45 ≈ 0.531)
+    expect(gamma(0.25)).toBeCloseTo(0.531, 1)
   })
 })
 
