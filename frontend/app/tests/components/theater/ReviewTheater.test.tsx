@@ -61,4 +61,14 @@ describe('ReviewTheater', () => {
     render(<ReviewTheater open={false} report={report} candidateName="A" subtitle="" onClose={() => {}} />)
     expect(screen.queryByLabelText(/Interview session recording/i)).not.toBeInTheDocument()
   })
+
+  it('pre-selects the flag when opened with initialFlagStartMs', async () => {
+    render(
+      <ReviewTheater open report={report} candidateName="Aarav" subtitle=""
+        initialFlagStartMs={16200} onClose={() => {}} />,
+    )
+    // The "this moment" panel switches to the flag detail (kind label) + confidence.
+    expect(await screen.findByText(/Looked off-screen/i)).toBeInTheDocument()
+    expect(screen.getByText(/65% confidence/i)).toBeInTheDocument()
+  })
 })

@@ -1,13 +1,10 @@
 'use client'
 
-import { useState } from 'react'
-
 import type { ReportRead } from '@/lib/api/reports'
 import { verdictMeta, TONE_BG, TONE_INK } from './report-format'
-import { ReviewTheater } from './theater/ReviewTheater'
 
-// Re-exported for back-compat: the pure helper + seek-api type now live in the theater model.
-// `PlaybackSeekApi` is still consumed by ReportView (its ProctoringIntegrityPanel seek ref).
+// Re-exported for back-compat: the pure helper + seek-api type live in the theater model.
+// `PlaybackSeekApi` is consumed by the theater (TheaterStage / useTheaterState).
 export { activeSegmentIndex } from './theater/timeline-model'
 export interface PlaybackSeekApi {
   seekToMs: (ms: number) => void
@@ -16,27 +13,23 @@ export interface PlaybackSeekApi {
 const CARD = 'rounded-xl border bg-white p-3.5'
 
 /**
- * Report-page session playback ENTRY: a poster with a Play button. Clicking it
- * opens the immersive Review Theater (glass popup + scannable session timeline).
- * The theater owns its own video + seek.
+ * Report-page playback ENTRY: a poster with a Play button. Clicking it calls
+ * `onOpen` so the parent (ReportView) opens the Review Theater. The theater is
+ * owned by ReportView so the proctoring panel can also open it at a flag.
  */
 export function SessionPlayback({
   report,
-  candidateName,
-  subtitle,
+  onOpen,
 }: {
   report: ReportRead
-  candidateName: string
-  subtitle: string
+  onOpen: () => void
 }) {
-  const [open, setOpen] = useState(false)
   const v = verdictMeta(report.verdict)
-
   return (
     <div className={CARD} style={{ borderColor: 'var(--px-hairline)' }}>
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={onOpen}
         aria-label="Play session recording — open review theater"
         className="relative flex w-full items-center justify-center rounded-lg"
         style={{
@@ -63,15 +56,6 @@ export function SessionPlayback({
         </span>
       </button>
       <VerbalContentOnlyBadge />
-      {open && (
-        <ReviewTheater
-          open={open}
-          report={report}
-          candidateName={candidateName}
-          subtitle={subtitle}
-          onClose={() => setOpen(false)}
-        />
-      )}
     </div>
   )
 }

@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 
 import { Dialog, DialogContent } from '@/components/px'
 import type { ReportRead } from '@/lib/api/reports'
@@ -22,12 +22,14 @@ export function ReviewTheater({
   report,
   candidateName,
   subtitle,
+  initialFlagStartMs = null,
   onClose,
 }: {
   open: boolean
   report: ReportRead
   candidateName: string
   subtitle: string
+  initialFlagStartMs?: number | null
   onClose: () => void
 }) {
   const sessionId = report.session_id ?? ''
@@ -52,6 +54,19 @@ export function ReviewTheater({
   )
 
   const st = useTheaterState({ markers, questions: report.questions, durationMs })
+
+  // When opened from a proctoring "jump to" row, pre-select that flag (which
+  // also seeks the video) once the flags have loaded. Runs once per open.
+  const { selectFlag } = st
+  const appliedFlagRef = useRef(false)
+  useEffect(() => {
+    if (appliedFlagRef.current || initialFlagStartMs == null) return
+    const f = flags.find((x) => x.startMs === initialFlagStartMs)
+    if (f) {
+      appliedFlagRef.current = true
+      selectFlag(f)
+    }
+  }, [initialFlagStartMs, flags, selectFlag])
 
   const integrityCaption = useMemo(() => {
     const s = proc && proc.status === 'ready' ? proc.detector_summary : null
