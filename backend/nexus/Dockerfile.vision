@@ -37,8 +37,21 @@ RUN groupadd --system --gid 1001 nexus && \
 COPY --from=deps /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
 COPY --from=deps /usr/local/bin /usr/local/bin
 
+# Pre-download the uniface RetinaFace model at BUILD time into a nexus-owned dir
+# OUTSIDE /app (which is bind-mounted in dev compose and would hide a baked /app
+# path). Mirrors the main Dockerfile's "pre-download models at build time"
+# pattern, and fixes two runtime problems the prior root-owned named volume had:
+#   (a) a network round-trip on first analysis, and
+#   (b) PermissionError when the non-root `nexus` user tried to write the cache.
+ENV UNIFACE_CACHE_DIR=/opt/uniface-cache
+RUN mkdir -p /opt/uniface-cache \
+    && python -c "from uniface.detection import RetinaFace; RetinaFace()" \
+    && chown -R nexus:nexus /opt/uniface-cache
+
 COPY . .
 
 USER nexus
 
-CMD ["dramatiq", "app.worker", "--processes", "1", "--threads", "2", "-Q", "vision"]
+# Dedicated entrypoint — registers ONLY the vision actor so the lean
+# nexus-worker never consumes the "vision" queue. See app/vision_worker.py.
+CMD ["dramatiq", "app.vision_worker", "--processes", "1", "--threads", "2", "-Q", "vision"]

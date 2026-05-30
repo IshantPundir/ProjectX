@@ -126,9 +126,10 @@ services:
       # NON-COMMERCIAL Gaze360 ONNX weights (dev/POC only — swap before GA).
       # Mounted read-only from ./models/ on the host (see Step 5 download command).
       - VISION_GAZE_WEIGHTS_PATH=/weights/resnet34_gaze.onnx
-      # uniface auto-downloads its RetinaFace ONNX model here on first run.
-      # Persisted via the uniface-cache named volume so restarts don't re-download.
-      - UNIFACE_CACHE_DIR=/uniface-cache
+      # UNIFACE_CACHE_DIR is set in Dockerfile.vision (/opt/uniface-cache, a
+      # nexus-owned dir with the RetinaFace model baked in at build time). No
+      # named volume / env override here — that previously caused a root-owned
+      # mount the non-root worker could not write to.
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -140,8 +141,7 @@ services:
       #   mkdir -p models && curl -L -o models/resnet34_gaze.onnx \
       #     https://github.com/yakhyo/gaze-estimation/releases/download/weights/resnet34_gaze.onnx
       - ./models:/weights:ro
-      - uniface-cache:/uniface-cache
-    command: dramatiq app.worker --processes 1 --threads 2 -Q vision
+    command: dramatiq app.vision_worker --processes 1 --threads 2 -Q vision
 
   redis:
     image: redis:7-alpine
@@ -160,4 +160,3 @@ services:
 volumes:
   redisdata:
   hf-cache:
-  uniface-cache:

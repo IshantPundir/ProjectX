@@ -67,8 +67,14 @@ from app.modules.ats import actors as _ats_actors  # noqa: F401, E402
 # Phase 3D reporting — post-session score_session_report actor.
 from app.modules.reporting import actors as _reporting_actors  # noqa: F401, E402
 
-# Phase 3D vision — post-session proctoring analysis actor (vision queue).
-from app.modules.vision import actors as _vision_actors  # noqa: F401, E402
+# NOTE: the vision proctoring actor (queue "vision") is intentionally NOT
+# imported here. This entrypoint runs in the LEAN nexus image, which has no
+# onnxruntime/uniface — importing+registering the actor would make this worker
+# (which listens on ALL queues) consume "vision" messages and crash at runtime.
+# The vision actor is registered only in `app/vision_worker.py`, run by the
+# dedicated `nexus-vision-worker` service from the heavier Dockerfile.vision.
+# (The API process registers it on demand via a lazy import in
+# session/recording.py purely to call `.send()`.)
 
 # Flush OTel batched spans on worker exit.
 atexit.register(_otel_provider.shutdown)

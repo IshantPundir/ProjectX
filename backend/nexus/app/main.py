@@ -227,20 +227,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # Phase 4 of the modular-monolith refactor split app/models.py per
     # module. Every model module is imported here so configure() resolves
     # every string FK at boot, not at first request.
-    import app.modules.auth.models  # noqa: F401
-    import app.modules.audit.models  # noqa: F401
-    import app.modules.candidates.models  # noqa: F401
-    import app.modules.jd.models  # noqa: F401
-    import app.modules.org_units.models  # noqa: F401
-    import app.modules.pipelines.models  # noqa: F401
-    import app.modules.question_bank.models  # noqa: F401
-    import app.modules.roles.models  # noqa: F401
-    import app.modules.session.models  # noqa: F401
-    import app.modules.tenant_settings.models  # noqa: F401
-    import app.modules.reporting.models  # noqa: F401
-
-    from app.database import Base
-    Base.registry.configure()
+    # Single source of truth for the full model set — shared with the
+    # standalone worker entrypoints (e.g. app/vision_worker.py).
+    from app.model_registry import configure_all_models
+    configure_all_models()
 
     # OpenTelemetry bootstrap. Both exporters are off by default; setting
     # OTEL_DEV_CONSOLE_EXPORTER=true or OTEL_EXPORTER_OTLP_ENDPOINT=<url>
