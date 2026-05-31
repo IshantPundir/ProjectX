@@ -87,14 +87,14 @@ export function IntegrityLane({
     <div className="mt-2 space-y-1.5">
       <Lane
         label="Down-glances"
-        color="var(--px-caution)"
+        color="var(--px-caution-fill)"
         buckets={downBuckets}
         flags={downFlags}
         onSelectFlag={onSelectFlag}
       />
       <Lane
         label="Off-screen"
-        color="var(--px-danger)"
+        color="var(--px-danger-fill)"
         buckets={offBuckets}
         flags={offFlags}
         onSelectFlag={onSelectFlag}

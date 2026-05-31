@@ -1,14 +1,19 @@
 /* components/dashboard/reports/theater/theater.css
-   Dark, immersive frosted-glass styling for the Review Theater.
-   Foreground tokens are overridden scoped to .theater-root so every
-   var(--px-fg*) reference flips light-on-dark automatically. Tone tokens
-   (--px-ok/caution/danger) are intentionally left vivid. */
+   True light glassmorphism for the Review Theater: translucent white frosted
+   panels (real backdrop blur + saturation) floating over the full-bleed video.
+   The theater uses the app's DEFAULT light tokens (dark-on-light), so no token
+   overrides are needed here — text stays legible on the frosted white glass.
 
-/* Dimmed, blurred page behind the near-full overlay. */
+   IMPORTANT: never put `transform` (or filter/perspective/will-change) on an
+   ancestor that wraps a `.theater-glass` panel — it resets the backdrop root in
+   Chromium and the blur silently degrades to plain transparency. The slots
+   below deliberately avoid transform for this reason. */
+
+/* Soft, light, blurred page behind the near-full overlay. */
 .px-dialog-backdrop:has(.theater-shell) {
-  background: rgba(8, 14, 20, 0.62);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: rgba(20, 32, 42, 0.34);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
 }
 
 .theater-shell {
@@ -19,42 +24,30 @@
   padding: 0;
   overflow: hidden;
   border-radius: 22px;
-  background: #000;
-  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.6);
+  background: #0a0f14;
+  box-shadow: 0 30px 90px rgba(15, 30, 45, 0.4);
 }
 
-/* The single positioned root that holds the video + all overlays. */
+/* The single positioned root that holds the video + all overlays.
+   Background only shows in the loading / "unavailable" state (the video is
+   object-cover and fills it otherwise). Default light tokens apply — no
+   overrides — so every var(--px-fg*)/tone token renders dark-on-light. */
 .theater-root {
   position: relative;
   height: 100%;
   width: 100%;
   overflow: hidden;
   border-radius: inherit;
-  background: #000;
-
-  /* light-on-dark foreground tokens, scoped to the theater only */
-  --px-fg: #eef4f8;
-  --px-fg-3: rgba(224, 235, 242, 0.74);
-  --px-fg-4: rgba(224, 235, 242, 0.5);
-  --px-hairline: rgba(255, 255, 255, 0.16);
-
-  /* Tone INK tokens are dark-on-light by design (e.g. --px-danger #8A2733);
-     on dark glass they read as near-black. Remap each to its vivid -fill
-     variant so verdict/risk chips, why-positive/negative titles, and filmstrip
-     status labels stay legible. TONE_INK/TONE_BG consumers resolve through these. */
-  --px-ok: var(--px-ok-fill);
-  --px-caution: var(--px-caution-fill);
-  --px-danger: var(--px-danger-fill);
-  --px-human: var(--px-human-fill);
+  background: linear-gradient(160deg, #eef4f8, #dde8ee);
 }
 
-/* Dark frosted panel (was light in the old theater). */
+/* Light frosted glass — the core glassmorphism surface. */
 .theater-glass {
-  background: rgba(16, 23, 30, 0.55);
-  backdrop-filter: blur(18px) saturate(120%);
-  -webkit-backdrop-filter: blur(18px) saturate(120%);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+  background: rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow: 0 10px 36px rgba(15, 40, 60, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.6);
 }
 
 /* --- overlay slots --- */
@@ -65,14 +58,25 @@
   right: 14px;
   z-index: 30;
 }
+/* Vertically centered on the right, WITHOUT transform (see file header).
+   The slot spans a tall band and centers its single child via flex; it is
+   click-through (pointer-events:none) so the empty area doesn't block the
+   video, while the panel itself re-enables pointer events. */
 .theater-moment-slot {
   position: absolute;
-  top: 50%;
+  top: 84px;
+  bottom: 210px;
   right: 16px;
-  transform: translateY(-50%);
   width: 300px;
-  max-height: 56%;
-  z-index: 30;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  pointer-events: none;
+}
+.theater-moment-slot > * {
+  pointer-events: auto;
+  max-height: 100%;
 }
 .theater-bottom {
   position: absolute;
@@ -85,36 +89,38 @@
   gap: 8px;
 }
 
-/* --- video scrims (legibility over any frame) --- */
+/* --- video scrims: subtle, just enough to seat the panels + define edges
+   without muddying the light/airy look. --- */
 .theater-scrim-top {
   position: absolute;
   inset: 0 0 auto 0;
-  height: 150px;
+  height: 120px;
   z-index: 10;
   pointer-events: none;
-  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0));
+  background: linear-gradient(to bottom, rgba(10, 20, 30, 0.16), rgba(10, 20, 30, 0));
 }
 .theater-scrim-bottom {
   position: absolute;
   inset: auto 0 0 0;
-  height: 320px;
+  height: 300px;
   z-index: 10;
   pointer-events: none;
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0));
+  background: linear-gradient(to top, rgba(10, 20, 30, 0.24), rgba(10, 20, 30, 0));
 }
 
-/* --- center play overlay --- */
+/* --- center play overlay (light frosted, dark icon) --- */
 .theater-centerplay {
-  color: #fff;
-  background: rgba(20, 28, 36, 0.5);
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  color: var(--px-fg);
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(14px) saturate(180%);
+  -webkit-backdrop-filter: blur(14px) saturate(180%);
+  box-shadow: 0 8px 28px rgba(15, 40, 60, 0.25);
   transition: transform 0.15s ease, background 0.15s ease;
 }
 .theater-centerplay:hover {
   transform: translate(-50%, -50%) scale(1.06);
-  background: rgba(30, 40, 50, 0.62);
+  background: rgba(255, 255, 255, 0.72);
 }
 
 /* --- control bar --- */
@@ -126,7 +132,7 @@
   pointer-events: none;
 }
 .theater-playbtn {
-  color: #0c1116;
+  color: #fff;
   background: var(--px-accent);
   transition: transform 0.12s ease;
 }
@@ -140,7 +146,7 @@
 }
 .theater-ctrlbtn:hover {
   color: var(--px-fg);
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(20, 40, 60, 0.07);
 }
 
 /* scrubber: a styled track with buffered + played fills, a transparent
@@ -158,7 +164,7 @@
   height: 4px;
   transform: translateY(-50%);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.18);
+  background: rgba(20, 40, 60, 0.16);
   overflow: hidden;
 }
 .theater-scrub-buf {
@@ -166,7 +172,7 @@
   left: 0;
   top: 0;
   bottom: 0;
-  background: rgba(255, 255, 255, 0.28);
+  background: rgba(20, 40, 60, 0.24);
 }
 .theater-scrub-fill {
   position: absolute;
@@ -192,12 +198,12 @@
   width: 12px;
   border-radius: 50%;
   background: #fff;
-  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(20, 40, 60, 0.2);
 }
 .theater-scrub-input::-moz-range-thumb {
   height: 12px;
   width: 12px;
-  border: none;
+  border: 1px solid rgba(20, 40, 60, 0.2);
   border-radius: 50%;
   background: #fff;
 }
@@ -207,7 +213,7 @@
   -webkit-appearance: none;
   appearance: none;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.22);
+  background: rgba(20, 40, 60, 0.16);
   cursor: pointer;
 }
 .theater-vol::-webkit-slider-thumb {
@@ -217,11 +223,12 @@
   width: 11px;
   border-radius: 50%;
   background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(20, 40, 60, 0.2);
 }
 .theater-vol::-moz-range-thumb {
   height: 11px;
   width: 11px;
-  border: none;
+  border: 1px solid rgba(20, 40, 60, 0.2);
   border-radius: 50%;
   background: #fff;
 }
@@ -239,7 +246,7 @@
   outline-offset: 1px;
 }
 .theater-card[data-seekable='false'] {
-  opacity: 0.62;
+  opacity: 0.6;
   cursor: default;
 }
 .theater-card[data-seekable='false']:hover {
@@ -254,7 +261,7 @@
   transition: width 0.12s ease, height 0.12s ease;
 }
 .theater-node[data-active='true'] {
-  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.22);
+  box-shadow: 0 0 0 4px rgba(184, 101, 30, 0.22);
 }
 
 /* --- integrity flag ticks + hover thumbnail --- */
@@ -278,8 +285,8 @@
   border-radius: 8px;
   overflow: hidden;
   z-index: 40;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 10px 28px rgba(15, 30, 45, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.8);
 }
 .theater-flagtick:hover .theater-flagtip {
   display: block;
