@@ -11,10 +11,15 @@
    silently degrades to plain transparency. The backdrop below therefore dims
    WITHOUT its own backdrop-filter, and the slots avoid transform. */
 
-/* Dim the page behind the overlay with opacity only — NO backdrop-filter here,
-   or it would cancel the panels' blur (nested-backdrop-filter bug). */
+/* Dim the page behind the overlay with opacity only. The base .px-dialog-backdrop
+   rule sets `backdrop-filter: blur(4px)` — we MUST force it off here, because a
+   backdrop-filter on this ancestor makes Chromium drop the backdrop-filter on
+   every descendant .theater-glass panel (the nested-backdrop-filter bug). That
+   single inherited line is what was killing the glass blur. */
 .px-dialog-backdrop:has(.theater-shell) {
   background: rgba(12, 20, 28, 0.55);
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
 /* Centred WITHOUT transform. The shared .px-dialog-content centres via
@@ -40,6 +45,15 @@
   top: 0;
   left: 0;
   transform: none;
+  /* The base rule animates `px-dialog-scale-in` which applies a transform during
+     the open; a transform on this ancestor also breaks descendant backdrop-filter.
+     Use a transform-free fade instead. */
+  animation: theater-fade-in 160ms var(--px-ease);
+}
+
+@keyframes theater-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 /* The single positioned root that holds the video + all overlays.
