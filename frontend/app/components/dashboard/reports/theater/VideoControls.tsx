@@ -3,17 +3,37 @@
 
 import { Maximize, Pause, Play, Volume2, VolumeX } from 'lucide-react'
 
+import { formatTimestamp } from '../report-format'
 import { clockFromSec, type VideoController } from './useVideoController'
+import type { FlagMarker, TimelineMarker } from './timeline-model'
 import './theater.css'
+
+const FLAG_KIND_LABEL: Record<string, string> = {
+  off_screen_sustained: 'Looked off-screen',
+  down_glance: 'Glanced down',
+  reading_sweep: 'Reading pattern',
+  multiple_faces: 'Multiple faces',
+}
+const DOWN_KIND = 'down_glance'
 
 export function VideoControls({
   controller,
   visible,
   onToggleFullscreen,
+  markers = [],
+  flags = [],
+  activeQuestionId = null,
+  onSeekMs,
+  onSelectFlag,
 }: {
   controller: VideoController
   visible: boolean
   onToggleFullscreen: () => void
+  markers?: TimelineMarker[]
+  flags?: FlagMarker[]
+  activeQuestionId?: string | null
+  onSeekMs?: (ms: number) => void
+  onSelectFlag?: (flag: FlagMarker) => void
 }) {
   const c = controller
   const pct = c.durationSec > 0 ? (c.currentSec / c.durationSec) * 100 : 0
@@ -42,6 +62,42 @@ export function VideoControls({
           <div className="theater-scrub-buf" style={{ width: `${buf}%` }} />
           <div className="theater-scrub-fill" style={{ width: `${pct}%` }} />
         </div>
+        {/* proctoring flag ticks merged onto the scrubber (below the input so the
+            range still owns keyboard/drag, but each tick is independently clickable) */}
+        {flags.map((f, i) => (
+          <button
+            key={`flag-${i}`}
+            type="button"
+            onClick={() => onSelectFlag?.(f)}
+            aria-label={`${FLAG_KIND_LABEL[f.kind] ?? f.kind} at ${formatTimestamp(f.startMs)}`}
+            className="theater-scrub-flag"
+            style={{
+              left: `${f.positionPct}%`,
+              background: f.kind === DOWN_KIND ? 'var(--px-caution-fill)' : 'var(--px-danger-fill)',
+            }}
+          >
+            {f.thumbnailUrl && (
+              <span className="theater-flagtip">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={f.thumbnailUrl} alt="" className="block w-full" />
+              </span>
+            )}
+          </button>
+        ))}
+        {/* question markers as small nodes on the same track */}
+        {markers.map((m) =>
+          m.positionPct == null || m.askedAtMs == null ? null : (
+            <button
+              key={`q-${m.questionId}`}
+              type="button"
+              data-active={m.questionId === activeQuestionId ? 'true' : 'false'}
+              onClick={() => onSeekMs?.(m.askedAtMs as number)}
+              aria-label={`Q${m.seq} jump to ${formatTimestamp(m.askedAtMs)}`}
+              className="theater-scrub-node"
+              style={{ left: `${m.positionPct}%` }}
+            />
+          ),
+        )}
         <input
           type="range"
           min={0}

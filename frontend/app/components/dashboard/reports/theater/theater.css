@@ -203,6 +203,43 @@
   -webkit-appearance: none;
   appearance: none;
   cursor: pointer;
+  z-index: 1;
+}
+
+/* proctoring flag ticks merged onto the scrubber — above the range input so
+   they stay clickable/hoverable; thin enough not to block dragging elsewhere. */
+.theater-scrub-flag {
+  position: absolute;
+  top: 50%;
+  height: 14px;
+  width: 3px;
+  transform: translate(-50%, -50%);
+  border: none;
+  padding: 0;
+  border-radius: 1px;
+  cursor: pointer;
+  z-index: 2;
+}
+/* question markers — small accent dots on the same track */
+.theater-scrub-node {
+  position: absolute;
+  top: 50%;
+  height: 9px;
+  width: 9px;
+  transform: translate(-50%, -50%);
+  border: 2px solid #fff;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--px-accent);
+  cursor: pointer;
+  z-index: 3;
+  transition: transform 0.12s ease;
+}
+.theater-scrub-node:hover {
+  transform: translate(-50%, -50%) scale(1.25);
+}
+.theater-scrub-node[data-active='true'] {
+  box-shadow: 0 0 0 3px var(--px-accent-glow);
 }
 .theater-scrub-input::-webkit-slider-thumb {
   -webkit-appearance: none;

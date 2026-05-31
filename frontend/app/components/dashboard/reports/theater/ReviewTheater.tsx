@@ -7,23 +7,16 @@ import { Dialog, DialogContent } from '@/components/px'
 import type { ReportRead } from '@/lib/api/reports'
 import { useSessionProctoring } from '@/lib/hooks/use-session-proctoring'
 import { useSessionRecording } from '@/lib/hooks/use-session-recording'
-import { SessionTimeline } from './SessionTimeline'
+import { Filmstrip } from './Filmstrip'
 import { TheaterStage } from './TheaterStage'
 import { TheaterTopBar } from './TheaterTopBar'
 import { ThisMomentPanel } from './ThisMomentPanel'
 import { VideoControls } from './VideoControls'
-import {
-  buildFlagMarkers,
-  buildQuestionMarkers,
-  densityBucketsForKinds,
-} from './timeline-model'
+import { buildFlagMarkers, buildQuestionMarkers } from './timeline-model'
 import { useTheaterState } from './useTheaterState'
 import { useVideoController } from './useVideoController'
 import './theater.css'
 
-const DENSITY_BUCKETS = 48
-const DOWN_KINDS = ['down_glance']
-const OFF_KINDS = ['off_screen_sustained', 'reading_sweep', 'multiple_faces']
 const HIDE_AFTER_MS = 2500
 
 export function ReviewTheater({
@@ -69,21 +62,6 @@ export function ReviewTheater({
     () => buildFlagMarkers(flaggedRaw, durationMs, flaggedRaw.length),
     [flaggedRaw, durationMs],
   )
-  const downBuckets = useMemo(
-    () =>
-      flaggedRaw.length
-        ? densityBucketsForKinds(flaggedRaw, durationMs, DENSITY_BUCKETS, DOWN_KINDS)
-        : [],
-    [flaggedRaw, durationMs],
-  )
-  const offBuckets = useMemo(
-    () =>
-      flaggedRaw.length
-        ? densityBucketsForKinds(flaggedRaw, durationMs, DENSITY_BUCKETS, OFF_KINDS)
-        : [],
-    [flaggedRaw, durationMs],
-  )
-
   const st = useTheaterState({ markers, questions: report.questions, durationMs })
 
   // custom video transport (replaces native controls)
@@ -203,25 +181,36 @@ export function ReviewTheater({
           </div>
 
           <div className="theater-bottom">
+            {/* row 1: question thumbnail strip + a compact integrity caption */}
+            <div className="theater-glass rounded-2xl px-3 py-2">
+              {integrityCaption && (
+                <div
+                  className="mb-1.5 text-[10px] font-bold"
+                  style={{ color: 'var(--px-danger)' }}
+                >
+                  {integrityCaption}
+                </div>
+              )}
+              <Filmstrip
+                markers={markers}
+                activeQuestionId={st.activeId}
+                onSelect={st.selectQuestion}
+              />
+            </div>
+            {/* row 2: controls pinned at the very bottom, with proctoring flag
+                ticks + question nodes merged onto the scrubber */}
             {signedUrl && (
               <VideoControls
                 controller={ctrl}
                 visible={controlsVisible}
                 onToggleFullscreen={toggleFullscreen}
+                markers={markers}
+                flags={flags}
+                activeQuestionId={st.activeId}
+                onSeekMs={st.seekMs}
+                onSelectFlag={st.selectFlag}
               />
             )}
-            <SessionTimeline
-              markers={markers}
-              flags={flags}
-              downBuckets={downBuckets}
-              offBuckets={offBuckets}
-              integrityCaption={integrityCaption}
-              playheadPct={st.playheadPct}
-              activeQuestionId={st.activeId}
-              onSelectQuestion={st.selectQuestion}
-              onSeekMs={st.seekMs}
-              onSelectFlag={st.selectFlag}
-            />
           </div>
         </div>
       </DialogContent>
