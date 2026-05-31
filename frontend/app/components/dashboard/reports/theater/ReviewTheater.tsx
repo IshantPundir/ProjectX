@@ -45,7 +45,13 @@ export function ReviewTheater({
   const { data: rec } = useSessionRecording(open ? sessionId : '')
   const { data: proc } = useSessionProctoring(open ? sessionId : '')
 
-  const durationMs = (rec?.duration_seconds ?? 0) * 1000
+  const apiDurationMs = (rec?.duration_seconds ?? 0) * 1000
+  // Egress sometimes finishes without reporting a duration (recording_duration_seconds
+  // stays NULL even when status='ready'). Without a duration the timeline, flag
+  // positions and density buckets all collapse to zero width. Fall back to the
+  // <video> element's own metadata duration (set from the controller below).
+  const [videoDurationMs, setVideoDurationMs] = useState(0)
+  const durationMs = apiDurationMs || videoDurationMs
   const signedUrl = rec?.status === 'ready' ? rec.signed_url : null
   const offsetMs = rec?.offset_ms ?? 0
   const flaggedRaw = useMemo(
@@ -88,6 +94,12 @@ export function ReviewTheater({
   useEffect(() => {
     ctrlRef.current = ctrl
   })
+
+  // Adopt the player's intrinsic duration when the API didn't provide one, so the
+  // timeline/flags/buckets get a real span to position against.
+  useEffect(() => {
+    if (ctrl.durationSec > 0) setVideoDurationMs(ctrl.durationSec * 1000)
+  }, [ctrl.durationSec])
 
   // fullscreen targets the theater root
   const shellRef = useRef<HTMLDivElement>(null)

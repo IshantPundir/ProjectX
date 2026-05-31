@@ -16,7 +16,13 @@
   -webkit-backdrop-filter: blur(6px);
 }
 
-.theater-shell {
+/* Centred WITHOUT transform. The shared .px-dialog-content centres via
+   `transform: translate(-50%,-50%)`, but a transform on an ancestor of a
+   backdrop-filter element disables the blur in Chromium — which silently flattens
+   every .theater-glass panel to plain transparency. We override the transform
+   centring with inset + margin:auto (double class for specificity over the base
+   rule) so the glass blur actually renders. */
+.px-dialog-content.theater-shell {
   width: 96vw;
   height: 94vh;
   max-width: 96vw;
@@ -26,6 +32,13 @@
   border-radius: 22px;
   background: #0a0f14;
   box-shadow: 0 30px 90px rgba(15, 30, 45, 0.4);
+
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  top: 0;
+  left: 0;
+  transform: none;
 }
 
 /* The single positioned root that holds the video + all overlays.
