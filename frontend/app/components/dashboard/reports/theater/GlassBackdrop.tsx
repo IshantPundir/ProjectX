@@ -15,6 +15,11 @@ import { createContext, useContext, useEffect, useRef, type RefObject } from 're
  * Drop a <GlassBackdrop /> as the first child of any `.theater-glass` panel. It
  * reads the video src + main-video/root refs from <GlassProvider> (set up once in
  * ReviewTheater), so panels need no extra props.
+ *
+ * Perf: alignment is EVENT-DRIVEN (mount + ResizeObserver on the stage), NOT a
+ * per-frame rAF — a per-frame getBoundingClientRect loop per panel thrashed
+ * layout every frame. Time-sync is driven off the main video's play/pause/seek
+ * events plus a low-frequency drift check.
  */
 
 interface GlassCtx {
@@ -47,14 +52,55 @@ export function GlassBackdrop() {
   const mainVideoRef = ctx?.mainVideoRef
   const rootRef = ctx?.rootRef
 
-  // Mirror play/pause/seek of the main video onto the muted clone.
+  // Position the blurred clone to overlap the stage 1:1. Event-driven only.
+  useEffect(() => {
+    if (!src || !rootRef) return
+    const align = () => {
+      const clone = cloneRef.current
+      const host = hostRef.current
+      const root = rootRef.current
+      if (!clone || !host || !root) return
+      const hostRect = host.getBoundingClientRect()
+      const rootRect = root.getBoundingClientRect()
+      if (!rootRect.width || !rootRect.height) return
+      clone.style.width = `${rootRect.width}px`
+      clone.style.height = `${rootRect.height}px`
+      clone.style.left = `${rootRect.left - hostRect.left}px`
+      clone.style.top = `${rootRect.top - hostRect.top}px`
+    }
+    align()
+    const ro = new ResizeObserver(align)
+    if (rootRef.current) ro.observe(rootRef.current)
+    if (hostRef.current) ro.observe(hostRef.current)
+    window.addEventListener('resize', align)
+    // a couple of delayed re-aligns to catch the dialog's open layout settling
+    const t1 = window.setTimeout(align, 60)
+    const t2 = window.setTimeout(align, 250)
+    return () => {
+      ro.disconnect()
+      window.removeEventListener('resize', align)
+      window.clearTimeout(t1)
+      window.clearTimeout(t2)
+    }
+  }, [src, rootRef])
+
+  // Mirror play/pause/seek of the main video onto the muted clone, plus a slow
+  // drift correction. No rAF.
   useEffect(() => {
     if (!src || !mainVideoRef) return
     const clone = cloneRef.current
     if (!clone) return
-    const main = mainVideoRef.current
     clone.muted = true
-    const onPlay = () => void clone.play?.().catch(() => {})
+    const main = mainVideoRef.current
+    const syncTime = () => {
+      if (main && Math.abs(clone.currentTime - main.currentTime) > 0.3) {
+        clone.currentTime = main.currentTime
+      }
+    }
+    const onPlay = () => {
+      syncTime()
+      void clone.play?.().catch(() => {})
+    }
     const onPause = () => clone.pause?.()
     const onSeek = () => {
       if (main) clone.currentTime = main.currentTime
@@ -65,46 +111,18 @@ export function GlassBackdrop() {
       main.addEventListener('seeking', onSeek)
       if (!main.paused) onPlay()
     }
+    const drift = window.setInterval(() => {
+      if (main && !main.paused) syncTime()
+    }, 2000)
     return () => {
       if (main) {
         main.removeEventListener('play', onPlay)
         main.removeEventListener('pause', onPause)
         main.removeEventListener('seeking', onSeek)
       }
+      window.clearInterval(drift)
     }
   }, [src, mainVideoRef])
-
-  // Keep the clone aligned to the main video's rect (handles layout/resize) and
-  // correct any playback drift. One rAF loop, cheap reads only.
-  useEffect(() => {
-    if (!src || !mainVideoRef || !rootRef) return
-    let raf = 0
-    let frame = 0
-    const tick = () => {
-      const clone = cloneRef.current
-      const host = hostRef.current
-      const root = rootRef.current
-      const main = mainVideoRef.current
-      if (clone && host && root) {
-        const hostRect = host.getBoundingClientRect()
-        const rootRect = root.getBoundingClientRect()
-        if (rootRect.width && rootRect.height) {
-          clone.style.width = `${rootRect.width}px`
-          clone.style.height = `${rootRect.height}px`
-          clone.style.left = `${rootRect.left - hostRect.left}px`
-          clone.style.top = `${rootRect.top - hostRect.top}px`
-        }
-        // correct drift ~4×/s, not every frame (seeking a video is expensive)
-        if (main && frame % 15 === 0 && Math.abs(clone.currentTime - main.currentTime) > 0.4) {
-          clone.currentTime = main.currentTime
-        }
-      }
-      frame += 1
-      raf = requestAnimationFrame(tick)
-    }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
-  }, [src, mainVideoRef, rootRef])
 
   if (!src) return null
   return (

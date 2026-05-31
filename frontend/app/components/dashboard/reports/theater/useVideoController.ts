@@ -117,7 +117,9 @@ export function useVideoController(
         const v = videoRef.current
         if (!v) return
         v.currentTime = Math.max(0, (ms + offsetMs) / 1000)
-        void v.play?.()
+        // Catch the benign "play() interrupted by pause()" rejection that fires
+        // when a rapid re-seek/pause interrupts this play promise.
+        void v.play?.()?.catch(() => {})
       },
     }
     return () => {
@@ -128,7 +130,7 @@ export function useVideoController(
   const togglePlay = useCallback(() => {
     const v = videoRef.current
     if (!v) return
-    if (v.paused) void v.play?.()
+    if (v.paused) void v.play?.()?.catch(() => {})
     else v.pause?.()
   }, [videoRef])
 
