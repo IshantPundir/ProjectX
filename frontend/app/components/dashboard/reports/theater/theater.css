@@ -75,8 +75,8 @@
    video behind a panel is barely readable; saturate keeps it from going milky. */
 .theater-glass {
   background: rgba(255, 255, 255, 0.6);
-  backdrop-filter: blur(40px) saturate(180%);
-  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  backdrop-filter: blur(5px) saturate(180%);
+  -webkit-backdrop-filter: blur(5px) saturate(180%);
   border: 1px solid rgba(255, 255, 255, 0.75);
   box-shadow: 0 10px 36px rgba(15, 40, 60, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.65);
 }
@@ -144,8 +144,8 @@
   color: var(--px-fg);
   background: rgba(255, 255, 255, 0.55);
   border: 1px solid rgba(255, 255, 255, 0.8);
-  backdrop-filter: blur(14px) saturate(180%);
-  -webkit-backdrop-filter: blur(14px) saturate(180%);
+  backdrop-filter: blur(5px) saturate(180%);
+  -webkit-backdrop-filter: blur(5px) saturate(180%);
   box-shadow: 0 8px 28px rgba(15, 40, 60, 0.25);
   transition: transform 0.15s ease, background 0.15s ease;
 }
