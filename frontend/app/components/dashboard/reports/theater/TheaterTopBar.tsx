@@ -3,6 +3,7 @@
 import type { ReportRead, RiskBand } from '@/lib/api/reports'
 import { ScoreGauge } from '../ScoreGauge'
 import { TONE_BG, TONE_INK, tierTone, verdictMeta } from '../report-format'
+import { GlassBackdrop } from './GlassBackdrop'
 
 export function TheaterTopBar({
   report,
@@ -25,6 +26,7 @@ export function TheaterTopBar({
   ]
   return (
     <div className="theater-glass flex items-center gap-4 rounded-2xl px-4 py-2">
+      <GlassBackdrop />
       <div className="min-w-0">
         <div className="truncate text-[13.5px] font-bold" style={{ color: 'var(--px-fg)' }}>
           {candidateName || 'Candidate'}

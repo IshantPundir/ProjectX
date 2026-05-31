@@ -9,6 +9,7 @@ import type { PlaybackSeekApi } from '../SessionPlayback'
 import { useSessionProctoring } from '@/lib/hooks/use-session-proctoring'
 import { useSessionRecording } from '@/lib/hooks/use-session-recording'
 import { Filmstrip } from './Filmstrip'
+import { GlassBackdrop, GlassProvider } from './GlassBackdrop'
 import { TheaterStage } from './TheaterStage'
 import { TheaterTopBar } from './TheaterTopBar'
 import { ThisMomentPanel } from './ThisMomentPanel'
@@ -165,6 +166,7 @@ export function ReviewTheater({
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose() }}>
       <DialogContent showCloseButton={false} widthClass="" className="theater-shell">
+        <GlassProvider src={signedUrl} mainVideoRef={videoRef} rootRef={shellRef}>
         <div ref={shellRef} className="theater-root">
           <TheaterStage
             videoRef={videoRef}
@@ -189,7 +191,8 @@ export function ReviewTheater({
 
           <div className="theater-bottom">
             {/* row 1: question thumbnail strip + a compact integrity caption */}
-            <div className="theater-glass rounded-2xl px-3 py-2">
+            <div className="theater-glass relative rounded-2xl px-3 py-2">
+              <GlassBackdrop />
               {integrityCaption && (
                 <div
                   className="mb-1.5 text-[10px] font-bold"
@@ -220,6 +223,7 @@ export function ReviewTheater({
             )}
           </div>
         </div>
+        </GlassProvider>
       </DialogContent>
     </Dialog>
   )

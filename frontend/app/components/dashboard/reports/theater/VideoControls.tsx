@@ -4,6 +4,7 @@
 import { Maximize, Pause, Play, Volume2, VolumeX } from 'lucide-react'
 
 import { formatTimestamp } from '../report-format'
+import { GlassBackdrop } from './GlassBackdrop'
 import { clockFromSec, type VideoController } from './useVideoController'
 import type { FlagMarker, TimelineMarker } from './timeline-model'
 import './theater.css'
@@ -44,6 +45,7 @@ export function VideoControls({
       className="theater-controls theater-glass flex items-center gap-3 rounded-2xl px-4 py-2"
       data-visible={visible ? 'true' : 'false'}
     >
+      <GlassBackdrop />
       <button
         type="button"
         onClick={c.togglePlay}

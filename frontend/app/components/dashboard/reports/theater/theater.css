@@ -85,19 +85,45 @@
 
 /* Light frosted glass — the core glassmorphism surface.
 
-   NOTE on the blur: Chromium cannot reliably apply `backdrop-filter` over a
-   <video> element (the panel samples its backdrop before the video paints and
-   never re-invalidates — blur shows over the page edge but NOT over the video).
-   So legibility "video barely visible behind the panel" is carried by a HIGH
-   white opacity here; the backdrop-filter is kept for the edges/page where it
-   does work and as progressive enhancement. For literal live blur over the
-   video we'd need synced blurred <video> clones per panel (heavier). */
+   Real blur is provided by a <GlassBackdrop> child (a synced, filter:blur()'d
+   copy of the video) at z-index -1, because Chromium can't apply backdrop-filter
+   over a <video>. So this element's own background is mostly TRANSPARENT — the
+   frost tint lives on the backdrop's ::after — and it just supplies the border,
+   shadow, clip and stacking context. A faint white fallback keeps panels legible
+   if a backdrop isn't present (e.g. recording unavailable). */
 .theater-glass {
-  background: rgba(255, 255, 255, 0.86);
-  backdrop-filter: blur(5px) saturate(160%);
-  -webkit-backdrop-filter: blur(5px) saturate(160%);
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  background: rgba(255, 255, 255, 0.14);
   border: 1px solid rgba(255, 255, 255, 0.8);
   box-shadow: 0 10px 36px rgba(15, 40, 60, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+/* The blurred-video glass backdrop: sits behind panel content, clipped to the
+   panel by .theater-glass overflow:hidden + inherited radius. */
+.theater-glass-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.theater-glass-backdrop video {
+  position: absolute;
+  object-fit: cover;
+  /* the real frosted blur, applied to the video pixels (works, unlike
+     backdrop-filter over video). scale hides blur's transparent edge bleed. */
+  filter: blur(10px) saturate(150%);
+  transform: scale(1.12);
+}
+/* white frost tint ON TOP of the blurred video → the "barely visible" look */
+.theater-glass-backdrop::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.5);
 }
 
 /* --- overlay slots --- */

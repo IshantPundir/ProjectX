@@ -2,6 +2,7 @@
 
 import type { DecisionOut, QuestionOut } from '@/lib/api/reports'
 import { formatTimestamp, statusBadgeMeta, TONE_BG, TONE_INK } from '../report-format'
+import { GlassBackdrop } from './GlassBackdrop'
 import type { FlagMarker } from './timeline-model'
 
 const KIND_LABEL: Record<string, string> = {
@@ -27,6 +28,7 @@ export function ThisMomentPanel({
 }) {
   return (
     <div className="theater-glass flex max-h-full flex-col overflow-y-auto rounded-2xl p-4">
+      <GlassBackdrop />
       <div className="mb-2 flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wide" style={{ color: 'var(--px-fg-4)' }}>
         <span className="h-1.5 w-1.5 rounded-full" style={{ background: 'var(--px-accent)' }} />
         This moment
