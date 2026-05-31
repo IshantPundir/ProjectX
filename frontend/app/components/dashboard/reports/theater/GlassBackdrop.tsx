@@ -73,11 +73,12 @@ export function GlassProvider({
 export function GlassBackdrop() {
   const ctx = useContext(GlassContext)
   const ref = useRef<HTMLSpanElement>(null)
+  const register = ctx?.registerPanel
   useEffect(() => {
     const panel = ref.current?.parentElement as HTMLElement | null
-    if (!panel || !ctx) return
-    return ctx.registerPanel(panel)
-  }, [ctx])
+    if (!panel || !register) return
+    return register(panel)
+  }, [register])
   return <span ref={ref} aria-hidden="true" style={{ display: 'none' }} />
 }
 
