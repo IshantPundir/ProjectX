@@ -4,16 +4,17 @@
    The theater uses the app's DEFAULT light tokens (dark-on-light), so no token
    overrides are needed here — text stays legible on the frosted white glass.
 
-   IMPORTANT: never put `transform` (or filter/perspective/will-change) on an
-   ancestor that wraps a `.theater-glass` panel — it resets the backdrop root in
-   Chromium and the blur silently degrades to plain transparency. The slots
-   below deliberately avoid transform for this reason. */
+   IMPORTANT: never put `transform`/`filter`/`backdrop-filter`/`perspective`/
+   `will-change` on an ancestor that wraps a `.theater-glass` panel — Chromium
+   suppresses a descendant's backdrop-filter when an ancestor has one (nested
+   backdrop-filter bug) or resets the backdrop root on transform, so the blur
+   silently degrades to plain transparency. The backdrop below therefore dims
+   WITHOUT its own backdrop-filter, and the slots avoid transform. */
 
-/* Soft, light, blurred page behind the near-full overlay. */
+/* Dim the page behind the overlay with opacity only — NO backdrop-filter here,
+   or it would cancel the panels' blur (nested-backdrop-filter bug). */
 .px-dialog-backdrop:has(.theater-shell) {
-  background: rgba(20, 32, 42, 0.34);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  background: rgba(12, 20, 28, 0.55);
 }
 
 /* Centred WITHOUT transform. The shared .px-dialog-content centres via
@@ -54,13 +55,14 @@
   background: linear-gradient(160deg, #eef4f8, #dde8ee);
 }
 
-/* Light frosted glass — the core glassmorphism surface. */
+/* Light frosted glass — the core glassmorphism surface. Heavy blur so the
+   video behind a panel is barely readable; saturate keeps it from going milky. */
 .theater-glass {
-  background: rgba(255, 255, 255, 0.55);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.7);
-  box-shadow: 0 10px 36px rgba(15, 40, 60, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(40px) saturate(180%);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  box-shadow: 0 10px 36px rgba(15, 40, 60, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.65);
 }
 
 /* --- overlay slots --- */
