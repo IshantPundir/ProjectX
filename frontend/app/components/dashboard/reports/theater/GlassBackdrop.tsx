@@ -1,31 +1,38 @@
 // components/dashboard/reports/theater/GlassBackdrop.tsx
 'use client'
 
-import { createContext, useContext, useEffect, useRef, type RefObject } from 'react'
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type RefObject,
+} from 'react'
 
 /**
- * True glassmorphism over a <video>. Chromium does not reliably apply
- * `backdrop-filter` over a video element, so instead of blurring the backdrop we
- * render a SECOND, blurred copy of the same recording inside each glass panel and
- * `filter: blur()` it (which DOES work on video). The clone is sized + positioned
- * to line up 1:1 with the main full-bleed video, then clipped to the panel by the
- * panel's `overflow: hidden`, so each panel shows the correctly-aligned, blurred
- * slice of the video behind it — real frosted glass that tracks playback.
+ * True glassmorphism over a <video>, single-source.
  *
- * Drop a <GlassBackdrop /> as the first child of any `.theater-glass` panel. It
- * reads the video src + main-video/root refs from <GlassProvider> (set up once in
- * ReviewTheater), so panels need no extra props.
- *
- * Perf: alignment is EVENT-DRIVEN (mount + ResizeObserver on the stage), NOT a
- * per-frame rAF — a per-frame getBoundingClientRect loop per panel thrashed
- * layout every frame. Time-sync is driven off the main video's play/pause/seek
- * events plus a low-frequency drift check.
+ * Chromium can't apply `backdrop-filter` over a <video>, so we blur the video
+ * pixels directly with `filter: blur()` (which works). Rather than one blurred
+ * clone PER panel (4 video decodes), we render ONE <GlassLayer> — a single
+ * blurred, playback-synced copy of the recording covering the whole stage — and
+ * clip it (via clip-path) to the union of the panels' rounded rects. Each panel
+ * drops a <GlassBackdrop/> marker that registers its own element; the layer reads
+ * those rects to build the clip. Result: real frosted glass over the live video,
+ * one decode regardless of panel count, and per-panel rounding "for free".
  */
+
+const PANEL_RADIUS = 16 // matches rounded-2xl on the panels
 
 interface GlassCtx {
   src: string | null
   mainVideoRef: RefObject<HTMLVideoElement | null>
   rootRef: RefObject<HTMLElement | null>
+  panels: RefObject<Set<HTMLElement>>
+  registerPanel: (el: HTMLElement | null) => () => void
+  version: number
 }
 
 const GlassContext = createContext<GlassCtx | null>(null)
@@ -35,57 +42,136 @@ export function GlassProvider({
   mainVideoRef,
   rootRef,
   children,
-}: GlassCtx & { children: React.ReactNode }) {
+}: {
+  src: string | null
+  mainVideoRef: RefObject<HTMLVideoElement | null>
+  rootRef: RefObject<HTMLElement | null>
+  children: React.ReactNode
+}) {
+  const panels = useRef<Set<HTMLElement>>(new Set())
+  const [version, setVersion] = useState(0)
+  const registerPanel = useCallback((el: HTMLElement | null) => {
+    if (!el) return () => {}
+    panels.current.add(el)
+    setVersion((v) => v + 1)
+    return () => {
+      panels.current.delete(el)
+      setVersion((v) => v + 1)
+    }
+  }, [])
   return (
-    <GlassContext.Provider value={{ src, mainVideoRef, rootRef }}>
+    <GlassContext.Provider
+      value={{ src, mainVideoRef, rootRef, panels, registerPanel, version }}
+    >
       {children}
     </GlassContext.Provider>
   )
 }
 
+/** Marker dropped as the first child of a `.theater-glass` panel. Registers the
+ *  panel element with the layer; renders nothing visible. */
 export function GlassBackdrop() {
   const ctx = useContext(GlassContext)
-  const hostRef = useRef<HTMLDivElement>(null)
+  const ref = useRef<HTMLSpanElement>(null)
+  useEffect(() => {
+    const panel = ref.current?.parentElement as HTMLElement | null
+    if (!panel || !ctx) return
+    return ctx.registerPanel(panel)
+  }, [ctx])
+  return <span ref={ref} aria-hidden="true" style={{ display: 'none' }} />
+}
+
+function roundedRectSubpath(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  radius: number,
+): string {
+  const r = Math.max(0, Math.min(radius, w / 2, h / 2))
+  const x2 = x + w
+  const y2 = y + h
+  return (
+    `M${x + r},${y} H${x2 - r} A${r},${r} 0 0 1 ${x2},${y + r} ` +
+    `V${y2 - r} A${r},${r} 0 0 1 ${x2 - r},${y2} ` +
+    `H${x + r} A${r},${r} 0 0 1 ${x},${y2 - r} ` +
+    `V${y + r} A${r},${r} 0 0 1 ${x + r},${y} Z`
+  )
+}
+
+/** The single blurred-video layer. Rendered once inside `.theater-root`, after
+ *  the stage video/scrims and before the panels. */
+export function GlassLayer() {
+  const ctx = useContext(GlassContext)
+  const layerRef = useRef<HTMLDivElement>(null)
   const cloneRef = useRef<HTMLVideoElement>(null)
 
   const src = ctx?.src ?? null
   const mainVideoRef = ctx?.mainVideoRef
   const rootRef = ctx?.rootRef
+  const panels = ctx?.panels
+  const version = ctx?.version ?? 0
 
-  // Position the blurred clone to overlap the stage 1:1. Event-driven only.
+  // Build the clip-path from the panels' rects (event-driven, no rAF).
   useEffect(() => {
-    if (!src || !rootRef) return
-    const align = () => {
-      const clone = cloneRef.current
-      const host = hostRef.current
+    if (!src || !rootRef || !panels) return
+    const layer = layerRef.current
+    if (!layer) return
+
+    const recompute = () => {
       const root = rootRef.current
-      if (!clone || !host || !root) return
-      const hostRect = host.getBoundingClientRect()
+      if (!root) return
       const rootRect = root.getBoundingClientRect()
-      if (!rootRect.width || !rootRect.height) return
-      clone.style.width = `${rootRect.width}px`
-      clone.style.height = `${rootRect.height}px`
-      clone.style.left = `${rootRect.left - hostRect.left}px`
-      clone.style.top = `${rootRect.top - hostRect.top}px`
+      const subpaths: string[] = []
+      panels.current.forEach((p) => {
+        // skip hidden panels (e.g. auto-hidden controls) so no frosted rect lingers
+        if (parseFloat(getComputedStyle(p).opacity || '1') < 0.05) return
+        const r = p.getBoundingClientRect()
+        if (!r.width || !r.height) return
+        subpaths.push(
+          roundedRectSubpath(
+            r.left - rootRect.left,
+            r.top - rootRect.top,
+            r.width,
+            r.height,
+            PANEL_RADIUS,
+          ),
+        )
+      })
+      // empty clip → nothing painted (no full-screen blur flash)
+      layer.style.clipPath = `path('${subpaths.join(' ')}')`
     }
-    align()
-    const ro = new ResizeObserver(align)
+
+    recompute()
+    const ro = new ResizeObserver(recompute)
     if (rootRef.current) ro.observe(rootRef.current)
-    if (hostRef.current) ro.observe(hostRef.current)
-    window.addEventListener('resize', align)
-    // a couple of delayed re-aligns to catch the dialog's open layout settling
-    const t1 = window.setTimeout(align, 60)
-    const t2 = window.setTimeout(align, 250)
+    panels.current.forEach((p) => ro.observe(p))
+    // attribute changes (controls data-visible / style / class) → reclip, plus a
+    // trailing pass so the opacity transition has settled before we drop a rect
+    const mo = new MutationObserver(() => {
+      recompute()
+      window.setTimeout(recompute, 320)
+    })
+    if (rootRef.current) {
+      mo.observe(rootRef.current, {
+        attributes: true,
+        subtree: true,
+        attributeFilter: ['data-visible', 'style', 'class'],
+      })
+    }
+    window.addEventListener('resize', recompute)
+    const t1 = window.setTimeout(recompute, 60)
+    const t2 = window.setTimeout(recompute, 260)
     return () => {
       ro.disconnect()
-      window.removeEventListener('resize', align)
+      mo.disconnect()
+      window.removeEventListener('resize', recompute)
       window.clearTimeout(t1)
       window.clearTimeout(t2)
     }
-  }, [src, rootRef])
+  }, [src, rootRef, panels, version])
 
-  // Mirror play/pause/seek of the main video onto the muted clone, plus a slow
-  // drift correction. No rAF.
+  // Mirror play/pause/seek of the main video onto the muted blurred clone.
   useEffect(() => {
     if (!src || !mainVideoRef) return
     const clone = cloneRef.current
@@ -126,7 +212,7 @@ export function GlassBackdrop() {
 
   if (!src) return null
   return (
-    <div ref={hostRef} className="theater-glass-backdrop" aria-hidden="true">
+    <div ref={layerRef} className="theater-glass-layer" aria-hidden="true">
       {/* eslint-disable-next-line jsx-a11y/media-has-caption -- decorative blurred clone */}
       <video ref={cloneRef} src={src} muted playsInline preload="auto" />
     </div>

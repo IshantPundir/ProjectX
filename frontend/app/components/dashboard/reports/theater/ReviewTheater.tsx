@@ -9,7 +9,7 @@ import type { PlaybackSeekApi } from '../SessionPlayback'
 import { useSessionProctoring } from '@/lib/hooks/use-session-proctoring'
 import { useSessionRecording } from '@/lib/hooks/use-session-recording'
 import { Filmstrip } from './Filmstrip'
-import { GlassBackdrop, GlassProvider } from './GlassBackdrop'
+import { GlassBackdrop, GlassLayer, GlassProvider } from './GlassBackdrop'
 import { TheaterStage } from './TheaterStage'
 import { TheaterTopBar } from './TheaterTopBar'
 import { ThisMomentPanel } from './ThisMomentPanel'
@@ -174,6 +174,9 @@ export function ReviewTheater({
             playing={ctrl.playing}
             onTogglePlay={ctrl.togglePlay}
           />
+
+          {/* single blurred-video layer behind all panels (clipped to their rects) */}
+          <GlassLayer />
 
           <div className="theater-topbar-slot">
             <TheaterTopBar
