@@ -69,6 +69,18 @@
   overflow: hidden;
   border-radius: inherit;
   background: linear-gradient(160deg, #eef4f8, #dde8ee);
+  /* Own backdrop root so the panels' backdrop-filter samples THIS subtree
+     (the video + scrims) rather than the page behind the dialog. */
+  isolation: isolate;
+}
+
+/* Promote the video to its own composited layer. Without this, Chromium snapshots
+   the panels' backdrop-filter before the video paints a frame and never
+   re-invalidates it as the video updates — the backdrop blur appears to do
+   nothing until a forced repaint (e.g. toggling it in devtools). */
+.theater-video {
+  transform: translateZ(0);
+  will-change: transform;
 }
 
 /* Light frosted glass — the core glassmorphism surface. Heavy blur so the
