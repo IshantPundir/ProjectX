@@ -48,6 +48,20 @@ export function ReviewTheater({
   )
   const riskBand = proc && proc.status === 'ready' ? proc.risk_band : null
 
+  // Transport state is owned here (not inside useTheaterState) so the video
+  // controller can be created first — its intrinsic duration is the fallback
+  // when the API didn't report one.
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const seekRef = useRef<PlaybackSeekApi | null>(null)
+  const [currentMs, setCurrentMs] = useState(0)
+  const ctrl = useVideoController(videoRef, !!signedUrl, offsetMs, seekRef, setCurrentMs)
+
+  // Egress sometimes finishes without a duration (recording_duration_seconds stays
+  // NULL even when status='ready'); without it the timeline, flag positions and
+  // density all collapse to zero width. Fall back to the <video> element's own
+  // metadata duration, which the controller exposes reactively.
+  const durationMs = apiDurationMs || ctrl.durationSec * 1000
+
   const markers = useMemo(
     () => buildQuestionMarkers(report.questions, durationMs),
     [report.questions, durationMs],
@@ -57,11 +71,15 @@ export function ReviewTheater({
     () => buildFlagMarkers(flaggedRaw, durationMs, flaggedRaw.length),
     [flaggedRaw, durationMs],
   )
-  const st = useTheaterState({ markers, questions: report.questions, durationMs })
 
-  // custom video transport (replaces native controls)
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const ctrl = useVideoController(videoRef, !!signedUrl, offsetMs, st.seekRef, st.setCurrentMs)
+  const st = useTheaterState({
+    markers,
+    questions: report.questions,
+    durationMs,
+    seekRef,
+    currentMs,
+  })
+
   const ctrlRef = useRef(ctrl)
   // keep the controller ref current — no dep array on purpose (runs after every render)
   useEffect(() => {
