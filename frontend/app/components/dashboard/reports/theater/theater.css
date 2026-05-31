@@ -18,8 +18,13 @@
    single inherited line is what was killing the glass blur. */
 .px-dialog-backdrop:has(.theater-shell) {
   background: rgba(12, 20, 28, 0.55);
+  /* No backdrop-filter: an ancestor blur suppresses the panels' blur. No
+     animation: the base rule fades opacity 0→1, and an ancestor animating
+     opacity paints the child backdrop-filter once (un-blurred) and never
+     re-invalidates — the "works only after a devtools poke" bug. */
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
+  animation: none !important;
 }
 
 /* Centred WITHOUT transform. The shared .px-dialog-content centres via
@@ -45,15 +50,12 @@
   top: 0;
   left: 0;
   transform: none;
-  /* The base rule animates `px-dialog-scale-in` which applies a transform during
-     the open; a transform on this ancestor also breaks descendant backdrop-filter.
-     Use a transform-free fade instead. */
-  animation: theater-fade-in 160ms var(--px-ease);
-}
-
-@keyframes theater-fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  /* No entrance animation at all. The base rule's `px-dialog-scale-in` applies a
+     transform (breaks descendant backdrop-filter), and ANY opacity/transform
+     animation on this ancestor makes the child panels' backdrop-filter fail to
+     paint on load (renders blur only after a forced repaint). A static shell is
+     the reliable trade for working glass. */
+  animation: none !important;
 }
 
 /* The single positioned root that holds the video + all overlays.
