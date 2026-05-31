@@ -1,20 +1,27 @@
 'use client'
 
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useState, type Dispatch, type MutableRefObject, type SetStateAction } from 'react'
 
 import type { QuestionOut } from '@/lib/api/reports'
 import type { PlaybackSeekApi } from '../SessionPlayback'
 import type { MomentSelection } from './ThisMomentPanel'
 import { activeQuestionId, type FlagMarker, type TimelineMarker } from './timeline-model'
 
+/**
+ * Selection/playhead state for the theater. `seekRef`, `currentMs` and
+ * `setCurrentMs` are passed in (owned by ReviewTheater) so the video controller
+ * — which needs them — can be created BEFORE this hook, letting the controller's
+ * intrinsic duration feed the marker/flag positioning without a render cycle.
+ */
 export function useTheaterState(params: {
   markers: TimelineMarker[]
   questions: QuestionOut[]
   durationMs: number
+  seekRef: MutableRefObject<PlaybackSeekApi | null>
+  currentMs: number
+  setCurrentMs: Dispatch<SetStateAction<number>>
 }) {
-  const { markers, questions, durationMs } = params
-  const seekRef = useRef<PlaybackSeekApi | null>(null)
-  const [currentMs, setCurrentMs] = useState(0)
+  const { markers, questions, durationMs, seekRef, currentMs, setCurrentMs } = params
   // explicit selection overrides the playhead-derived active question until cleared
   const [explicit, setExplicit] = useState<MomentSelection>(null)
 
