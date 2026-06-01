@@ -1,14 +1,17 @@
-"""Throwaway perf harness (2026-06-01 proctoring incident).
+"""Vision-pipeline perf-verification harness (dev tool).
 
-Times a single, single-process gaze-analysis run over a recording to isolate
-per-frame cost from the Dramatiq retry/parallel loop. Run inside the vision
-image with different OMP_NUM_THREADS to test the thread-oversubscription
-hypothesis:
+Times a single, single-process gaze-analysis run over a recording in isolation
+from the Dramatiq actor (no queue, no retries, no concurrency) to measure
+per-frame and full-run cost. Use it to validate pipeline speed — e.g. confirm
+the GPU (onnxruntime CUDA EP) is engaged vs CPU, or quantify decode cost.
 
-    docker compose run --rm -e OMP_NUM_THREADS=1 nexus-vision-worker \
-        python scripts/vision_timing.py <s3_key> [max_frames]
+Run inside the vision image (it provides cv2 / onnxruntime / uniface):
 
-Not committed as product code — diagnostic only.
+    docker compose run --rm -e PYTHONPATH=/app -w /app nexus-vision-worker \\
+        python scripts/vision_timing.py <recording_s3_key> [max_frames]
+
+Loads the recording from object storage and the gaze config from Settings, so
+it exercises the SAME providers / model / sampling the production actor uses.
 """
 from __future__ import annotations
 

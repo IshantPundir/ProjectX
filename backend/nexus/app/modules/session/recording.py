@@ -135,11 +135,15 @@ async def _vision_analysis_needs_enqueue(
 ) -> bool:
     """Decide whether to (re)enqueue vision analysis, given the current row.
 
-    The actor's idempotency gate skips terminal rows ({ready, unscorable}) but
-    RECLAIMS running/pending/failed (Dramatiq retry + crash recovery). So the
-    enqueue side must NOT pile on: re-enqueue only when there's no row yet, the
-    last attempt FAILED, or a running/pending row has gone stale (presumed-dead
-    worker). A fresh running/pending row, or a terminal row, is left alone.
+    The report page calls this on every read, so it must NOT pile work onto an
+    in-flight or settled analysis. Re-enqueue only when:
+      - there is no row yet (never analyzed), or
+      - a running/pending row has gone stale (the worker that owned it is
+        presumed dead — a crash leaves the row running/pending, never failed).
+    A ``ready``/``unscorable`` row is done; a ``failed`` row has already
+    exhausted Dramatiq's own per-message retries, so re-driving it here would
+    slow-loop a genuinely-broken recording — recovery is an explicit re-trigger,
+    not a side effect of viewing the report. All three are left alone.
     """
     from app.modules.vision.models import SessionProctoringAnalysis  # noqa: PLC0415
 
@@ -157,10 +161,9 @@ async def _vision_analysis_needs_enqueue(
     if row is None:
         return True  # never analyzed
     status, updated_at = row
-    if status in ("ready", "unscorable"):
-        return False  # terminal — nothing to do
-    if status == "failed":
-        return True  # last attempt failed — retry
+    # Terminal from the report-read side — never auto-re-enqueue (see docstring).
+    if status in ("ready", "unscorable", "failed"):
+        return False
     # running / pending: only re-drive if stale (the in-flight worker is gone).
     if updated_at is None:
         return True

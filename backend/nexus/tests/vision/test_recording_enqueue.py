@@ -55,26 +55,20 @@ async def test_no_enqueue_when_not_ready(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("terminal_status", ["ready", "unscorable"])
+@pytest.mark.parametrize("terminal_status", ["ready", "unscorable", "failed"])
 async def test_no_enqueue_when_terminal(monkeypatch, terminal_status):
-    # Terminal row → never re-enqueue (this was the report-read storm bug).
+    # Terminal rows are never auto-re-enqueued from a report read:
+    #  - ready / unscorable: analysis is done (this was the report-read storm bug).
+    #  - failed: Dramatiq has already exhausted its own per-message retries;
+    #    re-driving on every report read would slow-loop a genuinely-broken
+    #    recording. Re-analysis of a failed row is an explicit action
+    #    (regenerate), not a side effect of viewing the report.
     sess = _sess()
     sent = MagicMock()
     monkeypatch.setattr(rec, "_enqueue_vision_analysis", sent)
     row = (terminal_status, datetime.now(UTC))
     await rec._maybe_enqueue_vision(_FakeDB(row), sess)
     sent.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_enqueue_when_failed(monkeypatch):
-    # Last attempt failed → retry.
-    sess = _sess()
-    sent = MagicMock()
-    monkeypatch.setattr(rec, "_enqueue_vision_analysis", sent)
-    row = ("failed", datetime.now(UTC))
-    await rec._maybe_enqueue_vision(_FakeDB(row), sess)
-    sent.assert_called_once_with(str(sess.id), str(sess.tenant_id))
 
 
 @pytest.mark.asyncio
