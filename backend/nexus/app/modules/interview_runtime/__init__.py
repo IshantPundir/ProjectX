@@ -43,7 +43,11 @@ from app.modules.interview_runtime.service import (
     record_engine_heartbeat,
     record_session_result,
 )
-from app.modules.interview_runtime.transcript_timing import question_asked_at_ms
+from app.modules.interview_runtime.transcript_timing import (
+    question_asked_at_ms,
+    relative_words,
+    turn_bounds,
+)
 
 __all__ = [
     "CandidateContext",
@@ -74,4 +78,6 @@ __all__ = [
     "question_asked_at_ms",
     "record_engine_heartbeat",
     "record_session_result",
+    "relative_words",
+    "turn_bounds",
 ]
