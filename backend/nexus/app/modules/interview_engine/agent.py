@@ -46,6 +46,7 @@ from livekit.agents import (
     UserStateChangedEvent,
     room_io,
 )
+from livekit.agents import stt as lk_stt
 from livekit.plugins.turn_detector import multilingual as _turn_detector_multilingual  # noqa: F401
 from opentelemetry.trace import set_tracer_provider as _otel_set_global_provider
 
@@ -275,6 +276,7 @@ class _MouthAgent(Agent):
         self._brain_task: asyncio.Task | None = None   # in-flight confirm/decide (barge-in cancels)
         self._spec_id: str | None = None               # id of the staged speculative pre-stage
         self._result_transcript: list[TranscriptEntry] = []  # reliable result transcript
+        self._pending_words: list[tuple[str, float, float, float]] = []  # raw STT words for the in-progress turn
         self._triage = triage
         self._triage_task: asyncio.Task | None = None
         self._pending_answer: list[str] = []     # candidate fragments in the current answer episode
@@ -384,6 +386,33 @@ class _MouthAgent(Agent):
             if d.say:
                 self._transcript.append(("agent", d.say))
             await self.session.generate_reply()
+
+    def _collect_words_from_event(self, event: object) -> None:
+        """Tee point: buffer per-word timings from a FINAL_TRANSCRIPT SpeechEvent.
+
+        Robust to the event/word shapes via getattr so the unit test can use
+        lightweight stand-ins. Non-final events and word-less finals are no-ops.
+        """
+        etype = getattr(event, "type", None)
+        if etype != lk_stt.SpeechEventType.FINAL_TRANSCRIPT and etype != "final_transcript":
+            return
+        alts = getattr(event, "alternatives", None) or []
+        if not alts:
+            return
+        for w in getattr(alts[0], "words", None) or []:
+            text = getattr(w, "text", None)
+            start = getattr(w, "start_time", None)
+            end = getattr(w, "end_time", None)
+            if text is None or start is None or end is None:
+                continue
+            conf = getattr(w, "confidence", 1.0)
+            self._pending_words.append((str(text), float(start), float(end), float(conf)))
+
+    async def stt_node(self, audio, model_settings):
+        """Default STT, with a tee that buffers word timings for the reel."""
+        async for ev in Agent.default.stt_node(self, audio, model_settings):
+            self._collect_words_from_event(ev)
+            yield ev
 
     async def on_user_turn_completed(
         self, turn_ctx: ChatContext, new_message: ChatMessage,
