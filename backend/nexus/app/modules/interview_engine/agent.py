@@ -278,7 +278,8 @@ class _MouthAgent(Agent):
         self._brain_task: asyncio.Task | None = None   # in-flight confirm/decide (barge-in cancels)
         self._spec_id: str | None = None               # id of the staged speculative pre-stage
         self._result_transcript: list[TranscriptEntry] = []  # reliable result transcript
-        self._pending_words: list[tuple[str, float, float, float]] = []  # raw STT words for the in-progress turn
+        # raw STT words buffered for the in-progress candidate turn
+        self._pending_words: list[tuple[str, float, float, float]] = []
         self._triage = triage
         self._triage_task: asyncio.Task | None = None
         self._pending_answer: list[str] = []     # candidate fragments in the current answer episode
@@ -454,7 +455,8 @@ class _MouthAgent(Agent):
                     question_id=self._brain.active_question_id,
                 ))
         else:
-            self._pending_words = []  # whitespace-only commit: drain so stale words don't leak into the next turn
+            # whitespace-only commit: drain so stale words don't leak into the next turn
+            self._pending_words = []
         word_count = len([w for w in text.split() if w])
         backchannel = is_backchannel(text, min_words=settings.engine_v2_backchannel_min_words)
 

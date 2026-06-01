@@ -35,7 +35,7 @@ class WordTiming(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0, default=1.0)
 
     @model_validator(mode="after")
-    def _end_not_before_start(self) -> "WordTiming":
+    def _end_not_before_start(self) -> WordTiming:
         if self.end_ms < self.start_ms:
             raise ValueError(
                 f"end_ms ({self.end_ms}) must be >= start_ms ({self.start_ms})"
