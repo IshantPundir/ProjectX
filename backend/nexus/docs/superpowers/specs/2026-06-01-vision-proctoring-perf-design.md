@@ -182,20 +182,61 @@ behavior.
 
 ---
 
-## 6. Config surface (new / changed in `app/config.py`)
+## 6. Config surface — fully env-driven
 
-| Setting | Old | New |
-|---|---|---|
-| `vision_sample_fps` | 5.0 | **2.0** |
-| `vision_max_frames` | — | **2000** (new) |
-| `vision_max_frame_width` | — | **960** (new) |
-| `vision_ort_intra_op_threads` | — | **1** (new) |
-| `vision_worker_concurrency` | — | **4** (new; wired to compose `--processes`) |
+Every bounded-CPU value is a `pydantic-settings` field on `Settings`
+(`app/config.py`), so each is **overridable in any environment via its uppercased
+env var** with zero code change — the same pattern as the rest of the config.
+This is the production tuning surface (Railway env vars at MVP, ECS task
+env/Secrets at enterprise).
 
-`docker-compose.yml` `nexus-vision-worker`: add `cpus: 4` (or
-`deploy.resources.limits.cpus`), change command to
-`--processes ${VISION_WORKER_CONCURRENCY:-4} --threads 1`.
-`Dockerfile.vision`: `ENV OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1`.
+| Setting (`app/config.py`) | Env var | Old | New (default) |
+|---|---|---|---|
+| `vision_sample_fps` | `VISION_SAMPLE_FPS` | 5.0 | **2.0** |
+| `vision_max_frames` | `VISION_MAX_FRAMES` | — | **2000** (new) |
+| `vision_max_frame_width` | `VISION_MAX_FRAME_WIDTH` | — | **960** (new) |
+| `vision_ort_intra_op_threads` | `VISION_ORT_INTRA_OP_THREADS` | — | **1** (new) |
+| `vision_worker_concurrency` | `VISION_WORKER_CONCURRENCY` | — | **4** (new) |
+
+**`.env.example`** — add a documented block alongside the existing
+`VISION_THUMBNAIL_*` entries (which today are the *only* documented vision vars;
+`VISION_SAMPLE_FPS` was previously undocumented and gets added here too):
+
+```bash
+# --- Vision proctoring — bounded-CPU tuning (vision worker) ---
+# Sample rate for gaze/proctoring analysis. 2 fps catches sustained off-screen,
+# reading, multi-face, and down-glances >=~1s. Lower = cheaper, less sensitive.
+VISION_SAMPLE_FPS=2.0
+# Hard frame budget per session. Effective fps = min(VISION_SAMPLE_FPS,
+# VISION_MAX_FRAMES / duration_seconds) — long recordings degrade to a wider
+# uniform stride instead of being truncated. Bounds worst-case cost.
+VISION_MAX_FRAMES=2000
+# Pre-detection downscale: cap frame width (px) before RetinaFace + gaze.
+VISION_MAX_FRAME_WIDTH=960
+# onnxruntime intra-op threads PER inference. Keep at 1 — parallelism comes from
+# worker concurrency, not per-call thread fan-out. (Raising this is what pegged
+# the host in the 2026-06-01 incident.)
+VISION_ORT_INTRA_OP_THREADS=1
+# Inference processes the vision worker runs (Dramatiq --processes). Match to the
+# worker's CPU cap. Scale throughput by adding worker REPLICAS, not by raising
+# this past the cap.
+VISION_WORKER_CONCURRENCY=4
+```
+
+**`docker-compose.yml`** `nexus-vision-worker`:
+- add a hard CPU backstop — `cpus: "4"` (Compose v2 top-level) or
+  `deploy.resources.limits.cpus: "4"`;
+- command → `dramatiq app.vision_worker --processes ${VISION_WORKER_CONCURRENCY:-4} --threads 1 -Q vision`;
+- the env var flows from `.env` via the existing `env_file`.
+
+**`Dockerfile.vision`**: `ENV OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1`
+(belt-and-suspenders for any BLAS/OpenMP fan-out; the `cpus:` cgroup cap remains
+the real guarantee).
+
+> Production tuning note: the CPU backstop has two coordinated knobs —
+> `VISION_WORKER_CONCURRENCY` (app-level process count) and the compose/orchestrator
+> `cpus` limit (cgroup ceiling). Keep them matched (concurrency ≤ cpu cap) per
+> environment. On ECS this becomes the task's `cpu` units + the same env var.
 
 ---
 
