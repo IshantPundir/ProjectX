@@ -44,6 +44,12 @@ COPY --from=deps /usr/local/bin /usr/local/bin
 #   (a) a network round-trip on first analysis, and
 #   (b) PermissionError when the non-root `nexus` user tried to write the cache.
 ENV UNIFACE_CACHE_DIR=/opt/uniface-cache
+# Belt-and-suspenders: cap any BLAS/OpenMP fan-out in native deps. The real
+# guarantee against pegging the host is the cpus cgroup cap on the compose
+# service; onnxruntime intra-op is capped via SessionOptions in mobilegaze.py.
+ENV OMP_NUM_THREADS=1 \
+    OPENBLAS_NUM_THREADS=1 \
+    MKL_NUM_THREADS=1
 RUN mkdir -p /opt/uniface-cache \
     && python -c "from uniface.detection import RetinaFace; RetinaFace()" \
     && chown -R nexus:nexus /opt/uniface-cache
@@ -54,4 +60,4 @@ USER nexus
 
 # Dedicated entrypoint — registers ONLY the vision actor so the lean
 # nexus-worker never consumes the "vision" queue. See app/vision_worker.py.
-CMD ["dramatiq", "app.vision_worker", "--processes", "1", "--threads", "2", "-Q", "vision"]
+CMD ["dramatiq", "app.vision_worker", "--processes", "4", "--threads", "1", "-Q", "vision"]
