@@ -592,7 +592,19 @@ class Settings(BaseSettings):
     # looking-down is not classified as the 'down' zone / left-right is mirrored.
     vision_gaze_pitch_sign: int = 1
     vision_gaze_yaw_sign: int = 1
-    vision_sample_fps: float = 5.0
+    vision_sample_fps: float = 2.0  # was 5.0 — see 2026-06-01 perf design
+    # Bounded-CPU work limits (2026-06-01 perf design). All env-overridable.
+    # Hard frame budget per session: effective fps degrades to a wider uniform
+    # stride on long recordings so worst-case cost is bounded regardless of length.
+    vision_max_frames: int = 2000
+    # Pre-detection downscale: cap frame width (px) before RetinaFace + gaze.
+    vision_max_frame_width: int = 960
+    # onnxruntime intra-op threads PER inference. Keep at 1 — parallelism comes
+    # from worker process concurrency, NOT per-call fan-out (the 2026-06-01 peg).
+    vision_ort_intra_op_threads: int = 1
+    # Vision worker inference process count (Dramatiq --processes). Match to the
+    # worker's cpus cap; scale throughput via replicas, not by exceeding the cap.
+    vision_worker_concurrency: int = 4
     # Self-baseline zone thresholds (degrees of deviation from the per-session
     # baseline gaze direction).
     vision_zone_yaw_deg: float = 15.0
