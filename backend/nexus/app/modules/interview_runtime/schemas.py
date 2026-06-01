@@ -318,7 +318,7 @@ class SteeringObservation(BaseModel):
 # circular import with engine.models.speaker. Re-exported here so existing
 # callers (`from app.modules.interview_runtime.schemas import TranscriptEntry`)
 # keep working.
-from app.modules.interview_runtime.models import TranscriptEntry  # noqa: F401
+from app.modules.interview_runtime.models import TranscriptEntry, WordTiming  # noqa: F401
 
 
 # ---------------------------------------------------------------------------

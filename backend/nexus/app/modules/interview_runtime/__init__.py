@@ -33,6 +33,7 @@ from app.modules.interview_runtime.schemas import (
     StageConfig,
     SteeringObservation,
     TranscriptEntry,
+    WordTiming,
 )
 from app.modules.interview_runtime.service import (
     _project_signal_metadata as project_signal_metadata,
@@ -67,6 +68,7 @@ __all__ = [
     "StageConfig",
     "SteeringObservation",
     "TranscriptEntry",
+    "WordTiming",
     "build_session_config",
     "project_signal_metadata",
     "question_asked_at_ms",

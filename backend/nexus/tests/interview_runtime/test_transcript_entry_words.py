@@ -1,3 +1,6 @@
+import pytest
+from pydantic import ValidationError
+
 from app.modules.interview_runtime.models import TranscriptEntry, WordTiming
 
 
@@ -29,3 +32,18 @@ def test_transcript_entry_backward_compatible():
     assert entry.words is None
     assert entry.start_ms is None
     assert entry.end_ms is None
+
+
+def test_word_timing_rejects_negative_start():
+    with pytest.raises(ValidationError):
+        WordTiming(text="x", start_ms=-1, end_ms=100, confidence=0.9)
+
+
+def test_word_timing_rejects_confidence_above_one():
+    with pytest.raises(ValidationError):
+        WordTiming(text="x", start_ms=0, end_ms=100, confidence=1.01)
+
+
+def test_word_timing_rejects_end_before_start():
+    with pytest.raises(ValidationError):
+        WordTiming(text="x", start_ms=500, end_ms=100, confidence=0.9)
