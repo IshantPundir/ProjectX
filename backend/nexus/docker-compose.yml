@@ -121,6 +121,21 @@ services:
       context: .
       dockerfile: Dockerfile.vision
     restart: unless-stopped
+    # Hard backstop: the worker can never exceed this many cores regardless of
+    # any dependency's thread fan-out (2026-06-01 incident pegged ~23 cores).
+    # Keep VISION_WORKER_CONCURRENCY <= this value.
+    cpus: 4
+    # GPU passthrough: grants the host NVIDIA GPU(s) so onnxruntime-gpu's
+    # CUDAExecutionProvider runs the gaze + RetinaFace models on-device
+    # (Settings.vision_onnx_providers). Requires nvidia-container-toolkit on the
+    # host. Harmless if no GPU — providers fall back to CPU.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     env_file:
       - .env
     environment:
@@ -133,6 +148,7 @@ services:
       # nexus-owned dir with the RetinaFace model baked in at build time). No
       # named volume / env override here — that previously caused a root-owned
       # mount the non-root worker could not write to.
+      - VISION_WORKER_CONCURRENCY=${VISION_WORKER_CONCURRENCY:-4}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -144,7 +160,7 @@ services:
       #   mkdir -p models && curl -L -o models/resnet34_gaze.onnx \
       #     https://github.com/yakhyo/gaze-estimation/releases/download/weights/resnet34_gaze.onnx
       - ./models:/weights:ro
-    command: dramatiq app.vision_worker --processes 1 --threads 2 -Q vision
+    command: sh -c 'dramatiq app.vision_worker --processes ${VISION_WORKER_CONCURRENCY:-4} --threads 1 -Q vision'
 
   redis:
     image: redis:7-alpine

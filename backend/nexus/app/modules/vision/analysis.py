@@ -11,6 +11,7 @@ import structlog
 from app.modules.vision.config import vision_config
 from app.modules.vision.detectors import AnalysisResult, FrameObservation, analyze_observations
 from app.modules.vision.gaze.base import FaceGaze, GazeEstimator
+from app.modules.vision.sampler import sample_frames
 
 log = structlog.get_logger("vision.analysis")
 
@@ -38,27 +39,6 @@ def observations_from_estimates(
             yaw=primary.yaw, pitch=primary.pitch, quality=primary.score,
         ))
     return obs
-
-
-def _sample_frames(video_path: str, fps: float):
-    """Yield (t_ms, frame_bgr) sampling `video_path` at ~fps. Lazy cv2 import."""
-    import cv2  # noqa: PLC0415
-
-    cap = cv2.VideoCapture(video_path)
-    src_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    step = max(1, int(round(src_fps / fps)))
-    idx = 0
-    try:
-        while True:
-            ok, frame = cap.read()
-            if not ok:
-                break
-            if idx % step == 0:
-                t_ms = int((idx / src_fps) * 1000)
-                yield t_ms, frame
-            idx += 1
-    finally:
-        cap.release()
 
 
 # Severity ordering for proctoring flags (higher = more serious). Decides which
@@ -136,7 +116,12 @@ def run_analysis(estimator: GazeEstimator, *, local_video_path: str) -> tuple[An
     """
     cfg = vision_config
     frames: list[tuple[int, list[FaceGaze]]] = []
-    for t_ms, frame in _sample_frames(local_video_path, cfg.sample_fps):
+    for t_ms, frame in sample_frames(
+        local_video_path,
+        target_fps=cfg.sample_fps,
+        max_frames=cfg.max_frames,
+        max_width=cfg.max_frame_width,
+    ):
         frames.append((t_ms, estimator.estimate(frame)))
 
     obs = observations_from_estimates(frames)

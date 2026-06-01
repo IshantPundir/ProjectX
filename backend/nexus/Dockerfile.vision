@@ -1,49 +1,51 @@
 # Dockerfile.vision — image for the nexus-vision-worker only.
-# ONNX gaze inference (onnxruntime + uniface RetinaFace + opencv + ffmpeg).
-# No torch — much lighter than a torch build.
+# GPU-FIRST ONNX gaze inference: onnxruntime-gpu (CUDA 12 + cuDNN 9) runs the
+# gaze model AND uniface RetinaFace on the GPU when one is present, falling back
+# to CPU automatically (see Settings.vision_onnx_providers). No torch.
 #
-# Only differences from the main Dockerfile:
-#   - apt packages include ffmpeg + libgl1 + libglib2.0-0 (opencv runtime deps)
-#   - pip installs .[vision] instead of .[dev]
-#   - CMD runs dramatiq on the -Q vision queue
-#   - No HF model pre-download step (vision worker has no livekit/HF models)
+# Base provides the CUDA + cuDNN runtime libs onnxruntime-gpu links against.
+# Python 3.13 (project requirement) comes from the deadsnakes PPA since the
+# Ubuntu base ships an older interpreter. A GPU is NOT required to BUILD this
+# image (the build-time RetinaFace pre-download runs on CPU); it is used at
+# RUN time when the host/orchestrator grants a device (compose `deploy.devices`
+# locally; ECS/SageMaker GPU instances in prod).
 
-# --- Stage 1: Build dependencies ---
-FROM python:3.13-slim AS deps
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 AS runner
 WORKDIR /app
+ENV DEBIAN_FRONTEND=noninteractive
 
+# Python 3.13 + opencv/ffmpeg runtime libs + libpq.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        gcc \
-        libpq-dev \
+        software-properties-common gnupg ca-certificates \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        python3.13 python3.13-venv python3.13-dev \
+        libpq5 ffmpeg libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
+
+# Isolated venv so `python`/`pip`/`dramatiq` resolve to 3.13 without fighting
+# the base image's system python.
+RUN python3.13 -m venv /opt/venv
+ENV PATH=/opt/venv/bin:$PATH
 
 COPY pyproject.toml ./
-RUN pip install --no-cache-dir ".[vision]"
-
-# --- Stage 2: Production image ---
-FROM python:3.13-slim AS runner
-WORKDIR /app
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        libpq5 \
-        ffmpeg \
-        libgl1 \
-        libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir ".[vision]"
 
 RUN groupadd --system --gid 1001 nexus && \
     useradd --system --uid 1001 --gid nexus nexus
 
-COPY --from=deps /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
-COPY --from=deps /usr/local/bin /usr/local/bin
-
 # Pre-download the uniface RetinaFace model at BUILD time into a nexus-owned dir
-# OUTSIDE /app (which is bind-mounted in dev compose and would hide a baked /app
-# path). Mirrors the main Dockerfile's "pre-download models at build time"
-# pattern, and fixes two runtime problems the prior root-owned named volume had:
-#   (a) a network round-trip on first analysis, and
-#   (b) PermissionError when the non-root `nexus` user tried to write the cache.
+# OUTSIDE /app (bind-mounted in dev compose). Runs on CPU at build time (no GPU
+# in the build sandbox) — it only fetches the model file; the provider is
+# chosen at RUN time per Settings.vision_onnx_providers.
 ENV UNIFACE_CACHE_DIR=/opt/uniface-cache
+# BLAS/OpenMP fan-out caps for the CPU-fallback path. On the GPU path inference
+# runs on-device so these are moot; on CPU they (with the cpus cgroup cap) keep
+# the worker from pegging the host.
+ENV OMP_NUM_THREADS=1 \
+    OPENBLAS_NUM_THREADS=1 \
+    MKL_NUM_THREADS=1
 RUN mkdir -p /opt/uniface-cache \
     && python -c "from uniface.detection import RetinaFace; RetinaFace()" \
     && chown -R nexus:nexus /opt/uniface-cache
@@ -52,6 +54,5 @@ COPY . .
 
 USER nexus
 
-# Dedicated entrypoint — registers ONLY the vision actor so the lean
-# nexus-worker never consumes the "vision" queue. See app/vision_worker.py.
-CMD ["dramatiq", "app.vision_worker", "--processes", "1", "--threads", "2", "-Q", "vision"]
+# Dedicated entrypoint — registers ONLY the vision actor. See app/vision_worker.py.
+CMD dramatiq app.vision_worker --processes ${VISION_WORKER_CONCURRENCY:-4} --threads 1 -Q vision

@@ -130,14 +130,57 @@ def _enqueue_vision_analysis(session_id: str, tenant_id: str) -> None:
     analyze_session_proctoring.send(session_id, tenant_id)
 
 
-def _maybe_enqueue_vision(sess: Session) -> None:
+async def _vision_analysis_needs_enqueue(
+    db: AsyncSession, session_id: UUID, tenant_id: UUID
+) -> bool:
+    """Decide whether to (re)enqueue vision analysis, given the current row.
+
+    The report page calls this on every read, so it must NOT pile work onto an
+    in-flight or settled analysis. Re-enqueue only when:
+      - there is no row yet (never analyzed), or
+      - a running/pending row has gone stale (the worker that owned it is
+        presumed dead — a crash leaves the row running/pending, never failed).
+    A ``ready``/``unscorable`` row is done; a ``failed`` row has already
+    exhausted Dramatiq's own per-message retries, so re-driving it here would
+    slow-loop a genuinely-broken recording — recovery is an explicit re-trigger,
+    not a side effect of viewing the report. All three are left alone.
+    """
+    from app.modules.vision.models import SessionProctoringAnalysis  # noqa: PLC0415
+
+    row = (
+        await db.execute(
+            select(
+                SessionProctoringAnalysis.status,
+                SessionProctoringAnalysis.updated_at,
+            ).where(
+                SessionProctoringAnalysis.session_id == session_id,
+                SessionProctoringAnalysis.tenant_id == tenant_id,
+            )
+        )
+    ).first()
+    if row is None:
+        return True  # never analyzed
+    status, updated_at = row
+    # Terminal from the report-read side — never auto-re-enqueue (see docstring).
+    if status in ("ready", "unscorable", "failed"):
+        return False
+    # running / pending: only re-drive if stale (the in-flight worker is gone).
+    if updated_at is None:
+        return True
+    stale_after = timedelta(seconds=settings.vision_reenqueue_stale_after_seconds)
+    return (datetime.now(UTC) - updated_at) > stale_after
+
+
+async def _maybe_enqueue_vision(db: AsyncSession, sess: Session) -> None:
     """Best-effort: enqueue post-session vision analysis once the recording is
-    ready. The actor is idempotent (its own status row), so re-enqueue on every
-    report read is safe. Never raises into the playback path.
+    ready — but only when it genuinely needs to run (see
+    ``_vision_analysis_needs_enqueue``). Never raises into the playback path.
     """
     if sess.recording_status != "ready" or not sess.recording_s3_key:
         return
     try:
+        if not await _vision_analysis_needs_enqueue(db, sess.id, sess.tenant_id):
+            return
         _enqueue_vision_analysis(str(sess.id), str(sess.tenant_id))
     except Exception:  # noqa: BLE001
         log.warning("recording.vision_enqueue_failed", session_id=str(sess.id), exc_info=True)
@@ -163,7 +206,7 @@ async def get_session_recording_playback(
         raise SessionNotFoundError()
 
     await _reconcile(db, sess)
-    _maybe_enqueue_vision(sess)
+    await _maybe_enqueue_vision(db, sess)
 
     transcript = _build_transcript(sess.transcript)
 

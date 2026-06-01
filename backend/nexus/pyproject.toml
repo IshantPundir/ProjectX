@@ -101,14 +101,24 @@ dev = [
     "mypy>=1.20,<2",
 ]
 # ONNX gaze inference — vision worker only. No torch; far lighter image.
-# uniface provides RetinaFace face detection via ONNX (auto-downloads its
-# model on first use). If uniface[cpu] does not resolve on PyPI, fall back
-# to plain uniface + onnxruntime.
+# GPU-first: onnxruntime-gpu (CUDA 12 + cuDNN 9) runs the gaze model AND
+# RetinaFace on the GPU when present, with automatic CPU fallback (see
+# vision_onnx_providers). `uniface[gpu]` pulls onnxruntime-gpu (NOT the CPU
+# onnxruntime) so the two never coexist — installing both breaks the
+# `onnxruntime` module. Image base must provide CUDA+cuDNN (Dockerfile.vision).
 vision = [
-    "onnxruntime>=1.17",
+    "onnxruntime-gpu>=1.19,<1.24",
     "opencv-python-headless>=4.9",
     "numpy>=1.26",
-    "uniface>=0.1",
+    "uniface[gpu]>=0.1",
+]
+# Test-only deps for running the vision_integration suite INSIDE the vision
+# image (which installs .[vision], not .[dev]). Kept out of the `vision` group
+# so the production vision worker image stays lean. Install ephemerally in a
+# throwaway container — see the canonical command in the perf plan / spec.
+vision-test = [
+    "pytest>=8.4,<9",
+    "pytest-asyncio>=0.26,<1",
 ]
 
 [build-system]
@@ -137,5 +147,6 @@ asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
 markers = [
     "prompt_quality: opt-in eval suite that hits the real OpenAI API; run with `pytest -m prompt_quality`",
+    "vision_integration: requires the vision image (ffmpeg + numpy + onnxruntime)",
 ]
 addopts = "-m 'not prompt_quality'"
