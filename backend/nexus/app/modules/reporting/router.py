@@ -431,6 +431,50 @@ async def regenerate_report(
 
 
 # ---------------------------------------------------------------------------
+# POST /api/reports/session/{session_id}/proctoring/retry
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/session/{session_id}/proctoring/retry",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Re-run post-session vision proctoring analysis",
+)
+async def retry_proctoring(
+    session_id: uuid_mod.UUID,
+    request: Request,
+    user: UserContext = Depends(get_current_user_roles),
+) -> dict[str, str]:
+    """Re-enqueue vision proctoring for a session and return 202.
+
+    A ``failed`` proctoring row is terminal from the report-read enqueue path
+    (Dramatiq has already exhausted its own per-message retries), so recovery is
+    an explicit action — not a side effect of viewing the report. The actor
+    reclaims a failed/running/pending row and re-runs it; a successfully
+    completed (ready/unscorable) row is left as-is. RBAC: super-admin only
+    (matches report regenerate).
+    """
+    _require_super_admin(user)
+
+    tenant_id: uuid_mod.UUID = user.user.tenant_id
+    correlation_id = _get_correlation_id(request)
+
+    # Lazy import (mirrors session/recording.py): keeps the API process's import
+    # graph light and makes the enqueue trivially monkeypatchable in tests.
+    from app.modules.vision import analyze_session_proctoring  # noqa: PLC0415
+
+    analyze_session_proctoring.send(str(session_id), str(tenant_id))
+
+    _log.info(
+        "reporting.proctoring.retry.enqueued",
+        session_id=str(session_id),
+        tenant_id=str(tenant_id),
+        correlation_id=correlation_id,
+    )
+    return {"status": "accepted", "session_id": str(session_id)}
+
+
+# ---------------------------------------------------------------------------
 # POST /api/reports/{report_id}/decision
 # ---------------------------------------------------------------------------
 

@@ -27,6 +27,24 @@ class VisionConfig:
         return self._s.vision_sample_fps
 
     @property
+    def max_frames(self) -> int:
+        return self._s.vision_max_frames
+
+    @property
+    def max_frame_width(self) -> int:
+        return self._s.vision_max_frame_width
+
+    @property
+    def ort_intra_op_threads(self) -> int:
+        return self._s.vision_ort_intra_op_threads
+
+    @property
+    def onnx_providers(self) -> list[str]:
+        """ONNX execution providers (ordered, first available wins). GPU-first
+        with CPU fallback by default — see Settings.vision_onnx_providers."""
+        return [p.strip() for p in self._s.vision_onnx_providers.split(",") if p.strip()]
+
+    @property
     def zone_yaw_deg(self) -> float:
         return self._s.vision_zone_yaw_deg
 

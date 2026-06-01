@@ -502,6 +502,65 @@ async def test_regenerate_report_forbidden_without_super_admin(db: AsyncSession)
 
 
 # ---------------------------------------------------------------------------
+# Tests: POST /api/reports/session/{session_id}/proctoring/retry
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_retry_proctoring_enqueues_and_returns_202(db: AsyncSession):
+    """POST proctoring/retry → 202 and analyze_session_proctoring.send called
+    with (session_id, tenant_id)."""
+    session_row, tenant_id = await seed_minimal_session(db)
+    user_row = await _get_user_for_tenant(db, tenant_id)
+
+    # Super-admin gate (matches report regenerate).
+    headers, restore = _setup_test_context(db, user_row, tenant_id, is_super=True)
+    try:
+        with patch(
+            "app.modules.vision.analyze_session_proctoring.send"
+        ) as mock_send:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as ac:
+                r = await ac.post(
+                    f"/api/reports/session/{session_row.id}/proctoring/retry",
+                    headers=headers,
+                )
+    finally:
+        restore()
+
+    assert r.status_code == 202, r.text
+    mock_send.assert_called_once()
+    assert mock_send.call_args.args[0] == str(session_row.id)
+    assert mock_send.call_args.args[1] == str(tenant_id)
+
+
+@pytest.mark.asyncio
+async def test_retry_proctoring_forbidden_without_super_admin(db: AsyncSession):
+    """POST proctoring/retry without super-admin → 403."""
+    session_row, tenant_id = await seed_minimal_session(db)
+    user_row = await _get_user_for_tenant(db, tenant_id)
+
+    headers, restore = _setup_test_context(
+        db, user_row, tenant_id, is_super=False, permissions=("reports.view",)
+    )
+    try:
+        with patch("app.modules.vision.analyze_session_proctoring.send") as mock_send:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as ac:
+                r = await ac.post(
+                    f"/api/reports/session/{session_row.id}/proctoring/retry",
+                    headers=headers,
+                )
+    finally:
+        restore()
+
+    assert r.status_code == 403, r.text
+    mock_send.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # Tests: POST /api/reports/{report_id}/decision
 # ---------------------------------------------------------------------------
 

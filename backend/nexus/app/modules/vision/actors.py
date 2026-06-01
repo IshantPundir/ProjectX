@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import threading
 import uuid
 
 import dramatiq
@@ -38,6 +39,33 @@ log = structlog.get_logger("vision.actor")
 # own retries (and a re-enqueue after a worker crash) actually re-run, instead of
 # being silently swallowed by the idempotency gate.
 _DONE = {"ready", "unscorable"}
+
+# Process-level gaze estimator. Model load + RetinaFace init are costly; build
+# ONCE per worker process (was previously rebuilt on every actor call). With
+# --threads 1 there is no intra-process race, but the lock keeps it correct if
+# worker concurrency is ever raised.
+_estimator = None
+_estimator_lock = threading.Lock()
+
+
+def _get_estimator():
+    global _estimator
+    if _estimator is None:
+        with _estimator_lock:
+            if _estimator is None:
+                from app.modules.vision.gaze.mobilegaze import (  # noqa: PLC0415
+                    MobileGazeEstimator,
+                )
+
+                _estimator = MobileGazeEstimator(
+                    weights_path=vision_config.gaze_weights_path,
+                    input_size=vision_config.gaze_input_size,
+                    pitch_sign=vision_config.gaze_pitch_sign,
+                    yaw_sign=vision_config.gaze_yaw_sign,
+                    intra_op_threads=vision_config.ort_intra_op_threads,
+                    providers=vision_config.onnx_providers,
+                )
+    return _estimator
 
 
 async def _load_state(db, session_id: str, tenant_id: str):
@@ -206,14 +234,7 @@ async def _run(session_id: str, tenant_id: str) -> None:
 
     # Phase 2: heavy work OUTSIDE the DB transaction.
     try:
-        from app.modules.vision.gaze.mobilegaze import MobileGazeEstimator  # noqa: PLC0415
-
-        estimator = MobileGazeEstimator(
-            weights_path=vision_config.gaze_weights_path,
-            input_size=vision_config.gaze_input_size,
-            pitch_sign=vision_config.gaze_pitch_sign,
-            yaw_sign=vision_config.gaze_yaw_sign,
-        )
+        estimator = _get_estimator()
         with tempfile.TemporaryDirectory() as tmp:
             dest = os.path.join(tmp, "recording.mp4")
             await get_object_storage().download_to_path(recording_key, dest)
