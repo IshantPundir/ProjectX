@@ -39,10 +39,6 @@ class VisionConfig:
         return self._s.vision_ort_intra_op_threads
 
     @property
-    def worker_concurrency(self) -> int:
-        return self._s.vision_worker_concurrency
-
-    @property
     def zone_yaw_deg(self) -> float:
         return self._s.vision_zone_yaw_deg
 

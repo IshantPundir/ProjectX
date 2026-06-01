@@ -52,9 +52,12 @@ class MobileGazeEstimator:
         )
         self._input_name = self._session.get_inputs()[0].name
         self._output_names = [o.name for o in self._session.get_outputs()]
-        # RetinaFace (uniface) is onnxruntime-backed too. Pass our capped options
-        # if this uniface version accepts them; otherwise the worker's cpus cgroup
-        # cap (docker-compose) is the hard backstop on its thread fan-out.
+        # RetinaFace (uniface) is onnxruntime-backed too, but most uniface
+        # versions build their InferenceSession internally WITHOUT exposing
+        # SessionOptions — in that case the detector's ORT intra-op threads are
+        # bounded ONLY by the worker's cpus cgroup cap (docker-compose), which is
+        # the real backstop. Pass our capped options when the version accepts them
+        # (best-effort efficiency).
         rf_params = inspect.signature(RetinaFace.__init__).parameters
         if "sess_options" in rf_params:
             self._detector = RetinaFace(sess_options=so)

@@ -64,6 +64,8 @@ def test_build_ffmpeg_cmd_has_fps_scale_and_rawvideo():
     assert "rawvideo" in cmd
     assert "bgr24" in cmd
     assert "pipe:1" in cmd
+    assert "-threads" in cmd
+    assert cmd[cmd.index("-threads") + 1] == "1"
 
 
 def test_parse_probe_json_extracts_dims_and_duration():

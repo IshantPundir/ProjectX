@@ -196,7 +196,8 @@ env/Secrets at enterprise).
 | `vision_max_frames` | `VISION_MAX_FRAMES` | — | **2000** (new) |
 | `vision_max_frame_width` | `VISION_MAX_FRAME_WIDTH` | — | **960** (new) |
 | `vision_ort_intra_op_threads` | `VISION_ORT_INTRA_OP_THREADS` | — | **1** (new) |
-| `vision_worker_concurrency` | `VISION_WORKER_CONCURRENCY` | — | **4** (new) |
+
+`VISION_WORKER_CONCURRENCY` is a deploy/shell env var (consumed by the compose command + the Dockerfile CMD), NOT a pydantic-settings field — a Dramatiq `--processes` count is a launch-time CLI arg, so it can't be a runtime setting.
 
 **`.env.example`** — add a documented block alongside the existing
 `VISION_THUMBNAIL_*` entries (which today are the *only* documented vision vars;

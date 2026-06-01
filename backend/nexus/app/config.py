@@ -602,9 +602,6 @@ class Settings(BaseSettings):
     # onnxruntime intra-op threads PER inference. Keep at 1 — parallelism comes
     # from worker process concurrency, NOT per-call fan-out (the 2026-06-01 peg).
     vision_ort_intra_op_threads: int = 1
-    # Vision worker inference process count (Dramatiq --processes). Match to the
-    # worker's cpus cap; scale throughput via replicas, not by exceeding the cap.
-    vision_worker_concurrency: int = 4
     # Self-baseline zone thresholds (degrees of deviation from the per-session
     # baseline gaze direction).
     vision_zone_yaw_deg: float = 15.0

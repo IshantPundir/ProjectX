@@ -70,10 +70,16 @@ def parse_probe_json(raw: str) -> tuple[int, int, float]:
 
 
 def build_ffmpeg_cmd(path: str, eff_fps: float, out_w: int, out_h: int) -> list[str]:
-    """ffmpeg argv → constant-fps, downscaled raw BGR24 frames on stdout."""
+    """ffmpeg argv → constant-fps, downscaled raw BGR24 frames on stdout.
+
+    -threads 1: the output frame is small (downscaled), so single-threaded
+    decode/filter is plenty fast and avoids ffmpeg spawning nproc decode threads
+    that would oversubscribe the worker's cpus cap under --processes N.
+    """
     vf = f"fps={eff_fps:.6f},scale={out_w}:{out_h}"
     return [
         "ffmpeg", "-v", "error",
+        "-threads", "1",
         "-i", path,
         "-vf", vf,
         "-f", "rawvideo", "-pix_fmt", "bgr24",

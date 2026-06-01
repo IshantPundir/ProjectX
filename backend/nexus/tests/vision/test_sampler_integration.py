@@ -1,5 +1,6 @@
 # tests/vision/test_sampler_integration.py
 import os
+import shutil
 import subprocess
 import tempfile
 
@@ -7,7 +8,10 @@ import pytest
 
 from app.modules.vision.sampler import sample_frames
 
-pytestmark = pytest.mark.vision_integration
+pytestmark = [
+    pytest.mark.vision_integration,
+    pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not available (lean image)"),
+]
 
 
 def _make_clip(path: str, *, seconds: int, w: int, h: int, src_fps: int) -> None:

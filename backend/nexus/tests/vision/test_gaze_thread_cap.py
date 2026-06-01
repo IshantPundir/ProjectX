@@ -2,13 +2,11 @@
 import sys
 import types
 
-import pytest
 
-
-@pytest.fixture
-def stub_heavy_deps(monkeypatch):
-    # Minimal stubs so MobileGazeEstimator.__init__ runs without real ONNX.
-    captured = {}
+def _install_stubs(monkeypatch, retinaface_cls, captured):
+    """Stub onnxruntime/numpy/uniface so MobileGazeEstimator.__init__ runs without
+    real native deps. `retinaface_cls` lets each test pick a uniface RetinaFace
+    that does or does not accept sess_options."""
 
     class _SessionOptions:
         def __init__(self):
@@ -24,6 +22,7 @@ def stub_heavy_deps(monkeypatch):
             captured["intra"] = sess_options.intra_op_num_threads
             captured["inter"] = sess_options.inter_op_num_threads
             captured["mode"] = sess_options.execution_mode
+            captured["so"] = sess_options
 
         def get_inputs(self):
             return [types.SimpleNamespace(name="in")]
@@ -44,22 +43,44 @@ def stub_heavy_deps(monkeypatch):
     monkeypatch.setitem(sys.modules, "numpy", np)
 
     uniface_det = types.ModuleType("uniface.detection")
-
-    class _RetinaFace:
-        def __init__(self):
-            pass
-
-    uniface_det.RetinaFace = _RetinaFace
+    uniface_det.RetinaFace = retinaface_cls
     uniface_pkg = types.ModuleType("uniface")
     monkeypatch.setitem(sys.modules, "uniface", uniface_pkg)
     monkeypatch.setitem(sys.modules, "uniface.detection", uniface_det)
-    return captured
 
 
-def test_gaze_session_thread_capped(stub_heavy_deps):
+def test_gaze_session_thread_capped_and_retinaface_fallback(monkeypatch):
+    captured = {}
+
+    class _RetinaFace:  # uniface version WITHOUT sess_options support
+        def __init__(self):
+            captured["rf_built"] = True
+
+    _install_stubs(monkeypatch, _RetinaFace, captured)
     from app.modules.vision.gaze.mobilegaze import MobileGazeEstimator
 
     MobileGazeEstimator(weights_path="/w.onnx", intra_op_threads=1)
-    assert stub_heavy_deps["intra"] == 1
-    assert stub_heavy_deps["inter"] == 1
-    assert stub_heavy_deps["mode"] == "seq"
+    assert captured["intra"] == 1
+    assert captured["inter"] == 1
+    assert captured["mode"] == "seq"
+    # uniface without sess_options → bare RetinaFace() fallback (cgroup is the
+    # detector's bound). The build must still succeed.
+    assert captured["rf_built"] is True
+
+
+def test_retinaface_receives_capped_options_when_supported(monkeypatch):
+    captured = {}
+
+    class _RetinaFace:  # uniface version that DOES accept sess_options
+        def __init__(self, sess_options=None):
+            captured["rf_so"] = sess_options
+
+    _install_stubs(monkeypatch, _RetinaFace, captured)
+    from app.modules.vision.gaze.mobilegaze import MobileGazeEstimator
+
+    MobileGazeEstimator(weights_path="/w.onnx", intra_op_threads=1)
+    # The same capped SessionOptions handed to the gaze session is passed to
+    # RetinaFace when the uniface version supports it.
+    assert captured["rf_so"] is not None
+    assert captured["rf_so"] is captured["so"]
+    assert captured["rf_so"].intra_op_num_threads == 1
