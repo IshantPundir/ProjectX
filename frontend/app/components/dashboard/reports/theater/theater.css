@@ -359,25 +359,7 @@
   scrollbar-width: thin;
 }
 
-/* --- node track --- */
-.theater-node {
-  transition: width 0.12s ease, height 0.12s ease;
-}
-.theater-node[data-active='true'] {
-  box-shadow: 0 0 0 4px rgba(184, 101, 30, 0.22);
-}
-
-/* --- integrity flag ticks + hover thumbnail --- */
-.theater-flagtick {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  transform: translateX(-50%);
-  cursor: pointer;
-  border: none;
-  padding: 0;
-}
+/* --- scrubber flag hover thumbnail --- */
 .theater-flagtip {
   position: absolute;
   bottom: 150%;

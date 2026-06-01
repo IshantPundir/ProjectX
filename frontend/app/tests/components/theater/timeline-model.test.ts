@@ -6,10 +6,6 @@ import {
   activeSegmentIndex,
   buildFlagMarkers,
   buildQuestionMarkers,
-  clamp01,
-  densityBuckets,
-  densityBucketsForKinds,
-  gamma,
 } from '@/components/dashboard/reports/theater/timeline-model'
 
 function q(partial: Partial<QuestionOut>): QuestionOut {
@@ -57,21 +53,6 @@ describe('buildFlagMarkers', () => {
   })
 })
 
-describe('densityBuckets', () => {
-  it('marks buckets covered by a flag interval as hot', () => {
-    const flags: ProctoringFlaggedInterval[] = [
-      { kind: 'off_screen_sustained', start_ms: 0, end_ms: 1000, confidence: 0.65 },
-    ]
-    const out = densityBuckets(flags, 4000, 4)
-    expect(out).toHaveLength(4)
-    expect(out[0]).toBeGreaterThan(0)
-    expect(out[3]).toBe(0)
-  })
-  it('zero duration → all-zero buckets of the requested length', () => {
-    expect(densityBuckets([], 0, 4)).toEqual([0, 0, 0, 0])
-  })
-})
-
 describe('activeQuestionId', () => {
   it('returns the latest question whose asked_at_ms <= currentMs', () => {
     const markers = buildQuestionMarkers(
@@ -94,45 +75,5 @@ describe('activeSegmentIndex', () => {
     expect(activeSegmentIndex(segs, 500)).toBe(0)
     expect(activeSegmentIndex(segs, 1500)).toBe(1)
     expect(activeSegmentIndex(segs, -1)).toBe(-1)
-  })
-})
-
-describe('clamp01', () => {
-  it('clamps below 0 and above 1', () => {
-    expect(clamp01(-0.5)).toBe(0)
-    expect(clamp01(1.5)).toBe(1)
-    expect(clamp01(0.3)).toBe(0.3)
-  })
-})
-
-describe('gamma', () => {
-  it('keeps 0 and 1 fixed and brightens mid values', () => {
-    expect(gamma(0)).toBe(0)
-    expect(gamma(1)).toBe(1)
-    expect(gamma(-1)).toBe(0)
-    expect(gamma(2)).toBe(1)
-    // gamma < 1 raises small inputs (0.25 ** 0.45 ≈ 0.531)
-    expect(gamma(0.25)).toBeCloseTo(0.531, 1)
-  })
-})
-
-describe('densityBucketsForKinds', () => {
-  const flagged: ProctoringFlaggedInterval[] = [
-    { kind: 'down_glance', start_ms: 0, end_ms: 1000, confidence: 0.6 },
-    { kind: 'off_screen_sustained', start_ms: 5000, end_ms: 6000, confidence: 0.65 },
-  ]
-
-  it('includes only the requested kinds', () => {
-    const out = densityBucketsForKinds(flagged, 10_000, 10, ['down_glance'])
-    expect(out).toHaveLength(10)
-    // bucket 0 (0–1000ms) is the only down_glance hit → normalized to 1
-    expect(out[0]).toBe(1)
-    // the off_screen bucket (≈5) is excluded → 0
-    expect(out[5]).toBe(0)
-  })
-
-  it('returns all-zero buckets when no kind matches', () => {
-    const out = densityBucketsForKinds(flagged, 10_000, 4, ['multiple_faces'])
-    expect(out).toEqual([0, 0, 0, 0])
   })
 })
