@@ -110,6 +110,14 @@ vision = [
     "numpy>=1.26",
     "uniface>=0.1",
 ]
+# Test-only deps for running the vision_integration suite INSIDE the vision
+# image (which installs .[vision], not .[dev]). Kept out of the `vision` group
+# so the production vision worker image stays lean. Install ephemerally in a
+# throwaway container — see the canonical command in the perf plan / spec.
+vision-test = [
+    "pytest>=8.4,<9",
+    "pytest-asyncio>=0.26,<1",
+]
 
 [build-system]
 requires = ["setuptools>=75"]

@@ -880,10 +880,12 @@ Expected: image builds (ffmpeg present).
 
 - [ ] **Step 4: Run the integration tests in the vision image**
 
+The production vision worker image deliberately does not contain pytest (lean image); install ephemerally in a throwaway container.
+
 Run:
 ```bash
-docker compose run --rm --entrypoint "" nexus-vision-worker \
-  pytest tests/vision/test_sampler_integration.py -m vision_integration -v
+docker compose run --rm --no-deps --entrypoint "" nexus-vision-worker \
+  sh -c "pip install -q --target /tmp/testdeps pytest pytest-asyncio && PYTHONPATH=/tmp/testdeps:\$PYTHONPATH /tmp/testdeps/bin/pytest tests/vision/test_sampler_integration.py -m vision_integration -v"
 ```
 Expected: PASS (both tests).
 
@@ -902,6 +904,8 @@ git commit -m "test(vision): ffmpeg sampler integration — bounded frames + dow
 
 - [ ] **Step 1: Run the full vision unit suite (lean image)**
 
+The production vision worker image deliberately does not contain pytest (lean image); the unit suite runs in the lean `nexus` image which does have it (via `.[dev]`).
+
 Run: `docker compose run --rm nexus pytest tests/vision -m "not vision_integration" -v`
 Expected: PASS, no regressions in `test_detectors_*`, `test_analysis_observations`, `test_actor_idempotency`, `test_public_api`, etc.
 
@@ -912,7 +916,12 @@ Expected: no errors.
 
 - [ ] **Step 3: Bounded-CPU smoke against a real recording (manual)**
 
-With the optimized worker built, start ONE vision worker and process a real ~14-min recording (re-enqueue via a report read, or directly send the actor a known session_id/tenant_id). In a second terminal:
+With the optimized worker built, start ONE vision worker and process a real ~14-min recording (re-enqueue via a report read, or directly send the actor a known session_id/tenant_id). Run the integration test via ephemeral install first to confirm the vision image is healthy:
+```bash
+docker compose run --rm --no-deps --entrypoint "" nexus-vision-worker \
+  sh -c "pip install -q --target /tmp/testdeps pytest pytest-asyncio && PYTHONPATH=/tmp/testdeps:\$PYTHONPATH /tmp/testdeps/bin/pytest tests/vision/test_sampler_integration.py -m vision_integration -v"
+```
+Then start the worker and watch CPU in a second terminal:
 ```bash
 docker stats --no-stream nexus-vision-worker
 ```
