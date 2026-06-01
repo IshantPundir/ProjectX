@@ -25,24 +25,36 @@ export function SessionPlayback({
   onOpen: () => void
 }) {
   const v = verdictMeta(report.verdict)
+  // A real recording frame for the poster — first question that has one.
+  const poster = report.questions.find((q) => q.thumbnail_url)?.thumbnail_url ?? null
   return (
     <div className={CARD} style={{ borderColor: 'var(--px-hairline)' }}>
       <button
         type="button"
         onClick={onOpen}
         aria-label="Play session recording — open review theater"
-        className="relative flex w-full items-center justify-center rounded-lg"
+        className="report-playposter group relative flex w-full items-center justify-center overflow-hidden rounded-lg"
         style={{
           aspectRatio: '16 / 9',
           background: 'radial-gradient(110% 90% at 50% 18%, #fbf4ee, #e7eef3 60%, #dfe9ee)',
           border: '1px solid var(--px-hairline)',
         }}
       >
+        {poster && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={poster} alt="" aria-hidden="true" className="absolute inset-0 h-full w-full object-cover" />
+        )}
+        {/* legibility scrim — darker when there's a photo behind the chrome */}
         <span
-          className="grid h-14 w-14 place-items-center rounded-full text-[20px] text-white shadow-lg"
-          style={{ background: 'var(--px-accent)' }}
+          className="absolute inset-0"
           aria-hidden="true"
-        >
+          style={{
+            background: poster
+              ? 'linear-gradient(180deg, rgba(8,16,24,0.34) 0%, rgba(8,16,24,0.04) 32%, rgba(8,16,24,0.10) 70%, rgba(8,16,24,0.46) 100%)'
+              : 'transparent',
+          }}
+        />
+        <span className="report-playbtn relative grid h-14 w-14 place-items-center rounded-full text-[20px] text-white" aria-hidden="true">
           ▶
         </span>
         <span
@@ -51,7 +63,10 @@ export function SessionPlayback({
         >
           {v.label}
         </span>
-        <span className="absolute bottom-2.5 left-2.5 text-[11px] font-semibold" style={{ color: 'var(--px-fg-3)' }}>
+        <span
+          className="absolute bottom-2.5 left-2.5 text-[11px] font-semibold"
+          style={{ color: poster ? '#fff' : 'var(--px-fg-3)', textShadow: poster ? '0 1px 6px rgba(0,0,0,0.5)' : 'none' }}
+        >
           Review session →
         </span>
       </button>

@@ -1,6 +1,8 @@
 'use client'
 
-import { formatTimestamp, statusBadgeMeta, TONE_BG, TONE_INK } from '../report-format'
+import type { CSSProperties } from 'react'
+
+import { formatTimestamp, statusBadgeMeta, TONE_FILL, TONE_INK } from '../report-format'
 import type { TimelineMarker } from './timeline-model'
 import './theater.css'
 
@@ -14,11 +16,15 @@ export function Filmstrip({
   onSelect: (questionId: string) => void
 }) {
   return (
-    <div className="theater-strip flex gap-2 overflow-x-auto pb-1" aria-label="Question timeline">
+    <div className="theater-scroll flex gap-2.5 overflow-x-auto pb-1.5 pt-1" aria-label="Question timeline">
       {markers.map((m) => {
         const badge = statusBadgeMeta(m.statusBadge)
         const active = m.questionId === activeQuestionId
         const seekable = m.askedAtMs != null
+        // The card's whole surface is tinted by status tone via --tf (a pastel
+        // of the tone's fill, mixed in CSS). Lively, but the color still means
+        // pass / partial / fail.
+        const cardStyle = { '--tf': TONE_FILL[m.tone] } as CSSProperties
         return (
           <button
             key={m.questionId}
@@ -27,39 +33,45 @@ export function Filmstrip({
             data-seekable={seekable ? 'true' : 'false'}
             onClick={() => onSelect(m.questionId)}
             aria-label={`Q${m.seq} ${m.title} — ${badge.label}${seekable ? '' : ' (no timestamp)'}`}
-            className="theater-card theater-glass flex w-[168px] flex-none flex-col overflow-hidden rounded-xl text-left"
+            className="theater-tl-card flex w-[236px] flex-none items-center gap-3 rounded-full p-1.5 pr-5 text-left"
+            style={cardStyle}
           >
-            <div className="relative h-[44px] w-full" style={{ background: TONE_BG[m.tone] }}>
+            <div
+              className="relative h-14 w-14 flex-none overflow-hidden rounded-full"
+              style={{ background: 'color-mix(in srgb, var(--tf) 55%, #fff)' }}
+            >
               {m.thumbnailUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={m.thumbnailUrl} alt={`Q${m.seq} ${m.title}`} className="h-full w-full object-cover" />
               ) : (
                 <span
-                  className="absolute inset-0 grid place-items-center text-[13px] font-extrabold"
+                  className="absolute inset-0 grid place-items-center text-[15px] font-extrabold"
                   aria-hidden="true"
                   style={{ color: TONE_INK[m.tone] }}
                 >
                   Q{m.seq}
                 </span>
               )}
-              {seekable && (
-                <span
-                  className="absolute bottom-1 right-1 rounded px-1 py-0.5 text-[8.5px] font-bold text-white"
-                  style={{ background: 'rgba(8,12,16,0.6)' }}
-                >
-                  {formatTimestamp(m.askedAtMs as number)}
-                </span>
-              )}
             </div>
-            <div className="px-2 py-1.5">
-              <div className="text-[8px] font-bold uppercase tracking-wide" style={{ color: 'var(--px-fg-4)' }}>
-                Q{m.seq}
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[9px] font-extrabold uppercase tracking-wide" style={{ color: 'var(--px-fg-4)' }}>
+                  Q{m.seq}
+                </span>
+                {seekable && (
+                  <span className="text-[9px] font-bold tabular-nums" style={{ color: 'var(--px-fg-4)' }}>
+                    · {formatTimestamp(m.askedAtMs as number)}
+                  </span>
+                )}
               </div>
-              <div className="truncate text-[11px] font-semibold" style={{ color: 'var(--px-fg)' }} title={m.title}>
+              <div className="truncate text-[12.5px] font-bold leading-snug" style={{ color: 'var(--px-fg)' }} title={m.title}>
                 {m.title}
               </div>
-              <div className="mt-0.5 text-[9px] font-bold" style={{ color: TONE_INK[m.tone] }}>
-                {badge.label}
+              <div className="mt-0.5 flex items-center gap-1">
+                <span className="h-1.5 w-1.5 flex-none rounded-full" style={{ background: TONE_FILL[m.tone] }} />
+                <span className="truncate text-[9.5px] font-bold" style={{ color: TONE_INK[m.tone] }}>
+                  {badge.label}
+                </span>
               </div>
             </div>
           </button>

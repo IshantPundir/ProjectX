@@ -18,13 +18,24 @@
    single inherited line is what was killing the glass blur. */
 .px-dialog-backdrop:has(.theater-shell) {
   background: rgba(12, 20, 28, 0.55);
-  /* No backdrop-filter: an ancestor blur suppresses the panels' blur. No
-     animation: the base rule fades opacity 0→1, and an ancestor animating
-     opacity paints the child backdrop-filter once (un-blurred) and never
-     re-invalidates — the "works only after a devtools poke" bug. */
+  /* No backdrop-filter: the main panel glass is GlassLayer's `filter: blur()`
+     (immune to ancestor effects); a backdrop-filter here would still suppress
+     the few small frosted chips. Opacity fade is safe now that no descendant
+     uses backdrop-filter. */
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
-  animation: none !important;
+  animation: theater-backdrop-in 320ms var(--px-ease) both;
+}
+.px-dialog-backdrop:has(.theater-shell[data-closing='true']) {
+  animation: theater-backdrop-out 260ms var(--px-ease) both;
+}
+@keyframes theater-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes theater-backdrop-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
 }
 
 /* Centred WITHOUT transform. The shared .px-dialog-content centres via
@@ -50,12 +61,49 @@
   top: 0;
   left: 0;
   transform: none;
-  /* No entrance animation at all. The base rule's `px-dialog-scale-in` applies a
-     transform (breaks descendant backdrop-filter), and ANY opacity/transform
-     animation on this ancestor makes the child panels' backdrop-filter fail to
-     paint on load (renders blur only after a forced repaint). A static shell is
-     the reliable trade for working glass. */
-  animation: none !important;
+  /* Futuristic open/close. Safe to transform now: the panel glass is GlassLayer's
+     `filter: blur()` (unaffected by ancestor transforms) and no descendant uses
+     backdrop-filter anymore, so the old "blur paints once un-blurred" bug can't
+     fire. Everything inside scales as one unit, so panels stay aligned with their
+     blurred backdrop. */
+  animation: theater-shell-in 380ms var(--px-ease) both;
+}
+.px-dialog-content.theater-shell[data-closing='true'] {
+  /* exit shorter than enter — feels responsive (MD motion) */
+  animation: theater-shell-out 260ms var(--px-ease) both;
+}
+@keyframes theater-shell-in {
+  from {
+    opacity: 0;
+    transform: scale(0.93) translateY(12px);
+    clip-path: inset(6% 7% round 22px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+    clip-path: inset(0 round 22px);
+  }
+}
+@keyframes theater-shell-out {
+  from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+    clip-path: inset(0 round 22px);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.965) translateY(8px);
+    clip-path: inset(4% 5% round 22px);
+  }
+}
+/* reduced motion: opacity-only, no scale/clip reveal */
+@media (prefers-reduced-motion: reduce) {
+  .px-dialog-content.theater-shell {
+    animation-name: theater-backdrop-in;
+  }
+  .px-dialog-content.theater-shell[data-closing='true'] {
+    animation-name: theater-backdrop-out;
+  }
 }
 
 /* The single positioned root that holds the video + all overlays.
@@ -123,6 +171,36 @@
   left: 14px;
   right: 14px;
   z-index: 30;
+  /* the strip is mostly empty (watermark + a small pill) — let clicks fall
+     through to the video; interactive children opt back in. */
+  pointer-events: none;
+}
+
+/* faint product watermark, top-left. White glow keeps the dark wordmark legible
+   over the darkened top scrim. Purely decorative. */
+.theater-watermark {
+  opacity: 0.72;
+  filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.85)) drop-shadow(0 1px 2px rgba(255, 255, 255, 0.7));
+  pointer-events: none;
+  user-select: none;
+}
+
+/* left rail: vertically-centered glass pill holding identity + gauges +
+   integrity. Click-through gutter; the panel itself re-enables pointer events. */
+.theater-rail-slot {
+  position: absolute;
+  left: 14px;
+  top: 60px;
+  bottom: 168px;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  pointer-events: none;
+}
+.theater-rail-slot > * {
+  pointer-events: auto;
+  max-height: 100%;
 }
 /* Vertically centered on the right, WITHOUT transform (see file header).
    The slot spans a tall band and centers its single child via flex; it is
@@ -130,10 +208,12 @@
    video, while the panel itself re-enables pointer events. */
 .theater-moment-slot {
   position: absolute;
-  top: 84px;
-  bottom: 210px;
-  right: 16px;
-  width: 300px;
+  /* a right-edge gutter that mirrors the left rail's inset; the band between the
+     top chrome and the floating bottom can never collide with either. */
+  top: 60px;
+  bottom: 168px;
+  right: 14px;
+  width: 312px;
   z-index: 25;
   display: flex;
   flex-direction: column;
@@ -174,13 +254,14 @@
   background: linear-gradient(to top, rgba(10, 20, 30, 0.24), rgba(10, 20, 30, 0));
 }
 
-/* --- center play overlay (light frosted, dark icon) --- */
+/* --- center play overlay (light frosted, dark icon) ---
+   No backdrop-filter on purpose: it's the only kind of blur that breaks under a
+   transformed ancestor, and the shell now plays a transform open/close
+   animation. A more opaque white reads the same over the video. --- */
 .theater-centerplay {
   color: var(--px-fg);
-  background: rgba(255, 255, 255, 0.55);
-  border: 1px solid rgba(255, 255, 255, 0.8);
-  backdrop-filter: blur(5px) saturate(180%);
-  -webkit-backdrop-filter: blur(5px) saturate(180%);
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.85);
   box-shadow: 0 8px 28px rgba(15, 40, 60, 0.25);
   transition: transform 0.15s ease, background 0.15s ease;
 }
@@ -336,27 +417,132 @@
   background: #fff;
 }
 
-/* --- filmstrip cards --- */
-.theater-card {
+/* --- bottom timeline: floating label + integrity chips --- */
+.theater-tl-label {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--px-fg-3);
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  box-shadow: 0 4px 14px rgba(15, 40, 60, 0.16);
+}
+.theater-tl-integrity {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  color: #fff;
+  background: var(--px-danger-fill);
+  box-shadow: 0 4px 14px rgba(229, 85, 107, 0.4);
+}
+/* pending hint (proctoring still analyzing) — same frosted pill as the label */
+.theater-tl-pending {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--px-fg-3);
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  box-shadow: 0 4px 14px rgba(15, 40, 60, 0.16);
+}
+
+/* --- loading spinners (accent ring on a faint track) --- */
+.theater-spinner {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 3px solid rgba(20, 40, 60, 0.14);
+  border-top-color: var(--px-accent);
+  animation: theater-spin 0.8s linear infinite;
+}
+.theater-spinner-sm {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 2px solid rgba(20, 40, 60, 0.18);
+  border-top-color: var(--px-accent);
+  animation: theater-spin 0.8s linear infinite;
+}
+@keyframes theater-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .theater-spinner,
+  .theater-spinner-sm {
+    animation-duration: 1.8s;
+  }
+}
+
+/* --- glassmorphic scrollbar ---
+   Minimal, floating, theme-tinted: a translucent ink thumb with rounded ends
+   inset off a transparent track (the 3px transparent border + padding-box clip
+   makes it read as a small pill drifting inside the panel). Shared by every
+   scroll region in the theater. */
+.theater-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(20, 40, 60, 0.26) transparent;
+}
+.theater-scroll::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+.theater-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.theater-scroll::-webkit-scrollbar-thumb {
+  background: rgba(20, 40, 60, 0.22);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+.theater-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(20, 40, 60, 0.38);
+  background-clip: padding-box;
+}
+.theater-scroll::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* --- lively, status-tinted timeline cards ---
+   --tf is the tone's saturated fill (set inline per card); the surface is a
+   pastel of it (mixed toward white) so the whole card carries the status color
+   while text stays dark and legible. */
+.theater-tl-card {
+  background: color-mix(in srgb, var(--tf) 22%, #fff);
+  border: 1px solid color-mix(in srgb, var(--tf) 48%, #fff);
+  box-shadow: 0 6px 18px rgba(15, 40, 60, 0.16);
   cursor: pointer;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transition: transform 0.15s var(--px-ease), box-shadow 0.15s ease, border-color 0.15s ease;
 }
-.theater-card:hover {
-  transform: translateY(-2px);
+.theater-tl-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 26px rgba(15, 40, 60, 0.22);
 }
-.theater-card[data-active='true'] {
-  outline: 2px solid var(--px-accent);
-  outline-offset: 1px;
+.theater-tl-card[data-active='true'] {
+  border-color: color-mix(in srgb, var(--tf) 80%, #fff);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--tf) 72%, #fff), 0 12px 28px rgba(15, 40, 60, 0.26);
+  transform: translateY(-3px);
 }
-.theater-card[data-seekable='false'] {
-  opacity: 0.6;
+.theater-tl-card[data-seekable='false'] {
+  opacity: 0.62;
   cursor: default;
 }
-.theater-card[data-seekable='false']:hover {
+.theater-tl-card[data-seekable='false']:hover {
   transform: none;
-}
-.theater-strip {
-  scrollbar-width: thin;
+  box-shadow: 0 6px 18px rgba(15, 40, 60, 0.16);
 }
 
 /* --- scrubber flag hover thumbnail --- */

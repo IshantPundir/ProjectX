@@ -56,6 +56,35 @@
 .px-arow { transition: background-color 140ms ease; }
 .px-arow:hover { background: var(--px-bg-2); }
 
+/* --- session playback poster: futuristic play button (glowing pulse ring) --- */
+.report-playposter img { transition: transform 0.5s var(--px-ease); }
+.report-playposter:hover img { transform: scale(1.04); }
+.report-playbtn {
+  background: var(--px-accent);
+  box-shadow: 0 0 0 6px rgba(108, 92, 208, 0.18), 0 12px 30px rgba(108, 92, 208, 0.45);
+  transition: transform 0.18s var(--px-ease), box-shadow 0.18s ease;
+}
+.report-playposter:hover .report-playbtn {
+  transform: scale(1.09);
+  box-shadow: 0 0 0 10px rgba(108, 92, 208, 0.24), 0 16px 40px rgba(108, 92, 208, 0.55);
+}
+/* concentric pulse rings radiating from the button */
+.report-playbtn::before,
+.report-playbtn::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid rgba(108, 92, 208, 0.55);
+  animation: report-playpulse 2.6s var(--px-ease) infinite;
+  pointer-events: none;
+}
+.report-playbtn::after { animation-delay: 1.3s; }
+@keyframes report-playpulse {
+  0% { transform: scale(1); opacity: 0.7; }
+  100% { transform: scale(1.7); opacity: 0; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .px-gauge-ring { animation: none; stroke-dashoffset: var(--px-gauge-final-offset); }
   .px-reveal { animation: none; opacity: 1; transform: none; }
@@ -63,4 +92,6 @@
   .px-gauge, .px-gauge:hover { transform: none; filter: none; }
   .px-row-slide:hover, .px-qrow:hover, .px-chip { transform: none; filter: none; box-shadow: none; }
   .px-shine::after { display: none; }
+  .report-playbtn::before, .report-playbtn::after { animation: none; }
+  .report-playposter:hover img, .report-playposter:hover .report-playbtn { transform: none; }
 }

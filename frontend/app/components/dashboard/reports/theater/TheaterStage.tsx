@@ -2,23 +2,35 @@
 'use client'
 
 import { Play } from 'lucide-react'
-import type { RefObject } from 'react'
+import type { Ref } from 'react'
 
 export function TheaterStage({
   videoRef,
   signedUrl,
+  loading,
   playing,
   onTogglePlay,
 }: {
-  videoRef: RefObject<HTMLVideoElement | null>
+  // callback ref (or ref object) — owner tracks the live node to re-bind effects
+  videoRef: Ref<HTMLVideoElement>
   signedUrl: string | null
+  loading: boolean
   playing: boolean
   onTogglePlay: () => void
 }) {
   if (!signedUrl) {
     return (
-      <div className="absolute inset-0 grid place-items-center text-[12px] text-[rgba(20,40,60,0.55)]">
-        Recording unavailable.
+      <div className="absolute inset-0 grid place-items-center">
+        {loading ? (
+          <div className="flex flex-col items-center gap-3">
+            <span className="theater-spinner" aria-hidden="true" />
+            <span className="text-[12px] font-semibold" style={{ color: 'rgba(20,40,60,0.6)' }}>
+              Loading recording…
+            </span>
+          </div>
+        ) : (
+          <span className="text-[12px] text-[rgba(20,40,60,0.55)]">Recording unavailable.</span>
+        )}
       </div>
     )
   }

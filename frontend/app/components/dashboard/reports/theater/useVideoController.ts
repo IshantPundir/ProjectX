@@ -4,9 +4,9 @@
 import {
   useCallback,
   useEffect,
+  useRef,
   useState,
   type MutableRefObject,
-  type RefObject,
 } from 'react'
 
 import type { PlaybackSeekApi } from '../SessionPlayback'
@@ -42,10 +42,16 @@ export interface VideoController {
  * the rest of the theater uses (questions/flags) via `seekApiRef`, and reports
  * the engine-relative playhead through `onCurrentMs`.
  *
+ * `video` is the live element NODE (not a ref object), so every effect re-runs
+ * when the <video> mounts/unmounts — critical because the Base UI dialog portal
+ * mounts the element a tick after this hook first commits, and remounts it on
+ * every reopen. Keying on a ref object instead would silently fail to re-attach
+ * listeners on the second open (the element changes without any dep changing).
+ *
  * @param onCurrentMs Must be render-stable (a useState setter or useCallback-wrapped fn);
  * an inline arrow would re-attach all media listeners on every parent render. */
 export function useVideoController(
-  videoRef: RefObject<HTMLVideoElement | null>,
+  video: HTMLVideoElement | null,
   enabled: boolean,
   offsetMs: number,
   seekApiRef: MutableRefObject<PlaybackSeekApi | null>,
@@ -60,8 +66,16 @@ export function useVideoController(
   const [rate, setRate] = useState(1)
   const [isFullscreen, setIsFullscreen] = useState(false)
 
+  // Imperative handle to the element. Effects key on the `video` node (so they
+  // re-bind when it mounts/remounts); DOM mutations go through this ref, which
+  // is the sanctioned mutable container.
+  const elRef = useRef<HTMLVideoElement | null>(null)
   useEffect(() => {
-    const v = videoRef.current
+    elRef.current = video
+  }, [video])
+
+  useEffect(() => {
+    const v = video
     if (!v || !enabled) return
     const onPlay = () => setPlaying(true)
     const onPause = () => setPlaying(false)
@@ -90,8 +104,15 @@ export function useVideoController(
     v.addEventListener('volumechange', onVol)
     v.addEventListener('ratechange', onRate)
     // sync initial state
+    // sync initial state — on a cached reopen the element can already carry
+    // metadata/playback state before any event fires, so seed from it via the
+    // same handlers (routing through them keeps state updates out of the effect
+    // body itself).
+    ;(v.paused ? onPause : onPlay)()
     onDur()
     onVol()
+    onTime()
+    onProgress()
     return () => {
       v.removeEventListener('play', onPlay)
       v.removeEventListener('pause', onPause)
@@ -101,7 +122,7 @@ export function useVideoController(
       v.removeEventListener('volumechange', onVol)
       v.removeEventListener('ratechange', onRate)
     }
-  }, [videoRef, enabled, offsetMs, onCurrentMs])
+  }, [video, enabled, offsetMs, onCurrentMs])
 
   useEffect(() => {
     const onFs = () => setIsFullscreen(document.fullscreenElement != null)
@@ -114,7 +135,7 @@ export function useVideoController(
   useEffect(() => {
     seekApiRef.current = {
       seekToMs: (ms: number) => {
-        const v = videoRef.current
+        const v = elRef.current
         if (!v) return
         v.currentTime = Math.max(0, (ms + offsetMs) / 1000)
         // Catch the benign "play() interrupted by pause()" rejection that fires
@@ -125,46 +146,40 @@ export function useVideoController(
     return () => {
       seekApiRef.current = null
     }
-  }, [videoRef, seekApiRef, offsetMs])
+  }, [seekApiRef, offsetMs])
 
   const togglePlay = useCallback(() => {
-    const v = videoRef.current
+    const v = elRef.current
     if (!v) return
     if (v.paused) void v.play?.()?.catch(() => {})
     else v.pause?.()
-  }, [videoRef])
+  }, [])
 
-  const seekToSec = useCallback(
-    (sec: number) => {
-      const v = videoRef.current
-      if (!v) return
-      v.currentTime = Math.max(0, sec)
-    },
-    [videoRef],
-  )
+  const seekToSec = useCallback((sec: number) => {
+    const v = elRef.current
+    if (!v) return
+    v.currentTime = Math.max(0, sec)
+  }, [])
 
-  const setVolume = useCallback(
-    (val: number) => {
-      const v = videoRef.current
-      if (!v) return
-      v.muted = false
-      v.volume = Math.min(1, Math.max(0, val))
-    },
-    [videoRef],
-  )
+  const setVolume = useCallback((val: number) => {
+    const v = elRef.current
+    if (!v) return
+    v.muted = false
+    v.volume = Math.min(1, Math.max(0, val))
+  }, [])
 
   const toggleMute = useCallback(() => {
-    const v = videoRef.current
+    const v = elRef.current
     if (!v) return
     v.muted = !v.muted
-  }, [videoRef])
+  }, [])
 
   const cycleRate = useCallback(() => {
-    const v = videoRef.current
+    const v = elRef.current
     if (!v) return
     const idx = (RATES as readonly number[]).indexOf(v.playbackRate)
     v.playbackRate = RATES[(idx + 1) % RATES.length] ?? 1
-  }, [videoRef])
+  }, [])
 
   return {
     playing,

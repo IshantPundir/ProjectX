@@ -1,15 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import { VerbalContentOnlyBadge } from '@/components/dashboard/reports/SessionPlayback'
 import { ReportMethodologyFooter } from '@/components/dashboard/reports/ReportMethodologyFooter'
 import { ReportTopBar } from '@/components/dashboard/reports/ReportTopBar'
 import { makeReport } from './_fixture'
 
 describe('report presentational components', () => {
-  it('VerbalContentOnlyBadge states no facial/affect scoring', () => {
-    render(<VerbalContentOnlyBadge />)
-    expect(screen.getByText(/no facial/i)).toBeInTheDocument()
-  })
   it('ReportMethodologyFooter shows the verbal-content-only line + model', () => {
     const r = makeReport()
     render(<ReportMethodologyFooter methodology={r.methodology} manifest={r.scoring_manifest} />)

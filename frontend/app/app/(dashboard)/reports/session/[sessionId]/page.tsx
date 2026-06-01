@@ -8,6 +8,7 @@ import {
   ReportEmptyState, ReportFailedState, ReportForbiddenState, ReportPendingState,
 } from '@/components/dashboard/reports/ReportStates'
 import type { HumanDecisionValue } from '@/lib/api/reports'
+import { useCandidate } from '@/lib/hooks/use-candidate'
 import { useMe } from '@/lib/hooks/use-me'
 import { useRecordDecision, useRegenerateReport, useReport } from '@/lib/hooks/use-report'
 
@@ -16,9 +17,13 @@ export default function ReportPage() {
   const sessionId = params.sessionId
   const sp = useSearchParams()
   const candidateId = sp.get('candidateId') ?? ''
-  const candidateName = sp.get('candidateName') ?? 'Candidate'
   const title = sp.get('title') ?? 'Interview'
   const subtitle = sp.get('subtitle') ?? ''
+
+  // The link usually carries candidateName, but it can be blank (opened without
+  // the param) — fall back to the candidate record so the name still shows.
+  const { data: candidate } = useCandidate(candidateId)
+  const candidateName = (sp.get('candidateName') || candidate?.name || 'Candidate').trim() || 'Candidate'
 
   const { data: me } = useMe()
   const isSuperAdmin = !!me?.is_super_admin
