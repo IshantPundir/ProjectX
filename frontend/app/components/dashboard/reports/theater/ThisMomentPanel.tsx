@@ -30,9 +30,9 @@ export function ThisMomentPanel({
     // Outer stays a non-scrolling clip container so the GlassBackdrop (absolute,
     // z-index:-1) paints; scrolling moves to the inner wrapper. (A scroll
     // container on the same element as theater-glass suppressed the backdrop.)
-    <div className="theater-glass flex max-h-full flex-col rounded-2xl p-4">
+    <div className="theater-glass flex max-h-full w-full flex-col rounded-2xl p-4">
       <GlassBackdrop />
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+      <div className="theater-scroll flex min-h-0 flex-1 flex-col overflow-y-auto">
       <div className="mb-2 flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wide" style={{ color: 'var(--px-fg-4)' }}>
         <span className="h-1.5 w-1.5 rounded-full" style={{ background: 'var(--px-accent)' }} />
         This moment

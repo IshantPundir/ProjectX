@@ -28,7 +28,10 @@ const PANEL_RADIUS = 16 // matches rounded-2xl on the panels
 
 interface GlassCtx {
   src: string | null
-  mainVideoRef: RefObject<HTMLVideoElement | null>
+  // the live <video> NODE (not a ref) so the playback-mirror effect re-runs when
+  // the element mounts/remounts across dialog reopens — same reason as the video
+  // controller; a ref object would silently miss the new element on reopen.
+  mainVideo: HTMLVideoElement | null
   rootRef: RefObject<HTMLElement | null>
   panels: RefObject<Set<HTMLElement>>
   registerPanel: (el: HTMLElement | null) => () => void
@@ -39,12 +42,12 @@ const GlassContext = createContext<GlassCtx | null>(null)
 
 export function GlassProvider({
   src,
-  mainVideoRef,
+  mainVideo,
   rootRef,
   children,
 }: {
   src: string | null
-  mainVideoRef: RefObject<HTMLVideoElement | null>
+  mainVideo: HTMLVideoElement | null
   rootRef: RefObject<HTMLElement | null>
   children: React.ReactNode
 }) {
@@ -61,7 +64,7 @@ export function GlassProvider({
   }, [])
   return (
     <GlassContext.Provider
-      value={{ src, mainVideoRef, rootRef, panels, registerPanel, version }}
+      value={{ src, mainVideo, rootRef, panels, registerPanel, version }}
     >
       {children}
     </GlassContext.Provider>
@@ -108,7 +111,7 @@ export function GlassLayer() {
   const cloneRef = useRef<HTMLVideoElement>(null)
 
   const src = ctx?.src ?? null
-  const mainVideoRef = ctx?.mainVideoRef
+  const mainVideo = ctx?.mainVideo ?? null
   const rootRef = ctx?.rootRef
   const panels = ctx?.panels
   const version = ctx?.version ?? 0
@@ -176,13 +179,13 @@ export function GlassLayer() {
 
   // Mirror play/pause/seek of the main video onto the muted blurred clone.
   useEffect(() => {
-    if (!src || !mainVideoRef) return
+    if (!src || !mainVideo) return
     const clone = cloneRef.current
     if (!clone) return
     clone.muted = true
-    const main = mainVideoRef.current
+    const main = mainVideo
     const syncTime = () => {
-      if (main && Math.abs(clone.currentTime - main.currentTime) > 0.3) {
+      if (Math.abs(clone.currentTime - main.currentTime) > 0.3) {
         clone.currentTime = main.currentTime
       }
     }
@@ -192,26 +195,22 @@ export function GlassLayer() {
     }
     const onPause = () => clone.pause?.()
     const onSeek = () => {
-      if (main) clone.currentTime = main.currentTime
+      clone.currentTime = main.currentTime
     }
-    if (main) {
-      main.addEventListener('play', onPlay)
-      main.addEventListener('pause', onPause)
-      main.addEventListener('seeking', onSeek)
-      if (!main.paused) onPlay()
-    }
+    main.addEventListener('play', onPlay)
+    main.addEventListener('pause', onPause)
+    main.addEventListener('seeking', onSeek)
+    if (!main.paused) onPlay()
     const drift = window.setInterval(() => {
-      if (main && !main.paused) syncTime()
+      if (!main.paused) syncTime()
     }, 2000)
     return () => {
-      if (main) {
-        main.removeEventListener('play', onPlay)
-        main.removeEventListener('pause', onPause)
-        main.removeEventListener('seeking', onSeek)
-      }
+      main.removeEventListener('play', onPlay)
+      main.removeEventListener('pause', onPause)
+      main.removeEventListener('seeking', onSeek)
       window.clearInterval(drift)
     }
-  }, [src, mainVideoRef])
+  }, [src, mainVideo])
 
   if (!src) return null
   return (

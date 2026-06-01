@@ -13,12 +13,15 @@ interface ScoreGaugeProps {
   toneOverride?: Tone
   /** Secondary caption under the gauge (e.g. "cov 0.66 · medium"). */
   caption?: string
+  /** Hide the visible label/caption (the svg keeps its aria-label). For dense
+   *  inline rows like the theater top bar where space is at a premium. */
+  hideLabel?: boolean
 }
 
 const R = 42
 const C = 2 * Math.PI * R // ≈ 263.9
 
-export function ScoreGauge({ score, label, size = 58, toneOverride, caption }: ScoreGaugeProps) {
+export function ScoreGauge({ score, label, size = 58, toneOverride, caption, hideLabel = false }: ScoreGaugeProps) {
   const assessed = score !== null && score !== undefined
   const ten = scoreToTen(score)
   const tone = toneOverride ?? scoreBandTone(score)
@@ -57,8 +60,8 @@ export function ScoreGauge({ score, label, size = 58, toneOverride, caption }: S
           <text x="50" y="64" textAnchor="middle" style={{ fontSize: 7, fill: 'var(--px-fg-4)' }}>/ 10</text>
         )}
       </svg>
-      <div className="mt-1 text-[11px]" style={{ color: 'var(--px-fg-3)' }}>{label}</div>
-      {caption && <div className="text-[9px]" style={{ color: 'var(--px-fg-4)' }}>{caption}</div>}
+      {!hideLabel && <div className="mt-1 text-[11px]" style={{ color: 'var(--px-fg-3)' }}>{label}</div>}
+      {!hideLabel && caption && <div className="text-[9px]" style={{ color: 'var(--px-fg-4)' }}>{caption}</div>}
     </div>
   )
 }

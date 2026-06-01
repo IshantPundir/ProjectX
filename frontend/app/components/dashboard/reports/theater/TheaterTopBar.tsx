@@ -1,67 +1,47 @@
 'use client'
 
+import { BrandLogo } from '@/components/px'
 import type { ReportRead, RiskBand } from '@/lib/api/reports'
-import { ScoreGauge } from '../ScoreGauge'
-import { TONE_BG, TONE_INK, tierTone, verdictMeta } from '../report-format'
+import { TONE_BG, TONE_INK, verdictMeta } from '../report-format'
 import { GlassBackdrop } from './GlassBackdrop'
 
+// Minimal top chrome: a faint product watermark on the left, and a small glass
+// pill on the right with the verdict + close. Scores moved to the left rail.
 export function TheaterTopBar({
   report,
-  candidateName,
-  subtitle,
   riskBand,
   onClose,
 }: {
   report: ReportRead
-  candidateName: string
-  subtitle: string
   riskBand: RiskBand | null
   onClose: () => void
 }) {
   const v = verdictMeta(report.verdict)
-  const dims: { key: string; label: string }[] = [
-    { key: 'overall', label: 'Overall' },
-    { key: 'technical', label: 'Technical' },
-    { key: 'communication', label: 'Comms' },
-  ]
   return (
-    <div className="theater-glass flex items-center gap-4 rounded-2xl px-4 py-2">
-      <GlassBackdrop />
-      <div className="min-w-0">
-        <div className="truncate text-[13.5px] font-bold" style={{ color: 'var(--px-fg)' }}>
-          {candidateName || 'Candidate'}
-        </div>
-        {subtitle && <div className="truncate text-[11px]" style={{ color: 'var(--px-fg-3)' }}>{subtitle}</div>}
-      </div>
-      <div className="h-8 w-px" style={{ background: 'var(--px-hairline)' }} />
-      <div className="flex items-center gap-3">
-        {dims.map((d) => {
-          const s = report.scores[d.key]
-          if (!s) return null
-          return <ScoreGauge key={d.key} score={s.score} label={d.label} size={40}
-            toneOverride={d.key === 'overall' ? v.tone : tierTone(s.tone)} />
-        })}
-      </div>
-      <div className="flex-1" />
-      {riskBand === 'high' && (
-        <span className="whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] font-bold"
-          style={{ background: TONE_BG.danger, color: TONE_INK.danger }}>
-          ⚠ High integrity risk
+    <div className="pointer-events-none flex items-start justify-between">
+      <BrandLogo height={18} className="theater-watermark" />
+      <div className="theater-glass pointer-events-auto flex items-center gap-2 rounded-full px-2.5 py-1.5">
+        <GlassBackdrop />
+        {riskBand === 'high' && (
+          <span className="whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-bold"
+            style={{ background: TONE_BG.danger, color: TONE_INK.danger }}>
+            ⚠ Integrity risk
+          </span>
+        )}
+        <span className="whitespace-nowrap rounded-full px-2.5 py-0.5 text-[10.5px] font-bold"
+          style={{ background: TONE_BG[v.tone], color: TONE_INK[v.tone] }}>
+          {v.label}
         </span>
-      )}
-      <span className="whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] font-bold"
-        style={{ background: TONE_BG[v.tone], color: TONE_INK[v.tone] }}>
-        {v.label}
-      </span>
-      <button
-        type="button"
-        onClick={onClose}
-        aria-label="Close"
-        className="grid h-7 w-7 place-items-center rounded-lg border text-[13px]"
-        style={{ borderColor: 'var(--px-hairline)', color: 'var(--px-fg-3)' }}
-      >
-        ✕
-      </button>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="grid h-6 w-6 flex-none place-items-center rounded-full border text-[12px]"
+          style={{ borderColor: 'var(--px-hairline-strong)', color: 'var(--px-fg-3)' }}
+        >
+          ✕
+        </button>
+      </div>
     </div>
   )
 }

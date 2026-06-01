@@ -9,7 +9,8 @@ import type { PlaybackSeekApi } from '../SessionPlayback'
 import { useSessionProctoring } from '@/lib/hooks/use-session-proctoring'
 import { useSessionRecording } from '@/lib/hooks/use-session-recording'
 import { Filmstrip } from './Filmstrip'
-import { GlassBackdrop, GlassLayer, GlassProvider } from './GlassBackdrop'
+import { GlassLayer, GlassProvider } from './GlassBackdrop'
+import { ScoreRail } from './ScoreRail'
 import { TheaterStage } from './TheaterStage'
 import { TheaterTopBar } from './TheaterTopBar'
 import { ThisMomentPanel } from './ThisMomentPanel'
@@ -37,25 +38,39 @@ export function ReviewTheater({
   onClose: () => void
 }) {
   const sessionId = report.session_id ?? ''
-  const { data: rec } = useSessionRecording(open ? sessionId : '')
-  const { data: proc } = useSessionProctoring(open ? sessionId : '')
+  const { data: rec, isLoading: recLoading } = useSessionRecording(open ? sessionId : '')
+  const { data: proc, isLoading: procLoading } = useSessionProctoring(open ? sessionId : '')
 
   const apiDurationMs = (rec?.duration_seconds ?? 0) * 1000
   const signedUrl = rec?.status === 'ready' ? rec.signed_url : null
   const offsetMs = rec?.offset_ms ?? 0
+  // The recording isn't watchable yet while the first fetch is in flight or egress
+  // is still finalizing it — show a loader rather than the "unavailable" fallback.
+  const recPending = recLoading || rec?.status === 'recording'
+  // Proctoring runs offline; marks arrive later. Hint at it instead of silence.
+  const procPending = procLoading || proc?.status === 'pending' || proc?.status === 'running'
   const flaggedRaw = useMemo(
     () => (proc && proc.status === 'ready' ? proc.flagged_intervals : []),
     [proc],
   )
   const riskBand = proc && proc.status === 'ready' ? proc.risk_band : null
+  const offScreenPct =
+    proc && proc.status === 'ready' && proc.detector_summary
+      ? proc.detector_summary.off_screen_pct
+      : null
 
   // Transport state is owned here (not inside useTheaterState) so the video
   // controller can be created first — its intrinsic duration is the fallback
   // when the API didn't report one.
-  const videoRef = useRef<HTMLVideoElement>(null)
+  //
+  // The <video> lives inside the dialog portal, which mounts it a tick after this
+  // commits and remounts it on every reopen. We track the live element NODE in
+  // state (via a callback ref) so the controller + glass layer re-bind to it each
+  // time — a ref object would miss the new element on reopen and freeze playback.
+  const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null)
   const seekRef = useRef<PlaybackSeekApi | null>(null)
   const [currentMs, setCurrentMs] = useState(0)
-  const ctrl = useVideoController(videoRef, !!signedUrl, offsetMs, seekRef, setCurrentMs)
+  const ctrl = useVideoController(videoEl, !!signedUrl, offsetMs, seekRef, setCurrentMs)
 
   // Egress sometimes finishes without a duration (recording_duration_seconds stays
   // NULL even when status='ready'); without it the timeline, flag positions and
@@ -155,6 +170,21 @@ export function ReviewTheater({
     }
   }, [initialFlagStartMs, flags, selectFlag])
 
+  // Exit animation: the shared px Dialog unmounts instantly on close, so we keep
+  // it mounted through a brief "closing" phase (data-closing drives the CSS exit
+  // keyframe), then actually close once it's played.
+  const EXIT_MS = 280
+  const [closing, setClosing] = useState(false)
+  const closingRef = useRef(false)
+  const closeTimerRef = useRef(0)
+  const requestClose = useCallback(() => {
+    if (closingRef.current) return
+    closingRef.current = true
+    setClosing(true)
+    closeTimerRef.current = window.setTimeout(onClose, EXIT_MS)
+  }, [onClose])
+  useEffect(() => () => window.clearTimeout(closeTimerRef.current), [])
+
   const integrityCaption = useMemo(() => {
     const riskText =
       riskBand === 'high' ? '⚠ HIGH RISK' : riskBand === 'medium' ? '⚠ MEDIUM RISK' : '⚠ INTEGRITY'
@@ -164,13 +194,19 @@ export function ReviewTheater({
   }, [proc, riskBand])
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose() }}>
-      <DialogContent showCloseButton={false} widthClass="" className="theater-shell">
-        <GlassProvider src={signedUrl} mainVideoRef={videoRef} rootRef={shellRef}>
+    <Dialog open={open} onOpenChange={(o) => { if (!o) requestClose() }}>
+      <DialogContent
+        showCloseButton={false}
+        widthClass=""
+        className="theater-shell"
+        data-closing={closing ? 'true' : 'false'}
+      >
+        <GlassProvider src={signedUrl} mainVideo={videoEl} rootRef={shellRef}>
         <div ref={shellRef} className="theater-root">
           <TheaterStage
-            videoRef={videoRef}
+            videoRef={setVideoEl}
             signedUrl={signedUrl}
+            loading={recPending}
             playing={ctrl.playing}
             onTogglePlay={ctrl.togglePlay}
           />
@@ -179,12 +215,16 @@ export function ReviewTheater({
           <GlassLayer />
 
           <div className="theater-topbar-slot">
-            <TheaterTopBar
+            <TheaterTopBar report={report} riskBand={riskBand} onClose={requestClose} />
+          </div>
+
+          {/* left rail: candidate identity + all gauges + proctoring integrity */}
+          <div className="theater-rail-slot">
+            <ScoreRail
               report={report}
               candidateName={candidateName}
               subtitle={subtitle}
-              riskBand={riskBand}
-              onClose={onClose}
+              offScreenPct={offScreenPct}
             />
           </div>
 
@@ -193,24 +233,27 @@ export function ReviewTheater({
           </div>
 
           <div className="theater-bottom">
-            {/* row 1: question thumbnail strip + a compact integrity caption */}
-            <div className="theater-glass relative rounded-2xl px-3 py-2">
-              <GlassBackdrop />
-              {integrityCaption && (
-                <div
-                  className="mb-1.5 text-[10px] font-bold"
-                  style={{ color: 'var(--px-danger)' }}
-                >
-                  {integrityCaption}
-                </div>
+            {/* row 1: a light "Question timeline" tag + an optional integrity
+                chip, floating over the video (no heavy box) */}
+            <div className="flex items-center gap-2 pl-0.5">
+              <span className="theater-tl-label">Question timeline</span>
+              {proc?.status === 'ready' && integrityCaption && (
+                <span className="theater-tl-integrity">{integrityCaption}</span>
               )}
-              <Filmstrip
-                markers={markers}
-                activeQuestionId={st.activeId}
-                onSelect={st.selectQuestion}
-              />
+              {procPending && (
+                <span className="theater-tl-pending">
+                  <span className="theater-spinner-sm" aria-hidden="true" />
+                  Analyzing integrity…
+                </span>
+              )}
             </div>
-            {/* row 2: controls pinned at the very bottom, with proctoring flag
+            {/* row 2: lively, status-tinted question cards floating free */}
+            <Filmstrip
+              markers={markers}
+              activeQuestionId={st.activeId}
+              onSelect={st.selectQuestion}
+            />
+            {/* row 3: controls pinned at the very bottom, with proctoring flag
                 ticks + question nodes merged onto the scrubber */}
             {signedUrl && (
               <VideoControls
