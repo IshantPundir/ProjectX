@@ -147,19 +147,21 @@ export function GlassLayer() {
     const ro = new ResizeObserver(recompute)
     if (rootRef.current) ro.observe(rootRef.current)
     panels.current.forEach((p) => ro.observe(p))
-    // attribute changes (controls data-visible / style / class) → reclip, plus a
-    // trailing pass so the opacity transition has settled before we drop a rect
+    // Only the controls bar's `data-visible` (auto-hide) needs a reclip. We
+    // deliberately do NOT watch `style`/`class` or the whole subtree: the
+    // scrubber rewrites its fill width inline on every timeupdate, which would
+    // fire this observer (and a full getBoundingClientRect of every panel) on
+    // every frame during playback — the main remaining lag source. The trailing
+    // pass lets the opacity transition settle before we drop the hidden rect.
     const mo = new MutationObserver(() => {
       recompute()
       window.setTimeout(recompute, 320)
     })
-    if (rootRef.current) {
-      mo.observe(rootRef.current, {
-        attributes: true,
-        subtree: true,
-        attributeFilter: ['data-visible', 'style', 'class'],
-      })
-    }
+    panels.current.forEach((p) => {
+      if (p.classList.contains('theater-controls')) {
+        mo.observe(p, { attributes: true, attributeFilter: ['data-visible'] })
+      }
+    })
     window.addEventListener('resize', recompute)
     const t1 = window.setTimeout(recompute, 60)
     const t2 = window.setTimeout(recompute, 260)
