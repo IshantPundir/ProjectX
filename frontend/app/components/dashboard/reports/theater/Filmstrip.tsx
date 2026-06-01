@@ -18,37 +18,36 @@ export function Filmstrip({
       {markers.map((m) => {
         const badge = statusBadgeMeta(m.statusBadge)
         const active = m.questionId === activeQuestionId
+        const seekable = m.askedAtMs != null
         return (
           <button
             key={m.questionId}
             type="button"
             data-active={active ? 'true' : 'false'}
+            data-seekable={seekable ? 'true' : 'false'}
             onClick={() => onSelect(m.questionId)}
-            aria-label={`Q${m.seq} ${m.title} — ${badge.label}`}
+            aria-label={`Q${m.seq} ${m.title} — ${badge.label}${seekable ? '' : ' (no timestamp)'}`}
             className="theater-card theater-glass flex w-[168px] flex-none flex-col overflow-hidden rounded-xl text-left"
           >
             <div className="relative h-[44px] w-full" style={{ background: TONE_BG[m.tone] }}>
               {m.thumbnailUrl ? (
-                <img
-                  src={m.thumbnailUrl}
-                  alt={`Q${m.seq} ${m.title}`}
-                  className="h-full w-full object-cover"
-                />
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={m.thumbnailUrl} alt={`Q${m.seq} ${m.title}`} className="h-full w-full object-cover" />
               ) : (
                 <span
-                  className="absolute inset-0 grid place-items-center text-[16px]"
+                  className="absolute inset-0 grid place-items-center text-[13px] font-extrabold"
                   aria-hidden="true"
                   style={{ color: TONE_INK[m.tone] }}
                 >
-                  {m.tone === 'ok' ? '✓' : m.tone === 'danger' ? '✕' : '~'}
+                  Q{m.seq}
                 </span>
               )}
-              {m.askedAtMs != null && (
+              {seekable && (
                 <span
                   className="absolute bottom-1 right-1 rounded px-1 py-0.5 text-[8.5px] font-bold text-white"
-                  style={{ background: 'rgba(20,30,40,0.45)' }}
+                  style={{ background: 'rgba(8,12,16,0.6)' }}
                 >
-                  {formatTimestamp(m.askedAtMs)}
+                  {formatTimestamp(m.askedAtMs as number)}
                 </span>
               )}
             </div>
@@ -56,11 +55,7 @@ export function Filmstrip({
               <div className="text-[8px] font-bold uppercase tracking-wide" style={{ color: 'var(--px-fg-4)' }}>
                 Q{m.seq}
               </div>
-              <div
-                className="truncate text-[11px] font-semibold"
-                style={{ color: 'var(--px-fg)' }}
-                title={m.title}
-              >
+              <div className="truncate text-[11px] font-semibold" style={{ color: 'var(--px-fg)' }} title={m.title}>
                 {m.title}
               </div>
               <div className="mt-0.5 text-[9px] font-bold" style={{ color: TONE_INK[m.tone] }}>

@@ -6,7 +6,6 @@ import {
   activeSegmentIndex,
   buildFlagMarkers,
   buildQuestionMarkers,
-  densityBuckets,
 } from '@/components/dashboard/reports/theater/timeline-model'
 
 function q(partial: Partial<QuestionOut>): QuestionOut {
@@ -51,21 +50,6 @@ describe('buildFlagMarkers', () => {
   })
   it('empty flags → empty', () => {
     expect(buildFlagMarkers([], 1000, 6)).toEqual([])
-  })
-})
-
-describe('densityBuckets', () => {
-  it('marks buckets covered by a flag interval as hot', () => {
-    const flags: ProctoringFlaggedInterval[] = [
-      { kind: 'off_screen_sustained', start_ms: 0, end_ms: 1000, confidence: 0.65 },
-    ]
-    const out = densityBuckets(flags, 4000, 4)
-    expect(out).toHaveLength(4)
-    expect(out[0]).toBeGreaterThan(0)
-    expect(out[3]).toBe(0)
-  })
-  it('zero duration → all-zero buckets of the requested length', () => {
-    expect(densityBuckets([], 0, 4)).toEqual([0, 0, 0, 0])
   })
 })
 

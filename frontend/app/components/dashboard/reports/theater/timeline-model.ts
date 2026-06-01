@@ -77,23 +77,6 @@ export function buildFlagMarkers(
   }))
 }
 
-export function densityBuckets(
-  flagged: ProctoringFlaggedInterval[],
-  durationMs: number,
-  buckets: number,
-): number[] {
-  const out = new Array<number>(buckets).fill(0)
-  if (!durationMs || durationMs <= 0) return out
-  const span = durationMs / buckets
-  for (const f of flagged) {
-    const from = Math.max(0, Math.floor(f.start_ms / span))
-    const to = Math.min(buckets - 1, Math.floor((f.end_ms - 1) / span))
-    for (let i = from; i <= to; i++) out[i] += 1
-  }
-  const max = Math.max(1, ...out)
-  return out.map((v) => v / max)
-}
-
 /** The latest question whose asked_at_ms <= currentMs (markers with null are ignored). */
 export function activeQuestionId(markers: TimelineMarker[], currentMs: number): string | null {
   let id: string | null = null

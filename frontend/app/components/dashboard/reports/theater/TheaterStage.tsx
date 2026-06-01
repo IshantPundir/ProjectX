@@ -1,55 +1,50 @@
+// components/dashboard/reports/theater/TheaterStage.tsx
 'use client'
 
-import { useEffect, useRef, type MutableRefObject } from 'react'
-
-import type { PlaybackSeekApi } from '../SessionPlayback'
+import { Play } from 'lucide-react'
+import type { RefObject } from 'react'
 
 export function TheaterStage({
+  videoRef,
   signedUrl,
-  offsetMs,
-  seekApiRef,
-  onCurrentMs,
+  playing,
+  onTogglePlay,
 }: {
+  videoRef: RefObject<HTMLVideoElement | null>
   signedUrl: string | null
-  offsetMs: number
-  seekApiRef: MutableRefObject<PlaybackSeekApi | null>
-  onCurrentMs: (ms: number) => void
+  playing: boolean
+  onTogglePlay: () => void
 }) {
-  const videoRef = useRef<HTMLVideoElement>(null)
-
-  useEffect(() => {
-    seekApiRef.current = {
-      seekToMs: (ms: number) => {
-        const v = videoRef.current
-        if (!v) return
-        v.currentTime = Math.max(0, (ms + offsetMs) / 1000)
-        void v.play?.()
-      },
-    }
-    return () => {
-      seekApiRef.current = null
-    }
-  }, [seekApiRef, offsetMs])
-
   if (!signedUrl) {
     return (
-      <div className="grid flex-1 place-items-center text-[12px]" style={{ color: 'var(--px-fg-3)' }}>
+      <div className="absolute inset-0 grid place-items-center text-[12px] text-[rgba(20,40,60,0.55)]">
         Recording unavailable.
       </div>
     )
   }
   return (
-    <video
-      ref={videoRef}
-      src={signedUrl}
-      controls
-      playsInline
-      aria-label="Interview session recording"
-      onTimeUpdate={() => {
-        const v = videoRef.current
-        if (v) onCurrentMs(v.currentTime * 1000 - offsetMs)
-      }}
-      className="h-full w-full rounded-xl bg-black object-contain"
-    />
+    <>
+      {/* interview recording — no caption track available */}
+      <video
+        ref={videoRef}
+        src={signedUrl}
+        playsInline
+        aria-label="Interview session recording"
+        onClick={onTogglePlay}
+        className="absolute inset-0 h-full w-full bg-black object-cover"
+      />
+      <div className="theater-scrim-top" aria-hidden="true" />
+      <div className="theater-scrim-bottom" aria-hidden="true" />
+      {!playing && (
+        <button
+          type="button"
+          onClick={onTogglePlay}
+          aria-label="Play"
+          className="theater-centerplay absolute left-1/2 top-1/2 z-20 grid h-16 w-16 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full"
+        >
+          <Play className="h-7 w-7" />
+        </button>
+      )}
+    </>
   )
 }
