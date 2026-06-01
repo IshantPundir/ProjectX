@@ -55,16 +55,6 @@ export function SessionPlayback({
           Review session →
         </span>
       </button>
-      <VerbalContentOnlyBadge />
-    </div>
-  )
-}
-
-export function VerbalContentOnlyBadge() {
-  return (
-    <div className="mt-2.5 flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-[11px]"
-      style={{ color: 'var(--px-ai)', background: 'var(--px-ai-bg)', borderColor: 'var(--px-ai-line)' }}>
-      🛈&nbsp;Verbal-content-only — scored on what the candidate said. No facial, affect, or appearance analysis.
     </div>
   )
 }
