@@ -17,11 +17,14 @@
 | File | Responsibility | Action |
 |---|---|---|
 | `app/modules/interview_runtime/models.py` | Wire-format transcript models | **Modify** — add `WordTiming`; extend `TranscriptEntry` |
-| `app/modules/interview_engine/transcript_timing.py` | Pure, livekit-free timing math (tuples → relative `WordTiming`; turn bounds) | **Create** |
+| `app/modules/interview_runtime/transcript_timing.py` | Pure, livekit-free timing math — **extend the EXISTING module** (already holds `question_asked_at_ms`) with `relative_words` + `turn_bounds`; export both via `interview_runtime/__init__.py` | **Modify** |
+| `app/modules/interview_runtime/__init__.py` | Public API — add `relative_words`, `turn_bounds` to imports + `__all__` | **Modify** |
 | `app/modules/interview_engine/agent.py` | LiveKit agent; word buffer + `stt_node` tee + attach at commit | **Modify** |
 | `tests/interview_runtime/test_transcript_entry_words.py` | Model round-trip + backward-compat | **Create** |
-| `tests/interview_engine/test_transcript_timing.py` | Pure helper unit tests | **Create** |
+| `tests/interview_runtime/test_transcript_timing.py` | Pure helper unit tests | **Create** |
 | `tests/interview_engine/test_word_capture.py` | Event-tee + commit-attach behavior | **Create** |
+
+> **Execution correction (2026-06-01, during Task 1):** the plan originally placed the timing helpers in a *new* `interview_engine/transcript_timing.py`. A module already exists at `interview_runtime/transcript_timing.py` (pure transcript helpers, `question_asked_at_ms`, consumed by reporting + vision). The new `relative_words`/`turn_bounds` belong **there** (DRY, co-located, no duplicate filename across modules) and are exported via `interview_runtime/__init__.py`. The engine (`agent.py`) imports them via the public API: `from app.modules.interview_runtime import relative_words, turn_bounds` — the same way it already imports `TranscriptEntry`/`WordTiming`. Tasks 2–5 below reflect this; test paths for the pure helpers move to `tests/interview_runtime/`.
 
 **Test invocation note:** tests that import `app.modules.interview_engine.agent` pull in `livekit.agents`, which segfaults under `pytest --cov` on Python 3.13 (see backend `CLAUDE.md` → "Coverage in Docker"). Run engine tests **without** the cov plugin, or via the documented `python -m coverage run … -m pytest` workaround. The model test and the `transcript_timing` test are livekit-free and run under plain `pytest`.
 
