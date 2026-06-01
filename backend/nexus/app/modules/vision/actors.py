@@ -63,6 +63,7 @@ def _get_estimator():
                     pitch_sign=vision_config.gaze_pitch_sign,
                     yaw_sign=vision_config.gaze_yaw_sign,
                     intra_op_threads=vision_config.ort_intra_op_threads,
+                    providers=vision_config.onnx_providers,
                 )
     return _estimator
 

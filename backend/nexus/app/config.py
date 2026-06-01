@@ -602,6 +602,20 @@ class Settings(BaseSettings):
     # onnxruntime intra-op threads PER inference. Keep at 1 — parallelism comes
     # from worker process concurrency, NOT per-call fan-out (the 2026-06-01 peg).
     vision_ort_intra_op_threads: int = 1
+    # ONNX execution providers, tried in order — first available wins. Default
+    # prefers GPU (CUDA) and falls back to CPU automatically, so the SAME build
+    # runs GPU-accelerated where a GPU + onnxruntime-gpu are present (local dev,
+    # AWS GPU workers) and CPU-only elsewhere (e.g. CI) with no code change.
+    # onnxruntime ignores an unavailable provider (warns, doesn't raise), so a
+    # CPU-only image is safe with this default. Applies to BOTH the gaze model
+    # and the RetinaFace detector. Comma-separated.
+    vision_onnx_providers: str = "CUDAExecutionProvider,CPUExecutionProvider"
+    # Re-enqueue guard: the report page enqueues vision analysis on every read.
+    # Only re-enqueue a running/pending row once it is THIS stale (presumed-dead
+    # worker) — otherwise an open report page piles fresh full-analysis passes
+    # onto an in-flight one and they thrash. Generous (> worst-case pass time);
+    # Dramatiq redelivery is the primary crash-recovery path, this is a backstop.
+    vision_reenqueue_stale_after_seconds: int = 3600
     # Self-baseline zone thresholds (degrees of deviation from the per-session
     # baseline gaze direction).
     vision_zone_yaw_deg: float = 15.0

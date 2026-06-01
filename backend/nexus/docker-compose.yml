@@ -125,6 +125,17 @@ services:
     # any dependency's thread fan-out (2026-06-01 incident pegged ~23 cores).
     # Keep VISION_WORKER_CONCURRENCY <= this value.
     cpus: 4
+    # GPU passthrough: grants the host NVIDIA GPU(s) so onnxruntime-gpu's
+    # CUDAExecutionProvider runs the gaze + RetinaFace models on-device
+    # (Settings.vision_onnx_providers). Requires nvidia-container-toolkit on the
+    # host. Harmless if no GPU — providers fall back to CPU.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     env_file:
       - .env
     environment:

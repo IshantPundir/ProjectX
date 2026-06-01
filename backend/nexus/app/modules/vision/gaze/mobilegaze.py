@@ -31,6 +31,7 @@ class MobileGazeEstimator:
         pitch_sign: int = 1,
         yaw_sign: int = 1,
         intra_op_threads: int = 1,
+        providers: list[str] | None = None,
     ) -> None:
         # Lazy — only the vision-worker image has these installed.
         import inspect  # noqa: PLC0415
@@ -43,36 +44,38 @@ class MobileGazeEstimator:
         # Cap per-inference fan-out: one inference must NOT own the box. Throughput
         # comes from worker process concurrency. (The 2026-06-01 peg was uncapped
         # intra-op threads defaulting to the host core count.)
+        prov = providers or ["CPUExecutionProvider"]
         so = ort.SessionOptions()
         so.intra_op_num_threads = intra_op_threads
         so.inter_op_num_threads = 1
         so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
         self._session = ort.InferenceSession(
-            weights_path, sess_options=so, providers=["CPUExecutionProvider"]
+            weights_path, sess_options=so, providers=prov
         )
         self._input_name = self._session.get_inputs()[0].name
         self._output_names = [o.name for o in self._session.get_outputs()]
-        # RetinaFace (uniface) is onnxruntime-backed too, but most uniface
-        # versions build their InferenceSession internally WITHOUT exposing
-        # SessionOptions — in that case the detector's ORT intra-op threads are
-        # bounded ONLY by the worker's cpus cgroup cap (docker-compose), which is
-        # the real backstop. Pass our capped options when the version accepts them
-        # (best-effort efficiency).
+        # RetinaFace (uniface) is onnxruntime-backed too — run it on the SAME
+        # providers as the gaze model so detection is GPU-accelerated when CUDA
+        # is available. uniface>=3 accepts a `providers` arg; older builds don't
+        # (fall back to its default). On CPU, the intra-op threadpool is bounded
+        # by the cpus cgroup cap (docker-compose); on CUDA, threads are moot.
         rf_params = inspect.signature(RetinaFace.__init__).parameters
-        if "sess_options" in rf_params:
-            self._detector = RetinaFace(sess_options=so)
-        elif "session_options" in rf_params:
-            self._detector = RetinaFace(session_options=so)
+        if "providers" in rf_params:
+            self._detector = RetinaFace(providers=prov)
         else:
             self._detector = RetinaFace()
-            log.info("vision.gaze.retinaface.uncapped_relying_on_cgroup")
+            log.info("vision.gaze.retinaface.default_providers")
         self._size = (input_size, input_size)
         self._pitch_sign = pitch_sign
         self._yaw_sign = yaw_sign
         self._mean = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(3, 1, 1)
         self._std = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(3, 1, 1)
         self._idx = np.arange(90, dtype=np.float32)
-        log.info("vision.gaze.mobilegaze.loaded", outputs=self._output_names, input_size=input_size)
+        log.info(
+            "vision.gaze.mobilegaze.loaded", outputs=self._output_names,
+            input_size=input_size, requested_providers=prov,
+            active_providers=self._session.get_providers(),
+        )
 
     def _preprocess(self, crop_bgr):
         import cv2  # noqa: PLC0415
