@@ -109,6 +109,8 @@ from app.modules.interview_runtime import (
     build_session_config,
     record_engine_heartbeat,
     record_session_result,
+    relative_words,
+    turn_bounds,
 )
 from app.modules.session import classify_engine_exception, transition_to_error
 
@@ -387,6 +389,26 @@ class _MouthAgent(Agent):
                 self._transcript.append(("agent", d.say))
             await self.session.generate_reply()
 
+    def _build_candidate_entry(
+        self, *, text: str, timestamp_ms: int, question_id: str | None
+    ) -> TranscriptEntry:
+        """Build the candidate TranscriptEntry, enriching it with the buffered
+        word timings (if any) and draining the buffer. No words → the legacy
+        shape (words/start_ms/end_ms stay None)."""
+        words = relative_words(self._pending_words)
+        self._pending_words = []
+        if not words:
+            return TranscriptEntry(
+                role="candidate", text=text,
+                timestamp_ms=timestamp_ms, question_id=question_id,
+            )
+        start_ms, end_ms = turn_bounds(anchor_ms=timestamp_ms, words=words)
+        return TranscriptEntry(
+            role="candidate", text=text,
+            timestamp_ms=timestamp_ms, question_id=question_id,
+            start_ms=start_ms, end_ms=end_ms, words=words,
+        )
+
     def _collect_words_from_event(self, event: object) -> None:
         """Tee point: buffer per-word timings from a FINAL_TRANSCRIPT SpeechEvent.
 
@@ -427,10 +449,12 @@ class _MouthAgent(Agent):
         if text.strip():
             self._pending_answer.append(text)        # accumulate fragments for this answer episode
             self._result_transcript.append(
-                TranscriptEntry(
-                    role="candidate", text=text, timestamp_ms=self._t_ms(),
+                self._build_candidate_entry(
+                    text=text, timestamp_ms=self._t_ms(),
                     question_id=self._brain.active_question_id,
                 ))
+        else:
+            self._pending_words = []  # whitespace-only commit: drain so stale words don't leak into the next turn
         word_count = len([w for w in text.split() if w])
         backchannel = is_backchannel(text, min_words=settings.engine_v2_backchannel_min_words)
 

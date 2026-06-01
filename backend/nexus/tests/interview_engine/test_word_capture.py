@@ -41,3 +41,27 @@ def test_collect_accumulates_across_multiple_finals():
     a._collect_words_from_event(_final_event([("a", 1.0, 1.1, 0.9)]))
     a._collect_words_from_event(_final_event([("b", 2.0, 2.1, 0.9)]))
     assert [w[0] for w in a._pending_words] == ["a", "b"]
+
+
+def test_build_candidate_entry_attaches_words_and_clears_buffer():
+    a = _bare_agent()
+    a._collect_words_from_event(_final_event([("six", 12.40, 12.72, 0.99),
+                                              ("years", 12.80, 13.30, 0.97)]))
+    entry = a._build_candidate_entry(text="six years", timestamp_ms=42000, question_id="q1")
+
+    assert entry.role == "candidate"
+    assert entry.question_id == "q1"
+    assert entry.timestamp_ms == 42000
+    assert entry.end_ms == 42000
+    assert entry.start_ms == 42000 - 900           # back off spoken duration
+    assert [w.text for w in entry.words] == ["six", "years"]
+    assert entry.words[0].start_ms == 0            # relative to first word
+    assert a._pending_words == []                  # buffer drained
+
+
+def test_build_candidate_entry_without_words_is_backward_compatible():
+    a = _bare_agent()
+    entry = a._build_candidate_entry(text="ok", timestamp_ms=1000, question_id=None)
+    assert entry.words is None
+    assert entry.start_ms is None and entry.end_ms is None
+    assert entry.timestamp_ms == 1000
