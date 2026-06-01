@@ -30,17 +30,39 @@ class MobileGazeEstimator:
         input_size: int = 448,
         pitch_sign: int = 1,
         yaw_sign: int = 1,
+        intra_op_threads: int = 1,
     ) -> None:
         # Lazy — only the vision-worker image has these installed.
+        import inspect  # noqa: PLC0415
+
         import numpy as np  # noqa: PLC0415
         import onnxruntime as ort  # noqa: PLC0415
         from uniface.detection import RetinaFace  # noqa: PLC0415
 
         self._np = np
-        self._session = ort.InferenceSession(weights_path, providers=["CPUExecutionProvider"])
+        # Cap per-inference fan-out: one inference must NOT own the box. Throughput
+        # comes from worker process concurrency. (The 2026-06-01 peg was uncapped
+        # intra-op threads defaulting to the host core count.)
+        so = ort.SessionOptions()
+        so.intra_op_num_threads = intra_op_threads
+        so.inter_op_num_threads = 1
+        so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        self._session = ort.InferenceSession(
+            weights_path, sess_options=so, providers=["CPUExecutionProvider"]
+        )
         self._input_name = self._session.get_inputs()[0].name
         self._output_names = [o.name for o in self._session.get_outputs()]
-        self._detector = RetinaFace()
+        # RetinaFace (uniface) is onnxruntime-backed too. Pass our capped options
+        # if this uniface version accepts them; otherwise the worker's cpus cgroup
+        # cap (docker-compose) is the hard backstop on its thread fan-out.
+        rf_params = inspect.signature(RetinaFace.__init__).parameters
+        if "sess_options" in rf_params:
+            self._detector = RetinaFace(sess_options=so)
+        elif "session_options" in rf_params:
+            self._detector = RetinaFace(session_options=so)
+        else:
+            self._detector = RetinaFace()
+            log.info("vision.gaze.retinaface.uncapped_relying_on_cgroup")
         self._size = (input_size, input_size)
         self._pitch_sign = pitch_sign
         self._yaw_sign = yaw_sign
