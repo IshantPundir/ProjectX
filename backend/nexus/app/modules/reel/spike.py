@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sys
 import tempfile
 
@@ -37,6 +38,15 @@ from app.modules.reel.render import concat_clips
 
 MAX_CLIP_MS = 24_000          # cap a long answer so the reel stays watchable
 SEG_PAD_MS = 120
+
+# The engine's VAD timestamps (audio.user.state t_ms) LAG the egress-recorded
+# audio by the agent's audio-receive pipeline latency (jitter buffer + ai-coustics
+# NC + VAD) — a fixed pipeline depth, constant per session but NOT a universal
+# constant. It is MEASURED per session (see _measure_pipeline_lag) by cross-
+# correlating the candidate VAD speech envelope against the recording's speech
+# envelope. REEL_PIPELINE_LAG_MS overrides the auto-measurement (debug only).
+LAG_SEARCH_MAX_MS = 8_000
+LAG_BIN_MS = 40
 
 # Featured answers, by their candidate turn.captured commit t_ms (substantive,
 # clean answers from 5e004a4d). Verified spans (video): Workato 179.3-202.6s,
@@ -79,6 +89,57 @@ def _speaking_intervals(events: list[dict]) -> list[tuple[int, int]]:
     return out
 
 
+async def _recording_speech_intervals(rec_path: str) -> list[tuple[int, int]]:
+    """Speech intervals (ms, video clock) in the recording via silencedetect."""
+    proc = await asyncio.create_subprocess_exec(
+        "ffmpeg", "-i", rec_path, "-af", "silencedetect=noise=-30dB:d=0.4",
+        "-f", "null", "-",
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await proc.communicate()
+    txt = stderr.decode("utf-8", "replace")
+    starts = [float(x) for x in re.findall(r"silence_start:\s*(-?[0-9.]+)", txt)]
+    ends = [float(x) for x in re.findall(r"silence_end:\s*([0-9.]+)", txt)]
+    speech: list[tuple[int, int]] = []
+    cursor = 0.0
+    for s_start, s_end in zip(starts, ends):
+        if s_start > cursor:
+            speech.append((int(cursor * 1000), int(s_start * 1000)))
+        cursor = max(cursor, s_end)
+    return speech
+
+
+def _measure_pipeline_lag(speaking: list[tuple[int, int]],
+                          rec_speech: list[tuple[int, int]],
+                          wall_anchor: int) -> int:
+    """Cross-correlate the candidate VAD envelope (t_ms+wall_anchor) against the
+    recording's speech envelope to find the lag L (ms) by which the engine's VAD
+    trails the recorded audio. The candidate speaks only during candidate audio,
+    so the overlap peaks at the true L; agent speech contributes nothing (VAD=0).
+    """
+    bin_ms = LAG_BIN_MS
+    span_ms = max(max((b for _, b in rec_speech), default=0),
+                  max((b + wall_anchor for _, b in speaking), default=0)) + 1000
+    n = span_ms // bin_ms + 1
+    vad = bytearray(n)   # candidate speaking, in (t_ms + wall_anchor) coordinate
+    rec = bytearray(n)   # any speech, in video coordinate
+    for a, b in speaking:
+        for i in range((a + wall_anchor) // bin_ms, (b + wall_anchor) // bin_ms + 1):
+            if 0 <= i < n:
+                vad[i] = 1
+    for a, b in rec_speech:
+        for i in range(a // bin_ms, b // bin_ms + 1):
+            if 0 <= i < n:
+                rec[i] = 1
+    max_shift = LAG_SEARCH_MAX_MS // bin_ms
+    best_lag, best_score = 0, -1
+    for shift in range(0, max_shift + 1):       # rec is EARLIER, so vad[i] vs rec[i-shift]
+        score = sum(1 for i in range(shift, n) if vad[i] and rec[i - shift])
+        if score > best_score:
+            best_score, best_lag = score, shift * bin_ms
+    return best_lag
+
+
 def _answer_span(events: list[dict], speaking: list[tuple[int, int]],
                  commit_t_ms: int) -> tuple[int, int] | None:
     """Real speech [start,end] t_ms for the candidate turn committed at commit_t_ms.
@@ -101,12 +162,9 @@ async def main(session_id: str) -> int:
     tenant_id, rec_key, rec_start_wall = await _load_session(session_id)
     events = _load_events(session_id)
     eng0_wall = next(e["wall_ms"] for e in events if e["kind"] == "engine.v2.dispatched")
-    anchor = eng0_wall - rec_start_wall  # video_ms = t_ms + anchor
-    print(f"[spike] wall anchor: video_ms = t_ms + {anchor}ms "
-          f"(engine_t0_wall={eng0_wall}, recording_started_at={rec_start_wall})")
-
+    wall_anchor = eng0_wall - rec_start_wall            # wall-clock: ~+90ms
     speaking = _speaking_intervals(events)
-    print(f"[spike] {len(speaking)} VAD speaking intervals")
+    print(f"[spike] {len(speaking)} VAD speaking intervals; wall_anchor={wall_anchor}ms")
 
     out_dir = "/app/tmp"
     os.makedirs(out_dir, exist_ok=True)
@@ -114,6 +172,18 @@ async def main(session_id: str) -> int:
         rec_path = os.path.join(tmp, "recording.mp4")
         print(f"[spike] downloading {rec_key} ...")
         await get_object_storage().download_to_path(rec_key, rec_path)
+
+        override = os.environ.get("REEL_PIPELINE_LAG_MS")
+        if override is not None:
+            pipeline_lag = int(override)
+            print(f"[spike] pipeline_lag = {pipeline_lag}ms (override)")
+        else:
+            rec_speech = await _recording_speech_intervals(rec_path)
+            pipeline_lag = _measure_pipeline_lag(speaking, rec_speech, wall_anchor)
+            print(f"[spike] pipeline_lag = {pipeline_lag}ms (auto, cross-correlated "
+                  f"VAD vs {len(rec_speech)} recording speech intervals)")
+        anchor = wall_anchor - pipeline_lag             # video_ms = t_ms + anchor
+        print(f"[spike] video_ms = t_ms + {anchor}ms")
 
         clips: list[str] = []
         for i, commit in enumerate(FEATURED_COMMITS):
