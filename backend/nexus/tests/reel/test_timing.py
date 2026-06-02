@@ -46,6 +46,25 @@ def test_answer_span_uses_vad_bounded_by_prev_commit_and_real_end():
     assert answer_span(events, speaking, commit_t_ms=10000) == (5200, 9000)
 
 
+def test_answer_span_tolerates_off_by_one_commit_vs_event():
+    # The transcript timestamp_ms can differ from the turn.captured event t_ms by
+    # ~1ms (float->int rounding). The Director references the transcript commit;
+    # answer_span must match the nearest turn.captured within tolerance.
+    speaking = [(5200, 9000)]
+    events = [
+        _state(5200, "speaking"), _state(9000, "listening"),
+        _cap(10000, 900),   # event t_ms = 10000
+    ]
+    # Director asks for commit 9999 (transcript timestamp_ms, 1ms earlier)
+    assert answer_span(events, speaking, commit_t_ms=9999) == (5200, 9000)
+
+
+def test_answer_span_returns_none_when_no_commit_within_tolerance():
+    speaking = [(5200, 9000)]
+    events = [_state(5200, "speaking"), _state(9000, "listening"), _cap(10000, 900)]
+    assert answer_span(events, speaking, commit_t_ms=50000) is None
+
+
 def test_measure_pipeline_lag_recovers_a_known_lag():
     # candidate speaks at these t_ms; recording is the same audio EARLIER by `lag`.
     speaking = [(10_000, 14_000), (20_000, 23_000), (30_000, 38_000)]

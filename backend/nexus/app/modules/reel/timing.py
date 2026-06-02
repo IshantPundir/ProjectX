@@ -54,17 +54,27 @@ def speaking_intervals(events: list[dict]) -> list[tuple[int, int]]:
 
 
 def answer_span(events: list[dict], speaking: list[tuple[int, int]],
-                commit_t_ms: int) -> tuple[int, int] | None:
+                commit_t_ms: int, *, tol_ms: int = 5) -> tuple[int, int] | None:
     """Real speech [start, end] t_ms for the candidate turn committed at commit_t_ms.
 
     Bounded below by the previous ``turn.captured`` commit and above by
     ``commit - pause_before_commit_ms`` (the real end of speech).
+
+    ``commit_t_ms`` is the transcript ``timestamp_ms``, which can differ from the
+    ``turn.captured`` event ``t_ms`` by ~1ms (float->int rounding). Matches the
+    NEAREST ``turn.captured`` within ``tol_ms`` and anchors on its event t_ms;
+    returns ``None`` (never raises) when no commit is within tolerance.
     """
-    caps = sorted(int(e["t_ms"]) for e in events if e.get("kind") == "turn.captured")
-    prev = max((c for c in caps if c < commit_t_ms), default=0)
-    cap_ev = next(e for e in events
-                  if e.get("kind") == "turn.captured" and int(e["t_ms"]) == commit_t_ms)
-    real_end = commit_t_ms - int(cap_ev["payload"].get("pause_before_commit_ms", 0))
+    cap_events = [e for e in events if e.get("kind") == "turn.captured"]
+    if not cap_events:
+        return None
+    cap_ev = min(cap_events, key=lambda e: abs(int(e["t_ms"]) - commit_t_ms))
+    cap_t = int(cap_ev["t_ms"])
+    if abs(cap_t - commit_t_ms) > tol_ms:
+        return None
+    caps = sorted(int(e["t_ms"]) for e in cap_events)
+    prev = max((c for c in caps if c < cap_t), default=0)
+    real_end = cap_t - int(cap_ev["payload"].get("pause_before_commit_ms", 0))
     segs = [(a, b) for (a, b) in speaking if a >= prev - 200 and b <= real_end + 1500]
     if not segs:
         return None

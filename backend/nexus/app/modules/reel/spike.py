@@ -33,7 +33,7 @@ from app.modules.reel import timing
 from app.modules.reel.clips import cut_clip
 from app.modules.reel.render import concat_clips
 
-# Hand-picked trimmed segments (the Director will choose these in production):
+# Hand-picked trimmed segments (fallback when no Director EDL is present):
 #   (commit_t_ms, trim_start_rel_ms, trim_end_rel_ms, label)
 # Each starts MID-answer to exercise trimming, not just full answers.
 TRIMS = [
@@ -41,6 +41,26 @@ TRIMS = [
     (457752, 23190, 32400, "throttle"),         # "then I would introduce ... throttle ... instead of hitting that limit"
     (484258, 5150, 10440, "idempotency"),       # "I'd use idempotency keys so that retries don't create any duplicate(s)"
 ]
+
+
+def _trims_from_edl(session_id: str) -> list[tuple[int, int, int, str]] | None:
+    """Load clip/experience beats from a Director EDL dump, if present.
+
+    tmp/edl_<session>.json is written by `python -m app.modules.reel.director`.
+    Its clip/experience beats map directly: source_turn_ref=commit,
+    in_ms/out_ms = turn-relative trims (the same coordinate as TRIMS).
+    """
+    path = f"/app/tmp/edl_{session_id}.json"
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        edl = json.load(f)
+    trims: list[tuple[int, int, int, str]] = []
+    for i, b in enumerate(edl.get("beats", [])):
+        if b.get("kind") in ("clip", "experience") and b.get("in_ms") is not None:
+            trims.append((int(b["source_turn_ref"]), int(b["in_ms"]),
+                          int(b["out_ms"]), f"{b['kind']}-{i}"))
+    return trims or None
 
 
 async def _load_session(session_id: str) -> tuple[str, str, int]:
@@ -125,8 +145,12 @@ async def main(session_id: str) -> int:
         anchor = wall_anchor - pipeline_lag             # video_ms = t_ms + anchor
         print(f"[spike] video_ms = t_ms + {anchor}ms")
 
+        trims = _trims_from_edl(session_id) or TRIMS
+        print(f"[spike] {len(trims)} trims from "
+              f"{'Director EDL' if _trims_from_edl(session_id) else 'hand-picked TRIMS'}")
+
         clips: list[str] = []
-        for i, (commit, ts_rel, te_rel, label) in enumerate(TRIMS):
+        for i, (commit, ts_rel, te_rel, label) in enumerate(trims):
             span = timing.answer_span(events, speaking, commit)
             turn = _turn_for_commit(transcript, commit)
             if span is None or turn is None:
