@@ -43,13 +43,23 @@ async def _load_session(session_id: str) -> tuple[str, str]:
 
 
 def _candidate_words_in(transcript: list[dict], start_ms: int, end_ms: int) -> list[dict]:
+    """Words whose SESSION-clock start falls in [start_ms, end_ms].
+
+    The fixture stores each word's start_ms/end_ms TURN-RELATIVE (the first word
+    of every turn starts at 0; turn.start_ms + last_word.end_ms == turn.end_ms).
+    We rebase them onto the session clock by adding the turn's start_ms, so the
+    returned words carry absolute session-ms — exactly what captions.build_ass
+    expects when it subtracts the clip's session-ms start.
+    """
     out: list[dict] = []
     for e in transcript:
         if e.get("role") != "candidate":
             continue
+        turn_start = int(e.get("start_ms") or 0)
         for w in e.get("words") or []:
-            if start_ms <= w["start_ms"] <= end_ms:
-                out.append(w)
+            ws = turn_start + int(w["start_ms"])
+            if start_ms <= ws <= end_ms:
+                out.append({**w, "start_ms": ws, "end_ms": turn_start + int(w["end_ms"])})
     return out
 
 
