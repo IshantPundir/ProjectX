@@ -23,7 +23,7 @@ lazily so the pure validation path (and its tests) need no OpenAI/ffmpeg deps.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Literal
 
 from pydantic import BaseModel
@@ -190,3 +190,193 @@ def validate_edl(edl: ReelEdlOut, transcript: list[dict]) -> ValidatedEdl:
 
     fitted = _fit_budget(resolved)
     return ValidatedEdl(beats=fitted, duration_ms=sum(b.duration_ms for b in fitted))
+
+
+# --- LLM call (manual-tested) ---------------------------------------------
+def _build_document(*, verdict: str | None, strengths: list[dict],
+                    question_scorecards: list[dict], signal_scorecards: list[dict],
+                    transcript: list[dict]) -> str:
+    """Serialize report context (FIRST) then the indexed transcript (the document).
+
+    Context-before-document per the house rule. Candidate turns are rendered with
+    a per-word ``idx:text`` index so the model can reference [in_word, out_word].
+    """
+    lines: list[str] = ["<report>", f"verdict: {verdict or 'n/a'}"]
+
+    lines.append("strengths:")
+    for s in strengths or []:
+        lines.append(f"- {s.get('title', '')}: {s.get('detail', '')}")
+
+    lines.append("questions:")
+    for q in question_scorecards or []:
+        lines.append(
+            f"- question_id: {q.get('question_id')} | status: {q.get('status_badge')} | "
+            f"title: {q.get('title', '')}"
+        )
+        lines.append(f"  question_text: {q.get('question_text', '')}")
+        if q.get("our_read"):
+            lines.append(f"  our_read: {q['our_read']}")
+        if q.get("candidate_quote"):
+            lines.append(f"  candidate_quote (hint): {q['candidate_quote']}")
+
+    lines.append("signal_assessments:")
+    for s in signal_scorecards or []:
+        lines.append(
+            f"- {s.get('signal')} | state: {s.get('final_state')} | grade: {s.get('grade')}"
+        )
+    lines.append("</report>")
+
+    lines.append("<transcript>")
+    for turn in transcript:
+        if turn.get("role") != "candidate":
+            continue
+        words = turn.get("words") or []
+        if not words:
+            continue
+        indexed = " ".join(f"{i}:{w['text']}" for i, w in enumerate(words))
+        lines.append(
+            f"turn_ref: {turn.get('timestamp_ms')} | question_id: {turn.get('question_id')}"
+        )
+        lines.append(f"words: {indexed}")
+        lines.append("---")
+    lines.append("</transcript>")
+    return "\n".join(lines)
+
+
+async def generate_edl(*, verdict: str | None, strengths: list[dict],
+                       question_scorecards: list[dict], signal_scorecards: list[dict],
+                       transcript: list[dict], correlation_id: str) -> ReelEdlOut:
+    """Call the LLM to produce a raw EDL. Caller must run ``validate_edl`` after.
+
+    Mirrors ``reporting/scoring/judge.py``: Responses API + native structured
+    output, effort-gated reasoning, prompt_cache_key, OTel span, no-PII logs.
+    app.ai imports are lazy so the pure-validation path stays import-light.
+    """
+    import structlog
+    from opentelemetry import trace
+
+    from app.ai.client import get_raw_openai_client
+    from app.ai.config import ai_config
+    from app.ai.prompts import PromptLoader
+    from app.ai.tracing import set_llm_span_attributes
+
+    log = structlog.get_logger()
+    system_prompt = PromptLoader(
+        version=ai_config.reel_director_prompt_version
+    ).get("reel/director")
+    document = _build_document(
+        verdict=verdict, strengths=strengths,
+        question_scorecards=question_scorecards, signal_scorecards=signal_scorecards,
+        transcript=transcript,
+    )
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": document},
+    ]
+    prompt_cache_key = (
+        f"{ai_config.reel_director_prompt_cache_key_prefix}"
+        f":{ai_config.reel_director_prompt_version}"
+        f":{ai_config.reel_director_model}"
+    )
+    kwargs: dict[str, object] = {
+        "model": ai_config.reel_director_model,
+        "input": messages,
+        "text_format": ReelEdlOut,
+        "prompt_cache_key": prompt_cache_key,
+    }
+    if ai_config.reel_director_effort:
+        kwargs["reasoning"] = {"effort": ai_config.reel_director_effort}
+
+    client = get_raw_openai_client()
+    tracer = trace.get_tracer("nexus.ai.openai")
+    with tracer.start_as_current_span("openai.responses.parse"):
+        set_llm_span_attributes(
+            prompt_name="reel_director",
+            prompt_version=ai_config.reel_director_prompt_version,
+            correlation_id=correlation_id,
+        )
+        response = await client.responses.parse(**kwargs)
+
+    usage = getattr(response, "usage", None)
+    if usage is not None:
+        details = getattr(usage, "input_tokens_details", None)
+        log.info(
+            "reel.director.usage",
+            input_tokens=getattr(usage, "input_tokens", None),
+            cached_tokens=getattr(details, "cached_tokens", None),
+            output_tokens=getattr(usage, "output_tokens", None),
+            correlation_id=correlation_id,
+        )
+
+    parsed = getattr(response, "output_parsed", None)
+    if parsed is None:
+        log.warning("reel.director.no_parse", correlation_id=correlation_id)
+        return ReelEdlOut(beats=[])
+    log.info("reel.director.parsed", n_beats=len(parsed.beats),
+             correlation_id=correlation_id)
+    return parsed
+
+
+def edl_to_dict(vedl: ValidatedEdl) -> dict:
+    """Serialize a ValidatedEdl to a plain dict (for the dev EDL dump / inspection)."""
+    return {"duration_ms": vedl.duration_ms, "beats": [asdict(b) for b in vedl.beats]}
+
+
+# --- dev entrypoint (retired at the production scaffold step) --------------
+async def _dev_main(session_id: str) -> int:
+    """Run the Director on a real session: report (DB) + transcript (fixture) -> EDL.
+
+    Prints the EDL and writes tmp/edl_<session>.json for the spike to render.
+        docker compose exec nexus python -m app.modules.reel.director <session_id>
+    """
+    import json
+    import os
+
+    from sqlalchemy import text
+
+    from app.database import get_bypass_session
+
+    async with get_bypass_session() as db:
+        await db.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+        row = (await db.execute(text(
+            "SELECT verdict, summary, question_scorecards, signal_scorecards "
+            "FROM session_reports WHERE session_id = :sid"
+        ), {"sid": session_id})).first()
+    if not row:
+        print(f"[director] no session_report for {session_id}")
+        return 1
+    verdict, summary, qsc, ssc = row
+
+    fixture = os.path.join(os.path.dirname(__file__), "..", "..", "..",
+                           "tests/fixtures/candidate_reel",
+                           f"session_{session_id[:8]}_transcript.json")
+    with open(os.path.abspath(fixture), encoding="utf-8") as f:
+        transcript = json.load(f)
+
+    raw = await generate_edl(
+        verdict=verdict, strengths=(summary or {}).get("strengths", []),
+        question_scorecards=qsc or [], signal_scorecards=ssc or [],
+        transcript=transcript, correlation_id=f"reel-dev-{session_id[:8]}",
+    )
+    print(f"[director] raw beats: {[b.kind for b in raw.beats]}")
+    vedl = validate_edl(raw, transcript)
+    print(f"[director] validated {len(vedl.beats)} beats, {vedl.duration_ms/1000:.1f}s")
+    for b in vedl.beats:
+        ref = f" turn={b.source_turn_ref} [{b.in_ms},{b.out_ms}]" if b.in_ms is not None else ""
+        text_preview = (b.on_screen_text or b.caption or "")[:50]
+        print(f"   {b.kind:11s} {b.duration_ms/1000:4.1f}s{ref}  {text_preview}")
+
+    out_dir = "/app/tmp"
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, f"edl_{session_id}.json")
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(edl_to_dict(vedl), f, indent=2)
+    print(f"[director] wrote {out_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    import asyncio
+    import sys
+
+    raise SystemExit(asyncio.run(_dev_main(sys.argv[1])))
