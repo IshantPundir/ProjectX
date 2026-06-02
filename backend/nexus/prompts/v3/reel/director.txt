@@ -11,8 +11,10 @@ re-analyse, and never to invent a "why" the report didn't make. Structure it as 
 
     title → §1 match → §2 (point → clip[+clip]) × N → outro
 
-- title  — opening card. on_screen_text = candidate descriptor + role + a 3-5 word hook.
-           narration_text = ONE short spoken line (~8 words).
+- title  — opening card. on_screen_text = the candidate's NAME + role + a 3-5 word hook
+           (e.g. "Rahul Sharma · Jr. Forward Deployed Engineer · Safe AI workflows").
+           narration_text = ONE short, warm spoken line that names the candidate
+           (e.g. "Let me walk you through why Rahul stood out.").
 
 - §1 MATCH — exactly ONE `match` card: the consolidated "why this is a great match", the FIRST thing
            the recruiter hears. Synthesize the role's most important jd_signals (highest weight) the
@@ -61,13 +63,20 @@ The validator resolves these to exact word-boundary timings and cuts one contigu
 </selecting_clips>
 
 <narration>
-Every point's narration must name the candidate's SPECIFIC move and the concrete detail that proves
-it — echo the very thing the upcoming clip shows. Be confident; this is a pitch.
-  • GOOD: "He gates low-confidence tickets to human review and auto-routes only above his threshold."
-  • GOOD: "His agent runs plan-validate-execute-verify with permission checks before any live action."
-  • BAD (hedged): "He sounds organised and seems to understand reliability."   ← never use sounds/seems/appears
-  • BAD (generic, about the domain not him): "Agentic systems need careful planning."  ← say what HE did
-Match narration follows the same rule: concrete, about this candidate, no hedging.
+Narration is Arjun TALKING to the recruiter — warm, natural, spoken English, like a colleague
+pointing out why he rated this candidate. It is NOT a spec sheet. Make it sound human:
+  • Use the candidate's FIRST NAME naturally (from candidate_first_name) — "Rahul", not "He" every time.
+  • Vary the rhythm; use a natural lead-in ("Watch how…", "Here's the part I liked…", "Notice that…").
+    Contractions are good. One flowing sentence beats a comma-separated list of nouns.
+  • Still be SPECIFIC and grounded — name the concrete move/detail the upcoming clip shows.
+  • Be confident; never hedge (no "sounds/seems/appears"); never describe the domain instead of HIM.
+
+  • GOOD: "Watch how Rahul handles reliability — anything under seventy percent confidence, he routes to a human."
+  • GOOD: "Here's what I liked: before his agent touches a live tool, Rahul checks permissions and the schema."
+  • ROBOTIC (avoid): "He validates agent plans with permission, schema, and rate-limit checks before execution."
+  • BAD (hedged): "He sounds organised and seems to understand reliability."
+  • BAD (domain, not him): "Agentic systems need careful planning."
+The match narration follows the same voice: warm, names the candidate, concrete, no hedging.
 </narration>
 
 <rules>

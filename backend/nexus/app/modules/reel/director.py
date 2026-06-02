@@ -31,8 +31,8 @@ from pydantic import BaseModel
 from app.modules.reel.transcript import AnswerRun, answer_runs, is_pause_before
 
 # --- tuning constants (transcript-space; ms) ------------------------------
-MAX_TOTAL_MS = 60_000        # soft target (design D2; quality may run a little over)
-TARGET_MS = 45_000           # aim for ~45s
+MAX_TOTAL_MS = 70_000        # soft target (quality may run a little over)
+TARGET_MS = 50_000           # aim for ~50s
 CLIP_SOFT_CAP_MS = 16_000    # a single clip may run this long to show full substance
 EST_BOUNDARY_PAUSE_MS = 500  # estimated inter-turn pause inside a multi-turn clip
 SPEAK_WPS = 2.75             # ~165 wpm, Arjun narration, for card duration estimate
@@ -244,10 +244,11 @@ def validate_edl(edl: ReelEdlOut, transcript: list[dict]) -> ValidatedEdl:
 
 
 # --- LLM call (manual-tested) ---------------------------------------------
-def _build_document(*, role_title: str | None, verdict: str | None,
-                    verdict_reason: str | None, why_positive: str | None,
-                    strengths: list[dict], question_scorecards: list[dict],
-                    signal_scorecards: list[dict], transcript: list[dict]) -> str:
+def _build_document(*, candidate_name: str | None, role_title: str | None,
+                    verdict: str | None, verdict_reason: str | None,
+                    why_positive: str | None, strengths: list[dict],
+                    question_scorecards: list[dict], signal_scorecards: list[dict],
+                    transcript: list[dict]) -> str:
     """Serialize report fit-context (FIRST) then the indexed transcript (the document).
 
     Context-before-document per the house rule. The fit-context is the material
@@ -255,7 +256,11 @@ def _build_document(*, role_title: str | None, verdict: str | None,
     rendered with a per-word ``idx:text`` index so the model can reference
     [in_word, out_word].
     """
-    lines: list[str] = ["<report>", f"role: {role_title or 'n/a'}",
+    first_name = (candidate_name or "").split()[0] if candidate_name else None
+    lines: list[str] = ["<report>",
+                        f"candidate_name: {candidate_name or 'n/a'}",
+                        f"candidate_first_name: {first_name or 'n/a'}",
+                        f"role: {role_title or 'n/a'}",
                         f"verdict: {verdict or 'n/a'}"]
     if verdict_reason:
         lines.append(f"verdict_reason: {verdict_reason}")
@@ -307,11 +312,11 @@ def _build_document(*, role_title: str | None, verdict: str | None,
     return "\n".join(lines)
 
 
-async def generate_edl(*, role_title: str | None, verdict: str | None,
-                       verdict_reason: str | None, why_positive: str | None,
-                       strengths: list[dict], question_scorecards: list[dict],
-                       signal_scorecards: list[dict], transcript: list[dict],
-                       correlation_id: str) -> ReelEdlOut:
+async def generate_edl(*, candidate_name: str | None, role_title: str | None,
+                       verdict: str | None, verdict_reason: str | None,
+                       why_positive: str | None, strengths: list[dict],
+                       question_scorecards: list[dict], signal_scorecards: list[dict],
+                       transcript: list[dict], correlation_id: str) -> ReelEdlOut:
     """Call the LLM to produce a raw EDL. Caller must run ``validate_edl`` after.
 
     Mirrors ``reporting/scoring/judge.py``: Responses API + native structured
@@ -331,8 +336,8 @@ async def generate_edl(*, role_title: str | None, verdict: str | None,
         version=ai_config.reel_director_prompt_version
     ).get("reel/director")
     document = _build_document(
-        role_title=role_title, verdict=verdict, verdict_reason=verdict_reason,
-        why_positive=why_positive, strengths=strengths,
+        candidate_name=candidate_name, role_title=role_title, verdict=verdict,
+        verdict_reason=verdict_reason, why_positive=why_positive, strengths=strengths,
         question_scorecards=question_scorecards, signal_scorecards=signal_scorecards,
         transcript=transcript,
     )
@@ -407,16 +412,17 @@ async def _dev_main(session_id: str) -> int:
         await db.execute(text("SET LOCAL app.bypass_rls = 'true'"))
         row = (await db.execute(text(
             "SELECT r.verdict, r.verdict_reason, r.summary, r.question_scorecards, "
-            "       r.signal_scorecards, j.title "
+            "       r.signal_scorecards, j.title, c.name "
             "FROM session_reports r "
             "LEFT JOIN candidate_job_assignments a ON a.id = r.assignment_id "
             "LEFT JOIN job_postings j ON j.id = a.job_posting_id "
+            "LEFT JOIN candidates c ON c.id = a.candidate_id "
             "WHERE r.session_id = :sid"
         ), {"sid": session_id})).first()
     if not row:
         print(f"[director] no session_report for {session_id}")
         return 1
-    verdict, verdict_reason, summary, qsc, ssc, role_title = row
+    verdict, verdict_reason, summary, qsc, ssc, role_title, candidate_name = row
     why_positive = ((summary or {}).get("decision") or {}).get("why_positive")
     if isinstance(why_positive, dict):
         why_positive = why_positive.get("body")
@@ -428,8 +434,9 @@ async def _dev_main(session_id: str) -> int:
         transcript = json.load(f)
 
     raw = await generate_edl(
-        role_title=role_title, verdict=verdict, verdict_reason=verdict_reason,
-        why_positive=why_positive, strengths=(summary or {}).get("strengths", []),
+        candidate_name=candidate_name, role_title=role_title, verdict=verdict,
+        verdict_reason=verdict_reason, why_positive=why_positive,
+        strengths=(summary or {}).get("strengths", []),
         question_scorecards=qsc or [], signal_scorecards=ssc or [],
         transcript=transcript, correlation_id=f"reel-dev-{session_id[:8]}",
     )
