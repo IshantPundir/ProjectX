@@ -45,7 +45,7 @@
 - Create: `backend/nexus/app/modules/reel/__init__.py`
 - Create: `backend/nexus/tests/reel/__init__.py`
 
-- [ ] **Step 1: Create the package marker with an explicit no-heavy-imports note**
+- [x] **Step 1: Create the package marker with an explicit no-heavy-imports note**
 
 `app/modules/reel/__init__.py`:
 ```python
@@ -57,13 +57,13 @@ vision worker image. Submodules are imported directly by callers.
 """
 ```
 
-- [ ] **Step 2: Create the test package marker**
+- [x] **Step 2: Create the test package marker**
 
 `tests/reel/__init__.py`:
 ```python
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add backend/nexus/app/modules/reel/__init__.py backend/nexus/tests/reel/__init__.py
@@ -78,7 +78,7 @@ git commit -m "feat(reel): scaffold reel module package"
 - Create: `backend/nexus/app/modules/reel/captions.py`
 - Test: `backend/nexus/tests/reel/test_captions.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/reel/test_captions.py`:
 ```python
@@ -116,12 +116,12 @@ def test_build_ass_empty_words_has_no_dialogue():
     assert "Dialogue:" not in ass
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `docker compose exec -T nexus python -m pytest tests/reel/test_captions.py -q`
 Expected: FAIL with `ModuleNotFoundError: app.modules.reel.captions`.
 
-- [ ] **Step 3: Implement `captions.py`**
+- [x] **Step 3: Implement `captions.py`**
 
 `app/modules/reel/captions.py`:
 ```python
@@ -182,12 +182,12 @@ def build_ass(words: list[dict], *, clip_start_ms: int, max_words: int = 5) -> s
     return "\n".join(out) + "\n"
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `docker compose exec -T nexus python -m pytest tests/reel/test_captions.py -q`
 Expected: PASS (4 passed).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/nexus/app/modules/reel/captions.py backend/nexus/tests/reel/test_captions.py
@@ -202,7 +202,7 @@ git commit -m "feat(reel): ASS caption generation from word timings"
 - Create: `backend/nexus/app/modules/reel/offset.py`
 - Test: `backend/nexus/tests/reel/test_offset.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/reel/test_offset.py`:
 ```python
@@ -230,12 +230,12 @@ def test_parse_first_onset_none_when_no_silence_end():
     assert parse_first_onset_ms("no markers here") is None
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `docker compose exec -T nexus python -m pytest tests/reel/test_offset.py -q`
 Expected: FAIL with `ModuleNotFoundError: app.modules.reel.offset`.
 
-- [ ] **Step 3: Implement the pure parts of `offset.py`**
+- [x] **Step 3: Implement the pure parts of `offset.py`**
 
 `app/modules/reel/offset.py`:
 ```python
@@ -280,12 +280,12 @@ async def measure_video_onset_ms(recording_path: str, *, noise_db: int = -30,
     return parse_first_onset_ms(stderr.decode("utf-8", "replace"))
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `docker compose exec -T nexus python -m pytest tests/reel/test_offset.py -q`
 Expected: PASS (3 passed).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/nexus/app/modules/reel/offset.py backend/nexus/tests/reel/test_offset.py
@@ -301,7 +301,7 @@ git commit -m "feat(reel): offset math + silencedetect onset parsing"
 
 No unit test (ffmpeg subprocess); validated by the spike in Task 6. Keep the command construction in a pure helper so it's inspectable.
 
-- [ ] **Step 1: Implement `clips.py`**
+- [x] **Step 1: Implement `clips.py`**
 
 `app/modules/reel/clips.py`:
 ```python
@@ -371,7 +371,7 @@ async def cut_clip(*, recording_path: str, out_path: str, words: list[dict],
     return out_path
 ```
 
-- [ ] **Step 2: Smoke-check the import + pure command builder**
+- [x] **Step 2: Smoke-check the import + pure command builder**
 
 Run:
 ```bash
@@ -386,7 +386,7 @@ print('OK')
 ```
 Expected: prints the ffmpeg argv ending in `OK` (proves `clips.py` imports in the vision image and the seek math runs).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add backend/nexus/app/modules/reel/clips.py
@@ -400,7 +400,7 @@ git commit -m "feat(reel): cut_clip ffmpeg cut/normalize/caption-burn"
 **Files:**
 - Create: `backend/nexus/app/modules/reel/render.py`
 
-- [ ] **Step 1: Implement `render.py`**
+- [x] **Step 1: Implement `render.py`**
 
 `app/modules/reel/render.py`:
 ```python
@@ -438,7 +438,7 @@ async def concat_clips(clip_paths: list[str], out_path: str) -> str:
     return out_path
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add backend/nexus/app/modules/reel/render.py
@@ -452,7 +452,7 @@ git commit -m "feat(reel): concat_clips concat-demuxer join"
 **Files:**
 - Create: `backend/nexus/app/modules/reel/spike.py`
 
-- [ ] **Step 1: Implement the spike**
+- [x] **Step 1: Implement the spike**
 
 `app/modules/reel/spike.py`:
 ```python
@@ -554,7 +554,7 @@ if __name__ == "__main__":
     raise SystemExit(asyncio.run(main(sys.argv[1])))
 ```
 
-- [ ] **Step 2: Run the spike in the vision container**
+- [x] **Step 2: Run the spike in the vision container**
 
 Run:
 ```bash
@@ -572,7 +572,7 @@ Open `backend/nexus/tmp/reel_5e004a4d-..._clips.mp4`. Confirm:
 
 This is the milestone's success gate. Record the measured offset in the PR/commit message.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add backend/nexus/app/modules/reel/spike.py
