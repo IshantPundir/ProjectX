@@ -600,4 +600,17 @@ git commit -m "feat(reel): clips-only spike entrypoint (session 5e004a4d)"
 
 ## After this milestone
 
-Once the clips look right, the next plans (separate) are: Director (LLM→EDL) → Cards (Pillow) → TTS (offline synth) → full interleaved render → production scaffold (`session_reels` table + actor on extended vision image + endpoints) → Phase 3 frontend. The measured offset here decides whether production uses automated opener-onset (A-automated) or the wall-anchor (B) — see the design doc §4.
+Once the clips look right, the next plans (separate) are: Director (LLM→EDL) → Cards (Pillow) → TTS (offline synth) → full interleaved render → production scaffold (`session_reels` table + actor on extended vision image + endpoints) → Phase 3 frontend.
+
+### Status after execution (2026-06-02) — clips-only core DONE + operator-confirmed
+Positioning, **captions, and trimming** all confirmed in-sync on session 5e004a4d. Timing model (NOT the plan's opener-onset offset, which was deleted):
+`video_ms = t_ms + wall_anchor − pipeline_lag`, all in `app/modules/reel/timing.py`:
+- `wall_anchor` = `engine_t0_wall − recording_started_at` (~90ms).
+- `pipeline_lag` = engine audio-receive latency (~3.6s), AUTO-measured per session by cross-correlating the candidate VAD envelope (`audio.user.state`) vs the recording's speech envelope.
+- clip spans from live VAD bounded by `turn.captured`; captions from turn-relative word timings anchored to the answer's VAD video start.
+Commits `4f150061`, `c48d43de`, `cbf616e1` on `feat/candidate-reel-phase2` (not pushed). Trim/select is the **Director's** job (hand-picked in the spike for this test).
+
+### Follow-ups (filed)
+1. **SOURCE FIX (preferred long-term): stamp `audio.user.state`/word events against the audio-FRAME clock the egress shares** (instead of engine processing time). Then `pipeline_lag` → 0 by construction and no per-session calibration is needed. The cross-correlation calibrator stays as a fallback for existing recordings. Engine change in `app/modules/interview_engine/` audio path + event log.
+2. Lift `timing.py` from spike usage into the production actor; retire `spike.py` at the production-scaffold step.
+3. Director snaps trim in/out to word boundaries (the spike does this by hand; `clips.py` tail pad already protects the last word).
