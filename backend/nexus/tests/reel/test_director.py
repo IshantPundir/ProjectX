@@ -1,9 +1,10 @@
 """Director EDL validation — pure-function table tests (lean nexus image).
 
+v2 fit-pitch model: title -> §1 `match` -> §2 (`point` -> clip[+clip])xN -> outro.
 The Director's LLM call is exercised manually on 5e004a4d (see the design doc);
 these tests cover the deterministic guardrails that run AFTER the LLM:
-turn-ref check, word-index bounds -> ms resolution, the duration budget +
-trim/drop fit order, and the >=1-clip-or-fail rule.
+turn-ref check, word-index bounds -> ms resolution, duplicate-span dedup, the
+duration budget + group-by-lead-card drop order, and >=1-clip-or-fail.
 """
 import pytest
 
@@ -101,71 +102,89 @@ def test_single_word_clip_is_valid():
     assert clip.in_ms == 3000 and clip.out_ms == 3900
 
 
-# --- per-clip soft cap (fit step a) ---------------------------------------
+# --- duplicate-span dedup backstop ----------------------------------------
+
+def test_duplicate_overlapping_clip_span_is_dropped():
+    transcript = [_turn(100, 12)]
+    # second clip [2,6] overlaps the first [0,5] on the same turn -> dropped
+    edl = ReelEdlOut(beats=[_clip(100, 0, 5), _clip(100, 2, 6)])
+    vedl = validate_edl(edl, transcript)
+    clips = _by_kind(vedl, "clip")
+    assert len(clips) == 1 and clips[0].in_ms == 0
+
+
+def test_disjoint_clips_same_turn_both_kept():
+    transcript = [_turn(100, 12)]
+    edl = ReelEdlOut(beats=[_clip(100, 0, 2), _clip(100, 6, 8)])
+    vedl = validate_edl(edl, transcript)
+    assert len(_by_kind(vedl, "clip")) == 2
+
+
+# --- per-clip soft cap ----------------------------------------------------
 
 def test_overlong_clip_is_trimmed_to_the_soft_cap():
-    # 20 words on a 1000ms grid -> a 0..19 clip would be ~19.9s; soft cap 12s.
-    transcript = [_turn(100, 20)]
+    transcript = [_turn(100, 20)]   # a 0..19 clip would be ~19.9s; soft cap 12s.
     edl = ReelEdlOut(beats=[_clip(100, 0, 19)])
     vedl = validate_edl(edl, transcript)
     clip = _by_kind(vedl, "clip")[0]
     assert clip.in_ms == 0
-    # last word whose end_ms <= in_ms + 12000: word 11 ends 11900, word 12 ends 12900
-    assert clip.out_ms == 11900
+    assert clip.out_ms == 11900          # last word with end_ms <= 12000
     assert clip.duration_ms <= 12000
 
 
-# --- total budget (fit steps b/c) -----------------------------------------
+# --- total budget: group-by-lead-card -------------------------------------
 
 def test_total_within_budget_keeps_all_beats():
-    transcript = [_turn(1, 6), _turn(2, 6), _turn(3, 6)]
+    transcript = [_turn(1, 6), _turn(2, 6)]
     edl = ReelEdlOut(beats=[
         ReelBeat(kind="title", on_screen_text="t"),
-        _clip(1, 0, 5), _clip(2, 0, 5), _clip(3, 0, 5),
+        ReelBeat(kind="match", on_screen_text="great match"),
+        ReelBeat(kind="point", on_screen_text="p1"), _clip(1, 0, 5),
+        ReelBeat(kind="point", on_screen_text="p2"), _clip(2, 0, 5),
         ReelBeat(kind="outro", on_screen_text="o"),
     ])
     vedl = validate_edl(edl, transcript)
-    assert len(_by_kind(vedl, "clip")) == 3
+    assert len(_by_kind(vedl, "clip")) == 2
+    assert len(_by_kind(vedl, "point")) == 2
     assert vedl.duration_ms <= MAX_TOTAL_MS
 
 
-def test_over_budget_drops_trailing_question_groups_keeping_title_outro_and_one_clip():
-    # four ~11.9s clips (each under the 12s cap) = ~47.6s of clips alone; with
-    # title+outro the total exceeds 60s, forcing trailing groups to drop.
-    transcript = [_turn(i, 12) for i in (1, 2, 3, 4)]
-    beats = [ReelBeat(kind="title", on_screen_text="t")]
-    for i in (1, 2, 3, 4):
-        beats += [
-            ReelBeat(kind="ask", on_screen_text=f"ask{i}"),
-            ReelBeat(kind="credit", on_screen_text=f"credit{i}"),
-            _clip(i, 0, 11),
-        ]
+def test_point_and_its_clips_drop_together_as_a_group():
+    # four points, each with TWO ~11.9s clips -> way over 60s, forcing trailing
+    # point-groups (card + both clips) to drop as units.
+    transcript = [_turn(i, 12) for i in range(1, 9)]
+    beats = [ReelBeat(kind="title", on_screen_text="t"),
+             ReelBeat(kind="match", on_screen_text="m")]
+    for p in range(4):
+        a, b = 2 * p + 1, 2 * p + 2
+        beats += [ReelBeat(kind="point", on_screen_text=f"p{p}"),
+                  _clip(a, 0, 11), _clip(b, 0, 11)]
     beats.append(ReelBeat(kind="outro", on_screen_text="o"))
     vedl = validate_edl(ReelEdlOut(beats=beats), transcript)
 
     kinds = [b.kind for b in vedl.beats]
     assert kinds[0] == "title" and kinds[-1] == "outro"
-    clips = _by_kind(vedl, "clip")
-    assert 1 <= len(clips) < 4                      # at least one, but trimmed down
     assert vedl.duration_ms <= MAX_TOTAL_MS
-    # earliest clip (turn 1) is the highest priority -> survives; trailing dropped
-    assert clips[0].source_turn_ref == 1
-    # a dropped clip's ask/credit go with it (no orphans): counts stay aligned
-    assert len(_by_kind(vedl, "ask")) == len(clips)
-    assert len(_by_kind(vedl, "credit")) == len(clips)
+    # each surviving point keeps BOTH of its clips (groups drop whole)
+    points = _by_kind(vedl, "point")
+    clips = _by_kind(vedl, "clip")
+    assert 1 <= len(points) < 4
+    assert len(clips) == 2 * len(points)
 
 
-def test_experience_survives_longer_than_trailing_question_groups():
-    transcript = [_turn(i, 12) for i in (1, 2, 3, 4, 5)]
+def test_match_section_survives_when_trailing_points_dropped():
+    transcript = [_turn(i, 12) for i in range(1, 7)]
     beats = [
         ReelBeat(kind="title", on_screen_text="t"),
+        ReelBeat(kind="match", on_screen_text="great match"),
         ReelBeat(kind="experience", source_turn_ref=1, in_word=0, out_word=11),
     ]
     for i in (2, 3, 4, 5):
-        beats += [ReelBeat(kind="ask", on_screen_text=f"a{i}"), _clip(i, 0, 11)]
+        beats += [ReelBeat(kind="point", on_screen_text=f"p{i}"), _clip(i, 0, 11)]
     beats.append(ReelBeat(kind="outro", on_screen_text="o"))
     vedl = validate_edl(ReelEdlOut(beats=beats), transcript)
-    # experience is first in order -> dropped last; it must remain
+    # §1 (match + establishing experience clip) is first -> dropped last; survives
+    assert _by_kind(vedl, "match")
     assert _by_kind(vedl, "experience")
     assert vedl.duration_ms <= MAX_TOTAL_MS
 
@@ -175,6 +194,7 @@ def test_experience_survives_longer_than_trailing_question_groups():
 def test_zero_clip_beats_raises():
     edl = ReelEdlOut(beats=[
         ReelBeat(kind="title", on_screen_text="t"),
+        ReelBeat(kind="match", on_screen_text="m"),
         ReelBeat(kind="outro", on_screen_text="o"),
     ])
     with pytest.raises(NoClipBeatsError):
@@ -189,14 +209,23 @@ def test_all_clips_hallucinated_raises():
 
 # --- card duration estimate ------------------------------------------------
 
-def test_card_duration_estimated_from_narration_word_count():
+def test_match_card_duration_estimated_from_narration_word_count():
     transcript = [_turn(1, 6)]
-    # ~14 words of narration / 2.75 wps ~= 5.1s, above the title floor.
-    narration = " ".join(["word"] * 14)
+    narration = " ".join(["word"] * 22)   # 22 / 2.75 = 8s, above the match floor
     edl = ReelEdlOut(beats=[
-        ReelBeat(kind="title", on_screen_text="t", narration_text=narration),
+        ReelBeat(kind="match", on_screen_text="m", narration_text=narration),
         _clip(1, 0, 5),
     ])
     vedl = validate_edl(edl, transcript)
-    title = _by_kind(vedl, "title")[0]
-    assert title.duration_ms >= 5000
+    match = _by_kind(vedl, "match")[0]
+    assert match.duration_ms >= 8000
+
+
+def test_point_card_uses_its_floor_when_narration_short():
+    transcript = [_turn(1, 6)]
+    edl = ReelEdlOut(beats=[
+        ReelBeat(kind="point", on_screen_text="p", narration_text="short"),
+        _clip(1, 0, 5),
+    ])
+    vedl = validate_edl(edl, transcript)
+    assert _by_kind(vedl, "point")[0].duration_ms == 3500   # point floor

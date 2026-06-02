@@ -33,10 +33,11 @@ MAX_TOTAL_MS = 60_000      # hard cap (design D2)
 TARGET_MS = 45_000         # aim for ~45s
 CLIP_SOFT_CAP_MS = 12_000  # no single answer slice longer than this
 SPEAK_WPS = 2.75           # ~165 wpm, Arjun narration, for card duration estimate
-_CARD_FLOOR_MS = {"title": 3_000, "ask": 2_000, "credit": 3_500, "outro": 4_000}
+_CARD_FLOOR_MS = {"title": 3_000, "match": 4_000, "point": 3_500, "outro": 4_000}
 
 TIMED_KINDS = {"clip", "experience"}   # beats cut from the recording (carry timing)
-BeatKind = Literal["title", "experience", "ask", "credit", "clip", "outro"]
+LEAD_CARDS = {"match", "point"}        # a card that leads a drop-group of clips
+BeatKind = Literal["title", "match", "experience", "point", "clip", "outro"]
 
 
 class NoClipBeatsError(Exception):
@@ -132,16 +133,21 @@ def _has_clip(group: list[ValidatedBeat]) -> bool:
 
 
 def _group_body(body: list[ValidatedBeat]) -> list[list[ValidatedBeat]]:
-    """Group body beats so each group ends at a timed beat (its ask/credit ride along)."""
+    """Group body beats into drop-units: a lead card (match/point) + its clips.
+
+    A new group starts at each lead card; clips/other beats attach to the current
+    group. A clip before any lead card (e.g. a §1 `experience`) forms its own group.
+    """
     groups: list[list[ValidatedBeat]] = []
     cur: list[ValidatedBeat] = []
     for b in body:
-        cur.append(b)
-        if b.kind in TIMED_KINDS:
+        if b.kind in LEAD_CARDS and cur:
             groups.append(cur)
-            cur = []
+            cur = [b]
+        else:
+            cur.append(b)
     if cur:
-        groups.append(cur)   # trailing non-timed beats (e.g. an orphaned ask)
+        groups.append(cur)
     return groups
 
 
@@ -176,12 +182,19 @@ def validate_edl(edl: ReelEdlOut, transcript: list[dict]) -> ValidatedEdl:
     Raises ``NoClipBeatsError`` if no clip/experience beat survives resolution.
     """
     turns = _candidate_turns(transcript)
+    kept_spans: dict[int, list[tuple[int, int]]] = {}   # turn -> [(in_ms, out_ms)]
     resolved: list[ValidatedBeat] = []
     for beat in edl.beats:
         if beat.kind in TIMED_KINDS:
             vb = _resolve_timed(beat, turns)
-            if vb is not None:
-                resolved.append(vb)
+            if vb is None:
+                continue
+            # structural dedup backstop: drop a span overlapping one already kept.
+            spans = kept_spans.setdefault(vb.source_turn_ref, [])
+            if any(vb.in_ms < e and vb.out_ms > s for s, e in spans):
+                continue
+            spans.append((vb.in_ms, vb.out_ms))
+            resolved.append(vb)
         else:
             resolved.append(_estimate_card(beat))
 
@@ -193,37 +206,48 @@ def validate_edl(edl: ReelEdlOut, transcript: list[dict]) -> ValidatedEdl:
 
 
 # --- LLM call (manual-tested) ---------------------------------------------
-def _build_document(*, verdict: str | None, strengths: list[dict],
-                    question_scorecards: list[dict], signal_scorecards: list[dict],
-                    transcript: list[dict]) -> str:
-    """Serialize report context (FIRST) then the indexed transcript (the document).
+def _build_document(*, role_title: str | None, verdict: str | None,
+                    verdict_reason: str | None, why_positive: str | None,
+                    strengths: list[dict], question_scorecards: list[dict],
+                    signal_scorecards: list[dict], transcript: list[dict]) -> str:
+    """Serialize report fit-context (FIRST) then the indexed transcript (the document).
 
-    Context-before-document per the house rule. Candidate turns are rendered with
-    a per-word ``idx:text`` index so the model can reference [in_word, out_word].
+    Context-before-document per the house rule. The fit-context is the material
+    for §1 (role + must-have signals) and §2 (strengths). Candidate turns are
+    rendered with a per-word ``idx:text`` index so the model can reference
+    [in_word, out_word].
     """
-    lines: list[str] = ["<report>", f"verdict: {verdict or 'n/a'}"]
+    lines: list[str] = ["<report>", f"role: {role_title or 'n/a'}",
+                        f"verdict: {verdict or 'n/a'}"]
+    if verdict_reason:
+        lines.append(f"verdict_reason: {verdict_reason}")
+    if why_positive:
+        lines.append(f"why_positive: {why_positive}")
 
+    # §1 source: the JD must-haves (highest-weight signals) the candidate met.
+    lines.append("jd_signals (the role's requirements; weight=importance):")
+    for s in sorted(signal_scorecards or [], key=lambda x: -(x.get("weight") or 0)):
+        lines.append(
+            f"- {s.get('signal')} | weight: {s.get('weight')} | "
+            f"state: {s.get('final_state')} | grade: {s.get('grade')}"
+        )
+
+    # §2 source: the report's named strengths.
     lines.append("strengths:")
     for s in strengths or []:
         lines.append(f"- {s.get('title', '')}: {s.get('detail', '')}")
 
+    # Per-question reads — to locate which turn evidences a point.
     lines.append("questions:")
     for q in question_scorecards or []:
         lines.append(
             f"- question_id: {q.get('question_id')} | status: {q.get('status_badge')} | "
             f"title: {q.get('title', '')}"
         )
-        lines.append(f"  question_text: {q.get('question_text', '')}")
         if q.get("our_read"):
             lines.append(f"  our_read: {q['our_read']}")
         if q.get("candidate_quote"):
             lines.append(f"  candidate_quote (hint): {q['candidate_quote']}")
-
-    lines.append("signal_assessments:")
-    for s in signal_scorecards or []:
-        lines.append(
-            f"- {s.get('signal')} | state: {s.get('final_state')} | grade: {s.get('grade')}"
-        )
     lines.append("</report>")
 
     lines.append("<transcript>")
@@ -243,9 +267,11 @@ def _build_document(*, verdict: str | None, strengths: list[dict],
     return "\n".join(lines)
 
 
-async def generate_edl(*, verdict: str | None, strengths: list[dict],
-                       question_scorecards: list[dict], signal_scorecards: list[dict],
-                       transcript: list[dict], correlation_id: str) -> ReelEdlOut:
+async def generate_edl(*, role_title: str | None, verdict: str | None,
+                       verdict_reason: str | None, why_positive: str | None,
+                       strengths: list[dict], question_scorecards: list[dict],
+                       signal_scorecards: list[dict], transcript: list[dict],
+                       correlation_id: str) -> ReelEdlOut:
     """Call the LLM to produce a raw EDL. Caller must run ``validate_edl`` after.
 
     Mirrors ``reporting/scoring/judge.py``: Responses API + native structured
@@ -265,7 +291,8 @@ async def generate_edl(*, verdict: str | None, strengths: list[dict],
         version=ai_config.reel_director_prompt_version
     ).get("reel/director")
     document = _build_document(
-        verdict=verdict, strengths=strengths,
+        role_title=role_title, verdict=verdict, verdict_reason=verdict_reason,
+        why_positive=why_positive, strengths=strengths,
         question_scorecards=question_scorecards, signal_scorecards=signal_scorecards,
         transcript=transcript,
     )
@@ -339,13 +366,20 @@ async def _dev_main(session_id: str) -> int:
     async with get_bypass_session() as db:
         await db.execute(text("SET LOCAL app.bypass_rls = 'true'"))
         row = (await db.execute(text(
-            "SELECT verdict, summary, question_scorecards, signal_scorecards "
-            "FROM session_reports WHERE session_id = :sid"
+            "SELECT r.verdict, r.verdict_reason, r.summary, r.question_scorecards, "
+            "       r.signal_scorecards, j.title "
+            "FROM session_reports r "
+            "LEFT JOIN candidate_job_assignments a ON a.id = r.assignment_id "
+            "LEFT JOIN job_postings j ON j.id = a.job_posting_id "
+            "WHERE r.session_id = :sid"
         ), {"sid": session_id})).first()
     if not row:
         print(f"[director] no session_report for {session_id}")
         return 1
-    verdict, summary, qsc, ssc = row
+    verdict, verdict_reason, summary, qsc, ssc, role_title = row
+    why_positive = ((summary or {}).get("decision") or {}).get("why_positive")
+    if isinstance(why_positive, dict):
+        why_positive = why_positive.get("body")
 
     fixture = os.path.join(os.path.dirname(__file__), "..", "..", "..",
                            "tests/fixtures/candidate_reel",
@@ -354,7 +388,8 @@ async def _dev_main(session_id: str) -> int:
         transcript = json.load(f)
 
     raw = await generate_edl(
-        verdict=verdict, strengths=(summary or {}).get("strengths", []),
+        role_title=role_title, verdict=verdict, verdict_reason=verdict_reason,
+        why_positive=why_positive, strengths=(summary or {}).get("strengths", []),
         question_scorecards=qsc or [], signal_scorecards=ssc or [],
         transcript=transcript, correlation_id=f"reel-dev-{session_id[:8]}",
     )
