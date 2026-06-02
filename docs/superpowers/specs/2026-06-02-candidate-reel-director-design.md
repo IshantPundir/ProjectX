@@ -5,6 +5,9 @@
   2026-06-02** after the first clips-only render proved the timing/selection seam but
   read as a Q&A recap rather than a persuasive "why this candidate fits the role" pitch.
   See §1a for the v2 narrative model (it supersedes the question-driven spine).
+  **v3 2026-06-02 — clip-quality rework (QA pass):** clips now select over **answer
+  runs** (multi-turn answers), end on natural pauses with edge-disfluency trim, and
+  captions are cleaned; narration must cite the candidate's specific move. See §1b.
 - **Refines:** `2026-06-01-candidate-reel-design.md` §7.1 (Director I/O + EDL validation) and
   `2026-06-02-candidate-reel-phase2-build-design.md` §2 (build step 2 = Director). This document
   locks the Director's **clip-reference contract**, **EDL schema**, **validation guardrails
@@ -85,6 +88,35 @@ structural backstop: a clip that **duplicates an already-used span** (same turn 
 persuasively; never fabricate or overstate. The **outro carries the real verdict** (a
 borderline candidate stays borderline). The reel aids the *required* human review — it never
 spins. The Borderline-human-review invariant is intact.
+
+## 1b. Answer-run model + clip quality (v3)
+
+A QA pass (reel script vs the real session) found the clips captured *framing, not
+evidence*: the engine commits one spoken answer as **many transcript turns**, and the
+v2 clip referenced a single turn — so it grabbed an answer's topic sentence and missed
+the substance (the agent-safety answer spans 7 turns / ~198 words; the v2 clip cut at
+"…rather"). Four fixes:
+
+1. **Answer runs (the structural fix).** `transcript.answer_runs()` groups a maximal
+   sequence of **consecutive candidate turns with no agent turn between** into one run:
+   contiguous video (no agent audio in the cut), one `question_id`, and a **continuous
+   word index** across the run. The Director selects `[in_word, out_word]` over the
+   whole run; each word keeps `(turn_commit, rel ms)`, so the renderer maps every word
+   via *its own* turn's VAD span and cuts **one contiguous range** — a multi-turn clip
+   is a single cut, no splicing. (Runs, not `question_id`-global: agent re-asks/
+   backchannels insert agent audio, which a run excludes.)
+2. **Natural boundaries (#2).** The document marks pauses (`//` = inter-word gap >400ms
+   or a turn boundary) so the LLM ends on complete thoughts; a deterministic
+   **edge-disfluency trim** strips leading/trailing "so/like/um/uh…" (lexical edge
+   cleanup, *not* intent classification — distinct from the no-regex rule).
+3. **Narration discipline (#3).** Each narration must name the candidate's **specific
+   move + concrete detail**, no hedges (sounds/seems), no domain-only lines.
+4. **Caption cleanup (#4).** `captions.clean_caption_words` drops non-lexical fillers
+   (um/uh/mm…), collapses stutters, sentence-cases + "I" — the **audio keeps the real
+   voice** (standard broadcast captioning; no invented words, meaning preserved).
+
+Per-clip soft cap raised to **16s** (room for a full line of reasoning); the 60s total
+is a soft target (quality may run a little over).
 
 ## 2. Data contract (from the fixture)
 

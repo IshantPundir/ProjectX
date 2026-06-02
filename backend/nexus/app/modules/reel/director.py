@@ -437,9 +437,16 @@ async def _dev_main(session_id: str) -> int:
     vedl = validate_edl(raw, transcript)
     print(f"[director] validated {len(vedl.beats)} beats, {vedl.duration_ms/1000:.1f}s")
     for b in vedl.beats:
-        ref = f" turn={b.source_turn_ref} [{b.in_ms},{b.out_ms}]" if b.in_ms is not None else ""
-        text_preview = (b.on_screen_text or b.caption or "")[:50]
-        print(f"   {b.kind:11s} {b.duration_ms/1000:4.1f}s{ref}  {text_preview}")
+        if b.words:
+            turns = sorted({w["turn_commit"] for w in b.words})
+            quote = " ".join(w["text"] for w in b.words)
+            print(f"   {b.kind:11s} {b.duration_ms/1000:4.1f}s  turns={turns}")
+            print(f"               CLIP: \"{quote}\"")
+        else:
+            if b.on_screen_text:
+                print(f"   {b.kind:11s} {b.duration_ms/1000:4.1f}s  CARD: {b.on_screen_text}")
+            if b.narration_text:
+                print(f"               NARR: {b.narration_text}")
 
     out_dir = "/app/tmp"
     os.makedirs(out_dir, exist_ok=True)
