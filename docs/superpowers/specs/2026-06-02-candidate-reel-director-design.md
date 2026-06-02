@@ -1,7 +1,10 @@
 # Candidate Reel — Reel Director Design
 
 - **Date:** 2026-06-02
-- **Status:** Approved brainstorm 2026-06-02, pending implementation.
+- **Status:** Approved brainstorm 2026-06-02. **Revised to the fit-pitch model (v2)
+  2026-06-02** after the first clips-only render proved the timing/selection seam but
+  read as a Q&A recap rather than a persuasive "why this candidate fits the role" pitch.
+  See §1a for the v2 narrative model (it supersedes the question-driven spine).
 - **Refines:** `2026-06-01-candidate-reel-design.md` §7.1 (Director I/O + EDL validation) and
   `2026-06-02-candidate-reel-phase2-build-design.md` §2 (build step 2 = Director). This document
   locks the Director's **clip-reference contract**, **EDL schema**, **validation guardrails
@@ -45,6 +48,44 @@ word-timed transcript (words)─┘            │
                                   spike renderer (existing) ─► MP4   ← operator watches
 ```
 
+## 1a. Narrative model — the fit-pitch (v2, supersedes the Q&A spine)
+
+The reel is a **persuasive argument that this candidate fits THIS role**, narrated by the
+AI (Arjun), stitching evidence from across the whole session — not a per-question recap.
+The report already did the analysis (a thesis in `verdict_reason`, a `why_positive`
+paragraph, named `strengths`, and JD `signal_scorecards`); the Director's job is to **voice
+that fit-case as a video**, never invent the "why."
+
+**Spine:**
+```
+title
+→ §1  match    — ONE consolidated, narrated "why this is a great match", grounded in the
+                  role's must-have signals. The first thing the recruiter hears → a full
+                  picture of fit. Narration-led; MAY include one short establishing clip.
+→ §2  (point → clip[+clip]) × N   — the report's DIFFERENTIATING strengths, each: a claim
+                  card + Arjun narration on WHY it's strong, then 1–2 evidence clips pulled
+                  from ANYWHERE in the session (sub-parts of different answers are fine).
+→ outro        — the REAL verdict + "▶ Watch full interview" CTA.
+```
+
+**Beat kinds (v2):** `title · match · experience · point · clip · outro` (the v1 `ask`/`credit`
+are renamed to `match`/`point`). Render types are unchanged: **cards** = `title`/`match`/
+`point`/`outro` (Arjun narration over a Pillow card); **clips** = `experience`/`clip`
+(candidate's real audio + burned captions). The locked audio architecture (D5) is untouched.
+
+**§1 vs §2 split, dedup, and coverage are the LLM's job, not hard rules** (the split is a
+semantic judgment; per the no-pattern-match rule the LLM does it better than a topic
+classifier). The prompt instructs: §1 synthesizes the baseline must-haves into one match
+beat; §2 features the *differentiators*; **do not repeat a point across §1/§2; do not skip a
+strong strength.** Deterministic validation stays **structural only** (§5) — plus one cheap
+structural backstop: a clip that **duplicates an already-used span** (same turn + overlapping
+`[in_ms,out_ms]`) is dropped, so the LLM's semantic dedup has a guard without rigid rules.
+
+**Honesty = honest-positive (a product invariant, not a toggle).** Feature genuine strengths
+persuasively; never fabricate or overstate. The **outro carries the real verdict** (a
+borderline candidate stays borderline). The reel aids the *required* human review — it never
+spins. The Borderline-human-review invariant is intact.
+
 ## 2. Data contract (from the fixture)
 
 A candidate transcript turn:
@@ -81,11 +122,11 @@ and are validated/renderable today; to prove on `5e004a4d` we filter to those an
 
 ```python
 class ReelBeat(BaseModel):
-    kind: Literal["title", "experience", "ask", "credit", "clip", "outro"]
+    kind: Literal["title", "match", "experience", "point", "clip", "outro"]
     source_turn_ref: int | None = None   # commit (timestamp_ms); REQUIRED for clip/experience
     in_word: int | None = None           # index into turn.words[]; clip/experience only
     out_word: int | None = None
-    on_screen_text: str | None = None    # card copy (title/ask/credit/outro)
+    on_screen_text: str | None = None    # card copy (title/match/point/outro)
     caption: str | None = None           # optional hint; renderer uses words[] as caption truth
     narration_text: str | None = None    # Arjun TTS script for card beats
 
@@ -93,7 +134,8 @@ class ReelEdlOut(BaseModel):
     beats: list[ReelBeat]
 ```
 
-Canonical sequence (design §4): `title → experience → (ask → credit → clip)×N → outro`.
+Canonical sequence (v2 §1a): `title → match → [experience] → (point → clip[+clip])×N → outro`.
+`match`/`point` are lead cards; `experience`/`clip` are timed (`TIMED_KINDS`).
 
 **Validated output** (`ValidatedEdl`): the surviving beats with `in_ms`/`out_ms` resolved on timed
 beats, a per-beat `duration_ms` (measured for clips, estimated for cards), total `duration_ms`, and
@@ -107,20 +149,26 @@ All operate on `(ReelEdlOut, transcript) → ValidatedEdl`; no ffmpeg/LLM; run i
    the beat (a card beat without a ref is fine; a clip/experience beat without a valid ref is dropped).
 2. **Word-index bounds.** Require `0 ≤ in_word ≤ out_word < len(words)`. Out-of-bounds = hallucination
    → drop the beat. Derive `in_ms = words[in_word].start_ms`, `out_ms = words[out_word].end_ms`.
-3. **Duration budget ≤ 60s, target ~45s.**
+3. **Duplicate-span guard (structural dedup backstop).** Resolving timed beats in order, drop a
+   clip whose `(source_turn_ref, [in_ms,out_ms])` overlaps an already-kept clip's span (keep the
+   first). The LLM owns semantic dedup; this catches identical/overlapping evidence only.
+4. **Duration budget ≤ 60s, target ~45s.**
    - Clip/experience `duration_ms = out_ms − in_ms` (measured).
-   - Card beats get an **estimated** duration (the real render recomputes): `max(min_read_s,
+   - Card beats get an **estimated** duration (the real render recomputes): `max(floor,
      narration_words / SPEAK_WPS)` with `SPEAK_WPS ≈ 2.75` (~165 wpm, Arjun); floors title 3s /
-     credit 3.5s / outro 4s; `ask` from its `narration_text`.
-   - **Fit order (deterministic):** (a) trim any clip whose `duration_ms` > `CLIP_SOFT_CAP_MS`
-     (~12000) inward by lowering `out_word` to the last word fitting the cap; (b) if still over 60s,
-     drop whole trailing `(ask → credit → clip)` groups (lowest priority = last) keeping ≥1 group;
-     (c) then drop `experience`. **Always keep `title`, `outro`, and ≥1 clip group.**
-4. **≥1 clip beat survives, or fail honestly.** Zero surviving clip/experience beats → raise/return a
+     match 4s / point 3.5s / outro 4s.
+   - **Grouping:** a drop-unit is a **lead card (`match`/`point`) + its following clips** (a point
+     and its 1–2 evidence clips drop together); a clip before any lead card (e.g. a §1 `experience`)
+     forms its own group.
+   - **Fit order (deterministic):** (a) trim any clip over `CLIP_SOFT_CAP_MS` (~12000) inward by
+     lowering `out_word`; (b) if still over 60s, drop whole **trailing groups** (lowest priority =
+     last → trailing §2 points drop before the §1 `match`, which is first). **Always keep `title`,
+     `outro`, and ≥1 clip-bearing group.**
+5. **≥1 clip beat survives, or fail honestly.** Zero surviving clip/experience beats → raise/return a
    failure (the actor sets `status=failed`, no MP4).
 
-Constants (`CLIP_SOFT_CAP_MS`, `MAX_TOTAL_MS=60000`, `TARGET_MS≈45000`, `SPEAK_WPS`) live as module
-constants in `director.py`.
+Constants (`CLIP_SOFT_CAP_MS`, `MAX_TOTAL_MS=60000`, `TARGET_MS≈45000`, `SPEAK_WPS`, `LEAD_CARDS=
+{match,point}`) live as module constants in `director.py`.
 
 ## 6. LLM call, prompt, config
 
@@ -132,11 +180,15 @@ constants in `director.py`.
   `reel_director_model`, `reel_director_effort`, `reel_director_prompt_version`,
   `reel_director_prompt_cache_key_prefix`, with matching `Settings` fields + `.env.example` entries.
 - **Prompt** `prompts/v3/reel/director.txt`, read via `PromptLoader(version=…).get("reel/director")`.
-  **Context-before-document** (house rule): (1) report context — verdict, `strengths`, per-question
-  scorecards, `signal_assessments`; THEN (2) the document — candidate turns serialized as **indexed
-  words**: `{turn_ref, question_id, words: [{idx, text}]}`. The prompt instructs: select the strongest
-  moments that argue fit, reference each by `source_turn_ref` + `[in_word, out_word]`, write card copy
-  + Arjun narration, honor the narrative spine, keep it tight (~45s).
+  **Context-before-document** (house rule): (1) report context — role title, `verdict`,
+  `verdict_reason`, `why_positive`, `strengths`, `signal_scorecards` (the JD must-haves with
+  weight + state), per-question scorecards; THEN (2) the document — candidate turns serialized as
+  **indexed words** `{turn_ref, question_id, words:[idx:text]}`. The prompt directs the **fit-pitch**
+  (§1a): build §1 as ONE consolidated `match` beat grounded in the must-have signals; build §2 from
+  the *differentiating* strengths, each a `point` + 1–2 evidence clips referenced by
+  `source_turn_ref` + `[in_word,out_word]`; **don't repeat across §1/§2, don't skip a strong
+  strength**; write card copy + Arjun narration that says *why each moment shows fit*; honest-positive
+  (outro carries the real verdict); keep it ~45s.
 
 ## 7. Prove flow (build step 2 acceptance)
 
