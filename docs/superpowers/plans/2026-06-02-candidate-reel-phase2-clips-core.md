@@ -563,14 +563,24 @@ docker compose exec nexus-vision-worker \
 ```
 Expected: logs the downloaded key, a measured `offset` (a few-second NEGATIVE number), two clip cuts, and `wrote /app/tmp/reel_..._clips.mp4`. The file appears on the host at `backend/nexus/tmp/reel_5e004a4d..._clips.mp4` (the `.:/app` mount).
 
-- [ ] **Step 3: MANUAL verification — watch the MP4**
+- [x] **Step 3: MANUAL verification — watch the MP4** ✅ confirmed 2026-06-02 (candidate-only answers, correctly positioned).
 
-Open `backend/nexus/tmp/reel_5e004a4d-..._clips.mp4`. Confirm:
-- the clips show the candidate **speaking the captioned words** (lips match captions → offset is right);
-- if everything is shifted by a constant, adjust `OPENER_SESSION_MS`/`SPANS` and re-run;
-- captions are readable and on-screen for the right span.
-
-This is the milestone's success gate. Record the measured offset in the PR/commit message.
+> **IMPORTANT — the offset approach in this plan was SUPERSEDED during execution.**
+> Live testing on 5e004a4d disproved the plan's two core assumptions:
+> 1. **There is no single per-session offset for candidate clips.** The transcript's
+>    candidate turn `start_ms`/`end_ms` are stamped at STT *commit* time, lagging real
+>    speech by the endpointing delay (`turn.captured.pause_before_commit_ms`, 0.8–10s,
+>    variable per turn). So `silencedetect`-opener-onset + `compute_offset_ms` cannot align them.
+> 2. **The recording already IS the engine clock.** `video_ms = wall_ms − recording_started_at`,
+>    and engine `t_ms=0` wall ≈ `recording_started_at` (+90ms on 5e004a4d), so `video_ms ≈ t_ms`.
+>    This is why the report's question timeline works with `offset_ms = 0`.
+>
+> **Working approach (in `spike.py`):** clip the candidate's REAL speech from the engine's
+> live VAD (`audio.user.state` events, on `t_ms` with `wall_ms`), bounded by `turn.captured`,
+> mapped to the recording by the wall anchor `video_ms = t_ms + (engine_t0_wall − recording_started_at)`.
+> No re-VAD, no re-STT, no offset hunting. `offset.py` (opener-onset) is retained but unused by the
+> clip path. Word-level timings remain valid for captions (turn-relative, accurate) once anchored to
+> the VAD span. Captions deferred per the operator's call (positioning proven first).
 
 - [x] **Step 4: Commit**
 

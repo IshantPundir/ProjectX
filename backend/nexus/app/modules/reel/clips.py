@@ -14,13 +14,14 @@ TARGET_W, TARGET_H, FPS = 1280, 720, 30
 PAD_MS = 150  # safety pad so a beat never starts a hair late
 
 
-def build_cut_cmd(*, recording_path: str, ass_path: str, out_path: str,
+def build_cut_cmd(*, recording_path: str, ass_path: str | None, out_path: str,
                   start_ms: int, end_ms: int, offset_ms: int,
                   pad_ms: int = PAD_MS) -> list[str]:
-    """Pure: the ffmpeg argv for one normalized, captioned clip.
+    """Pure: the ffmpeg argv for one normalized clip.
 
-    video position = session_ms - offset_ms (+/- pad). Seek before -i for speed,
-    then the subtitles filter burns the clip-relative .ass.
+    video position = source_ms - offset_ms (+/- pad). Seek before -i for speed.
+    If ``ass_path`` is given, the subtitles filter burns the clip-relative .ass;
+    pass None to render the clip without captions.
     """
     v_start = max(0, start_ms - offset_ms - pad_ms)
     v_end = max(v_start + 1, end_ms - offset_ms + pad_ms)
@@ -29,9 +30,10 @@ def build_cut_cmd(*, recording_path: str, ass_path: str, out_path: str,
     vf = (
         f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,"
         f"pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,"
-        f"setsar=1,fps={FPS},"
-        f"subtitles='{ass_path}'"
+        f"setsar=1,fps={FPS}"
     )
+    if ass_path:
+        vf += f",subtitles='{ass_path}'"
     return [
         "ffmpeg", "-y",
         "-ss", f"{ss:.3f}", "-to", f"{to:.3f}", "-i", recording_path,
@@ -43,13 +45,20 @@ def build_cut_cmd(*, recording_path: str, ass_path: str, out_path: str,
     ]
 
 
-async def cut_clip(*, recording_path: str, out_path: str, words: list[dict],
+async def cut_clip(*, recording_path: str, out_path: str,
+                   words: list[dict] | None = None,
                    start_ms: int, end_ms: int, offset_ms: int,
                    pad_ms: int = PAD_MS) -> str:
-    """Write a normalized captioned clip for [start_ms, end_ms] (session clock)."""
-    ass_path = out_path + ".ass"
-    with open(ass_path, "w", encoding="utf-8") as f:
-        f.write(build_ass(words, clip_start_ms=start_ms))
+    """Write a normalized clip for [start_ms, end_ms] (source clock).
+
+    When ``words`` is provided, burn clip-relative captions; otherwise render
+    the clip without captions (captions deferred until offset/anchor is proven).
+    """
+    ass_path: str | None = None
+    if words:
+        ass_path = out_path + ".ass"
+        with open(ass_path, "w", encoding="utf-8") as f:
+            f.write(build_ass(words, clip_start_ms=start_ms))
     cmd = build_cut_cmd(
         recording_path=recording_path, ass_path=ass_path, out_path=out_path,
         start_ms=start_ms, end_ms=end_ms, offset_ms=offset_ms, pad_ms=pad_ms,
