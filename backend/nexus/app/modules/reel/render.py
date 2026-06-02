@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import os
 
-from app.modules.reel import cards, clips, timing, tts
+from app.modules.reel import captions, cards, clips, timing, tts
 
 # Render-side minimum card hold times (s) — a card lasts max(floor, narration+tail).
 _CARD_FLOOR_S = {"title": 3.0, "match": 4.0, "point": 3.0, "outro": 4.0}
@@ -69,34 +69,38 @@ async def card_segment(*, image_path: str, out_path: str, duration_ms: int,
 _CARD_KINDS = ("title", "match", "point", "outro")
 
 
-def _turn_words(transcript: list[dict], commit: int, *, tol_ms: int = 5) -> list[dict]:
-    """The candidate turn's word list for a commit ref (nearest within tol)."""
-    best, best_d = None, tol_ms + 1
-    for t in transcript:
-        if t.get("role") != "candidate" or t.get("timestamp_ms") is None:
-            continue
-        d = abs(int(t["timestamp_ms"]) - commit)
-        if d < best_d:
-            best, best_d = t, d
-    return (best.get("words") or []) if best else []
+def _clip_to_video(beat, events: list[dict], speaking: list[tuple[int, int]],
+                   anchor: int) -> tuple[int, int, list[dict]] | None:
+    """Map a clip beat's words -> (video_start, video_end, cleaned caption words).
 
+    Each word maps to video via ITS OWN turn's VAD span (so a multi-turn clip is
+    one contiguous cut). Returns None if any source turn's span can't be resolved.
+    """
+    span_cache: dict[int, tuple[int, int] | None] = {}
 
-def _caption_words(words: list[dict], ans_start_video_ms: int,
-                   in_ms: int, out_ms: int) -> list[dict]:
-    """Words inside [in_ms,out_ms] mapped to the VIDEO clock for burned captions."""
-    out = []
-    for w in words:
-        if in_ms <= int(w["start_ms"]) <= out_ms:
-            out.append({"text": w["text"],
-                        "start_ms": ans_start_video_ms + int(w["start_ms"]),
-                        "end_ms": ans_start_video_ms + int(w["end_ms"])})
-    return out
+    def base(turn_commit: int) -> int | None:
+        if turn_commit not in span_cache:
+            span_cache[turn_commit] = timing.answer_span(events, speaking, turn_commit)
+        sp = span_cache[turn_commit]
+        return None if sp is None else sp[0] + anchor
+
+    mapped: list[dict] = []
+    for w in beat.words:
+        b = base(int(w["turn_commit"]))
+        if b is None:
+            return None
+        mapped.append({"text": w["text"],
+                       "start_ms": b + int(w["rel_start_ms"]),
+                       "end_ms": b + int(w["rel_end_ms"])})
+    if not mapped:
+        return None
+    video_start, video_end = mapped[0]["start_ms"], mapped[-1]["end_ms"]
+    return video_start, video_end, captions.clean_caption_words(mapped)
 
 
 async def render_reel(*, beats: list, recording_path: str, events: list[dict],
-                      speaking: list[tuple[int, int]], transcript: list[dict],
-                      anchor: int, tmp_dir: str, out_path: str,
-                      tts_enabled: bool = True) -> str:
+                      speaking: list[tuple[int, int]], anchor: int,
+                      tmp_dir: str, out_path: str, tts_enabled: bool = True) -> str:
     """Render a validated EDL into one MP4: card+narration beats interleaved with clips.
 
     ``anchor`` maps engine t_ms to the video clock (``video_ms = t_ms + anchor``;
@@ -122,16 +126,13 @@ async def render_reel(*, beats: list, recording_path: str, events: list[dict],
                                duration_ms=duration_ms, audio_path=audio_path)
             segments.append(seg)
         else:  # clip / experience
-            span = timing.answer_span(events, speaking, b.source_turn_ref)
-            if span is None:
+            mapped = _clip_to_video(b, events, speaking, anchor)
+            if mapped is None:
                 continue
-            ans_start_v = span[0] + anchor
-            words = _caption_words(_turn_words(transcript, b.source_turn_ref),
-                                   ans_start_v, b.in_ms, b.out_ms)
+            video_start, video_end, caption_words = mapped
             await clips.cut_clip(
-                recording_path=recording_path, out_path=seg, words=words,
-                start_ms=ans_start_v + b.in_ms, end_ms=ans_start_v + b.out_ms,
-                offset_ms=0)
+                recording_path=recording_path, out_path=seg, words=caption_words,
+                start_ms=video_start, end_ms=video_end, offset_ms=0)
             segments.append(seg)
 
     if not segments:

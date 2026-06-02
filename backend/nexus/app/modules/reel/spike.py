@@ -65,17 +65,9 @@ def _load_events(session_id: str) -> list[dict]:
         return json.load(f)["events"]
 
 
-def _load_transcript() -> list[dict]:
-    path = os.path.join(os.path.dirname(__file__), "..", "..", "..",
-                        "tests/fixtures/candidate_reel/session_5e004a4d_transcript.json")
-    with open(os.path.abspath(path), encoding="utf-8") as f:
-        return json.load(f)
-
-
 async def main(session_id: str) -> int:
     tenant_id, rec_key, rec_start_wall = await _load_session(session_id)
     events = _load_events(session_id)
-    transcript = _load_transcript()
 
     wall_anchor = timing.wall_anchor(events, rec_start_wall)
     speaking = timing.speaking_intervals(events)
@@ -107,8 +99,7 @@ async def main(session_id: str) -> int:
         out = os.path.join(out_dir, f"reel_{session_id}_full.mp4")
         await render.render_reel(
             beats=beats, recording_path=rec_path, events=events, speaking=speaking,
-            transcript=transcript, anchor=anchor, tmp_dir=tmp, out_path=out,
-            tts_enabled=not no_tts,
+            anchor=anchor, tmp_dir=tmp, out_path=out, tts_enabled=not no_tts,
         )
     print(f"[spike] wrote {out}")
     return 0

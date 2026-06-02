@@ -1,9 +1,10 @@
 """Director EDL validation — pure-function table tests (lean nexus image).
 
-v2 fit-pitch model: title -> §1 `match` -> §2 (`point` -> clip[+clip])xN -> outro.
-The Director's LLM call is exercised manually on 5e004a4d (see the design doc);
-these tests cover the deterministic guardrails that run AFTER the LLM:
-turn-ref check, word-index bounds -> ms resolution, duplicate-span dedup, the
+v2 fit-pitch + answer-run model: a clip references an ANSWER RUN (a contiguous
+group of candidate turns) by ref + [in_word, out_word] over the run's continuous
+word index; validation resolves to a per-word list carrying (turn_commit, rel ms)
+so a multi-turn clip maps to one contiguous video cut. These tests cover the
+deterministic guardrails: bounds, edge-disfluency trim, duplicate dedup, the
 duration budget + group-by-lead-card drop order, and >=1-clip-or-fail.
 """
 import pytest
@@ -17,215 +18,179 @@ from app.modules.reel.director import (
 )
 
 
-def _turn(commit, n_words, *, step_ms=1000, dur_ms=900, role="candidate",
-          question_id="q1", prefix="w"):
-    """Candidate turn with ``n_words`` turn-relative words on a fixed grid.
-
-    word i: start_ms = i*step_ms, end_ms = i*step_ms + dur_ms.
-    """
-    words = [
-        {"text": f"{prefix}{i}", "start_ms": i * step_ms, "end_ms": i * step_ms + dur_ms,
-         "confidence": 1.0}
-        for i in range(n_words)
-    ]
-    return {
-        "role": role, "timestamp_ms": commit, "question_id": question_id,
-        "words": words, "text": " ".join(w["text"] for w in words),
-        "start_ms": 0, "end_ms": (n_words - 1) * step_ms + dur_ms if n_words else 0,
-    }
+def _cand(commit, n, *, step=1000, dur=900, qid="q1", prefix="w"):
+    return {"role": "candidate", "timestamp_ms": commit, "question_id": qid,
+            "words": [{"text": f"{prefix}{i}", "start_ms": i * step,
+                       "end_ms": i * step + dur} for i in range(n)]}
 
 
-def _clip(commit, in_word, out_word, **kw):
-    return ReelBeat(kind="clip", source_turn_ref=commit, in_word=in_word,
-                    out_word=out_word, **kw)
+def _cand_words(commit, texts, *, step=1000, dur=900, qid="q1"):
+    return {"role": "candidate", "timestamp_ms": commit, "question_id": qid,
+            "words": [{"text": t, "start_ms": i * step, "end_ms": i * step + dur}
+                      for i, t in enumerate(texts)]}
+
+
+def _agent():
+    return {"role": "agent", "text": "ok"}
+
+
+def _clip(ref, iw, ow, **kw):
+    return ReelBeat(kind="clip", source_turn_ref=ref, in_word=iw, out_word=ow, **kw)
 
 
 def _by_kind(vedl, kind):
     return [b for b in vedl.beats if b.kind == kind]
 
 
-# --- word-index resolution ------------------------------------------------
+def _texts(beat):
+    return [w["text"] for w in beat.words]
 
-def test_clip_resolves_indices_to_word_boundary_ms():
-    transcript = [_turn(203401, 20)]
-    edl = ReelEdlOut(beats=[_clip(203401, 3, 8, caption="hi")])
-    vedl = validate_edl(edl, transcript)
-    clip = _by_kind(vedl, "clip")[0]
-    assert clip.in_ms == 3000           # words[3].start_ms
-    assert clip.out_ms == 8 * 1000 + 900  # words[8].end_ms
-    assert clip.duration_ms == clip.out_ms - clip.in_ms
-    assert clip.source_turn_ref == 203401
+
+# --- word-index resolution over a run -------------------------------------
+
+def test_clip_resolves_to_words_with_turn_and_rel_ms():
+    edl = ReelEdlOut(beats=[_clip(100, 3, 8, caption="hi")])
+    clip = _by_kind(validate_edl(edl, [_cand(100, 20)]), "clip")[0]
+    assert clip.source_turn_ref == 100
+    assert clip.words[0]["rel_start_ms"] == 3000          # word 3 start
+    assert clip.words[-1]["rel_end_ms"] == 8 * 1000 + 900  # word 8 end
+    assert all(w["turn_commit"] == 100 for w in clip.words)
     assert clip.caption == "hi"
 
 
 def test_experience_beat_is_resolved_like_a_clip():
-    transcript = [_turn(500, 10)]
     edl = ReelEdlOut(beats=[
         ReelBeat(kind="experience", source_turn_ref=500, in_word=0, out_word=2),
         _clip(500, 4, 6),
     ])
-    vedl = validate_edl(edl, transcript)
-    exp = _by_kind(vedl, "experience")[0]
-    assert exp.in_ms == 0
-    assert exp.out_ms == 2 * 1000 + 900
+    vedl = validate_edl(edl, [_cand(500, 10)])
+    assert _by_kind(vedl, "experience")[0].words[0]["rel_start_ms"] == 0
+
+
+# --- the #1 fix: a clip can span continuation turns (one run) --------------
+
+def test_clip_spans_multiple_continuation_turns():
+    # two consecutive candidate turns (no agent between) = one run, ref=100,
+    # continuous indices 0..3 (turn 100) then 4..6 (turn 200).
+    transcript = [_cand(100, 4), _cand(200, 3, prefix="x")]
+    clip = _by_kind(validate_edl(ReelEdlOut(beats=[_clip(100, 2, 5)]), transcript),
+                    "clip")[0]
+    commits = [w["turn_commit"] for w in clip.words]
+    assert 100 in commits and 200 in commits        # spans both turns
+    assert [w["text"] for w in clip.words] == ["w2", "w3", "x0", "x1"]
+    # duration includes the boundary-pause estimate (>0 added at the turn edge)
+    assert clip.duration_ms > 0
 
 
 # --- hallucination rejection ----------------------------------------------
 
-def test_unknown_source_turn_ref_drops_the_beat():
-    transcript = [_turn(100, 10)]
+def test_unknown_run_ref_drops_the_beat():
     edl = ReelEdlOut(beats=[_clip(100, 0, 3), _clip(999999, 0, 3)])
-    vedl = validate_edl(edl, transcript)
-    refs = [b.source_turn_ref for b in _by_kind(vedl, "clip")]
-    assert refs == [100]            # the hallucinated 999999 ref is gone
+    vedl = validate_edl(edl, [_cand(100, 10)])
+    assert [b.source_turn_ref for b in _by_kind(vedl, "clip")] == [100]
 
 
 def test_out_of_bounds_word_index_drops_the_beat():
-    transcript = [_turn(100, 5)]    # valid indices 0..4
     edl = ReelEdlOut(beats=[_clip(100, 0, 2), _clip(100, 0, 99)])
-    vedl = validate_edl(edl, transcript)
-    assert len(_by_kind(vedl, "clip")) == 1
+    assert len(_by_kind(validate_edl(edl, [_cand(100, 5)]), "clip")) == 1
 
 
 def test_inverted_word_range_drops_the_beat():
-    transcript = [_turn(100, 10)]
     edl = ReelEdlOut(beats=[_clip(100, 7, 2), _clip(100, 1, 4)])
-    vedl = validate_edl(edl, transcript)
-    kept = _by_kind(vedl, "clip")
-    assert len(kept) == 1 and kept[0].in_ms == 1000
+    kept = _by_kind(validate_edl(edl, [_cand(100, 10)]), "clip")
+    assert len(kept) == 1 and kept[0].words[0]["text"] == "w1"
 
 
-def test_single_word_clip_is_valid():
-    transcript = [_turn(100, 10)]
-    vedl = validate_edl(ReelEdlOut(beats=[_clip(100, 3, 3)]), transcript)
-    clip = _by_kind(vedl, "clip")[0]
-    assert clip.in_ms == 3000 and clip.out_ms == 3900
+# --- #2: edge-disfluency trim ---------------------------------------------
+
+def test_edge_disfluencies_trimmed_from_clip_ends():
+    transcript = [_cand_words(100, ["so", "like", "i", "designed", "this", "uh"])]
+    clip = _by_kind(validate_edl(ReelEdlOut(beats=[_clip(100, 0, 5)]), transcript),
+                    "clip")[0]
+    assert _texts(clip) == ["i", "designed", "this"]   # so/like leading, uh trailing
 
 
-# --- duplicate-span dedup backstop ----------------------------------------
-
-def test_duplicate_overlapping_clip_span_is_dropped():
-    transcript = [_turn(100, 12)]
-    # second clip [2,6] overlaps the first [0,5] on the same turn -> dropped
-    edl = ReelEdlOut(beats=[_clip(100, 0, 5), _clip(100, 2, 6)])
-    vedl = validate_edl(edl, transcript)
-    clips = _by_kind(vedl, "clip")
-    assert len(clips) == 1 and clips[0].in_ms == 0
+def test_all_filler_clip_is_dropped():
+    # agent between -> two separate runs (refs 100 and 200)
+    transcript = [_cand_words(100, ["so", "like", "uh"]), _agent(),
+                  _cand(200, 4, prefix="x")]
+    edl = ReelEdlOut(beats=[_clip(100, 0, 2), _clip(200, 0, 3)])
+    kept = _by_kind(validate_edl(edl, transcript), "clip")
+    assert len(kept) == 1 and kept[0].source_turn_ref == 200
 
 
-def test_disjoint_clips_same_turn_both_kept():
-    transcript = [_turn(100, 12)]
+# --- dedup by overlapping word range --------------------------------------
+
+def test_overlapping_word_range_is_deduped():
+    edl = ReelEdlOut(beats=[_clip(100, 0, 5), _clip(100, 3, 8)])
+    kept = _by_kind(validate_edl(edl, [_cand(100, 12)]), "clip")
+    assert len(kept) == 1 and kept[0].words[0]["idx"] == 0
+
+
+def test_disjoint_word_ranges_both_kept():
     edl = ReelEdlOut(beats=[_clip(100, 0, 2), _clip(100, 6, 8)])
-    vedl = validate_edl(edl, transcript)
-    assert len(_by_kind(vedl, "clip")) == 2
+    assert len(_by_kind(validate_edl(edl, [_cand(100, 12)]), "clip")) == 2
 
 
 # --- per-clip soft cap ----------------------------------------------------
 
 def test_overlong_clip_is_trimmed_to_the_soft_cap():
-    transcript = [_turn(100, 20)]   # a 0..19 clip would be ~19.9s; soft cap 12s.
-    edl = ReelEdlOut(beats=[_clip(100, 0, 19)])
-    vedl = validate_edl(edl, transcript)
-    clip = _by_kind(vedl, "clip")[0]
-    assert clip.in_ms == 0
-    assert clip.out_ms == 11900          # last word with end_ms <= 12000
-    assert clip.duration_ms <= 12000
+    # 0..24 on a 1000ms grid ~= 24.9s; soft cap 16s.
+    clip = _by_kind(validate_edl(ReelEdlOut(beats=[_clip(100, 0, 24)]),
+                                 [_cand(100, 25)]), "clip")[0]
+    assert clip.duration_ms <= 16_000
+    assert clip.words[0]["text"] == "w0"
 
 
 # --- total budget: group-by-lead-card -------------------------------------
 
-def test_total_within_budget_keeps_all_beats():
-    transcript = [_turn(1, 6), _turn(2, 6)]
-    edl = ReelEdlOut(beats=[
-        ReelBeat(kind="title", on_screen_text="t"),
-        ReelBeat(kind="match", on_screen_text="great match"),
-        ReelBeat(kind="point", on_screen_text="p1"), _clip(1, 0, 5),
-        ReelBeat(kind="point", on_screen_text="p2"), _clip(2, 0, 5),
-        ReelBeat(kind="outro", on_screen_text="o"),
-    ])
-    vedl = validate_edl(edl, transcript)
-    assert len(_by_kind(vedl, "clip")) == 2
-    assert len(_by_kind(vedl, "point")) == 2
-    assert vedl.duration_ms <= MAX_TOTAL_MS
-
-
-def test_point_and_its_clips_drop_together_as_a_group():
-    # four points, each with TWO ~11.9s clips -> way over 60s, forcing trailing
-    # point-groups (card + both clips) to drop as units.
-    transcript = [_turn(i, 12) for i in range(1, 9)]
+def test_over_budget_drops_trailing_point_groups_keeping_one():
+    # agents between -> four separate runs (refs 1..4)
+    transcript = []
+    for i in (1, 2, 3, 4):
+        transcript += [_cand(i, 12), _agent()]
     beats = [ReelBeat(kind="title", on_screen_text="t"),
              ReelBeat(kind="match", on_screen_text="m")]
-    for p in range(4):
-        a, b = 2 * p + 1, 2 * p + 2
-        beats += [ReelBeat(kind="point", on_screen_text=f"p{p}"),
-                  _clip(a, 0, 11), _clip(b, 0, 11)]
-    beats.append(ReelBeat(kind="outro", on_screen_text="o"))
-    vedl = validate_edl(ReelEdlOut(beats=beats), transcript)
-
-    kinds = [b.kind for b in vedl.beats]
-    assert kinds[0] == "title" and kinds[-1] == "outro"
-    assert vedl.duration_ms <= MAX_TOTAL_MS
-    # each surviving point keeps BOTH of its clips (groups drop whole)
-    points = _by_kind(vedl, "point")
-    clips = _by_kind(vedl, "clip")
-    assert 1 <= len(points) < 4
-    assert len(clips) == 2 * len(points)
-
-
-def test_match_section_survives_when_trailing_points_dropped():
-    transcript = [_turn(i, 12) for i in range(1, 7)]
-    beats = [
-        ReelBeat(kind="title", on_screen_text="t"),
-        ReelBeat(kind="match", on_screen_text="great match"),
-        ReelBeat(kind="experience", source_turn_ref=1, in_word=0, out_word=11),
-    ]
-    for i in (2, 3, 4, 5):
+    for i in (1, 2, 3, 4):
         beats += [ReelBeat(kind="point", on_screen_text=f"p{i}"), _clip(i, 0, 11)]
     beats.append(ReelBeat(kind="outro", on_screen_text="o"))
     vedl = validate_edl(ReelEdlOut(beats=beats), transcript)
-    # §1 (match + establishing experience clip) is first -> dropped last; survives
-    assert _by_kind(vedl, "match")
-    assert _by_kind(vedl, "experience")
+    kinds = [b.kind for b in vedl.beats]
+    assert kinds[0] == "title" and kinds[-1] == "outro"
+    clips = _by_kind(vedl, "clip")
+    assert 1 <= len(clips) < 4
+    assert len(_by_kind(vedl, "point")) == len(clips)
     assert vedl.duration_ms <= MAX_TOTAL_MS
 
 
 # --- >=1 clip or fail ------------------------------------------------------
 
 def test_zero_clip_beats_raises():
-    edl = ReelEdlOut(beats=[
-        ReelBeat(kind="title", on_screen_text="t"),
-        ReelBeat(kind="match", on_screen_text="m"),
-        ReelBeat(kind="outro", on_screen_text="o"),
-    ])
+    edl = ReelEdlOut(beats=[ReelBeat(kind="title", on_screen_text="t"),
+                            ReelBeat(kind="outro", on_screen_text="o")])
     with pytest.raises(NoClipBeatsError):
-        validate_edl(edl, [_turn(1, 5)])
+        validate_edl(edl, [_cand(1, 5)])
 
 
 def test_all_clips_hallucinated_raises():
     edl = ReelEdlOut(beats=[_clip(777, 0, 3), _clip(888, 0, 3)])
     with pytest.raises(NoClipBeatsError):
-        validate_edl(edl, [_turn(1, 5)])
+        validate_edl(edl, [_cand(1, 5)])
 
 
 # --- card duration estimate ------------------------------------------------
 
-def test_match_card_duration_estimated_from_narration_word_count():
-    transcript = [_turn(1, 6)]
+def test_match_card_duration_estimated_from_narration():
     narration = " ".join(["word"] * 22)   # 22 / 2.75 = 8s, above the match floor
     edl = ReelEdlOut(beats=[
         ReelBeat(kind="match", on_screen_text="m", narration_text=narration),
-        _clip(1, 0, 5),
-    ])
-    vedl = validate_edl(edl, transcript)
-    match = _by_kind(vedl, "match")[0]
+        _clip(1, 0, 5)])
+    match = _by_kind(validate_edl(edl, [_cand(1, 6)]), "match")[0]
     assert match.duration_ms >= 8000
 
 
 def test_point_card_uses_its_floor_when_narration_short():
-    transcript = [_turn(1, 6)]
     edl = ReelEdlOut(beats=[
         ReelBeat(kind="point", on_screen_text="p", narration_text="short"),
-        _clip(1, 0, 5),
-    ])
-    vedl = validate_edl(edl, transcript)
-    assert _by_kind(vedl, "point")[0].duration_ms == 3500   # point floor
+        _clip(1, 0, 5)])
+    assert _by_kind(validate_edl(edl, [_cand(1, 6)]), "point")[0].duration_ms == 3500

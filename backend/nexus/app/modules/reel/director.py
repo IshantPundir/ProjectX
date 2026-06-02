@@ -23,17 +23,25 @@ lazily so the pure validation path (and its tests) need no OpenAI/ffmpeg deps.
 from __future__ import annotations
 
 import math
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Literal
 
 from pydantic import BaseModel
 
+from app.modules.reel.transcript import AnswerRun, answer_runs, is_pause_before
+
 # --- tuning constants (transcript-space; ms) ------------------------------
-MAX_TOTAL_MS = 60_000      # hard cap (design D2)
-TARGET_MS = 45_000         # aim for ~45s
-CLIP_SOFT_CAP_MS = 12_000  # no single answer slice longer than this
-SPEAK_WPS = 2.75           # ~165 wpm, Arjun narration, for card duration estimate
+MAX_TOTAL_MS = 60_000        # soft target (design D2; quality may run a little over)
+TARGET_MS = 45_000           # aim for ~45s
+CLIP_SOFT_CAP_MS = 16_000    # a single clip may run this long to show full substance
+EST_BOUNDARY_PAUSE_MS = 500  # estimated inter-turn pause inside a multi-turn clip
+SPEAK_WPS = 2.75             # ~165 wpm, Arjun narration, for card duration estimate
 _CARD_FLOOR_MS = {"title": 3_000, "match": 4_000, "point": 3_500, "outro": 4_000}
+
+# Edge-only disfluency/discourse tokens trimmed off a clip's IN/OUT (and captions).
+# This is lexical edge cleanup, NOT semantic intent classification.
+_EDGE_TRIM = {"um", "uh", "uhh", "umm", "mm", "mmm", "er", "ah", "hmm", "so",
+              "like", "yeah", "okay", "ok", "sure", "well", "right"}
 
 TIMED_KINDS = {"clip", "experience"}   # beats cut from the recording (carry timing)
 LEAD_CARDS = {"match", "point"}        # a card that leads a drop-group of clips
@@ -65,8 +73,9 @@ class ValidatedBeat:
     kind: str
     duration_ms: int
     source_turn_ref: int | None = None
-    in_ms: int | None = None             # turn-relative; renderer anchors to video
-    out_ms: int | None = None
+    # clip/experience: the selected words, each carrying its origin turn + turn-
+    # relative timing so the renderer maps a multi-turn clip to one contiguous cut.
+    words: list[dict] = field(default_factory=list)
     on_screen_text: str | None = None
     caption: str | None = None
     narration_text: str | None = None
@@ -78,43 +87,71 @@ class ValidatedEdl:
     duration_ms: int
 
 
-def _candidate_turns(transcript: list[dict]) -> dict[int, list[dict]]:
-    """Map each candidate turn's commit (``timestamp_ms``) -> its word list."""
-    out: dict[int, list[dict]] = {}
-    for turn in transcript:
-        if turn.get("role") != "candidate":
-            continue
-        commit = turn.get("timestamp_ms")
-        if commit is None:
-            continue
-        out[int(commit)] = turn.get("words") or []
-    return out
+def _estimate_clip_duration(words: list[dict]) -> int:
+    """Estimated video duration of a (possibly multi-turn) clip word list.
+
+    Sum each same-turn segment's covered span + an estimated pause per turn
+    boundary (the real inter-turn pause is VAD-only; the renderer measures it).
+    """
+    if not words:
+        return 0
+    total = 0
+    seg_start = words[0]["rel_start_ms"]
+    prev = words[0]
+    boundaries = 0
+    for w in words[1:]:
+        if w["turn_commit"] != prev["turn_commit"]:
+            total += prev["rel_end_ms"] - seg_start
+            boundaries += 1
+            seg_start = w["rel_start_ms"]
+        prev = w
+    total += prev["rel_end_ms"] - seg_start
+    return total + boundaries * EST_BOUNDARY_PAUSE_MS
 
 
-def _resolve_timed(beat: ReelBeat, turns: dict[int, list[dict]]) -> ValidatedBeat | None:
-    """Resolve a clip/experience beat's word indices -> ms, or None to drop it.
+def _edge_trim(words: list) -> list:
+    """Drop leading/trailing edge-disfluency tokens (lexical cleanup, not intent)."""
+    lo, hi = 0, len(words)
+    while lo < hi and words[lo].text.lower().strip(".,?!") in _EDGE_TRIM:
+        lo += 1
+    while hi > lo and words[hi - 1].text.lower().strip(".,?!") in _EDGE_TRIM:
+        hi -= 1
+    return words[lo:hi]
 
-    Drops the beat on a hallucinated turn ref or an out-of-bounds / inverted
-    word range. Trims an over-cap slice inward to ``CLIP_SOFT_CAP_MS``.
+
+def _resolve_clip(beat: ReelBeat, runs_by_ref: dict[int, AnswerRun]) -> ValidatedBeat | None:
+    """Resolve a clip/experience beat over its answer run, or None to drop it.
+
+    Drops on a hallucinated run ref or an out-of-bounds / inverted word range.
+    Edge-trims disfluencies, then trims over-cap clips inward to ``CLIP_SOFT_CAP_MS``.
     """
     ref = beat.source_turn_ref
-    if ref is None or ref not in turns:
+    run = runs_by_ref.get(ref) if ref is not None else None
+    if run is None:
         return None
-    words = turns[ref]
     iw, ow = beat.in_word, beat.out_word
-    if iw is None or ow is None or not (0 <= iw <= ow < len(words)):
+    if iw is None or ow is None or not (0 <= iw <= ow < len(run.words)):
         return None
 
-    in_ms = int(words[iw]["start_ms"])
-    # per-clip soft cap: pull out_word back to the last word fitting the cap.
-    while ow > iw and int(words[ow]["end_ms"]) - in_ms > CLIP_SOFT_CAP_MS:
-        ow -= 1
-    out_ms = int(words[ow]["end_ms"])
+    selected = _edge_trim(run.words[iw:ow + 1])
+    if not selected:
+        return None
+    # per-clip soft cap: drop trailing words until the estimate fits.
+    while len(selected) > 1 and _estimate_clip_duration(
+            [_word_dict(w) for w in selected]) > CLIP_SOFT_CAP_MS:
+        selected = selected[:-1]
+
+    words = [_word_dict(w) for w in selected]
     return ValidatedBeat(
-        kind=beat.kind, duration_ms=out_ms - in_ms, source_turn_ref=ref,
-        in_ms=in_ms, out_ms=out_ms, on_screen_text=beat.on_screen_text,
+        kind=beat.kind, duration_ms=_estimate_clip_duration(words),
+        source_turn_ref=ref, words=words, on_screen_text=beat.on_screen_text,
         caption=beat.caption, narration_text=beat.narration_text,
     )
+
+
+def _word_dict(w) -> dict:
+    return {"idx": w.idx, "text": w.text, "turn_commit": w.turn_commit,
+            "rel_start_ms": w.rel_start_ms, "rel_end_ms": w.rel_end_ms}
 
 
 def _estimate_card(beat: ReelBeat) -> ValidatedBeat:
@@ -181,19 +218,20 @@ def validate_edl(edl: ReelEdlOut, transcript: list[dict]) -> ValidatedEdl:
 
     Raises ``NoClipBeatsError`` if no clip/experience beat survives resolution.
     """
-    turns = _candidate_turns(transcript)
-    kept_spans: dict[int, list[tuple[int, int]]] = {}   # turn -> [(in_ms, out_ms)]
+    runs_by_ref = {r.ref: r for r in answer_runs(transcript)}
+    kept_ranges: dict[int, list[tuple[int, int]]] = {}   # run ref -> [(lo_idx, hi_idx)]
     resolved: list[ValidatedBeat] = []
     for beat in edl.beats:
         if beat.kind in TIMED_KINDS:
-            vb = _resolve_timed(beat, turns)
+            vb = _resolve_clip(beat, runs_by_ref)
             if vb is None:
                 continue
-            # structural dedup backstop: drop a span overlapping one already kept.
-            spans = kept_spans.setdefault(vb.source_turn_ref, [])
-            if any(vb.in_ms < e and vb.out_ms > s for s, e in spans):
+            # structural dedup backstop: drop a word range overlapping a kept one.
+            lo, hi = vb.words[0]["idx"], vb.words[-1]["idx"]
+            ranges = kept_ranges.setdefault(vb.source_turn_ref, [])
+            if any(lo <= b and hi >= a for a, b in ranges):
                 continue
-            spans.append((vb.in_ms, vb.out_ms))
+            ranges.append((lo, hi))
             resolved.append(vb)
         else:
             resolved.append(_estimate_card(beat))
@@ -250,20 +288,22 @@ def _build_document(*, role_title: str | None, verdict: str | None,
             lines.append(f"  candidate_quote (hint): {q['candidate_quote']}")
     lines.append("</report>")
 
-    lines.append("<transcript>")
-    for turn in transcript:
-        if turn.get("role") != "candidate":
+    # The document: each ANSWER (a contiguous run of the candidate's turns) with a
+    # continuous word index. ``//`` marks a natural pause (a clean in/out point).
+    # A clip references an answer by ref + [in_word, out_word] over its word index.
+    lines.append("<answers>")
+    for run in answer_runs(transcript):
+        if not run.words:
             continue
-        words = turn.get("words") or []
-        if not words:
-            continue
-        indexed = " ".join(f"{i}:{w['text']}" for i, w in enumerate(words))
-        lines.append(
-            f"turn_ref: {turn.get('timestamp_ms')} | question_id: {turn.get('question_id')}"
-        )
-        lines.append(f"words: {indexed}")
+        parts = []
+        for w in run.words:
+            if w.idx != run.words[0].idx and is_pause_before(w):
+                parts.append("//")
+            parts.append(f"{w.idx}:{w.text}")
+        lines.append(f"answer ref={run.ref} | question_id={run.question_id}")
+        lines.append("words: " + " ".join(parts))
         lines.append("---")
-    lines.append("</transcript>")
+    lines.append("</answers>")
     return "\n".join(lines)
 
 

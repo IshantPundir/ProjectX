@@ -6,6 +6,39 @@ start. `words[]` is the source of truth (it may be a superset of the turn text).
 """
 from __future__ import annotations
 
+# Non-lexical fillers dropped from DISPLAYED captions (the audio keeps the real
+# voice — standard broadcast captioning). Conservative: only true noise tokens,
+# never content words like "so"/"like" (those may carry meaning mid-sentence).
+_CAPTION_FILLERS = {"um", "umm", "uh", "uhh", "mm", "mmm", "er", "erm", "ah", "hmm"}
+
+
+def clean_caption_words(words: list[dict]) -> list[dict]:
+    """Readable, honest caption words: drop fillers, collapse stutters, sentence-case.
+
+    Preserves each kept word's timing; never invents words or punctuation. Meaning
+    is preserved — this only removes non-lexical noise and re-cases for readability.
+    """
+    out: list[dict] = []
+    prev: str | None = None
+    for w in words:
+        token = str(w["text"])
+        low = token.lower().strip(".,?!")
+        if low in _CAPTION_FILLERS:
+            continue
+        if low and low == prev:          # collapse adjacent duplicate (stutter)
+            continue
+        out.append({**w, "text": token})
+        prev = low
+    for i, w in enumerate(out):
+        token = w["text"]
+        low = token.lower()
+        if low == "i" or low.startswith("i'"):
+            w["text"] = token[0].upper() + token[1:]
+        elif i == 0 and token[:1].isalpha():
+            w["text"] = token[0].upper() + token[1:]
+    return out
+
+
 _ASS_HEADER = """\
 [Script Info]
 ScriptType: v4.00+
