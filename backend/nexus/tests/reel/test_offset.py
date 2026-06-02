@@ -4,8 +4,10 @@ from app.modules.reel.offset import compute_offset_ms, parse_first_onset_ms
 
 
 def test_compute_offset_is_opener_minus_video_onset():
-    # opener at session-ms 3520, heard 1000ms into the video -> offset -2520
-    assert compute_offset_ms(opener_session_ms=3520, video_onset_ms=1000) == -2520
+    # opener at session-ms 3520; the recording has pre-roll before the engine's
+    # monotonic zero, so the opener is heard 6040ms into the video.
+    # offset = 3520 - 6040 = -2520 (negative, as expected for pre-roll).
+    assert compute_offset_ms(opener_session_ms=3520, video_onset_ms=6040) == -2520
 
 
 def test_parse_first_onset_reads_first_silence_end():

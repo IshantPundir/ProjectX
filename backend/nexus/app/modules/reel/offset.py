@@ -13,7 +13,7 @@ _SILENCE_END_RE = re.compile(r"silence_end:\s*([0-9.]+)")
 
 
 def compute_offset_ms(*, opener_session_ms: int, video_onset_ms: int) -> int:
-    return int(video_onset_ms) - int(opener_session_ms)
+    return int(opener_session_ms) - int(video_onset_ms)
 
 
 def parse_first_onset_ms(stderr: str) -> int | None:
