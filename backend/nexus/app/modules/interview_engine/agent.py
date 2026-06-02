@@ -253,6 +253,15 @@ def _leading_bridge(text: str) -> str | None:
     return snippet if snippet else None
 
 
+def _is_number(value: object) -> bool:
+    """True for a real int/float (NOT bool, NOT the NOT_GIVEN sentinel, NOT None).
+
+    Word timings arrive as ``TimedString`` attributes that may be the ``NOT_GIVEN``
+    sentinel when the STT provider omits them; this gates those out cleanly.
+    """
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 class _MouthAgent(Agent):
     """Voices the controller's current Directive in persona via the LLM (no canned text)."""
 
@@ -413,9 +422,20 @@ class _MouthAgent(Agent):
     def _collect_words_from_event(self, event: object) -> None:
         """Tee point: buffer per-word timings from a FINAL_TRANSCRIPT SpeechEvent.
 
-        Robust to the event/word shapes via getattr so the unit test can use
-        lightweight stand-ins. Non-final events and word-less finals are no-ops.
+        Each word is a LiveKit ``TimedString`` — a ``str`` SUBCLASS whose text
+        IS the value (there is no ``.text`` attribute), carrying ``start_time``/
+        ``end_time``/``confidence`` as attributes. Deepgram omits ``confidence``,
+        so it arrives as the ``NOT_GIVEN`` sentinel; default it to 1.0. Non-final
+        events and word-less finals are no-ops.
         """
+        # Floor gate: only buffer words the candidate speaks while THEY hold the
+        # floor. `responding` is True whenever the agent is speaking/thinking/
+        # masking — words captured then are backchannel/overlap (e.g. a "sure"
+        # over the agent's question) and must not leak into the next answer turn
+        # or skew its turn_bounds.
+        state = getattr(self, "_state", None)
+        if state is not None and state.get("responding"):
+            return
         etype = getattr(event, "type", None)
         if etype != lk_stt.SpeechEventType.FINAL_TRANSCRIPT and etype != "final_transcript":
             return
@@ -423,13 +443,14 @@ class _MouthAgent(Agent):
         if not alts:
             return
         for w in getattr(alts[0], "words", None) or []:
-            text = getattr(w, "text", None)
+            text = str(w)  # TimedString is a str subclass — the word IS the value
             start = getattr(w, "start_time", None)
             end = getattr(w, "end_time", None)
-            if text is None or start is None or end is None:
+            if not text or not _is_number(start) or not _is_number(end):
                 continue
-            conf = getattr(w, "confidence", 1.0)
-            self._pending_words.append((str(text), float(start), float(end), float(conf)))
+            conf = getattr(w, "confidence", None)
+            conf = float(conf) if _is_number(conf) else 1.0
+            self._pending_words.append((text, float(start), float(end), conf))
 
     async def stt_node(self, audio, model_settings):
         """Default STT, with a tee that buffers word timings for the reel."""

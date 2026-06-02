@@ -1,0 +1,6714 @@
+[
+    {
+        "role": "agent",
+        "text": "Hi, I’m Arjun — thanks for making the time today. This is a short, recorded AI screening for the Jr. Forward Deployed Engineer role, and it’s about building and operating AI-driven integrations and automations on Workato across enterprise and cloud apps. Let’s get started, shall we?",
+        "words": null,
+        "end_ms": null,
+        "start_ms": null,
+        "question_id": null,
+        "timestamp_ms": 6101
+    },
+    {
+        "role": "agent",
+        "text": "How many years of full-time professional experience do you have?",
+        "words": null,
+        "end_ms": null,
+        "start_ms": null,
+        "question_id": "0ab73bfa-6ffe-4de5-8b6c-efff6fb83814",
+        "timestamp_ms": 25554
+    },
+    {
+        "role": "candidate",
+        "text": "I would say, like, I have around four to five years of full time professional experience. Primarily working on, like, software systems in the and, like,",
+        "words": [
+            {
+                "text": "sure",
+                "end_ms": 400,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "i",
+                "end_ms": 5420,
+                "start_ms": 5180,
+                "confidence": 1.0
+            },
+            {
+                "text": "would",
+                "end_ms": 5660,
+                "start_ms": 5420,
+                "confidence": 1.0
+            },
+            {
+                "text": "say",
+                "end_ms": 5820,
+                "start_ms": 5660,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 6060,
+                "start_ms": 5820,
+                "confidence": 1.0
+            },
+            {
+                "text": "i",
+                "end_ms": 6140,
+                "start_ms": 6060,
+                "confidence": 1.0
+            },
+            {
+                "text": "have",
+                "end_ms": 6300,
+                "start_ms": 6140,
+                "confidence": 1.0
+            },
+            {
+                "text": "around",
+                "end_ms": 6620,
+                "start_ms": 6300,
+                "confidence": 1.0
+            },
+            {
+                "text": "four",
+                "end_ms": 7260,
+                "start_ms": 6620,
+                "confidence": 1.0
+            },
+            {
+                "text": "to",
+                "end_ms": 7420,
+                "start_ms": 7260,
+                "confidence": 1.0
+            },
+            {
+                "text": "five",
+                "end_ms": 7580,
+                "start_ms": 7420,
+                "confidence": 1.0
+            },
+            {
+                "text": "years",
+                "end_ms": 7900,
+                "start_ms": 7580,
+                "confidence": 1.0
+            },
+            {
+                "text": "of",
+                "end_ms": 8060,
+                "start_ms": 7900,
+                "confidence": 1.0
+            },
+            {
+                "text": "full",
+                "end_ms": 8220,
+                "start_ms": 8060,
+                "confidence": 1.0
+            },
+            {
+                "text": "time",
+                "end_ms": 8460,
+                "start_ms": 8220,
+                "confidence": 1.0
+            },
+            {
+                "text": "professional",
+                "end_ms": 8860,
+                "start_ms": 8460,
+                "confidence": 1.0
+            },
+            {
+                "text": "experience",
+                "end_ms": 9340,
+                "start_ms": 8860,
+                "confidence": 1.0
+            },
+            {
+                "text": "primarily",
+                "end_ms": 11160,
+                "start_ms": 10680,
+                "confidence": 1.0
+            },
+            {
+                "text": "working",
+                "end_ms": 11560,
+                "start_ms": 11160,
+                "confidence": 1.0
+            },
+            {
+                "text": "on",
+                "end_ms": 11720,
+                "start_ms": 11560,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 11880,
+                "start_ms": 11720,
+                "confidence": 1.0
+            },
+            {
+                "text": "software",
+                "end_ms": 12120,
+                "start_ms": 11880,
+                "confidence": 1.0
+            },
+            {
+                "text": "systems",
+                "end_ms": 12640,
+                "start_ms": 12160,
+                "confidence": 1.0
+            },
+            {
+                "text": "in",
+                "end_ms": 12880,
+                "start_ms": 12640,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 12960,
+                "start_ms": 12880,
+                "confidence": 1.0
+            },
+            {
+                "text": "and",
+                "end_ms": 13740,
+                "start_ms": 13420,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 13820,
+                "start_ms": 13740,
+                "confidence": 1.0
+            },
+            {
+                "text": "ai",
+                "end_ms": 14420,
+                "start_ms": 14020,
+                "confidence": 1.0
+            },
+            {
+                "text": "integration",
+                "end_ms": 14900,
+                "start_ms": 14420,
+                "confidence": 1.0
+            },
+            {
+                "text": "systems",
+                "end_ms": 15300,
+                "start_ms": 14900,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 46634,
+        "start_ms": 31334,
+        "question_id": "0ab73bfa-6ffe-4de5-8b6c-efff6fb83814",
+        "timestamp_ms": 46634
+    },
+    {
+        "role": "agent",
+        "text": "Mm, four to five years…",
+        "words": null,
+        "end_ms": null,
+        "start_ms": null,
+        "question_id": null,
+        "timestamp_ms": 48503
+    },
+    {
+        "role": "agent",
+        "text": "Which employers and roles make up those years?",
+        "words": null,
+        "end_ms": null,
+        "start_ms": null,
+        "question_id": "0ab73bfa-6ffe-4de5-8b6c-efff6fb83814",
+        "timestamp_ms": 50950
+    },
+    {
+        "role": "candidate",
+        "text": "I've been working mostly with a single employer since last years now. And yeah.",
+        "words": [
+            {
+                "text": "i've",
+                "end_ms": 400,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "been",
+                "end_ms": 480,
+                "start_ms": 400,
+                "confidence": 1.0
+            },
+            {
+                "text": "working",
+                "end_ms": 800,
+                "start_ms": 480,
+                "confidence": 1.0
+            },
+            {
+                "text": "mostly",
+                "end_ms": 1200,
+                "start_ms": 800,
+                "confidence": 1.0
+            },
+            {
+                "text": "with",
+                "end_ms": 1440,
+                "start_ms": 1200,
+                "confidence": 1.0
+            },
+            {
+                "text": "a",
+                "end_ms": 1600,
+                "start_ms": 1440,
+                "confidence": 1.0
+            },
+            {
+                "text": "single",
+                "end_ms": 1920,
+                "start_ms": 1600,
+                "confidence": 1.0
+            },
+            {
+                "text": "employer",
+                "end_ms": 2480,
+                "start_ms": 1920,
+                "confidence": 1.0
+            },
+            {
+                "text": "since",
+                "end_ms": 2800,
+                "start_ms": 2480,
+                "confidence": 1.0
+            },
+            {
+                "text": "last",
+                "end_ms": 3040,
+                "start_ms": 2800,
+                "confidence": 1.0
+            },
+            {
+                "text": "years",
+                "end_ms": 3680,
+                "start_ms": 3280,
+                "confidence": 1.0
+            },
+            {
+                "text": "now",
+                "end_ms": 4000,
+                "start_ms": 3680,
+                "confidence": 1.0
+            },
+            {
+                "text": "and",
+                "end_ms": 4480,
+                "start_ms": 4000,
+                "confidence": 1.0
+            },
+            {
+                "text": "yeah",
+                "end_ms": 4880,
+                "start_ms": 4640,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 69848,
+        "start_ms": 64968,
+        "question_id": "0ab73bfa-6ffe-4de5-8b6c-efff6fb83814",
+        "timestamp_ms": 69848
+    },
+    {
+        "role": "agent",
+        "text": "Alright — mostly one employer…",
+        "words": null,
+        "end_ms": null,
+        "start_ms": null,
+        "question_id": null,
+        "timestamp_ms": 72777
+    },
+    {
+        "role": "agent",
+        "text": "What was your longest single tenure, and what did you do there?",
+        "words": null,
+        "end_ms": null,
+        "start_ms": null,
+        "question_id": "0ab73bfa-6ffe-4de5-8b6c-efff6fb83814",
+        "timestamp_ms": 76078
+    },
+    {
+        "role": "candidate",
+        "text": "Like I said, five years, I've been working with the last in my first company.",
+        "words": [
+            {
+                "text": "like",
+                "end_ms": 320,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "i",
+                "end_ms": 480,
+                "start_ms": 320,
+                "confidence": 1.0
+            },
+            {
+                "text": "said",
+                "end_ms": 720,
+                "start_ms": 480,
+                "confidence": 1.0
+            },
+            {
+                "text": "five",
+                "end_ms": 880,
+                "start_ms": 720,
+                "confidence": 1.0
+            },
+            {
+                "text": "years",
+                "end_ms": 1120,
+                "start_ms": 880,
+                "confidence": 1.0
+            },
+            {
+                "text": "i've",
+                "end_ms": 1440,
+                "start_ms": 1120,
+                "confidence": 1.0
+            },
+            {
+                "text": "been",
+                "end_ms": 1520,
+                "start_ms": 1440,
+                "confidence": 1.0
+            },
+            {
+                "text": "working",
+                "end_ms": 1840,
+                "start_ms": 1520,
+                "confidence": 1.0
+            },
+            {
+                "text": "with",
+                "end_ms": 2080,
+                "start_ms": 1840,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 2160,
+                "start_ms": 2080,
+                "confidence": 1.0
+            },
+            {
+                "text": "last",
+                "end_ms": 2640,
+                "start_ms": 2160,
+                "confidence": 1.0
+            },
+            {
+                "text": "in",
+                "end_ms": 3040,
+                "start_ms": 2800,
+                "confidence": 1.0
+            },
+            {
+                "text": "my",
+                "end_ms": 3200,
+                "start_ms": 3040,
+                "confidence": 1.0
+            },
+            {
+                "text": "first",
+                "end_ms": 3360,
+                "start_ms": 3200,
+                "confidence": 1.0
+            },
+            {
+                "text": "company",
+                "end_ms": 3680,
+                "start_ms": 3360,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 86602,
+        "start_ms": 82922,
+        "question_id": "0ab73bfa-6ffe-4de5-8b6c-efff6fb83814",
+        "timestamp_ms": 86602
+    },
+    {
+        "role": "agent",
+        "text": "Got it — five years…",
+        "words": null,
+        "end_ms": null,
+        "start_ms": null,
+        "question_id": null,
+        "timestamp_ms": 88506
+    },
+    {
+        "role": "agent",
+        "text": "How many years have you worked hands-on with Workato in production?",
+        "words": null,
+        "end_ms": null,
+        "start_ms": null,
+        "question_id": "2fe68aad-6984-47d6-9cfc-6bed08172aa2",
+        "timestamp_ms": 91278
+    },
+    {
+        "role": "candidate",
+        "text": "And around, like, hands on experience, I would say around one a half people.",
+        "words": [
+            {
+                "text": "and",
+                "end_ms": 640,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "around",
+                "end_ms": 1760,
+                "start_ms": 1360,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 2160,
+                "start_ms": 1760,
+                "confidence": 1.0
+            },
+            {
+                "text": "hands",
+                "end_ms": 2560,
+                "start_ms": 2320,
+                "confidence": 1.0
+            },
+            {
+                "text": "on",
+                "end_ms": 2800,
+                "start_ms": 2560,
+                "confidence": 1.0
+            },
+            {
+                "text": "experience",
+                "end_ms": 3360,
+                "start_ms": 2800,
+                "confidence": 1.0
+            },
+            {
+                "text": "i",
+                "end_ms": 3440,
+                "start_ms": 3360,
+                "confidence": 1.0
+            },
+            {
+                "text": "would",
+                "end_ms": 3600,
+                "start_ms": 3440,
+                "confidence": 1.0
+            },
+            {
+                "text": "say",
+                "end_ms": 3760,
+                "start_ms": 3600,
+                "confidence": 1.0
+            },
+            {
+                "text": "around",
+                "end_ms": 4000,
+                "start_ms": 3760,
+                "confidence": 1.0
+            },
+            {
+                "text": "one",
+                "end_ms": 4160,
+                "start_ms": 4000,
+                "confidence": 1.0
+            },
+            {
+                "text": "a",
+                "end_ms": 4490,
+                "start_ms": 4330,
+                "confidence": 1.0
+            },
+            {
+                "text": "half",
+                "end_ms": 4650,
+                "start_ms": 4490,
+                "confidence": 1.0
+            },
+            {
+                "text": "people",
+                "end_ms": 4970,
+                "start_ms": 4650,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 103147,
+        "start_ms": 98177,
+        "question_id": "2fe68aad-6984-47d6-9cfc-6bed08172aa2",
+        "timestamp_ms": 103147
+    },
+    {
+        "role": "agent",
+        "text": "Mm-hmm…",
+        "words": null,
+        "end_ms": null,
+        "start_ms": null,
+        "question_id": null,
+        "timestamp_ms": 105066
+    },
+    {
+        "role": "candidate",
+        "text": "Yeah. So, like, one and a half year, I was on the gutter.",
+        "words": [
+            {
+                "text": "yeah",
+                "end_ms": 400,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "so",
+                "end_ms": 640,
+                "start_ms": 400,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 800,
+                "start_ms": 640,
+                "confidence": 1.0
+            },
+            {
+                "text": "one",
+                "end_ms": 960,
+                "start_ms": 800,
+                "confidence": 1.0
+            },
+            {
+                "text": "and",
+                "end_ms": 1120,
+                "start_ms": 960,
+                "confidence": 1.0
+            },
+            {
+                "text": "a",
+                "end_ms": 1200,
+                "start_ms": 1120,
+                "confidence": 1.0
+            },
+            {
+                "text": "half",
+                "end_ms": 1360,
+                "start_ms": 1200,
+                "confidence": 1.0
+            },
+            {
+                "text": "year",
+                "end_ms": 1680,
+                "start_ms": 1360,
+                "confidence": 1.0
+            },
+            {
+                "text": "i",
+                "end_ms": 1760,
+                "start_ms": 1680,
+                "confidence": 1.0
+            },
+            {
+                "text": "was",
+                "end_ms": 1840,
+                "start_ms": 1760,
+                "confidence": 1.0
+            },
+            {
+                "text": "on",
+                "end_ms": 2410,
+                "start_ms": 2090,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 2570,
+                "start_ms": 2410,
+                "confidence": 1.0
+            },
+            {
+                "text": "gutter",
+                "end_ms": 2970,
+                "start_ms": 2570,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 120056,
+        "start_ms": 117086,
+        "question_id": "2fe68aad-6984-47d6-9cfc-6bed08172aa2",
+        "timestamp_ms": 120056
+    },
+    {
+        "role": "agent",
+        "text": "Right — about a year and a half…",
+        "words": null,
+        "end_ms": null,
+        "start_ms": null,
+        "question_id": null,
+        "timestamp_ms": 121624
+    },
+    {
+        "role": "agent",
+        "text": "You’re building a Workato recipe that calls an AI to auto-triage IT tickets. How would you design the flow so the AI’s decision reliably routes the ticket?",
+        "words": null,
+        "end_ms": null,
+        "start_ms": null,
+        "question_id": "c99c92ca-a2fe-4814-8932-edaba1e61a5a",
+        "timestamp_ms": 125674
+    },
+    {
+        "role": "candidate",
+        "text": "So can you tell me more give me some more context, like, what are these tickets? Like, are these coming from something like Jira? Like, who are the, like, what end consumers who are to whom we are routing these to guys to.",
+        "words": [
+            {
+                "text": "so",
+                "end_ms": 160,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "can",
+                "end_ms": 400,
+                "start_ms": 160,
+                "confidence": 1.0
+            },
+            {
+                "text": "you",
+                "end_ms": 560,
+                "start_ms": 400,
+                "confidence": 1.0
+            },
+            {
+                "text": "tell",
+                "end_ms": 720,
+                "start_ms": 560,
+                "confidence": 1.0
+            },
+            {
+                "text": "me",
+                "end_ms": 800,
+                "start_ms": 720,
+                "confidence": 1.0
+            },
+            {
+                "text": "more",
+                "end_ms": 1040,
+                "start_ms": 800,
+                "confidence": 1.0
+            },
+            {
+                "text": "give",
+                "end_ms": 1280,
+                "start_ms": 1120,
+                "confidence": 1.0
+            },
+            {
+                "text": "me",
+                "end_ms": 1440,
+                "start_ms": 1280,
+                "confidence": 1.0
+            },
+            {
+                "text": "some",
+                "end_ms": 1600,
+                "start_ms": 1440,
+                "confidence": 1.0
+            },
+            {
+                "text": "more",
+                "end_ms": 1760,
+                "start_ms": 1600,
+                "confidence": 1.0
+            },
+            {
+                "text": "context",
+                "end_ms": 2320,
+                "start_ms": 1760,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 2560,
+                "start_ms": 2320,
+                "confidence": 1.0
+            },
+            {
+                "text": "what",
+                "end_ms": 2880,
+                "start_ms": 2560,
+                "confidence": 1.0
+            },
+            {
+                "text": "are",
+                "end_ms": 3040,
+                "start_ms": 2880,
+                "confidence": 1.0
+            },
+            {
+                "text": "these",
+                "end_ms": 3280,
+                "start_ms": 3040,
+                "confidence": 1.0
+            },
+            {
+                "text": "tickets",
+                "end_ms": 3840,
+                "start_ms": 3280,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 4000,
+                "start_ms": 3840,
+                "confidence": 1.0
+            },
+            {
+                "text": "are",
+                "end_ms": 4160,
+                "start_ms": 4000,
+                "confidence": 1.0
+            },
+            {
+                "text": "these",
+                "end_ms": 4320,
+                "start_ms": 4160,
+                "confidence": 1.0
+            },
+            {
+                "text": "coming",
+                "end_ms": 4650,
+                "start_ms": 4410,
+                "confidence": 1.0
+            },
+            {
+                "text": "from",
+                "end_ms": 4890,
+                "start_ms": 4650,
+                "confidence": 1.0
+            },
+            {
+                "text": "something",
+                "end_ms": 5210,
+                "start_ms": 4890,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 5370,
+                "start_ms": 5210,
+                "confidence": 1.0
+            },
+            {
+                "text": "jira",
+                "end_ms": 6170,
+                "start_ms": 5370,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 6890,
+                "start_ms": 6410,
+                "confidence": 1.0
+            },
+            {
+                "text": "who",
+                "end_ms": 7290,
+                "start_ms": 6890,
+                "confidence": 1.0
+            },
+            {
+                "text": "are",
+                "end_ms": 7450,
+                "start_ms": 7290,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 7610,
+                "start_ms": 7450,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 7770,
+                "start_ms": 7610,
+                "confidence": 1.0
+            },
+            {
+                "text": "what",
+                "end_ms": 8670,
+                "start_ms": 8430,
+                "confidence": 1.0
+            },
+            {
+                "text": "end",
+                "end_ms": 8990,
+                "start_ms": 8670,
+                "confidence": 1.0
+            },
+            {
+                "text": "consumers",
+                "end_ms": 9630,
+                "start_ms": 8990,
+                "confidence": 1.0
+            },
+            {
+                "text": "who",
+                "end_ms": 9870,
+                "start_ms": 9630,
+                "confidence": 1.0
+            },
+            {
+                "text": "are",
+                "end_ms": 9950,
+                "start_ms": 9870,
+                "confidence": 1.0
+            },
+            {
+                "text": "to",
+                "end_ms": 11000,
+                "start_ms": 10680,
+                "confidence": 1.0
+            },
+            {
+                "text": "whom",
+                "end_ms": 11160,
+                "start_ms": 11000,
+                "confidence": 1.0
+            },
+            {
+                "text": "we",
+                "end_ms": 11400,
+                "start_ms": 11160,
+                "confidence": 1.0
+            },
+            {
+                "text": "are",
+                "end_ms": 11480,
+                "start_ms": 11400,
+                "confidence": 1.0
+            },
+            {
+                "text": "routing",
+                "end_ms": 11880,
+                "start_ms": 11480,
+                "confidence": 1.0
+            },
+            {
+                "text": "these",
+                "end_ms": 12040,
+                "start_ms": 11880,
+                "confidence": 1.0
+            },
+            {
+                "text": "to",
+                "end_ms": 12200,
+                "start_ms": 12040,
+                "confidence": 1.0
+            },
+            {
+                "text": "guys",
+                "end_ms": 12360,
+                "start_ms": 12200,
+                "confidence": 1.0
+            },
+            {
+                "text": "to",
+                "end_ms": 12600,
+                "start_ms": 12360,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 157987,
+        "start_ms": 145387,
+        "question_id": "c99c92ca-a2fe-4814-8932-edaba1e61a5a",
+        "timestamp_ms": 157987
+    },
+    {
+        "role": "agent",
+        "text": "Sure —",
+        "words": null,
+        "end_ms": null,
+        "start_ms": null,
+        "question_id": null,
+        "timestamp_ms": 159584
+    },
+    {
+        "role": "agent",
+        "text": "moving on — say the tickets are coming from Jira and ServiceNow for an internal IT helpdesk, and the workflow is supposed to decide whether to route them to the network, app support, or security queue. How would you make that routing reliable?",
+        "words": null,
+        "end_ms": null,
+        "start_ms": null,
+        "question_id": "c99c92ca-a2fe-4814-8932-edaba1e61a5a",
+        "timestamp_ms": 163978
+    },
+    {
+        "role": "candidate",
+        "text": "So, like, I designed this workflow as a reliable human in loop system instead of fully autonomous routing. The recipe would start whenever a ticket ID new IT ticket is very created on Jira. So, like, first, right, normalize and sanitize the input data to extract things like type description,",
+        "words": [
+            {
+                "text": "so",
+                "end_ms": 320,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 800,
+                "start_ms": 320,
+                "confidence": 1.0
+            },
+            {
+                "text": "i",
+                "end_ms": 1040,
+                "start_ms": 880,
+                "confidence": 1.0
+            },
+            {
+                "text": "designed",
+                "end_ms": 1440,
+                "start_ms": 1040,
+                "confidence": 1.0
+            },
+            {
+                "text": "this",
+                "end_ms": 1760,
+                "start_ms": 1440,
+                "confidence": 1.0
+            },
+            {
+                "text": "workflow",
+                "end_ms": 2080,
+                "start_ms": 1760,
+                "confidence": 1.0
+            },
+            {
+                "text": "as",
+                "end_ms": 2400,
+                "start_ms": 2080,
+                "confidence": 1.0
+            },
+            {
+                "text": "a",
+                "end_ms": 2560,
+                "start_ms": 2400,
+                "confidence": 1.0
+            },
+            {
+                "text": "reliable",
+                "end_ms": 2800,
+                "start_ms": 2560,
+                "confidence": 1.0
+            },
+            {
+                "text": "human",
+                "end_ms": 3490,
+                "start_ms": 3170,
+                "confidence": 1.0
+            },
+            {
+                "text": "in",
+                "end_ms": 3730,
+                "start_ms": 3490,
+                "confidence": 1.0
+            },
+            {
+                "text": "loop",
+                "end_ms": 3890,
+                "start_ms": 3730,
+                "confidence": 1.0
+            },
+            {
+                "text": "system",
+                "end_ms": 4370,
+                "start_ms": 3890,
+                "confidence": 1.0
+            },
+            {
+                "text": "instead",
+                "end_ms": 4690,
+                "start_ms": 4370,
+                "confidence": 1.0
+            },
+            {
+                "text": "of",
+                "end_ms": 4930,
+                "start_ms": 4690,
+                "confidence": 1.0
+            },
+            {
+                "text": "fully",
+                "end_ms": 5730,
+                "start_ms": 4930,
+                "confidence": 1.0
+            },
+            {
+                "text": "autonomous",
+                "end_ms": 6210,
+                "start_ms": 5730,
+                "confidence": 1.0
+            },
+            {
+                "text": "routing",
+                "end_ms": 6450,
+                "start_ms": 6210,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 7340,
+                "start_ms": 7020,
+                "confidence": 1.0
+            },
+            {
+                "text": "recipe",
+                "end_ms": 7900,
+                "start_ms": 7340,
+                "confidence": 1.0
+            },
+            {
+                "text": "would",
+                "end_ms": 8140,
+                "start_ms": 7900,
+                "confidence": 1.0
+            },
+            {
+                "text": "start",
+                "end_ms": 8380,
+                "start_ms": 8140,
+                "confidence": 1.0
+            },
+            {
+                "text": "whenever",
+                "end_ms": 9050,
+                "start_ms": 8650,
+                "confidence": 1.0
+            },
+            {
+                "text": "a",
+                "end_ms": 9210,
+                "start_ms": 9050,
+                "confidence": 1.0
+            },
+            {
+                "text": "ticket",
+                "end_ms": 9530,
+                "start_ms": 9210,
+                "confidence": 1.0
+            },
+            {
+                "text": "id",
+                "end_ms": 9850,
+                "start_ms": 9530,
+                "confidence": 1.0
+            },
+            {
+                "text": "new",
+                "end_ms": 10410,
+                "start_ms": 10170,
+                "confidence": 1.0
+            },
+            {
+                "text": "it",
+                "end_ms": 10810,
+                "start_ms": 10410,
+                "confidence": 1.0
+            },
+            {
+                "text": "ticket",
+                "end_ms": 11130,
+                "start_ms": 10810,
+                "confidence": 1.0
+            },
+            {
+                "text": "is",
+                "end_ms": 11370,
+                "start_ms": 11130,
+                "confidence": 1.0
+            },
+            {
+                "text": "very",
+                "end_ms": 12160,
+                "start_ms": 11520,
+                "confidence": 1.0
+            },
+            {
+                "text": "created",
+                "end_ms": 13410,
+                "start_ms": 13250,
+                "confidence": 1.0
+            },
+            {
+                "text": "on",
+                "end_ms": 13730,
+                "start_ms": 13410,
+                "confidence": 1.0
+            },
+            {
+                "text": "jira",
+                "end_ms": 14050,
+                "start_ms": 13730,
+                "confidence": 1.0
+            },
+            {
+                "text": "so",
+                "end_ms": 15240,
+                "start_ms": 14920,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 15480,
+                "start_ms": 15240,
+                "confidence": 1.0
+            },
+            {
+                "text": "first",
+                "end_ms": 15800,
+                "start_ms": 15480,
+                "confidence": 1.0
+            },
+            {
+                "text": "right",
+                "end_ms": 15960,
+                "start_ms": 15800,
+                "confidence": 1.0
+            },
+            {
+                "text": "normalize",
+                "end_ms": 16520,
+                "start_ms": 15960,
+                "confidence": 1.0
+            },
+            {
+                "text": "and",
+                "end_ms": 16680,
+                "start_ms": 16520,
+                "confidence": 1.0
+            },
+            {
+                "text": "sanitize",
+                "end_ms": 17160,
+                "start_ms": 16680,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 17320,
+                "start_ms": 17160,
+                "confidence": 1.0
+            },
+            {
+                "text": "input",
+                "end_ms": 17640,
+                "start_ms": 17320,
+                "confidence": 1.0
+            },
+            {
+                "text": "data",
+                "end_ms": 17880,
+                "start_ms": 17640,
+                "confidence": 1.0
+            },
+            {
+                "text": "to",
+                "end_ms": 18120,
+                "start_ms": 17880,
+                "confidence": 1.0
+            },
+            {
+                "text": "extract",
+                "end_ms": 18440,
+                "start_ms": 18120,
+                "confidence": 1.0
+            },
+            {
+                "text": "things",
+                "end_ms": 18680,
+                "start_ms": 18440,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 18840,
+                "start_ms": 18680,
+                "confidence": 1.0
+            },
+            {
+                "text": "type",
+                "end_ms": 19080,
+                "start_ms": 18840,
+                "confidence": 1.0
+            },
+            {
+                "text": "description",
+                "end_ms": 20050,
+                "start_ms": 19490,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 203401,
+        "start_ms": 183351,
+        "question_id": "c99c92ca-a2fe-4814-8932-edaba1e61a5a",
+        "timestamp_ms": 203401
+    },
+    {
+        "role": "candidate",
+        "text": "logs, tags, severity, and any other metadata.",
+        "words": [
+            {
+                "text": "logs",
+                "end_ms": 640,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "tags",
+                "end_ms": 2160,
+                "start_ms": 1600,
+                "confidence": 1.0
+            },
+            {
+                "text": "severity",
+                "end_ms": 3040,
+                "start_ms": 2240,
+                "confidence": 1.0
+            },
+            {
+                "text": "and",
+                "end_ms": 3360,
+                "start_ms": 3040,
+                "confidence": 1.0
+            },
+            {
+                "text": "any",
+                "end_ms": 3680,
+                "start_ms": 3360,
+                "confidence": 1.0
+            },
+            {
+                "text": "other",
+                "end_ms": 3840,
+                "start_ms": 3680,
+                "confidence": 1.0
+            },
+            {
+                "text": "metadata",
+                "end_ms": 4480,
+                "start_ms": 3840,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 204976,
+        "start_ms": 200496,
+        "question_id": "c99c92ca-a2fe-4814-8932-edaba1e61a5a",
+        "timestamp_ms": 204976
+    },
+    {
+        "role": "candidate",
+        "text": "Then the Workato would call the LLM using a structured prompt,",
+        "words": [
+            {
+                "text": "then",
+                "end_ms": 240,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 480,
+                "start_ms": 240,
+                "confidence": 1.0
+            },
+            {
+                "text": "workato",
+                "end_ms": 960,
+                "start_ms": 480,
+                "confidence": 1.0
+            },
+            {
+                "text": "would",
+                "end_ms": 1200,
+                "start_ms": 960,
+                "confidence": 1.0
+            },
+            {
+                "text": "call",
+                "end_ms": 1600,
+                "start_ms": 1200,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 1840,
+                "start_ms": 1600,
+                "confidence": 1.0
+            },
+            {
+                "text": "llm",
+                "end_ms": 2400,
+                "start_ms": 1840,
+                "confidence": 1.0
+            },
+            {
+                "text": "using",
+                "end_ms": 2720,
+                "start_ms": 2400,
+                "confidence": 1.0
+            },
+            {
+                "text": "a",
+                "end_ms": 2880,
+                "start_ms": 2720,
+                "confidence": 1.0
+            },
+            {
+                "text": "structured",
+                "end_ms": 3280,
+                "start_ms": 2880,
+                "confidence": 1.0
+            },
+            {
+                "text": "prompt",
+                "end_ms": 3520,
+                "start_ms": 3280,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 212249,
+        "start_ms": 208729,
+        "question_id": "c99c92ca-a2fe-4814-8932-edaba1e61a5a",
+        "timestamp_ms": 212249
+    },
+    {
+        "role": "candidate",
+        "text": "that would then classify the ticket into different categories like issue categories,",
+        "words": [
+            {
+                "text": "that",
+                "end_ms": 320,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "would",
+                "end_ms": 480,
+                "start_ms": 320,
+                "confidence": 1.0
+            },
+            {
+                "text": "then",
+                "end_ms": 720,
+                "start_ms": 480,
+                "confidence": 1.0
+            },
+            {
+                "text": "classify",
+                "end_ms": 1360,
+                "start_ms": 720,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 1840,
+                "start_ms": 1360,
+                "confidence": 1.0
+            },
+            {
+                "text": "ticket",
+                "end_ms": 2240,
+                "start_ms": 1840,
+                "confidence": 1.0
+            },
+            {
+                "text": "into",
+                "end_ms": 2720,
+                "start_ms": 2240,
+                "confidence": 1.0
+            },
+            {
+                "text": "different",
+                "end_ms": 3730,
+                "start_ms": 3010,
+                "confidence": 1.0
+            },
+            {
+                "text": "categories",
+                "end_ms": 4210,
+                "start_ms": 3730,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 4450,
+                "start_ms": 4210,
+                "confidence": 1.0
+            },
+            {
+                "text": "issue",
+                "end_ms": 4850,
+                "start_ms": 4450,
+                "confidence": 1.0
+            },
+            {
+                "text": "categories",
+                "end_ms": 5330,
+                "start_ms": 4850,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 218349,
+        "start_ms": 213019,
+        "question_id": "c99c92ca-a2fe-4814-8932-edaba1e61a5a",
+        "timestamp_ms": 218349
+    },
+    {
+        "role": "candidate",
+        "text": "or IT networking team and things like that. I would use, like, something like confidence threshold for reliability.",
+        "words": [
+            {
+                "text": "or",
+                "end_ms": 400,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "it",
+                "end_ms": 800,
+                "start_ms": 400,
+                "confidence": 1.0
+            },
+            {
+                "text": "networking",
+                "end_ms": 1440,
+                "start_ms": 800,
+                "confidence": 1.0
+            },
+            {
+                "text": "team",
+                "end_ms": 1840,
+                "start_ms": 1440,
+                "confidence": 1.0
+            },
+            {
+                "text": "and",
+                "end_ms": 2080,
+                "start_ms": 1840,
+                "confidence": 1.0
+            },
+            {
+                "text": "things",
+                "end_ms": 2240,
+                "start_ms": 2080,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 2400,
+                "start_ms": 2240,
+                "confidence": 1.0
+            },
+            {
+                "text": "that",
+                "end_ms": 3060,
+                "start_ms": 2500,
+                "confidence": 1.0
+            },
+            {
+                "text": "i",
+                "end_ms": 3540,
+                "start_ms": 3060,
+                "confidence": 1.0
+            },
+            {
+                "text": "would",
+                "end_ms": 3700,
+                "start_ms": 3540,
+                "confidence": 1.0
+            },
+            {
+                "text": "use",
+                "end_ms": 4020,
+                "start_ms": 3700,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 4180,
+                "start_ms": 4020,
+                "confidence": 1.0
+            },
+            {
+                "text": "something",
+                "end_ms": 4420,
+                "start_ms": 4180,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 4580,
+                "start_ms": 4420,
+                "confidence": 1.0
+            },
+            {
+                "text": "confidence",
+                "end_ms": 5060,
+                "start_ms": 4580,
+                "confidence": 1.0
+            },
+            {
+                "text": "threshold",
+                "end_ms": 5620,
+                "start_ms": 5060,
+                "confidence": 1.0
+            },
+            {
+                "text": "for",
+                "end_ms": 5860,
+                "start_ms": 5620,
+                "confidence": 1.0
+            },
+            {
+                "text": "reliability",
+                "end_ms": 6420,
+                "start_ms": 5860,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 224601,
+        "start_ms": 218181,
+        "question_id": "c99c92ca-a2fe-4814-8932-edaba1e61a5a",
+        "timestamp_ms": 224601
+    },
+    {
+        "role": "candidate",
+        "text": "Like, for example, I need the confidence of the LLM is, like, above percent, it can go to directly be order of it. But, like, anything between, let's say, seventy to ninety eight percent, human approval is required. And, like, for something any confidence that is below seventy percent, a med wall triage is, uh, required.",
+        "words": [
+            {
+                "text": "like",
+                "end_ms": 400,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "for",
+                "end_ms": 560,
+                "start_ms": 400,
+                "confidence": 1.0
+            },
+            {
+                "text": "example",
+                "end_ms": 1200,
+                "start_ms": 560,
+                "confidence": 1.0
+            },
+            {
+                "text": "i",
+                "end_ms": 1680,
+                "start_ms": 1520,
+                "confidence": 1.0
+            },
+            {
+                "text": "need",
+                "end_ms": 1920,
+                "start_ms": 1680,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 2240,
+                "start_ms": 1920,
+                "confidence": 1.0
+            },
+            {
+                "text": "confidence",
+                "end_ms": 2640,
+                "start_ms": 2240,
+                "confidence": 1.0
+            },
+            {
+                "text": "of",
+                "end_ms": 2880,
+                "start_ms": 2640,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 3040,
+                "start_ms": 2880,
+                "confidence": 1.0
+            },
+            {
+                "text": "llm",
+                "end_ms": 3440,
+                "start_ms": 3040,
+                "confidence": 1.0
+            },
+            {
+                "text": "is",
+                "end_ms": 3760,
+                "start_ms": 3440,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 3920,
+                "start_ms": 3760,
+                "confidence": 1.0
+            },
+            {
+                "text": "above",
+                "end_ms": 4080,
+                "start_ms": 3920,
+                "confidence": 1.0
+            },
+            {
+                "text": "percent",
+                "end_ms": 5210,
+                "start_ms": 4490,
+                "confidence": 1.0
+            },
+            {
+                "text": "it",
+                "end_ms": 5690,
+                "start_ms": 5290,
+                "confidence": 1.0
+            },
+            {
+                "text": "can",
+                "end_ms": 5850,
+                "start_ms": 5690,
+                "confidence": 1.0
+            },
+            {
+                "text": "go",
+                "end_ms": 6090,
+                "start_ms": 5850,
+                "confidence": 1.0
+            },
+            {
+                "text": "to",
+                "end_ms": 6500,
+                "start_ms": 6340,
+                "confidence": 1.0
+            },
+            {
+                "text": "directly",
+                "end_ms": 6980,
+                "start_ms": 6500,
+                "confidence": 1.0
+            },
+            {
+                "text": "be",
+                "end_ms": 7140,
+                "start_ms": 6980,
+                "confidence": 1.0
+            },
+            {
+                "text": "order",
+                "end_ms": 7460,
+                "start_ms": 7140,
+                "confidence": 1.0
+            },
+            {
+                "text": "of",
+                "end_ms": 7620,
+                "start_ms": 7460,
+                "confidence": 1.0
+            },
+            {
+                "text": "it",
+                "end_ms": 7780,
+                "start_ms": 7620,
+                "confidence": 1.0
+            },
+            {
+                "text": "but",
+                "end_ms": 8540,
+                "start_ms": 8220,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 8700,
+                "start_ms": 8540,
+                "confidence": 1.0
+            },
+            {
+                "text": "anything",
+                "end_ms": 9100,
+                "start_ms": 8700,
+                "confidence": 1.0
+            },
+            {
+                "text": "between",
+                "end_ms": 9500,
+                "start_ms": 9100,
+                "confidence": 1.0
+            },
+            {
+                "text": "let's",
+                "end_ms": 9660,
+                "start_ms": 9500,
+                "confidence": 1.0
+            },
+            {
+                "text": "say",
+                "end_ms": 9900,
+                "start_ms": 9660,
+                "confidence": 1.0
+            },
+            {
+                "text": "seventy",
+                "end_ms": 10300,
+                "start_ms": 9900,
+                "confidence": 1.0
+            },
+            {
+                "text": "to",
+                "end_ms": 10460,
+                "start_ms": 10300,
+                "confidence": 1.0
+            },
+            {
+                "text": "ninety",
+                "end_ms": 10780,
+                "start_ms": 10460,
+                "confidence": 1.0
+            },
+            {
+                "text": "eight",
+                "end_ms": 10940,
+                "start_ms": 10780,
+                "confidence": 1.0
+            },
+            {
+                "text": "percent",
+                "end_ms": 11180,
+                "start_ms": 10940,
+                "confidence": 1.0
+            },
+            {
+                "text": "human",
+                "end_ms": 11930,
+                "start_ms": 11610,
+                "confidence": 1.0
+            },
+            {
+                "text": "approval",
+                "end_ms": 12250,
+                "start_ms": 11930,
+                "confidence": 1.0
+            },
+            {
+                "text": "is",
+                "end_ms": 12570,
+                "start_ms": 12250,
+                "confidence": 1.0
+            },
+            {
+                "text": "required",
+                "end_ms": 12890,
+                "start_ms": 12570,
+                "confidence": 1.0
+            },
+            {
+                "text": "and",
+                "end_ms": 13790,
+                "start_ms": 13470,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 13950,
+                "start_ms": 13790,
+                "confidence": 1.0
+            },
+            {
+                "text": "for",
+                "end_ms": 14270,
+                "start_ms": 13950,
+                "confidence": 1.0
+            },
+            {
+                "text": "something",
+                "end_ms": 14990,
+                "start_ms": 14270,
+                "confidence": 1.0
+            },
+            {
+                "text": "any",
+                "end_ms": 15630,
+                "start_ms": 15230,
+                "confidence": 1.0
+            },
+            {
+                "text": "confidence",
+                "end_ms": 16110,
+                "start_ms": 15630,
+                "confidence": 1.0
+            },
+            {
+                "text": "that",
+                "end_ms": 16350,
+                "start_ms": 16110,
+                "confidence": 1.0
+            },
+            {
+                "text": "is",
+                "end_ms": 16510,
+                "start_ms": 16350,
+                "confidence": 1.0
+            },
+            {
+                "text": "below",
+                "end_ms": 16950,
+                "start_ms": 16630,
+                "confidence": 1.0
+            },
+            {
+                "text": "seventy",
+                "end_ms": 17430,
+                "start_ms": 16950,
+                "confidence": 1.0
+            },
+            {
+                "text": "percent",
+                "end_ms": 17830,
+                "start_ms": 17430,
+                "confidence": 1.0
+            },
+            {
+                "text": "a",
+                "end_ms": 17990,
+                "start_ms": 17830,
+                "confidence": 1.0
+            },
+            {
+                "text": "med",
+                "end_ms": 18230,
+                "start_ms": 17990,
+                "confidence": 1.0
+            },
+            {
+                "text": "wall",
+                "end_ms": 18390,
+                "start_ms": 18230,
+                "confidence": 1.0
+            },
+            {
+                "text": "triage",
+                "end_ms": 18870,
+                "start_ms": 18390,
+                "confidence": 1.0
+            },
+            {
+                "text": "is",
+                "end_ms": 19270,
+                "start_ms": 18870,
+                "confidence": 1.0
+            },
+            {
+                "text": "uh",
+                "end_ms": 19430,
+                "start_ms": 19270,
+                "confidence": 1.0
+            },
+            {
+                "text": "required",
+                "end_ms": 19830,
+                "start_ms": 19430,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 243310,
+        "start_ms": 223480,
+        "question_id": "c99c92ca-a2fe-4814-8932-edaba1e61a5a",
+        "timestamp_ms": 243310
+    },
+    {
+        "role": "candidate",
+        "text": "So so I I that's how I think I will will will it.",
+        "words": [
+            {
+                "text": "so",
+                "end_ms": 240,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "so",
+                "end_ms": 560,
+                "start_ms": 240,
+                "confidence": 1.0
+            },
+            {
+                "text": "i",
+                "end_ms": 720,
+                "start_ms": 560,
+                "confidence": 1.0
+            },
+            {
+                "text": "i",
+                "end_ms": 960,
+                "start_ms": 720,
+                "confidence": 1.0
+            },
+            {
+                "text": "that's",
+                "end_ms": 1440,
+                "start_ms": 1200,
+                "confidence": 1.0
+            },
+            {
+                "text": "how",
+                "end_ms": 1600,
+                "start_ms": 1440,
+                "confidence": 1.0
+            },
+            {
+                "text": "i",
+                "end_ms": 1760,
+                "start_ms": 1600,
+                "confidence": 1.0
+            },
+            {
+                "text": "think",
+                "end_ms": 2000,
+                "start_ms": 1760,
+                "confidence": 1.0
+            },
+            {
+                "text": "i",
+                "end_ms": 2160,
+                "start_ms": 2000,
+                "confidence": 1.0
+            },
+            {
+                "text": "will",
+                "end_ms": 2320,
+                "start_ms": 2160,
+                "confidence": 1.0
+            },
+            {
+                "text": "will",
+                "end_ms": 2560,
+                "start_ms": 2320,
+                "confidence": 1.0
+            },
+            {
+                "text": "will",
+                "end_ms": 2800,
+                "start_ms": 2560,
+                "confidence": 1.0
+            },
+            {
+                "text": "it",
+                "end_ms": 3040,
+                "start_ms": 2800,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 255799,
+        "start_ms": 252759,
+        "question_id": "c99c92ca-a2fe-4814-8932-edaba1e61a5a",
+        "timestamp_ms": 255799
+    },
+    {
+        "role": "agent",
+        "text": "Got it — human-in-loop routing…",
+        "words": null,
+        "end_ms": null,
+        "start_ms": null,
+        "question_id": null,
+        "timestamp_ms": 257360
+    },
+    {
+        "role": "agent",
+        "text": "Now — you need an AI agent that plans multi-step actions across apps. How would you design its action loop so tool use stays safe and auditable?",
+        "words": null,
+        "end_ms": null,
+        "start_ms": null,
+        "question_id": "137ae49f-75c9-4d47-9260-3a54ec37283a",
+        "timestamp_ms": 261161
+    },
+    {
+        "role": "candidate",
+        "text": "So, like, I designed the can you repeat the question once again, please? So I understand it better.",
+        "words": [
+            {
+                "text": "so",
+                "end_ms": 640,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 1040,
+                "start_ms": 720,
+                "confidence": 1.0
+            },
+            {
+                "text": "i",
+                "end_ms": 1200,
+                "start_ms": 1040,
+                "confidence": 1.0
+            },
+            {
+                "text": "designed",
+                "end_ms": 1600,
+                "start_ms": 1200,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 1920,
+                "start_ms": 1600,
+                "confidence": 1.0
+            },
+            {
+                "text": "can",
+                "end_ms": 3430,
+                "start_ms": 3030,
+                "confidence": 1.0
+            },
+            {
+                "text": "you",
+                "end_ms": 3590,
+                "start_ms": 3430,
+                "confidence": 1.0
+            },
+            {
+                "text": "repeat",
+                "end_ms": 3830,
+                "start_ms": 3590,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 3910,
+                "start_ms": 3830,
+                "confidence": 1.0
+            },
+            {
+                "text": "question",
+                "end_ms": 4230,
+                "start_ms": 3910,
+                "confidence": 1.0
+            },
+            {
+                "text": "once",
+                "end_ms": 4470,
+                "start_ms": 4230,
+                "confidence": 1.0
+            },
+            {
+                "text": "again",
+                "end_ms": 4710,
+                "start_ms": 4470,
+                "confidence": 1.0
+            },
+            {
+                "text": "please",
+                "end_ms": 4950,
+                "start_ms": 4710,
+                "confidence": 1.0
+            },
+            {
+                "text": "so",
+                "end_ms": 5920,
+                "start_ms": 5680,
+                "confidence": 1.0
+            },
+            {
+                "text": "i",
+                "end_ms": 6080,
+                "start_ms": 5920,
+                "confidence": 1.0
+            },
+            {
+                "text": "understand",
+                "end_ms": 6480,
+                "start_ms": 6080,
+                "confidence": 1.0
+            },
+            {
+                "text": "it",
+                "end_ms": 6560,
+                "start_ms": 6480,
+                "confidence": 1.0
+            },
+            {
+                "text": "better",
+                "end_ms": 6800,
+                "start_ms": 6560,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 280352,
+        "start_ms": 273552,
+        "question_id": "137ae49f-75c9-4d47-9260-3a54ec37283a",
+        "timestamp_ms": 280352
+    },
+    {
+        "role": "agent",
+        "text": "You need an AI agent that plans multi-step actions across apps. How would you design its action loop so tool use stays safe and auditable?",
+        "words": null,
+        "end_ms": null,
+        "start_ms": null,
+        "question_id": null,
+        "timestamp_ms": 282900
+    },
+    {
+        "role": "candidate",
+        "text": "Sure. So, like, I would like, design the engine using something like a plan validate, execute, verify loop rather than allowing unrestricted to, like, executions.",
+        "words": [
+            {
+                "text": "sure",
+                "end_ms": 400,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "so",
+                "end_ms": 560,
+                "start_ms": 400,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 800,
+                "start_ms": 560,
+                "confidence": 1.0
+            },
+            {
+                "text": "i",
+                "end_ms": 960,
+                "start_ms": 800,
+                "confidence": 1.0
+            },
+            {
+                "text": "would",
+                "end_ms": 1120,
+                "start_ms": 960,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 1580,
+                "start_ms": 1180,
+                "confidence": 1.0
+            },
+            {
+                "text": "design",
+                "end_ms": 1900,
+                "start_ms": 1580,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 2140,
+                "start_ms": 1900,
+                "confidence": 1.0
+            },
+            {
+                "text": "engine",
+                "end_ms": 2620,
+                "start_ms": 2140,
+                "confidence": 1.0
+            },
+            {
+                "text": "using",
+                "end_ms": 3020,
+                "start_ms": 2620,
+                "confidence": 1.0
+            },
+            {
+                "text": "something",
+                "end_ms": 3340,
+                "start_ms": 3020,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 3580,
+                "start_ms": 3340,
+                "confidence": 1.0
+            },
+            {
+                "text": "a",
+                "end_ms": 3900,
+                "start_ms": 3580,
+                "confidence": 1.0
+            },
+            {
+                "text": "plan",
+                "end_ms": 4220,
+                "start_ms": 3900,
+                "confidence": 1.0
+            },
+            {
+                "text": "validate",
+                "end_ms": 4960,
+                "start_ms": 4320,
+                "confidence": 1.0
+            },
+            {
+                "text": "execute",
+                "end_ms": 5520,
+                "start_ms": 4960,
+                "confidence": 1.0
+            },
+            {
+                "text": "verify",
+                "end_ms": 5920,
+                "start_ms": 5520,
+                "confidence": 1.0
+            },
+            {
+                "text": "loop",
+                "end_ms": 6240,
+                "start_ms": 5920,
+                "confidence": 1.0
+            },
+            {
+                "text": "rather",
+                "end_ms": 6640,
+                "start_ms": 6240,
+                "confidence": 1.0
+            },
+            {
+                "text": "than",
+                "end_ms": 7040,
+                "start_ms": 6640,
+                "confidence": 1.0
+            },
+            {
+                "text": "allowing",
+                "end_ms": 7520,
+                "start_ms": 7040,
+                "confidence": 1.0
+            },
+            {
+                "text": "unrestricted",
+                "end_ms": 8240,
+                "start_ms": 7520,
+                "confidence": 1.0
+            },
+            {
+                "text": "to",
+                "end_ms": 8640,
+                "start_ms": 8240,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 8720,
+                "start_ms": 8640,
+                "confidence": 1.0
+            },
+            {
+                "text": "executions",
+                "end_ms": 9570,
+                "start_ms": 8930,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 304302,
+        "start_ms": 294732,
+        "question_id": "137ae49f-75c9-4d47-9260-3a54ec37283a",
+        "timestamp_ms": 304302
+    },
+    {
+        "role": "candidate",
+        "text": "So, like, for the l l m gen so, like, the first l l m will generate a structured action plan instead of directly calling tool. So for example, like, the structured execution plan could look like a bunch of to do list or, like, something. Plans that read something like maybe first read the CRM data, then update ticket, and then send a notification",
+        "words": [
+            {
+                "text": "so",
+                "end_ms": 320,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 480,
+                "start_ms": 320,
+                "confidence": 1.0
+            },
+            {
+                "text": "for",
+                "end_ms": 640,
+                "start_ms": 480,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 880,
+                "start_ms": 640,
+                "confidence": 1.0
+            },
+            {
+                "text": "l",
+                "end_ms": 1040,
+                "start_ms": 880,
+                "confidence": 1.0
+            },
+            {
+                "text": "l",
+                "end_ms": 1200,
+                "start_ms": 1040,
+                "confidence": 1.0
+            },
+            {
+                "text": "m",
+                "end_ms": 1360,
+                "start_ms": 1200,
+                "confidence": 1.0
+            },
+            {
+                "text": "gen",
+                "end_ms": 1520,
+                "start_ms": 1360,
+                "confidence": 1.0
+            },
+            {
+                "text": "so",
+                "end_ms": 1920,
+                "start_ms": 1600,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 2000,
+                "start_ms": 1920,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 2710,
+                "start_ms": 2230,
+                "confidence": 1.0
+            },
+            {
+                "text": "first",
+                "end_ms": 3030,
+                "start_ms": 2710,
+                "confidence": 1.0
+            },
+            {
+                "text": "l",
+                "end_ms": 3510,
+                "start_ms": 3030,
+                "confidence": 1.0
+            },
+            {
+                "text": "l",
+                "end_ms": 3670,
+                "start_ms": 3510,
+                "confidence": 1.0
+            },
+            {
+                "text": "m",
+                "end_ms": 3750,
+                "start_ms": 3670,
+                "confidence": 1.0
+            },
+            {
+                "text": "will",
+                "end_ms": 3990,
+                "start_ms": 3750,
+                "confidence": 1.0
+            },
+            {
+                "text": "generate",
+                "end_ms": 4390,
+                "start_ms": 3990,
+                "confidence": 1.0
+            },
+            {
+                "text": "a",
+                "end_ms": 4550,
+                "start_ms": 4390,
+                "confidence": 1.0
+            },
+            {
+                "text": "structured",
+                "end_ms": 5110,
+                "start_ms": 4550,
+                "confidence": 1.0
+            },
+            {
+                "text": "action",
+                "end_ms": 5510,
+                "start_ms": 5110,
+                "confidence": 1.0
+            },
+            {
+                "text": "plan",
+                "end_ms": 5750,
+                "start_ms": 5510,
+                "confidence": 1.0
+            },
+            {
+                "text": "instead",
+                "end_ms": 6190,
+                "start_ms": 5950,
+                "confidence": 1.0
+            },
+            {
+                "text": "of",
+                "end_ms": 6270,
+                "start_ms": 6190,
+                "confidence": 1.0
+            },
+            {
+                "text": "directly",
+                "end_ms": 6590,
+                "start_ms": 6270,
+                "confidence": 1.0
+            },
+            {
+                "text": "calling",
+                "end_ms": 6910,
+                "start_ms": 6590,
+                "confidence": 1.0
+            },
+            {
+                "text": "tool",
+                "end_ms": 7230,
+                "start_ms": 6910,
+                "confidence": 1.0
+            },
+            {
+                "text": "so",
+                "end_ms": 7310,
+                "start_ms": 7230,
+                "confidence": 1.0
+            },
+            {
+                "text": "for",
+                "end_ms": 7550,
+                "start_ms": 7310,
+                "confidence": 1.0
+            },
+            {
+                "text": "example",
+                "end_ms": 7870,
+                "start_ms": 7550,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 8030,
+                "start_ms": 7870,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 8730,
+                "start_ms": 8410,
+                "confidence": 1.0
+            },
+            {
+                "text": "structured",
+                "end_ms": 9130,
+                "start_ms": 8730,
+                "confidence": 1.0
+            },
+            {
+                "text": "execution",
+                "end_ms": 9690,
+                "start_ms": 9130,
+                "confidence": 1.0
+            },
+            {
+                "text": "plan",
+                "end_ms": 9930,
+                "start_ms": 9690,
+                "confidence": 1.0
+            },
+            {
+                "text": "could",
+                "end_ms": 10170,
+                "start_ms": 9930,
+                "confidence": 1.0
+            },
+            {
+                "text": "look",
+                "end_ms": 10410,
+                "start_ms": 10170,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 10730,
+                "start_ms": 10410,
+                "confidence": 1.0
+            },
+            {
+                "text": "a",
+                "end_ms": 10970,
+                "start_ms": 10730,
+                "confidence": 1.0
+            },
+            {
+                "text": "bunch",
+                "end_ms": 11210,
+                "start_ms": 10970,
+                "confidence": 1.0
+            },
+            {
+                "text": "of",
+                "end_ms": 11370,
+                "start_ms": 11210,
+                "confidence": 1.0
+            },
+            {
+                "text": "to",
+                "end_ms": 11610,
+                "start_ms": 11370,
+                "confidence": 1.0
+            },
+            {
+                "text": "do",
+                "end_ms": 11770,
+                "start_ms": 11610,
+                "confidence": 1.0
+            },
+            {
+                "text": "list",
+                "end_ms": 12010,
+                "start_ms": 11770,
+                "confidence": 1.0
+            },
+            {
+                "text": "or",
+                "end_ms": 12250,
+                "start_ms": 12010,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 12490,
+                "start_ms": 12250,
+                "confidence": 1.0
+            },
+            {
+                "text": "something",
+                "end_ms": 12970,
+                "start_ms": 12490,
+                "confidence": 1.0
+            },
+            {
+                "text": "plans",
+                "end_ms": 14030,
+                "start_ms": 13470,
+                "confidence": 1.0
+            },
+            {
+                "text": "that",
+                "end_ms": 14590,
+                "start_ms": 14030,
+                "confidence": 1.0
+            },
+            {
+                "text": "read",
+                "end_ms": 14830,
+                "start_ms": 14590,
+                "confidence": 1.0
+            },
+            {
+                "text": "something",
+                "end_ms": 15150,
+                "start_ms": 14830,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 15470,
+                "start_ms": 15150,
+                "confidence": 1.0
+            },
+            {
+                "text": "maybe",
+                "end_ms": 15870,
+                "start_ms": 15470,
+                "confidence": 1.0
+            },
+            {
+                "text": "first",
+                "end_ms": 16190,
+                "start_ms": 15870,
+                "confidence": 1.0
+            },
+            {
+                "text": "read",
+                "end_ms": 16510,
+                "start_ms": 16190,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 16750,
+                "start_ms": 16510,
+                "confidence": 1.0
+            },
+            {
+                "text": "crm",
+                "end_ms": 17150,
+                "start_ms": 16750,
+                "confidence": 1.0
+            },
+            {
+                "text": "data",
+                "end_ms": 17630,
+                "start_ms": 17150,
+                "confidence": 1.0
+            },
+            {
+                "text": "then",
+                "end_ms": 17790,
+                "start_ms": 17630,
+                "confidence": 1.0
+            },
+            {
+                "text": "update",
+                "end_ms": 18030,
+                "start_ms": 17790,
+                "confidence": 1.0
+            },
+            {
+                "text": "ticket",
+                "end_ms": 18680,
+                "start_ms": 18120,
+                "confidence": 1.0
+            },
+            {
+                "text": "and",
+                "end_ms": 18760,
+                "start_ms": 18680,
+                "confidence": 1.0
+            },
+            {
+                "text": "then",
+                "end_ms": 18920,
+                "start_ms": 18760,
+                "confidence": 1.0
+            },
+            {
+                "text": "send",
+                "end_ms": 19160,
+                "start_ms": 18920,
+                "confidence": 1.0
+            },
+            {
+                "text": "a",
+                "end_ms": 19240,
+                "start_ms": 19160,
+                "confidence": 1.0
+            },
+            {
+                "text": "notification",
+                "end_ms": 19480,
+                "start_ms": 19240,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 324650,
+        "start_ms": 305170,
+        "question_id": "137ae49f-75c9-4d47-9260-3a54ec37283a",
+        "timestamp_ms": 324650
+    },
+    {
+        "role": "candidate",
+        "text": "to, let's say, Slack. If we are continuing the previous Jira example,",
+        "words": [
+            {
+                "text": "to",
+                "end_ms": 800,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "let's",
+                "end_ms": 1040,
+                "start_ms": 800,
+                "confidence": 1.0
+            },
+            {
+                "text": "say",
+                "end_ms": 1280,
+                "start_ms": 1040,
+                "confidence": 1.0
+            },
+            {
+                "text": "slack",
+                "end_ms": 1520,
+                "start_ms": 1280,
+                "confidence": 1.0
+            },
+            {
+                "text": "if",
+                "end_ms": 2840,
+                "start_ms": 2520,
+                "confidence": 1.0
+            },
+            {
+                "text": "we",
+                "end_ms": 3160,
+                "start_ms": 2840,
+                "confidence": 1.0
+            },
+            {
+                "text": "are",
+                "end_ms": 3320,
+                "start_ms": 3160,
+                "confidence": 1.0
+            },
+            {
+                "text": "continuing",
+                "end_ms": 3640,
+                "start_ms": 3320,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 3960,
+                "start_ms": 3640,
+                "confidence": 1.0
+            },
+            {
+                "text": "previous",
+                "end_ms": 4440,
+                "start_ms": 3960,
+                "confidence": 1.0
+            },
+            {
+                "text": "jira",
+                "end_ms": 4840,
+                "start_ms": 4440,
+                "confidence": 1.0
+            },
+            {
+                "text": "example",
+                "end_ms": 5160,
+                "start_ms": 4840,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 330550,
+        "start_ms": 325390,
+        "question_id": "137ae49f-75c9-4d47-9260-3a54ec37283a",
+        "timestamp_ms": 330550
+    },
+    {
+        "role": "candidate",
+        "text": "And then before execution, the plan goes through the validation rules to, let's say, a the permission checks, the schema validation, date limit checks, and things like that. For high risk actions, such as, like, anything that requires deleting something or, like, if it's something that that is consumer facing?",
+        "words": [
+            {
+                "text": "and",
+                "end_ms": 160,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "then",
+                "end_ms": 400,
+                "start_ms": 160,
+                "confidence": 1.0
+            },
+            {
+                "text": "before",
+                "end_ms": 720,
+                "start_ms": 400,
+                "confidence": 1.0
+            },
+            {
+                "text": "execution",
+                "end_ms": 1520,
+                "start_ms": 720,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 1680,
+                "start_ms": 1520,
+                "confidence": 1.0
+            },
+            {
+                "text": "plan",
+                "end_ms": 1920,
+                "start_ms": 1680,
+                "confidence": 1.0
+            },
+            {
+                "text": "goes",
+                "end_ms": 2160,
+                "start_ms": 1920,
+                "confidence": 1.0
+            },
+            {
+                "text": "through",
+                "end_ms": 2400,
+                "start_ms": 2160,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 2560,
+                "start_ms": 2400,
+                "confidence": 1.0
+            },
+            {
+                "text": "validation",
+                "end_ms": 2960,
+                "start_ms": 2560,
+                "confidence": 1.0
+            },
+            {
+                "text": "rules",
+                "end_ms": 3440,
+                "start_ms": 2960,
+                "confidence": 1.0
+            },
+            {
+                "text": "to",
+                "end_ms": 3760,
+                "start_ms": 3440,
+                "confidence": 1.0
+            },
+            {
+                "text": "let's",
+                "end_ms": 4080,
+                "start_ms": 3760,
+                "confidence": 1.0
+            },
+            {
+                "text": "say",
+                "end_ms": 4400,
+                "start_ms": 4080,
+                "confidence": 1.0
+            },
+            {
+                "text": "a",
+                "end_ms": 4560,
+                "start_ms": 4400,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 5040,
+                "start_ms": 4720,
+                "confidence": 1.0
+            },
+            {
+                "text": "permission",
+                "end_ms": 5440,
+                "start_ms": 5040,
+                "confidence": 1.0
+            },
+            {
+                "text": "checks",
+                "end_ms": 6080,
+                "start_ms": 5440,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 6160,
+                "start_ms": 6080,
+                "confidence": 1.0
+            },
+            {
+                "text": "schema",
+                "end_ms": 6580,
+                "start_ms": 6260,
+                "confidence": 1.0
+            },
+            {
+                "text": "validation",
+                "end_ms": 7060,
+                "start_ms": 6580,
+                "confidence": 1.0
+            },
+            {
+                "text": "date",
+                "end_ms": 8500,
+                "start_ms": 8100,
+                "confidence": 1.0
+            },
+            {
+                "text": "limit",
+                "end_ms": 8820,
+                "start_ms": 8500,
+                "confidence": 1.0
+            },
+            {
+                "text": "checks",
+                "end_ms": 9220,
+                "start_ms": 8820,
+                "confidence": 1.0
+            },
+            {
+                "text": "and",
+                "end_ms": 9300,
+                "start_ms": 9220,
+                "confidence": 1.0
+            },
+            {
+                "text": "things",
+                "end_ms": 9540,
+                "start_ms": 9300,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 9700,
+                "start_ms": 9540,
+                "confidence": 1.0
+            },
+            {
+                "text": "that",
+                "end_ms": 9780,
+                "start_ms": 9700,
+                "confidence": 1.0
+            },
+            {
+                "text": "for",
+                "end_ms": 11220,
+                "start_ms": 10980,
+                "confidence": 1.0
+            },
+            {
+                "text": "high",
+                "end_ms": 11460,
+                "start_ms": 11220,
+                "confidence": 1.0
+            },
+            {
+                "text": "risk",
+                "end_ms": 11780,
+                "start_ms": 11460,
+                "confidence": 1.0
+            },
+            {
+                "text": "actions",
+                "end_ms": 12500,
+                "start_ms": 11780,
+                "confidence": 1.0
+            },
+            {
+                "text": "such",
+                "end_ms": 12980,
+                "start_ms": 12820,
+                "confidence": 1.0
+            },
+            {
+                "text": "as",
+                "end_ms": 13220,
+                "start_ms": 12980,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 13380,
+                "start_ms": 13220,
+                "confidence": 1.0
+            },
+            {
+                "text": "anything",
+                "end_ms": 13780,
+                "start_ms": 13380,
+                "confidence": 1.0
+            },
+            {
+                "text": "that",
+                "end_ms": 14260,
+                "start_ms": 13780,
+                "confidence": 1.0
+            },
+            {
+                "text": "requires",
+                "end_ms": 14980,
+                "start_ms": 14500,
+                "confidence": 1.0
+            },
+            {
+                "text": "deleting",
+                "end_ms": 15610,
+                "start_ms": 15130,
+                "confidence": 1.0
+            },
+            {
+                "text": "something",
+                "end_ms": 16010,
+                "start_ms": 15610,
+                "confidence": 1.0
+            },
+            {
+                "text": "or",
+                "end_ms": 16330,
+                "start_ms": 16010,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 16570,
+                "start_ms": 16330,
+                "confidence": 1.0
+            },
+            {
+                "text": "if",
+                "end_ms": 16730,
+                "start_ms": 16570,
+                "confidence": 1.0
+            },
+            {
+                "text": "it's",
+                "end_ms": 16970,
+                "start_ms": 16730,
+                "confidence": 1.0
+            },
+            {
+                "text": "something",
+                "end_ms": 17210,
+                "start_ms": 16970,
+                "confidence": 1.0
+            },
+            {
+                "text": "that",
+                "end_ms": 17530,
+                "start_ms": 17210,
+                "confidence": 1.0
+            },
+            {
+                "text": "that",
+                "end_ms": 17690,
+                "start_ms": 17530,
+                "confidence": 1.0
+            },
+            {
+                "text": "is",
+                "end_ms": 17850,
+                "start_ms": 17690,
+                "confidence": 1.0
+            },
+            {
+                "text": "consumer",
+                "end_ms": 18250,
+                "start_ms": 17850,
+                "confidence": 1.0
+            },
+            {
+                "text": "facing",
+                "end_ms": 18490,
+                "start_ms": 18250,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 352149,
+        "start_ms": 333659,
+        "question_id": "137ae49f-75c9-4d47-9260-3a54ec37283a",
+        "timestamp_ms": 352149
+    },
+    {
+        "role": "candidate",
+        "text": "It it will always require a human approval. And, like, every tool would get would be, like, for auditability of the tool",
+        "words": [
+            {
+                "text": "it",
+                "end_ms": 320,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "it",
+                "end_ms": 560,
+                "start_ms": 320,
+                "confidence": 1.0
+            },
+            {
+                "text": "will",
+                "end_ms": 800,
+                "start_ms": 560,
+                "confidence": 1.0
+            },
+            {
+                "text": "always",
+                "end_ms": 1120,
+                "start_ms": 800,
+                "confidence": 1.0
+            },
+            {
+                "text": "require",
+                "end_ms": 1520,
+                "start_ms": 1120,
+                "confidence": 1.0
+            },
+            {
+                "text": "a",
+                "end_ms": 1760,
+                "start_ms": 1520,
+                "confidence": 1.0
+            },
+            {
+                "text": "human",
+                "end_ms": 2160,
+                "start_ms": 1760,
+                "confidence": 1.0
+            },
+            {
+                "text": "approval",
+                "end_ms": 2480,
+                "start_ms": 2160,
+                "confidence": 1.0
+            },
+            {
+                "text": "and",
+                "end_ms": 3120,
+                "start_ms": 2880,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 3360,
+                "start_ms": 3120,
+                "confidence": 1.0
+            },
+            {
+                "text": "every",
+                "end_ms": 3600,
+                "start_ms": 3360,
+                "confidence": 1.0
+            },
+            {
+                "text": "tool",
+                "end_ms": 3760,
+                "start_ms": 3600,
+                "confidence": 1.0
+            },
+            {
+                "text": "would",
+                "end_ms": 4000,
+                "start_ms": 3760,
+                "confidence": 1.0
+            },
+            {
+                "text": "get",
+                "end_ms": 4240,
+                "start_ms": 4000,
+                "confidence": 1.0
+            },
+            {
+                "text": "would",
+                "end_ms": 4720,
+                "start_ms": 4320,
+                "confidence": 1.0
+            },
+            {
+                "text": "be",
+                "end_ms": 5040,
+                "start_ms": 4720,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 5280,
+                "start_ms": 5040,
+                "confidence": 1.0
+            },
+            {
+                "text": "for",
+                "end_ms": 5440,
+                "start_ms": 5280,
+                "confidence": 1.0
+            },
+            {
+                "text": "auditability",
+                "end_ms": 6080,
+                "start_ms": 5440,
+                "confidence": 1.0
+            },
+            {
+                "text": "of",
+                "end_ms": 6240,
+                "start_ms": 6080,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 6400,
+                "start_ms": 6240,
+                "confidence": 1.0
+            },
+            {
+                "text": "tool",
+                "end_ms": 6720,
+                "start_ms": 6400,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 360499,
+        "start_ms": 353779,
+        "question_id": "137ae49f-75c9-4d47-9260-3a54ec37283a",
+        "timestamp_ms": 360499
+    },
+    {
+        "role": "candidate",
+        "text": "will be logged, including whatever the tool name was",
+        "words": [
+            {
+                "text": "will",
+                "end_ms": 240,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "be",
+                "end_ms": 400,
+                "start_ms": 240,
+                "confidence": 1.0
+            },
+            {
+                "text": "logged",
+                "end_ms": 1120,
+                "start_ms": 400,
+                "confidence": 1.0
+            },
+            {
+                "text": "including",
+                "end_ms": 1920,
+                "start_ms": 1680,
+                "confidence": 1.0
+            },
+            {
+                "text": "whatever",
+                "end_ms": 2320,
+                "start_ms": 1920,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 2960,
+                "start_ms": 2320,
+                "confidence": 1.0
+            },
+            {
+                "text": "tool",
+                "end_ms": 3200,
+                "start_ms": 2960,
+                "confidence": 1.0
+            },
+            {
+                "text": "name",
+                "end_ms": 3440,
+                "start_ms": 3200,
+                "confidence": 1.0
+            },
+            {
+                "text": "was",
+                "end_ms": 3680,
+                "start_ms": 3440,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 365902,
+        "start_ms": 362222,
+        "question_id": "137ae49f-75c9-4d47-9260-3a54ec37283a",
+        "timestamp_ms": 365902
+    },
+    {
+        "role": "candidate",
+        "text": "what parameter it had, the timestamps, and, like, the reasoning somebody from directly from the",
+        "words": [
+            {
+                "text": "what",
+                "end_ms": 240,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "parameter",
+                "end_ms": 720,
+                "start_ms": 240,
+                "confidence": 1.0
+            },
+            {
+                "text": "it",
+                "end_ms": 960,
+                "start_ms": 720,
+                "confidence": 1.0
+            },
+            {
+                "text": "had",
+                "end_ms": 1200,
+                "start_ms": 960,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 1440,
+                "start_ms": 1200,
+                "confidence": 1.0
+            },
+            {
+                "text": "timestamps",
+                "end_ms": 2480,
+                "start_ms": 1440,
+                "confidence": 1.0
+            },
+            {
+                "text": "and",
+                "end_ms": 3040,
+                "start_ms": 2480,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 3280,
+                "start_ms": 3120,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 4150,
+                "start_ms": 3910,
+                "confidence": 1.0
+            },
+            {
+                "text": "reasoning",
+                "end_ms": 4550,
+                "start_ms": 4150,
+                "confidence": 1.0
+            },
+            {
+                "text": "somebody",
+                "end_ms": 4870,
+                "start_ms": 4550,
+                "confidence": 1.0
+            },
+            {
+                "text": "from",
+                "end_ms": 5030,
+                "start_ms": 4870,
+                "confidence": 1.0
+            },
+            {
+                "text": "directly",
+                "end_ms": 5430,
+                "start_ms": 5030,
+                "confidence": 1.0
+            },
+            {
+                "text": "from",
+                "end_ms": 5670,
+                "start_ms": 5430,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 5830,
+                "start_ms": 5670,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 378310,
+        "start_ms": 372480,
+        "question_id": "137ae49f-75c9-4d47-9260-3a54ec37283a",
+        "timestamp_ms": 378310
+    },
+    {
+        "role": "agent",
+        "text": "Mm — plan, validate, execute…",
+        "words": null,
+        "end_ms": null,
+        "start_ms": null,
+        "question_id": null,
+        "timestamp_ms": 380999
+    },
+    {
+        "role": "agent",
+        "text": "You’re building a custom connector to a REST API that enforces rate limits. How would you design around the limit to avoid dropped calls?",
+        "words": null,
+        "end_ms": null,
+        "start_ms": null,
+        "question_id": "9ffff440-d383-4201-9cb0-bfe43e0c9d11",
+        "timestamp_ms": 383508
+    },
+    {
+        "role": "candidate",
+        "text": "What are the kind of rate limits we're dealing with you? Okay.",
+        "words": [
+            {
+                "text": "what",
+                "end_ms": 640,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "are",
+                "end_ms": 800,
+                "start_ms": 640,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 1440,
+                "start_ms": 800,
+                "confidence": 1.0
+            },
+            {
+                "text": "kind",
+                "end_ms": 1760,
+                "start_ms": 1440,
+                "confidence": 1.0
+            },
+            {
+                "text": "of",
+                "end_ms": 1920,
+                "start_ms": 1760,
+                "confidence": 1.0
+            },
+            {
+                "text": "rate",
+                "end_ms": 2160,
+                "start_ms": 1920,
+                "confidence": 1.0
+            },
+            {
+                "text": "limits",
+                "end_ms": 2400,
+                "start_ms": 2160,
+                "confidence": 1.0
+            },
+            {
+                "text": "we're",
+                "end_ms": 2640,
+                "start_ms": 2400,
+                "confidence": 1.0
+            },
+            {
+                "text": "dealing",
+                "end_ms": 2880,
+                "start_ms": 2640,
+                "confidence": 1.0
+            },
+            {
+                "text": "with",
+                "end_ms": 3120,
+                "start_ms": 2880,
+                "confidence": 1.0
+            },
+            {
+                "text": "you",
+                "end_ms": 3440,
+                "start_ms": 3120,
+                "confidence": 1.0
+            },
+            {
+                "text": "okay",
+                "end_ms": 3600,
+                "start_ms": 3440,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 397352,
+        "start_ms": 393752,
+        "question_id": "9ffff440-d383-4201-9cb0-bfe43e0c9d11",
+        "timestamp_ms": 397352
+    },
+    {
+        "role": "candidate",
+        "text": "Can give me some examples.",
+        "words": [
+            {
+                "text": "can",
+                "end_ms": 240,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "give",
+                "end_ms": 400,
+                "start_ms": 240,
+                "confidence": 1.0
+            },
+            {
+                "text": "me",
+                "end_ms": 560,
+                "start_ms": 400,
+                "confidence": 1.0
+            },
+            {
+                "text": "some",
+                "end_ms": 720,
+                "start_ms": 560,
+                "confidence": 1.0
+            },
+            {
+                "text": "examples",
+                "end_ms": 1200,
+                "start_ms": 720,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 398661,
+        "start_ms": 397461,
+        "question_id": "9ffff440-d383-4201-9cb0-bfe43e0c9d11",
+        "timestamp_ms": 398661
+    },
+    {
+        "role": "agent",
+        "text": "Right —",
+        "words": null,
+        "end_ms": null,
+        "start_ms": null,
+        "question_id": null,
+        "timestamp_ms": 400837
+    },
+    {
+        "role": "agent",
+        "text": "Say it’s a connector syncing ticket updates to a SaaS A-P-I that returns four twenty-nines after a fixed number of calls per minute. How would you design around the limit to avoid dropped calls?",
+        "words": null,
+        "end_ms": null,
+        "start_ms": null,
+        "question_id": "9ffff440-d383-4201-9cb0-bfe43e0c9d11",
+        "timestamp_ms": 403207
+    },
+    {
+        "role": "candidate",
+        "text": "So, like, I always design the connectors with, like, rate limit in my mind. So, like, the connectors are read are read away from the start rather than, like, instead of, like, reacting it after a failure happens. So, well, the first thing I would do is understand the provider's limit for the API. For example, like, in your in this case, for example, it's a permanent rate limit. Then I would introduce throw introduce something like throttle inside the connectors or request space within a safe threshold instead of hitting that limit? For something like errors like four twenty nine? I would implement I would, like, add response triggers like exponential backoffs,",
+        "words": [
+            {
+                "text": "so",
+                "end_ms": 480,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 640,
+                "start_ms": 480,
+                "confidence": 1.0
+            },
+            {
+                "text": "i",
+                "end_ms": 800,
+                "start_ms": 640,
+                "confidence": 1.0
+            },
+            {
+                "text": "always",
+                "end_ms": 1200,
+                "start_ms": 800,
+                "confidence": 1.0
+            },
+            {
+                "text": "design",
+                "end_ms": 1600,
+                "start_ms": 1200,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 1760,
+                "start_ms": 1600,
+                "confidence": 1.0
+            },
+            {
+                "text": "connectors",
+                "end_ms": 2640,
+                "start_ms": 1760,
+                "confidence": 1.0
+            },
+            {
+                "text": "with",
+                "end_ms": 3600,
+                "start_ms": 3200,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 3760,
+                "start_ms": 3600,
+                "confidence": 1.0
+            },
+            {
+                "text": "rate",
+                "end_ms": 4260,
+                "start_ms": 3860,
+                "confidence": 1.0
+            },
+            {
+                "text": "limit",
+                "end_ms": 4500,
+                "start_ms": 4260,
+                "confidence": 1.0
+            },
+            {
+                "text": "in",
+                "end_ms": 4660,
+                "start_ms": 4500,
+                "confidence": 1.0
+            },
+            {
+                "text": "my",
+                "end_ms": 4820,
+                "start_ms": 4660,
+                "confidence": 1.0
+            },
+            {
+                "text": "mind",
+                "end_ms": 5460,
+                "start_ms": 4820,
+                "confidence": 1.0
+            },
+            {
+                "text": "so",
+                "end_ms": 6260,
+                "start_ms": 5860,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 6500,
+                "start_ms": 6260,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 6660,
+                "start_ms": 6500,
+                "confidence": 1.0
+            },
+            {
+                "text": "connectors",
+                "end_ms": 7060,
+                "start_ms": 6660,
+                "confidence": 1.0
+            },
+            {
+                "text": "are",
+                "end_ms": 7220,
+                "start_ms": 7060,
+                "confidence": 1.0
+            },
+            {
+                "text": "read",
+                "end_ms": 7460,
+                "start_ms": 7220,
+                "confidence": 1.0
+            },
+            {
+                "text": "are",
+                "end_ms": 7780,
+                "start_ms": 7620,
+                "confidence": 1.0
+            },
+            {
+                "text": "read",
+                "end_ms": 7940,
+                "start_ms": 7780,
+                "confidence": 1.0
+            },
+            {
+                "text": "away",
+                "end_ms": 8260,
+                "start_ms": 7940,
+                "confidence": 1.0
+            },
+            {
+                "text": "from",
+                "end_ms": 8500,
+                "start_ms": 8260,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 8580,
+                "start_ms": 8500,
+                "confidence": 1.0
+            },
+            {
+                "text": "start",
+                "end_ms": 9030,
+                "start_ms": 8710,
+                "confidence": 1.0
+            },
+            {
+                "text": "rather",
+                "end_ms": 9350,
+                "start_ms": 9030,
+                "confidence": 1.0
+            },
+            {
+                "text": "than",
+                "end_ms": 9590,
+                "start_ms": 9350,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 9750,
+                "start_ms": 9590,
+                "confidence": 1.0
+            },
+            {
+                "text": "instead",
+                "end_ms": 10520,
+                "start_ms": 10040,
+                "confidence": 1.0
+            },
+            {
+                "text": "of",
+                "end_ms": 10760,
+                "start_ms": 10520,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 11000,
+                "start_ms": 10760,
+                "confidence": 1.0
+            },
+            {
+                "text": "reacting",
+                "end_ms": 11480,
+                "start_ms": 11000,
+                "confidence": 1.0
+            },
+            {
+                "text": "it",
+                "end_ms": 11640,
+                "start_ms": 11480,
+                "confidence": 1.0
+            },
+            {
+                "text": "after",
+                "end_ms": 12120,
+                "start_ms": 11640,
+                "confidence": 1.0
+            },
+            {
+                "text": "a",
+                "end_ms": 12360,
+                "start_ms": 12120,
+                "confidence": 1.0
+            },
+            {
+                "text": "failure",
+                "end_ms": 12680,
+                "start_ms": 12360,
+                "confidence": 1.0
+            },
+            {
+                "text": "happens",
+                "end_ms": 13000,
+                "start_ms": 12680,
+                "confidence": 1.0
+            },
+            {
+                "text": "so",
+                "end_ms": 13940,
+                "start_ms": 13620,
+                "confidence": 1.0
+            },
+            {
+                "text": "well",
+                "end_ms": 14180,
+                "start_ms": 13940,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 14420,
+                "start_ms": 14180,
+                "confidence": 1.0
+            },
+            {
+                "text": "first",
+                "end_ms": 14740,
+                "start_ms": 14420,
+                "confidence": 1.0
+            },
+            {
+                "text": "thing",
+                "end_ms": 14900,
+                "start_ms": 14740,
+                "confidence": 1.0
+            },
+            {
+                "text": "i",
+                "end_ms": 15060,
+                "start_ms": 14900,
+                "confidence": 1.0
+            },
+            {
+                "text": "would",
+                "end_ms": 15220,
+                "start_ms": 15060,
+                "confidence": 1.0
+            },
+            {
+                "text": "do",
+                "end_ms": 15300,
+                "start_ms": 15220,
+                "confidence": 1.0
+            },
+            {
+                "text": "is",
+                "end_ms": 15460,
+                "start_ms": 15300,
+                "confidence": 1.0
+            },
+            {
+                "text": "understand",
+                "end_ms": 16020,
+                "start_ms": 15460,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 16260,
+                "start_ms": 16020,
+                "confidence": 1.0
+            },
+            {
+                "text": "provider's",
+                "end_ms": 16820,
+                "start_ms": 16260,
+                "confidence": 1.0
+            },
+            {
+                "text": "limit",
+                "end_ms": 17300,
+                "start_ms": 16820,
+                "confidence": 1.0
+            },
+            {
+                "text": "for",
+                "end_ms": 17620,
+                "start_ms": 17300,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 17700,
+                "start_ms": 17620,
+                "confidence": 1.0
+            },
+            {
+                "text": "api",
+                "end_ms": 18240,
+                "start_ms": 17840,
+                "confidence": 1.0
+            },
+            {
+                "text": "for",
+                "end_ms": 18480,
+                "start_ms": 18240,
+                "confidence": 1.0
+            },
+            {
+                "text": "example",
+                "end_ms": 19120,
+                "start_ms": 18480,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 19280,
+                "start_ms": 19120,
+                "confidence": 1.0
+            },
+            {
+                "text": "in",
+                "end_ms": 19710,
+                "start_ms": 19550,
+                "confidence": 1.0
+            },
+            {
+                "text": "your",
+                "end_ms": 19950,
+                "start_ms": 19710,
+                "confidence": 1.0
+            },
+            {
+                "text": "in",
+                "end_ms": 20190,
+                "start_ms": 20030,
+                "confidence": 1.0
+            },
+            {
+                "text": "this",
+                "end_ms": 20350,
+                "start_ms": 20190,
+                "confidence": 1.0
+            },
+            {
+                "text": "case",
+                "end_ms": 20590,
+                "start_ms": 20350,
+                "confidence": 1.0
+            },
+            {
+                "text": "for",
+                "end_ms": 20750,
+                "start_ms": 20590,
+                "confidence": 1.0
+            },
+            {
+                "text": "example",
+                "end_ms": 21070,
+                "start_ms": 20750,
+                "confidence": 1.0
+            },
+            {
+                "text": "it's",
+                "end_ms": 21310,
+                "start_ms": 21070,
+                "confidence": 1.0
+            },
+            {
+                "text": "a",
+                "end_ms": 21390,
+                "start_ms": 21310,
+                "confidence": 1.0
+            },
+            {
+                "text": "permanent",
+                "end_ms": 21790,
+                "start_ms": 21390,
+                "confidence": 1.0
+            },
+            {
+                "text": "rate",
+                "end_ms": 22190,
+                "start_ms": 21790,
+                "confidence": 1.0
+            },
+            {
+                "text": "limit",
+                "end_ms": 22590,
+                "start_ms": 22190,
+                "confidence": 1.0
+            },
+            {
+                "text": "then",
+                "end_ms": 23670,
+                "start_ms": 23190,
+                "confidence": 1.0
+            },
+            {
+                "text": "i",
+                "end_ms": 23830,
+                "start_ms": 23670,
+                "confidence": 1.0
+            },
+            {
+                "text": "would",
+                "end_ms": 24070,
+                "start_ms": 23830,
+                "confidence": 1.0
+            },
+            {
+                "text": "introduce",
+                "end_ms": 24550,
+                "start_ms": 24070,
+                "confidence": 1.0
+            },
+            {
+                "text": "throw",
+                "end_ms": 24870,
+                "start_ms": 24550,
+                "confidence": 1.0
+            },
+            {
+                "text": "introduce",
+                "end_ms": 25830,
+                "start_ms": 25190,
+                "confidence": 1.0
+            },
+            {
+                "text": "something",
+                "end_ms": 26150,
+                "start_ms": 25830,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 26310,
+                "start_ms": 26150,
+                "confidence": 1.0
+            },
+            {
+                "text": "throttle",
+                "end_ms": 26630,
+                "start_ms": 26310,
+                "confidence": 1.0
+            },
+            {
+                "text": "inside",
+                "end_ms": 27120,
+                "start_ms": 26720,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 27280,
+                "start_ms": 27120,
+                "confidence": 1.0
+            },
+            {
+                "text": "connectors",
+                "end_ms": 27680,
+                "start_ms": 27280,
+                "confidence": 1.0
+            },
+            {
+                "text": "or",
+                "end_ms": 27920,
+                "start_ms": 27680,
+                "confidence": 1.0
+            },
+            {
+                "text": "request",
+                "end_ms": 28560,
+                "start_ms": 27920,
+                "confidence": 1.0
+            },
+            {
+                "text": "space",
+                "end_ms": 29120,
+                "start_ms": 28640,
+                "confidence": 1.0
+            },
+            {
+                "text": "within",
+                "end_ms": 29520,
+                "start_ms": 29120,
+                "confidence": 1.0
+            },
+            {
+                "text": "a",
+                "end_ms": 29680,
+                "start_ms": 29520,
+                "confidence": 1.0
+            },
+            {
+                "text": "safe",
+                "end_ms": 29920,
+                "start_ms": 29680,
+                "confidence": 1.0
+            },
+            {
+                "text": "threshold",
+                "end_ms": 30400,
+                "start_ms": 29920,
+                "confidence": 1.0
+            },
+            {
+                "text": "instead",
+                "end_ms": 30800,
+                "start_ms": 30400,
+                "confidence": 1.0
+            },
+            {
+                "text": "of",
+                "end_ms": 31040,
+                "start_ms": 30800,
+                "confidence": 1.0
+            },
+            {
+                "text": "hitting",
+                "end_ms": 31620,
+                "start_ms": 31300,
+                "confidence": 1.0
+            },
+            {
+                "text": "that",
+                "end_ms": 31860,
+                "start_ms": 31620,
+                "confidence": 1.0
+            },
+            {
+                "text": "limit",
+                "end_ms": 32100,
+                "start_ms": 31860,
+                "confidence": 1.0
+            },
+            {
+                "text": "for",
+                "end_ms": 33420,
+                "start_ms": 32620,
+                "confidence": 1.0
+            },
+            {
+                "text": "something",
+                "end_ms": 33740,
+                "start_ms": 33420,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 34140,
+                "start_ms": 33740,
+                "confidence": 1.0
+            },
+            {
+                "text": "errors",
+                "end_ms": 35450,
+                "start_ms": 35050,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 35690,
+                "start_ms": 35450,
+                "confidence": 1.0
+            },
+            {
+                "text": "four",
+                "end_ms": 35930,
+                "start_ms": 35690,
+                "confidence": 1.0
+            },
+            {
+                "text": "twenty",
+                "end_ms": 36170,
+                "start_ms": 35930,
+                "confidence": 1.0
+            },
+            {
+                "text": "nine",
+                "end_ms": 36330,
+                "start_ms": 36170,
+                "confidence": 1.0
+            },
+            {
+                "text": "i",
+                "end_ms": 37330,
+                "start_ms": 36930,
+                "confidence": 1.0
+            },
+            {
+                "text": "would",
+                "end_ms": 37490,
+                "start_ms": 37330,
+                "confidence": 1.0
+            },
+            {
+                "text": "implement",
+                "end_ms": 37890,
+                "start_ms": 37490,
+                "confidence": 1.0
+            },
+            {
+                "text": "i",
+                "end_ms": 38210,
+                "start_ms": 38130,
+                "confidence": 1.0
+            },
+            {
+                "text": "would",
+                "end_ms": 38450,
+                "start_ms": 38210,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 38930,
+                "start_ms": 38450,
+                "confidence": 1.0
+            },
+            {
+                "text": "add",
+                "end_ms": 39410,
+                "start_ms": 39170,
+                "confidence": 1.0
+            },
+            {
+                "text": "response",
+                "end_ms": 40610,
+                "start_ms": 39570,
+                "confidence": 1.0
+            },
+            {
+                "text": "triggers",
+                "end_ms": 41090,
+                "start_ms": 40610,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 41410,
+                "start_ms": 41090,
+                "confidence": 1.0
+            },
+            {
+                "text": "exponential",
+                "end_ms": 42050,
+                "start_ms": 41410,
+                "confidence": 1.0
+            },
+            {
+                "text": "backoffs",
+                "end_ms": 42530,
+                "start_ms": 42050,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 457751,
+        "start_ms": 415221,
+        "question_id": "9ffff440-d383-4201-9cb0-bfe43e0c9d11",
+        "timestamp_ms": 457751
+    },
+    {
+        "role": "candidate",
+        "text": "with jitters.",
+        "words": [
+            {
+                "text": "with",
+                "end_ms": 160,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "jitters",
+                "end_ms": 640,
+                "start_ms": 160,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 458715,
+        "start_ms": 458075,
+        "question_id": "9ffff440-d383-4201-9cb0-bfe43e0c9d11",
+        "timestamp_ms": 458715
+    },
+    {
+        "role": "agent",
+        "text": "I see — throttling and backoff…",
+        "words": null,
+        "end_ms": null,
+        "start_ms": null,
+        "question_id": null,
+        "timestamp_ms": 460219
+    },
+    {
+        "role": "agent",
+        "text": "How would you ensure idempotency on retries?",
+        "words": null,
+        "end_ms": null,
+        "start_ms": null,
+        "question_id": "9ffff440-d383-4201-9cb0-bfe43e0c9d11",
+        "timestamp_ms": 463300
+    },
+    {
+        "role": "candidate",
+        "text": "So yeah. So sure. So I can make sure item is properly I'd use, like, idempotency keys so that retries don't care don't create any duplicate. Duplicates during any kind of post operations.",
+        "words": [
+            {
+                "text": "so",
+                "end_ms": 400,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "yeah",
+                "end_ms": 880,
+                "start_ms": 480,
+                "confidence": 1.0
+            },
+            {
+                "text": "so",
+                "end_ms": 1120,
+                "start_ms": 880,
+                "confidence": 1.0
+            },
+            {
+                "text": "sure",
+                "end_ms": 1440,
+                "start_ms": 1120,
+                "confidence": 1.0
+            },
+            {
+                "text": "so",
+                "end_ms": 1600,
+                "start_ms": 1440,
+                "confidence": 1.0
+            },
+            {
+                "text": "i",
+                "end_ms": 1760,
+                "start_ms": 1600,
+                "confidence": 1.0
+            },
+            {
+                "text": "can",
+                "end_ms": 1840,
+                "start_ms": 1760,
+                "confidence": 1.0
+            },
+            {
+                "text": "make",
+                "end_ms": 2080,
+                "start_ms": 1840,
+                "confidence": 1.0
+            },
+            {
+                "text": "sure",
+                "end_ms": 2410,
+                "start_ms": 2170,
+                "confidence": 1.0
+            },
+            {
+                "text": "item",
+                "end_ms": 2890,
+                "start_ms": 2410,
+                "confidence": 1.0
+            },
+            {
+                "text": "is",
+                "end_ms": 3210,
+                "start_ms": 2890,
+                "confidence": 1.0
+            },
+            {
+                "text": "properly",
+                "end_ms": 4090,
+                "start_ms": 3210,
+                "confidence": 1.0
+            },
+            {
+                "text": "i'd",
+                "end_ms": 5470,
+                "start_ms": 5150,
+                "confidence": 1.0
+            },
+            {
+                "text": "use",
+                "end_ms": 5710,
+                "start_ms": 5470,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 5870,
+                "start_ms": 5710,
+                "confidence": 1.0
+            },
+            {
+                "text": "idempotency",
+                "end_ms": 6510,
+                "start_ms": 5870,
+                "confidence": 1.0
+            },
+            {
+                "text": "keys",
+                "end_ms": 6830,
+                "start_ms": 6510,
+                "confidence": 1.0
+            },
+            {
+                "text": "so",
+                "end_ms": 7150,
+                "start_ms": 6830,
+                "confidence": 1.0
+            },
+            {
+                "text": "that",
+                "end_ms": 7310,
+                "start_ms": 7150,
+                "confidence": 1.0
+            },
+            {
+                "text": "retries",
+                "end_ms": 7950,
+                "start_ms": 7310,
+                "confidence": 1.0
+            },
+            {
+                "text": "don't",
+                "end_ms": 8270,
+                "start_ms": 7950,
+                "confidence": 1.0
+            },
+            {
+                "text": "care",
+                "end_ms": 8510,
+                "start_ms": 8270,
+                "confidence": 1.0
+            },
+            {
+                "text": "don't",
+                "end_ms": 8990,
+                "start_ms": 8670,
+                "confidence": 1.0
+            },
+            {
+                "text": "create",
+                "end_ms": 9380,
+                "start_ms": 9140,
+                "confidence": 1.0
+            },
+            {
+                "text": "any",
+                "end_ms": 9620,
+                "start_ms": 9380,
+                "confidence": 1.0
+            },
+            {
+                "text": "duplicate",
+                "end_ms": 9860,
+                "start_ms": 9620,
+                "confidence": 1.0
+            },
+            {
+                "text": "duplicates",
+                "end_ms": 10440,
+                "start_ms": 9800,
+                "confidence": 1.0
+            },
+            {
+                "text": "during",
+                "end_ms": 11000,
+                "start_ms": 10440,
+                "confidence": 1.0
+            },
+            {
+                "text": "any",
+                "end_ms": 11560,
+                "start_ms": 11000,
+                "confidence": 1.0
+            },
+            {
+                "text": "kind",
+                "end_ms": 11880,
+                "start_ms": 11560,
+                "confidence": 1.0
+            },
+            {
+                "text": "of",
+                "end_ms": 11960,
+                "start_ms": 11880,
+                "confidence": 1.0
+            },
+            {
+                "text": "post",
+                "end_ms": 12720,
+                "start_ms": 12400,
+                "confidence": 1.0
+            },
+            {
+                "text": "operations",
+                "end_ms": 13200,
+                "start_ms": 12720,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 484258,
+        "start_ms": 471058,
+        "question_id": "9ffff440-d383-4201-9cb0-bfe43e0c9d11",
+        "timestamp_ms": 484258
+    },
+    {
+        "role": "candidate",
+        "text": "Even if if it's during the day tries and everything, So we keep on track, so we are not building any including any duplicates.",
+        "words": [
+            {
+                "text": "even",
+                "end_ms": 320,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "if",
+                "end_ms": 560,
+                "start_ms": 320,
+                "confidence": 1.0
+            },
+            {
+                "text": "if",
+                "end_ms": 800,
+                "start_ms": 560,
+                "confidence": 1.0
+            },
+            {
+                "text": "it's",
+                "end_ms": 1040,
+                "start_ms": 800,
+                "confidence": 1.0
+            },
+            {
+                "text": "during",
+                "end_ms": 1440,
+                "start_ms": 1040,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 1600,
+                "start_ms": 1440,
+                "confidence": 1.0
+            },
+            {
+                "text": "day",
+                "end_ms": 1840,
+                "start_ms": 1600,
+                "confidence": 1.0
+            },
+            {
+                "text": "tries",
+                "end_ms": 2320,
+                "start_ms": 1840,
+                "confidence": 1.0
+            },
+            {
+                "text": "and",
+                "end_ms": 2560,
+                "start_ms": 2320,
+                "confidence": 1.0
+            },
+            {
+                "text": "everything",
+                "end_ms": 2880,
+                "start_ms": 2560,
+                "confidence": 1.0
+            },
+            {
+                "text": "so",
+                "end_ms": 3560,
+                "start_ms": 3240,
+                "confidence": 1.0
+            },
+            {
+                "text": "we",
+                "end_ms": 3800,
+                "start_ms": 3560,
+                "confidence": 1.0
+            },
+            {
+                "text": "keep",
+                "end_ms": 4040,
+                "start_ms": 3800,
+                "confidence": 1.0
+            },
+            {
+                "text": "on",
+                "end_ms": 4200,
+                "start_ms": 4040,
+                "confidence": 1.0
+            },
+            {
+                "text": "track",
+                "end_ms": 4520,
+                "start_ms": 4200,
+                "confidence": 1.0
+            },
+            {
+                "text": "so",
+                "end_ms": 4600,
+                "start_ms": 4520,
+                "confidence": 1.0
+            },
+            {
+                "text": "we",
+                "end_ms": 4760,
+                "start_ms": 4600,
+                "confidence": 1.0
+            },
+            {
+                "text": "are",
+                "end_ms": 4840,
+                "start_ms": 4760,
+                "confidence": 1.0
+            },
+            {
+                "text": "not",
+                "end_ms": 5000,
+                "start_ms": 4840,
+                "confidence": 1.0
+            },
+            {
+                "text": "building",
+                "end_ms": 5660,
+                "start_ms": 5180,
+                "confidence": 1.0
+            },
+            {
+                "text": "any",
+                "end_ms": 5900,
+                "start_ms": 5660,
+                "confidence": 1.0
+            },
+            {
+                "text": "including",
+                "end_ms": 6380,
+                "start_ms": 5980,
+                "confidence": 1.0
+            },
+            {
+                "text": "any",
+                "end_ms": 6620,
+                "start_ms": 6380,
+                "confidence": 1.0
+            },
+            {
+                "text": "duplicates",
+                "end_ms": 7180,
+                "start_ms": 6620,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 491805,
+        "start_ms": 484625,
+        "question_id": "9ffff440-d383-4201-9cb0-bfe43e0c9d11",
+        "timestamp_ms": 491805
+    },
+    {
+        "role": "agent",
+        "text": "Got it — idempotency keys…",
+        "words": null,
+        "end_ms": null,
+        "start_ms": null,
+        "question_id": null,
+        "timestamp_ms": 493654
+    },
+    {
+        "role": "agent",
+        "text": "In whichever of Java, Python, or Ruby you’re strongest, how would you implement a robust JSON transform that validates and maps fields for an integration step?",
+        "words": null,
+        "end_ms": null,
+        "start_ms": null,
+        "question_id": "4f648441-f43c-4e15-94f4-b238d81794bc",
+        "timestamp_ms": 497126
+    },
+    {
+        "role": "candidate",
+        "text": "Sure. So, like, have most of my life, I've been working in Python, so I'll answer with Python. So in Python, like, I instead of building just one function, I'd separate this into, like, three different separate functions. So, like, forward validation, transformation, and mapping logic. Separating this helps us with the maintainability.",
+        "words": [
+            {
+                "text": "sure",
+                "end_ms": 480,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "so",
+                "end_ms": 640,
+                "start_ms": 480,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 1120,
+                "start_ms": 640,
+                "confidence": 1.0
+            },
+            {
+                "text": "have",
+                "end_ms": 1680,
+                "start_ms": 1440,
+                "confidence": 1.0
+            },
+            {
+                "text": "most",
+                "end_ms": 2370,
+                "start_ms": 1730,
+                "confidence": 1.0
+            },
+            {
+                "text": "of",
+                "end_ms": 2610,
+                "start_ms": 2370,
+                "confidence": 1.0
+            },
+            {
+                "text": "my",
+                "end_ms": 2770,
+                "start_ms": 2610,
+                "confidence": 1.0
+            },
+            {
+                "text": "life",
+                "end_ms": 3090,
+                "start_ms": 2770,
+                "confidence": 1.0
+            },
+            {
+                "text": "i've",
+                "end_ms": 3250,
+                "start_ms": 3090,
+                "confidence": 1.0
+            },
+            {
+                "text": "been",
+                "end_ms": 3330,
+                "start_ms": 3250,
+                "confidence": 1.0
+            },
+            {
+                "text": "working",
+                "end_ms": 3570,
+                "start_ms": 3330,
+                "confidence": 1.0
+            },
+            {
+                "text": "in",
+                "end_ms": 3730,
+                "start_ms": 3570,
+                "confidence": 1.0
+            },
+            {
+                "text": "python",
+                "end_ms": 4130,
+                "start_ms": 3730,
+                "confidence": 1.0
+            },
+            {
+                "text": "so",
+                "end_ms": 4290,
+                "start_ms": 4130,
+                "confidence": 1.0
+            },
+            {
+                "text": "i'll",
+                "end_ms": 4610,
+                "start_ms": 4290,
+                "confidence": 1.0
+            },
+            {
+                "text": "answer",
+                "end_ms": 4930,
+                "start_ms": 4610,
+                "confidence": 1.0
+            },
+            {
+                "text": "with",
+                "end_ms": 5260,
+                "start_ms": 5020,
+                "confidence": 1.0
+            },
+            {
+                "text": "python",
+                "end_ms": 5660,
+                "start_ms": 5260,
+                "confidence": 1.0
+            },
+            {
+                "text": "so",
+                "end_ms": 5820,
+                "start_ms": 5660,
+                "confidence": 1.0
+            },
+            {
+                "text": "in",
+                "end_ms": 5980,
+                "start_ms": 5820,
+                "confidence": 1.0
+            },
+            {
+                "text": "python",
+                "end_ms": 6380,
+                "start_ms": 5980,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 6620,
+                "start_ms": 6380,
+                "confidence": 1.0
+            },
+            {
+                "text": "i",
+                "end_ms": 6700,
+                "start_ms": 6620,
+                "confidence": 1.0
+            },
+            {
+                "text": "instead",
+                "end_ms": 8060,
+                "start_ms": 7660,
+                "confidence": 1.0
+            },
+            {
+                "text": "of",
+                "end_ms": 8300,
+                "start_ms": 8060,
+                "confidence": 1.0
+            },
+            {
+                "text": "building",
+                "end_ms": 8700,
+                "start_ms": 8300,
+                "confidence": 1.0
+            },
+            {
+                "text": "just",
+                "end_ms": 8940,
+                "start_ms": 8700,
+                "confidence": 1.0
+            },
+            {
+                "text": "one",
+                "end_ms": 9180,
+                "start_ms": 8940,
+                "confidence": 1.0
+            },
+            {
+                "text": "function",
+                "end_ms": 9420,
+                "start_ms": 9180,
+                "confidence": 1.0
+            },
+            {
+                "text": "i'd",
+                "end_ms": 10060,
+                "start_ms": 9740,
+                "confidence": 1.0
+            },
+            {
+                "text": "separate",
+                "end_ms": 10460,
+                "start_ms": 10060,
+                "confidence": 1.0
+            },
+            {
+                "text": "this",
+                "end_ms": 10620,
+                "start_ms": 10460,
+                "confidence": 1.0
+            },
+            {
+                "text": "into",
+                "end_ms": 11020,
+                "start_ms": 10620,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 11180,
+                "start_ms": 11020,
+                "confidence": 1.0
+            },
+            {
+                "text": "three",
+                "end_ms": 11340,
+                "start_ms": 11180,
+                "confidence": 1.0
+            },
+            {
+                "text": "different",
+                "end_ms": 11580,
+                "start_ms": 11340,
+                "confidence": 1.0
+            },
+            {
+                "text": "separate",
+                "end_ms": 12620,
+                "start_ms": 11740,
+                "confidence": 1.0
+            },
+            {
+                "text": "functions",
+                "end_ms": 12860,
+                "start_ms": 12620,
+                "confidence": 1.0
+            },
+            {
+                "text": "so",
+                "end_ms": 13370,
+                "start_ms": 13130,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 13610,
+                "start_ms": 13370,
+                "confidence": 1.0
+            },
+            {
+                "text": "forward",
+                "end_ms": 13850,
+                "start_ms": 13610,
+                "confidence": 1.0
+            },
+            {
+                "text": "validation",
+                "end_ms": 14570,
+                "start_ms": 13850,
+                "confidence": 1.0
+            },
+            {
+                "text": "transformation",
+                "end_ms": 15290,
+                "start_ms": 14570,
+                "confidence": 1.0
+            },
+            {
+                "text": "and",
+                "end_ms": 15370,
+                "start_ms": 15290,
+                "confidence": 1.0
+            },
+            {
+                "text": "mapping",
+                "end_ms": 15690,
+                "start_ms": 15370,
+                "confidence": 1.0
+            },
+            {
+                "text": "logic",
+                "end_ms": 16010,
+                "start_ms": 15690,
+                "confidence": 1.0
+            },
+            {
+                "text": "separating",
+                "end_ms": 17440,
+                "start_ms": 16960,
+                "confidence": 1.0
+            },
+            {
+                "text": "this",
+                "end_ms": 17920,
+                "start_ms": 17440,
+                "confidence": 1.0
+            },
+            {
+                "text": "helps",
+                "end_ms": 18400,
+                "start_ms": 17920,
+                "confidence": 1.0
+            },
+            {
+                "text": "us",
+                "end_ms": 18640,
+                "start_ms": 18400,
+                "confidence": 1.0
+            },
+            {
+                "text": "with",
+                "end_ms": 18800,
+                "start_ms": 18640,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 18960,
+                "start_ms": 18800,
+                "confidence": 1.0
+            },
+            {
+                "text": "maintainability",
+                "end_ms": 19600,
+                "start_ms": 18960,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 529702,
+        "start_ms": 510102,
+        "question_id": "4f648441-f43c-4e15-94f4-b238d81794bc",
+        "timestamp_ms": 529702
+    },
+    {
+        "role": "candidate",
+        "text": "And the ability of everything. So, like, first, I I'd validate the incoming JSON against expected schema to ensure required field success and the data types are correct.",
+        "words": [
+            {
+                "text": "and",
+                "end_ms": 320,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 480,
+                "start_ms": 320,
+                "confidence": 1.0
+            },
+            {
+                "text": "ability",
+                "end_ms": 800,
+                "start_ms": 480,
+                "confidence": 1.0
+            },
+            {
+                "text": "of",
+                "end_ms": 1040,
+                "start_ms": 800,
+                "confidence": 1.0
+            },
+            {
+                "text": "everything",
+                "end_ms": 1520,
+                "start_ms": 1040,
+                "confidence": 1.0
+            },
+            {
+                "text": "so",
+                "end_ms": 1760,
+                "start_ms": 1520,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 2000,
+                "start_ms": 1760,
+                "confidence": 1.0
+            },
+            {
+                "text": "first",
+                "end_ms": 2240,
+                "start_ms": 2000,
+                "confidence": 1.0
+            },
+            {
+                "text": "i",
+                "end_ms": 2320,
+                "start_ms": 2240,
+                "confidence": 1.0
+            },
+            {
+                "text": "i'd",
+                "end_ms": 4780,
+                "start_ms": 4460,
+                "confidence": 1.0
+            },
+            {
+                "text": "validate",
+                "end_ms": 5100,
+                "start_ms": 4780,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 5340,
+                "start_ms": 5100,
+                "confidence": 1.0
+            },
+            {
+                "text": "incoming",
+                "end_ms": 5740,
+                "start_ms": 5340,
+                "confidence": 1.0
+            },
+            {
+                "text": "json",
+                "end_ms": 6220,
+                "start_ms": 5740,
+                "confidence": 1.0
+            },
+            {
+                "text": "against",
+                "end_ms": 6620,
+                "start_ms": 6220,
+                "confidence": 1.0
+            },
+            {
+                "text": "expected",
+                "end_ms": 7720,
+                "start_ms": 7320,
+                "confidence": 1.0
+            },
+            {
+                "text": "schema",
+                "end_ms": 8280,
+                "start_ms": 7720,
+                "confidence": 1.0
+            },
+            {
+                "text": "to",
+                "end_ms": 8440,
+                "start_ms": 8280,
+                "confidence": 1.0
+            },
+            {
+                "text": "ensure",
+                "end_ms": 8760,
+                "start_ms": 8440,
+                "confidence": 1.0
+            },
+            {
+                "text": "required",
+                "end_ms": 9160,
+                "start_ms": 8760,
+                "confidence": 1.0
+            },
+            {
+                "text": "field",
+                "end_ms": 9480,
+                "start_ms": 9160,
+                "confidence": 1.0
+            },
+            {
+                "text": "success",
+                "end_ms": 9960,
+                "start_ms": 9480,
+                "confidence": 1.0
+            },
+            {
+                "text": "and",
+                "end_ms": 10200,
+                "start_ms": 9960,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 10360,
+                "start_ms": 10200,
+                "confidence": 1.0
+            },
+            {
+                "text": "data",
+                "end_ms": 10600,
+                "start_ms": 10360,
+                "confidence": 1.0
+            },
+            {
+                "text": "types",
+                "end_ms": 10840,
+                "start_ms": 10600,
+                "confidence": 1.0
+            },
+            {
+                "text": "are",
+                "end_ms": 11000,
+                "start_ms": 10840,
+                "confidence": 1.0
+            },
+            {
+                "text": "correct",
+                "end_ms": 11240,
+                "start_ms": 11000,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 542003,
+        "start_ms": 530763,
+        "question_id": "4f648441-f43c-4e15-94f4-b238d81794bc",
+        "timestamp_ms": 542003
+    },
+    {
+        "role": "candidate",
+        "text": "Then I would like map source fields into the target using transformation.",
+        "words": [
+            {
+                "text": "then",
+                "end_ms": 320,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "i",
+                "end_ms": 560,
+                "start_ms": 320,
+                "confidence": 1.0
+            },
+            {
+                "text": "would",
+                "end_ms": 880,
+                "start_ms": 560,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 1040,
+                "start_ms": 880,
+                "confidence": 1.0
+            },
+            {
+                "text": "map",
+                "end_ms": 1360,
+                "start_ms": 1040,
+                "confidence": 1.0
+            },
+            {
+                "text": "source",
+                "end_ms": 1680,
+                "start_ms": 1360,
+                "confidence": 1.0
+            },
+            {
+                "text": "fields",
+                "end_ms": 2000,
+                "start_ms": 1680,
+                "confidence": 1.0
+            },
+            {
+                "text": "into",
+                "end_ms": 2320,
+                "start_ms": 2000,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 2960,
+                "start_ms": 2320,
+                "confidence": 1.0
+            },
+            {
+                "text": "target",
+                "end_ms": 3360,
+                "start_ms": 2960,
+                "confidence": 1.0
+            },
+            {
+                "text": "using",
+                "end_ms": 4110,
+                "start_ms": 3630,
+                "confidence": 1.0
+            },
+            {
+                "text": "transformation",
+                "end_ms": 4750,
+                "start_ms": 4110,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 551150,
+        "start_ms": 546400,
+        "question_id": "4f648441-f43c-4e15-94f4-b238d81794bc",
+        "timestamp_ms": 551150
+    },
+    {
+        "role": "candidate",
+        "text": "Transformation functions instead of, like, hardcore environment. For example, data normalization, you know, mapping, nested field flattening, and then setting default values for missing fields. Then I'll also handle, like, invalid payload gracefully using structured exceptions rather than fillings, like, silently. And, like, I do use, type models or serializers where possible to reduce runtime issues. And, like, at the end, like, just like everything else, I'd like to do proper locking and unit testing to validate mapping behavior",
+        "words": [
+            {
+                "text": "transformation",
+                "end_ms": 560,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "functions",
+                "end_ms": 1120,
+                "start_ms": 560,
+                "confidence": 1.0
+            },
+            {
+                "text": "instead",
+                "end_ms": 1520,
+                "start_ms": 1120,
+                "confidence": 1.0
+            },
+            {
+                "text": "of",
+                "end_ms": 1760,
+                "start_ms": 1520,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 2000,
+                "start_ms": 1760,
+                "confidence": 1.0
+            },
+            {
+                "text": "hardcore",
+                "end_ms": 2400,
+                "start_ms": 2000,
+                "confidence": 1.0
+            },
+            {
+                "text": "environment",
+                "end_ms": 2800,
+                "start_ms": 2400,
+                "confidence": 1.0
+            },
+            {
+                "text": "for",
+                "end_ms": 4220,
+                "start_ms": 3980,
+                "confidence": 1.0
+            },
+            {
+                "text": "example",
+                "end_ms": 4700,
+                "start_ms": 4220,
+                "confidence": 1.0
+            },
+            {
+                "text": "data",
+                "end_ms": 5020,
+                "start_ms": 4700,
+                "confidence": 1.0
+            },
+            {
+                "text": "normalization",
+                "end_ms": 5980,
+                "start_ms": 5020,
+                "confidence": 1.0
+            },
+            {
+                "text": "you",
+                "end_ms": 6380,
+                "start_ms": 6300,
+                "confidence": 1.0
+            },
+            {
+                "text": "know",
+                "end_ms": 6540,
+                "start_ms": 6380,
+                "confidence": 1.0
+            },
+            {
+                "text": "mapping",
+                "end_ms": 6940,
+                "start_ms": 6540,
+                "confidence": 1.0
+            },
+            {
+                "text": "nested",
+                "end_ms": 7970,
+                "start_ms": 7250,
+                "confidence": 1.0
+            },
+            {
+                "text": "field",
+                "end_ms": 8290,
+                "start_ms": 7970,
+                "confidence": 1.0
+            },
+            {
+                "text": "flattening",
+                "end_ms": 9010,
+                "start_ms": 8290,
+                "confidence": 1.0
+            },
+            {
+                "text": "and",
+                "end_ms": 9170,
+                "start_ms": 9010,
+                "confidence": 1.0
+            },
+            {
+                "text": "then",
+                "end_ms": 9330,
+                "start_ms": 9170,
+                "confidence": 1.0
+            },
+            {
+                "text": "setting",
+                "end_ms": 9730,
+                "start_ms": 9330,
+                "confidence": 1.0
+            },
+            {
+                "text": "default",
+                "end_ms": 10130,
+                "start_ms": 9730,
+                "confidence": 1.0
+            },
+            {
+                "text": "values",
+                "end_ms": 10530,
+                "start_ms": 10130,
+                "confidence": 1.0
+            },
+            {
+                "text": "for",
+                "end_ms": 10770,
+                "start_ms": 10530,
+                "confidence": 1.0
+            },
+            {
+                "text": "missing",
+                "end_ms": 11170,
+                "start_ms": 10770,
+                "confidence": 1.0
+            },
+            {
+                "text": "fields",
+                "end_ms": 11490,
+                "start_ms": 11170,
+                "confidence": 1.0
+            },
+            {
+                "text": "then",
+                "end_ms": 12690,
+                "start_ms": 12370,
+                "confidence": 1.0
+            },
+            {
+                "text": "i'll",
+                "end_ms": 13010,
+                "start_ms": 12690,
+                "confidence": 1.0
+            },
+            {
+                "text": "also",
+                "end_ms": 13170,
+                "start_ms": 13010,
+                "confidence": 1.0
+            },
+            {
+                "text": "handle",
+                "end_ms": 13650,
+                "start_ms": 13170,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 13810,
+                "start_ms": 13650,
+                "confidence": 1.0
+            },
+            {
+                "text": "invalid",
+                "end_ms": 14210,
+                "start_ms": 13810,
+                "confidence": 1.0
+            },
+            {
+                "text": "payload",
+                "end_ms": 14610,
+                "start_ms": 14210,
+                "confidence": 1.0
+            },
+            {
+                "text": "gracefully",
+                "end_ms": 15250,
+                "start_ms": 14610,
+                "confidence": 1.0
+            },
+            {
+                "text": "using",
+                "end_ms": 15730,
+                "start_ms": 15250,
+                "confidence": 1.0
+            },
+            {
+                "text": "structured",
+                "end_ms": 16130,
+                "start_ms": 15730,
+                "confidence": 1.0
+            },
+            {
+                "text": "exceptions",
+                "end_ms": 18190,
+                "start_ms": 17470,
+                "confidence": 1.0
+            },
+            {
+                "text": "rather",
+                "end_ms": 18590,
+                "start_ms": 18190,
+                "confidence": 1.0
+            },
+            {
+                "text": "than",
+                "end_ms": 18750,
+                "start_ms": 18590,
+                "confidence": 1.0
+            },
+            {
+                "text": "fillings",
+                "end_ms": 19230,
+                "start_ms": 18750,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 19470,
+                "start_ms": 19230,
+                "confidence": 1.0
+            },
+            {
+                "text": "silently",
+                "end_ms": 19950,
+                "start_ms": 19470,
+                "confidence": 1.0
+            },
+            {
+                "text": "and",
+                "end_ms": 21420,
+                "start_ms": 21100,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 21580,
+                "start_ms": 21420,
+                "confidence": 1.0
+            },
+            {
+                "text": "i",
+                "end_ms": 21740,
+                "start_ms": 21580,
+                "confidence": 1.0
+            },
+            {
+                "text": "do",
+                "end_ms": 21900,
+                "start_ms": 21740,
+                "confidence": 1.0
+            },
+            {
+                "text": "use",
+                "end_ms": 22300,
+                "start_ms": 21900,
+                "confidence": 1.0
+            },
+            {
+                "text": "type",
+                "end_ms": 22460,
+                "start_ms": 22300,
+                "confidence": 1.0
+            },
+            {
+                "text": "models",
+                "end_ms": 23180,
+                "start_ms": 22460,
+                "confidence": 1.0
+            },
+            {
+                "text": "or",
+                "end_ms": 23580,
+                "start_ms": 23180,
+                "confidence": 1.0
+            },
+            {
+                "text": "serializers",
+                "end_ms": 24300,
+                "start_ms": 23580,
+                "confidence": 1.0
+            },
+            {
+                "text": "where",
+                "end_ms": 25100,
+                "start_ms": 24300,
+                "confidence": 1.0
+            },
+            {
+                "text": "possible",
+                "end_ms": 25500,
+                "start_ms": 25100,
+                "confidence": 1.0
+            },
+            {
+                "text": "to",
+                "end_ms": 25910,
+                "start_ms": 25670,
+                "confidence": 1.0
+            },
+            {
+                "text": "reduce",
+                "end_ms": 26470,
+                "start_ms": 25910,
+                "confidence": 1.0
+            },
+            {
+                "text": "runtime",
+                "end_ms": 26950,
+                "start_ms": 26470,
+                "confidence": 1.0
+            },
+            {
+                "text": "issues",
+                "end_ms": 27270,
+                "start_ms": 26950,
+                "confidence": 1.0
+            },
+            {
+                "text": "and",
+                "end_ms": 28790,
+                "start_ms": 28150,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 28950,
+                "start_ms": 28790,
+                "confidence": 1.0
+            },
+            {
+                "text": "at",
+                "end_ms": 29190,
+                "start_ms": 28950,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 29350,
+                "start_ms": 29190,
+                "confidence": 1.0
+            },
+            {
+                "text": "end",
+                "end_ms": 29590,
+                "start_ms": 29350,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 29830,
+                "start_ms": 29590,
+                "confidence": 1.0
+            },
+            {
+                "text": "just",
+                "end_ms": 29990,
+                "start_ms": 29830,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 30230,
+                "start_ms": 29990,
+                "confidence": 1.0
+            },
+            {
+                "text": "everything",
+                "end_ms": 30630,
+                "start_ms": 30230,
+                "confidence": 1.0
+            },
+            {
+                "text": "else",
+                "end_ms": 30870,
+                "start_ms": 30630,
+                "confidence": 1.0
+            },
+            {
+                "text": "i'd",
+                "end_ms": 31110,
+                "start_ms": 30870,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 31190,
+                "start_ms": 31110,
+                "confidence": 1.0
+            },
+            {
+                "text": "to",
+                "end_ms": 32090,
+                "start_ms": 31290,
+                "confidence": 1.0
+            },
+            {
+                "text": "do",
+                "end_ms": 32170,
+                "start_ms": 32090,
+                "confidence": 1.0
+            },
+            {
+                "text": "proper",
+                "end_ms": 32490,
+                "start_ms": 32170,
+                "confidence": 1.0
+            },
+            {
+                "text": "locking",
+                "end_ms": 32890,
+                "start_ms": 32490,
+                "confidence": 1.0
+            },
+            {
+                "text": "and",
+                "end_ms": 33050,
+                "start_ms": 32890,
+                "confidence": 1.0
+            },
+            {
+                "text": "unit",
+                "end_ms": 33370,
+                "start_ms": 33050,
+                "confidence": 1.0
+            },
+            {
+                "text": "testing",
+                "end_ms": 33690,
+                "start_ms": 33370,
+                "confidence": 1.0
+            },
+            {
+                "text": "to",
+                "end_ms": 33930,
+                "start_ms": 33690,
+                "confidence": 1.0
+            },
+            {
+                "text": "validate",
+                "end_ms": 34570,
+                "start_ms": 33930,
+                "confidence": 1.0
+            },
+            {
+                "text": "mapping",
+                "end_ms": 35130,
+                "start_ms": 34570,
+                "confidence": 1.0
+            },
+            {
+                "text": "behavior",
+                "end_ms": 35450,
+                "start_ms": 35130,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 584648,
+        "start_ms": 549198,
+        "question_id": "4f648441-f43c-4e15-94f4-b238d81794bc",
+        "timestamp_ms": 584648
+    },
+    {
+        "role": "candidate",
+        "text": "across edge cases.",
+        "words": [
+            {
+                "text": "across",
+                "end_ms": 480,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "edge",
+                "end_ms": 880,
+                "start_ms": 480,
+                "confidence": 1.0
+            },
+            {
+                "text": "cases",
+                "end_ms": 1200,
+                "start_ms": 880,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 585306,
+        "start_ms": 584106,
+        "question_id": "4f648441-f43c-4e15-94f4-b238d81794bc",
+        "timestamp_ms": 585306
+    },
+    {
+        "role": "agent",
+        "text": "Got it — Python, validation and mapping…",
+        "words": null,
+        "end_ms": null,
+        "start_ms": null,
+        "question_id": null,
+        "timestamp_ms": 587152
+    },
+    {
+        "role": "agent",
+        "text": "Tell me about a time you led an integration project and had to align cross-functional teams on requirements.",
+        "words": null,
+        "end_ms": null,
+        "start_ms": null,
+        "question_id": "07b4442d-b9d7-4445-8a0a-ec3cef5777a9",
+        "timestamp_ms": 590325
+    },
+    {
+        "role": "candidate",
+        "text": "Sure. So, like, one integration project and there involved connecting multiple systems that different teams depended on. For operational workflow. The challenge was the engineering on operation and the business stakeholders.",
+        "words": [
+            {
+                "text": "sure",
+                "end_ms": 480,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "so",
+                "end_ms": 720,
+                "start_ms": 480,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 1200,
+                "start_ms": 720,
+                "confidence": 1.0
+            },
+            {
+                "text": "one",
+                "end_ms": 1440,
+                "start_ms": 1200,
+                "confidence": 1.0
+            },
+            {
+                "text": "integration",
+                "end_ms": 1920,
+                "start_ms": 1440,
+                "confidence": 1.0
+            },
+            {
+                "text": "project",
+                "end_ms": 2320,
+                "start_ms": 1920,
+                "confidence": 1.0
+            },
+            {
+                "text": "and",
+                "end_ms": 2560,
+                "start_ms": 2320,
+                "confidence": 1.0
+            },
+            {
+                "text": "there",
+                "end_ms": 2720,
+                "start_ms": 2560,
+                "confidence": 1.0
+            },
+            {
+                "text": "involved",
+                "end_ms": 3350,
+                "start_ms": 2870,
+                "confidence": 1.0
+            },
+            {
+                "text": "connecting",
+                "end_ms": 3910,
+                "start_ms": 3350,
+                "confidence": 1.0
+            },
+            {
+                "text": "multiple",
+                "end_ms": 4310,
+                "start_ms": 3910,
+                "confidence": 1.0
+            },
+            {
+                "text": "systems",
+                "end_ms": 4710,
+                "start_ms": 4310,
+                "confidence": 1.0
+            },
+            {
+                "text": "that",
+                "end_ms": 5030,
+                "start_ms": 4710,
+                "confidence": 1.0
+            },
+            {
+                "text": "different",
+                "end_ms": 5350,
+                "start_ms": 5030,
+                "confidence": 1.0
+            },
+            {
+                "text": "teams",
+                "end_ms": 5670,
+                "start_ms": 5350,
+                "confidence": 1.0
+            },
+            {
+                "text": "depended",
+                "end_ms": 6150,
+                "start_ms": 5670,
+                "confidence": 1.0
+            },
+            {
+                "text": "on",
+                "end_ms": 6230,
+                "start_ms": 6150,
+                "confidence": 1.0
+            },
+            {
+                "text": "for",
+                "end_ms": 7070,
+                "start_ms": 6830,
+                "confidence": 1.0
+            },
+            {
+                "text": "operational",
+                "end_ms": 7550,
+                "start_ms": 7070,
+                "confidence": 1.0
+            },
+            {
+                "text": "workflow",
+                "end_ms": 8190,
+                "start_ms": 7550,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 8510,
+                "start_ms": 8190,
+                "confidence": 1.0
+            },
+            {
+                "text": "challenge",
+                "end_ms": 8830,
+                "start_ms": 8510,
+                "confidence": 1.0
+            },
+            {
+                "text": "was",
+                "end_ms": 9070,
+                "start_ms": 8830,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 9230,
+                "start_ms": 9070,
+                "confidence": 1.0
+            },
+            {
+                "text": "engineering",
+                "end_ms": 9710,
+                "start_ms": 9230,
+                "confidence": 1.0
+            },
+            {
+                "text": "on",
+                "end_ms": 10030,
+                "start_ms": 9710,
+                "confidence": 1.0
+            },
+            {
+                "text": "operation",
+                "end_ms": 10510,
+                "start_ms": 10030,
+                "confidence": 1.0
+            },
+            {
+                "text": "and",
+                "end_ms": 10750,
+                "start_ms": 10510,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 10910,
+                "start_ms": 10750,
+                "confidence": 1.0
+            },
+            {
+                "text": "business",
+                "end_ms": 11490,
+                "start_ms": 11090,
+                "confidence": 1.0
+            },
+            {
+                "text": "stakeholders",
+                "end_ms": 12050,
+                "start_ms": 11490,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 614255,
+        "start_ms": 602205,
+        "question_id": "07b4442d-b9d7-4445-8a0a-ec3cef5777a9",
+        "timestamp_ms": 614255
+    },
+    {
+        "role": "candidate",
+        "text": "All had, like, slightly different expectations around the how the data should move and what the success criteria work. So my role was to first align requirement and ensure the integration is all the actual operational problem instead of just moving data between systems. I started by running requirement gathering sessions with each stakeholder group. Dependencies, failures, and Then I documented the integration flow API contract. So pay load structure and then ownership boundaries. So everyone had a shared understanding during implementation I schedule checkpoints with stakeholders to validate the assumption and avoid late surprises. Uh, as a result, uh, we delivered the with fewer production issues and significantly reduced my operation work.",
+        "words": [
+            {
+                "text": "all",
+                "end_ms": 400,
+                "start_ms": 0,
+                "confidence": 1.0
+            },
+            {
+                "text": "had",
+                "end_ms": 640,
+                "start_ms": 400,
+                "confidence": 1.0
+            },
+            {
+                "text": "like",
+                "end_ms": 800,
+                "start_ms": 640,
+                "confidence": 1.0
+            },
+            {
+                "text": "slightly",
+                "end_ms": 1120,
+                "start_ms": 800,
+                "confidence": 1.0
+            },
+            {
+                "text": "different",
+                "end_ms": 1600,
+                "start_ms": 1120,
+                "confidence": 1.0
+            },
+            {
+                "text": "expectations",
+                "end_ms": 2240,
+                "start_ms": 1600,
+                "confidence": 1.0
+            },
+            {
+                "text": "around",
+                "end_ms": 2560,
+                "start_ms": 2240,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 3120,
+                "start_ms": 2560,
+                "confidence": 1.0
+            },
+            {
+                "text": "how",
+                "end_ms": 3360,
+                "start_ms": 3120,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 3600,
+                "start_ms": 3360,
+                "confidence": 1.0
+            },
+            {
+                "text": "data",
+                "end_ms": 3920,
+                "start_ms": 3600,
+                "confidence": 1.0
+            },
+            {
+                "text": "should",
+                "end_ms": 4080,
+                "start_ms": 3920,
+                "confidence": 1.0
+            },
+            {
+                "text": "move",
+                "end_ms": 4380,
+                "start_ms": 4220,
+                "confidence": 1.0
+            },
+            {
+                "text": "and",
+                "end_ms": 4620,
+                "start_ms": 4380,
+                "confidence": 1.0
+            },
+            {
+                "text": "what",
+                "end_ms": 4780,
+                "start_ms": 4620,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 4940,
+                "start_ms": 4780,
+                "confidence": 1.0
+            },
+            {
+                "text": "success",
+                "end_ms": 5340,
+                "start_ms": 4940,
+                "confidence": 1.0
+            },
+            {
+                "text": "criteria",
+                "end_ms": 5820,
+                "start_ms": 5340,
+                "confidence": 1.0
+            },
+            {
+                "text": "work",
+                "end_ms": 6060,
+                "start_ms": 5820,
+                "confidence": 1.0
+            },
+            {
+                "text": "so",
+                "end_ms": 6990,
+                "start_ms": 6590,
+                "confidence": 1.0
+            },
+            {
+                "text": "my",
+                "end_ms": 7230,
+                "start_ms": 6990,
+                "confidence": 1.0
+            },
+            {
+                "text": "role",
+                "end_ms": 7550,
+                "start_ms": 7230,
+                "confidence": 1.0
+            },
+            {
+                "text": "was",
+                "end_ms": 7710,
+                "start_ms": 7550,
+                "confidence": 1.0
+            },
+            {
+                "text": "to",
+                "end_ms": 7950,
+                "start_ms": 7710,
+                "confidence": 1.0
+            },
+            {
+                "text": "first",
+                "end_ms": 8190,
+                "start_ms": 7950,
+                "confidence": 1.0
+            },
+            {
+                "text": "align",
+                "end_ms": 8670,
+                "start_ms": 8190,
+                "confidence": 1.0
+            },
+            {
+                "text": "requirement",
+                "end_ms": 9310,
+                "start_ms": 8670,
+                "confidence": 1.0
+            },
+            {
+                "text": "and",
+                "end_ms": 9550,
+                "start_ms": 9310,
+                "confidence": 1.0
+            },
+            {
+                "text": "ensure",
+                "end_ms": 9950,
+                "start_ms": 9550,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 10190,
+                "start_ms": 9950,
+                "confidence": 1.0
+            },
+            {
+                "text": "integration",
+                "end_ms": 10940,
+                "start_ms": 10620,
+                "confidence": 1.0
+            },
+            {
+                "text": "is",
+                "end_ms": 11260,
+                "start_ms": 10940,
+                "confidence": 1.0
+            },
+            {
+                "text": "all",
+                "end_ms": 11420,
+                "start_ms": 11260,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 12100,
+                "start_ms": 11700,
+                "confidence": 1.0
+            },
+            {
+                "text": "actual",
+                "end_ms": 12580,
+                "start_ms": 12100,
+                "confidence": 1.0
+            },
+            {
+                "text": "operational",
+                "end_ms": 13380,
+                "start_ms": 12580,
+                "confidence": 1.0
+            },
+            {
+                "text": "problem",
+                "end_ms": 13780,
+                "start_ms": 13380,
+                "confidence": 1.0
+            },
+            {
+                "text": "instead",
+                "end_ms": 14260,
+                "start_ms": 13780,
+                "confidence": 1.0
+            },
+            {
+                "text": "of",
+                "end_ms": 14340,
+                "start_ms": 14260,
+                "confidence": 1.0
+            },
+            {
+                "text": "just",
+                "end_ms": 14580,
+                "start_ms": 14340,
+                "confidence": 1.0
+            },
+            {
+                "text": "moving",
+                "end_ms": 14820,
+                "start_ms": 14580,
+                "confidence": 1.0
+            },
+            {
+                "text": "data",
+                "end_ms": 15140,
+                "start_ms": 14820,
+                "confidence": 1.0
+            },
+            {
+                "text": "between",
+                "end_ms": 15380,
+                "start_ms": 15140,
+                "confidence": 1.0
+            },
+            {
+                "text": "systems",
+                "end_ms": 15780,
+                "start_ms": 15380,
+                "confidence": 1.0
+            },
+            {
+                "text": "i",
+                "end_ms": 16810,
+                "start_ms": 16570,
+                "confidence": 1.0
+            },
+            {
+                "text": "started",
+                "end_ms": 17130,
+                "start_ms": 16810,
+                "confidence": 1.0
+            },
+            {
+                "text": "by",
+                "end_ms": 17370,
+                "start_ms": 17130,
+                "confidence": 1.0
+            },
+            {
+                "text": "running",
+                "end_ms": 17850,
+                "start_ms": 17370,
+                "confidence": 1.0
+            },
+            {
+                "text": "requirement",
+                "end_ms": 18490,
+                "start_ms": 17850,
+                "confidence": 1.0
+            },
+            {
+                "text": "gathering",
+                "end_ms": 18890,
+                "start_ms": 18490,
+                "confidence": 1.0
+            },
+            {
+                "text": "sessions",
+                "end_ms": 19450,
+                "start_ms": 18890,
+                "confidence": 1.0
+            },
+            {
+                "text": "with",
+                "end_ms": 20090,
+                "start_ms": 19450,
+                "confidence": 1.0
+            },
+            {
+                "text": "each",
+                "end_ms": 20570,
+                "start_ms": 20250,
+                "confidence": 1.0
+            },
+            {
+                "text": "stakeholder",
+                "end_ms": 20970,
+                "start_ms": 20570,
+                "confidence": 1.0
+            },
+            {
+                "text": "group",
+                "end_ms": 21210,
+                "start_ms": 20970,
+                "confidence": 1.0
+            },
+            {
+                "text": "dependencies",
+                "end_ms": 24410,
+                "start_ms": 23210,
+                "confidence": 1.0
+            },
+            {
+                "text": "failures",
+                "end_ms": 24970,
+                "start_ms": 24410,
+                "confidence": 1.0
+            },
+            {
+                "text": "and",
+                "end_ms": 25050,
+                "start_ms": 24970,
+                "confidence": 1.0
+            },
+            {
+                "text": "then",
+                "end_ms": 27590,
+                "start_ms": 27270,
+                "confidence": 1.0
+            },
+            {
+                "text": "i",
+                "end_ms": 27750,
+                "start_ms": 27590,
+                "confidence": 1.0
+            },
+            {
+                "text": "documented",
+                "end_ms": 28310,
+                "start_ms": 27750,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 28550,
+                "start_ms": 28310,
+                "confidence": 1.0
+            },
+            {
+                "text": "integration",
+                "end_ms": 29110,
+                "start_ms": 28550,
+                "confidence": 1.0
+            },
+            {
+                "text": "flow",
+                "end_ms": 29430,
+                "start_ms": 29110,
+                "confidence": 1.0
+            },
+            {
+                "text": "api",
+                "end_ms": 29940,
+                "start_ms": 29620,
+                "confidence": 1.0
+            },
+            {
+                "text": "contract",
+                "end_ms": 30660,
+                "start_ms": 29940,
+                "confidence": 1.0
+            },
+            {
+                "text": "so",
+                "end_ms": 30980,
+                "start_ms": 30660,
+                "confidence": 1.0
+            },
+            {
+                "text": "pay",
+                "end_ms": 31220,
+                "start_ms": 30980,
+                "confidence": 1.0
+            },
+            {
+                "text": "load",
+                "end_ms": 31460,
+                "start_ms": 31220,
+                "confidence": 1.0
+            },
+            {
+                "text": "structure",
+                "end_ms": 31940,
+                "start_ms": 31460,
+                "confidence": 1.0
+            },
+            {
+                "text": "and",
+                "end_ms": 32340,
+                "start_ms": 31940,
+                "confidence": 1.0
+            },
+            {
+                "text": "then",
+                "end_ms": 32580,
+                "start_ms": 32340,
+                "confidence": 1.0
+            },
+            {
+                "text": "ownership",
+                "end_ms": 33220,
+                "start_ms": 32580,
+                "confidence": 1.0
+            },
+            {
+                "text": "boundaries",
+                "end_ms": 33700,
+                "start_ms": 33220,
+                "confidence": 1.0
+            },
+            {
+                "text": "so",
+                "end_ms": 34100,
+                "start_ms": 33700,
+                "confidence": 1.0
+            },
+            {
+                "text": "everyone",
+                "end_ms": 35030,
+                "start_ms": 34470,
+                "confidence": 1.0
+            },
+            {
+                "text": "had",
+                "end_ms": 35350,
+                "start_ms": 35030,
+                "confidence": 1.0
+            },
+            {
+                "text": "a",
+                "end_ms": 35590,
+                "start_ms": 35350,
+                "confidence": 1.0
+            },
+            {
+                "text": "shared",
+                "end_ms": 36630,
+                "start_ms": 35590,
+                "confidence": 1.0
+            },
+            {
+                "text": "understanding",
+                "end_ms": 37350,
+                "start_ms": 36630,
+                "confidence": 1.0
+            },
+            {
+                "text": "during",
+                "end_ms": 37910,
+                "start_ms": 37350,
+                "confidence": 1.0
+            },
+            {
+                "text": "implementation",
+                "end_ms": 38470,
+                "start_ms": 37910,
+                "confidence": 1.0
+            },
+            {
+                "text": "i",
+                "end_ms": 38940,
+                "start_ms": 38700,
+                "confidence": 1.0
+            },
+            {
+                "text": "schedule",
+                "end_ms": 39420,
+                "start_ms": 38940,
+                "confidence": 1.0
+            },
+            {
+                "text": "checkpoints",
+                "end_ms": 40700,
+                "start_ms": 40140,
+                "confidence": 1.0
+            },
+            {
+                "text": "with",
+                "end_ms": 40940,
+                "start_ms": 40700,
+                "confidence": 1.0
+            },
+            {
+                "text": "stakeholders",
+                "end_ms": 41340,
+                "start_ms": 40940,
+                "confidence": 1.0
+            },
+            {
+                "text": "to",
+                "end_ms": 41660,
+                "start_ms": 41340,
+                "confidence": 1.0
+            },
+            {
+                "text": "validate",
+                "end_ms": 41980,
+                "start_ms": 41660,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 42220,
+                "start_ms": 41980,
+                "confidence": 1.0
+            },
+            {
+                "text": "assumption",
+                "end_ms": 42540,
+                "start_ms": 42220,
+                "confidence": 1.0
+            },
+            {
+                "text": "and",
+                "end_ms": 42700,
+                "start_ms": 42540,
+                "confidence": 1.0
+            },
+            {
+                "text": "avoid",
+                "end_ms": 43190,
+                "start_ms": 42870,
+                "confidence": 1.0
+            },
+            {
+                "text": "late",
+                "end_ms": 43510,
+                "start_ms": 43190,
+                "confidence": 1.0
+            },
+            {
+                "text": "surprises",
+                "end_ms": 44230,
+                "start_ms": 43510,
+                "confidence": 1.0
+            },
+            {
+                "text": "uh",
+                "end_ms": 44470,
+                "start_ms": 44230,
+                "confidence": 1.0
+            },
+            {
+                "text": "as",
+                "end_ms": 44630,
+                "start_ms": 44470,
+                "confidence": 1.0
+            },
+            {
+                "text": "a",
+                "end_ms": 44790,
+                "start_ms": 44630,
+                "confidence": 1.0
+            },
+            {
+                "text": "result",
+                "end_ms": 45270,
+                "start_ms": 44790,
+                "confidence": 1.0
+            },
+            {
+                "text": "uh",
+                "end_ms": 45430,
+                "start_ms": 45270,
+                "confidence": 1.0
+            },
+            {
+                "text": "we",
+                "end_ms": 45590,
+                "start_ms": 45430,
+                "confidence": 1.0
+            },
+            {
+                "text": "delivered",
+                "end_ms": 46070,
+                "start_ms": 45590,
+                "confidence": 1.0
+            },
+            {
+                "text": "the",
+                "end_ms": 46230,
+                "start_ms": 46070,
+                "confidence": 1.0
+            },
+            {
+                "text": "with",
+                "end_ms": 47340,
+                "start_ms": 46940,
+                "confidence": 1.0
+            },
+            {
+                "text": "fewer",
+                "end_ms": 47740,
+                "start_ms": 47340,
+                "confidence": 1.0
+            },
+            {
+                "text": "production",
+                "end_ms": 48540,
+                "start_ms": 48140,
+                "confidence": 1.0
+            },
+            {
+                "text": "issues",
+                "end_ms": 49100,
+                "start_ms": 48540,
+                "confidence": 1.0
+            },
+            {
+                "text": "and",
+                "end_ms": 49420,
+                "start_ms": 49100,
+                "confidence": 1.0
+            },
+            {
+                "text": "significantly",
+                "end_ms": 50220,
+                "start_ms": 49420,
+                "confidence": 1.0
+            },
+            {
+                "text": "reduced",
+                "end_ms": 50780,
+                "start_ms": 50220,
+                "confidence": 1.0
+            },
+            {
+                "text": "my",
+                "end_ms": 50940,
+                "start_ms": 50780,
+                "confidence": 1.0
+            },
+            {
+                "text": "operation",
+                "end_ms": 51570,
+                "start_ms": 51090,
+                "confidence": 1.0
+            },
+            {
+                "text": "work",
+                "end_ms": 51890,
+                "start_ms": 51570,
+                "confidence": 1.0
+            }
+        ],
+        "end_ms": 667102,
+        "start_ms": 615212,
+        "question_id": "07b4442d-b9d7-4445-8a0a-ec3cef5777a9",
+        "timestamp_ms": 667102
+    },
+    {
+        "role": "agent",
+        "text": "Okay — cross-functional alignment…",
+        "words": null,
+        "end_ms": null,
+        "start_ms": null,
+        "question_id": null,
+        "timestamp_ms": 668569
+    },
+    {
+        "role": "agent",
+        "text": "I think that gives me a good picture of things, ya. Thanks so much for your time today — the recruitment team will be in touch with you about the next steps.",
+        "words": null,
+        "end_ms": null,
+        "start_ms": null,
+        "question_id": null,
+        "timestamp_ms": 672177
+    }
+]
