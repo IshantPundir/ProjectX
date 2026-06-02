@@ -31,8 +31,8 @@ from pydantic import BaseModel
 from app.modules.reel.transcript import AnswerRun, answer_runs, is_pause_before
 
 # --- tuning constants (transcript-space; ms) ------------------------------
-MAX_TOTAL_MS = 70_000        # soft target (quality may run a little over)
-TARGET_MS = 50_000           # aim for ~50s
+MAX_TOTAL_MS = 80_000        # soft target (quality may run a little over)
+TARGET_MS = 60_000           # aim for ~60s
 CLIP_SOFT_CAP_MS = 16_000    # a single clip may run this long to show full substance
 EST_BOUNDARY_PAUSE_MS = 500  # estimated inter-turn pause inside a multi-turn clip
 SPEAK_WPS = 2.75             # ~165 wpm, Arjun narration, for card duration estimate
