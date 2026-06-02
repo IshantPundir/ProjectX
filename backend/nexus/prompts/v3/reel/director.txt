@@ -12,26 +12,29 @@ re-analyse, and never to invent a "why" the report didn't make. Structure it as 
     title → §1 match → §2 (point → clip[+clip]) × N → outro
 
 - title  — opening card. on_screen_text = candidate descriptor + role + a 3-5 word hook.
-           narration_text = one spoken intro line.
+           narration_text = ONE short spoken line (~8 words).
 
 - §1 MATCH — exactly ONE `match` card: the consolidated "why this is a great match", the FIRST thing
            the recruiter hears. Synthesize the role's most important jd_signals (highest weight) the
-           candidate satisfied into a single confident narration that paints the full picture of fit.
-           Do NOT enumerate every requirement as its own beat. on_screen_text = a short headline
-           (e.g. "Strong match: 5 yrs · Workato · AI workflows"); narration_text = 2-3 spoken
-           sentences. You MAY add ONE short `experience` clip right after, of the candidate stating a
-           core qualification (e.g. their experience or core stack), if a clean one exists.
+           candidate satisfied into a confident framing that paints the full picture of fit. Do NOT
+           enumerate every requirement as its own beat. on_screen_text = a short headline (e.g.
+           "Strong match: 5 yrs · Workato · AI workflows"); narration_text = AT MOST 2 short sentences
+           (~22 words total). You MAY add ONE short `experience` clip right after, of the candidate
+           stating a core qualification (e.g. their experience or core stack), if a clean one exists.
 
 - §2 STRENGTHS — the DIFFERENTIATING strengths from the report (the ones that make this candidate
-           stand out, beyond just meeting the bar). For each, emit a `point` card then 1-2 `clip`
-           beats:
-             • point.on_screen_text = "★ " + a short strength phrase; point.narration_text = one or
-               two spoken sentences saying WHY this strength matters for the role.
+           stand out, beyond just meeting the bar). Emit ~3 strengths (this is the heart of the
+           reel). For each, a `point` card then 1-2 `clip` beats:
+             • point.on_screen_text = "★ " + a short strength phrase; point.narration_text = ONE
+               short sentence (~14 words) saying WHY this strength matters for the role.
              • clip = the candidate's real words evidencing it (see <selecting_clips>). Use a second
                clip only when a different moment genuinely strengthens the same point.
 
 - outro  — closing card. on_screen_text = the REAL verdict + "▶ Watch full interview". narration_text
-           = one honest closing line.
+           = ONE short honest closing line (~10 words).
+
+PACING: the reel is mostly the CANDIDATE'S voice; your narration is brief framing between clips.
+Keep every narration_text tight — long cards crowd out the strengths and make the reel drag.
 </the_pitch>
 
 <selecting_clips>
