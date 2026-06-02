@@ -29,38 +29,22 @@ from sqlalchemy import text
 
 from app.database import get_bypass_session
 from app.storage import get_object_storage
-from app.modules.reel import timing
-from app.modules.reel.clips import cut_clip
-from app.modules.reel.render import concat_clips
-
-# Hand-picked trimmed segments (fallback when no Director EDL is present):
-#   (commit_t_ms, trim_start_rel_ms, trim_end_rel_ms, label)
-# Each starts MID-answer to exercise trimming, not just full answers.
-TRIMS = [
-    (203401, 880, 6700, "workflow-design"),     # "I designed this workflow ... instead of fully autonomous routing"
-    (457752, 23190, 32400, "throttle"),         # "then I would introduce ... throttle ... instead of hitting that limit"
-    (484258, 5150, 10440, "idempotency"),       # "I'd use idempotency keys so that retries don't create any duplicate(s)"
-]
+from app.modules.reel import render, timing
+from app.modules.reel.director import ValidatedBeat
 
 
-def _trims_from_edl(session_id: str) -> list[tuple[int, int, int, str]] | None:
-    """Load clip/experience beats from a Director EDL dump, if present.
+def _load_validated_edl(session_id: str) -> list[ValidatedBeat]:
+    """Reconstruct the validated EDL beats from the Director dump.
 
     tmp/edl_<session>.json is written by `python -m app.modules.reel.director`.
-    Its clip/experience beats map directly: source_turn_ref=commit,
-    in_ms/out_ms = turn-relative trims (the same coordinate as TRIMS).
     """
     path = f"/app/tmp/edl_{session_id}.json"
     if not os.path.exists(path):
-        return None
+        raise SystemExit(f"[spike] {path} missing — run "
+                         f"`python -m app.modules.reel.director {session_id}` first")
     with open(path, encoding="utf-8") as f:
         edl = json.load(f)
-    trims: list[tuple[int, int, int, str]] = []
-    for i, b in enumerate(edl.get("beats", [])):
-        if b.get("kind") in ("clip", "experience") and b.get("in_ms") is not None:
-            trims.append((int(b["source_turn_ref"]), int(b["in_ms"]),
-                          int(b["out_ms"]), f"{b['kind']}-{i}"))
-    return trims or None
+    return [ValidatedBeat(**b) for b in edl.get("beats", [])]
 
 
 async def _load_session(session_id: str) -> tuple[str, str, int]:
@@ -86,36 +70,6 @@ def _load_transcript() -> list[dict]:
                         "tests/fixtures/candidate_reel/session_5e004a4d_transcript.json")
     with open(os.path.abspath(path), encoding="utf-8") as f:
         return json.load(f)
-
-
-def _turn_for_commit(transcript: list[dict], commit_t_ms: int) -> dict | None:
-    """Candidate transcript turn whose commit (timestamp_ms) matches (±5ms)."""
-    best, best_d = None, 6
-    for e in transcript:
-        if e.get("role") != "candidate":
-            continue
-        d = abs(int(e.get("timestamp_ms") or -10**9) - commit_t_ms)
-        if d < best_d:
-            best, best_d = e, d
-    return best
-
-
-def _caption_words(turn: dict, answer_start_video_ms: int,
-                   trim_start_rel: int, trim_end_rel: int) -> list[dict]:
-    """Words inside the trim window, on the VIDEO clock for captions.
-
-    Turn word timings are turn-relative (first word=0, accurate); the answer's
-    first word sits at answer_start_video_ms, so word_video = start + rel.
-    """
-    out = []
-    for w in turn.get("words") or []:
-        if trim_start_rel <= int(w["start_ms"]) <= trim_end_rel:
-            out.append({
-                "text": w["text"],
-                "start_ms": answer_start_video_ms + int(w["start_ms"]),
-                "end_ms": answer_start_video_ms + int(w["end_ms"]),
-            })
-    return out
 
 
 async def main(session_id: str) -> int:
@@ -145,30 +99,17 @@ async def main(session_id: str) -> int:
         anchor = wall_anchor - pipeline_lag             # video_ms = t_ms + anchor
         print(f"[spike] video_ms = t_ms + {anchor}ms")
 
-        trims = _trims_from_edl(session_id) or TRIMS
-        print(f"[spike] {len(trims)} trims from "
-              f"{'Director EDL' if _trims_from_edl(session_id) else 'hand-picked TRIMS'}")
-
-        clips: list[str] = []
-        for i, (commit, ts_rel, te_rel, label) in enumerate(trims):
-            span = timing.answer_span(events, speaking, commit)
-            turn = _turn_for_commit(transcript, commit)
-            if span is None or turn is None:
-                print(f"[spike] clip {i} ({label}): no span/turn — skipped")
-                continue
-            ans_start_v = span[0] + anchor
-            words = _caption_words(turn, ans_start_v, ts_rel, te_rel)
-            clip_start_v = ans_start_v + ts_rel
-            clip_end_v = ans_start_v + te_rel
-            cp = os.path.join(tmp, f"clip_{i}.mp4")
-            print(f"[spike] clip {i} ({label}): video [{clip_start_v/1000:.2f},"
-                  f"{clip_end_v/1000:.2f}]s ({(te_rel-ts_rel)/1000:.1f}s), {len(words)} caption words")
-            await cut_clip(recording_path=rec_path, out_path=cp, words=words,
-                           start_ms=clip_start_v, end_ms=clip_end_v, offset_ms=0)
-            clips.append(cp)
-
-        out = os.path.join(out_dir, f"reel_{session_id}_clips.mp4")
-        await concat_clips(clips, out)
+        beats = _load_validated_edl(session_id)
+        no_tts = os.environ.get("REEL_NO_TTS") == "1"
+        print(f"[spike] full reel: {len(beats)} beats ("
+              f"{sum(1 for b in beats if b.kind in ('clip','experience'))} clips), "
+              f"tts={'off' if no_tts else 'on'}")
+        out = os.path.join(out_dir, f"reel_{session_id}_full.mp4")
+        await render.render_reel(
+            beats=beats, recording_path=rec_path, events=events, speaking=speaking,
+            transcript=transcript, anchor=anchor, tmp_dir=tmp, out_path=out,
+            tts_enabled=not no_tts,
+        )
     print(f"[spike] wrote {out}")
     return 0
 

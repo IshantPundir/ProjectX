@@ -1,17 +1,142 @@
-"""Join normalized clips into one MP4 via ffmpeg's concat demuxer.
+"""Assemble the reel: render each EDL beat to a normalized segment, then concat.
 
-All inputs MUST share codec/params (clips.cut_clip guarantees this), so concat
-is a stream copy -- fast and glitch-free. Grows later to interleave card+TTS beats.
+Cards (title/match/point/outro) become a still image under Arjun narration; clips
+(experience/clip) are cut from the recording with burned captions. Every segment
+is normalized to identical codec/params (1280x720, 30fps, H.264 yuv420p, AAC 48k
+stereo) so the concat demuxer joins them with a stream copy -- fast, glitch-free.
+
+Imports of cards/tts/clips/timing are top-level but import-light (Pillow / livekit
+/ ffmpeg are all lazy or shelled out), so this stays importable in the lean image;
+``render_reel`` is only CALLED in the vision image.
 """
 from __future__ import annotations
 
 import asyncio
 import os
 
+from app.modules.reel import cards, clips, timing, tts
+
+# Render-side minimum card hold times (s) — a card lasts max(floor, narration+tail).
+_CARD_FLOOR_S = {"title": 3.0, "match": 4.0, "point": 3.0, "outro": 4.0}
+_NARRATION_TAIL_S = 0.5
+
 
 def build_concat_file(clip_paths: list[str]) -> str:
     """Pure: the concat-demuxer list file body (one `file '<abspath>'` per line)."""
     return "".join(f"file '{os.path.abspath(p)}'\n" for p in clip_paths)
+
+
+def build_card_segment_cmd(*, image_path: str, out_path: str, duration_ms: int,
+                           audio_path: str | None = None,
+                           w: int = cards.CARD_W, h: int = cards.CARD_H,
+                           fps: int = 30) -> list[str]:
+    """Pure: ffmpeg argv turning a still card (+ optional narration) into a segment.
+
+    Output params match ``clips.cut_clip`` so concat can stream-copy. Without
+    narration, a silent stereo source keeps every segment's audio stream present.
+    """
+    dur = max(0.1, duration_ms / 1000.0)
+    cmd = ["ffmpeg", "-y", "-loop", "1", "-i", image_path]
+    if audio_path:
+        cmd += ["-i", audio_path]
+    else:
+        cmd += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
+    cmd += [
+        "-map", "0:v", "-map", "1:a", "-t", f"{dur:.3f}",
+        "-vf", (f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps},format=yuv420p"),
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-ar", "48000", "-ac", "2",
+        "-movflags", "+faststart", out_path,
+    ]
+    return cmd
+
+
+async def card_segment(*, image_path: str, out_path: str, duration_ms: int,
+                       audio_path: str | None = None) -> str:
+    cmd = build_card_segment_cmd(image_path=image_path, out_path=out_path,
+                                 duration_ms=duration_ms, audio_path=audio_path)
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await proc.communicate()
+    if proc.returncode != 0 or not os.path.exists(out_path):
+        raise RuntimeError(f"ffmpeg card segment failed ({proc.returncode}): "
+                           f"{stderr.decode('utf-8', 'replace')[-800:]}")
+    return out_path
+
+
+_CARD_KINDS = ("title", "match", "point", "outro")
+
+
+def _turn_words(transcript: list[dict], commit: int, *, tol_ms: int = 5) -> list[dict]:
+    """The candidate turn's word list for a commit ref (nearest within tol)."""
+    best, best_d = None, tol_ms + 1
+    for t in transcript:
+        if t.get("role") != "candidate" or t.get("timestamp_ms") is None:
+            continue
+        d = abs(int(t["timestamp_ms"]) - commit)
+        if d < best_d:
+            best, best_d = t, d
+    return (best.get("words") or []) if best else []
+
+
+def _caption_words(words: list[dict], ans_start_video_ms: int,
+                   in_ms: int, out_ms: int) -> list[dict]:
+    """Words inside [in_ms,out_ms] mapped to the VIDEO clock for burned captions."""
+    out = []
+    for w in words:
+        if in_ms <= int(w["start_ms"]) <= out_ms:
+            out.append({"text": w["text"],
+                        "start_ms": ans_start_video_ms + int(w["start_ms"]),
+                        "end_ms": ans_start_video_ms + int(w["end_ms"])})
+    return out
+
+
+async def render_reel(*, beats: list, recording_path: str, events: list[dict],
+                      speaking: list[tuple[int, int]], transcript: list[dict],
+                      anchor: int, tmp_dir: str, out_path: str,
+                      tts_enabled: bool = True) -> str:
+    """Render a validated EDL into one MP4: card+narration beats interleaved with clips.
+
+    ``anchor`` maps engine t_ms to the video clock (``video_ms = t_ms + anchor``;
+    see timing.py). Clip beats whose VAD span can't be resolved are skipped.
+    """
+    segments: list[str] = []
+    for i, b in enumerate(beats):
+        seg = os.path.join(tmp_dir, f"seg_{i:02d}.mp4")
+        if b.kind in _CARD_KINDS:
+            png = os.path.join(tmp_dir, f"card_{i:02d}.png")
+            cards.render_card(kind=b.kind, out_path=png,
+                              on_screen_text=b.on_screen_text or "")
+            audio_path, audio_dur = None, 0
+            if tts_enabled and b.narration_text:
+                res = await tts.synthesize_to_wav(
+                    b.narration_text, os.path.join(tmp_dir, f"narr_{i:02d}.wav"))
+                if res:
+                    audio_path, audio_dur = res
+            floor_ms = int(_CARD_FLOOR_S.get(b.kind, 3.0) * 1000)
+            duration_ms = (max(floor_ms, audio_dur + int(_NARRATION_TAIL_S * 1000))
+                           if audio_dur else max(floor_ms, b.duration_ms))
+            await card_segment(image_path=png, out_path=seg,
+                               duration_ms=duration_ms, audio_path=audio_path)
+            segments.append(seg)
+        else:  # clip / experience
+            span = timing.answer_span(events, speaking, b.source_turn_ref)
+            if span is None:
+                continue
+            ans_start_v = span[0] + anchor
+            words = _caption_words(_turn_words(transcript, b.source_turn_ref),
+                                   ans_start_v, b.in_ms, b.out_ms)
+            await clips.cut_clip(
+                recording_path=recording_path, out_path=seg, words=words,
+                start_ms=ans_start_v + b.in_ms, end_ms=ans_start_v + b.out_ms,
+                offset_ms=0)
+            segments.append(seg)
+
+    if not segments:
+        raise RuntimeError("render_reel: no renderable segments")
+    return await concat_clips(segments, out_path)
 
 
 async def concat_clips(clip_paths: list[str], out_path: str) -> str:
