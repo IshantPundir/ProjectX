@@ -85,7 +85,7 @@ async def prepare_anchor(events: list[dict], recording_path: str,
     return wall_anchor - pipeline_lag, speaking
 
 
-async def _probe_duration_ms(path: str) -> int:
+async def probe_duration_ms(path: str) -> int:
     """Exact media duration (ms) via ffprobe — for accurate chapter offsets."""
     proc = await asyncio.create_subprocess_exec(
         "ffprobe", "-v", "error", "-show_entries", "format=duration",
@@ -183,7 +183,7 @@ async def render_reel(*, beats: list, recording_path: str, events: list[dict],
     for seg, beat in rendered:
         chapters.append({"kind": beat.kind, "label": _chapter_label(beat),
                          "start_ms": cursor})
-        cursor += await _probe_duration_ms(seg)
+        cursor += await probe_duration_ms(seg)
 
     await concat_clips([s for s, _ in rendered], out_path)
     return out_path, chapters

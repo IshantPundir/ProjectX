@@ -9,6 +9,7 @@ only in the vision image (Pillow present).
 """
 from __future__ import annotations
 
+import html
 import os
 from typing import Callable
 
@@ -78,7 +79,8 @@ def render_card(*, kind: str, out_path: str, on_screen_text: str | None = None,
             y += lh
         return y
 
-    text = (on_screen_text or "").strip()
+    # Unescape HTML entities the LLM sometimes emits (e.g. "&amp;" -> "&").
+    text = html.unescape((on_screen_text or "").strip())
     if kind == "title":
         _paste_wordmark(Image, img, y=120, target_w=300)
         centered_block(text, font(_FONT_BOLD, 62), top=300, fill=_INK)

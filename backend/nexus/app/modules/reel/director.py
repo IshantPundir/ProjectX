@@ -394,11 +394,12 @@ def edl_to_dict(vedl: ValidatedEdl) -> dict:
     return {"duration_ms": vedl.duration_ms, "beats": [asdict(b) for b in vedl.beats]}
 
 
-# --- dev entrypoint (retired at the production scaffold step) --------------
+# --- dev entrypoint: inspect the EDL for a session without rendering ----------
 async def _dev_main(session_id: str) -> int:
     """Run the Director on a real session: report (DB) + transcript (fixture) -> EDL.
 
-    Prints the EDL and writes tmp/edl_<session>.json for the spike to render.
+    Prints the EDL (beats + resolved clip quotes) for debugging; production
+    rendering goes through ``generate_session_reel`` (the actor), not here.
         docker compose exec nexus python -m app.modules.reel.director <session_id>
     """
     import json

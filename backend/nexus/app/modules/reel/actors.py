@@ -137,7 +137,7 @@ async def _build_and_upload(session_id: UUID, tenant_id: UUID,
             beats=vedl.beats, recording_path=rec_path, events=events,
             speaking=speaking, anchor=anchor, tmp_dir=tmp, out_path=out_path,
         )
-        duration_ms = await render._probe_duration_ms(out_path)
+        duration_ms = await render.probe_duration_ms(out_path)
         data = await asyncio.to_thread(Path(out_path).read_bytes)
         await storage.upload_bytes(r2_key, data, content_type="video/mp4")
 
