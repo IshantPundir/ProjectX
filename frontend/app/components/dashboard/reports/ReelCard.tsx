@@ -80,15 +80,21 @@ export function ReelCard({
         <Poster muted>{data?.ineligible_reason ?? 'Reel not available yet.'}</Poster>
       )}
 
-      <ReelTheater
-        open={playing && !!data?.signed_url}
-        signedUrl={data?.signed_url ?? null}
-        chapters={data?.chapters ?? []}
-        durationSeconds={data?.duration_seconds ?? null}
-        candidateName={candidateName}
-        subtitle=""
-        onClose={() => setPlaying(false)}
-      />
+      {/* Mount only while playing (matches ReviewTheater in ReportView): the
+          theater's fire-once `closing` state resets by remount, so reopening
+          after a close comes up clean instead of stuck mid-exit. The exit
+          animation still plays — onClose (the unmount) is deferred behind it. */}
+      {playing && data?.signed_url && (
+        <ReelTheater
+          open
+          signedUrl={data.signed_url}
+          chapters={data.chapters ?? []}
+          durationSeconds={data.duration_seconds ?? null}
+          candidateName={candidateName}
+          subtitle=""
+          onClose={() => setPlaying(false)}
+        />
+      )}
     </div>
   )
 }
