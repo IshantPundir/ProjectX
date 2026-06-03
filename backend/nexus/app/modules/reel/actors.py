@@ -54,6 +54,12 @@ def _resolve_events(session_id: str, stored_ref: str | None) -> list[dict]:
         candidates.append(Path(stored_ref))
         if settings.engine_event_log_dir:
             candidates.append(Path(settings.engine_event_log_dir) / Path(stored_ref).name)
+    # Repo-mounted event-log dir (dev + portable fallback). NOTE: durable
+    # cross-container event-log storage in production is a known open concern
+    # shared with the reporting actor (the reel has a HARD dependency on it for
+    # VAD timing, unlike the report which degrades to empty events).
+    repo_dir = Path(__file__).resolve().parents[3] / "engine-events"
+    candidates.append(repo_dir / f"{session_id}.json")
     for path in candidates:
         try:
             return json.loads(path.read_text()).get("events", [])

@@ -10,8 +10,8 @@ import { QuickSummary } from './QuickSummary'
 import { ReportMethodologyFooter } from './ReportMethodologyFooter'
 import { ReportTopBar } from './ReportTopBar'
 import './report.css'
+import { PlaybackPanel } from './PlaybackPanel'
 import { ScoresCard } from './ScoresCard'
-import { SessionPlayback } from './SessionPlayback'
 import { ReviewTheater } from './theater/ReviewTheater'
 import { SignalAuditTable } from './SignalAuditTable'
 import { StrengthsConcerns } from './StrengthsConcerns'
@@ -50,7 +50,7 @@ export function ReportView({
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.85fr_1fr]">
         <div className="space-y-4">
           {[
-            <SessionPlayback key="p" report={report} onOpen={() => openTheater(null)} />,
+            <PlaybackPanel key="p" report={report} candidateName={candidateName} onOpenTheater={() => openTheater(null)} />,
             <WhyContrast key="w" decision={report.decision} />,
             <QuickSummary key="s" text={report.quick_summary} />,
             <StrengthsConcerns key="sc" strengths={report.strengths} concerns={report.concerns} />,
