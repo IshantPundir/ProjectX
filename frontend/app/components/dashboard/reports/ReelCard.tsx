@@ -1,12 +1,12 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useState } from 'react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/px'
 import { ApiError } from '@/lib/api/client'
-import type { ReelChapter } from '@/lib/api/reels'
 import { useGenerateReel, useReel } from '@/lib/hooks/use-reel'
+import { ReelTheater } from './theater/ReelTheater'
 
 const CARD = 'rounded-xl border bg-white p-3.5'
 
@@ -80,14 +80,15 @@ export function ReelCard({
         <Poster muted>{data?.ineligible_reason ?? 'Reel not available yet.'}</Poster>
       )}
 
-      {playing && data?.signed_url && (
-        <ReelPlayerModal
-          src={data.signed_url}
-          chapters={data.chapters}
-          candidateName={candidateName}
-          onClose={() => setPlaying(false)}
-        />
-      )}
+      <ReelTheater
+        open={playing && !!data?.signed_url}
+        signedUrl={data?.signed_url ?? null}
+        chapters={data?.chapters ?? []}
+        durationSeconds={data?.duration_seconds ?? null}
+        candidateName={candidateName}
+        subtitle=""
+        onClose={() => setPlaying(false)}
+      />
     </div>
   )
 }
@@ -226,79 +227,6 @@ function ReadyPoster({
         style={{ color: 'var(--px-fg-4)' }}
       >
         {regenerating ? 'Regenerating…' : 'Regenerate'}
-      </button>
-    </div>
-  )
-}
-
-function ReelPlayerModal({
-  src,
-  chapters,
-  candidateName,
-  onClose,
-}: {
-  src: string
-  chapters: ReelChapter[]
-  candidateName: string
-  onClose: () => void
-}) {
-  // Callback ref (not a ref object): the element is the dependency, so chapter
-  // seeking always targets the live <video> node. See feedback_dialog_portal_node_ref.
-  const [video, setVideo] = useState<HTMLVideoElement | null>(null)
-  const seek = useCallback(
-    (ms: number) => {
-      if (video) {
-        video.currentTime = ms / 1000
-        void video.play()
-      }
-    },
-    [video],
-  )
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6"
-      role="dialog"
-      aria-modal="true"
-      aria-label={`${candidateName} candidate reel`}
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-[860px] overflow-hidden rounded-2xl bg-black"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-        <video
-          key={src}
-          ref={setVideo}
-          src={src}
-          controls
-          autoPlay
-          className="aspect-video w-full bg-black"
-        />
-        {chapters.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 bg-black/95 p-3">
-            {chapters.map((c, i) => (
-              <button
-                key={i}
-                type="button"
-                onClick={() => seek(c.start_ms)}
-                className="rounded-full px-2.5 py-1 text-[11px] text-white/80 transition-colors hover:bg-white/15"
-                style={{ border: '1px solid rgba(255,255,255,0.18)' }}
-              >
-                {c.label}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-      <button
-        type="button"
-        onClick={onClose}
-        aria-label="Close reel"
-        className="absolute right-5 top-5 grid h-9 w-9 place-items-center rounded-full bg-white/15 text-white hover:bg-white/25"
-      >
-        ✕
       </button>
     </div>
   )
