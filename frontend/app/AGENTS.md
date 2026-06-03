@@ -6,4 +6,4 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 # One design system
 
-This app uses `components/px/` (hand-rolled, on `@base-ui-components/react`) for every route. There is no shadcn enclave here — that surface moved to `frontend/session/`.
+This app uses `components/px/` (hand-rolled on plain React — NOT `@base-ui-components/react`, which was removed) for every route. There is no shadcn enclave here — that surface moved to `frontend/session/`.

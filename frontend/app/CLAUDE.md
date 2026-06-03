@@ -25,7 +25,7 @@ This Next.js app serves the **recruiter dashboard ONLY**. It is the surface for 
 
 ### Currently Installed (Phase 1)
 
-- **Framework:** Next.js 16.2.2 with App Router
+- **Framework:** Next.js 16.2.4 with App Router (React 19.2.x)
 - **Language:** TypeScript (strict mode — `"strict": true` in tsconfig)
 - **Styling:** Tailwind CSS v4 (utility-first — no custom CSS unless strictly necessary)
 - **Auth:** @supabase/ssr v0.10 (cookie-based SSR sessions) + @supabase/supabase-js
@@ -54,7 +54,7 @@ This Next.js app serves the **recruiter dashboard ONLY**. It is the surface for 
 
 ### Component Library — In-House `px/` Primitives
 
-The dashboard surface uses **no shadcn/ui** — the design system is a hand-rolled primitive library at `components/px/` built directly on `@base-ui-components/react`. The barrel export is `components/px/index.ts`.
+The dashboard surface uses **no shadcn/ui** — the design system is a hand-rolled primitive library at `components/px/` built on **plain React** (`cn` + `react-dom` `createPortal`; no `@base-ui-components/react` — that dependency was removed and is imported nowhere). The barrel export is `components/px/index.ts`.
 
 | Primitive | File |
 |---|---|
@@ -62,18 +62,18 @@ The dashboard surface uses **no shadcn/ui** — the design system is a hand-roll
 | `Input`, `InputSize` | `components/px/Input.tsx` |
 | `Textarea`, `Label` | `components/px/Textarea.tsx`, `components/px/Label.tsx` |
 | `Select` family | `components/px/Select.tsx` |
+| `Checkbox`, `Tabs` family | `components/px/Checkbox.tsx`, `components/px/Tabs.tsx` |
 | `Dialog` family + `DangerConfirmDialog` | `components/px/Dialog.tsx`, `components/px/DangerConfirmDialog.tsx` |
 | `Alert`, `Badge`, `Skeleton`, `Separator` | `components/px/{Alert,Badge,Skeleton,Separator}.tsx` |
 | `Tooltip` family | `components/px/Tooltip.tsx` |
 | `Toaster` (sonner wrapper) | `components/px/Toaster.tsx` |
+| `BrandLogo` (wordmark), `BrandMark` (square) | `components/px/BrandLogo.tsx` |
 
-**Base UI ecosystem rules (still apply, just inside `px/` primitives):**
-- `TooltipTrigger` uses `render={<span>...</span>}` instead of Radix's `asChild`
-- `TooltipProvider` uses `delay={150}` instead of Radix's `delayDuration`
-- `Select`'s `onValueChange` types its value as `unknown` (Zod validation catches invalid shapes)
-- `SelectTrigger` defaults to `w-fit` — add `w-full` explicitly when you need it to fill a grid column
-
-When you need a new primitive, add it under `components/px/` and export it from `index.ts` — never reach for an external shadcn snippet or copy a Radix pattern from the internet without checking the actual `@base-ui-components/react` API.
+**px primitive conventions:**
+- Primitives are hand-rolled — when you need a new one, build it on plain React + Tailwind tokens and export it from `index.ts`. Do NOT reach for an external shadcn snippet, Radix, or `@base-ui-components/react`.
+- `Select`'s `onValueChange` types its value as `unknown` (Zod validation catches invalid shapes).
+- Dialogs/drawers must move focus on open; portal-remounting dialogs (e.g. the ReviewTheater) must key effects on the element via a callback ref, not a ref object, or playback freezes on the 2nd open.
+- Icons are `lucide-react`. (`@phosphor-icons/react` is in package.json but unused — a cleanup candidate.)
 
 ### Code shared by duplication with `frontend/session`
 
@@ -126,14 +126,18 @@ frontend/app/
 │   │   ├── candidates/
 │   │   │   ├── page.tsx                  ← Kanban + list view (ClientCandidatesPage shell)
 │   │   │   └── [candidateId]/page.tsx    ← Candidate detail (profile / assignments / sessions)
+│   │   ├── tracker/                      ← Per-job candidate kanban tracker (primary sidebar nav, kbd T)
+│   │   │   ├── page.tsx                  ← Tracker landing (ClientTrackerLandingPage)
+│   │   │   └── [jobId]/page.tsx          ← Per-job tracker board (+ error.tsx / loading.tsx)
 │   │   ├── pipeline/page.tsx             ← Tenant-wide pipeline templates browser
 │   │   ├── questions/page.tsx            ← Tenant-wide question bank browser (placeholder)
-│   │   ├── reports/page.tsx              ← Reports landing (Phase 3D — placeholder)
+│   │   ├── reports/                      ← SHIPPED (Phase 3D) — not a placeholder
+│   │   │   ├── page.tsx                  ← Reports hub: table of completed interviews (verdict/score, generate/view)
+│   │   │   └── session/[sessionId]/page.tsx ← Full report viewer + ReviewTheater playback (+ error.tsx / loading.tsx)
 │   │   └── settings/
 │   │       ├── team/page.tsx             ← Team management, invites, resend, revoke, deactivate
-│       └── org-units/
-│           ├── page.tsx              ← Org unit infinite-canvas tree + create
-│           └── [unitId]/page.tsx     ← Unit detail: members, roles, sub-units, delete
+│   │       ├── integrations/            ← ATS (Ceipal) connections: list, connect, [connectionId] detail + sync
+│   │       └── org-units/                ← Org-unit infinite-canvas tree + create; [unitId] detail; pipeline-templates/{new,[templateId]}
 ├── components/
 │   ├── px/                               ← In-house design-system primitives (Button, Input, Dialog, Tooltip, BrandLogo/BrandMark, …)
 │   └── dashboard/
@@ -147,15 +151,19 @@ frontend/app/
 │       ├── question-bank/                ← AddQuestionDialog, AddCustomQuestionDialog, BankStatusBadge, QuestionCard, QuestionRefinePanel, …
 │       ├── candidates/                   ← AddCandidateDialog, CandidateListView, ClientCandidatesPage, ResumeUploadField, SendInviteDialog, JdPicker, StageTransitionDropdown, SessionStatusBadge, StatusBadge
 │       ├── tracker/                       ← Kanban primitives (CandidateKanbanView/Card/Column) — used by /tracker pages
+│       ├── job/                           ← Job detail composite components
+│       ├── reports/                       ← Report viewer: ReportView, ScoresCard, ScoreGauge, VerdictBand, StrengthsConcerns, WhyContrast, QuestionByQuestion, SignalAuditTable, HumanDecisionPanel, ReelCard, ProctoringIntegrityPanel, SessionPlayback, report-format.ts, report.css
+│       │   └── theater/                   ← ReviewTheater glass-redesign playback: ReviewTheater, ReelTheater, TheaterStage, Filmstrip, ScoreRail, ThisMomentPanel, VideoControls, GlassBackdrop, useTheaterState, useVideoController, theater.css
 │       └── org-units/                    ← OrgGraph + OrgGraphCanvas + custom SVG edge/node + dagre layout hook + pan-zoom + direction-toggle
+│   └── settings/integrations/            ← ATS UI: CeipalConnectionForm, ConnectionListCard, SyncLogTable, SyncProgressBar, JobStatusFilterDialog
 ├── stores/
 │   └── job-edit.ts                       ← Zustand: editable signal state with isDirty tracking
 ├── lib/
 │   ├── brand.ts                          ← name/logo/tagline + active theme/density (single source)
-│   ├── api/                              ← Typed API namespaces: client, jobs, candidates, pipelines, question-banks, questions, scheduler, team, org-units, auth, errors
+│   ├── api/                              ← Typed API namespaces: client, jobs, candidates, pipelines, question-banks, questions, scheduler, team, org-units, auth, ats, reports, reels, errors
 │   ├── auth/                             ← getFreshSupabaseToken, handle-error (global 401 sink)
-│   ├── hooks/                            ← 50+ TanStack Query hooks (use-jobs, use-candidates, use-banks, use-pipeline-templates, use-job-status-stream, use-questions-status-stream, …)
-│   ├── pipelines/                        ← Pipeline-specific helpers (e.g. classification, stage rules)
+│   ├── hooks/                            ← 60+ TanStack Query hooks (use-jobs, use-candidates, use-banks, use-pipeline-templates, use-report, use-reel, use-session-recording, use-session-proctoring, use-tracker-jobs, use-job-status-stream, …)
+│   ├── pipelines/                        ← Pipeline helpers (activation.ts, categories.ts)
 │   ├── supabase/{client,server}.ts       ← @supabase/ssr clients (cookies / browser)
 │   └── utils.ts
 ├── tests/                                ← Vitest + Testing Library + jsdom
@@ -167,11 +175,11 @@ frontend/app/
 
 Candidate interview surface lives at frontend/session/. See frontend/session/CLAUDE.md.
 
-### Pending UI work (Phase 3D)
+### Shipped (Phase 3D) & still-pending UI
 
-- **`components/copilot/`** — AI Copilot panel components don't exist yet. Required for any human-in-the-loop session.
-- **`components/shared/`** — directory is reserved for cross-surface components; not yet populated.
-- **Reports view** — `app/(dashboard)/reports/page.tsx` is a placeholder. Pairs with backend Phase 3D (`reporting` module is still a stub).
+- **Reports — SHIPPED.** `app/(dashboard)/reports/` is a full system: a reports hub table + a per-session report viewer (`components/dashboard/reports/`) with verdict band, dimension gauges, signal audit, question-by-question, human-decision panel, recording playback, the **ReviewTheater** glass playback shell (`reports/theater/`), the **ReelCard** reel player, and the **ProctoringIntegrityPanel**. Backed by the implemented backend `reporting` + `reel` + `vision` modules.
+- **`components/copilot/` — NOT built, and not the current shape.** The originally-envisioned always-on *in-session* AI Copilot panel does not exist. Its review function is served instead by the **post-session** report viewer + ReviewTheater. A live in-session copilot (for human-panel Round 2) remains future work.
+- **`components/shared/`** — reserved for cross-surface components; not yet populated.
 
 ---
 
@@ -232,7 +240,8 @@ When extending `components/px/`, add an export to `components/px/index.ts`. Alwa
 - Borderline candidates display a clear visual indicator and cannot be advanced/rejected without explicit action.
 - The recruiter's daily action items dashboard must be the default landing view post-login.
 
-### AI Copilot Panel (`components/copilot/`)
+### AI Copilot Panel (`components/copilot/`) — FUTURE / not built
+> Status: the always-on *in-session* copilot below describes the original product vision for human-panel (Round 2) sessions. It is **not implemented**. What shipped instead is the **post-session** report viewer + ReviewTheater (`components/dashboard/reports/`). Treat this section as the spec for when live-panel support is built.
 - Renders automatically for any human (non-candidate) in a session — never toggled off.
 - Shows: live transcript with speaker labels, real-time signal cards per exchange, bot's next planned probe (before it fires), question coverage tracker.
 - This panel must be visually distinct from the main video grid — secondary panel, not overlaid.
@@ -301,6 +310,9 @@ Each backend module has a co-located `lib/api/<module>.ts` file with response ty
 | `question-banks.ts`, `questions.ts` | `/api/jobs/{id}/banks/*` and per-question CRUD |
 | `candidates.ts` | `/api/candidates/*` + kanban |
 | `scheduler.ts` | `/api/scheduler/*` (invite send/resend/revoke) |
+| `reports.ts` | `/api/reports/*` (hub index, session report, presigned recording, proctoring, human decision) |
+| `reels.ts` | `/api/reports/session/{id}/reel*` (playback envelope, generate, regenerate) |
+| `ats.ts` | `/api/ats/*` (Ceipal connections, sync, sync-logs, job-status-filter) |
 | `client.ts`, `errors.ts` | Shared transport + error mapping |
 
 When adding endpoints for a new backend module, create a new file under `lib/api/` and follow the existing pattern. Keep response types co-located with their fetcher; there is no central `types/` directory.
@@ -400,7 +412,7 @@ The Vitest suite (~30 files under `tests/`) covers API client error mapping, for
 
 ## Human Review Required For
 
-- Any change to `middleware.ts` (route protection logic)
+- Any change to `proxy.ts` (route protection logic — this app's middleware file is `proxy.ts`, there is no `middleware.ts`)
 - Any change to auth token handling in `lib/auth/`
 - Any change to the Borderline candidate display or advancement logic
 

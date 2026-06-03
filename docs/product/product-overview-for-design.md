@@ -2,8 +2,17 @@
 
 > **Audience:** The UI/UX designer leading the next visual + interaction overhaul.
 > **Purpose:** A complete picture of what ProjectX is, who uses it, how it works today, and where it is going — so the redesign starts from understanding, not guesswork.
-> **Date:** 2026-05-15
+> **Date:** 2026-05-15 (snapshot) · **Corrections appended 2026-06-03**
 > **Status:** Reflects the codebase as of branch `feature/tracker-page`.
+>
+> ⚠️ **Shipped since this snapshot (treat the "placeholder / coming soon" notes below as
+> historical):** the **Reports** surface is now fully built — a reports hub + per-session
+> report viewer with verdict-driven scoring, signal audit, **session recording playback**,
+> the **ReviewTheater** glass player, an optional **Candidate Reel** highlight video, and a
+> **proctoring integrity panel**. Vision proctoring (client deterrent + server gaze analysis)
+> shipped as a POC. The backend `reporting`, `reel`, and `vision` modules are implemented.
+> The always-on *in-session* AI Copilot remains unbuilt. Audio path is **Deepgram STT →
+> OpenAI LLM → Sarvam TTS** (not Sarvam STT).
 
 ---
 
@@ -19,7 +28,7 @@ Replace the recruiter phone-screen for Fortune 500 hiring teams running high-vol
 
 ### What it is *not*
 
-- Not a chatbot. The candidate is on a real video call with an AI interviewer running on LiveKit, with proper audio (Sarvam STT → OpenAI LLM → Cartesia/Sarvam TTS) and a structured rubric per question.
+- Not a chatbot. The candidate is on a real video call with an AI interviewer running on LiveKit, with proper audio (**Deepgram STT → OpenAI LLM → Sarvam TTS**) and a structured rubric per question.
 - Not an ATS. ProjectX *integrates* with ATS systems (Ceipal, Greenhouse, Workday). It sits *between* the ATS and the candidate, doing the interview work that recruiters do today.
 - Not a sourcing tool. Candidates arrive either via manual entry, resume upload, or ATS sync.
 - Not a one-size-fits-all template. Every JD generates its own question bank from a 4-layer context stack (JD + company profile + candidate brief + project brief).

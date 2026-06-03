@@ -384,3 +384,56 @@ candidate is the `session_id` FK only.
 - Worker moved outside the current infra boundary (e.g. tenant-VPC enterprise
   deployment), which would add a new network trust boundary.
 - Any change to the `vision` queue access model (currently internal only).
+
+---
+
+## Candidate Reel — AI highlight video (2026-06-03)
+
+The Candidate Reel (`app/modules/reel/`) produces a ~45–60s recruiter-facing
+highlight video derived from an existing session recording + the post-session
+report. It is a new **derived candidate-video artifact** and so is assessed
+here per the "candidate-facing surface changes" update rule.
+
+### No new external sub-processors
+
+The reel data path reuses only **already-registered** services: the OpenAI
+API (Director EDL selection — same provider as the rest of the platform),
+Cloudflare R2 (reads the source recording, writes the reel MP4 — same bucket
+family as §Session recording), and Sarvam TTS (narration — same voice as the
+live interview). No new third party joins the data path. Rendering runs
+in-house in the existing `nexus-vision-worker` container (ffmpeg + Pillow).
+
+### Trust boundaries
+
+| Boundary | Element | STRIDE | Mitigation |
+|---|---|---|---|
+| R2 → reel actor download | Actor presigns + downloads the source recording. | I (recording exfil) | Recording-bucket credentials are server-only secrets (same policy as DB creds). Private bucket, tenant-prefixed keys. |
+| Reel actor → Postgres (bypass-RLS) | `generate_session_reel` runs with no Supabase user context. | E (cross-tenant read/write) | Every query filters by the explicit `tenant_id` from the Dramatiq message (bypass-RLS + explicit-tenant filter — same dual layer as `interview_runtime`). `session_reels` carries the canonical RLS pair (migration `0053`) + is in `_TENANT_SCOPED_TABLES`. |
+| Reel MP4 → R2 → recruiter | Rendered reel stored at `reels/{tenant}/{session}.mp4`; served via presigned URL. | I (unauthorized playback) | Tenant-prefixed key; presigned, short-lived URL minted only on an RBAC-checked (`reports.view`) `GET .../reel`. Recruiter-only — the reel is never exposed to the candidate. |
+| Director LLM (OpenAI) | Sees report ground-truth + word-indexed transcript. | I (PII via 3rd party) | Same consent + existing-sub-processor posture as the rest of the OpenAI path. No raw video frames are sent to the LLM — only text (transcript + scorecards); clip selection is by word index, rendered locally. |
+| Eligibility gate | A reel can be requested for a session. | — (product invariant) | Eligibility requires report `status='ready'` AND verdict ∈ {advance, borderline} AND a recording exists. A **rejected** candidate's reel is disallowed by design, limiting blast radius + avoiding adverse-action artifacts. |
+
+### Stored data classification
+
+`session_reels` stores reel **state + metadata** only (EDL, chapters,
+`r2_key`, duration, model versions, status). The rendered video itself lives
+on R2 (private). The reel is a recruiter aid, not an evaluation input — it
+does not feed scoring or the verdict.
+
+### Residual threats (accepted)
+
+- **Narrative framing risk.** The reel is "grounded-positive" — it
+  foregrounds strengths. It is a presentation artifact, not a decision input,
+  and is gated to non-rejected candidates; human sign-off on the underlying
+  report remains the control.
+- **R2 lacks versioning / MFA-delete** (same residual as §Session recording).
+  The reel is fully reproducible from the recording + report, so loss is
+  recoverable by regeneration.
+
+### When this section needs updating
+
+- The reel is ever surfaced to candidates (new external-facing surface).
+- A new external service joins the render/selection path (e.g. a hosted video
+  pipeline or a different TTS/LLM vendor).
+- Reel storage moves to a new bucket / sub-processor, or eligibility is
+  widened to rejected candidates (re-examine adverse-action exposure).

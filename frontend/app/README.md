@@ -1,13 +1,18 @@
-# ProjectX — Frontend
+# ProjectX — Recruiter Dashboard (frontend/app)
 
-Next.js application for the ProjectX AI video interview platform. Serves two distinct surfaces: a **recruiter dashboard** and a **candidate interview UI**.
+Next.js application for the ProjectX AI video interview platform. This app serves the
+**recruiter dashboard ONLY** (rebranded **BinQle**). The candidate interview surface was
+extracted to a separate app at `frontend/session/` on 2026-05-01 — do not add candidate
+routes, LiveKit, or Supabase-free flows here.
 
 ## Tech Stack
 
-- **Next.js 16** (App Router)
+- **Next.js 16.2.x** (App Router)
 - **React 19** / **TypeScript** (strict mode)
-- **Tailwind CSS v4**
-- **shadcn/ui** (component primitives)
+- **Tailwind CSS v4** (design tokens in `app/theme.css`, mapped in `app/globals.css`)
+- **`components/px/`** — in-house, hand-rolled primitives on plain React (NO shadcn/ui, NO `@base-ui-components/react`)
+- **TanStack Query v5** (server state), **Zustand** (minimal client state), **React Hook Form + Zod** (forms)
+- **Supabase Auth** (email/password) for session management only — all data goes through Nexus
 
 ## Prerequisites
 
@@ -44,33 +49,34 @@ Open **http://localhost:3000**.
 ```
 frontend/app/
 ├── app/                          # Next.js App Router
-│   ├── (dashboard)/              # Recruiter/admin dashboard surface
-│   ├── (interview)/              # Candidate interview surface
-│   └── (auth)/                   # Login, SSO, invite acceptance
+│   ├── (auth)/                   # Login, invite acceptance (email/password)
+│   ├── onboarding/               # First-run wizard
+│   └── (dashboard)/              # Recruiter dashboard: jobs, candidates, tracker,
+│                                 #   pipeline, questions, reports/[sessionId], settings/{team,integrations,org-units}
 ├── components/
-│   ├── ui/                       # shadcn/ui primitives (auto-generated)
-│   ├── dashboard/                # Dashboard composite components
-│   ├── interview/                # Candidate session components
-│   ├── shared/                   # Shared across both surfaces
-│   └── copilot/                  # AI Copilot panel components
+│   ├── px/                       # In-house hand-rolled primitives (no shadcn, no base-ui)
+│   └── dashboard/                # Composite components: jd-panels, pipeline, question-bank,
+│                                 #   candidates, tracker, reports (+ reports/theater), org-units, job
+│   └── settings/integrations/    # ATS (Ceipal) connection UI
 ├── lib/
-│   ├── api/                      # Typed API client (all calls to Nexus)
-│   ├── auth/                     # Auth helpers, token management
-│   ├── hooks/                    # Custom React hooks
-│   └── utils/                    # Pure utility functions
-├── stores/                       # Zustand stores
-├── types/                        # Shared TypeScript types
+│   ├── brand.ts                  # Name/logo/tagline + active theme (single source — "BinQle")
+│   ├── api/                      # Typed API namespaces (all calls to Nexus)
+│   ├── auth/                     # Token retrieval + global 401 sink
+│   ├── hooks/                    # 60+ TanStack Query hooks
+│   └── supabase/                 # @supabase/ssr clients (auth only)
+├── stores/                       # Zustand (job-edit only)
 ├── Dockerfile                    # Multi-stage standalone build
 ├── docker-compose.yml            # Dev & prod profiles
-└── middleware.ts                 # Route protection, auth checks
+└── proxy.ts                      # Route protection + auth checks (this app's middleware file)
 ```
 
-## Two Surfaces
+## Surface
 
-| Surface             | Audience                                | Access                          |
-|---------------------|------------------------------------------|---------------------------------|
-| **Dashboard**       | Recruiters, Hiring Managers, Admins      | Supabase Auth (SSO / magic link)|
-| **Candidate Interview** | Job candidates                       | JWT invite link (no login)      |
+| Surface       | Audience                                          | Access                         |
+|---------------|---------------------------------------------------|--------------------------------|
+| **Dashboard** | Recruiters, Hiring Managers, Interviewers, Admins | Supabase Auth (email/password) |
+
+Candidates use the separate `frontend/session/` app (JWT invite link, no login).
 
 ## Available Commands
 

@@ -29,19 +29,23 @@ import recruiter-side modules or add Supabase auth here.
 
 ## Tech Stack
 
-- Next.js 16 App Router, React 19, TypeScript strict mode
+- Next.js 16 (16.2.x) App Router, React 19, TypeScript strict mode
 - Tailwind v4 (in-house tokens duplicated from `frontend/app`)
-- LiveKit (`livekit-client` + `@livekit/components-react`) — lazy-loaded inside
-  `WizardShell.tsx` so pre-check steps do not pull the SDK
-- TanStack Query v5 for the 6 candidate-session endpoints
+- LiveKit (`livekit-client` + `@livekit/components-react` + `@livekit/components-styles`)
+  — lazy-loaded inside `WizardShell.tsx` so pre-check steps do not pull the SDK
+- **`@mediapipe/tasks-vision`** — client-side face/head-pose detection for the
+  proctoring deterrent (model + WASM served from `public/mediapipe/`). Load-bearing.
+- TanStack Query v5 for the candidate-session endpoints (8 — see API Client)
 - React Hook Form + Zod for consent + OTP forms
-- `sonner` for toasts
+- `sonner` for toasts; `motion` for transitions; `streamdown` for streamed text
 - Vitest + Testing Library + jsdom for tests
 
 **Forbidden dependencies** (pre-merge grep gate; CI gate when CI lands):
 `@supabase/*`, `@dnd-kit/*`, `gsap`, `@dagrejs/dagre`, `cmdk`,
 `embla-carousel-react`, `media-chrome`, `@microsoft/fetch-event-source`,
 `ai`. Adding any of these requires a justification in the PR description.
+(Currently-present deps NOT on the ban list but worth knowing: `@mediapipe/tasks-vision`,
+`motion`, `radix-ui`, `streamdown`, `use-stick-to-bottom`, `lucide-react`.)
 
 ---
 
@@ -105,43 +109,49 @@ import recruiter-side modules or add Supabase auth here.
 
 ```
 frontend/session/
+├── app-config.ts                ← Static branding/visualizer config (from LiveKit starter template): title, logo, accent, audio-visualizer tuning (default type 'aura')
 ├── app/
-│   ├── layout.tsx               ← Root layout (fonts + px theme attrs + InterviewProviders)
+│   ├── layout.tsx               ← Root layout (fonts + px theme attrs + InterviewProviders; export const dynamic = "force-dynamic")
 │   ├── page.tsx                 ← Friendly landing for accidental root visits
 │   ├── not-found.tsx
 │   ├── globals.css              ← Duplicated px tokens + shadcn → px mapping
 │   ├── healthz/route.ts         ← Health probe
 │   └── interview/[token]/
 │       ├── page.tsx             ← Wizard host
-│       ├── WizardShell.tsx      ← Lazy-loads LiveSessionShell via next/dynamic
-│       ├── ConsentStep.tsx
-│       ├── OtpStep.tsx
-│       ├── CameraMicStep.tsx
+│       ├── WizardShell.tsx      ← Lazy-loads the live session shell via next/dynamic
+│       ├── WizardFrame.tsx / WizardStepper.tsx ← Wizard chrome
+│       ├── WelcomeStep.tsx / ConsentStep.tsx / OtpStep.tsx / CameraMicStep.tsx
+│       ├── sampleNoiseFloorDbfs.ts ← Mic noise-floor probe
 │       └── error/page.tsx       ← Token error landing
 ├── components/
-│   ├── px/                      ← 3 duplicated primitives (Button, Input, Toaster)
-│   ├── agents-ui/               ← LiveKit shadcn enclave (audio viz, control bar, transcript)
-│   ├── interview/               ← App shell, view controller, completion/error/reconnecting screens
-│   ├── ui/                      ← shadcn ui primitives used by agents-ui
-│   └── ai-elements/             ← shadcn AI SDK elements (transcript, message, shimmer)
-├── hooks/agents-ui/             ← Audio visualizer + control-bar canvas hooks
+│   ├── px/                      ← Duplicated primitives (Button, Input, Toaster)
+│   ├── ui/                      ← shadcn-style ui primitives (now minimal — button.tsx)
+│   ├── agents-ui/               ← Aura/shader audio-visualizer enclave (aura, react-shader-toy, animated-background, agent-session-provider, start-audio-button) — NO control bar / transcript here
+│   ├── interview/               ← Live session surface, split into app/, app/hooks/, lib/, session/ + the proctoring subsystem
+│   │   └── proctoring/          ← Client proctoring (see "Candidate-side proctoring" below) incl. vision/ (MediaPipe)
+│   └── DevtoolsShield.tsx       ← Devtools-open deterrent overlay
+├── hooks/
+│   ├── agents-ui/use-agent-audio-visualizer-aura.ts
+│   ├── use-agent-state.ts
+│   └── use-prefers-reduced-motion.ts
 ├── lib/
 │   ├── env.ts                   ← Zod env validator
 │   ├── utils.ts                 ← Duplicated cn helper
 │   ├── api/
-│   │   ├── candidate-session.ts ← 6 endpoints under /api/candidate-session/{token}/
+│   │   ├── candidate-session.ts ← 8 endpoints under /api/candidate-session/{token}/
+│   │   ├── audio-hints.ts       ← toAudioCaptureOptions (snake_case → camelCase)
+│   │   ├── client.ts
 │   │   └── errors.ts            ← Duplicated error narrowing
 │   └── hooks/
 │       └── use-{candidate-session,consent,request-otp,verify-otp}.ts
 ├── public/
-│   └── projectx-logo.svg        ← Duplicated brand asset
+│   ├── projectx-logo.svg        ← Duplicated brand asset
+│   └── mediapipe/               ← face_landmarker.task model + wasm/ (MediaPipe vision runtime for client proctoring)
 └── tests/
     ├── setup.ts                 ← jsdom polyfills + getUserMedia mock
     ├── _utils/render.tsx        ← Test render harness with QueryClient
-    ├── lib/
-    │   ├── env.test.ts
-    │   └── api/candidate-session.test.ts
-    └── components/interview/    ← 6 component tests
+    ├── lib/{env.test.ts, api/candidate-session.test.ts}
+    └── components/interview/    ← component tests
 ```
 
 ---
@@ -161,16 +171,18 @@ frontend/session/
 
 ## API Client (`lib/api/candidate-session.ts`)
 
-Six endpoints, all under `/api/candidate-session/{token}/*`:
+Eight endpoints, all under `/api/candidate-session/{token}/*`:
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET  | `/pre-check` | Initial state load (company, stage, consent text, OTP requirement) |
+| GET  | `/pre-check` | Initial state load (company, stage, consent text, OTP requirement, `proctoring_enabled`/`proctoring_outcome`) |
 | POST | `/consent` | Capture consent + signature |
 | POST | `/request-otp` | Send OTP via email/SMS |
 | POST | `/verify-otp` | Verify the 6-digit code |
-| POST | `/start` | Atomic-consume token, mint LiveKit creds, dispatch agent |
+| POST | `/start` | Atomic-consume token, mint LiveKit creds, dispatch agent (returns a `proctoring: ProctoringConfig` block + `audio_processing_hints`) |
 | POST | `/rejoin` | Mid-session reconnect (for active sessions) |
+| GET  | `/state` | Minimal post-`/start` state snapshot (fallback poll, `useSessionStateFallback`); `SessionState` includes `'terminated'` |
+| POST | `/proctoring/event` | Report a single proctoring violation; backend is authoritative on the soft-violation threshold + termination |
 
 This client deliberately does NOT use the recruiter `apiFetch` wrapper —
 that wrapper auto-attaches a Supabase bearer token. The candidate flow
@@ -185,7 +197,9 @@ has no Supabase session and must not send any `Authorization` header.
   steps do not pull it.
 - LiveKit URL + access token are returned by Nexus's `/start` endpoint;
   the frontend does NOT generate tokens.
-- Recordings use LiveKit Egress writing to S3 — no frontend involvement.
+- Recordings use LiveKit **Auto Egress** writing to **Cloudflare R2** — no frontend
+  involvement (this surface has zero recording/egress/storage code; the destination
+  is a backend detail).
 
 ### Audio handling
 
@@ -216,6 +230,35 @@ Required For: any change to OTP, consent, or camera/mic step flow"
 rule.
 
 ---
+
+## Candidate-side proctoring
+
+The live session runs a **client-side proctoring deterrent** (spec
+`docs/superpowers/specs/2026-05-21-candidate-session-proctoring-design.md`). It lives
+under `components/interview/proctoring/` and is wired into the session via
+`components/interview/app/view-controller.tsx`. The backend is authoritative — the
+client only detects + reports; Nexus decides termination.
+
+- **Controller** (`use-proctoring-controller.ts`) — classifies violations hard vs
+  soft, flashes a border, POSTs each to `/api/candidate-session/{token}/proctoring/event`,
+  and ends the LiveKit session via `ctx.end()` when told to.
+- **Guards** (hooks): `use-devtools-guard`, `use-focus-guard`, `use-fullscreen-guard`,
+  `use-keyboard-guard`, `use-visibility-guard`, `use-vision-guard`. Plus the top-level
+  `components/DevtoolsShield.tsx`.
+- **Vision** (`proctoring/vision/`: `face-landmarker.ts`, `head-pose.ts`, `gaze.ts`,
+  `reading.ts`) — uses `@mediapipe/tasks-vision` against the candidate's LiveKit camera
+  track to flag `multiple_faces`, `face_not_visible`, `looking_away_sustained`. This is a
+  **coarse head-pose-only deterrent** (iris removed); accurate gaze is deferred to the
+  server-side `vision` module. Model + WASM are served from `public/mediapipe/`.
+- **UI**: `ProctoringGuard`, `FocusGraceOverlay`, `FullscreenGraceOverlay`, `ViolationBorder`,
+  `VisionDebugOverlay`, with `nudge-kinds.ts` / `violation-kinds.ts`.
+- The candidate is informed; proctoring is gated by the backend `proctoring_enabled` flag
+  (from `/pre-check` + the `/start` `proctoring` block). `SessionState` gains `'terminated'`
+  when policy ends the interview mid-session.
+
+> Proctoring is a **deterrent + signal for human review**, never an auto-reject. It is the
+> client half of a two-plane system; the server half (ONNX gaze analysis) lives in the
+> backend `vision` module. Any change here falls under "Human Review Required For".
 
 ## Tailwind Standards
 
@@ -286,5 +329,6 @@ npm run test:coverage
 - Any new `Authorization` header sent from the candidate surface
 - Any change that adds a third-party origin to CSP `connect-src`
 - Any change to OTP, consent, or camera/mic step flow
+- Any change to `components/interview/proctoring/` (client proctoring detection/reporting)
 
 ---

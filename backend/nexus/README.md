@@ -4,13 +4,15 @@ FastAPI backend for the ProjectX AI video interview platform. Modular monolith a
 
 ## Tech Stack
 
-- **Python 3.12** / **FastAPI** (async throughout)
-- **PostgreSQL 16** via SQLAlchemy async + asyncpg
-- **Redis 7** (session state, task queue broker)
-- **Dramatiq** (async task queue)
+- **Python 3.13** / **FastAPI** (async throughout)
+- **PostgreSQL** (Supabase-hosted; local dev via `supabase start`) over SQLAlchemy async + asyncpg — NOT PostgREST
+- **Redis** (Dramatiq broker; ephemeral)
+- **Dramatiq** (async task queue — default + `report_scoring` / `ats_poll` / `reel` / `vision` queues)
 - **Alembic** (database migrations)
 - **Pydantic v2** (request/response schemas, settings)
-- **structlog** + **OpenTelemetry** + **Sentry** (observability)
+- **OpenAI** for all LLM work (via the `app/ai/` provider-agnostic layer)
+- **LiveKit** (real-time interview) + **Deepgram** STT + **Sarvam** TTS + **ai-coustics** denoise
+- **structlog** + **OpenTelemetry** (LLM/distributed traces) + **Sentry** (errors). No Langfuse (removed 2026-05-01).
 
 ## Prerequisites
 
@@ -22,7 +24,7 @@ FastAPI backend for the ProjectX AI video interview platform. Modular monolith a
 # Copy environment config
 cp .env.example .env
 
-# Start all services (FastAPI + Postgres + Redis)
+# Start the stack (FastAPI + workers + Redis; Postgres is Supabase-hosted)
 docker compose up --build
 
 # Verify
@@ -34,11 +36,16 @@ The API server runs at **http://localhost:8000** with hot-reload enabled via vol
 
 ## Services
 
-| Service  | Port | Description                      |
-|----------|------|----------------------------------|
-| nexus    | 8000 | FastAPI application server       |
-| postgres | 5432 | PostgreSQL 16 (user: `projectx`) |
-| redis    | 6379 | Redis 7 (session state + tasks)  |
+| Service               | Port | Description                                              |
+|-----------------------|------|---------------------------------------------------------|
+| nexus                 | 8000 | FastAPI application server                               |
+| nexus-worker          | —    | Dramatiq worker (default + report_scoring + ats_poll)   |
+| nexus-engine          | —    | Live interview engine worker (`python -m app.modules.interview_engine`) |
+| nexus-vision-worker   | —    | Dedicated worker for `reel` + `vision` queues (ffmpeg/ONNX, GPU-first) |
+| redis                 | 6379 | Dramatiq broker                                         |
+
+> Postgres is **not** a compose service — Nexus connects to a Supabase-hosted
+> database via `DATABASE_URL` (local dev: `supabase start`, Postgres on 54322).
 
 ## Project Structure
 
@@ -51,17 +58,29 @@ backend/nexus/
 │   ├── middleware/
 │   │   ├── auth.py          # JWT verification, RBAC enforcement
 │   │   └── tenant.py        # Tenant context for structured logging
+│   ├── storage/            # Provider-agnostic object storage (AWS S3 resumes + Cloudflare R2 recordings/reels)
 │   └── modules/
-│       ├── auth/            # Provider-agnostic JWT, roles, token schemas
-│       ├── ats/             # ATS adapter protocol, polling, sync
-│       ├── jd/              # Job description parsing, interview config
-│       ├── question_bank/   # AI question generation, versioning
-│       ├── scheduler/       # Session provisioning, invite dispatch, OTP
-│       ├── session/         # LiveKit orchestration, session state machine
-│       ├── analysis/        # Real-time scoring, signal detection
-│       ├── reporting/       # Report compilation, score aggregation
-│       └── notifications/   # Provider-agnostic email/SMS dispatch
-├── migrations/              # Alembic (async SQLAlchemy)
+│       ├── auth/            # Provider-agnostic JWT, roles, RBAC, /me
+│       ├── admin/          # ProjectX-internal tenant provisioning
+│       ├── settings/       # Team management (invite/resend/revoke)
+│       ├── org_units/      # Org-unit tree, roles, company profile
+│       ├── jd/             # JD pipeline (extract → enrich → signals)
+│       ├── pipelines/      # Pipeline templates + per-job stages
+│       ├── question_bank/  # AI question generation, versioning
+│       ├── candidates/     # Candidate CRUD, resume (S3), kanban, PII redaction
+│       ├── scheduler/      # Invite dispatch + supersession chain
+│       ├── session/        # LiveKit orchestration, single-use token, OTP, consent, proctoring events
+│       ├── interview_runtime/ # In-process wire contract the engine calls
+│       ├── interview_engine/  # The three-tier live interview engine (triage ∥ brain → mouth)
+│       ├── reporting/      # Post-session report (3-layer hybrid scorer + narrative)
+│       ├── reel/           # Candidate Reel highlight video (Director EDL + ffmpeg render)
+│       ├── vision/         # Server-plane gaze proctoring (POC, ONNX)
+│       ├── tenant_settings/ # Per-tenant engine + proctoring config
+│       ├── ats/            # Ceipal sync (manual-trigger)
+│       ├── analysis/       # [Dead stub] absorbed by interview_engine
+│       └── notifications/  # Provider-agnostic email/SMS dispatch
+├── migrations/              # Alembic (async SQLAlchemy) — head 0053
+├── vision_worker.py         # Dedicated Dramatiq worker for the reel + vision queues (ffmpeg/ONNX)
 ├── tests/
 ├── Dockerfile               # Multi-stage build, non-root user
 ├── docker-compose.yml       # Full local stack
@@ -94,20 +113,27 @@ docker compose run nexus mypy app/
 
 Copy `.env.example` to `.env` for local development. Key variables:
 
-| Variable              | Description                          |
-|-----------------------|--------------------------------------|
-| `DATABASE_URL`        | PostgreSQL async connection string   |
-| `REDIS_URL`           | Redis connection string              |
-| `JWT_SECRET`          | Dashboard user JWT signing key       |
-| `CANDIDATE_JWT_SECRET`| Candidate session JWT signing key    |
-| `SUPABASE_JWT_SECRET` | Supabase Auth JWT verification key   |
-| `ANTHROPIC_API_KEY`   | Claude API for AI pipelines          |
-| `DEEPGRAM_API_KEY`    | Speech-to-text                       |
-| `LIVEKIT_*`           | LiveKit server URL, API key & secret |
-| `RESEND_API_KEY`      | Email dispatch (MVP provider)        |
-| `TWILIO_*`            | SMS/OTP dispatch (MVP provider)      |
-| `SENTRY_DSN`          | Error tracking                       |
-| `LANGFUSE_*`          | LLM observability (self-hosted only) |
+| Variable                  | Description                                              |
+|---------------------------|---------------------------------------------------------|
+| `DATABASE_URL`            | PostgreSQL async connection string                      |
+| `DB_RUNTIME_ROLE`         | RLS runtime role (default `nexus_app`; empty only in tests/bootstrap) |
+| `REDIS_URL`               | Redis connection string (Dramatiq broker)               |
+| `SUPABASE_URL` / `SUPABASE_*` | Supabase project URL + admin/service keys (JWKS, ES256 verification) |
+| `CANDIDATE_JWT_SECRET`    | Candidate session JWT signing key (HS256)               |
+| `OTP_HMAC_KEY`            | OTP HMAC key                                            |
+| `OPENAI_API_KEY`          | OpenAI — all LLM work (async + real-time)               |
+| `DEEPGRAM_API_KEY`        | Speech-to-text (nova-3, en-IN)                          |
+| `SARVAM_API_KEY`          | TTS (bulbul:v3) — and optional STT alternate            |
+| `LIVEKIT_*`               | LiveKit server URL, API key & secret                    |
+| `RECORDING_STORAGE_*`     | Cloudflare R2 endpoint/bucket/keys (recordings, reels, thumbnails) |
+| `AWS_*` / S3 bucket vars  | AWS S3 (candidate resumes)                              |
+| `RESEND_API_KEY`          | Email dispatch (MVP provider)                           |
+| `TWILIO_*`                | SMS/OTP dispatch (MVP provider)                         |
+| `SENTRY_DSN`              | Error tracking                                          |
+| `OTEL_*`                  | OpenTelemetry exporters (off by default; OTLP → operator sink) |
+
+> Auth verification is JWKS/ES256 (Supabase auth hook) — there is no static
+> `JWT_SECRET`/`SUPABASE_JWT_SECRET` for dashboard users.
 
 See `.env.example` for the full list.
 

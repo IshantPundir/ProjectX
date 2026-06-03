@@ -14,8 +14,8 @@
 - **Framework:** FastAPI (async throughout)
 - **DB driver:** asyncpg (direct PostgreSQL connection — NOT PostgREST)
 - **ORM:** SQLAlchemy async (asyncpg driver)
-- **Schema management:** Supabase SQL for the initial cut + Supabase-managed objects (auth hook, `supabase_auth_admin` grants); Alembic for every incremental change after that. `migrations/versions/` head is `0048_drop_interview_engine_version` (recent: `0045` bank spoken fields/`primary_signal` → `0046` bank reset → `0047` session reports → `0048` drops `job_postings.interview_engine_version`, retiring the engine-selection flag — single engine).
-- **Task queue:** Dramatiq + Redis. Used for JD extraction/re-enrichment and question-bank generation. Notification dispatch still runs via FastAPI `BackgroundTasks` (short, non-retryable).
+- **Schema management:** Supabase SQL for the initial cut + Supabase-managed objects (auth hook, `supabase_auth_admin` grants); Alembic for every incremental change after that. `migrations/versions/` head is `0053_session_reels` (recent: `0048` drops the engine-selection flag → `0049` engine heartbeat → `0050` session recording columns → `0051` proctoring analysis → `0052` timeline thumbnails → `0053` session reels).
+- **Task queue:** Dramatiq + Redis. Broker setup is shared via `app/brokers.py`. Queues today: default (JD extraction/re-enrichment, question-bank generation), `report_scoring` (post-session report), `ats_poll` (manual ATS sync), `reel` + `vision` (run in the dedicated `nexus-vision-worker`, NOT the lean `nexus-worker`). Notification dispatch still runs via FastAPI `BackgroundTasks` (short, non-retryable).
 - **Containerisation:** Docker + Docker Compose
 - **Hosting MVP:** Railway
 - **Hosting Enterprise:** AWS ECS Fargate (same Docker image, different target)
@@ -25,7 +25,7 @@
 ## Current State
 
 - **Phase 1** — done: auth (Supabase + provider-agnostic interface), multi-tenancy with RLS, client provisioning, team invites, org units (hierarchical tree with typed nesting rules), roles & permissions, audit log, notification abstraction (Resend + dry-run).
-- **Phase 2A** — done: JD pipeline (create → extract → confirm → re-enrich), signal schema v2 with provenance, Dramatiq worker, `app/ai/` provider-agnostic AI layer, OpenAI instructor + Langfuse (self-hosted) tracing.
+- **Phase 2A** — done: JD pipeline (create → extract → confirm → re-enrich), signal schema v2 with provenance, Dramatiq worker, `app/ai/` provider-agnostic AI layer, OpenAI instructor + OpenTelemetry tracing (Langfuse was removed 2026-05-01 — OTel only).
 - **Phase 2B** — done: signal editing with snapshot versioning + row-locked version conflict detection, company profile ancestry walk.
 - **Phase 2C.1** — done: pipeline builder (templates + per-job instances + stages), drag-to-reorder, tenant-scoped template library, starter pipelines. Stage type collapsed to v5 (6 values) in migration 0016. Pipeline versioning + stage pause + stale-bank tracking added in 0018.
 - **Phase 2C.2** — done: question bank generation (adaptive coverage, mandatory demotion, per-stage LLM call, bundling discipline, SSE progress stream).
@@ -43,11 +43,15 @@
   - `stage_questions.question_kind` + `primary_signal` + per-question `difficulty` — the bank taxonomy, signal-coverage map, and grading strictness; the bank-generator emits them.
   - `tenant_settings.engine_agent_name` — read at session start (the mouth persona falls back to it; `engine_mouth_persona_name` default "Arjun"). `engine_knockout_policy` still unread.
   - `sessions.knockout_failures` JSONB + `KnockoutFailure` model — the engine still writes `[]`; a knockout currently lands in `coverage_summary` (signal=`failed`) + the audit trail, not yet the typed list (documented follow-up).
-- **Phase 3D.audio-pipeline (2026-05-06)** — done. LK Cloud cutover with adaptive interruption + ai-coustics QUAIL_L noise cancellation + ai-coustics built-in VAD adapter. The architecture is locked to LK Cloud. New JSONB column `sessions.audio_tuning_summary` (migration `0028`) persists per-session pause/interruption/latency percentiles for empirical tuning. `preemptive_tts: True` in `TurnHandlingOptions`. Frontend reads server-authoritative audio constraints via the `audio_processing_hints` field on the `/start` response (`noiseSuppression: false`, `echoCancellation: true`, `autoGainControl: true`). Adaptive interruption uses `min_words=2` to gate single-word backchannel. See spec `docs/superpowers/specs/2026-05-06-audio-pipeline-design.md`.
+- **Phase 3D.audio-pipeline (2026-05-06)** — done. LK Cloud cutover with adaptive interruption + ai-coustics QUAIL_L noise cancellation + ai-coustics built-in VAD adapter. The architecture is locked to LK Cloud. New JSONB column `sessions.audio_tuning_summary` (migration `0028`) persists per-session pause/interruption/latency percentiles for empirical tuning. **`preemptive_generation={"enabled": False}`** in `TurnHandlingOptions` (`agent.py` — quality-before-latency lock; preemptive generation is intentionally OFF). Frontend reads server-authoritative audio constraints via the `audio_processing_hints` field on the `/start` response (`noiseSuppression: false`, `echoCancellation: true`, `autoGainControl: true`). Adaptive interruption uses `min_words=2` to gate single-word backchannel. See spec `docs/superpowers/specs/2026-05-06-audio-pipeline-design.md`.
 - **Phase 3D.simplification (2026-05-12)** — done. Stripped the orchestrator's five layered race-condition mitigations (continuation coalescing, stale-turn drop-and-drain, post-Judge resumption gate, must-deliver whitelist, and supporting timestamp tracking). STT was Sarvam (`saaras:v3`) then; it has since moved to **Deepgram `nova-3` (`en-IN`) + per-session keyterm prompting** as the default (`interview_stt_provider="deepgram"`, migration `0041`), Sarvam kept as the alternate (Deepgram **Flux** is still ruled out — English-only). Turn detection stays the `MultilingualModel` (`unlikely_threshold` is `None` = model default, with `engine_endpointing_max_delay` raised to 10.0 for patient think-pauses). Hardened the Judge fallback path: the `push_back+concrete` cross-field check no longer raises (the State Engine's new `inverse_quality_gate` downgrades to `probe`), and `validation_error` synthesizes `clarify` instead of force-advancing the queue. Added `state.snapshot` and `speaker.input` audit events; populated `judge.call.input_summary` with the full `JudgeInputPayload` (was hardcoded empty). `engine_endpointing_max_delay` lowered 6.0s → 3.0s (LK default); adaptive interruption `min_duration` raised 0.5s → 1.0s. Supersedes `docs/superpowers/specs/2026-05-11-turn-continuation-coalescing-design.md`. Spec: `docs/superpowers/specs/2026-05-12-engine-simplification-design.md`.
-- **Phase 3D** — real-time `analysis` (per-turn grading, signal coverage, probe selection) is now done **in-session by the engine's brain** (it emits `SessionResult` + `coverage_summary` + the audit trail). Still pending: `reporting` (post-session report compilation / scorecards / PDF — a future effort that consumes the `SessionResult` + audit), and wiring the typed `knockout_failures` list.
+- **Phase 3D.analysis** — real-time per-turn grading / signal coverage / probe selection is done **in-session by the engine's brain** (it emits `SessionResult` + `coverage_summary` + the audit trail). The standalone `app/modules/analysis/` module is a **dead stub** (`GET /api/analysis/{id}/signals` → `not_implemented`) — its role was absorbed by the engine; it survives only as leftover scaffolding.
+- **Phase 3D.reporting — done.** `app/modules/reporting/` compiles the post-session report: a 3-layer hybrid (deterministic projection of the engine's `coverage_summary` onto role signals → parallel LLM signal re-check → LLM narrative). Verdict-driven fit-score (Overall/Technical/Behavioral/Communication ints → tier → verdict; state×texture bluff-aware; knockout-gated + fit-ceiling-capped + ±5 holistic; Borderline always human-held). `session_reports` table (migration `0047`, UNIQUE on `session_id`); Dramatiq actor `score_session_report` (queue `report_scoring`) enqueued by `record_session_result`; `/api/reports/*` (hub index, report view, presigned recording playback, proctoring view, human-decision write). Prompts under `prompts/v3/report_scorer/`. Spec: `docs/superpowers/specs/2026-05-28-verdict-driven-fit-score-design.md`. (Still unwired: the typed `knockout_failures` list — a knockout lands in `coverage_summary` + audit, not the typed field.)
+- **Phase 3D.recording — done.** Session recordings via **LiveKit Auto Egress → Cloudflare R2** (S3-compatible). `session/livekit.py::build_room_egress` (RoomComposite, `speaker` layout, `H264_720P_30`), pull-based reconcile via `get_room_egress_status`. Recording lifecycle columns in migration `0050`. Storage is vendor-blind through `app/storage/` (boto3 SigV4, path-style). Resumes stay on AWS S3 (`candidates/resume_service.py`); recordings/reels/thumbnails on R2.
+- **Phase 3D.reel — done.** `app/modules/reel/` — Candidate Reel highlight video (see "Reel module" below).
+- **Phase 3D.vision — POC.** `app/modules/vision/` — server-side gaze proctoring (see "Vision proctoring" below) + the client deterrent classified in `session/proctoring.py`.
 
-Stubbed modules (routers registered, no business logic yet): `ats`, `analysis`, `reporting`.
+Genuinely stubbed modules (routers registered, no business logic): `analysis` only. (`ats` and `reporting` are now implemented — see below.)
 
 ---
 
@@ -145,26 +149,39 @@ backend/nexus/
 │       │   ├── schemas.py
 │       │   └── errors.py         ← TokenAlreadyUsedError, TokenSupersededError, OtpInvalidError, AgentDispatchFailedError
 │       ├── interview_runtime/    ← Helpers the in-process engine calls (post-Phase-3 merge)
-│       │   ├── service.py        ← build_session_config, record_session_result (called directly by agent.py)
-│       │   ├── schemas.py        ← SessionConfig, SessionResult, QuestionConfig, KnockoutFailure (the wire contract)
+│       │   ├── service.py        ← build_session_config, record_session_result, record_engine_heartbeat (called by agent.py)
+│       │   ├── schemas.py        ← SessionConfig, SessionResult, QuestionConfig, QuestionRubric, KnockoutFailure, WordTiming (wire contract)
+│       │   ├── transcript_timing.py ← question_asked_at_ms / relative_words / turn_bounds (shared by engine + reporting + reel/vision)
 │       │   └── errors.py         ← CompanyProfileMissingError, EmptySignalMetadataError, QuestionBankNotReadyError, …
-│       ├── interview_engine/     ← Phase 3D — the interview engine (three-tier): triage/ ∥ brain/ → mouth/ ; agent.py (LiveKit entrypoint + worker bootstrap), coverage.py, turn_taking/{floor,eou,pacing}.py, directive.py, policy gates, event_log/ → engine-events/<id>.json + result_builder.py
-│       ├── tenant_settings/      ← Phase 5 — per-tenant engine configuration
+│       ├── interview_engine/     ← Phase 3D — the interview engine (three-tier): triage/ ∥ brain/ → mouth/ ; agent.py (LiveKit entrypoint + worker bootstrap), controller.py (DirectiveController), directive.py (closed act/move vocab), coverage.py, audit.py (TurnDecisionRecord), audio_metrics.py, turn_taking/{floor,eou,pacing}.py, event_log/ → engine-events/<id>.json + result_builder.py
+│       ├── reporting/            ← Phase 3D — post-session report generator
+│       │   ├── service.py        ← build_report (coverage projection → LLM recheck → LLM narrative)
+│       │   ├── scoring/          ← signal scoring (state×texture), fit ceilings, holistic delta, verdict, recheck, judge, narrative, engine_signals
+│       │   ├── actors.py         ← score_session_report (queue report_scoring)
+│       │   └── models.py / schemas.py / router.py ← session_reports + /api/reports/* (hub, view, recording, proctoring, decision)
+│       ├── reel/                 ← Phase 3D — Candidate Reel highlight video
+│       │   ├── director.py       ← generate_edl (gpt-5.4) + validate_edl (pure, hallucination-guarded)
+│       │   ├── timing.py         ← live-VAD → recording-ms map (per-session measured pipeline lag)
+│       │   ├── render.py / clips.py / cards.py / captions.py / tts.py ← ffmpeg pipeline (runs in vision image)
+│       │   ├── actors.py         ← generate_session_reel (queue reel)
+│       │   └── service.py / router.py ← session_reels + /api/reports/session/{id}/reel*
+│       ├── vision/               ← Phase 3D — server-plane gaze proctoring (POC; nexus-vision-worker only)
+│       │   ├── gaze/mobilegaze.py ← ONNX gaze estimator (resnet34, NON-COMMERCIAL weights — GA blocker)
+│       │   ├── actors.py         ← analyze_session_proctoring (queue vision)
+│       │   └── …                 ← RetinaFace detect + frame sampling + risk band; persists FEATURES ONLY (session_proctoring_analysis)
+│       ├── tenant_settings/      ← per-tenant engine + proctoring configuration
 │       │   ├── models.py         ← TenantSettingsModel (PK = tenant_id, FK clients.id ON DELETE CASCADE)
-│       │   ├── schemas.py        ← TenantSettings (engine_knockout_policy Literal, engine_agent_name)
+│       │   ├── schemas.py        ← TenantSettings (engine_knockout_policy Literal default 'close_polite', engine_agent_name, proctoring_enabled, proctoring_soft_violation_limit, proctoring_fullscreen_grace_seconds)
 │       │   └── service.py        ← get_tenant_settings — lazy-default read (no row → schema defaults)
-│       ├── ats/                  ← [Stub] Per-ATS adapters, polling, outbound sync
-│       ├── analysis/             ← [Stub] Real-time scoring, probe decision logic
-│       └── reporting/            ← [Stub] Report compilation, score aggregation
+│       ├── ats/                  ← Ceipal sync — vendor-blind orchestrator + CeipalAdapter + poll_ats_connection actor (manual-trigger)
+│       └── analysis/             ← [Dead stub] role absorbed by interview_engine/brain — returns not_implemented
+│   └── storage/                 ← app/storage/ — provider-agnostic object storage (S3CompatibleStorage: AWS S3 resumes + Cloudflare R2 recordings/reels/thumbnails)
+├── worker.py + vision_worker.py + brokers.py  ← Dramatiq entrypoints (vision_worker runs `-Q vision reel`) + shared broker init
 ├── prompts/                     ← versioned prompt files (PromptLoader reads `v{N}/…`, in-memory cache)
-│   ├── v1/                       ← JD pipeline + question-bank prompts
-│   │   ├── jd_enrichment.txt        ← Phase 1 — JD enrichment (rewrite raw JD)
-│   │   ├── jd_signal_extraction.txt ← Phase 2 — signal extraction from (enriched or raw) JD
-│   │   ├── jd_reenrichment.txt      ← Call 2 — re-enrichment after signal edits
-│   │   ├── question_bank_common.txt ← Shared system prompt for question bank calls
-│   │   └── question_bank_<stage_type>.txt ← Per-stage-type system prompts
-│   └── v3/engine/                ← interview-engine prompts: brain.system.txt, triage.system.txt, mouth/* (per-act)
-├── migrations/                  ← Alembic — head is `0048_drop_interview_engine_version`
+│   ├── v1/                       ← JD pipeline prompts (jd_enrichment / jd_signal_extraction / jd_reenrichment)
+│   ├── v2/                       ← question-bank prompts (ACTIVE — `question_bank_prompt_version="v2"`): question_bank_common + question_bank_<stage_type>
+│   └── v3/                       ← engine/ (brain.system, triage.system, mouth/* per-act) · reel/ (director.txt) · report_scorer/ (communication, holistic, narrative, signal_recheck)
+├── migrations/                  ← Alembic — head is `0053_session_reels`
 │   └── versions/
 ├── tests/
 │   └── conftest.py              ← AsyncClient fixture
@@ -393,15 +410,22 @@ from openai import AsyncOpenAI
 | `scheduler` | Invite send / resend / revoke. `send_invite` mints a candidate JWT (HS256) and inserts the matching `candidate_session_tokens` row (jti, tenant, session_id, expires_at). Resend creates a new token row and stamps `superseded_at + superseded_by` on the prior row, building a per-session supersession chain. Notification dispatch via the provider-agnostic notifications module — notification dispatch reads settings.candidate_session_base_url (NOT frontend_base_url). |
 | `session` | Two routers: `candidate_session_router` (candidate-facing, JWT in path) and `session_router` (recruiter-facing, read-only). State machine: `created → pre_check → consented → active → completed \| cancelled \| error`. OTP gate (CSPRNG 6-digit code, HMAC-SHA256 hash, 10-minute lifetime, max 3 attempts, 60s rate limit, constant-time compare). **Single-use token enforcement** is atomic on `/start` (`UPDATE … WHERE used_at IS NULL RETURNING`). Phase 3C.2 wired the LiveKit room + token provisioning: `/start` mints a candidate `room_join` token, mints + records an engine dispatch JWT, dispatches the agent, then atomically consumes the candidate token and transitions to `active` (502 `AGENT_DISPATCH_FAILED` if dispatch fails — token is NOT consumed in that case so the candidate can retry). LiveKit helpers live at `session/livekit.py`. |
 | `interview_runtime` | In-process helpers the engine calls directly (post-Phase-3 merge). `build_session_config` walks session → assignment → candidate → job → stage → bank → snapshot → questions → ancestry-walked company profile to build the engine's `SessionConfig`. `record_session_result` atomically updates the session row gated on `state='active'`, idempotent on retry, writes an audit row; the `SessionResult` carries `coverage_summary`. Both run on a bypass-RLS session with explicit `tenant_id` filter on every query (RLS-only defense layer; no HTTP router, no engine-dispatch JWT — those were retired in migration `0025`). The wire-format Pydantic models (`SessionConfig`, `SessionResult`, `KnockoutFailure`) live here for the engine to import. |
-| `tenant_settings` | Phase 5 — per-tenant engine configuration. ORM `TenantSettingsModel` (PK = `tenant_id`, FK `clients.id` ON DELETE CASCADE); Pydantic `TenantSettings` with `engine_knockout_policy: Literal['record_only','close_polite']` and `engine_agent_name: str \| None`. `get_tenant_settings(db, tenant_id)` is the single read path with lazy-default semantics (no row → schema defaults). No router; recruiter-side editing UI is post-arc per overview Decision #19. |
+| `tenant_settings` | Per-tenant engine + proctoring configuration. ORM `TenantSettingsModel` (PK = `tenant_id`, FK `clients.id` ON DELETE CASCADE); Pydantic `TenantSettings` with `engine_knockout_policy: Literal['record_only','close_polite']` (Pydantic default **`close_polite`**; note migration `0027` seeds the DB default `record_only` — a schema/DB-default divergence), `engine_agent_name: str \| None`, and the proctoring trio `proctoring_enabled` (default True), `proctoring_soft_violation_limit` (3), `proctoring_fullscreen_grace_seconds` (10). `get_tenant_settings(db, tenant_id)` is the single read path with lazy-default semantics (no row → schema defaults). No router. |
+
+### Phase 3D — Implemented
+
+| Module | What It Owns |
+|---|---|
+| `reporting` | Post-session report generator. `build_report` runs a 3-layer hybrid: (1) deterministic — projects the engine's `coverage_summary` onto role signals, detects `knockout_close` from the audit envelope, scores the four dimensions (Overall/Technical/Behavioral/Communication); (2) parallel LLM signal re-check (may override the engine state with a texture grade); (3) LLM narrative (sees final numbers, never changes them). Scoring is state×texture (bluff-aware), knockout-gated, fit-ceiling-capped, ±5 holistic. `resolve_verdict` → advance / borderline / reject (Borderline never auto-resolved). `session_reports` table (UNIQUE on session_id), `score_session_report` actor (queue `report_scoring`), `/api/reports/*` (hub index, report view, presigned recording, proctoring view, `POST /{report_id}/decision` human decision). |
+| `reel` | Candidate Reel (~45–60s highlight video). `director.generate_edl` (`gpt-5.4`, Responses API + structured output) reads report ground-truth THEN the word-indexed transcript and emits an ordered EDL (title → match → (point → clip)×N → outro); `validate_edl` is pure + hallucination-guarded (resolves word indices → ms, edge-trims, dedups, per-clip 16s cap, 80s total budget). `timing.py` maps live-VAD candidate spans to recording-ms via a per-session measured pipeline lag. `render.py` cuts clips from the R2 recording + builds branded cards under Arjun TTS narration with burned captions. `generate_session_reel` actor (queue `reel`, runs in `nexus-vision-worker`), uploads MP4 to R2. Eligibility: report ready + verdict advance/borderline + recording exists. |
+| `vision` | Server-plane gaze proctoring (POC). `analyze_session_proctoring` actor (queue `vision`, `nexus-vision-worker` only) downloads the recording from R2, runs an ONNX gaze estimator (`gaze/mobilegaze.py`, resnet34 / Gaze360 — **non-commercial weights, dev/POC only, GA blocker**) + RetinaFace detection over ffmpeg-sampled frames, derives gaze features → risk band + flagged intervals + heatmap. Persists **features only, never frames** to `session_proctoring_analysis` (migration `0051`); timeline thumbnails to `session_timeline_thumbnails` (`0052`) on R2. Hard perf caps after the 2026-06-01 incident: `vision_sample_fps=2.0`, single ORT intra-op thread, `cpus: 4` backstop, GPU-first providers. The **client-side** deterrent is separate — `session/proctoring.py` classifies MediaPipe head-pose / focus / devtools / fullscreen violations reported by `frontend/session`. |
+| `ats` | Ceipal sync. Vendor-blind `ATSSyncOrchestrator` (cursor-based job-driven sync, lazy entity materialization, quarantine, email-collision matrix, diff/audit), `CeipalAdapter`, `poll_ats_connection` actor (queue `ats_poll`, per-connection advisory lock), credential encryption (`crypto.py`), `/api/ats/*` (connections, sync, job-status-filter, sync-logs, stage-mappings, retry-import). **Manual-trigger only** — the scheduled auto-poll was removed. Greenhouse/Workday adapters not yet built. Migration `0036`. |
 
 ### Future Phases — Stubbed
 
 | Module | What It Will Own |
 |---|---|
-| `ats` | Per-ATS adapter interface, Ceipal polling cron, Greenhouse/Workday webhooks, outbound sync after session completion |
-| `analysis` | Real-time answer scoring, probe selection logic, signal detection (depth, specificity, evidence quality) |
-| `reporting` | Post-session report compilation, per-question scorecards, transcript assembly, score aggregation, PDF generation |
+| `analysis` | Dead stub — real-time scoring/probe selection was absorbed into `interview_engine/brain`. `GET /api/analysis/{id}/signals` returns `not_implemented`. Kept only as leftover scaffolding; remove or repurpose. |
 
 ---
 
@@ -419,8 +443,8 @@ class ATSAdapter(Protocol):
 
 ### Ceipal — Critical Details
 - **Has NO webhooks.** Polling is the **sole** data pipeline — not a fallback.
-- Poll every 15 minutes per entity type per connected company.
-- Delta detection: store `last_synced_at` per entity type per company. Compare `ceipal_job_id` / `ceipal_submission_id` against DB on every poll.
+- **Sync is manual-trigger today** (`POST /api/ats/.../sync`, `poll_ats_connection` actor on queue `ats_poll` with a per-connection advisory lock). The scheduled 15-min auto-poll cron was removed; re-introducing it is a worker-schedule change, not a rewrite.
+- Delta detection: cursor-based, job-driven. Compare `ceipal_job_id` / `ceipal_submission_id` against DB on every poll.
 - Auth: OAuth2. Access token + refresh token. Auto-refresh at 80% of token lifetime.
 - Primary entity is **Submission** (recruiter submits candidate to job), not Applicant.
 - Rate limits are undocumented. Test on first integration — run consecutive list calls and inspect response headers.
@@ -429,9 +453,9 @@ class ATSAdapter(Protocol):
 
 ## Session State Machine
 
-Live session state is stored in Redis with TTL. A crashed session agent recovers from the last Redis checkpoint.
+Live session state lives **in the engine process** for the duration of the LiveKit call; the durable record is the append-only **event-log envelope** (`engine-events/<session_id>.json`, optionally mirrored to an AWS S3 sink) plus the final `SessionResult` committed by `record_session_result`. Redis is the Dramatiq broker, not a session-state checkpoint store. A liveness heartbeat (`record_engine_heartbeat`, `sessions.last_engine_heartbeat_at`, migration `0049`) keeps the reaper from killing a long interview; on engine crash the session transitions to `error` (no mid-call checkpoint recovery today).
 
-State stored per session:
+Conceptual state tracked per session by the engine:
 - Conversation history
 - Current question index
 - Detected signals (depth, specificity, evidence quality)
@@ -486,7 +510,7 @@ Real-time latency budget:
 | WebRTC transport out | 20–50ms |
 | **Total P50** | **~620–1,250ms** |
 
-TTS TTFB is the highest-leverage variable. Benchmark Cartesia Sonic vs ElevenLabs under realistic concurrent load before building the session engine.
+TTS TTFB is the highest-leverage variable. TTS default is **Sarvam `bulbul:v3`** (voice `shubh`, en-IN); OpenAI (`gpt-4o-mini-tts`) and Cartesia (`sonic-2`) are env-selectable alternates via `build_tts_plugin()`. STT default is **Deepgram `nova-3`** (en-IN, transcribe mode, per-session keyterm boosting); Sarvam (`saaras:v3`) is the alternate. All real-time model IDs/voices live in `AIConfig`, never hardcoded.
 
 ### OpenTelemetry — Vendor-Neutral by Design
 LLM traces flow through OpenTelemetry instrumentation, not a vendor-specific SDK. The `opentelemetry-instrumentation-openai-v2` auto-instrumentor captures every `chat.completions.create` call as a span; `app/ai/tracing.set_llm_span_attributes()` adds prompt metadata. Two opt-in exporters (`OTEL_DEV_CONSOLE_EXPORTER` for stdout, `OTEL_EXPORTER_OTLP_ENDPOINT` for production); both off by default. Spans contain candidate evaluation data, so the OTLP endpoint MUST point at a sink the operator controls — never a third-party-hosted backend without a signed sub-processor agreement.
@@ -525,7 +549,7 @@ Every environment must set BOTH settings explicitly. The localhost defaults are 
 ## Database Migrations
 
 ### Current State
-The initial schema (6 tables, first-cut RLS policies, system role seeds, and the Supabase auth hook) lives in `backend/supabase/migrations/20260405000000_initial_schema.sql`. Every incremental change since Phase 2A has been an Alembic migration in `migrations/versions/`. Current head: `0048_drop_interview_engine_version`.
+The initial schema (6 tables, first-cut RLS policies, system role seeds, and the Supabase auth hook) lives in `backend/supabase/migrations/20260405000000_initial_schema.sql`. Every incremental change since Phase 2A has been an Alembic migration in `migrations/versions/`. Current head: `0053_session_reels`.
 
 Migrations so far:
 - `0001_phase_2b_columns` — signal editing + version columns
@@ -564,6 +588,11 @@ Migrations so far:
 - `0046_reset_emptied_banks` — Data-consistency follow-up to `0045`: resets the bank/job rows the `0045` clear left inconsistent so regeneration starts clean.
 - `0047_session_reports` — Adds the `session_reports` table for the post-session reporting work (compiled report + status per completed session).
 - `0048_drop_interview_engine_version` — Drops `job_postings.interview_engine_version`; the engine-selection flag is retired — there is now a single interview engine.
+- `0049_session_engine_heartbeat` — Adds `sessions.last_engine_heartbeat_at`. The engine pulses it so the reaper treats a long-running interview as alive instead of killing it.
+- `0050_session_recording` — Adds the recording lifecycle columns (`recording_status`, `recording_s3_key`, `recording_egress_id`, `recording_duration_seconds`, bytes, …). Recordings land on Cloudflare R2 via LiveKit Auto Egress.
+- `0051_session_proctoring_analysis` — Adds the `session_proctoring_analysis` table (server-plane vision features: risk band, flagged intervals, gaze heatmap, model versions — **features only, never frames**). Canonical RLS pair; registered in `_TENANT_SCOPED_TABLES`.
+- `0052_session_timeline_thumbnails` — Adds `session_timeline_thumbnails` (report-timeline WebP thumbnails, stored on R2).
+- `0053_session_reels` — Adds the `session_reels` table (Candidate Reel highlight-video state: edl, chapters, r2_key, duration, model_versions, status lifecycle, version/attempts). Registered in `_TENANT_SCOPED_TABLES`.
 
 ### Going Forward
 - Future schema changes should use Alembic migrations in `migrations/versions/`.

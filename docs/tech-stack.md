@@ -2,6 +2,14 @@
 
 **Platform:** ProjectX — AI Video Interview Platform
 
+> **Refreshed 2026-06-03.** Key deltas since the original draft: Langfuse was
+> **removed** (OpenTelemetry only); the interview engine is **built** (three-tier,
+> `gpt-5.4-mini`); session **recordings moved to Cloudflare R2** (LiveKit Auto Egress);
+> TTS default is **Sarvam `bulbul:v3`** (not Cartesia/ElevenLabs); reporting, Candidate
+> Reel, and vision proctoring shipped; Python is **3.13**; migration head is **`0053`**.
+> The authoritative module-level source of truth is each `CLAUDE.md` — this file is the
+> cross-cutting summary.
+
 ---
 
 # Guiding principle
@@ -23,14 +31,14 @@ The rule: data model, RLS policies, auth contracts, and module boundaries must b
 | Backend | FastAPI · Railway | FastAPI · AWS ECS Fargate | With DB migration |
 | Task queue | Dramatiq · Upstash Redis | Dramatiq · AWS ElastiCache | With backend migration |
 | Real-time sessions | LiveKit Cloud | LiveKit self-hosted · AWS EC2 | Client requires audio/video in VPC |
-| STT | Deepgram Nova-3 managed | Deepgram self-hosted · AWS | Client requires audio data isolation |
+| STT | Deepgram `nova-3` (en-IN, per-session keyterm) | Deepgram self-hosted · AWS | Client requires audio data isolation |
 | LLM — async | OpenAI API | Same | — |
-| LLM — real-time | OpenAI API (GPT-5 mini class) | Llama/Mistral · AWS GPU (g4dn) | Per-token cost exceeds GPU infra cost |
-| TTS | Cartesia Sonic or ElevenLabs ⚠️ | Same | — |
-| Storage | AWS S3 | AWS S3 | Already AWS-native — no migration |
+| LLM — real-time | OpenAI API (`gpt-5.4-mini`, three-tier engine) | Llama/Mistral · AWS GPU (g4dn) | Per-token cost exceeds GPU infra cost |
+| TTS | Sarvam `bulbul:v3` (default); OpenAI / Cartesia selectable | Same | — |
+| Storage | AWS S3 (resumes) + Cloudflare R2 (recordings/reels/thumbnails) | Same | Already native — no migration |
 | Email | Resend | AWS SES | Config swap only |
 | SMS / OTP | Twilio | AWS SNS | Config swap only |
-| Observability | Sentry · Langfuse (self-hosted) | Same + AWS CloudTrail | — |
+| Observability | Sentry (errors) · OpenTelemetry (LLM/traces) | Same + AWS CloudTrail | — |
 
 ---
 
@@ -121,7 +129,7 @@ CREATE POLICY "service_bypass" ON <table>
 
 > 🚨 **Startup RLS completeness check.** `app/main.py` runs `_assert_rls_completeness` on app boot. It queries `pg_policies` for every tenant-scoped table and aborts startup with a structured CRITICAL log if any table is missing `tenant_isolation` (with non-NULL WITH CHECK) or `service_bypass`. Skipped under `ENVIRONMENT=test` or when `DB_RUNTIME_ROLE` is unset. New tenant-scoped tables must be added to the enumerated list in that helper.
 
-**ORM:** SQLAlchemy async (`asyncpg` driver) + Alembic for versioned migrations. Initial schema (6 Phase 1 tables, seed roles, Supabase auth hook, `supabase_auth_admin` grants) lives in `backend/supabase/migrations/`. Every incremental change since Phase 2A is an Alembic migration in `backend/nexus/migrations/versions/`. **Current head: `0012_rename_service_role_bypass`** (12 revisions total, 0001–0012; 0008–0012 are RLS hardening — audit-log INSERT gap, Phase 1 full-command rewrite, `nexus_app` role creation, `NULLIF` cast fix, and a `service_role_bypass` → `service_bypass` rename for consistency).
+**ORM:** SQLAlchemy async (`asyncpg` driver) + Alembic for versioned migrations. Initial schema (6 Phase 1 tables, seed roles, Supabase auth hook, `supabase_auth_admin` grants) lives in `backend/supabase/migrations/`. Every incremental change since Phase 2A is an Alembic migration in `backend/nexus/migrations/versions/`. **Current head: `0053_session_reels`** (0008–0012 are the RLS hardening set; later migrations add candidates/scheduler/session, the engine integration + its later teardown, tenant settings, audio tuning, Deepgram keyterms, session reports, recording columns, proctoring analysis + thumbnails, and session reels). See `backend/nexus/CLAUDE.md` for the full annotated list.
 
 > 🚨 **Developer note — do not use PostgREST.** Supabase's auto-generated REST/GraphQL API (PostgREST) creates a second direct path into the database that bypasses FastAPI entirely. All data access must go through FastAPI. Use Supabase as a managed Postgres host and auth service only.
 > 
@@ -137,27 +145,31 @@ Both migrations are config-only. Same PostgreSQL schema and RLS policies through
 
 # 3. Backend
 
-**FastAPI · Python 3.12 · Docker · Modular Monolith**
+**FastAPI · Python 3.13 · Docker · Modular Monolith**
 
 Single deployable unit with clean internal module boundaries. No microservices until a module demonstrably needs independent scaling.
 
 | Module | Responsibility |
 | --- | --- |
-| `ats` | Per-ATS adapter, webhook ingestion, outbound sync |
-| `jd` | JD parsing, project brief, interview configuration |
-| `question_bank` | AI generation pipeline, versioning, admin editing |
-| `scheduler` | Session provisioning, invite dispatch, OTP |
-| `session` | LiveKit orchestration, session state machine |
-| `analysis` | Real-time scoring, probe decision logic |
-| `reporting` | Report compilation, score aggregation |
+| `auth` / `admin` / `settings` / `org_units` / `roles` | Supabase JWT verification, RBAC, tenant provisioning, team + org-unit management |
+| `jd` | JD parsing, signal extraction/enrichment, interview configuration |
+| `pipelines` / `question_bank` | Pipeline templates + per-job stages · AI question-bank generation |
+| `candidates` / `scheduler` | Candidate CRUD + resume (S3) + kanban · invite dispatch + supersession |
+| `session` | LiveKit orchestration, single-use token, OTP, consent, proctoring events |
+| `interview_runtime` | In-process wire contract the live engine calls (`build_session_config` / `record_session_result`) |
+| `interview_engine` | The three-tier live interview engine (triage ∥ brain → mouth) |
+| `reporting` | Post-session report — 3-layer hybrid scorer + narrative (`session_reports`) |
+| `reel` | Candidate Reel highlight video (Director EDL + ffmpeg render) |
+| `vision` | Server-plane gaze proctoring (POC, ONNX) |
+| `tenant_settings` | Per-tenant engine + proctoring config |
+| `ats` | Ceipal sync (manual-trigger); `analysis` is a dead stub absorbed by the engine |
 | `notifications` | Email/SMS dispatch via provider-agnostic interface |
-| `auth` | Supabase JWT verification, RBAC middleware |
 
-**Session state during live sessions** is stored in Redis with a TTL. Conversation history, current question index, detected signals, and running scores survive process restarts. A crashed session agent recovers from the last Redis checkpoint.
+**Live session state** lives in the engine process for the call's duration; the durable record is the append-only event-log envelope (`engine-events/<id>.json`, optionally mirrored to S3) + the final `SessionResult`. Redis is the Dramatiq broker, not a session-state checkpoint store. A DB heartbeat keeps the reaper from killing long interviews; there is no mid-call checkpoint recovery today (engine crash → session `error`).
 
-**Provider-agnostic AI layer (`app/ai/`).** Every LLM call goes through the `app/ai/` package — business logic never imports the OpenAI SDK (or `instructor`, or `langfuse.openai`) directly. `AIConfig` in `app/ai/config.py` is env-driven (`OPENAI_*_MODEL`, `OPENAI_*_EFFORT`) so swapping a model for a task is a `.env` change, not a code change. `get_openai_client()` in `app/ai/client.py` returns an `instructor.AsyncInstructor` wrapped around `langfuse.openai.AsyncOpenAI` — Langfuse tracing is a drop-in and becomes a no-op when `LANGFUSE_HOST` is empty. `PromptLoader` in `app/ai/prompts.py` reads versioned prompt files from `backend/nexus/prompts/v{N}/` so prompt updates are file changes, not code deploys. `ExtractionOutput` and sibling structured-output schemas in `app/ai/schemas.py` enforce provenance (`ai_extracted` vs `ai_inferred`) via Pydantic validators. This package is the single swap point if a future provider change is needed.
+**Provider-agnostic AI layer (`app/ai/`).** Every LLM call goes through the `app/ai/` package — business logic never imports the OpenAI SDK (or `instructor`) directly. `AIConfig` in `app/ai/config.py` is env-driven (`OPENAI_*_MODEL`, `OPENAI_*_EFFORT`) so swapping a model for a task is a `.env` change, not a code change. `get_openai_client()` in `app/ai/client.py` returns an `instructor.AsyncInstructor` wrapped around a plain `openai.AsyncOpenAI`. Observability is **OpenTelemetry** (`app/ai/otel.py` bootstraps the OpenAI auto-instrumentor; `app/ai/tracing.set_llm_span_attributes()` adds prompt metadata) — Langfuse was removed on 2026-05-01. `PromptLoader` in `app/ai/prompts.py` reads versioned prompt files from `backend/nexus/prompts/v{N}/` (v1 JD · v2 question bank · v3 engine/reel/report_scorer) so prompt updates are file changes, not code deploys. Structured-output schemas in `app/ai/schemas.py` enforce provenance via Pydantic validators. Real-time LiveKit plugin instantiation is isolated in `app/ai/realtime.py` (the one blessed site for STT/TTS/VAD vendor SDKs). This package is the single swap point if a future provider change is needed.
 
-> 🚨 **Ceipal has no webhook API.** The polling cron is the primary and only data pipeline — not a fallback. There is no inbound event push from Ceipal. All job and candidate data flows into ProjectX via scheduled REST API polls.
+> 🚨 **Ceipal has no webhook API.** Polling is the only data pipeline — there is no inbound event push. Sync is **manual-trigger today** (`POST /api/ats/.../sync`, vendor-blind orchestrator + `CeipalAdapter`); the scheduled auto-poll cron was removed and can be re-introduced as a worker-schedule change.
 > 
 
 **Ceipal ATS integration specifics:**
@@ -218,13 +230,13 @@ SFU architecture for 500+ concurrent sessions. LiveKit Agents framework handles 
 
 **Session format:** Video interview. Camera + microphone required from candidates. Bot appears as an avatar tile (no camera).
 
-**AI Copilot panel:** Renders automatically for any human (non-candidate) who joins the session — supervisors, recruiters, or hiring managers. Always-on, never optional. Shows: live transcript, real-time signal cards, bot’s next planned probe (before it fires), and question coverage tracker. The copilot pipeline runs for every session regardless of whether a human is present — data is stored in Redis and surfaces in the post-session report when no human is watching live.
+**AI Copilot panel (roadmap):** The always-on *in-session* copilot for human-panel rounds is **not built**. Today the engine runs solo and its in-session signal coverage + audit envelope surface afterward in the **post-session report + ReviewTheater** (`frontend/app` reports). A live in-session copilot is future work for Round-2 human panels.
 
 **Human participants:** Any human (supervisor, recruiter, HM) joins as a full video participant visible to the candidate. They see the Copilot panel but cannot redirect the bot mid-session.
 
 **Session duration:** 10–15 minutes · 8–10 questions.
 
-**Recordings:** LiveKit Egress writes directly to AWS S3. SSE-KMS encryption at rest. Pre-signed URL access only.
+**Recordings:** LiveKit **Auto Egress** writes to **Cloudflare R2** (S3-compatible) via the provider-agnostic `app/storage/` layer. RoomComposite, `speaker` layout, `H264_720P_30`; pull-based reconcile. Private bucket, tenant-prefixed keys, pre-signed URL access only. (Resumes stay on AWS S3.)
 
 - **MVP →** LiveKit Cloud. Zero ops. Same SDK as self-hosted.
 - **Enterprise →** Self-hosted on AWS EC2 (c6i autoscaling group). SDK config change only — zero code changes.
@@ -263,27 +275,22 @@ Best-in-class for accented speech, natural language, and technical vocabulary. S
 
 Used today for: JD extraction (Call 1), JD re-enrichment (Call 2), question bank generation. Planned for: post-session reports, signal analysis, candidate summaries.
 
-These are batch tasks. API latency is not a constraint — wrapped with `instructor` for structured output enforcement and `langfuse.openai` for tracing. Model IDs are env-driven through `AIConfig`; swapping a model for a task is a `.env` change. Every call is traced through self-hosted Langfuse.
+These are batch tasks. API latency is not a constraint — wrapped with `instructor` for structured-output enforcement. Used today for: JD extraction/re-enrichment, question-bank generation, the **post-session report** (3-layer hybrid scorer), and the **Candidate Reel** Director (`gpt-5.4`). Model IDs are env-driven through `AIConfig`; every call is traced through OpenTelemetry.
 
-## LLM — real-time (OpenAI API (GPT-5 mini class) → self-hosted)
+## LLM — real-time (the interview engine) — BUILT
 
-Used for: live answer scoring, probe selection, dynamic question generation during sessions. Not yet wired — belongs to Phase 3 when the LiveKit session engine ships.
+Live scoring + probe selection + question delivery now run **in-session** via the three-tier interview engine (`app/modules/interview_engine/`): **triage** (fast classify + immediate spoken beat) ∥ **brain** (async control plane: rubric grading, signal coverage, policy gates) → **mouth** (renders the directive as natural spoken Indian English). All three tiers run **`gpt-5.4-mini`** on the OpenAI API.
 
 | Phase | Model | Hosting |
 | --- | --- | --- |
-| v1 | OpenAI GPT-5 mini class | OpenAI API |
+| v1 (today) | OpenAI `gpt-5.4-mini` | OpenAI API |
 | v2+ | Llama 3 / Mistral | AWS g4dn GPU instances |
 
 Switch trigger: when per-token API cost at session volume exceeds self-hosted GPU cost, or a client requires real-time LLM data to stay in-VPC.
 
-## TTS — decision pending
+## TTS — Sarvam `bulbul:v3` (default)
 
-| Option | TTFB | Trade-off |
-| --- | --- | --- |
-| Cartesia Sonic | ~80ms | Lower latency, slightly less natural |
-| ElevenLabs | ~300ms | Higher quality, ~220ms slower to first audio |
-
-Run benchmark under realistic load (concurrent sessions, varied sentence lengths) before building the session engine. Both hold enterprise DPAs.
+Default is **Sarvam `bulbul:v3`** (voice `shubh`, en-IN) — the same voice is reused offline for the Candidate Reel narration. **OpenAI `gpt-4o-mini-tts`** and **Cartesia `sonic-2`** are env-selectable alternates via `build_tts_plugin()`. Provider/voice/model are `AIConfig`-driven — never hardcoded.
 
 ## Avatar
 
@@ -293,13 +300,14 @@ Run benchmark under realistic load (concurrent sessions, varied sentence lengths
 
 # 7. Storage
 
-**AWS S3 — both tiers, from day 1**
+**AWS S3 (candidate resumes) + Cloudflare R2 (recordings, reels, proctoring thumbnails)**
 
-Stores: session recordings (video + audio), transcripts, generated PDF reports, question bank exports, branding assets.
+Both are reached through a single provider-agnostic `app/storage/` layer (`S3CompatibleStorage`, boto3 SigV4, path-style) — the vendor is a config swap, not a code change.
 
-All buckets: SSE-KMS encryption at rest · versioning enabled · no public access · pre-signed URL access only · lifecycle policies per client's configured retention period.
+- **AWS S3** — candidate resumes (`AWS_*` / resume bucket). Versioning ON, MFA-delete ON, SSE.
+- **Cloudflare R2** — session recordings (video+audio), Candidate Reels, and report-timeline thumbnails (`RECORDING_STORAGE_*`, region `auto`). Private, tenant-prefixed keys, pre-signed URL access only. R2 lacks S3-style versioning + MFA-delete — an accepted residual (recordings are reproducible artifacts of a one-time event); see `docs/security/threat-model.md`.
 
-S3 is AWS-native from the start. No migration ever needed.
+No public access on any bucket. No migration needed.
 
 ---
 
@@ -308,22 +316,19 @@ S3 is AWS-native from the start. No migration ever needed.
 | Tool | Purpose |
 | --- | --- |
 | Sentry | Error tracking, exception monitoring |
-| Langfuse (self-hostable) | LLM observability — token usage, cost, latency, prompt version tracking per session |
+| OpenTelemetry | LLM observability **and** distributed tracing: WebRTC join → STT → LLM → scoring → report. The `opentelemetry-instrumentation-openai-v2` auto-instrumentor captures every `chat.completions.create` as a span; `app/ai/tracing.set_llm_span_attributes()` adds prompt metadata. |
 | structlog | Structured logging with correlation IDs across the full pipeline |
-| OpenTelemetry | Distributed tracing: WebRTC join → STT → LLM → scoring → report |
 
 Every session carries a correlation ID end-to-end. Debugging a bad session is forensically possible without replaying the recording.
 
 AWS CloudTrail added at enterprise tier for infrastructure-level audit logging.
 
-> 🚨 **Developer note — self-host Langfuse from day 1.** Langfuse traces every LLM call end-to-end, including the candidate's response text passed to the model for scoring, the probe decision logic, and the real-time signal classifications per session. That is sensitive candidate evaluation data. Managed Langfuse cloud requires a DPA before any real candidate data flows through it, and introduces a third-party sub-processor that enterprise procurement teams must approve. `app/ai/client.py::_is_langfuse_cloud_host` actively refuses to connect to managed Langfuse cloud outside dev mode — this guard prevents accidental data exfiltration.
-> 
-
-> 
-> 
-
-> Self-host Langfuse using their official Docker Compose setup — it takes under an hour, runs on a single `t3.small` for MVP volumes, and is fully featured. Point `LANGFUSE_HOST` in your environment to your self-hosted instance. There is no reason to use managed Langfuse cloud for this product.
-> 
+> 🚨 **Langfuse was removed (2026-05-01).** LLM observability is now OpenTelemetry only.
+> Both OTel exporters (Console for dev, OTLP for production) are **off by default**. The
+> OTLP endpoint MUST point at an **operator-controlled sink** — spans carry the candidate's
+> response text, probe decisions, and per-session signal classifications (sensitive
+> evaluation data), so never a third-party-hosted backend without a signed sub-processor
+> agreement. See `docs/superpowers/specs/2026-05-01-drop-langfuse-modular-monolith-design.md`.
 
 ---
 

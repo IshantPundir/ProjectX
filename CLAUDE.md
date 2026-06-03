@@ -52,10 +52,10 @@ Each subdirectory has its own `CLAUDE.md` with context-specific rules. Always re
 | LLM async | OpenAI API | — |
 | LLM real-time | OpenAI API (GPT-5 mini class) | Per-token cost > GPU cost |
 | TTS | Sarvam (bulbul:v3) default; Cartesia / OpenAI selectable | — |
-| Storage | AWS S3 | Already native, no migration |
+| Storage | AWS S3 (candidate resumes) + Cloudflare R2 (session recordings + reels + proctoring thumbnails, via LiveKit Auto Egress) | Already native, no migration |
 | Email | Resend | Config swap only |
 | SMS/OTP | Twilio | Config swap only |
-| Observability | Sentry + Langfuse (self-hosted) | + CloudTrail |
+| Observability | Sentry (errors) + OpenTelemetry (LLM/distributed traces → operator-controlled OTLP sink) | + CloudTrail |
 
 **The rule:** Data model, RLS policies, auth contracts, and module boundaries must be correct from day 1. Everything else evolves on demand, triggered by a real client requirement — not in anticipation of one.
 
@@ -66,16 +66,19 @@ Each subdirectory has its own `CLAUDE.md` with context-specific rules. Always re
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Auth, multi-tenancy + RLS, client provisioning, team invites, org units, roles, audit log, notifications | ✅ done |
-| 2A | JD pipeline, signal schema v2 with provenance, `app/ai/` provider-agnostic layer, Langfuse tracing | ✅ done |
+| 2A | JD pipeline, signal schema v2 with provenance, `app/ai/` provider-agnostic layer, OpenTelemetry tracing | ✅ done |
 | 2B | Signal editing with snapshot versioning + row-locked save, company profile ancestry walk | ✅ done |
 | 2C.1 | Pipeline templates + per-job instances + stages, drag-to-reorder, stage type v5 (6 values), participants | ✅ done |
 | 2C.2 | Question bank generation (per-stage LLM, adaptive coverage, mandatory demotion, bundling, SSE) | ✅ done |
 | 3B | Candidates module (CRUD, resume + S3, kanban, PII redaction gate) | ✅ done |
 | 3C.1 | Scheduler invites + supersession chain; session pre-check / consent / OTP; **single-use token enforcement** atomic on `/start` | ✅ done |
-| 3C.2 | LiveKit room + token provisioning on `/start`; in-process engine worker (`app/modules/interview_engine/agent.py`) running a generic LLM-chatbot loop; candidate live UI on LiveKit's `agent-starter-react` template via `@agents-ui` shadcn enclave (`<AgentSessionView_01>`, audio visualizers, control bar); engine graceful-close attribute (`session_outcome`); mid-session rejoin endpoint (`POST /rejoin`); realtime tuning (preemptive generation, dynamic endpointing, adaptive interruption). RLS-only defense layer: `build_session_config` / `record_session_result` are called in-process by the engine and filter every query by an explicit `tenant_id`. (Frontend lives at `frontend/session`; see `docs/superpowers/specs/2026-05-01-frontend-session-extract-design.md`.) | ✅ done |
-| 3D | Audio pipeline (LK Cloud + **Deepgram nova-3 STT (en-IN) + per-session keyterm** + MultilingualModel turn detector + adaptive interruption + ai-coustics VAD). `reporting` (post-session report) still pending; real-time `analysis` (scoring/probe selection) is done in-session by the interview engine's brain. | 🟡 partial |
-| 3D.engine | **The interview engine** (`app/modules/interview_engine/`) — a three-tier conversation/control split: **triage** (fast classify + immediate spoken beat) ∥ **brain** (async control plane: rubric grading, signal coverage, policy gates incl. verified-knockout + no-leak, emits one Directive) → **mouth** (renders the directive as natural spoken Indian English, never sees the rubric). Prompts under `prompts/v3/engine/`. | ✅ done |
-| ATS | Ceipal polling, Greenhouse/Workday adapters, outbound sync | 🟡 stubbed |
+| 3C.2 | LiveKit room + token provisioning on `/start`; in-process engine worker (`app/modules/interview_engine/agent.py`) running the three-tier interview engine (see 3D.engine); candidate live UI at `frontend/session` on LiveKit's `agent-starter-react` template (aura/shader audio visualizer + client-side proctoring deterrent); engine graceful-close attribute (`session_outcome`); mid-session rejoin endpoint (`POST /rejoin`); realtime tuning (dynamic endpointing + adaptive interruption — **preemptive generation is intentionally OFF**, quality-before-latency lock). RLS-only defense layer: `build_session_config` / `record_session_result` are called in-process by the engine and filter every query by an explicit `tenant_id`. (See `docs/superpowers/specs/2026-05-01-frontend-session-extract-design.md`.) | ✅ done |
+| 3D.audio | Audio pipeline (LK Cloud + **Deepgram nova-3 STT (en-IN) + per-session keyterm** + MultilingualModel turn detector + adaptive interruption + ai-coustics VAD/denoise). Real-time `analysis` (scoring/probe selection) is done in-session by the interview engine's brain (the standalone `analysis` module is a dead stub). | ✅ done |
+| 3D.engine | **The interview engine** (`app/modules/interview_engine/`) — a three-tier conversation/control split, all tiers on `gpt-5.4-mini`: **triage** (fast classify + immediate spoken beat) ∥ **brain** (async control plane: rubric grading, signal coverage, policy gates incl. verified-knockout + no-leak, emits one Directive) → **mouth** (renders the directive as natural spoken Indian English, never sees the rubric). Prompts under `prompts/v3/engine/`. | ✅ done |
+| 3D.report | **Post-session report** (`app/modules/reporting/`) — 3-layer hybrid scorer: deterministic projection of the engine's `coverage_summary` onto role signals → LLM signal re-check → LLM narrative. Verdict-driven fit-score (Overall/Technical/Behavioral/Communication → tier → verdict; knockout-gated + ceiling-capped; Borderline always human-held). `session_reports` table; recruiter report viewer + ReviewTheater playback (R2 recording, presigned). Prompts under `prompts/v3/report_scorer/`. | ✅ done |
+| 3D.reel | **Candidate Reel** (`app/modules/reel/`) — ~45–60s AI-directed highlight video. Director LLM (`gpt-5.4`) builds an EDL from report ground-truth + word-indexed transcript; clips cut from the R2 recording via live-VAD timing; branded cards + Arjun TTS narration + burned captions; rendered in the `nexus-vision-worker` (ffmpeg). `session_reels` table; eligibility gated to advance/borderline verdicts. Prompts under `prompts/v3/reel/`. | ✅ done |
+| 3D.proctoring | **Vision proctoring (POC)** — client deterrent (`frontend/session` MediaPipe head-pose + devtools/focus/fullscreen/visibility guards → `/proctoring/event`) + server-plane analysis (`app/modules/vision/` ONNX gaze estimator in the dedicated `nexus-vision-worker`, derives risk band + flagged intervals, stores **features only, never frames**). For-review-not-a-decision. ⚠️ Non-commercial model weights = GA blocker; see DPIA. 2026-06-01 perf incident (~23 cores) → capped, see `docs/incidents/`. | 🟡 POC |
+| ATS | Ceipal sync substantially implemented (vendor-blind orchestrator + `CeipalAdapter` + `poll_ats_connection` actor + recruiter Integrations UI). **Manual-trigger sync** (auto-cron removed). Greenhouse/Workday adapters + outbound sync still unbuilt. | 🟡 partial |
 
 Subdirectory CLAUDE.md files are the source of truth for module-level detail. This table is the cross-cutting summary only.
 
@@ -87,7 +90,7 @@ Subdirectory CLAUDE.md files are the source of truth for module-level detail. Th
 - **NEVER commit `.env` files, API keys, secrets, or credentials to the repository.**
 - Secrets belong in environment variables at MVP; AWS Secrets Manager at enterprise.
 - Candidate JWT signing keys are treated with the same sensitivity as DB credentials.
-- All S3 buckets are private. Pre-signed URL access only. No exceptions.
+- All object storage is private — AWS S3 (resumes) **and** Cloudflare R2 (session recordings, reels, proctoring thumbnails). Pre-signed URL access only. No exceptions.
 - RBAC is enforced at FastAPI middleware on every endpoint. Role is checked before any processing begins.
 - Tenant isolation is enforced at the PostgreSQL RLS layer — never in application code alone.
 - **RLS is actually enforced at runtime** via a dedicated `nexus_app` role (`NOBYPASSRLS`, created by migration 0010). Every `get_tenant_db` / `get_bypass_db` session runs `SET LOCAL ROLE nexus_app` before any query. The default `postgres` Supabase role has `rolbypassrls=true` and would otherwise silently skip every policy. See `backend/nexus/CLAUDE.md` → "RLS runtime role" for the full model.
@@ -117,7 +120,7 @@ section for the full rollback/re-lock history.
 
 ### AI Provider — Load-Bearing
 - AI provider is OpenAI for the entire system (Phase 2A onwards).
-- All LLM calls go through the `app/ai/` module. Never call the OpenAI SDK (or `langfuse.openai`, or `instructor`) directly from business logic.
+- All LLM calls go through the `app/ai/` module. Never call the OpenAI SDK (or `instructor`) directly from business logic. Real-time LiveKit STT/TTS/VAD plugins are instantiated only in `app/ai/realtime.py`.
 - `AIConfig` in `app/ai/config.py` is the single source of truth for model IDs and reasoning_effort — env-driven, never hardcoded in service files.
 - Swapping a model for a task is a `.env` change, not a code change.
 
@@ -157,7 +160,8 @@ Error budget: 0.1% / 30 days for the dashboard, 0.05% / 30 days for the candidat
 - Postgres: managed daily backups + PITR. **RPO ≤ 15 min. RTO ≤ 4 h.**
 - Restore drill required quarterly — restore into a scratch DB, run `_assert_rls_completeness` + `pytest`, then drop. Log results under `docs/dr/`.
 - Redis (Dramatiq broker, session checkpoints) is ephemeral by design. Anything that must survive a flush goes to Postgres.
-- S3: versioning ON for the resume bucket and the recording bucket. MFA-delete ON for the recording bucket.
+- AWS S3 (resume bucket): versioning ON. MFA-delete ON.
+- Cloudflare R2 (recording + reel + thumbnail bucket): private, tenant-prefixed keys, presigned access only. R2 lacks S3-style object versioning + MFA-delete — tracked as an accepted residual in `docs/security/threat-model.md` (§Session recording). Recordings are reproducible artifacts of a one-time live event, not source-of-truth data.
 
 ### Rate Limiting & Abuse Posture
 
@@ -252,6 +256,9 @@ If any of these directories are missing when an enterprise standard above demand
 | AI Copilot Panel | Always-on panel visible to any human (non-candidate) in a session. Shows live transcript, signal cards, next bot probe, question coverage tracker. |
 | Submission | In Ceipal, the correct primary entity is Submission (recruiter submits candidate to job) — not Applicant. |
 | Borderline | AI score classification. Cannot be auto-resolved. Requires explicit human decision. |
+| Report | Post-session evaluation (`reporting` module). A 3-layer hybrid: deterministic projection of the engine's in-session `coverage_summary`, an LLM signal re-check, and an LLM narrative. Drives a verdict-driven fit-score (advance / borderline / reject). NOT an offline re-grade from scratch — the engine's coverage map is the spine. |
+| Reel | Optional ~45–60s AI-directed candidate highlight video (`reel` module), built from the report + recording. Eligible only for advance/borderline verdicts. Recruiter-facing aid, never shown to candidates. |
+| Proctoring | Two planes: a client-side coarse deterrent (MediaPipe head-pose + focus/devtools guards on `frontend/session`) and a server-side gaze analysis (`vision` module, ONNX, features-only). "For review, not a decision" — never auto-rejects. POC; non-commercial weights are a GA blocker. |
 | Correlation ID | Every session carries a correlation ID end-to-end through the entire pipeline (WebRTC → STT → LLM → scoring → report). Required for forensic debugging. |
 
 ---
@@ -259,10 +266,12 @@ If any of these directories are missing when an enterprise standard above demand
 ## Critical Integration Details
 
 ### Ceipal ATS
-- **Has no webhooks.** Polling every 15 minutes is the **primary and only** data pipeline — not a fallback.
-- Delta detection: store `last_synced_at` per entity type per company.
-- Auth: OAuth2 (access token + refresh token). Auto-refresh at 80% of token lifetime.
-- Rate limits are undocumented — test on Day 1.
+- **Has no webhooks.** Polling is the **only** data pipeline — there is nothing else to fall back to.
+- **Current state:** sync is **manual-trigger** (`POST /api/ats/.../sync`) via a vendor-blind orchestrator (`ats/orchestrator.py`) + `CeipalAdapter`. The scheduled 15-min auto-poll cron was removed; re-introducing it is a config/worker change, not a rewrite. Greenhouse/Workday adapters are not yet built.
+- Delta detection: cursor-based, job-driven; lazy entity materialization + quarantine + email-collision matrix.
+- Auth: OAuth2 (access token + refresh token). Credentials encrypted at rest (`ats/crypto.py`).
+- Primary entity is **Submission** (recruiter submits candidate to job), not Applicant.
+- Rate limits are undocumented — test on first integration.
 
 ### RLS Pattern (asyncpg — NOT PostgREST)
 ```sql
@@ -353,9 +362,9 @@ Require explicit human review before merging changes to:
 
 - Every session carries a **correlation ID** end-to-end.
 - structlog for structured logging throughout the backend.
-- OpenTelemetry for distributed tracing: WebRTC join → STT → LLM → scoring → report.
+- OpenTelemetry for distributed tracing AND LLM observability: WebRTC join → STT → LLM → scoring → report. The `opentelemetry-instrumentation-openai-v2` auto-instrumentor captures every `chat.completions.create` as a span; `app/ai/tracing.set_llm_span_attributes()` adds prompt metadata.
+- **Langfuse was removed** (2026-05-01, see `docs/superpowers/specs/2026-05-01-drop-langfuse-modular-monolith-design.md`) — LLM observability is now OpenTelemetry only. Both OTel exporters (Console for dev, OTLP for prod) are off by default; the OTLP endpoint MUST point at an operator-controlled sink (spans carry candidate evaluation data — never a third-party-hosted backend without a signed sub-processor agreement).
 - Sentry for error tracking.
-- Langfuse **self-hosted** for LLM observability. Do NOT use managed Langfuse cloud — it would make candidate evaluation data flow through a third-party sub-processor.
 - When Sentry is wired across all three frontend apps (separate PR), each app uses its own DSN. The candidate-session DSN's `beforeSend` MUST scrub `/interview/[^/]+` from URL/breadcrumb/stack data and drop events whose payloads pattern-match a JWT (`eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`). Until Sentry is wired, the candidate surface logs nothing to a third party.
 
 ---

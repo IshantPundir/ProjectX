@@ -45,6 +45,18 @@ ProjectX automates candidate screening via AI-led video interviews. A company co
 
 The diagram below maps the complete end-to-end flow across 6 phases, from initial setup through to the final hire decision.
 
+> **Build status (2026-06) — vision vs. shipped.** This document describes the full
+> product vision. Today's build covers **Phases 1–4 end-to-end**: company onboarding +
+> team/roles, JD → signals → pipeline → question banks, candidate management + invites,
+> the **live AI-led video interview** (a three-tier real-time engine — *Arjun*), session
+> **recording** (Cloudflare R2), the **post-session report** (verdict-driven scoring +
+> recruiter report viewer + ReviewTheater playback), an optional **Candidate Reel**
+> highlight video, and **vision proctoring** (POC). **Phases 5–6** (human-panel Round 2,
+> coding interviews, multi-round final-decision aggregation) and the always-on *in-session*
+> AI Copilot are **roadmap, not built**. ATS is Ceipal-only and manual-trigger. Auth is
+> **email/password** (SSO is additive later). The live UI is a single-candidate session
+> surface, not the 2×2 panel grid described below for Round 2.
+
 ![image.png](assets/product_overview/image.png)
 
 ---
@@ -57,7 +69,7 @@ The admin is invited to ProjectX and walks through a 5-step guided wizard to con
 
 **What happens:**
 
-- Authenticates via SSO (Google Workspace or Microsoft) or work email — no new password
+- Authenticates via work email + password (SSO is a later, additive option — not in the MVP)
 - Fills in company profile: name, industry, size, and a culture brief that the AI uses to personalise interview questions
 - Connects their ATS using API credentials — each ATS uses a different method (Ceipal uses OAuth2 access token + base URL; Greenhouse uses REST API; Workday uses Client ID + Secret)
 
@@ -107,7 +119,7 @@ Each candidate receives a branded, personal invite and completes a live AI-led v
 - They pick a time slot from the recruiter's defined availability window — a calendar invite is sent automatically
 - On joining, they complete a pre-check: **camera test**, mic test, identity confirmation, and OTP verification
 - The video interview begins — camera and mic are both required throughout
-- The AI bot ("Alex") conducts the session: asks questions, listens actively, and dynamically probes shallow or vague responses
+- The AI bot ("Arjun") conducts the session: asks questions, listens actively, and dynamically probes shallow or vague responses
 - Session progress is tracked (e.g. Q3 of 9, 11 min remaining) and displayed throughout
 
 **Session interface:** A 2×2 video grid (candidate, AI bot, human participant if present, empty slot). An AI Copilot panel renders automatically for any human (non-candidate) in the session — always-on, never optional.

@@ -2,7 +2,13 @@
 
 > **For:** The UI/UX designer redesigning ProjectX.
 > **Goal:** Give you a clear picture of what the product does, who uses it, and how it works today — in plain language.
-> **Date:** 2026-05-15
+> **Date:** 2026-05-15 (snapshot) · **Corrections appended 2026-06-03**
+>
+> ⚠️ **Shipped since this snapshot:** the **Reports** page is no longer a placeholder — it's
+> a real reports hub + per-session report viewer with scoring, **recording playback**, a
+> **ReviewTheater** player, an optional **Candidate Reel** highlight video, and a
+> **proctoring** integrity panel. Read the "placeholder / coming soon" notes below as
+> historical. The AI bot's name is **Arjun**.
 
 ---
 
