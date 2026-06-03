@@ -28,6 +28,7 @@ from app import brokers  # noqa: F401  (side effect: init broker before actor im
 from app.ai.otel import bootstrap_tracer_provider
 from app.config import settings
 from app.model_registry import configure_all_models
+from app.modules.reel import actors as reel_actors  # noqa: F401  (register reel actor, queue "reel")
 from app.modules.vision import actors  # noqa: F401  (side effect: register vision actor)
 
 # --- structlog init (mirrors app/worker.py) ---

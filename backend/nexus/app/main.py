@@ -73,6 +73,8 @@ _TENANT_SCOPED_TABLES: tuple[str, ...] = (
     "session_proctoring_analysis",
     # Report Review Theater — derived timeline thumbnails (migration 0052).
     "session_timeline_thumbnails",
+    # Candidate Reel — AI-directed highlight reel (migration 0053).
+    "session_reels",
 )
 
 
@@ -348,6 +350,7 @@ def create_app() -> FastAPI:
     from app.modules.session.router import candidate_session_router, session_router
     from app.modules.analysis.router import router as analysis_router
     from app.modules.reporting.router import router as reporting_router
+    from app.modules.reel.router import router as reel_router
     from app.modules.notifications.router import router as notifications_router
     from app.modules.auth.router import router as auth_router
     from app.modules.admin.router import router as admin_router
@@ -367,6 +370,7 @@ def create_app() -> FastAPI:
     application.include_router(question_bank_refine_router)
     application.include_router(analysis_router)
     application.include_router(reporting_router)
+    application.include_router(reel_router)
     application.include_router(notifications_router)
     application.include_router(admin_router)
     application.include_router(settings_router)

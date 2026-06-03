@@ -160,7 +160,7 @@ services:
       #   mkdir -p models && curl -L -o models/resnet34_gaze.onnx \
       #     https://github.com/yakhyo/gaze-estimation/releases/download/weights/resnet34_gaze.onnx
       - ./models:/weights:ro
-    command: sh -c 'dramatiq app.vision_worker --processes ${VISION_WORKER_CONCURRENCY:-4} --threads 1 -Q vision'
+    command: sh -c 'dramatiq app.vision_worker --processes ${VISION_WORKER_CONCURRENCY:-4} --threads 1 -Q vision reel'
 
   redis:
     image: redis:7-alpine

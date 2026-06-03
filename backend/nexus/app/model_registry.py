@@ -32,6 +32,7 @@ def configure_all_models() -> None:
     import app.modules.org_units.models  # noqa: F401
     import app.modules.pipelines.models  # noqa: F401
     import app.modules.question_bank.models  # noqa: F401
+    import app.modules.reel.models  # noqa: F401
     import app.modules.reporting.models  # noqa: F401
     import app.modules.roles.models  # noqa: F401
     import app.modules.session.models  # noqa: F401

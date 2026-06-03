@@ -145,20 +145,23 @@ def test_overlong_clip_is_trimmed_to_the_soft_cap():
 # --- total budget: group-by-lead-card -------------------------------------
 
 def test_over_budget_drops_trailing_point_groups_keeping_one():
-    # agents between -> four separate runs (refs 1..4)
+    # Seven ~15s clips (15 words on a 1000ms grid) far exceed the 80s budget,
+    # forcing trailing point-groups (card + clip) to drop. agents between ->
+    # separate runs (refs 1..7).
+    refs = range(1, 8)
     transcript = []
-    for i in (1, 2, 3, 4):
-        transcript += [_cand(i, 12), _agent()]
+    for i in refs:
+        transcript += [_cand(i, 16), _agent()]
     beats = [ReelBeat(kind="title", on_screen_text="t"),
              ReelBeat(kind="match", on_screen_text="m")]
-    for i in (1, 2, 3, 4):
-        beats += [ReelBeat(kind="point", on_screen_text=f"p{i}"), _clip(i, 0, 11)]
+    for i in refs:
+        beats += [ReelBeat(kind="point", on_screen_text=f"p{i}"), _clip(i, 0, 15)]
     beats.append(ReelBeat(kind="outro", on_screen_text="o"))
     vedl = validate_edl(ReelEdlOut(beats=beats), transcript)
     kinds = [b.kind for b in vedl.beats]
     assert kinds[0] == "title" and kinds[-1] == "outro"
     clips = _by_kind(vedl, "clip")
-    assert 1 <= len(clips) < 4
+    assert 1 <= len(clips) < 7
     assert len(_by_kind(vedl, "point")) == len(clips)
     assert vedl.duration_ms <= MAX_TOTAL_MS
 

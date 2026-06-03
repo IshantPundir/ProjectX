@@ -69,6 +69,42 @@ async def card_segment(*, image_path: str, out_path: str, duration_ms: int,
 _CARD_KINDS = ("title", "match", "point", "outro")
 
 
+async def prepare_anchor(events: list[dict], recording_path: str,
+                         recording_started_at_ms: int
+                         ) -> tuple[int, list[tuple[int, int]]]:
+    """Compute ``anchor`` (video_ms = t_ms + anchor) + the VAD speaking intervals.
+
+    ``anchor = wall_anchor - pipeline_lag``; the lag is measured per session by
+    cross-correlating the candidate VAD envelope against the recording's speech
+    envelope (calibration only). Requires ffmpeg — call only in the vision image.
+    """
+    wall_anchor = timing.wall_anchor(events, recording_started_at_ms)
+    speaking = timing.speaking_intervals(events)
+    rec_speech = await timing.recording_speech_intervals(recording_path)
+    pipeline_lag = timing.measure_pipeline_lag(speaking, rec_speech, wall_anchor)
+    return wall_anchor - pipeline_lag, speaking
+
+
+async def _probe_duration_ms(path: str) -> int:
+    """Exact media duration (ms) via ffprobe — for accurate chapter offsets."""
+    proc = await asyncio.create_subprocess_exec(
+        "ffprobe", "-v", "error", "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1", path,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+    )
+    out, _ = await proc.communicate()
+    try:
+        return int(float(out.decode().strip()) * 1000)
+    except (ValueError, AttributeError):
+        return 0
+
+
+def _chapter_label(beat) -> str:
+    if beat.on_screen_text:
+        return beat.on_screen_text.lstrip("★ ").strip()[:60]
+    return {"clip": "Candidate", "experience": "Candidate"}.get(beat.kind, beat.kind.title())
+
+
 def _clip_to_video(beat, events: list[dict], speaking: list[tuple[int, int]],
                    anchor: int) -> tuple[int, int, list[dict]] | None:
     """Map a clip beat's words -> (video_start, video_end, cleaned caption words).
@@ -100,13 +136,17 @@ def _clip_to_video(beat, events: list[dict], speaking: list[tuple[int, int]],
 
 async def render_reel(*, beats: list, recording_path: str, events: list[dict],
                       speaking: list[tuple[int, int]], anchor: int,
-                      tmp_dir: str, out_path: str, tts_enabled: bool = True) -> str:
-    """Render a validated EDL into one MP4: card+narration beats interleaved with clips.
+                      tmp_dir: str, out_path: str, tts_enabled: bool = True
+                      ) -> tuple[str, list[dict]]:
+    """Render a validated EDL into one MP4 + chapter metadata.
 
-    ``anchor`` maps engine t_ms to the video clock (``video_ms = t_ms + anchor``;
-    see timing.py). Clip beats whose VAD span can't be resolved are skipped.
+    Card+narration beats are interleaved with candidate clips. ``anchor`` maps
+    engine t_ms to the video clock (``video_ms = t_ms + anchor``; see timing.py).
+    Clip beats whose VAD span can't be resolved are skipped. Returns
+    ``(out_path, chapters)`` where chapters = ``[{kind, label, start_ms}]`` at the
+    exact (ffprobe-measured) offset of each rendered segment.
     """
-    segments: list[str] = []
+    rendered: list[tuple[str, object]] = []   # (segment_path, beat)
     for i, b in enumerate(beats):
         seg = os.path.join(tmp_dir, f"seg_{i:02d}.mp4")
         if b.kind in _CARD_KINDS:
@@ -124,7 +164,7 @@ async def render_reel(*, beats: list, recording_path: str, events: list[dict],
                            if audio_dur else max(floor_ms, b.duration_ms))
             await card_segment(image_path=png, out_path=seg,
                                duration_ms=duration_ms, audio_path=audio_path)
-            segments.append(seg)
+            rendered.append((seg, b))
         else:  # clip / experience
             mapped = _clip_to_video(b, events, speaking, anchor)
             if mapped is None:
@@ -133,11 +173,20 @@ async def render_reel(*, beats: list, recording_path: str, events: list[dict],
             await clips.cut_clip(
                 recording_path=recording_path, out_path=seg, words=caption_words,
                 start_ms=video_start, end_ms=video_end, offset_ms=0)
-            segments.append(seg)
+            rendered.append((seg, b))
 
-    if not segments:
+    if not rendered:
         raise RuntimeError("render_reel: no renderable segments")
-    return await concat_clips(segments, out_path)
+
+    chapters: list[dict] = []
+    cursor = 0
+    for seg, beat in rendered:
+        chapters.append({"kind": beat.kind, "label": _chapter_label(beat),
+                         "start_ms": cursor})
+        cursor += await _probe_duration_ms(seg)
+
+    await concat_clips([s for s, _ in rendered], out_path)
+    return out_path, chapters
 
 
 async def concat_clips(clip_paths: list[str], out_path: str) -> str:
