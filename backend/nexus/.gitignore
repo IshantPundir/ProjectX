@@ -37,3 +37,6 @@ engine-events/*.json
 # Download manually: mkdir -p models && curl -L -o models/resnet34_gaze.onnx \
 #   https://github.com/yakhyo/gaze-estimation/releases/download/weights/resnet34_gaze.onnx
 models/
+
+# Reel spike scratch output (throwaway MP4s)
+tmp/

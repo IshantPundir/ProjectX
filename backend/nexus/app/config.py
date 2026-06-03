@@ -677,5 +677,18 @@ class Settings(BaseSettings):
     openai_report_narrative_model: str = "gpt-5.4"
     openai_report_narrative_effort: str = "low"
 
+    # --- Reel Director (candidate-reel EDL selection) ---
+    # Same env-driven convention as the report scorer above. The Director reads
+    # the report + word-timed transcript and emits a structured EDL; a strong
+    # reasoning model picks the moments that argue fit.
+    openai_reel_director_model: str = "gpt-5.4"
+    # reasoning_effort, effort-gated (forwarded only when non-empty).
+    openai_reel_director_effort: str = "medium"
+    # versioned prompt directory PromptLoader reads from (prompts/v{N}/).
+    reel_director_prompt_version: str = "v3"
+    # PREFIX only — concatenated into keys like
+    # ``reel_director:{prompt_version}:{model}``. Bump on a prompt-family change.
+    reel_director_prompt_cache_key_prefix: str = "reel_director"
+
 
 settings = Settings()

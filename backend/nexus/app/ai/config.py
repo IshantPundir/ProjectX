@@ -266,6 +266,23 @@ class AIConfig:
     def report_scorer_prompt_cache_key_prefix(self) -> str:
         return self._settings.report_scorer_prompt_cache_key_prefix
 
+    # --- Reel Director (candidate-reel EDL selection) ---
+    @property
+    def reel_director_model(self) -> str:
+        return self._settings.openai_reel_director_model
+
+    @property
+    def reel_director_effort(self) -> str:
+        return self._settings.openai_reel_director_effort
+
+    @property
+    def reel_director_prompt_version(self) -> str:
+        return self._settings.reel_director_prompt_version
+
+    @property
+    def reel_director_prompt_cache_key_prefix(self) -> str:
+        return self._settings.reel_director_prompt_cache_key_prefix
+
     @property
     def report_narrative_model(self) -> str:
         return self._settings.openai_report_narrative_model
