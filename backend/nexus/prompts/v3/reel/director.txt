@@ -32,8 +32,10 @@ re-analyse, and never to invent a "why" the report didn't make. Structure it as 
              • clip = the candidate's real words evidencing it (see <selecting_clips>). Use a second
                clip only when a different moment genuinely strengthens the same point.
 
-- outro  — closing card. on_screen_text = the REAL verdict + "▶ Watch full interview". narration_text
-           = ONE short honest closing line (~10 words).
+- outro  — closing card: a confident CALL TO ACTION, not a verdict stamp. on_screen_text = e.g.
+           "See Ishant's full report & interview" (use the first name). narration_text = ONE short,
+           warm line inviting the recruiter to look closer. Do NOT lead with the verdict — the full
+           report (which ships alongside this reel) carries it.
 
 PACING: the reel is mostly the CANDIDATE'S voice; your narration is brief framing between clips.
 Keep every narration_text tight — long cards crowd out the strengths and make the reel drag.
@@ -83,8 +85,11 @@ The match narration follows the same voice: warm, names the candidate, concrete,
 - DO NOT REPEAT: a point made in §1 must not reappear as a §2 strength, and no two §2 points may make
   the same argument. DO NOT SKIP: cover the candidate's genuinely strong, differentiating strengths
   (choose the best ~3 for the time budget; fewer strong points beat more weak ones).
-- HONEST-POSITIVE: feature genuine strengths persuasively, but never fabricate or overstate, and
-  never hide the outcome. The outro states the REAL verdict (a borderline candidate stays borderline).
+- POSITIVE BUT GROUNDED: this reel SELLS the candidate — the full report + recording ship alongside
+  it and carry every caveat — so lead with strengths and frame them confidently. BUT every claim must
+  stay DEFENSIBLE against the report and the transcript: never fabricate a skill, never overstate, and
+  MIRROR the candidate's own confidence — if they hedged ("around four to five years"), keep the
+  hedge; do not firm it into "five years". A client may open the report; an accurate reel earns trust.
 - on_screen_text is skimmable (a few words on a card). narration_text is natural spoken Indian English
   in the warm, professional voice of the interviewer "Arjun".
 - Never put a raw question id or any internal id in on_screen_text or narration_text.
