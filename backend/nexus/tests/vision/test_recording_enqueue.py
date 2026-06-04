@@ -92,3 +92,29 @@ async def test_enqueue_when_running_stale(monkeypatch):
     row = ("running", datetime.now(UTC) - timedelta(hours=2))
     await rec._maybe_enqueue_vision(_FakeDB(row), sess)
     sent.assert_called_once_with(str(sess.id), str(sess.tenant_id))
+
+
+def test_no_send_when_proctoring_disabled(monkeypatch):
+    """AUTO_ANALYZE_PROCTORING off => the vision actor is never enqueued."""
+    import app.modules.vision as vision
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "auto_analyze_proctoring", False)
+    send = MagicMock()
+    monkeypatch.setattr(vision.analyze_session_proctoring, "send", send)
+
+    rec._enqueue_vision_analysis("sid-1", "tid-1")
+    send.assert_not_called()
+
+
+def test_send_when_proctoring_enabled(monkeypatch):
+    """AUTO_ANALYZE_PROCTORING on (default) => the vision actor is enqueued."""
+    import app.modules.vision as vision
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "auto_analyze_proctoring", True)
+    send = MagicMock()
+    monkeypatch.setattr(vision.analyze_session_proctoring, "send", send)
+
+    rec._enqueue_vision_analysis("sid-1", "tid-1")
+    send.assert_called_once_with("sid-1", "tid-1")

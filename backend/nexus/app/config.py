@@ -696,5 +696,11 @@ class Settings(BaseSettings):
     # persists coverage_summary, so it stays re-scorable via the manual endpoint.
     auto_score_session_reports: bool = True
 
+    # Dev/test ergonomics — leave True in every real environment. Set False
+    # locally to skip the post-session vision gaze analysis (heavy CPU/GPU) during
+    # agent tuning runs. Non-destructive: the recording is still produced, so the
+    # analysis can be re-run later from the report page.
+    auto_analyze_proctoring: bool = True
+
 
 settings = Settings()
