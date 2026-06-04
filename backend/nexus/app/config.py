@@ -690,5 +690,11 @@ class Settings(BaseSettings):
     # ``reel_director:{prompt_version}:{model}``. Bump on a prompt-family change.
     reel_director_prompt_cache_key_prefix: str = "reel_director"
 
+    # Dev/test ergonomics — leave True in every real environment. Set False
+    # locally to skip the post-session report LLM scorer during agent tuning
+    # runs (saves tokens). Non-destructive: the session still completes and
+    # persists coverage_summary, so it stays re-scorable via the manual endpoint.
+    auto_score_session_reports: bool = True
+
 
 settings = Settings()
