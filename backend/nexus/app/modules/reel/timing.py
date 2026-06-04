@@ -7,7 +7,7 @@ The recording IS the engine monotonic clock plus two corrections:
   * ``wall_anchor`` = engine_t0_wall - recording_started_at_wall  (tens of ms):
     the recording and the engine clock share an origin.
   * ``pipeline_lag`` = the agent's audio-RECEIVE latency (LiveKit jitter buffer +
-    ai-coustics NC + VAD). It is INVISIBLE to every stored timestamp
+    Silero VAD (no server-side NC)). It is INVISIBLE to every stored timestamp
     (recording_started_at, MP4 creation_time, engine t0 all agree to ~tens of ms),
     so it is MEASURED per session by cross-correlating the candidate VAD speech
     envelope against the recording's speech envelope.

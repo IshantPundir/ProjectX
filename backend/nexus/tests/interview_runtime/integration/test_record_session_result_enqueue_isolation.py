@@ -122,3 +122,32 @@ async def test_successful_enqueue_still_completes(db, monkeypatch) -> None:
     assert row.state == "completed"
     assert len(calls) == 1
     assert calls[0][0][0] == str(session_id)  # first positional arg = session_id
+
+
+@pytest.mark.asyncio
+async def test_no_enqueue_when_auto_score_disabled(db, monkeypatch) -> None:
+    """With AUTO_SCORE_SESSION_REPORTS off, the session still completes durably
+    but report scoring is NOT enqueued (token-saving dev/test toggle)."""
+    from app.config import settings
+
+    session_id, tenant_id = await _seed_active_session(db)
+    calls: list[tuple] = []
+    monkeypatch.setattr(
+        reporting.score_session_report, "send",
+        lambda *a, **k: calls.append((a, k)),
+    )
+    monkeypatch.setattr(settings, "auto_score_session_reports", False)
+
+    await record_session_result(
+        db,
+        session_id=session_id,
+        tenant_id=tenant_id,
+        result=_result(session_id),
+        correlation_id="corr-disabled",
+    )
+
+    row = (
+        await db.execute(select(SessionRow).where(SessionRow.id == session_id))
+    ).scalar_one()
+    assert row.state == "completed"
+    assert calls == []

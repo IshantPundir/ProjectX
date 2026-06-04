@@ -80,14 +80,12 @@ OTP_MAX_ATTEMPTS = 3
 def _compute_audio_processing_hints() -> AudioProcessingHints:
     """Browser-side audio constraints for the candidate session.
 
-    Server-side NC (ai-coustics or Krisp) is always on per the
-    audio-pipeline architecture (no self-hosted fallback).
-    Browser noiseSuppression is therefore always OFF (let the ML
-    model see raw audio); EC and AGC stay ON (load-bearing for
-    full-duplex).
+    No server-side noise cancellation: the browser's built-in noise suppression
+    handles the (mandated-quiet) ambient case. Echo cancellation is load-bearing
+    for full-duplex barge-in; AGC stabilizes the input dynamic range.
     """
     return AudioProcessingHints(
-        noise_suppression=False,
+        noise_suppression=True,
         echo_cancellation=True,
         auto_gain_control=True,
     )

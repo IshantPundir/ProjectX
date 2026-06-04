@@ -78,7 +78,7 @@ dependencies = [
     "livekit-plugins-deepgram>=1.5.4,<2",
     "livekit-plugins-cartesia>=1.5.4,<2",
     "livekit-plugins-sarvam>=1.5.4,<2",
-    "livekit-plugins-ai-coustics>=0.2,<1",
+    "livekit-plugins-silero>=1.5.4,<2",
 
     # --- AI provider (Phase 2A) ---
     # openai 2.x: livekit-agents>=1.5.4 requires openai>=2; instructor>=1.15

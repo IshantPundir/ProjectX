@@ -16,6 +16,6 @@ DO NOT hard-code `noiseSuppression: true` (or `false`) in `getUserMedia` or `Aud
 
 Use `lib/api/audio-hints.ts::toAudioCaptureOptions` to convert the server payload to LiveKit's camelCase `AudioCaptureOptions`. Pass the result straight in — no local overrides.
 
-**Why:** Architecture is locked to LK Cloud. Server-side ai-coustics QUAIL_L is always the denoiser, so `noise_suppression` is always `false`. `echo_cancellation` and `auto_gain_control` are always `true` — never turn them off.
+**Why:** There is no server-side NC. The server sets `noise_suppression: true` so the browser does light NS. `echo_cancellation` and `auto_gain_control` are always `true` — never turn them off.
 
-If `audio_processing_hints` is missing from a `/start` response, fall back to `{ noiseSuppression: false, echoCancellation: true, autoGainControl: true }` and log a warning — do NOT silently omit all constraints.
+If `audio_processing_hints` is missing from a `/start` response, fall back to `{ noiseSuppression: true, echoCancellation: true, autoGainControl: true }` and log a warning — do NOT silently omit all constraints.

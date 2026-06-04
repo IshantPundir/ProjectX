@@ -77,9 +77,8 @@ export function App({ appConfig, token, preCheck, mode }: Props) {
           // Apply server-provided audio hints before returning creds so the room
           // picks them up when it acquires the microphone track during room.connect().
           // This mutation is intentional: it happens in an async callback (not during
-          // render). The server is the source of truth — Cloud mode sets
-          // noise_suppression=false so the ML model sees raw audio; EC and AGC stay
-          // ON in both modes.
+          // render). The server is the source of truth — it sets noise_suppression=true
+          // so the browser does light NS; there is no server-side NC. EC and AGC stay ON.
           const hints = creds.audio_processing_hints
           if (!hints) {
             console.warn(

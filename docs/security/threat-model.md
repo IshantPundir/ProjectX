@@ -64,32 +64,22 @@ If the LiveKit API secret leaks, an attacker could dispatch arbitrary agents int
 - **LiveKit Cloud SFU** — candidate audio routes through Cloud's SFU
   (encrypted in transit, transient, no persistence at the SFU layer).
   New as of 2026-05-06 audio-pipeline cutover.
-- **ai-coustics** — ML noise-cancellation provider running inside
-  the LK Cloud audio path. Server-side QUAIL_L model processes
-  candidate audio before it reaches Deepgram STT.
 
-### Current audio path (LK Cloud mode)
+### Current audio path (self-hosted, updated 2026-06-04)
 
 Audio data-flow: candidate mic → browser WebRTC (EC + AGC on,
-`noiseSuppression` OFF) → LiveKit Cloud SFU → ai-coustics QUAIL_L
-(server-side denoising, enhancement_level=0.5) → Deepgram STT →
-engine LLM.
+`noiseSuppression` ON — browser does light NS) → LiveKit Cloud SFU →
+Deepgram STT → engine LLM. No server-side NC stage.
 
-- `noiseSuppression` is **false** on the browser side when server NC
-  is on — avoids double-denoising the ML model's input.
-- `echoCancellation` and `autoGainControl` stay true in both modes
-  (Cloud and self-hosted).
+- `noiseSuppression` is **true** on the browser side (browser-side
+  light NS; no server NC, so no double-denoising concern).
+- `echoCancellation` and `autoGainControl` stay true.
 - Server is source of truth: frontend reads constraints from
   `audio_processing_hints` on the `/start` response.
-- The engine installs `livekit-plugins-ai-coustics` only (Krisp +
-  Silero plugins were removed in Patch 5 once the architecture
-  locked to ai-coustics). `app/ai/realtime.py` exposes
-  `build_noise_cancellation()` (ai_coustics QUAIL_L or QUAIL_VF,
-  env-selected), `build_interruption_options()` (locked to
-  `mode="adaptive"` with `min_words=2`), and `build_vad()`
-  (always returns `ai_coustics.VAD()` — uses ai-coustics' built-in
-  VAD adapter, which reads VAD signals from the same inference that
-  runs for NC).
+- The engine uses **Silero VAD** (`livekit-plugins-silero`; prewarm-loaded
+  in agent.py). `app/ai/realtime.py` exposes `build_interruption_options()`
+  (`mode="vad"` with `min_words=2`) and `build_vad()` (returns Silero VAD).
+  `build_noise_cancellation()` no longer exists (ai-coustics removed).
 - Per-session tuning is snapshotted in `sessions.audio_tuning_summary`
   (migration `0028_audio_tuning_summary`) for audit and analytics.
 
@@ -97,17 +87,15 @@ engine LLM.
 
 | Boundary | Element | STRIDE | Mitigation |
 |---|---|---|---|
-| Browser mic → LiveKit Cloud SFU | Audio carries whatever the browser's WebRTC EC/AGC pass through (noiseSuppression is OFF in Cloud mode). | I (info disclosure of bystander speech) | ai-coustics QUAIL_L provides server-side NS before STT. Pre-session consent covers audio recording; consent text must cover third-party voices for the candidate's locale. STT transcripts of bystander speech fall under the existing event-log redaction policy (`metadata` mode). |
-| LiveKit Cloud SFU → ai-coustics | Candidate audio transits ai-coustics infrastructure before STT. | I (PII via 3rd party) | ai-coustics is a sub-processor (add to DPA); audio is transient (not stored by the provider). Consent gate already in place. |
-| Engine → recording (LiveKit Egress, if ever wired) | LiveKit Egress is not wired today. When wired, the recording captures post-denoising audio. | I (information disclosure via recording) | Future Egress wiring will need its own threat-model row. S3 recording-bucket policy in root CLAUDE.md (versioning + MFA-delete) is already in place. |
+| Browser mic → LiveKit Cloud SFU | Audio carries whatever the browser's WebRTC EC/AGC + browser NS pass through (noiseSuppression is ON). | I (info disclosure of bystander speech) | No server-side NS; bystander mitigation rests on the quiet-environment mandate in the pre-session guidance + pre-session consent (consent text must cover third-party voices for the candidate's locale) + event-log redaction policy (`metadata` mode) for any STT transcripts of bystander speech. |
+| Engine → recording (LiveKit Egress, if ever wired) | LiveKit Egress is not wired today. When wired, the recording captures browser-NS-processed audio. | I (information disclosure via recording) | Future Egress wiring will need its own threat-model row. S3 recording-bucket policy in root CLAUDE.md (versioning + MFA-delete) is already in place. |
 
 ### When this section needs updating
 
-- NC model changes (QUAIL_L → QUAIL_VF_L or different provider).
-- Enhancement level tuned above 0.8 (voice-isolation range; changes
-  consent-gate posture for bystander speech).
+- A server-side NC plugin is re-introduced (changes bystander-disclosure posture).
+- VAD provider changes (Silero → different provider).
 - Egress (recording) wired in.
-- Deployment target switches from Cloud to self-hosted for a specific
+- Deployment target switches to a different SFU for a specific
   tenant (per-tenant audio path becomes heterogeneous).
 
 ## Phase ATS — 2026-05-12

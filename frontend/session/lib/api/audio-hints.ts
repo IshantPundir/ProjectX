@@ -5,10 +5,11 @@ import type { AudioProcessingHints } from './candidate-session'
  * AudioCaptureOptions / getUserMedia audio constraints object
  * the LiveKit React SDK / browser API expects (camelCase).
  *
- * The server is the source of truth: when server-side enhanced NC
- * is on (Cloud mode), `noise_suppression` is false so the ML model
- * sees raw audio. EC and AGC stay true in both modes (load-bearing
- * for full-duplex; ai-coustics is not an EC).
+ * Pure passthrough mapper: renames snake_case server keys to
+ * camelCase browser keys. The server is the source of truth —
+ * it sets `noise_suppression: true` so the browser does light NS;
+ * there is no server-side NC. EC and AGC stay true (load-bearing
+ * for full-duplex).
  */
 export function toAudioCaptureOptions(hints: AudioProcessingHints): {
   noiseSuppression: boolean

@@ -123,6 +123,13 @@ async def _reconcile(db: AsyncSession, sess: Session) -> None:
 
 
 def _enqueue_vision_analysis(session_id: str, tenant_id: str) -> None:
+    if not settings.auto_analyze_proctoring:
+        log.info(
+            "session.recording.vision_analysis_disabled",
+            session_id=session_id,
+            reason="auto_analyze_proctoring=false",
+        )
+        return
     # Imported here (not module top) to keep the import graph obviously light
     # and to make monkeypatching in tests trivial.
     from app.modules.vision import analyze_session_proctoring

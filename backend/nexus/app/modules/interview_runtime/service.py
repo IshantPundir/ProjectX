@@ -22,22 +22,9 @@ import structlog
 from sqlalchemy import desc, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-logger = structlog.get_logger("interview_runtime")
-
+from app.config import settings
 from app.modules.audit import log_event
 from app.modules.candidates import Candidate, CandidateJobAssignment
-from app.modules.jd import (
-    JobPosting,
-    JobPostingSignalSnapshot,
-    default_evaluation_method,
-)
-from app.modules.org_units import (
-    find_company_profile_in_ancestry,
-    get_org_unit_ancestry,
-)
-from app.modules.pipelines import JobPipelineStage
-from app.modules.question_bank import StageQuestion, StageQuestionBank
-from app.modules.session import Session as SessionRow
 from app.modules.interview_runtime.errors import (
     CompanyProfileMissingError,
     EmptySignalMetadataError,
@@ -55,6 +42,20 @@ from app.modules.interview_runtime.schemas import (
     SignalMetadata,
     StageConfig,
 )
+from app.modules.jd import (
+    JobPosting,
+    JobPostingSignalSnapshot,
+    default_evaluation_method,
+)
+from app.modules.org_units import (
+    find_company_profile_in_ancestry,
+    get_org_unit_ancestry,
+)
+from app.modules.pipelines import JobPipelineStage
+from app.modules.question_bank import StageQuestion, StageQuestionBank
+from app.modules.session import Session as SessionRow
+
+logger = structlog.get_logger("interview_runtime")
 
 _AI_STAGE_TYPES = frozenset({"ai_screening", "phone_screen"})
 
@@ -459,7 +460,15 @@ async def record_session_result(
     # and can be re-scored later. coverage_summary is None only for results with
     # nothing to score (ended before any answer was graded) — skip those. Local
     # import avoids circular-import risk (reporting.actors -> reporting.service).
-    if result.coverage_summary is not None:
+    if not settings.auto_score_session_reports:
+        logger.info(
+            "interview_runtime.record_session_result.report_scoring_disabled",
+            session_id=str(session_id),
+            tenant_id=str(tenant_id),
+            correlation_id=correlation_id,
+            reason="auto_score_session_reports=false",
+        )
+    elif result.coverage_summary is not None:
         try:
             from app.modules.reporting import score_session_report  # noqa: PLC0415
 

@@ -47,6 +47,7 @@ from livekit.agents import (
     room_io,
 )
 from livekit.agents import stt as lk_stt
+from livekit.plugins import silero as _silero_vad  # noqa: F401  — register for download-files
 from livekit.plugins.turn_detector import multilingual as _turn_detector_multilingual  # noqa: F401
 from opentelemetry.trace import set_tracer_provider as _otel_set_global_provider
 
@@ -63,7 +64,6 @@ from app.ai.prompts import PromptLoader
 from app.ai.realtime import (
     build_interruption_options,
     build_mouth_llm_plugin,
-    build_noise_cancellation,
     build_stt_plugin,
     build_tts_plugin,
     build_turn_detector,
@@ -130,6 +130,8 @@ def prewarm(proc: JobProcess) -> None:
     _otel_set_global_provider(provider)
     proc.userdata["otel_provider"] = provider
     log.info("engine.otel.bootstrapped", service_name=settings.otel_service_name)
+    proc.userdata["vad"] = build_vad()
+    log.info("engine.vad.prewarmed", provider="silero")
 
 
 server.setup_fnc = prewarm
@@ -687,7 +689,7 @@ async def run(
         stt=build_stt_plugin(keyterms=keyterms),
         llm=build_mouth_llm_plugin(),                 # the mouth voices via the LLM node
         tts=build_tts_plugin(),
-        vad=build_vad(),
+        vad=ctx.proc.userdata["vad"],
         user_away_timeout=None,                       # the manual ladder owns unresponsive behavior
         turn_handling=TurnHandlingOptions(
             turn_detection=build_turn_detector(
@@ -1026,11 +1028,9 @@ async def run(
                         pose_question=_pose_question, correlation_id=correlation_id,
                         triage=triage)
 
-    nc_filter = build_noise_cancellation()
     await session.start(
         agent=agent, room=ctx.room,
         room_options=room_io.RoomOptions(
-            audio_input=room_io.AudioInputOptions(noise_cancellation=nc_filter),
             delete_room_on_close=True,
         ),
     )

@@ -37,7 +37,7 @@ document a non-empty effort default; all others must default to ``""``.
 ------------------------------------------------------------------
 """
 
-from app.config import NoiseCancellationMode, Settings, settings
+from app.config import Settings, settings
 
 
 class AIConfig:
@@ -130,14 +130,6 @@ class AIConfig:
     @property
     def interview_tts_temperature(self) -> float:
         return self._settings.interview_tts_temperature
-
-    @property
-    def interview_noise_cancellation(self) -> NoiseCancellationMode:
-        return self._settings.interview_noise_cancellation
-
-    @property
-    def interview_nc_enhancement_level(self) -> float:
-        return self._settings.interview_nc_enhancement_level
 
     # --- Interview engine (two-plane) ---
     @property
