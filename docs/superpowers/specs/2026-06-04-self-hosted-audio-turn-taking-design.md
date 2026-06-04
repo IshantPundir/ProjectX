@@ -136,28 +136,48 @@ not a Cloud feature). EOU tuning is the next spec.
 
 ### A2. `app/modules/interview_engine/agent.py`
 
-- **`prewarm(proc)`** (already bootstraps OTel) → add
-  `proc.userdata["vad"] = build_vad()`. This loads Silero once per worker process.
+- **Top-level Silero registration import** — add
+  `from livekit.plugins import silero  # noqa: F401` at module top, **mirroring the
+  existing `turn_detector` registration import at line 50**. This is load-bearing: the
+  Dockerfile's `download-files` step runs via this package's entrypoint and only bakes
+  models for plugins **registered at import time**. Without this, the Silero ONNX
+  weights are not baked into the image and the engine crashes on first dispatch
+  (Silero's `load()` needs the weights; LiveKit confirms "you must download the model
+  weights before running"). The `# noqa: F401` registration import in `agent.py` +
+  actual instantiation in `realtime.py` is the same documented split already used for
+  the turn detector. (Verified against the codebase + LiveKit Builds/Dockerfiles docs,
+  2026-06-04.)
+- **`prewarm(proc)`** (already bootstraps OTel, already stores `proc.userdata[...]`) →
+  add `proc.userdata["vad"] = build_vad()`. Loads Silero once per worker process
+  (LiveKit's documented prewarm pattern).
 - **Imports** → drop `build_noise_cancellation`; keep `build_interruption_options`,
   `build_vad` (now only called in prewarm), `build_turn_detector`.
 - **`run()` AgentSession** → `vad=ctx.proc.userdata["vad"]` (was `vad=build_vad()`).
   `turn_handling` unchanged in shape (interruption block now returns `mode="vad"`).
-- **`run()` `session.start(...)`** (current lines ~1029–1035) → remove
+- **`run()` `session.start(...)`** (current lines 1029–1036) → remove
   `nc_filter = build_noise_cancellation()` and the `noise_cancellation=nc_filter`
   argument. Drop the now-empty `audio_input=room_io.AudioInputOptions(...)`; keep
-  `room_options=room_io.RoomOptions(delete_room_on_close=True)`.
+  `room_options=room_io.RoomOptions(delete_room_on_close=True)`. The `room_io` import
+  stays (still used for `RoomOptions`); `AudioInputOptions` is attribute-accessed, so
+  there is no import line to remove.
 
 > `compute_audio_summary` / `audio_tuning_summary` records endpointing + turn-detector
-> config only (no NC field), so it needs **no change**. (Optional, additive: record the
-> interruption `mode` for observability — not required; defer.)
+> config only (no NC field — verified), so it needs **no change**. (Optional, additive:
+> record the interruption `mode` for observability — not required; defer.)
 
-### A3. `app/config.py`
+### A3. Noise-cancellation config — remove across BOTH layers
 
-Remove the now-dead noise-cancellation config (no compatibility stub):
+The NC config has **two layers** (grounding found the second one):
 
-- `NoiseCancellationMode` Literal (and its `# "off"/"krisp_nc" no longer valid` comment).
-- `interview_noise_cancellation`.
-- `interview_nc_enhancement_level`.
+**`app/config.py`** (`Settings`) — remove:
+- `NoiseCancellationMode` Literal (lines 6–9) and its `# "off"/"krisp_nc" no longer valid` comment.
+- the `# Architecture is locked to LK Cloud + ai-coustics exclusively` comment block (lines 409–414).
+- `interview_noise_cancellation` (line 413) and `interview_nc_enhancement_level` (line 415).
+
+**`app/ai/config.py`** (`AIConfig` wrapper — the layer `realtime.py` actually reads) — remove:
+- the `NoiseCancellationMode` symbol from the `from app.config import …` line (line 40).
+- the `interview_noise_cancellation` property (lines 135–136).
+- the `interview_nc_enhancement_level` property (lines 139–140).
 
 No new Silero knobs (YAGNI; defaults are the documented sane values).
 
@@ -170,14 +190,41 @@ Rewrite both the function docstring and `AudioProcessingHints` schema docstring:
 > the (rare, mandated-quiet) ambient case; echo cancellation is load-bearing for
 > full-duplex barge-in; AGC stabilizes input level.
 
-The frontend `lib/api/audio-hints.ts` is generic (maps server hints → getUserMedia
-constraints) and needs **no logic change** — the flip propagates automatically.
+**Frontend needs no code or test change** (grounding confirmed it's already
+NC-agnostic / forward-compatible):
+- `lib/api/audio-hints.ts::toAudioCaptureOptions` is a pure mapper — the
+  `noise_suppression: true` flip propagates automatically.
+- `tests/lib/api/audio-hints.test.ts` **already** tests both modes
+  (`noise_suppression: false` *and* `true`) — stays green.
+- `CameraMicStep.tsx` already uses default `audio: true` and its comment already states
+  "Browser-side noiseSuppression is enabled"; `CameraMicStep.test.tsx` already asserts
+  "default browser EC/NS/AGC on". No change.
+- *Optional cleanup only* (not required for correctness): the stale docstring in
+  `audio-hints.ts` ("Cloud mode … ai-coustics is not an EC") and the `audio-hints.test.ts`
+  test label "cloud mode (server NC on)". Cosmetic; can be tidied in the same PR.
 
 ### A5. Dependencies (`backend/nexus/pyproject.toml`)
 
-- Remove `livekit-plugins-ai-coustics>=0.2,<1`.
-- Add `livekit-plugins-silero>=1.5.4,<2` (track the pinned livekit-agents minor).
+- Remove `livekit-plugins-ai-coustics>=0.2,<1` (line 81).
+- Add `livekit-plugins-silero>=1.5.4,<2` (matches the sibling first-party plugins
+  `livekit-plugins-{openai,deepgram,cartesia,sarvam}>=1.5.4,<2`, which ship in lockstep
+  with `livekit-agents`; exact version resolves at `uv.lock` time).
 - Regenerate `uv.lock` (lockfile is authoritative; committed).
+
+### A6. Dockerfile — model baking (verify, likely no edit)
+
+The Dockerfile (lines 37–54) already pre-downloads plugin model files at build via
+`python -m app.modules.interview_engine download-files`, and its comment already lists
+`(silero, turn-detector)`. Because A2 adds the top-level Silero registration import, the
+existing step will bake the Silero ONNX weights with **no Dockerfile change**. The
+ai-coustics removal needs no Dockerfile edit (it was not in the download set).
+**Build-time validation:** after `docker build`, confirm the Silero weights are present
+under `/opt/hf-cache` (or the plugin's cache) and that the image no longer imports
+`livekit.plugins.ai_coustics`.
+
+> Migration `0028_audio_tuning_summary.py`'s docstring mentions the old
+> "adaptive-interruption + ai-coustics QUAIL_L pipeline" — **left as-is** (migration
+> docstrings are history, never rewritten).
 
 ---
 
@@ -214,13 +261,15 @@ preserved inside the `elif`.
 
 - New setting `auto_analyze_proctoring: bool = True` in `app/config.py`.
 - Gate the **single** choke point, `session/recording.py::_enqueue_vision_analysis`
-  (~line 125) — every enqueue path funnels through it:
+  (line 125) — every enqueue path funnels through it. `recording.py` **already imports
+  `settings`** (line 26) and uses the structlog logger named `log` (line 32), so no new
+  import:
 
 ```python
 def _enqueue_vision_analysis(session_id: str, tenant_id: str) -> None:
     if not settings.auto_analyze_proctoring:
-        logger.info("session.recording.vision_analysis_disabled",
-                    session_id=session_id, reason="auto_analyze_proctoring=false")
+        log.info("session.recording.vision_analysis_disabled",
+                 session_id=session_id, reason="auto_analyze_proctoring=false")
         return
     from app.modules.vision import analyze_session_proctoring
     analyze_session_proctoring.send(session_id, tenant_id)
@@ -235,7 +284,10 @@ def _enqueue_vision_analysis(session_id: str, tenant_id: str) -> None:
 
 ### B4. `.env.example`
 
-Document both flags with their default and intent:
+- **Remove** the dead NC block (lines 226–230): the
+  `INTERVIEW_NOISE_CANCELLATION=ai_coustics_quail` var and its
+  "adaptive interruption + ai-coustics" comment.
+- **Add** both new toggles with default + intent:
 
 ```
 # Dev/test ergonomics — leave TRUE in every real environment.
@@ -249,17 +301,21 @@ AUTO_ANALYZE_PROCTORING=true      # false => skip vision gaze analysis (saves CP
 ## Testing & validation
 
 ### Automated
-- `tests/ai/test_realtime_factories.py`:
-  - `build_vad()` returns a Silero VAD (assert provider/type; mock the heavy load).
-  - `build_noise_cancellation` test **removed**.
-  - `build_interruption_options()` returns `mode="vad"` with the gates intact.
-- `tests/test_audio_hints.py`: `_compute_audio_processing_hints()` →
-  `noise_suppression=True`, `echo_cancellation=True`, `auto_gain_control=True`.
+- `tests/ai/test_realtime_factories.py` (precise edits):
+  - drop `build_noise_cancellation` from the module import line.
+  - **delete** `class TestBuildNoiseCancellation` (3 tests).
+  - `TestBuildInterruptionOptions` → assert `mode == "vad"` (gates unchanged); rename
+    the method off "adaptive_classifier_friendly".
+  - `TestBuildVad.test_returns_ai_coustics_vad` → replace with a Silero assertion
+    (`livekit.plugins.silero` registered); **mock `silero.VAD.load`** so the heavy ONNX
+    load doesn't run in unit tests. STT/TTS test classes unchanged.
+- `tests/test_audio_hints.py`: flip the expectation to `noise_suppression=True`
+  (EC/AGC stay `True`) and rename `test_audio_hints_always_disable_browser_noise_suppression`.
 - New: `record_session_result` does **not** enqueue when
-  `auto_score_session_reports=false` (and still commits the completion).
+  `auto_score_session_reports=false` (and still commits the completion + persists
+  `coverage_summary`).
 - New: `_enqueue_vision_analysis` is a no-op when `auto_analyze_proctoring=false`.
-- Frontend `frontend/session`: update `tests/lib/api/audio-hints.test.ts` and
-  `tests/components/interview/CameraMicStep.test.tsx` to expect `noiseSuppression: true`.
+- **Frontend: no test change required** (see A4 — both modes already covered).
 
 ### Manual (operator)
 - Boot `nexus-engine`: confirm a single `ai.realtime.vad.built provider=silero` line at
@@ -307,16 +363,18 @@ read at process start / session start).
 
 | File | Change |
 |---|---|
-| `app/ai/realtime.py` | interruption `mode="vad"`; delete `build_noise_cancellation`; `build_vad`→Silero |
-| `app/modules/interview_engine/agent.py` | prewarm-load Silero; drop NC call + `noise_cancellation=`; use `ctx.proc.userdata["vad"]` |
-| `app/config.py` | remove NC config; add `auto_score_session_reports`, `auto_analyze_proctoring` |
-| `app/modules/session/service.py` | `noise_suppression=True`; docstring; gate report enqueue |
+| `app/ai/realtime.py` | interruption `mode="vad"`; delete `build_noise_cancellation`; `build_vad`→Silero; fix stale ai-coustics comment (line 73) |
+| `app/ai/config.py` | **(grounding)** remove `NoiseCancellationMode` import + the two NC `@property` wrappers (the layer realtime.py reads) |
+| `app/modules/interview_engine/agent.py` | top-level `silero` registration import (`# noqa: F401`, for `download-files`); prewarm-load Silero; drop NC call + `noise_cancellation=`; use `ctx.proc.userdata["vad"]` |
+| `app/config.py` | remove NC config (Literal + 2 fields + "locked to LK Cloud" comment); add `auto_score_session_reports`, `auto_analyze_proctoring` |
+| `app/modules/session/service.py` | `noise_suppression=True`; docstring (drop "ai-coustics or Krisp") |
 | `app/modules/session/schemas.py` | `AudioProcessingHints` docstring |
-| `app/modules/interview_runtime/service.py` | import `settings`; gate report enqueue on `auto_score_session_reports` |
-| `app/modules/session/recording.py` | gate `_enqueue_vision_analysis` on `auto_analyze_proctoring` |
-| `backend/nexus/pyproject.toml` + `uv.lock` | − ai-coustics, + silero |
-| `backend/nexus/.env.example` | document both toggles |
-| `frontend/session/lib/api/audio-hints.ts` | docstring only |
-| `frontend/session/app/interview/[token]/CameraMicStep.tsx` | verify NS-on comment consistency |
-| tests (backend + frontend) | as listed under Testing |
-| docs (this spec, CLAUDE.md ×2, threat-model, audio-pipeline header, deployment) | as listed |
+| `app/modules/interview_runtime/service.py` | **add** `from app.config import settings`; gate report enqueue on `auto_score_session_reports` |
+| `app/modules/session/recording.py` | gate `_enqueue_vision_analysis` on `auto_analyze_proctoring` (`settings`+`log` already imported) |
+| `app/modules/reel/timing.py` | **(grounding)** fix stale "ai-coustics NC + VAD" comment (line 10) → Silero / no server NC |
+| `backend/nexus/Dockerfile` | verify only — `download-files` bakes Silero via the registration import; no edit expected |
+| `backend/nexus/pyproject.toml` + `uv.lock` | − ai-coustics, + silero `>=1.5.4,<2` |
+| `backend/nexus/.env.example` | remove `INTERVIEW_NOISE_CANCELLATION` block; add both toggles |
+| `frontend/session` | **no code/test change** (already NC-agnostic); optional docstring/test-label tidy in `lib/api/audio-hints.ts` + `tests/lib/api/audio-hints.test.ts` |
+| tests (`tests/ai/test_realtime_factories.py`, `tests/test_audio_hints.py` + 2 new) | as listed under Testing |
+| docs (this spec, CLAUDE.md ×2, threat-model, audio-pipeline header, deployment) | as listed; migration `0028` docstring left as history |
