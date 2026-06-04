@@ -3,7 +3,7 @@ import type { AudioProcessingHints } from '@/lib/api/candidate-session'
 import { toAudioCaptureOptions } from '@/lib/api/audio-hints'
 
 describe('toAudioCaptureOptions', () => {
-  it('cloud mode (server NC on) sets browser noiseSuppression to false', () => {
+  it('maps server hints with NS off (legacy/explicit input)', () => {
     const hints: AudioProcessingHints = {
       noise_suppression: false,
       echo_cancellation: true,

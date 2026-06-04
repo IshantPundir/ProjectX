@@ -215,15 +215,16 @@ snake_case → camelCase rename.
 
 | Constraint | Value |
 |---|---|
-| `noiseSuppression` | **false** (server-side ai-coustics QUAIL_L is the denoiser; raw audio) |
-| `echoCancellation` | true (load-bearing for full-duplex) |
+| `noiseSuppression` | **true** (no server-side NC; the browser does light NS) |
+| `echoCancellation` | true (load-bearing for full-duplex barge-in) |
 | `autoGainControl` | true |
 
-Architecture is locked to LK Cloud (no self-hosted fallback). The helper
-still abstracts the server contract for resilience — always read from the
-`/start` response, never hard-code these values. See root CLAUDE.md → "Audio
-Path" and the audio-pipeline spec
-`docs/superpowers/specs/2026-05-06-audio-pipeline-design.md`.
+There is no server-side noise cancellation (ai-coustics was removed; barge-in
+is VAD-mode and the engine VAD is Silero). The helper still abstracts the server
+contract for resilience — always read from the `/start` response, never hard-code
+these values. See root CLAUDE.md → "Audio Path" and the spec
+`docs/superpowers/specs/2026-06-04-self-hosted-audio-turn-taking-design.md`
+(supersedes the audio path of `2026-05-06-audio-pipeline-design.md`).
 
 `getUserMedia` (in `CameraMicStep.tsx`) is gated by the "Human Review
 Required For: any change to OTP, consent, or camera/mic step flow"

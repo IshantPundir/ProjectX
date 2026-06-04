@@ -11,7 +11,7 @@ FastAPI backend for the ProjectX AI video interview platform. Modular monolith a
 - **Alembic** (database migrations)
 - **Pydantic v2** (request/response schemas, settings)
 - **OpenAI** for all LLM work (via the `app/ai/` provider-agnostic layer)
-- **LiveKit** (real-time interview) + **Deepgram** STT + **Sarvam** TTS + **ai-coustics** denoise
+- **LiveKit** (real-time interview) + **Deepgram** STT + **Sarvam** TTS + **Silero** VAD (no server-side NC; browser does light NS)
 - **structlog** + **OpenTelemetry** (LLM/distributed traces) + **Sentry** (errors). No Langfuse (removed 2026-05-01).
 
 ## Prerequisites

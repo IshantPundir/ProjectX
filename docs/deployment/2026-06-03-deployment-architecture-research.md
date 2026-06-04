@@ -92,7 +92,7 @@ zero-to-thousands realtime agent is hiding a latency cliff.
 
 ### Capacity math
 - LiveKit guidance: 4-core/8GB ≈ 10–25 concurrent jobs for a typical agent. Ours
-  is heavier (ai-coustics NC + multilingual turn detector + 3-tier LLM) →
+  is heavier (Silero VAD + multilingual turn detector + 3-tier LLM) →
   budget **~6–10 interviews per 4c/8GB node**. ~100–160 nodes for 1,000
   concurrent. Connection draining + 10-min grace lets the fleet scale down safely.
 
@@ -111,7 +111,7 @@ container** registering outbound to LiveKit Cloud transport. So the journey is
 
 | Step / Trigger | Threshold | Action |
 |---|---|---|
-| **Step 1 — decouple Cloud *features*** | **Now**, scale-independent | Engineer out adaptive-interruption (→ VAD + own barge-in) + pin own ai-coustics key. Makes the agent portable; removes the lock-in. **The one near-term action.** |
+| **Step 1 — decouple Cloud *features*** | **Now**, scale-independent | ~~Engineer out adaptive-interruption (→ VAD + own barge-in) + pin own ai-coustics key.~~ **DONE (2026-06-04):** adaptive interruption removed (→ VAD-mode barge-in); ai-coustics removed entirely (no server NC; the "pin own ai-coustics key" sub-item is now moot). Makes the agent portable; removes the lock-in. |
 | **Trigger A — agent fleet → autoscaling K8s/Fargate** | Routinely **>~400–500 concurrent** (nearing 600 cap), **OR** agent-minute spend **>~$1–2k/mo**, **OR** Railway/single-box can't absorb the spike | Self-hosted spot agent fleet w/ autoscaling; Cloud transport stays |
 | **Trigger B — self-host the SFU** | A client contract **mandates A/V data in-VPC**, **OR** *sustained* (not occasional) **1000s-concurrent daily** | Run own SFU + TURN + egress fleet (EKS) |
 
@@ -252,8 +252,8 @@ both tiers; only the collector destination changes.
    candidate latency/data-residency requires it.
 
 ## Near-term concrete actions (when deployment work starts)
-- [ ] **Step 1: decouple LiveKit Cloud features** (adaptive interruption → VAD +
-  own barge-in; ai-coustics own key). *The only scale-independent prerequisite.*
+- [x] **Step 1: decouple LiveKit Cloud features** (adaptive interruption → VAD-mode
+  barge-in; ai-coustics removed entirely). *Done 2026-06-04.*
 - [ ] Stand up the **dev Grafana LGTM stack** + flip on the OTel exporter + add
   FastAPI `/metrics` + `redis_exporter`.
 - [ ] Author the **OpenTofu** baseline (VPC, ECS Fargate services, IAM, Upstash,

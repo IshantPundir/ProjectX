@@ -497,27 +497,36 @@ No tests; verification is a clean grep + a human read. Each edit below is mechan
 
 - [ ] **Step 3: `backend/nexus/CLAUDE.md`** — update the Phase 3D.audio-pipeline bullet and the `app/ai/realtime.py` description: remove ai-coustics (NC + VAD) and adaptive interruption; state interruption is `mode="vad"`, VAD is Silero (prewarm-loaded + registered for download-files), `build_noise_cancellation` is gone. Add a one-line note documenting the two new dev toggles (`AUTO_SCORE_SESSION_REPORTS`, `AUTO_ANALYZE_PROCTORING`).
 
-- [ ] **Step 4: `docs/security/threat-model.md`** — remove **ai-coustics** as an audio-path sub-processor (candidate audio no longer transits an external NC processor — a net reduction in data-path surface). Note the browser performs light NS locally; no audio leaves to a third-party NC service.
+- [ ] **Step 4: `docs/security/threat-model.md`** — remove **ai-coustics** as an audio-path sub-processor (candidate audio no longer transits an external NC processor — a net reduction in data-path surface). Specifically update: the ai-coustics sub-processor entry (lines ~67–68); the data-flow line "`noiseSuppression` OFF … → ai-coustics QUAIL_L" (line ~74); the "`noiseSuppression` is **false** … avoids double-denoising" rationale (lines ~78–79) → now `noiseSuppression` is **true** (browser-side light NS; no server NC, so no double-denoising concern); the engine-installs-`livekit-plugins-ai-coustics`/`build_noise_cancellation` paragraph (lines ~84–90) → Silero VAD, no NC plugin; and the bystander-speech-disclosure row crediting "QUAIL_L provides server-side NS before STT" (line ~100) → there is no server-side NS now; bystander mitigation rests on the quiet-environment mandate + consent + event-log redaction.
+
+- [ ] **Step 4b: `frontend/session/AGENTS.md`** (review-surfaced — authoritative agent instructions, MUST fix or a future agent re-breaks it). Lines ~15/19/21: the rule still mandates `noise_suppression` is "always `false`" and a `{ noiseSuppression: false, ... }` fallback (which now contradicts BOTH the new backend default and the actual `app.tsx` fallback). Update the "Why" to: no server-side NC; the server sets `noise_suppression: true` (browser does light NS); EC/AGC stay true. Update the missing-hints fallback to `{ noiseSuppression: true, echoCancellation: true, autoGainControl: true }`. Keep the core rule intact ("the server decides — read `audio_processing_hints`; do not hard-code").
+
+- [ ] **Step 4c: `frontend/session/components/interview/app/app.tsx`** (comment-only — the runtime fallback at lines ~91–95 is ALREADY `noise_suppression: true`, no code change). Fix the stale comment at lines ~80–82 ("Cloud mode sets noise_suppression=false so the ML model sees raw audio") → server sets `noise_suppression: true`; browser does light NS; EC/AGC stay on.
 
 - [ ] **Step 5: `docs/superpowers/specs/2026-05-06-audio-pipeline-design.md`** — add a header note at the top: `> Superseded (audio path) by docs/superpowers/specs/2026-06-04-self-hosted-audio-turn-taking-design.md (2026-06-04).` Do not rewrite the body (history).
 
 - [ ] **Step 6: `docs/deployment/2026-06-03-deployment-architecture-research.md`** — in the staged-decision table / near-term actions, mark "Step 1 — decouple Cloud *features*" as **done** (adaptive interruption removed → VAD; ai-coustics removed entirely, so the "own key" sub-item is moot).
 
-- [ ] **Step 7: Optional frontend tidy** (cosmetic, no behavior change) — in `frontend/session/lib/api/audio-hints.ts` update the docstring that references "Cloud mode … ai-coustics is not an EC"; optionally rename the `audio-hints.test.ts` label "cloud mode (server NC on)" to "server NC off (self-hosted)". Skip if you prefer a zero-frontend-diff PR.
+- [ ] **Step 7: Frontend comment/test tidy** (review-surfaced; do it — these are now contradictory, not merely cosmetic). In `frontend/session/lib/api/audio-hints.ts` update the docstring referencing "Cloud mode … ai-coustics is not an EC" to describe the self-hosted reality (server sets NS true; the mapper is a pure passthrough). In `frontend/session/tests/lib/api/audio-hints.test.ts` rename the misleading label "cloud mode (server NC on) sets browser noiseSuppression to false" (e.g. to "maps server-provided hints (NS off legacy input)") — keep BOTH mapping test cases (they exercise the pure mapper for both values; don't delete coverage). Run `cd frontend/session && npm run test -- audio-hints` to confirm green.
 
 - [ ] **Step 8: Verify docs are clean of stale runtime claims**
 
 Run: `grep -rn "ai-coustics\|ai_coustics\|adaptive interruption" CLAUDE.md backend/nexus/CLAUDE.md docs/security/threat-model.md || echo CLEAN`
 Expected: matches only in historical/spec docs (the 2026-05-06 spec body, deployment research, this spec/plan, migration notes) — **not** in the two CLAUDE.md files or the threat-model's active sub-processor list.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 9: Commit** (run `git -C <repo root>` paths; the reel/timing.py + CLAUDE.md paths below are repo-root-relative)
 
 ```bash
+# from repo root /home/ishant/Projects/ProjectX
 git add CLAUDE.md backend/nexus/CLAUDE.md docs/security/threat-model.md \
         docs/superpowers/specs/2026-05-06-audio-pipeline-design.md \
         docs/deployment/2026-06-03-deployment-architecture-research.md \
-        app/modules/reel/timing.py
-# include frontend files only if Step 7 was done
+        docs/superpowers/plans/2026-06-04-self-hosted-audio-turn-taking.md \
+        backend/nexus/app/modules/reel/timing.py \
+        frontend/session/AGENTS.md \
+        frontend/session/components/interview/app/app.tsx \
+        frontend/session/lib/api/audio-hints.ts \
+        frontend/session/tests/lib/api/audio-hints.test.ts
 git commit -m "docs: reflect self-hosted audio path (Silero VAD, no server NC, VAD barge-in)"
 ```
 

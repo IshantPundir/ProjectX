@@ -72,8 +72,8 @@ Each subdirectory has its own `CLAUDE.md` with context-specific rules. Always re
 | 2C.2 | Question bank generation (per-stage LLM, adaptive coverage, mandatory demotion, bundling, SSE) | ✅ done |
 | 3B | Candidates module (CRUD, resume + S3, kanban, PII redaction gate) | ✅ done |
 | 3C.1 | Scheduler invites + supersession chain; session pre-check / consent / OTP; **single-use token enforcement** atomic on `/start` | ✅ done |
-| 3C.2 | LiveKit room + token provisioning on `/start`; in-process engine worker (`app/modules/interview_engine/agent.py`) running the three-tier interview engine (see 3D.engine); candidate live UI at `frontend/session` on LiveKit's `agent-starter-react` template (aura/shader audio visualizer + client-side proctoring deterrent); engine graceful-close attribute (`session_outcome`); mid-session rejoin endpoint (`POST /rejoin`); realtime tuning (dynamic endpointing + adaptive interruption — **preemptive generation is intentionally OFF**, quality-before-latency lock). RLS-only defense layer: `build_session_config` / `record_session_result` are called in-process by the engine and filter every query by an explicit `tenant_id`. (See `docs/superpowers/specs/2026-05-01-frontend-session-extract-design.md`.) | ✅ done |
-| 3D.audio | Audio pipeline (LK Cloud + **Deepgram nova-3 STT (en-IN) + per-session keyterm** + MultilingualModel turn detector + adaptive interruption + ai-coustics VAD/denoise). Real-time `analysis` (scoring/probe selection) is done in-session by the interview engine's brain (the standalone `analysis` module is a dead stub). | ✅ done |
+| 3C.2 | LiveKit room + token provisioning on `/start`; in-process engine worker (`app/modules/interview_engine/agent.py`) running the three-tier interview engine (see 3D.engine); candidate live UI at `frontend/session` on LiveKit's `agent-starter-react` template (aura/shader audio visualizer + client-side proctoring deterrent); engine graceful-close attribute (`session_outcome`); mid-session rejoin endpoint (`POST /rejoin`); realtime tuning (dynamic endpointing + VAD-mode barge-in — **preemptive generation is intentionally OFF**, quality-before-latency lock). RLS-only defense layer: `build_session_config` / `record_session_result` are called in-process by the engine and filter every query by an explicit `tenant_id`. (See `docs/superpowers/specs/2026-05-01-frontend-session-extract-design.md`.) | ✅ done |
+| 3D.audio | Audio pipeline (LK Cloud + **Deepgram nova-3 STT (en-IN) + per-session keyterm** + MultilingualModel turn detector + VAD-mode barge-in (`interruption mode="vad"`) + **Silero VAD**; no server-side NC — browser `noiseSuppression: true`). Real-time `analysis` (scoring/probe selection) is done in-session by the interview engine's brain (the standalone `analysis` module is a dead stub). | ✅ done |
 | 3D.engine | **The interview engine** (`app/modules/interview_engine/`) — a three-tier conversation/control split, all tiers on `gpt-5.4-mini`: **triage** (fast classify + immediate spoken beat) ∥ **brain** (async control plane: rubric grading, signal coverage, policy gates incl. verified-knockout + no-leak, emits one Directive) → **mouth** (renders the directive as natural spoken Indian English, never sees the rubric). Prompts under `prompts/v3/engine/`. | ✅ done |
 | 3D.report | **Post-session report** (`app/modules/reporting/`) — 3-layer hybrid scorer: deterministic projection of the engine's `coverage_summary` onto role signals → LLM signal re-check → LLM narrative. Verdict-driven fit-score (Overall/Technical/Behavioral/Communication → tier → verdict; knockout-gated + ceiling-capped; Borderline always human-held). `session_reports` table; recruiter report viewer + ReviewTheater playback (R2 recording, presigned). Prompts under `prompts/v3/report_scorer/`. | ✅ done |
 | 3D.reel | **Candidate Reel** (`app/modules/reel/`) — ~45–60s AI-directed highlight video. Director LLM (`gpt-5.4`) builds an EDL from report ground-truth + word-indexed transcript; clips cut from the R2 recording via live-VAD timing; branded cards + Arjun TTS narration + burned captions; rendered in the `nexus-vision-worker` (ffmpeg). `session_reels` table; eligibility gated to advance/borderline verdicts. Prompts under `prompts/v3/reel/`. | ✅ done |
@@ -103,16 +103,16 @@ Browser-side `getUserMedia` audio constraints (server is source of truth):
 
 | Constraint | Value |
 |---|---|
-| `noiseSuppression` | **false** (raw audio for the ML model's training distribution) |
-| `echoCancellation` | true (load-bearing for full-duplex; ai-coustics is not an EC) |
+| `noiseSuppression` | **true** (browser handles light NS; no server-side NC) |
+| `echoCancellation` | true (load-bearing for full-duplex) |
 | `autoGainControl` | true |
 
 The frontend reads these via the `audio_processing_hints` field on the `/start`
-response. Architecture is locked to LK Cloud (no self-hosted fallback) — if a
-future tenant-VPC requirement arises, the spec at
-`docs/superpowers/specs/2026-05-06-audio-pipeline-design.md` documents what
-would need to be re-introduced. See `docs/security/threat-model.md` Phase 6
-section for the full rollback/re-lock history.
+response. Barge-in is VAD-mode (`interruption mode="vad"`) using **Silero VAD**
+(prewarm-loaded in the engine process). There is no server-side NC plugin.
+See `docs/superpowers/specs/2026-06-04-self-hosted-audio-turn-taking-design.md`
+for the full self-hosted audio design. The superseded Cloud-mode spec is at
+`docs/superpowers/specs/2026-05-06-audio-pipeline-design.md`.
 
 ### Auth Abstraction — Load-Bearing
 - FastAPI must verify JWTs through a **provider-agnostic interface**. Never call the Supabase SDK directly in business logic.

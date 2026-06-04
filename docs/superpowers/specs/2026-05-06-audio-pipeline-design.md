@@ -1,3 +1,5 @@
+> Superseded (audio path) by docs/superpowers/specs/2026-06-04-self-hosted-audio-turn-taking-design.md (2026-06-04).
+
 # Audio Pipeline — LK Cloud cutover, ai-coustics QUAIL_L, adaptive interruption, empirical tuning loop
 
 **Status:** Draft for user review · **Date:** 2026-05-06 · **Supersedes the partial-rollback portion of:** `2026-05-03-engine-redesign-phase-6-audio-authority-design.md`
