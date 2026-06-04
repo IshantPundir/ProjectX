@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import sys
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from app.ai.realtime import (
     build_interruption_options,
-    build_noise_cancellation,
     build_stt_plugin,
     build_tts_plugin,
     build_vad,
@@ -17,10 +16,10 @@ from app.ai.realtime import (
 
 
 class TestBuildInterruptionOptions:
-    def test_returns_adaptive_classifier_friendly_defaults(self) -> None:
+    def test_returns_vad_mode_with_gates(self) -> None:
         opts = build_interruption_options()
         assert opts == {
-            "mode": "adaptive",
+            "mode": "vad",
             "min_duration": 1.0,
             "min_words": 2,
             "false_interruption_timeout": 2.0,
@@ -28,36 +27,13 @@ class TestBuildInterruptionOptions:
         }
 
 
-class TestBuildNoiseCancellation:
-    def test_ai_coustics_quail_returns_audio_enhancement(self) -> None:
-        with patch("app.ai.realtime.ai_config") as mock_config:
-            mock_config.interview_noise_cancellation = "ai_coustics_quail"
-            mock_config.interview_nc_enhancement_level = 0.5
-            result = build_noise_cancellation()
-        assert result is not None
-        assert "livekit.plugins.ai_coustics" in sys.modules
-
-    def test_ai_coustics_quail_vf_returns_audio_enhancement(self) -> None:
-        with patch("app.ai.realtime.ai_config") as mock_config:
-            mock_config.interview_noise_cancellation = "ai_coustics_quail_vf"
-            mock_config.interview_nc_enhancement_level = 0.5
-            result = build_noise_cancellation()
-        assert result is not None
-        assert "livekit.plugins.ai_coustics" in sys.modules
-
-    def test_unknown_value_raises(self) -> None:
-        with patch("app.ai.realtime.ai_config") as mock_config:
-            mock_config.interview_noise_cancellation = "bogus"
-            mock_config.interview_nc_enhancement_level = 0.5
-            with pytest.raises(ValueError, match="Unknown interview_noise_cancellation"):
-                build_noise_cancellation()
-
-
 class TestBuildVad:
-    def test_returns_ai_coustics_vad(self) -> None:
-        result = build_vad()
+    def test_returns_silero_vad(self) -> None:
+        with patch("livekit.plugins.silero.VAD.load", return_value=MagicMock()) as load:
+            result = build_vad()
         assert result is not None
-        assert "livekit.plugins.ai_coustics" in sys.modules
+        load.assert_called_once()
+        assert "livekit.plugins.silero" in sys.modules
 
 
 class TestBuildSttPlugin:

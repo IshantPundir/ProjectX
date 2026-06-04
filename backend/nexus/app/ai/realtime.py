@@ -70,7 +70,7 @@ def _build_stt_sarvam() -> "_BaseSTT":
     """Sarvam STT (default). Indian-language tuned. Auth via SARVAM_API_KEY env.
 
     ``high_vad_sensitivity`` is intentionally left unset (None) so the
-    plugin's internal VAD does not race with our ai-coustics VAD.
+    plugin's internal VAD does not race with our Silero VAD.
     """
     from livekit.plugins import sarvam
 
@@ -261,15 +261,13 @@ def build_turn_detector(
 def build_interruption_options() -> dict[str, object]:
     """Construct the `interruption=` block for TurnHandlingOptions.
 
-    Locked to adaptive mode (LK Cloud). The barge-in classifier handles
-    backchannel detection. min_words=2 layers an STT-aligned word-count
-    gate on top per the LK turn-handling-options reference. min_duration=1.0s
-    filters incidental noise; backchannel filtering is still handled by the
-    adaptive classifier and min_words=2.
+    VAD-based barge-in — self-hostable, no LiveKit-Cloud dependency. The word-count
+    and duration gates filter backchannel/noise; false-interruption recovery resumes
+    the agent's line if no transcript follows.
     """
-    logger.info("ai.realtime.interruption.built", mode="adaptive")
+    logger.info("ai.realtime.interruption.built", mode="vad")
     return {
-        "mode": "adaptive",
+        "mode": "vad",
         "min_duration": 1.0,
         "min_words": 2,
         "false_interruption_timeout": 2.0,
@@ -277,51 +275,10 @@ def build_interruption_options() -> dict[str, object]:
     }
 
 
-def build_noise_cancellation() -> object:
-    """Construct the noise cancellation filter from AIConfig.
-
-    Returns a LiveKit AudioFilter-protocol object suitable for
-    passing into `room_io.AudioInputOptions(noise_cancellation=...)`.
-
-    Locked to LK Cloud — at least one ML provider is always wired
-    (no self-hosted fallback). Plugin imports stay LAZY for cold-start
-    isolation.
-    """
-    nc = ai_config.interview_noise_cancellation
-    logger.info(
-        "ai.realtime.noise_cancellation.built",
-        provider=nc,
-        enhancement_level=ai_config.interview_nc_enhancement_level,
-    )
-    if nc == "ai_coustics_quail":
-        from livekit.plugins import ai_coustics
-        return ai_coustics.audio_enhancement(
-            model=ai_coustics.EnhancerModel.QUAIL_L,
-            model_parameters=ai_coustics.ModelParameters(
-                enhancement_level=ai_config.interview_nc_enhancement_level,
-            ),
-        )
-    if nc == "ai_coustics_quail_vf":
-        from livekit.plugins import ai_coustics
-        return ai_coustics.audio_enhancement(
-            model=ai_coustics.EnhancerModel.QUAIL_VF_L,
-            model_parameters=ai_coustics.ModelParameters(
-                enhancement_level=ai_config.interview_nc_enhancement_level,
-            ),
-        )
-    raise ValueError(f"Unknown interview_noise_cancellation: {nc!r}")
-
-
 def build_vad() -> object:
-    """Construct the VAD instance for the AgentSession.
+    """Construct the Silero VAD. Blocking ONNX model load — call from prewarm()."""
+    from livekit.plugins import silero
 
-    Locked to ai-coustics' built-in VAD adapter — reads VAD signals
-    from the same ai-coustics inference that runs for noise
-    cancellation. Saves a separate VAD model load and operates on
-    the cleanest possible signal (the model's internal classification,
-    not post-filter audio).
-    """
-    from livekit.plugins import ai_coustics
-    logger.info("ai.realtime.vad.built", provider="ai_coustics")
-    return ai_coustics.VAD()
+    logger.info("ai.realtime.vad.built", provider="silero")
+    return silero.VAD.load()
 

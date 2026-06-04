@@ -3,11 +3,6 @@ from typing import Annotated, Literal
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-NoiseCancellationMode = Literal[
-    "ai_coustics_quail",
-    "ai_coustics_quail_vf",
-]
-
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -404,15 +399,6 @@ class Settings(BaseSettings):
         "Got it.",
         "Mm-hmm.",
     ]
-
-    # Phase 3D — audio pipeline tuning (LK Cloud locked, 2026-05-06)
-    # Architecture is locked to LK Cloud + ai-coustics exclusively.
-    # "off" and "krisp_nc" are no longer valid values.
-    # Set ai_coustics_quail (default, background noise suppression) or
-    # ai_coustics_quail_vf (voice isolation — kills other voices in the room).
-    interview_noise_cancellation: NoiseCancellationMode = "ai_coustics_quail"
-    # Passed as `enhancement_level` to the ai_coustics plugin (0.0 = off, 1.0 = max).
-    interview_nc_enhancement_level: float = 0.5
 
     # Stuck-session reaper. Sweeps state='active' sessions whose LAST SIGN OF LIFE
     # — COALESCE(last_engine_heartbeat_at, state_changed_at) — is older than
