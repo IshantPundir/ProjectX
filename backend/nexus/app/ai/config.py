@@ -310,5 +310,15 @@ class AIConfig:
     def report_narrative_effort(self) -> str:
         return self._settings.openai_report_narrative_effort
 
+    # --- Gen-3 deterministic resolver time-budget knobs ---
+    # [VALIDATE] F3-tuned defaults; tune empirically on talk-tests.
+    @property
+    def engine_close_reserve_s(self) -> float:
+        return self._settings.engine_close_reserve_s
+
+    @property
+    def engine_winding_down_s(self) -> float:
+        return self._settings.engine_winding_down_s
+
 
 ai_config = AIConfig(settings)
