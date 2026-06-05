@@ -70,6 +70,7 @@ class Session(Base):
     recording_duration_seconds: Mapped[int | None] = mapped_column(Integer)
     recording_bytes: Mapped[int | None] = mapped_column(BigInteger)
     raw_result_json: Mapped[dict | None] = mapped_column(JSONB)
+    session_evidence_json: Mapped[dict | None] = mapped_column(JSONB)
     knockout_failures: Mapped[list[dict]] = mapped_column(
         JSONB,
         nullable=False,
