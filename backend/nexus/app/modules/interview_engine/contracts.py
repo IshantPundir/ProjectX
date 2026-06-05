@@ -11,6 +11,7 @@ Module layout (import order):
   3. Brain input types: BudgetPhase, SignalSpec, BankQuestionIndex, BrainSessionContext,
      ActiveQuestionRubric, SignalRead, WindowTurn, BrainTurnInput.
   4. Directive + mouth types: DirectiveAct, DirectiveTone, Directive, MouthTurnInput, BridgeRequest.
+  5. Brain service result: BrainDecision (after Directive + SignalObservation are defined).
 """
 
 from __future__ import annotations
@@ -353,3 +354,39 @@ class BridgeRequest(BaseModel):
     triage_intent: str = Field(
         description="The triage tier's classified intent — passed through for logging/audit."
     )
+
+
+# ============================================================================
+# Brain service result — produced by the Phase-D brain service, consumed by the loop
+# ============================================================================
+
+class BrainDecision(BaseModel):
+    """The brain SERVICE's per-turn result — distinct from the lean `BrainTurnOutput` LLM
+    output. The brain service derives the `Directive` (via the deterministic resolver) and
+    carries the signal observations for the NoteLog.
+
+    The drive-loop (loop.py) consumes exactly one BrainDecision per committed candidate
+    turn. The brain service in Phase D produces it by:
+      1. Calling the LLM to get a `BrainTurnOutput`.
+      2. Running the deterministic resolver (policy gates, move→act mapping).
+      3. Packaging the resolved `Directive` + observations into this struct.
+
+    Placement: defined here — after `Directive` and `SignalObservation` — so all forward
+    references are already resolved in the same module.
+
+    Fields:
+        directive:      The resolved instruction to the mouth for this turn.
+        observations:   Zero or more signal observations emitted by the brain. The loop
+                        appends each one to the NoteLog via NoteLog.append().
+        reasoning:      Brain chain-of-thought — audit-only, NEVER forwarded to the mouth
+                        (no-leak invariant).
+        is_terminal:    Mirrors directive.is_terminal for the loop's caller's convenience,
+                        so the caller does not need to drill into the directive to decide
+                        whether to trigger session cleanup.
+    """
+    model_config = ConfigDict(frozen=True)
+
+    directive: Directive
+    observations: list[SignalObservation] = Field(default_factory=list)
+    reasoning: str = ""   # audit-only; never forwarded to the mouth
+    is_terminal: bool = False   # mirror of directive.is_terminal, for the loop's caller
