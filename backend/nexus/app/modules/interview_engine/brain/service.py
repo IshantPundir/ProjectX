@@ -167,8 +167,8 @@ class ControlPlane:
             established_quote_by_signal=quote_by_signal,
         )
 
-        # Step 4: derive the Directive
-        directive = self._derive_directive(
+        # Step 4: derive the Directive + the resolver-selected next question id (if ask)
+        directive, next_question_id = self._derive_directive(
             output=output,
             turn_input=turn_input,
             asked_ids=asked_ids,
@@ -181,6 +181,7 @@ class ControlPlane:
             observations=output.observations,
             reasoning=output.reasoning,
             is_terminal=directive.is_terminal,
+            next_question_id=next_question_id,
         )
 
     # -----------------------------------------------------------------------
@@ -194,8 +195,14 @@ class ControlPlane:
         turn_input: BrainTurnInput,
         asked_ids: set[str],
         time_remaining_s: float,
-    ) -> Directive:
-        """Map BrainTurnOutput → Directive applying all policy gates."""
+    ) -> tuple[Directive, str | None]:
+        """Map BrainTurnOutput → (Directive, next_question_id) applying all policy gates.
+
+        Returns:
+            A tuple of (Directive, next_question_id). `next_question_id` is the
+            resolver-selected question id when act==ask; None for all other acts and
+            for a close produced when the resolver found no remaining question.
+        """
 
         # Covered signals (for resolver)
         covered_signals: set[str] = {
@@ -214,7 +221,7 @@ class ControlPlane:
         if not gate.allow_move:
             # Premature close blocked — steer toward the knockout verification flow.
             # Produce a warm probe/clarify directive to drive gate.forced_step.
-            return self._steer_knockout(gate, turn_input)
+            return self._steer_knockout(gate, turn_input), None
 
         # ── Move → Act + Say ─────────────────────────────────────────────────
         move = output.move
@@ -236,8 +243,11 @@ class ControlPlane:
         asked_ids: set[str],
         covered_signals: set[str],
         time_remaining_s: float,
-    ) -> Directive:
-        """Resolve a BrainMove (gate-allowed) → Directive with say populated."""
+    ) -> tuple[Directive, str | None]:
+        """Resolve a BrainMove (gate-allowed) → (Directive, next_question_id).
+
+        `next_question_id` is the resolver-selected question id for ask moves; None otherwise.
+        """
 
         act = DirectiveAct(move.value)  # 1:1 by name
 
@@ -267,7 +277,7 @@ class ControlPlane:
                     tone=_ACT_TONE[act],
                     spoken_setup=None,
                     is_terminal=False,
-                )
+                ), None
 
             case BrainMove.repeat:
                 return Directive(
@@ -276,7 +286,7 @@ class ControlPlane:
                     tone=_ACT_TONE[DirectiveAct.repeat],
                     spoken_setup=None,
                     is_terminal=False,
-                )
+                ), None
 
             case BrainMove.close:
                 return Directive(
@@ -285,7 +295,7 @@ class ControlPlane:
                     tone=DirectiveTone.warm,
                     spoken_setup=None,
                     is_terminal=True,
-                )
+                ), None
 
             case _:
                 # Defensive fallback — unknown move → treat as repeat
@@ -296,7 +306,7 @@ class ControlPlane:
                     tone=DirectiveTone.warm,
                     spoken_setup=None,
                     is_terminal=False,
-                )
+                ), None
 
     def _resolve_ask(
         self,
@@ -305,8 +315,12 @@ class ControlPlane:
         asked_ids: set[str],
         covered_signals: set[str],
         time_remaining_s: float,
-    ) -> Directive:
-        """Resolve an `ask` move: deterministic resolver → bank text."""
+    ) -> tuple[Directive, str | None]:
+        """Resolve an `ask` move: deterministic resolver → (bank-text Directive, next_question_id).
+
+        Returns (close Directive, None) when the resolver finds no remaining question.
+        Returns (ask Directive, nxt.question_id) otherwise.
+        """
         nxt = resolve_next(
             questions=self._resolver_questions,
             asked_ids=asked_ids,
@@ -316,14 +330,14 @@ class ControlPlane:
             preferred_next_signal=output.preferred_next_signal,
         )
         if nxt is None:
-            # No question left → this is actually a close
+            # No question left → this is actually a close; next_question_id is None.
             return Directive(
                 act=DirectiveAct.close,
                 say=None,
                 tone=DirectiveTone.warm,
                 spoken_setup=None,
                 is_terminal=True,
-            )
+            ), None
 
         say = self._bank_text_by_id.get(nxt.question_id)
         if say is None:
@@ -339,7 +353,7 @@ class ControlPlane:
             tone=_ACT_TONE[DirectiveAct.ask],
             spoken_setup=None,
             is_terminal=False,
-        )
+        ), nxt.question_id
 
     def _resolve_probe(
         self,
@@ -349,15 +363,18 @@ class ControlPlane:
         asked_ids: set[str],
         covered_signals: set[str],
         time_remaining_s: float,
-    ) -> Directive:
-        """Resolve a `probe` move: coerce index → verbatim follow_up, or fall back to ask."""
+    ) -> tuple[Directive, str | None]:
+        """Resolve a `probe` move: coerce index → (verbatim follow_up Directive, None).
+
+        Falls back to _resolve_ask (returning its tuple) when all probes are exhausted.
+        """
         idx = coerce_probe_index(
             output.probe_index,
             follow_ups=turn_input.active_question.follow_ups,
             probes_used=turn_input.active_question.probes_used,
         )
         if idx is None:
-            # No probe left → fall back to ask
+            # No probe left → fall back to ask (which returns a tuple)
             return self._resolve_ask(
                 output=output,
                 asked_ids=asked_ids,
@@ -372,7 +389,7 @@ class ControlPlane:
             tone=_ACT_TONE[DirectiveAct.probe],
             spoken_setup=None,
             is_terminal=False,
-        )
+        ), None
 
     def _steer_knockout(
         self,

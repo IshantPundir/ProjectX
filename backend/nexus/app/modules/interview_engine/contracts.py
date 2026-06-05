@@ -335,3 +335,12 @@ class BrainDecision(BaseModel):
     observations: list[SignalObservation] = Field(default_factory=list)
     reasoning: str = ""          # audit-only; NEVER forwarded to the mouth (no-leak invariant)
     is_terminal: bool = False    # mirror of directive.is_terminal, for the loop's caller's convenience
+    next_question_id: str | None = Field(
+        default=None,
+        description=(
+            "When directive.act == ask: the question_id the resolver selected as the next "
+            "active question. The SessionDriver uses this to advance the active-question "
+            "pointer and update asked_ids. None for non-ask acts and for a close directive "
+            "produced when the resolver found no remaining question."
+        ),
+    )

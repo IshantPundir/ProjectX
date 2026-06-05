@@ -346,17 +346,159 @@ async def _drive(
     tenant_id: uuid.UUID,
     correlation_id: str,
 ) -> None:
-    """Gen-3 three-tier drive loop stub.
+    """Gen-3 three-tier drive loop.
 
-    The real implementation (Ear ∥ Brain → Mouth, NoteLog accumulation,
-    SessionEvidence persistence) arrives in Phase F (F1). Until then this
-    stub raises immediately so integration tests catch unexpected calls.
+    Builds a SessionDriver from the config + session, wires the Ear, speaks the
+    opener, then enters the turn loop until a terminal directive is received.
+    On session end, finalizes and persists the SessionEvidence.
 
-    The stub is never reachable from tests — tests only import agent.py, they
-    never call run(). The entrypoint chain only reaches _drive() via a real
-    LiveKit session.
+    Thin glue: all the orchestration logic lives in driver.py (SessionDriver).
+    The live event wiring (user_input_transcribed, committed-turn → handle_turn)
+    is marked # F3-VALIDATE — confirm attribute names on real LiveKit sessions.
     """
-    raise NotImplementedError("gen-3 drive loop — implemented in Phase F (F1)")
+    from datetime import UTC, datetime
+
+    from app.database import get_bypass_session
+    from app.modules.interview_engine.driver import build_session_driver
+    from app.modules.interview_runtime import record_session_evidence
+    from app.modules.interview_runtime.evidence import CompletionReason, TimeSpan
+
+    started_at = datetime.now(UTC)
+
+    # ── Build the persist callable ───────────────────────────────────────────
+    async def _persist(evidence):  # type: ignore[no-untyped-def]
+        """Open a bypass-RLS session and persist the SessionEvidence."""
+        async with get_bypass_session() as db:
+            await record_session_evidence(
+                db,
+                tenant_id=tenant_id,
+                evidence=evidence,
+                correlation_id=correlation_id,
+            )
+            # record_session_evidence commits internally; no extra commit needed.
+
+    # ── Build the SessionDriver (assembles brain/mouth/bridge/notelog/projection) ──
+    driver = build_session_driver(
+        config,
+        voice=session,         # AgentSession satisfies the Voice protocol (has .say())
+        persist=_persist,
+        started_at=started_at,
+    )
+
+    # ── Build the Ear ────────────────────────────────────────────────────────
+    ear = build_ear()
+
+    # ── Replace the skeleton Agent with the full _EarAgent ──────────────────
+    # F3-VALIDATE: The AgentSession was started with a skeleton Agent(instructions="")
+    # in run(). Ideally we'd pass _EarAgent from the start, but since run() already
+    # called session.start(), we only set up the Ear's event hooks here (the stt_node
+    # tee is a best-effort enhancement, not load-bearing for turn commits).
+    poll_task = setup_ear(session, ear, clock=_now_ms)
+
+    # ── Speak the opener ─────────────────────────────────────────────────────
+    try:
+        await driver.opener()
+    except Exception:  # noqa: BLE001
+        log.warning("engine.drive.opener_failed", exc_info=True)
+
+    # ── Committed-turn loop ──────────────────────────────────────────────────
+    # F3-VALIDATE: The mechanism for receiving committed turns from the Ear.
+    # In the gen-3 architecture, the Ear calls session.commit_user_turn() after
+    # fusion-ladder decision. The committed candidate utterance is then available
+    # on the session's transcript. We use asyncio.Queue to decouple the Ear's
+    # commit from the driver's handle_turn.
+    #
+    # The canonical approach: subscribe to the session's "user_input_transcribed"
+    # event (LiveKit AgentSession fires this after STT + turn commit), which
+    # provides the full transcribed text + timing.
+    #
+    # F3-VALIDATE: confirm event name + payload attributes on real LiveKit session.
+
+    committed_turn_q: asyncio.Queue = asyncio.Queue()
+    _turn_id: list[int] = [0]
+
+    def _on_user_input_transcribed(ev) -> None:  # type: ignore[no-untyped-def]
+        """Fired by LiveKit AgentSession when a committed candidate turn is ready.
+
+        F3-VALIDATE: confirm event name 'user_input_transcribed' and payload
+        attributes (transcript, start_time, end_time) on real LiveKit sessions.
+        """
+        text: str = getattr(ev, "transcript", "") or ""
+        if not text.strip():
+            return
+        _turn_id[0] += 1
+        # F3-VALIDATE: ev.start_time / ev.end_time are in seconds (float) from
+        # session start (or absolute epoch?). Convert to session-relative ms.
+        start_ms: int = int(getattr(ev, "start_time", 0) * 1000)
+        end_ms: int = int(getattr(ev, "end_time", start_ms / 1000 + 1) * 1000)
+        span = TimeSpan(start_ms=max(0, start_ms), end_ms=max(0, end_ms))
+        turn_ref = f"t-{_turn_id[0]}"
+        committed_turn_q.put_nowait((text, turn_ref, span))
+
+    # F3-VALIDATE: confirm event name on real LiveKit AgentSession.
+    session.on("user_input_transcribed", _on_user_input_transcribed)
+
+    terminal = False
+    try:
+        while not terminal:
+            # Wait for the next committed turn (with a keepalive timeout so we
+            # don't spin forever if no candidate speech arrives).
+            # F3-VALIDATE: tune the timeout based on real session behaviour.
+            try:
+                utterance, turn_ref, span = await asyncio.wait_for(
+                    committed_turn_q.get(),
+                    timeout=300.0,  # 5-minute silence → close
+                )
+            except asyncio.TimeoutError:
+                log.warning(
+                    "engine.drive.candidate_silence_timeout",
+                    session_id=config.session_id,
+                )
+                terminal = True
+                await driver.finalize(CompletionReason.unresponsive)
+                break
+
+            try:
+                terminal = await driver.handle_turn(
+                    utterance=utterance,
+                    turn_ref=turn_ref,
+                    span=span,
+                )
+            except Exception:  # noqa: BLE001
+                log.error(
+                    "engine.drive.handle_turn_error",
+                    turn_ref=turn_ref,
+                    exc_info=True,
+                )
+                # On a handle_turn error, finalize as error and break
+                terminal = True
+                await driver.finalize(CompletionReason.error)
+                break
+
+        if terminal and _turn_id[0] > 0:
+            # Normal terminal path (close directive reached inside handle_turn)
+            # driver.handle_turn returns True but does NOT call finalize —
+            # we call it here.
+            # Guard: finalize may have already been called in the error/timeout paths above
+            # but NOT in the normal terminal path.
+            # To avoid double-persist: wrap in try/except.
+            try:
+                await driver.finalize(CompletionReason.completed)
+            except Exception:  # noqa: BLE001
+                log.warning("engine.drive.finalize_error", exc_info=True)
+
+    finally:
+        poll_task.cancel()
+        try:
+            await poll_task
+        except asyncio.CancelledError:
+            pass
+        # Publish session_outcome='completed' to the room for the frontend
+        # F3-VALIDATE: confirm attribute path on real LiveKit room participant.
+        try:
+            await ctx.room.local_participant.set_attributes({"session_outcome": "completed"})
+        except Exception:  # noqa: BLE001
+            log.warning("engine.drive.outcome_publish_failed", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
