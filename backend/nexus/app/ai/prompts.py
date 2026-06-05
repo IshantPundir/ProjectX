@@ -126,6 +126,11 @@ class PromptLoader:
             )
         return self._cache[name]
 
+    # ``load`` is an alias for ``get`` — the two names are interchangeable.
+    # ``get`` is the original name (kept for back-compat); ``load`` is the
+    # preferred name in new callers (reads more naturally: "load a prompt").
+    load = get
+
     def load_pair(self, common_name: str, type_name: str) -> str:
         """Concatenate a common header file with a per-type specialization file.
 

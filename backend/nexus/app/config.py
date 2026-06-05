@@ -437,7 +437,8 @@ class Settings(BaseSettings):
     engine_mouth_effort: str = ""
 
     # New v3 engine prompt family (rewritten from scratch — brain + per-act mouth).
-    engine_brain_prompt_version: str = "v3"
+    # Brain bumped to v4 for the gen-3 rewrite (job-agnostic, fleet-wide cache).
+    engine_brain_prompt_version: str = "v4"
     engine_mouth_prompt_version: str = "v3"
 
     # Brain total wall-clock budget (ms) before the deterministic fallback directive
@@ -471,7 +472,7 @@ class Settings(BaseSettings):
     # Explicit OpenAI prompt_cache_key per surface for stable cache routing
     # (design §11: stable-prefix -> dynamic-suffix). Bump the suffix on a
     # prompt change to avoid cross-version cache pollution.
-    engine_brain_prompt_cache_key: str = "brain:v1"
+    engine_brain_prompt_cache_key: str = "brain:v4"
     engine_mouth_prompt_cache_key: str = "mouth:v1"
 
     # v2 mouth persona display name. The design persona is "Arjun"; kept a
