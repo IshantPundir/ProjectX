@@ -58,7 +58,8 @@ from app.modules.interview_runtime.schemas import (
 SENTINEL_EXCELLENT = "SENTINEL_EXCELLENT_RUBRIC_STRING"
 SENTINEL_MEETS_BAR = "SENTINEL_MEETS_BAR_RUBRIC_STRING"
 
-ACTIVE_Q_RUBRIC_TEXT = "active-question-rubric-advance-criteria-sentinel"
+ACTIVE_Q_EXCELLENT = "ACTIVE_EXCELLENT_RUBRIC"
+ACTIVE_Q_MEETS_BAR = "ACTIVE_Q_RUBRIC_TEXT_SENTINEL"
 
 
 def _make_question(
@@ -139,8 +140,8 @@ def _make_session_config() -> SessionConfig:
                     ["distributed_systems", "system_design"],
                     primary_signal="distributed_systems",
                     is_mandatory=True,
-                    excellent="ACTIVE_EXCELLENT_RUBRIC",
-                    meets_bar=ACTIVE_Q_RUBRIC_TEXT,
+                    excellent=ACTIVE_Q_EXCELLENT,
+                    meets_bar=ACTIVE_Q_MEETS_BAR,
                 ),
                 _make_question(
                     "q-002",
@@ -189,42 +190,65 @@ class TestBuildSessionContext:
     def test_bank_index_count(self):
         config = _make_session_config()
         ctx = build_session_context(config)
-        assert len(ctx.questions) == 2
+        assert len(ctx.bank_index) == 2
 
     def test_bank_index_all_core(self):
+        """All questions in the flat bank are tier='core'."""
         config = _make_session_config()
         ctx = build_session_context(config)
-        for qi in ctx.questions:
+        for qi in ctx.bank_index:
             assert qi.tier == "core"
 
     def test_bank_index_primary_signal(self):
         config = _make_session_config()
         ctx = build_session_context(config)
-        qmap = {q.question_id: q for q in ctx.questions}
+        qmap = {q.question_id: q for q in ctx.bank_index}
 
         assert qmap["q-001"].primary_signal == "distributed_systems"
         assert qmap["q-002"].primary_signal == "incident_response"
 
     def test_bank_index_no_rubric_fields(self):
-        """BankQuestionIndex must NOT carry excellent/meets_bar/below_bar/text fields."""
+        """BankQuestionIndex must NOT carry excellent/meets_bar/below_bar fields."""
         config = _make_session_config()
         ctx = build_session_context(config)
-        for qi in ctx.questions:
-            # These fields MUST NOT exist on BankQuestionIndex
+        for qi in ctx.bank_index:
             assert not hasattr(qi, "excellent")
             assert not hasattr(qi, "meets_bar")
             assert not hasattr(qi, "below_bar")
-            assert not hasattr(qi, "text")
+
+    def test_bank_index_has_text_and_follow_ups(self):
+        """BankQuestionIndex carries text + follow_ups (per corrected contract)."""
+        config = _make_session_config()
+        ctx = build_session_context(config)
+        qmap = {q.question_id: q for q in ctx.bank_index}
+
+        qi = qmap["q-001"]
+        assert qi.text == "Tell me about your distributed systems experience."
+        assert qi.follow_ups == ["Follow up 1?", "Follow up 2?"]
+
+    def test_bank_index_signals_list(self):
+        """BankQuestionIndex.signals must be the full coverable signal set."""
+        config = _make_session_config()
+        ctx = build_session_context(config)
+        qmap = {q.question_id: q for q in ctx.bank_index}
+
+        assert set(qmap["q-001"].signals) == {"distributed_systems", "system_design"}
+        assert qmap["q-002"].signals == ["incident_response"]
+
+    def test_bank_index_is_mandatory(self):
+        config = _make_session_config()
+        ctx = build_session_context(config)
+        qmap = {q.question_id: q for q in ctx.bank_index}
+
+        assert qmap["q-001"].is_mandatory is True
+        assert qmap["q-002"].is_mandatory is False
 
     def test_signal_metadata_fallback_on_empty(self):
         """When signal_metadata is empty, build_session_context falls back to one minimal
         SignalSpec per signals entry (competency, weight=1, preferred, knockout=False)."""
         config = _make_session_config()
-        # Patch: clear signal_metadata but keep signals
-        import copy
         config2 = config.model_copy(update={"signal_metadata": []})
         ctx = build_session_context(config2)
-        # Should still produce one spec per signals entry
         assert len(ctx.signals) == len(config2.signals)
         for spec in ctx.signals:
             assert spec.signal_type == SignalType.competency
@@ -232,17 +256,24 @@ class TestBuildSessionContext:
             assert spec.priority == SignalPriority.preferred
             assert spec.knockout is False
 
-    def test_job_title_and_company_name(self):
+    def test_job_title_and_seniority_level(self):
         config = _make_session_config()
         ctx = build_session_context(config)
         assert ctx.job_title == "Senior Backend Engineer"
-        # company_name should come from config.company (about/industry) or hiring_company_name
-        assert isinstance(ctx.company_name, str)
+        assert ctx.seniority_level == "senior"
 
-    def test_time_budget_s(self):
+    def test_role_summary_and_hiring_bar(self):
         config = _make_session_config()
         ctx = build_session_context(config)
-        assert ctx.time_budget_s == 30 * 60.0  # 30 min → seconds
+        assert ctx.role_summary == "Build distributed systems at scale."
+        assert ctx.hiring_bar == "high"
+
+    def test_no_company_name_or_time_budget(self):
+        """The corrected BrainSessionContext has no company_name or time_budget_s fields."""
+        config = _make_session_config()
+        ctx = build_session_context(config)
+        assert not hasattr(ctx, "company_name")
+        assert not hasattr(ctx, "time_budget_s")
 
 
 # ---------------------------------------------------------------------------
@@ -258,7 +289,6 @@ class TestPrefixByteIdentical:
         prefix1 = render_prefix(sys_prompt, ctx)
         prefix2 = render_prefix(sys_prompt, ctx)
 
-        # Must be equal by value (byte-identical serialization)
         assert prefix1 == prefix2
 
     def test_identical_regardless_of_turn_input(self):
@@ -273,15 +303,16 @@ class TestPrefixByteIdentical:
         q = config.stage.questions[0]
         rubric = active_question_rubric(q, probes_used=[])
         proj = CoverageProjection()
-        turn_input = build_turn_input(
+        _turn_input = build_turn_input(
             turn_ref="turn-001",
             active_question=rubric,
-            candidate_text="I've worked on Kafka-based pipelines for 3 years.",
-            elapsed_s=60.0,
-            questions_asked=1,
+            on_the_floor="Tell me about your distributed systems experience.",
+            candidate_utterance="I've worked on Kafka-based pipelines for 3 years.",
+            thread_turn_count=1,
             projection=proj,
             all_specs=ctx.signals,
-            window=[],
+            transcript_window=[],
+            budget_phase=BudgetPhase.on_track,
         )
 
         prefix_after = render_prefix(sys_prompt, ctx)
@@ -299,41 +330,40 @@ class TestNoRubricInPrefix:
         sys_prompt = "You are the brain."
 
         prefix = render_prefix(sys_prompt, ctx)
-
-        # Serialize prefix to a single string for inspection
         prefix_text = json.dumps(prefix)
 
         # Rubric sentinels must NOT appear in the prefix
         assert SENTINEL_EXCELLENT not in prefix_text
         assert SENTINEL_MEETS_BAR not in prefix_text
-        assert "ACTIVE_EXCELLENT_RUBRIC" not in prefix_text
-        assert ACTIVE_Q_RUBRIC_TEXT not in prefix_text
+        assert ACTIVE_Q_EXCELLENT not in prefix_text
+        assert ACTIVE_Q_MEETS_BAR not in prefix_text
         assert "OTHER_Q_EXCELLENT_RUBRIC" not in prefix_text
         assert "OTHER_Q_MEETS_BAR_RUBRIC" not in prefix_text
 
-    def test_rubric_sentinel_present_in_suffix_when_active(self):
+    def test_rubric_present_in_suffix_when_active(self):
         """The active question's rubric MUST appear in the suffix."""
         config = _make_session_config()
         ctx = build_session_context(config)
 
-        q = config.stage.questions[0]  # has ACTIVE_EXCELLENT_RUBRIC and ACTIVE_Q_RUBRIC_TEXT
+        q = config.stage.questions[0]  # has ACTIVE_Q_EXCELLENT and ACTIVE_Q_MEETS_BAR
         rubric = active_question_rubric(q, probes_used=[])
         proj = CoverageProjection()
         turn_input = build_turn_input(
             turn_ref="turn-001",
             active_question=rubric,
-            candidate_text="Some answer.",
-            elapsed_s=60.0,
-            questions_asked=1,
+            on_the_floor="Tell me about your distributed systems experience.",
+            candidate_utterance="Some answer.",
+            thread_turn_count=1,
             projection=proj,
             all_specs=ctx.signals,
-            window=[],
+            transcript_window=[],
+            budget_phase=BudgetPhase.on_track,
         )
         suffix = render_suffix(turn_input)
         suffix_text = json.dumps(suffix)
 
-        # The active question's advance_criteria (mapped from meets_bar or excellent) should appear
-        assert ACTIVE_Q_RUBRIC_TEXT in suffix_text or "ACTIVE_EXCELLENT_RUBRIC" in suffix_text
+        # The active question's rubric strings must appear in the suffix
+        assert ACTIVE_Q_EXCELLENT in suffix_text or ACTIVE_Q_MEETS_BAR in suffix_text
 
 
 # ---------------------------------------------------------------------------
@@ -352,34 +382,30 @@ class TestCandidateUtteranceFenced:
         turn_input = build_turn_input(
             turn_ref="turn-001",
             active_question=rubric,
-            candidate_text=utterance,
-            elapsed_s=60.0,
-            questions_asked=1,
+            on_the_floor="Tell me about your distributed systems experience.",
+            candidate_utterance=utterance,
+            thread_turn_count=1,
             projection=proj,
             all_specs=ctx.signals,
-            window=[],
+            transcript_window=[],
+            budget_phase=BudgetPhase.on_track,
         )
         suffix = render_suffix(turn_input)
         suffix_text = json.dumps(suffix)
 
-        # The utterance must appear in the suffix
+        # The utterance must be present in the suffix
         assert utterance in suffix_text
 
-        # The utterance must be inside a DATA fence (not free-floating as instructions)
-        # Check that a fence delimiter appears before/after the utterance.
-        # We look for the utterance between known delimiter strings.
-        # The implementation chooses delimiters; we just verify the utterance is bracketed.
-        utterance_pos = suffix_text.index(utterance)
+        # Must be wrapped in CANDIDATE_ANSWER fencing
+        assert "<<<CANDIDATE_ANSWER_BEGIN>>>" in suffix_text
+        assert "<<<CANDIDATE_ANSWER_END>>>" in suffix_text
 
-        # There should be some kind of fence marker in the suffix text
-        fence_indicators = [
-            "---", "```", "<<<", ">>>", "<candidate_answer>", "<answer>",
-            "CANDIDATE_ANSWER", "candidate_text", "candidate_answer",
-            "[CANDIDATE]", "BEGIN_CANDIDATE",
-        ]
-        has_fence = any(fi in suffix_text for fi in fence_indicators)
-        assert has_fence, (
-            f"No fence delimiter found in suffix. Suffix: {suffix_text[:500]}"
+        # The fence markers must appear before and after the utterance in the text
+        begin_pos = suffix_text.index("<<<CANDIDATE_ANSWER_BEGIN>>>")
+        end_pos = suffix_text.index("<<<CANDIDATE_ANSWER_END>>>")
+        utterance_pos = suffix_text.index(utterance)
+        assert begin_pos < utterance_pos < end_pos, (
+            "Utterance must be between the BEGIN and END fence markers"
         )
 
 
@@ -414,7 +440,83 @@ class TestCoverageProjection:
         r = reads[0]
         assert r.signal == "distributed_systems"
         assert r.coverage == CoverageState.partial
-        assert r.stance == EvidenceStance.supports
+        assert r.last_stance == EvidenceStance.supports
+
+    def test_update_uses_last_stance_not_stance(self):
+        """The field on SignalRead must be last_stance (corrected contract)."""
+        from app.modules.interview_engine.contracts import SignalObservation
+        proj = CoverageProjection()
+        obs = SignalObservation(
+            signal="incident_response",
+            stance=EvidenceStance.contradicts,
+            texture=EvidenceTexture.thin,
+            coverage_after=CoverageState.none,
+        )
+        proj.update([obs])
+
+        reads = proj.signal_reads()
+        r = reads[0]
+        assert r.last_stance == EvidenceStance.contradicts
+        # Verify there is no 'stance' field (old contract)
+        assert not hasattr(r, "stance")
+
+    def test_update_established_quote_from_map(self):
+        from app.modules.interview_engine.contracts import SignalObservation
+        proj = CoverageProjection()
+        obs = SignalObservation(
+            signal="distributed_systems",
+            stance=EvidenceStance.supports,
+            texture=EvidenceTexture.strong,
+            coverage_after=CoverageState.sufficient,
+        )
+        proj.update([obs], established_quote_by_signal={"distributed_systems": "I ran Kafka at scale."})
+
+        reads = proj.signal_reads()
+        assert reads[0].established_quote == "I ran Kafka at scale."
+
+    def test_update_carries_forward_prior_quote_when_no_map_entry(self):
+        from app.modules.interview_engine.contracts import SignalObservation
+        proj = CoverageProjection()
+
+        # First update with a quote
+        obs1 = SignalObservation(
+            signal="distributed_systems",
+            stance=EvidenceStance.supports,
+            texture=EvidenceTexture.concrete,
+            coverage_after=CoverageState.partial,
+        )
+        proj.update([obs1], established_quote_by_signal={"distributed_systems": "prior quote"})
+
+        # Second update — no quote map entry → prior quote carried forward
+        obs2 = SignalObservation(
+            signal="distributed_systems",
+            stance=EvidenceStance.supports,
+            texture=EvidenceTexture.strong,
+            coverage_after=CoverageState.sufficient,
+        )
+        proj.update([obs2])
+
+        reads = proj.signal_reads()
+        assert reads[0].established_quote == "prior quote"
+
+    def test_signal_reads_stable_insertion_order(self):
+        """signal_reads() returns signals in insertion order, not alphabetical."""
+        from app.modules.interview_engine.contracts import SignalObservation
+        proj = CoverageProjection()
+
+        # Touch in a specific order
+        for sig in ["python_proficiency", "distributed_systems", "incident_response"]:
+            proj.update([SignalObservation(
+                signal=sig,
+                stance=EvidenceStance.supports,
+                texture=EvidenceTexture.concrete,
+                coverage_after=CoverageState.partial,
+            )])
+
+        reads = proj.signal_reads()
+        assert [r.signal for r in reads] == [
+            "python_proficiency", "distributed_systems", "incident_response"
+        ]
 
     def test_uncovered_signals_weight_ranked(self):
         from app.modules.interview_engine.contracts import SignalObservation
@@ -431,8 +533,9 @@ class TestCoverageProjection:
         proj.update([obs])
 
         uncovered = proj.uncovered_signals(specs)
-        # distributed_systems (weight=3) must appear before incident_response (weight=2)
+        # python_proficiency is now covered → absent
         assert "python_proficiency" not in uncovered
+        # distributed_systems (weight=3) must appear before incident_response (weight=2)
         assert uncovered[0] == "distributed_systems"
         assert uncovered[1] == "incident_response"
 
@@ -440,7 +543,6 @@ class TestCoverageProjection:
         specs = self._make_specs()
         proj = CoverageProjection()  # nothing updated
         uncovered = proj.uncovered_signals(specs)
-        # All three must appear (none touched)
         assert set(uncovered) == {"distributed_systems", "incident_response", "python_proficiency"}
 
     def test_knockout_pending_absent_signal(self):
@@ -450,7 +552,7 @@ class TestCoverageProjection:
         pending = proj.knockout_pending(specs)
         assert "python_proficiency" in pending
 
-    def test_knockout_pending_cleared_when_sufficient(self):
+    def test_knockout_pending_cleared_when_sufficient_supports(self):
         from app.modules.interview_engine.contracts import SignalObservation
         specs = self._make_specs()
         proj = CoverageProjection()
@@ -483,13 +585,30 @@ class TestCoverageProjection:
         # partial coverage on a knockout signal → still pending
         assert "python_proficiency" in pending
 
-    def test_knockout_pending_cleared_when_contradicts_none(self):
-        """A non-knockout signal with contradicts stance should NOT appear in knockout_pending."""
+    def test_knockout_pending_still_listed_when_contradicts(self):
         from app.modules.interview_engine.contracts import SignalObservation
         specs = self._make_specs()
         proj = CoverageProjection()
 
-        # distributed_systems has knockout=False → never in knockout_pending
+        # sufficient coverage but stance is contradicts → still pending (absence confirmed)
+        obs = SignalObservation(
+            signal="python_proficiency",
+            stance=EvidenceStance.contradicts,
+            texture=EvidenceTexture.concrete,
+            coverage_after=CoverageState.sufficient,
+        )
+        proj.update([obs])
+
+        pending = proj.knockout_pending(specs)
+        assert "python_proficiency" in pending
+
+    def test_non_knockout_signal_never_in_knockout_pending(self):
+        """A non-knockout signal with contradicts stance must NOT appear in knockout_pending."""
+        from app.modules.interview_engine.contracts import SignalObservation
+        specs = self._make_specs()
+        proj = CoverageProjection()
+
+        # distributed_systems has knockout=False
         obs = SignalObservation(
             signal="distributed_systems",
             stance=EvidenceStance.contradicts,
@@ -525,9 +644,24 @@ class TestCoverageProjection:
         reads = proj.signal_reads()
         r = next(r for r in reads if r.signal == "distributed_systems")
         assert r.coverage == CoverageState.sufficient
+        assert r.last_stance == EvidenceStance.supports
 
         uncovered = proj.uncovered_signals(specs)
         assert "distributed_systems" not in uncovered
+
+    def test_no_note_count_field(self):
+        """SignalRead must have NO note_count field (old drifted shape)."""
+        from app.modules.interview_engine.contracts import SignalObservation
+        proj = CoverageProjection()
+        obs = SignalObservation(
+            signal="distributed_systems",
+            stance=EvidenceStance.supports,
+            texture=EvidenceTexture.concrete,
+            coverage_after=CoverageState.partial,
+        )
+        proj.update([obs])
+        r = proj.signal_reads()[0]
+        assert not hasattr(r, "note_count")
 
 
 # ---------------------------------------------------------------------------
@@ -540,19 +674,20 @@ class TestSuffixBounded:
         config = _make_session_config()
         ctx = build_session_context(config)
 
-        # Activate q-001 — it has ACTIVE_EXCELLENT_RUBRIC / ACTIVE_Q_RUBRIC_TEXT
+        # Activate q-001
         q_active = config.stage.questions[0]
         rubric = active_question_rubric(q_active, probes_used=[])
         proj = CoverageProjection()
         turn_input = build_turn_input(
             turn_ref="turn-001",
             active_question=rubric,
-            candidate_text="Some answer.",
-            elapsed_s=60.0,
-            questions_asked=1,
+            on_the_floor="Tell me about your distributed systems experience.",
+            candidate_utterance="Some answer.",
+            thread_turn_count=1,
             projection=proj,
             all_specs=ctx.signals,
-            window=[],
+            transcript_window=[],
+            budget_phase=BudgetPhase.on_track,
         )
         suffix = render_suffix(turn_input)
         suffix_text = json.dumps(suffix)
@@ -561,8 +696,8 @@ class TestSuffixBounded:
         assert "OTHER_Q_EXCELLENT_RUBRIC" not in suffix_text
         assert "OTHER_Q_MEETS_BAR_RUBRIC" not in suffix_text
 
-    def test_full_bank_text_absent_from_suffix(self):
-        """The suffix must not embed the full bank (only the active rubric)."""
+    def test_full_bank_rubrics_absent_from_suffix(self):
+        """The suffix must not embed other questions' rubrics."""
         config = _make_session_config()
         ctx = build_session_context(config)
 
@@ -572,18 +707,20 @@ class TestSuffixBounded:
         turn_input = build_turn_input(
             turn_ref="turn-001",
             active_question=rubric,
-            candidate_text="Another answer.",
-            elapsed_s=60.0,
-            questions_asked=1,
+            on_the_floor="Tell me about your distributed systems experience.",
+            candidate_utterance="Another answer.",
+            thread_turn_count=1,
             projection=proj,
             all_specs=ctx.signals,
-            window=[],
+            transcript_window=[],
+            budget_phase=BudgetPhase.on_track,
         )
         suffix = render_suffix(turn_input)
         suffix_text = json.dumps(suffix)
 
-        # q-002's text (the question itself) should not appear in the suffix
-        assert "Walk me through a time you led an incident response." not in suffix_text
+        # Neither of q-002's rubric strings should appear
+        assert SENTINEL_EXCELLENT not in suffix_text
+        assert SENTINEL_MEETS_BAR not in suffix_text
 
 
 # ---------------------------------------------------------------------------
@@ -602,15 +739,16 @@ class TestBuildMessages:
         turn_input = build_turn_input(
             turn_ref="turn-001",
             active_question=rubric,
-            candidate_text="I built Kafka consumers handling 1M events/day.",
-            elapsed_s=120.0,
-            questions_asked=1,
+            on_the_floor="Tell me about your distributed systems experience.",
+            candidate_utterance="I built Kafka consumers handling 1M events/day.",
+            thread_turn_count=1,
             projection=proj,
             all_specs=ctx.signals,
-            window=[
+            transcript_window=[
                 WindowTurn(turn_ref="t-0", speaker="agent",
                            text="Tell me about your distributed systems experience."),
             ],
+            budget_phase=BudgetPhase.on_track,
         )
         messages = build_messages(sys_prompt, ctx, turn_input)
 
@@ -620,3 +758,30 @@ class TestBuildMessages:
             assert "role" in msg
             assert "content" in msg
             assert msg["role"] in {"system", "user", "assistant"}
+
+    def test_prefix_is_system_messages(self):
+        config = _make_session_config()
+        ctx = build_session_context(config)
+        sys_prompt = "You are the brain."
+
+        q = config.stage.questions[0]
+        rubric = active_question_rubric(q, probes_used=[])
+        proj = CoverageProjection()
+        turn_input = build_turn_input(
+            turn_ref="turn-001",
+            active_question=rubric,
+            on_the_floor="Tell me about your distributed systems experience.",
+            candidate_utterance="My answer.",
+            thread_turn_count=0,
+            projection=proj,
+            all_specs=ctx.signals,
+            transcript_window=[],
+            budget_phase=BudgetPhase.winding_down,
+        )
+        messages = build_messages(sys_prompt, ctx, turn_input)
+
+        # First two messages must be system
+        assert messages[0]["role"] == "system"
+        assert messages[1]["role"] == "system"
+        # First system message is the prompt
+        assert messages[0]["content"] == sys_prompt

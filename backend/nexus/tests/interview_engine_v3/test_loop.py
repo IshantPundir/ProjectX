@@ -62,49 +62,53 @@ def _directive(
     say: str = "Tell me more.",
     is_terminal: bool = False,
 ) -> Directive:
-    return Directive(act=act, say=say, tone=DirectiveTone.curious, is_terminal=is_terminal)
+    return Directive(act=act, say=say, tone=DirectiveTone.neutral, is_terminal=is_terminal)
 
 
 def _brain_session_context() -> BrainSessionContext:
     return BrainSessionContext(
         job_title="Software Engineer",
-        company_name="ACME Corp",
+        seniority_level="mid",
+        role_summary="Build web services in Python.",
+        hiring_bar="high",
         signals=[],
-        questions=[],
-        time_budget_s=1800.0,
-        budget_phase=BudgetPhase.early,
+        bank_index=[],
     )
 
 
 def _active_rubric() -> ActiveQuestionRubric:
     return ActiveQuestionRubric(
         question_id="q-1",
-        question_text="Tell me about your Python experience.",
-        primary_signal="python_experience",
+        text="Tell me about your Python experience.",
+        excellent="3+ years production Python with deep async/concurrency knowledge.",
+        meets_bar="2+ years production Python with real project examples.",
+        below_bar="Only personal/academic Python; no production experience.",
+        positive_evidence=["concrete project", "async usage", "production deploy"],
+        red_flags=["only tutorials", "never deployed"],
+        evaluation_hint="Look for specific projects and production context.",
         follow_ups=["How did you use async?", "Any ML work?"],
-        difficulty="medium",
-        advance_criteria="Candidate demonstrates 2+ years of production Python.",
     )
 
 
 def _brain_turn_input() -> BrainTurnInput:
     return BrainTurnInput(
-        session_context=_brain_session_context(),
-        active_rubric=_active_rubric(),
-        signal_reads=[],
-        window=[],
-        candidate_turn_ref="t-1",
-        candidate_text="I've used Python for three years, mainly Django REST APIs.",
-        elapsed_s=60.0,
-        questions_asked=1,
-        triage_intent="answering",
+        turn_ref="t-1",
+        active_question=_active_rubric(),
+        on_the_floor="Tell me about your Python experience.",
+        candidate_utterance="I've used Python for three years, mainly Django REST APIs.",
+        thread_turn_count=1,
+        evidence_so_far=[],
+        transcript_window=[],
+        budget_phase=BudgetPhase.on_track,
+        uncovered_signals=[],
+        knockout_pending=[],
     )
 
 
 def _bridge_request() -> BridgeRequest:
     return BridgeRequest(
-        cue="Okay, go on...",
-        triage_intent="answering",
+        candidate_utterance="I've used Python for three years, mainly Django REST APIs.",
+        recent_openers=["okay", "right", "so"],
     )
 
 
