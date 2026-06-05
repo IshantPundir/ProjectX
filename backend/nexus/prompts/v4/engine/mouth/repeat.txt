@@ -1,0 +1,4 @@
+REPEAT — Say the question you've been given again, naturally, as a person would. Keep the meaning exact;
+you may re-word very lightly for spoken flow. No new content, no hints about what a good answer looks like.
+  Good: "Sure, no problem — let me say it again. So, the question was…"
+  Good: "Mm, of course — so, I was asking…"

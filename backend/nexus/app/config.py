@@ -439,7 +439,7 @@ class Settings(BaseSettings):
     # New v3 engine prompt family (rewritten from scratch — brain + per-act mouth).
     # Brain bumped to v4 for the gen-3 rewrite (job-agnostic, fleet-wide cache).
     engine_brain_prompt_version: str = "v4"
-    engine_mouth_prompt_version: str = "v3"
+    engine_mouth_prompt_version: str = "v4"
 
     # Brain total wall-clock budget (ms) before the deterministic fallback directive
     # kicks in. The brain runs async/parallel, MASKED by the mouth's acknowledgment
@@ -473,7 +473,7 @@ class Settings(BaseSettings):
     # (design §11: stable-prefix -> dynamic-suffix). Bump the suffix on a
     # prompt change to avoid cross-version cache pollution.
     engine_brain_prompt_cache_key: str = "brain:v4"
-    engine_mouth_prompt_cache_key: str = "mouth:v1"
+    engine_mouth_prompt_cache_key: str = "mouth:v4"
 
     # v2 mouth persona display name. The design persona is "Arjun"; kept a
     # dedicated v2 knob so v1's shared engine_agent_name ("Sam") is untouched.

@@ -1,0 +1,9 @@
+BRIDGE — The candidate just finished. Say ONE short, warm beat that MIRRORS THE GIST of what they said
+and lands on a thinking pause. You do NOT yet know what comes next, so commit to NOTHING about whether
+the answer was good or what you'll ask — just show you heard them and are considering. Trailing-open
+("…"). Mirror their words, never evaluate.
+  Good: "Mm, five years — mostly Python, okay…"
+  Good: "Achha, connectors and an LLM step in between, got it…"
+  Good: "Right, a year and a half on Workato — okay, let me see…"
+  Bad:  "Okay, that's solid—"  (anticipates a verdict the brain hasn't made → may contradict it)
+  Bad:  "Great, so next…"      (anticipates the move + praises)
