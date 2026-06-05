@@ -375,3 +375,26 @@ async def test_session_driver_end_to_end() -> None:
     # ── 8. no real LLM / DB calls ──
     # (Brain was our fake; FakeMouth and FakeVoice never call real APIs)
     # Confirmed by the absence of any network I/O — the test passes offline.
+
+
+async def test_mouth_adapter_combines_bridge_and_real_line():
+    """Regression: run_turn needs ONE mouth with both bridge() + real_line().
+
+    The driver splits them (BridgeComposer + ConversationPlane); _MouthAdapter
+    must delegate each call to the right half. (A prior wiring bug passed only
+    ConversationPlane → AttributeError: 'ConversationPlane' has no attribute
+    'bridge' on the first live turn.)
+    """
+    from app.modules.interview_engine.driver import _MouthAdapter
+
+    class _FakeReal:
+        async def real_line(self, mi):
+            return "REAL"
+
+    class _FakeBridge:
+        async def bridge(self, req):
+            return "BRIDGE"
+
+    adapter = _MouthAdapter(real_plane=_FakeReal(), bridge_composer=_FakeBridge())
+    assert await adapter.bridge(object()) == "BRIDGE"
+    assert await adapter.real_line(object()) == "REAL"

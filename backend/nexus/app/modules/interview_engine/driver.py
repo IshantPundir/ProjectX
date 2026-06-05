@@ -111,6 +111,26 @@ class _CapturingVoice:
         await self._voice.say(text)  # type: ignore[union-attr]
 
 
+class _MouthAdapter:
+    """Combines the two mouth halves into the single object `run_turn` expects.
+
+    The loop's `Mouth` protocol needs BOTH `bridge()` and `real_line()` on one
+    object, but gen-3 splits them: `BridgeComposer` (the immediate gist-mirror
+    beat) and `ConversationPlane` (the real line). This thin adapter delegates
+    each call to the right half so the driver can pass one `mouth` to `run_turn`.
+    """
+
+    def __init__(self, *, real_plane: object, bridge_composer: object) -> None:
+        self._real_plane = real_plane
+        self._bridge_composer = bridge_composer
+
+    async def bridge(self, req):  # type: ignore[no-untyped-def]
+        return await self._bridge_composer.bridge(req)  # type: ignore[union-attr]
+
+    async def real_line(self, mouth_input):  # type: ignore[no-untyped-def]
+        return await self._real_plane.real_line(mouth_input)  # type: ignore[union-attr]
+
+
 # ============================================================================
 # SessionDriver
 # ============================================================================
@@ -165,6 +185,8 @@ class SessionDriver:
         self._brain = brain
         self._mouth = mouth
         self._bridge = bridge
+        # run_turn expects ONE mouth object with both bridge() + real_line().
+        self._mouth_combined = _MouthAdapter(real_plane=mouth, bridge_composer=bridge)
         self._notelog = notelog
         self._projection = projection
         self._voice = voice
@@ -465,7 +487,7 @@ class SessionDriver:
         decision: BrainDecision = await run_turn(
             ctx,
             brain=self._brain,  # type: ignore[arg-type]
-            mouth=self._mouth,  # type: ignore[arg-type]
+            mouth=self._mouth_combined,  # bridge() + real_line() combined
             voice=capturing,
             notelog=self._notelog,
         )
