@@ -558,6 +558,27 @@ async def _drive(
         terminal_event=terminal_event,
     )
 
+    # ── Clean shutdown on candidate disconnect ───────────────────────────────
+    # The candidate leaving — voluntarily, on a network drop, OR because proctoring
+    # deleted the room — must end the screen PROMPTLY and finalize cleanly (record
+    # the evidence), not wait out the inactivity window or rely on job cancellation.
+    # The engine can't tell a proctoring kick from a voluntary leave (both are just
+    # "the candidate is gone"); it records `candidate_ended` and the proctoring
+    # detail lives on the session row. If a real brain-driven close already fired
+    # (terminal_event set), we leave that completion reason untouched.
+    def _on_participant_disconnected(_participant: object) -> None:  # noqa: ANN001
+        if terminal_event.is_set():
+            return
+        log.info("engine.drive.participant_disconnected", session_id=config.session_id)
+        if _finalize_reason[0] == CompletionReason.completed:
+            _finalize_reason[0] = CompletionReason.candidate_ended
+        terminal_event.set()
+
+    try:
+        ctx.room.on("participant_disconnected", _on_participant_disconnected)
+    except Exception:  # noqa: BLE001 — never let event wiring break the run
+        log.warning("engine.drive.disconnect_hook_failed", exc_info=True)
+
     # ── Speak the opener ─────────────────────────────────────────────────────
     try:
         await driver.opener()

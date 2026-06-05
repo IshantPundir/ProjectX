@@ -7,7 +7,8 @@ Validates:
 - Idempotent retry: second call is a silent no-op, row stays completed
 - result_status == "partial" when questions_asked == 0
 - ValueError raised when the session row does not exist
-- SessionNotActiveError raised when the session is in a non-active, non-completed state
+- Evidence is ATTACHED (state preserved) when the session was externally terminated
+  first (e.g. proctoring → 'terminated'), and that attach is idempotent
 """
 from __future__ import annotations
 
@@ -37,7 +38,6 @@ from app.modules.interview_runtime.evidence import (
     Word,
 )
 from app.modules.interview_runtime import record_session_evidence
-from app.modules.interview_runtime.errors import SessionNotActiveError
 from app.modules.session.models import Session as SessionRow
 from tests.conftest import (
     create_test_client,
@@ -268,25 +268,68 @@ async def test_record_session_evidence_missing_session_raises(db) -> None:
 
 
 @pytest.mark.asyncio
-async def test_record_session_evidence_non_active_raises(db) -> None:
-    """SessionNotActiveError is raised when the session is in a non-active, non-completed state."""
+async def test_record_session_evidence_attaches_to_proctoring_terminated(db) -> None:
+    """Externally terminated (e.g. proctoring → 'terminated'): the engine ATTACHES
+    its evidence WITHOUT clobbering the terminal state — the report still gets the
+    notes/transcript even though proctoring ended the screen first."""
     session_id, tenant_id, job_id, stage_id = await _seed_active_session(db)
     candidate_id = uuid.uuid4()
     evidence = _build_minimal_evidence(session_id, job_id, candidate_id, stage_id)
 
-    # Flip the session to 'error' before calling — simulates a crashed engine
-    # or any other non-active terminal state.
+    # Proctoring terminated the session first (state='terminated' + an outcome).
     await db.execute(
         sql_text(
-            f"UPDATE sessions SET state = 'error' WHERE id = '{session_id}'"
+            "UPDATE sessions SET state='terminated', proctoring_outcome='multiple_faces' "
+            f"WHERE id = '{session_id}'"
         )
     )
     await db.flush()
 
-    with pytest.raises(SessionNotActiveError):
-        await record_session_evidence(
-            db,
-            tenant_id=tenant_id,
-            evidence=evidence,
-            correlation_id="test-corr-non-active",
-        )
+    await record_session_evidence(
+        db, tenant_id=tenant_id, evidence=evidence, correlation_id="test-corr-proctor"
+    )
+
+    row = (
+        await db.execute(select(SessionRow).where(SessionRow.id == session_id))
+    ).scalar_one()
+    # Evidence attached…
+    assert row.session_evidence_json is not None
+    assert SessionEvidence.model_validate(row.session_evidence_json) == evidence
+    assert row.agent_completed_at is not None
+    # …but the proctoring terminal state + outcome are PRESERVED (not flipped to completed).
+    assert row.state == "terminated"
+    assert row.proctoring_outcome == "multiple_faces"
+
+    # Idempotent: a re-call is a silent no-op and does not change anything.
+    await record_session_evidence(
+        db, tenant_id=tenant_id, evidence=evidence, correlation_id="test-corr-proctor-2"
+    )
+    row2 = (
+        await db.execute(select(SessionRow).where(SessionRow.id == session_id))
+    ).scalar_one()
+    assert row2.state == "terminated"
+
+
+async def test_record_session_evidence_attach_is_idempotent_when_already_recorded(db) -> None:
+    """If evidence was already recorded (any state), a re-call is a silent no-op."""
+    session_id, tenant_id, job_id, stage_id = await _seed_active_session(db)
+    candidate_id = uuid.uuid4()
+    evidence = _build_minimal_evidence(session_id, job_id, candidate_id, stage_id)
+
+    # First call (active → completed) records the evidence.
+    await record_session_evidence(
+        db, tenant_id=tenant_id, evidence=evidence, correlation_id="c1"
+    )
+    # Now externally flip to 'terminated' AFTER evidence exists; re-call no-ops.
+    await db.execute(
+        sql_text(f"UPDATE sessions SET state='terminated' WHERE id = '{session_id}'")
+    )
+    await db.flush()
+    await record_session_evidence(
+        db, tenant_id=tenant_id, evidence=evidence, correlation_id="c2"
+    )
+    row = (
+        await db.execute(select(SessionRow).where(SessionRow.id == session_id))
+    ).scalar_one()
+    assert row.session_evidence_json is not None
+    assert row.state == "terminated"  # the later external flip is preserved
