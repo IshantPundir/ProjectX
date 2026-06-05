@@ -422,24 +422,31 @@ class ControlPlane:
         signal = gate.signal
 
         # Build a safe steering line (not a rubric leak — purely meta/process).
+        # IMPORTANT: never interpolate the raw signal NAME (it's an internal
+        # description like "4+ years total professional experience", which reads
+        # as nonsense aloud). Keep the line generic + warm.
         if step == KnockoutStep.probe:
             say = (
-                f"Before we wrap up, I'd like to understand a bit more — "
-                f"have you had direct experience with {signal}?"
+                "Before we wrap up — have you worked directly in that area at "
+                "all, even a little? Even a rough example is fine."
             )
         elif step == KnockoutStep.check_alternatives:
             say = (
-                "And are there alternative approaches or tools you've used "
-                "to achieve the same outcome?"
+                "Got it. And have you used any other tools or approaches to "
+                "achieve something similar?"
             )
-        elif step == KnockoutStep.reflect_confirm:
+        else:  # reflect_confirm (or confirmed/unknown — terminal verification)
             say = (
-                "Just to confirm — based on what you've shared, "
-                "could you summarise your experience in that area for me?"
+                "Okay — just to confirm, that's not something you've worked on "
+                "directly yet. Is that right?"
             )
-        else:
-            # confirmed or unknown — shouldn't be reached (gate would have allowed move)
-            say = "Let me circle back to one more point before we close."
+
+        # CRITICAL: advance the tracker so the verified-knockout flow PROGRESSES
+        # (probe → check_alternatives → reflect_confirm → confirmed) and the gate
+        # eventually ALLOWS the close. Without this the candidate is trapped in an
+        # infinite knockout-probe loop (F3 talk-test regression).
+        if signal:
+            self._knockout_tracker.advance(signal)
 
         return Directive(
             act=DirectiveAct.probe,
@@ -448,6 +455,18 @@ class ControlPlane:
             spoken_setup=None,
             is_terminal=False,
         )
+
+    def confirmed_knockout_signals(self) -> list[str]:
+        """Knockout signals whose verified-absence flow reached `confirmed`.
+
+        Read by the driver at session close to record the KnockoutOutcome(s) into
+        SessionEvidence (the engine RECORDS; the report/human decides — never an
+        auto-reject)."""
+        return [
+            spec.signal
+            for spec in self._session_context.signals
+            if spec.knockout and self._knockout_tracker.is_confirmed(spec.signal)
+        ]
 
     # -----------------------------------------------------------------------
     # Default real LLM call (injectable seam — only called in production)

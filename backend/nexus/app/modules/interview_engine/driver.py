@@ -677,13 +677,34 @@ class SessionDriver:
             questions_overflow_asked=questions_overflow_asked,
         )
 
+        # 4b. Record a KnockoutOutcome for any knockout signal the brain VERIFIED
+        # absent (probe → check-alternatives → reflect-confirm → confirmed). The
+        # engine RECORDS; the report/human decides — never an auto-reject.
+        knockout_outcome: KnockoutOutcome | None = None
+        try:
+            confirmed = self._brain.confirmed_knockout_signals()  # type: ignore[union-attr]
+        except Exception:  # noqa: BLE001 — never let finalize fail on this
+            confirmed = []
+        if confirmed:
+            sig = confirmed[0]
+            note_seqs = [n.seq for n in self._notelog.notes if n.signal == sig]
+            knockout_outcome = KnockoutOutcome(
+                signal=sig,
+                or_alternatives_checked=[],
+                reflect_confirmed=True,
+                evidence_note_seqs=note_seqs,
+            )
+            # A verified knockout that ended the screen is a knockout_close.
+            if completion == CompletionReason.completed:
+                meta = meta.model_copy(update={"completion": CompletionReason.knockout_close})
+
         # 5. Assemble evidence
         evidence: SessionEvidence = self._notelog.to_session_evidence(
             meta=meta,
             signals=signals_with_prov,
             questions=questions,
             transcript=self._transcript,
-            knockout=None,
+            knockout=knockout_outcome,
         )
 
         # 6. Persist

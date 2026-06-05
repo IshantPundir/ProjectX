@@ -689,9 +689,12 @@ class Settings(BaseSettings):
     # talk-tests once the full Ear is wired end-to-end.
     #
     # ear_smart_turn_commit_thr: Smart Turn v3 EOU probability at/above which
-    # the voice signal counts as "complete". 0.5 is the natural mid-point;
-    # Smart Turn is a binary classifier so practical values cluster near 0/1.
-    ear_smart_turn_commit_thr: float = 0.5
+    # the voice signal counts as "complete". Raised 0.5 → 0.72 after the F3
+    # talk-test: borderline predictions (~0.55) on ~1s mid-thought pauses were
+    # committing the candidate EARLY (e.g. cutting off "for the…"). 0.72 commits
+    # only when the voice clearly sounds finished. (text-EOU vote is off →
+    # Smart-Turn-only, so this threshold carries the whole turn-end decision.)
+    ear_smart_turn_commit_thr: float = 0.72
     #
     # ear_text_commit_thr: MultilingualModel EOU probability at/above which
     # the text signal counts as "complete". Probs run very small for disfluent

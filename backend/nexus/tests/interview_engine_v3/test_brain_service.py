@@ -519,3 +519,62 @@ async def test_llm_mocked_and_called_with_messages():
         assert isinstance(msg, dict)
         assert "role" in msg
         assert "content" in msg
+
+
+async def test_knockout_flow_advances_and_terminates(_make_control_plane_with_knockout=None):
+    """Regression (F3): repeated close-on-knockout must ADVANCE the tracker
+    (probe → check_alternatives → reflect_confirm → confirmed) and finally let
+    the close through — NOT loop the same knockout-probe forever. Also exposes
+    confirmed_knockout_signals() for the driver to record the KnockoutOutcome."""
+    from app.modules.interview_engine.brain.service import ControlPlane
+    from app.modules.interview_engine.brain.input_builder import CoverageProjection
+    from app.modules.interview_engine.contracts import (
+        BrainSessionContext, SignalSpec, BrainTurnOutput, BrainMove, BrainTurnInput,
+        ActiveQuestionRubric,
+    )
+    from app.modules.interview_runtime.evidence import SignalType, SignalPriority
+
+    ko_signal = "Workato hands-on"
+    ctx = BrainSessionContext(
+        job_title="x", seniority_level="mid", role_summary="r", hiring_bar="b",
+        signals=[SignalSpec(signal=ko_signal, signal_type=SignalType.experience,
+                            weight=3, priority=SignalPriority.required, knockout=True)],
+        bank_index=[],
+    )
+
+    async def _close_llm(messages):
+        return BrainTurnOutput(reasoning="no exp", observations=[], move=BrainMove.close)
+
+    cp = ControlPlane(
+        session_context=ctx, system_prompt="sys", projection=CoverageProjection(),
+        resolver_questions=[], all_specs=ctx.signals,
+        budget_cfg=__import__("app.modules.interview_engine.brain.resolver", fromlist=["BudgetConfig"]).BudgetConfig(close_reserve_s=45, winding_down_s=90),
+        llm_call=_close_llm,
+    )
+
+    rubric = ActiveQuestionRubric(question_id="q", text="t", excellent="e", meets_bar="m",
+                                  below_bar="b", positive_evidence=["a","b","c"], red_flags=["x","y"],
+                                  evaluation_hint="h", follow_ups=[])
+
+    def _ti():
+        from app.modules.interview_engine.contracts import BudgetPhase
+        return BrainTurnInput(turn_ref="t", active_question=rubric, on_the_floor="?",
+                              candidate_utterance="no", thread_turn_count=1,
+                              evidence_so_far=[], transcript_window=[],
+                              budget_phase=BudgetPhase.on_track,
+                              uncovered_signals=[], knockout_pending=[ko_signal])
+
+    # First three closes are BLOCKED + steered (non-terminal), advancing the tracker.
+    acts = []
+    for _ in range(3):
+        d = await cp.decide(_ti(), asked_ids=set(), time_remaining_s=600)
+        acts.append((d.directive.act.value, d.is_terminal))
+    assert all(not term for _, term in acts), f"steps should be non-terminal: {acts}"
+    assert all(a == "probe" for a, _ in acts), f"steps should steer via probe: {acts}"
+
+    # The signal is now confirmed → exposed for the driver to record.
+    assert cp.confirmed_knockout_signals() == [ko_signal]
+
+    # The NEXT close is finally allowed through (terminal) — no infinite loop.
+    d4 = await cp.decide(_ti(), asked_ids=set(), time_remaining_s=600)
+    assert d4.directive.act.value == "close" and d4.is_terminal
