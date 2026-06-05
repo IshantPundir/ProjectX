@@ -4,7 +4,7 @@ Design under test (notes.py):
 - append(obs, *, turn_ref, utterance, utterance_span, from_question_id, via_probe) → EvidenceNote
   - seq is monotonically assigned from len(_notes)+1
   - note.quote == utterance (full utterance; precise sub-window in span)
-  - note.span == obs.span if obs.span is not None else utterance_span
+  - note.span == obs.quote_span if obs.quote_span is not None else utterance_span
   - note.retracts_seq == seq of most-recent prior note with same signal (if obs.retracts is True),
     else None (and None if obs.retracts is True but no prior same-signal note exists)
 - notes property returns a copy of the accumulated list
@@ -49,8 +49,7 @@ def _obs(
     stance: EvidenceStance = EvidenceStance.supports,
     texture: EvidenceTexture = EvidenceTexture.concrete,
     coverage_after: CoverageState = CoverageState.partial,
-    span: TimeSpan | None = None,
-    quote: str | None = None,
+    quote_span: TimeSpan | None = None,
     retracts: bool = False,
 ) -> SignalObservation:
     return SignalObservation(
@@ -58,8 +57,7 @@ def _obs(
         stance=stance,
         texture=texture,
         coverage_after=coverage_after,
-        span=span,
-        quote=quote,
+        quote_span=quote_span,
         retracts=retracts,
     )
 
@@ -126,7 +124,7 @@ def test_append_assigns_seq_and_fills_note():
     log = NoteLog()
     utterance = "I worked with Python for five years, built APIs and ML pipelines."
     uspan = _utterance_span()
-    obs = _obs(signal="python_experience", span=None)
+    obs = _obs(signal="python_experience", quote_span=None)
 
     note = log.append(
         obs,
@@ -159,7 +157,7 @@ def test_span_sets_note_span_quote_stays_full_utterance():
     utterance = "Well, mostly I used REST, but I dabbled in SOAP for a legacy integration."
     uspan = TimeSpan(start_ms=0, end_ms=6000)
     precise = TimeSpan(start_ms=3100, end_ms=5900)  # the SOAP sub-window
-    obs = _obs(signal="SOAP_experience", span=precise)
+    obs = _obs(signal="SOAP_experience", quote_span=precise)
 
     note = log.append(
         obs,

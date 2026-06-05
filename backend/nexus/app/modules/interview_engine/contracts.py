@@ -70,19 +70,15 @@ class SignalObservation(BaseModel):
     coverage_after: CoverageState = Field(
         description="The brain's updated live read of coverage AFTER this turn."
     )
-    span: TimeSpan | None = Field(
+    quote_span: TimeSpan | None = Field(
         default=None,
-        description="Optional: the portion of the candidate utterance most relevant to this signal.",
-    )
-    quote: str | None = Field(
-        default=None,
-        description="Optional verbatim excerpt — used if the brain wants to anchor the observation.",
+        description="Span within THIS candidate utterance that is the evidence. "
+                    "None → the engine uses the whole utterance as the quote.",
     )
     retracts: bool = Field(
         default=False,
-        description="True when this observation walks back a prior claim for the same signal. "
-                    "NoteLog will link the new EvidenceNote to the most-recent prior note for this "
-                    "signal via retracts_seq; both notes are kept (append-only).",
+        description="True if this note walks back an earlier claim by the SAME candidate. The engine "
+                    "appends a new contradicts-note and links the prior one; the prior note is KEPT.",
     )
 
 

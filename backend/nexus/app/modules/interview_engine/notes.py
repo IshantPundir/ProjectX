@@ -14,9 +14,9 @@ KEY INVARIANTS
 - quote = full utterance (always): the caller passes the complete candidate
   utterance as the proof. Precise sub-windows are carried by `span` and are
   re-derivable from the transcript's word-level timing.
-- span = obs.span if provided, else utterance_span: the observation's `span`
-  field narrows the relevance window when the brain identifies a precise
-  sub-span; when absent the whole utterance span is used.
+- span = obs.quote_span if provided, else utterance_span: the observation's
+  `quote_span` field narrows the relevance window when the brain identifies a
+  precise sub-span; when absent the whole utterance span is used.
 - NO LIVEKIT DEPENDENCY: NoteLog is a pure Python data structure — it must
   never import any livekit module so it can be unit-tested without the engine.
 
@@ -81,7 +81,7 @@ class NoteLog:
                 proof. Precise sub-windows are carried by ``span`` and are
                 re-derivable from the transcript's word-level timing.
             utterance_span: The `TimeSpan` of the full candidate utterance. Used
-                as the note's span when ``obs.span`` is None.
+                as the note's span when ``obs.quote_span`` is None.
             from_question_id: The bank question on the floor when this was said.
             via_probe: True if elicited by a follow-up probe, False for the main
                 question.
@@ -106,7 +106,7 @@ class NoteLog:
         quote = utterance
 
         # span = precise sub-window from observation, or the full utterance span.
-        span = obs.span if obs.span is not None else utterance_span
+        span = obs.quote_span if obs.quote_span is not None else utterance_span
 
         note = EvidenceNote(
             seq=seq,
