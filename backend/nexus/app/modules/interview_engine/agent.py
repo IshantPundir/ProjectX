@@ -512,6 +512,8 @@ async def _drive(
     _handle_turn_error: list[bool] = [False]
 
     # ── on_commit: called by the poll loop after each successful commit ───────
+    _last_activity_s: list[float] = [time.monotonic()]
+
     async def on_commit(transcript: str) -> bool:
         """Forward a committed transcript to the SessionDriver.
 
@@ -519,6 +521,7 @@ async def _drive(
         returns a non-empty transcript. Returns True when the session is
         terminal (the poll loop will set terminal_event and stop).
         """
+        _last_activity_s[0] = time.monotonic()  # a committed turn = activity
         _turn_id[0] += 1
         turn_ref = f"t-{_turn_id[0]}"
         # F3-VALIDATE: timing — commit_user_turn does not return start/end ms;
@@ -561,19 +564,29 @@ async def _drive(
     except Exception:  # noqa: BLE001
         log.warning("engine.drive.opener_failed", exc_info=True)
 
-    # ── Wait for terminal (commit-driven) or silence timeout ─────────────────
-    try:
-        await asyncio.wait_for(
-            terminal_event.wait(),
-            timeout=300.0,  # 5-minute silence without a committed turn → close
-        )
-    except asyncio.TimeoutError:
-        log.warning(
-            "engine.drive.candidate_silence_timeout",
-            session_id=config.session_id,
-        )
-        terminal_event.set()
-        _finalize_reason[0] = CompletionReason.unresponsive
+    # ── Wait for terminal (commit-driven) or candidate INACTIVITY ────────────
+    # The timeout is an INACTIVITY window that RESETS on every committed turn —
+    # NOT an absolute session cap. An actively-talking candidate runs as long as
+    # they keep answering; the resolver closes the screen when it runs out of
+    # questions/budget. Only genuine silence (no committed turn for this long)
+    # closes as `unresponsive`. F3-tunable.
+    _INACTIVITY_TIMEOUT_S = 180.0
+    while not terminal_event.is_set():
+        remaining = _INACTIVITY_TIMEOUT_S - (time.monotonic() - _last_activity_s[0])
+        if remaining <= 0:
+            log.warning(
+                "engine.drive.candidate_inactivity_timeout",
+                session_id=config.session_id,
+                inactive_s=round(time.monotonic() - _last_activity_s[0], 1),
+            )
+            _finalize_reason[0] = CompletionReason.unresponsive
+            terminal_event.set()
+            break
+        try:
+            await asyncio.wait_for(terminal_event.wait(), timeout=remaining)
+        except asyncio.TimeoutError:
+            # Window elapsed — re-check; a turn committed meanwhile resets it.
+            continue
 
     # ── Finalize (persist SessionEvidence) ───────────────────────────────────
     try:

@@ -175,6 +175,19 @@ class ControlPlane:
             time_remaining_s=time_remaining_s,
         )
 
+        # Per-turn decision trace (F3 tuning observability). reasoning is the
+        # brain's own scratchpad (not candidate PII); kept short.
+        _log.info(
+            "engine.brain.decision",
+            llm_move=output.move.value,
+            act=directive.act.value,
+            is_terminal=directive.is_terminal,
+            probe_index=output.probe_index,
+            next_question_id=next_question_id,
+            n_observations=len(output.observations),
+            reasoning=(output.reasoning or "")[:160],
+        )
+
         # Step 5: return BrainDecision
         return BrainDecision(
             directive=directive,
