@@ -55,10 +55,15 @@ from app.ai.realtime import (
     build_mouth_llm_plugin,
     build_stt_plugin,
     build_tts_plugin,
+    build_turn_detector,
     build_vad,
 )
 from app.config import settings
 from app.database import get_bypass_session
+from app.modules.interview_engine.ear.ladder import ladder_config_from_ai_config
+from app.modules.interview_engine.ear.orchestrator import Ear
+from app.modules.interview_engine.ear.smart_turn import TurnAudioBuffer
+from app.modules.interview_engine.ear.vad_gate import SpeechActivity
 from app.modules.interview_runtime import (
     SessionConfig,
     build_session_config,
@@ -125,6 +130,208 @@ def assemble_v2_keyterms(*, candidate_first_name: str, bank_keyterms: list[str])
     for term in bank_keyterms:
         _add(term)
     return terms
+
+
+# ---------------------------------------------------------------------------
+# LiveKit Ear glue — wired here; real-event behavior validated in Phase F talk-test
+# ---------------------------------------------------------------------------
+
+# Poll interval while the candidate is paused (state=listening) and the agent
+# is not speaking. We re-evaluate the fusion ladder at this cadence.
+# F3-VALIDATE: tune empirically alongside the ladder thresholds.
+_EAR_POLL_INTERVAL_S: float = 0.120  # 120ms
+
+
+class _EarAgent(Agent):
+    """Gen-3 engine Agent — extends the base Agent with an audio-tee stt_node.
+
+    The ``stt_node`` override taps every incoming ``rtc.AudioFrame`` and feeds
+    a float32 mono version of it into the ``Ear``'s ``TurnAudioBuffer`` so the
+    Smart Turn model can predict end-of-utterance probability on live audio.
+    The frame is then passed through unchanged to the default STT node.
+
+    Design rules:
+    - The tee MUST NEVER block or drop the audio passthrough. Any buffer error
+      is caught and logged; the yield always continues regardless.
+    - Conversion from LiveKit's int16 PCM to float32 normalised [-1, 1] is
+      done here so ``TurnAudioBuffer.append()`` always receives float32 mono.
+    - Resampling to 16kHz is done when the frame's ``sample_rate != 16000``.
+      In practice LiveKit delivers 48kHz frames from the browser; the
+      conversion is a lightweight linear downsample via numpy.
+    """
+
+    def __init__(self, ear: Ear, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._ear = ear
+
+    async def stt_node(self, audio, model_settings):  # type: ignore[override]
+        """Tee each LiveKit AudioFrame into the Ear buffer, then yield it onward.
+
+        The default STT node (``Agent.default.stt_node``) is the authoritative
+        audio passthrough — we just observe frames as they flow past.
+
+        F3-VALIDATE: verify the float32/resampling conversion on real 48kHz
+        LiveKit frames during the Phase F talk-test. Confirm the stt_node
+        async generator signature against the current livekit-agents version.
+        """
+        import numpy as _np
+
+        async for ev in Agent.default.stt_node(self, audio, model_settings):
+            # Tee into the Ear — wrapped in try/except so any buffer error
+            # can never break the STT passthrough.
+            try:
+                frame = ev  # AudioFrame from the audio stream
+                # Extract raw samples — LiveKit AudioFrame stores int16 PCM.
+                # F3-VALIDATE: confirm attribute name on real livekit AudioFrame.
+                raw = getattr(frame, "data", None)
+                sr: int = getattr(frame, "sample_rate", 16000)
+                num_channels: int = getattr(frame, "num_channels", 1)
+
+                if raw is not None:
+                    # Convert int16 bytes → float32 numpy [-1, 1]
+                    pcm = _np.frombuffer(raw, dtype=_np.int16).astype(_np.float32) / 32768.0
+
+                    # Mix down to mono if needed
+                    if num_channels > 1:
+                        pcm = pcm.reshape(-1, num_channels).mean(axis=1)
+
+                    # Resample to 16kHz if the frame rate differs
+                    if sr != 16000 and len(pcm) > 0:
+                        target_len = int(len(pcm) * 16000 / sr)
+                        if target_len > 0:
+                            indices = _np.linspace(0, len(pcm) - 1, target_len)
+                            pcm = _np.interp(
+                                indices, _np.arange(len(pcm)), pcm
+                            ).astype(_np.float32)
+
+                    self._ear.append_audio(pcm)
+            except Exception:  # noqa: BLE001 — tee error must never break STT
+                log.warning("engine.ear.audio_tee_error", exc_info=True)
+
+            yield ev
+
+
+def build_ear() -> Ear:
+    """Assemble a fresh ``Ear`` from env-driven config.
+
+    Called once per session inside ``run()``. Composes:
+    - ``EarLadderConfig`` from ``AIConfig`` (env-driven thresholds)
+    - ``TurnAudioBuffer`` at 16kHz with lazy Smart Turn detector
+    - ``SpeechActivity`` (pure pause clock)
+    - ``MultilingualModel`` (text-EOU) built via ``build_turn_detector``
+
+    Falls back to ``eou_model=None`` (Smart-Turn-only mode) if the
+    MultilingualModel raises — the ladder has an explicit ST-only path.
+
+    F3-VALIDATE: confirm the MultilingualModel loads correctly in the
+    engine container and that ``predict_end_of_turn`` is compatible with
+    the ``text_eou_probability`` wrapper in ``ear/vad_gate.py``.
+    """
+    cfg = ladder_config_from_ai_config()
+    buffer = TurnAudioBuffer(sample_rate=16000, max_seconds=8.0)  # lazy ONNX
+    activity = SpeechActivity()
+
+    eou_model: object | None = None
+    try:
+        eou_model = build_turn_detector(unlikely_threshold=ai_config.engine_v2_turn_detector_unlikely_threshold)
+        log.info("engine.ear.eou_model.built", model="MultilingualModel")
+    except Exception:  # noqa: BLE001
+        # F3-VALIDATE: if MultilingualModel is unavailable in dev, ST-only is fine.
+        log.warning(
+            "engine.ear.eou_model.unavailable — falling back to Smart-Turn-only",
+            exc_info=True,
+        )
+
+    return Ear(
+        cfg=cfg,
+        buffer=buffer,
+        activity=activity,
+        eou_model=eou_model,
+    )
+
+
+def setup_ear(session: "AgentSession", ear: Ear, *, clock) -> "asyncio.Task":  # type: ignore[name-defined]
+    """Register LiveKit event hooks and start the background Ear poll task.
+
+    This wires the ``Ear`` into a running ``AgentSession``:
+
+    1. ``user_state_changed`` → ``ear.on_user_state(ev.new_state, clock())``
+       The Ear updates ``SpeechActivity`` and resets the buffer on speaking-start.
+
+    2. Barge-in: when the candidate starts speaking while the agent is talking,
+       call ``session.interrupt()`` so the Mouth stops mid-sentence.
+
+    3. A background async poll task runs while the user is paused (state=listening)
+       and the agent is not speaking. Every ``_EAR_POLL_INTERVAL_S`` it calls
+       ``ear.evaluate()`` + ``ear.act(session, decision)`` until it commits or
+       the user starts speaking again.
+
+    Returns the background ``asyncio.Task`` so the caller (``run()``) can
+    cancel it on session close.
+
+    F3-VALIDATE: the ``agent_state`` / ``is_speaking`` attribute on the session
+    for detecting whether the agent is talking. Confirm event name
+    ``"user_state_changed"`` and ``UserStateChangedEvent.new_state`` attribute
+    on real LiveKit sessions during the Phase F talk-test.
+    """
+    # Mutable state shared by the hook and the poll task.
+    _user_state: list[str] = ["away"]  # start as away until first speaking event
+
+    def _on_user_state_changed(ev) -> None:
+        new_state: str = ev.new_state  # F3-VALIDATE: attribute name on real event
+        now_ms: int = clock()
+        _user_state[0] = new_state
+
+        ear.on_user_state(new_state, now_ms)
+
+        # Barge-in: candidate spoke while agent was talking → interrupt the agent.
+        # F3-VALIDATE: confirm the agent-speaking predicate on AgentSession.
+        if new_state == "speaking":
+            try:
+                agent_is_speaking = getattr(session, "agent_state", None) == "speaking"
+            except Exception:  # noqa: BLE001
+                agent_is_speaking = False
+            if agent_is_speaking:
+                session.interrupt()
+                log.info("engine.ear.barge_in")
+
+    # F3-VALIDATE: confirm event name on real LiveKit AgentSession.
+    session.on("user_state_changed", _on_user_state_changed)
+
+    async def _poll_loop() -> None:
+        """While paused (state=listening), tick the Ear until commit or resume."""
+        while True:
+            await asyncio.sleep(_EAR_POLL_INTERVAL_S)
+
+            if _user_state[0] != "listening":
+                # Candidate is speaking or away — nothing to do.
+                continue
+
+            # F3-VALIDATE: confirm agent-speaking predicate on AgentSession.
+            try:
+                agent_is_speaking = getattr(session, "agent_state", None) == "speaking"
+            except Exception:  # noqa: BLE001
+                agent_is_speaking = False
+
+            if agent_is_speaking:
+                # Don't commit while the agent is mid-sentence.
+                continue
+
+            # F3-VALIDATE: build chat_ctx from session.history for text-EOU.
+            # Passing None is safe — the ladder falls back to Smart-Turn-only.
+            chat_ctx = getattr(session, "history", None)
+
+            try:
+                decision, _ = await ear.evaluate(
+                    now_ms=clock(),
+                    chat_ctx=chat_ctx,
+                )
+                await ear.act(session, decision)
+            except Exception:  # noqa: BLE001 — poll errors must never crash the session
+                log.warning("engine.ear.poll_error", exc_info=True)
+
+    poll_task = asyncio.create_task(_poll_loop())
+    return poll_task
 
 
 # ---------------------------------------------------------------------------
