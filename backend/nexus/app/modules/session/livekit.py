@@ -6,6 +6,14 @@ patching deeper into the SDK) so unit tests can run without the SDK's
 real network behavior.
 
 Phase 3C.2 — replaces the 501 LIVEKIT_INTEGRATION_PENDING stub.
+
+IMPORTANT: `livekit.api` is imported LAZILY (inside each function/helper that
+needs it). This module is transitively imported by `app.main` at startup via
+`session/__init__.py` → `session/recording.py`; a top-level `from livekit import
+api` would pull the entire LiveKit server SDK into the FastAPI process import
+graph, violating the livekit-isolation invariant (only the engine container should
+load livekit). The lazy pattern costs nothing at call time (the import is cached
+by Python's module system after the first call).
 """
 
 from __future__ import annotations
@@ -15,12 +23,16 @@ import uuid
 from dataclasses import dataclass
 from datetime import timedelta
 
-from livekit import api as livekit_api
-
 from app.config import settings
 
 
-def _lk_client() -> livekit_api.LiveKitAPI:
+def _lk_api():
+    """Return the livekit.api module — lazy import so FastAPI never loads livekit at startup."""
+    from livekit import api as _api
+    return _api
+
+
+def _lk_client():
     """Construct a LiveKitAPI client bound to this deployment's keys.
 
     The client is single-use per call site — we close via aclose() in a
@@ -33,6 +45,7 @@ def _lk_client() -> livekit_api.LiveKitAPI:
     context raises RuntimeError. Both dispatch_agent and cancel_room are
     async, so this constraint is always satisfied at call sites.
     """
+    livekit_api = _lk_api()
     return livekit_api.LiveKitAPI(
         url=settings.livekit_url,
         api_key=settings.livekit_api_key,
@@ -53,6 +66,7 @@ def mint_candidate_lk_token(
     touch the LiveKitAPI client. Callers must supply real api_key and
     api_secret (from settings) for the JWT to be verifiable by LiveKit.
     """
+    livekit_api = _lk_api()
     grants = livekit_api.VideoGrants(
         room=room_name,
         room_join=True,
@@ -72,7 +86,7 @@ def mint_candidate_lk_token(
 
 
 async def create_room(
-    *, room_name: str, egress: livekit_api.RoomEgress | None = None
+    *, room_name: str, egress: object | None = None
 ) -> None:
     """Pre-create the LiveKit room with an explicit ``empty_timeout``.
 
@@ -93,6 +107,7 @@ async def create_room(
     (no empty-room race) and stops it when the room empties. See
     ``build_room_egress``.
     """
+    livekit_api = _lk_api()
     kwargs: dict = {
         "name": room_name,
         "empty_timeout": settings.livekit_room_empty_timeout_seconds,
@@ -126,6 +141,7 @@ async def dispatch_agent(
     them to AgentDispatchFailedError before the candidate token is
     consumed.
     """
+    livekit_api = _lk_api()
     metadata = json.dumps({
         "session_id": str(session_id),
         "tenant_id": str(tenant_id),
@@ -172,12 +188,13 @@ def recording_object_key(*, tenant_id: uuid.UUID, session_id: uuid.UUID) -> str:
     return f"{settings.recording_key_prefix}/{tenant_id}/{session_id}.mp4"
 
 
-def _build_recording_file_output(key: str) -> livekit_api.EncodedFileOutput:
+def _build_recording_file_output(key: str) -> object:
     """Build the MP4 + S3 upload target from provider-agnostic settings.
 
     The S3Upload speaks the S3 protocol, so the same code targets Cloudflare
     R2, AWS S3, Supabase Storage, or MinIO — only the settings differ.
     """
+    livekit_api = _lk_api()
     return livekit_api.EncodedFileOutput(
         file_type=livekit_api.EncodedFileType.MP4,
         filepath=key,
@@ -194,7 +211,7 @@ def _build_recording_file_output(key: str) -> livekit_api.EncodedFileOutput:
 
 def build_room_egress(
     *, tenant_id: uuid.UUID, session_id: uuid.UUID
-) -> tuple[livekit_api.RoomEgress, str]:
+) -> tuple[object, str]:
     """Build an auto-egress config + the object key for a session recording.
 
     Attaching this to ``create_room`` makes LiveKit start a RoomComposite
@@ -206,6 +223,7 @@ def build_room_egress(
 
     Pure (no I/O); returns the config to attach and the deterministic key.
     """
+    livekit_api = _lk_api()
     key = recording_object_key(tenant_id=tenant_id, session_id=session_id)
     room_req = livekit_api.RoomCompositeEgressRequest(
         layout=settings.recording_egress_layout,
@@ -218,16 +236,17 @@ def build_room_egress(
     return livekit_api.RoomEgress(room=room_req), key
 
 
-def _normalize_egress_status(info: livekit_api.EgressInfo) -> str:
+def _normalize_egress_status(info: object) -> str:
+    livekit_api = _lk_api()
     complete = {livekit_api.EgressStatus.EGRESS_COMPLETE}
     failed = {
         livekit_api.EgressStatus.EGRESS_FAILED,
         livekit_api.EgressStatus.EGRESS_ABORTED,
         livekit_api.EgressStatus.EGRESS_LIMIT_REACHED,
     }
-    if info.status in complete:
+    if info.status in complete:  # type: ignore[union-attr]
         return "ready"
-    if info.status in failed:
+    if info.status in failed:  # type: ignore[union-attr]
         return "failed"
     return "recording"
 
@@ -239,6 +258,7 @@ async def get_recording_status(room_name: str) -> EgressSnapshot | None:
     starts). Returns None if LiveKit has no egress for the room yet. On
     completion the file result carries duration (ns → seconds) and size.
     """
+    livekit_api = _lk_api()
     lk = _lk_client()
     try:
         resp = await lk.egress.list_egress(
@@ -281,6 +301,7 @@ async def cancel_room(room_name: str) -> None:
     fully torn down, or unreachable due to LiveKit transient failure. We
     still raise the original token-consume error in either case.
     """
+    livekit_api = _lk_api()
     lk = _lk_client()
     try:
         await lk.room.delete_room(
