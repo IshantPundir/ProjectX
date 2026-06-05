@@ -703,9 +703,12 @@ class Settings(BaseSettings):
     ear_text_commit_thr: float = 0.02
     #
     # ear_min_silence_ms: Hard floor before ANY commit is allowed. Prevents
-    # cutting off a candidate mid-word even if both models say "done".
-    # 300 ms ≈ one syllable of trailing speech; tune up if early-commits persist.
-    ear_min_silence_ms: int = 300
+    # cutting off a candidate mid-word even if both models say "done". Raised
+    # 300 → 450 after the F3 talk-test: committing right at 300 ms could fire
+    # before the STT had finalised the tail of the utterance, so the bridge/brain
+    # got a partial/lagged transcript (bridge echoed the prior answer). 450 ms
+    # gives Deepgram a bit more time to flush the final transcript.
+    ear_min_silence_ms: int = 450
     #
     # ear_hold_cue_ms: Silence at/above which the Ear plays a gentle patience
     # cue ("take your time") when both signals are still incomplete — i.e. the

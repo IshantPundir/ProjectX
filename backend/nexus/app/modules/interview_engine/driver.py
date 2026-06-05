@@ -521,6 +521,18 @@ class SessionDriver:
             notelog=self._notelog,
         )
 
+        # F3 DIAGNOSTIC (temporary): pair the committed utterance with what the
+        # bridge mirrored, to detect a one-turn STT lag (bridge echoing the prior
+        # answer). Remove before prod (raw transcript snippet = dev-only).
+        _log.info(
+            "engine.driver.turn_trace",
+            turn_ref=turn_ref,
+            on_question=q_id,
+            committed_utterance=(utterance or "")[:100],
+            bridge_said=(capturing.captured[0] if capturing.captured else "")[:80],
+            act=decision.directive.act.value,
+        )
+
         # 4. Record agent turns for what was spoken (bridge text + real line)
         # run_turn speaks: bridge first, then the real line — both via capturing voice.
         # captured[0] = bridge text, captured[1] = real line (if both spoken).
