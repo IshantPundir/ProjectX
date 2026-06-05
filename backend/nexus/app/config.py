@@ -683,6 +683,34 @@ class Settings(BaseSettings):
     engine_smart_turn_model: str = "pipecat-ai/smart-turn-v3"
     engine_smart_turn_filename: str = "smart-turn-v3.1-cpu.onnx"
 
+    # --- Gen-3 Ear fusion ladder thresholds ---
+    # [VALIDATE] These are initial defaults — tune empirically in Phase F3
+    # talk-tests once the full Ear is wired end-to-end.
+    #
+    # ear_smart_turn_commit_thr: Smart Turn v3 EOU probability at/above which
+    # the voice signal counts as "complete". 0.5 is the natural mid-point;
+    # Smart Turn is a binary classifier so practical values cluster near 0/1.
+    ear_smart_turn_commit_thr: float = 0.5
+    #
+    # ear_text_commit_thr: MultilingualModel EOU probability at/above which
+    # the text signal counts as "complete". Probs run very small for disfluent
+    # Indian-English — forensic session median was ~0.008; 0.02 gives a small
+    # buffer above that noise floor without becoming overly permissive.
+    ear_text_commit_thr: float = 0.02
+    #
+    # ear_min_silence_ms: Hard floor before ANY commit is allowed. Prevents
+    # cutting off a candidate mid-word even if both models say "done".
+    # 300 ms ≈ one syllable of trailing speech; tune up if early-commits persist.
+    ear_min_silence_ms: int = 300
+    #
+    # ear_hold_cue_ms: Silence at/above which the Ear plays a gentle patience
+    # cue ("take your time") when both signals are still incomplete — i.e. the
+    # candidate is mid-thought on a long pause, not finished. 2500 ms is
+    # above the worst-case complete-answer commit latency observed in v2
+    # talk-tests (~1–2 s) so a complete answer always commits first; only a
+    # genuinely held-open incomplete pause reaches the cue.
+    ear_hold_cue_ms: int = 2500
+
     # Dev/test ergonomics — leave True in every real environment. Set False
     # locally to skip the post-session report LLM scorer during agent tuning
     # runs (saves tokens). Non-destructive: the session still completes and

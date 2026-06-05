@@ -250,6 +250,24 @@ class AIConfig:
     def engine_smart_turn_filename(self) -> str:
         return self._settings.engine_smart_turn_filename
 
+    # --- Gen-3 Ear fusion ladder thresholds ---
+    # [VALIDATE] Initial defaults; tune empirically in Phase F3 talk-tests.
+    @property
+    def ear_smart_turn_commit_thr(self) -> float:
+        return self._settings.ear_smart_turn_commit_thr
+
+    @property
+    def ear_text_commit_thr(self) -> float:
+        return self._settings.ear_text_commit_thr
+
+    @property
+    def ear_min_silence_ms(self) -> int:
+        return self._settings.ear_min_silence_ms
+
+    @property
+    def ear_hold_cue_ms(self) -> int:
+        return self._settings.ear_hold_cue_ms
+
     # --- Reporting — offline report scorer (Phase 3D+ post-session) ---
     @property
     def report_scorer_model(self) -> str:
