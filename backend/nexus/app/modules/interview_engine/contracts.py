@@ -1,23 +1,26 @@
 """
 Gen-3 engine-internal contracts: brain input/output + directive + mouth inputs.
 
-Shared enums and value-types (SignalType, SignalPriority, CoverageState, EvidenceStance,
-EvidenceTexture, TimeSpan, etc.) are imported from `interview_runtime.evidence` — that is
-the single source of truth. They are NEVER redefined here.
+Promoted VERBATIM from the validated design artifacts
+(`tmp/interview_engine_research/{evidence_contract,brain_input,directive}.py`,
+validated on pydantic 2.13.4). Shared enums and value-types (SignalType,
+SignalPriority, CoverageState, EvidenceStance, EvidenceTexture, TimeSpan) are
+imported from `interview_runtime.evidence` — the single source of truth; they
+are NEVER redefined here.
 
-Module layout (import order):
+Module layout:
   1. Shared vocabulary imports from evidence (single source).
-  2. Brain output types: BrainMove, SignalObservation, BrainTurnOutput.
-  3. Brain input types: BudgetPhase, SignalSpec, BankQuestionIndex, BrainSessionContext,
+  2. Brain output (LEAN): BrainMove, SignalObservation, BrainTurnOutput.
+  3. Brain input (cache-split: STABLE PREFIX → DYNAMIC SUFFIX):
+     BudgetPhase, SignalSpec, BankQuestionIndex, BrainSessionContext,
      ActiveQuestionRubric, SignalRead, WindowTurn, BrainTurnInput.
-  4. Directive + mouth types: DirectiveAct, DirectiveTone, Directive, MouthTurnInput, BridgeRequest.
-  5. Brain service result: BrainDecision (after Directive + SignalObservation are defined).
+  4. Directive + mouth: DirectiveAct, DirectiveTone, Directive, MouthTurnInput, BridgeRequest.
+  5. Brain service result: BrainDecision (loop contract; after Directive + SignalObservation).
 """
 
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -35,42 +38,34 @@ from app.modules.interview_runtime.evidence import (  # noqa: F401
 
 
 # ============================================================================
-# Brain output types
-# (from evidence_contract.py — the brain-output half only)
+# 1. BRAIN per-turn OUTPUT (LEAN — what the LLM emits each turn)
 # ============================================================================
 
 class BrainMove(StrEnum):
-    """The control action the brain has decided for this turn.
-
-    The deterministic resolver (not the brain) owns which question comes next when
-    the move is `ask` — the brain only expresses a preference via `preferred_next_signal`.
-    """
-    probe = "probe"                   # fire a follow-up against the active question
-    ask = "ask"                       # advance to the next question (resolver picks it)
-    clarify = "clarify"               # ask for clarification without grading
-    confirm = "confirm"               # reflect back for candidate confirmation
-    redirect = "redirect"             # pull back a wandering answer
-    hold = "hold"                     # wait — triage flagged the turn incomplete
-    answer_meta = "answer_meta"       # answer a meta question (about the process/AI)
-    knockout_close = "knockout_close" # mandatory signal verified absent — warm close
-    close = "close"                   # planned end of session
+    ask = "ask"                  # advance: deliver the next main question
+    probe = "probe"              # elicit specifics: one bank follow-up
+    clarify = "clarify"          # candidate misunderstood → re-pose more simply
+    redirect = "redirect"        # off-topic / injection → bring back on track
+    reassure = "reassure"        # nervous candidate → lower the stakes
+    answer_meta = "answer_meta"  # candidate asked the agent something → answer, then return
+    repeat = "repeat"            # replay the last question verbatim
+    close = "close"              # terminal (full coverage / verified knockout / candidate ended)
 
 
 class SignalObservation(BaseModel):
-    """One signal observation emitted by the brain for this turn.
+    """The brain's attribution for ONE signal it heard evidence for THIS turn (usually 0–2).
 
-    The brain emits one observation per signal touched in the candidate's utterance.
-    This is the engine's live runtime read — NOT a persisted verdict. The persisted
-    append-only fact lives in `interview_runtime.evidence.EvidenceNote`.
+    Pointers + enums — the engine turns each of these into an immutable `EvidenceNote`, filling the
+    verbatim quote, turn_ref, question-on-floor, and via_probe from data it already holds.
+    `coverage_after` is the brain's LIVE read (steers the next move); it feeds runtime state, not the
+    durable note.
     """
     model_config = ConfigDict(frozen=True)
 
-    signal: str = Field(description="The signal name this observation speaks to.")
+    signal: str
     stance: EvidenceStance
     texture: EvidenceTexture
-    coverage_after: CoverageState = Field(
-        description="The brain's updated live read of coverage AFTER this turn."
-    )
+    coverage_after: CoverageState
     quote_span: TimeSpan | None = Field(
         default=None,
         description="Span within THIS candidate utterance that is the evidence. "
@@ -84,309 +79,259 @@ class SignalObservation(BaseModel):
 
 
 class BrainTurnOutput(BaseModel):
-    """The brain's complete output for a single committed candidate turn.
+    """The brain LLM's COMPLETE output for one turn. Intentionally tiny.
 
-    The brain emits exactly one BrainTurnOutput per turn. The deterministic resolver
-    reads this to pick the next Directive. Critically:
-      - There is NO `target_question_id` here: the resolver owns next-question selection.
-      - `preferred_next_signal` is an advisory hint; the resolver may ignore it.
-      - `probe_index` is set ONLY when move == probe; it indexes into the active question's
-        follow_ups list.
+    The engine derives BOTH the mouth Directive (move + say, leak-scrubbed) AND the appended evidence
+    notes (observations) from this single object. 'Enough evidence? probe vs advance' is encoded by
+    `move` + `coverage_after`, not a separate flag.
     """
-    # Chain-of-thought (never shown to the candidate or mouth)
-    reasoning: str = Field(description="Brain's internal chain-of-thought — never leaked to mouth.")
-
-    # Signal observations for this turn (zero or more)
-    observations: list[SignalObservation] = Field(default_factory=list)
-
-    # The control decision
+    reasoning: str = Field(
+        max_length=600,
+        description="Short reasoning-first scratchpad (grade↔move coherence at low effort), bounded "
+                    "for latency. Audit-only: never spoken, never authoritative to the report.",
+    )
+    observations: list[SignalObservation] = Field(
+        default_factory=list,
+        description="Signals evidenced this turn (cross-question crediting allowed). "
+                    "Empty on non-answer turns (clarify/meta/redirect).",
+    )
     move: BrainMove
-
-    # Move-specific payloads (each is None unless relevant to the move)
     probe_index: int | None = Field(
-        default=None,
-        ge=0,
-        description="Index into the active question's follow_ups. Set ONLY when move == probe.",
+        default=None, ge=0,
+        description="For `probe`: index into the ACTIVE question's bank `follow_ups` — the context-aware "
+                    "elicitation probe the brain selects to target the gap in what was just said. Probing "
+                    "is thread-local, so the question is always the one on the floor (no id needed).",
     )
     preferred_next_signal: str | None = Field(
         default=None,
-        description="Advisory hint for the resolver when move == ask. May be ignored.",
+        description="OPTIONAL soft hint (a signal/topic) for what would flow well NEXT, for naturalness. "
+                    "The deterministic resolver HONORS it only when budget has slack AND it doesn't break "
+                    "the mandatory-coverage guarantee; otherwise it falls back to mandatory-first. The brain "
+                    "NEVER hard-selects the next main question (resolver owns repeat + coverage + budget "
+                    "safety). None → let the resolver choose by position/weight.",
     )
-    clarification_topic: str | None = Field(
-        default=None,
-        description="What to clarify. Set when move == clarify.",
-    )
-    confirm_claim: str | None = Field(
-        default=None,
-        description="The claim to reflect back. Set when move == confirm.",
-    )
-    meta_answer: str | None = Field(
-        default=None,
-        description="The answer to a meta question. Set when move == answer_meta.",
-    )
-    knockout_signal: str | None = Field(
-        default=None,
-        description="The mandatory signal verified absent. Set when move == knockout_close.",
+    composed_say: str | None = Field(
+        default=None, max_length=400,
+        description="Brain-composed safe text for clarify/redirect/reassure/answer_meta. "
+                    "Leak-scrubbed before reaching the mouth. None for ask/probe/repeat (verbatim bank text).",
     )
 
 
 # ============================================================================
-# Brain input types
-# (from brain_input.py — verbatim, with evidence_contract imports repointed above)
+# 2. BRAIN INPUT — STABLE PREFIX (built once per session, byte-identical → cached)
 # ============================================================================
 
 class BudgetPhase(StrEnum):
-    """Which portion of the session time budget we are currently in."""
-    early = "early"     # plenty of time — explore breadth
-    mid = "mid"         # keep pace — balance breadth and depth
-    late = "late"       # closing window — prioritise required signals
-    final = "final"     # last question or two — aim for a clean close
+    """The ONLY time signal the brain sees (the time arithmetic lives in the engine resolver)."""
+    on_track = "on_track"          # plenty of budget — probe normally when warranted
+    winding_down = "winding_down"  # little left — at most one quick elicitation, then let it advance
 
 
 class SignalSpec(BaseModel):
-    """Identity + metadata for one role signal, as seen by the brain at session start."""
-    model_config = ConfigDict(frozen=True)
-
+    """One JD signal the screen collects. The FULL set is in the prefix so the brain can credit an
+    answer to ANY signal (cross-question / signal-greedy crediting), even one with no dedicated Q."""
     signal: str
     signal_type: SignalType
-    priority: SignalPriority
     weight: int = Field(ge=1, le=3)
-    knockout: bool = False
+    priority: SignalPriority
+    knockout: bool
 
 
 class BankQuestionIndex(BaseModel):
-    """A lightweight index entry for one bank question — enough for the brain to reason
-    about sequence and coverage without the full question text."""
-    model_config = ConfigDict(frozen=True)
-
+    """Compact per-question index entry. NO rubric here on purpose — inlining all questions' rubrics
+    blows the prompt (the documented ~36KB bloat). Only the ACTIVE question's rubric goes in the
+    dynamic suffix."""
     question_id: str
     primary_signal: str
-    tier: str = Field(description="'core' or 'coverage' (QuestionTier values as strings).")
-    difficulty: str = Field(description="Bank-level difficulty label (e.g. 'medium').")
-    follow_up_count: int = Field(ge=0, description="How many follow-ups the bank offers.")
+    signals: list[str]          # the broader coverable set
+    kind: str                   # experience_check | behavioral | technical_scenario | compliance_binary
+    difficulty: str             # easy | medium | hard
+    is_mandatory: bool
+    tier: str                   # core | coverage
+    text: str
+    follow_ups: list[str]       # the pre-written elicitation probes
 
 
 class BrainSessionContext(BaseModel):
-    """Immutable session-level context passed to the brain on every turn.
-
-    Built once at session start from the SessionConfig and never mutated. Contains the
-    signal registry, the question index, and the time budget — everything the brain needs
-    to reason about coverage and pacing without touching live session state.
-    """
-    model_config = ConfigDict(frozen=True)
-
+    """STABLE PREFIX — rendered once, deterministically, byte-identical across every turn of the
+    session (the prompt-cache key). Contains ZERO per-turn data. The brain's system prompt
+    (instructions) is prepended to this when rendered; together they form the cached prefix."""
     job_title: str
-    company_name: str
+    seniority_level: str
+    role_summary: str
+    hiring_bar: str
     signals: list[SignalSpec]
-    questions: list[BankQuestionIndex]
-    time_budget_s: float = Field(ge=0)
-    budget_phase: BudgetPhase = BudgetPhase.early
+    bank_index: list[BankQuestionIndex]
 
+
+# ============================================================================
+# 2b. BRAIN INPUT — DYNAMIC SUFFIX (rebuilt each turn → the only new tokens)
+# ============================================================================
 
 class ActiveQuestionRubric(BaseModel):
-    """The rubric for the question currently on the floor — what the brain grades against.
-
-    The mouth NEVER sees this (no-leak invariant). The brain uses it to assess whether the
-    candidate has earned an advance or needs a probe.
-    """
-    model_config = ConfigDict(frozen=True)
-
+    """The FULL rubric for the question on the floor — the ONLY rubric in the prompt. This is what the
+    brain grades THIS answer against (verbatim, accuracy-critical). Stays out of the cached prefix
+    because it changes as the active question changes."""
     question_id: str
-    question_text: str
-    primary_signal: str
-    follow_ups: list[str] = Field(default_factory=list, description="The bank's follow-up texts.")
-    difficulty: str
-    advance_criteria: str = Field(description="What 'sufficient' looks like for this question.")
-    probes_used: list[int] = Field(default_factory=list, description="Follow-up indices already fired.")
+    text: str                   # the exact bank question text
+    excellent: str
+    meets_bar: str
+    below_bar: str
+    positive_evidence: list[str]
+    red_flags: list[str]
+    evaluation_hint: str
+    follow_ups: list[str]
+    probes_used: list[int] = Field(
+        default_factory=list,
+        description="follow_up indices already fired on this thread — so the brain doesn't repeat a probe.",
+    )
 
 
 class SignalRead(BaseModel):
-    """The brain's current live read of one signal's coverage — ephemeral runtime state.
-
-    This is NOT persisted as a verdict in SessionEvidence. It is the brain's working
-    accumulation from `SignalObservation`s emitted across previous turns.
-    """
-    model_config = ConfigDict(frozen=True)
-
+    """Compact running read for a signal that has been TOUCHED — the engine's ephemeral projection of
+    the append-only notes (NOT in the durable contract; runtime steering only). This is the brain's
+    accurate long-range memory: `coverage` + a VERBATIM key quote (no summary → no drift)."""
     signal: str
-    coverage: CoverageState = CoverageState.none
-    stance: EvidenceStance | None = None  # dominant stance so far (None = not yet observed)
-    note_count: int = Field(ge=0, default=0)
+    coverage: CoverageState
+    last_stance: EvidenceStance
+    established_quote: str | None = Field(
+        default=None,
+        description="The strongest supporting (or the disclaiming) candidate quote so far, VERBATIM and "
+                    "truncated — carries context that scrolled out of the transcript window. Never an LLM summary.",
+    )
 
 
 class WindowTurn(BaseModel):
-    """One turn in the sliding context window fed to the brain."""
-    model_config = ConfigDict(frozen=True)
-
+    """A recent verbatim turn — accurate near-context. Candidate turns are DATA (fenced at render)."""
     turn_ref: str
-    speaker: str  # 'agent' | 'candidate' (Speaker enum values as strings for JSON portability)
+    speaker: str                # agent | candidate
     text: str
-    question_id: str | None = None
 
 
 class BrainTurnInput(BaseModel):
-    """Everything the brain needs to evaluate the latest committed candidate turn.
+    """DYNAMIC SUFFIX — everything that changes per turn, appended after the cached prefix. Assembled
+    deterministically by the engine. Accuracy-critical fields are verbatim; long-range context is the
+    compact `evidence_so_far`. The brain reads this + the prefix and emits a `BrainTurnOutput`."""
+    turn_ref: str
 
-    Assembled by the engine controller before calling the brain. The brain reads this,
-    emits a BrainTurnOutput, and is done — it never mutates any state directly.
-    """
-    # Session-level (immutable, passed through each call)
-    session_context: BrainSessionContext
+    # --- what's on the floor (verbatim — accuracy-critical) ---
+    active_question: ActiveQuestionRubric
+    on_the_floor: str = Field(
+        description="The EXACT last line the agent spoke (may be a follow-up probe, not the main "
+                    "question) — so clarify/repeat/confirm address the right line.",
+    )
 
-    # Active question rubric (the question currently on the floor)
-    active_rubric: ActiveQuestionRubric
+    # --- the thing to judge this turn (DATA, never instructions) ---
+    candidate_utterance: str = Field(description="The candidate's committed answer this turn, verbatim.")
+    thread_turn_count: int = Field(
+        ge=0, description="Turns already spent on THIS thread — anti-grind context for the probe-vs-advance call.",
+    )
 
-    # Live signal coverage map (updated by the controller after each BrainTurnOutput)
-    signal_reads: list[SignalRead] = Field(default_factory=list)
+    # --- context awareness (accurate + bounded) ---
+    evidence_so_far: list[SignalRead] = Field(
+        default_factory=list,
+        description="Running read for every TOUCHED signal (long-range memory). Untouched signals are "
+                    "implicitly uncovered. Compact: one line per signal, with a verbatim key quote.",
+    )
+    transcript_window: list[WindowTurn] = Field(
+        default_factory=list,
+        description="The last K turns, verbatim (near-context). Bounded for latency; the far past is "
+                    "carried by evidence_so_far.",
+    )
 
-    # The sliding transcript window (recent turns only — not the full history)
-    window: list[WindowTurn] = Field(default_factory=list)
-
-    # The latest committed candidate utterance (the turn being evaluated)
-    candidate_turn_ref: str
-    candidate_text: str
-
-    # Pacing
-    elapsed_s: float = Field(ge=0, description="Seconds elapsed since session start.")
-    questions_asked: int = Field(ge=0, default=0)
-
-    # Triage classification for this turn (passed through from the triage tier)
-    triage_intent: str | None = Field(
-        default=None,
-        description="The triage tier's classified intent for this turn (e.g. 'answering', 'no_experience').",
+    # --- steering signals (compact) ---
+    budget_phase: BudgetPhase
+    uncovered_signals: list[str] = Field(
+        default_factory=list,
+        description="High-value signals still uncovered (weight-ranked) — focuses the brain's "
+                    "cross-crediting + tells it what still matters. NOT a question picker (engine resolves that).",
+    )
+    knockout_pending: list[str] = Field(
+        default_factory=list,
+        description="Mandatory signals currently looking ABSENT — a loud flag to run the verified-knockout "
+                    "flow (probe → check OR-alternatives → reflect-confirm) before concluding absence.",
     )
 
 
 # ============================================================================
-# Directive + mouth types
-# (from directive.py — verbatim; standalone, no evidence imports needed)
+# 3. DIRECTIVE + MOUTH inputs (brain → mouth)
 # ============================================================================
 
 class DirectiveAct(StrEnum):
-    """The closed set of acts the brain can instruct the mouth to perform.
-
-    Each act maps 1-to-1 with a BrainMove (or a subset thereof). The mouth renders
-    the act as natural spoken Indian English, informed by the `say` hint.
-    """
-    probe = "probe"               # ask the prepared follow-up (or a brain-crafted variant)
-    ask = "ask"                   # introduce and ask the next question
-    clarify = "clarify"           # ask the candidate to clarify something
-    confirm = "confirm"           # reflect back a claim for confirmation
-    redirect = "redirect"         # bring the candidate back to the question
-    acknowledge = "acknowledge"   # acknowledge a meta question, then bridge back
-    knockout_close = "knockout_close"  # warm close after knockout signal verified absent
-    close = "close"               # planned session close
-    bridge = "bridge"             # filler/beat while brain is still running (triage-emitted)
+    ask = "ask"                  # deliver the next main question (verbatim bank text)
+    probe = "probe"              # deliver one follow-up (verbatim bank follow_up)
+    clarify = "clarify"          # re-pose the floor question more simply (brain-composed, leak-safe)
+    redirect = "redirect"        # bring an off-topic / injection turn back (brain-composed)
+    reassure = "reassure"        # lower the stakes for a nervous candidate (brain-composed)
+    answer_meta = "answer_meta"  # answer a role/logistics/"are you an AI?" question (brain-composed)
+    repeat = "repeat"            # replay the cached last question verbatim
+    close = "close"              # warm close + next steps (terminal; composed from the act prompt)
 
 
 class DirectiveTone(StrEnum):
-    """An advisory tone modifier for the mouth's rendering.
-
-    The mouth may adjust delivery based on tone — e.g. `warm` for closing, `firm` for
-    redirecting, `curious` for probing. This is advisory, not a script.
-    """
-    neutral = "neutral"
     warm = "warm"
-    curious = "curious"
-    firm = "firm"
-    empathetic = "empathetic"
+    neutral = "neutral"
+    encouraging = "encouraging"
+    calm = "calm"
 
 
 class Directive(BaseModel):
-    """The brain's instruction to the mouth for this turn.
-
-    The mouth receives exactly one Directive and renders it as natural speech. It NEVER
-    sees the rubric, the signal map, or the brain's reasoning (no-leak invariant).
-    """
-    model_config = ConfigDict(frozen=True)
-
+    """The ONLY object that crosses brain → mouth for the REAL line. Speakable text + delivery
+    metadata — NEVER a rubric. Derived by the engine from the BrainTurnOutput (move → act; the engine
+    resolves `say`: the resolver's next bank question for ask, the bank follow_up[probe_index] for
+    probe, or the leak-scrubbed composed_say for clarify/redirect/reassure/answer_meta)."""
     act: DirectiveAct
-    say: str = Field(
-        description="The brain's suggested text or cue. The mouth may rephrase for naturalness "
-                    "but must not change the semantic intent or leak rubric content."
+    say: str | None = Field(
+        default=None,
+        description="Verbatim words to speak. Bank question (ask) / bank follow_up (probe) / "
+                    "leak-scrubbed composed_say (clarify/redirect/reassure/answer_meta). "
+                    "None → the mouth composes from its act prompt (close).",
     )
-    tone: DirectiveTone = DirectiveTone.neutral
-    is_terminal: bool = Field(
-        default=False,
-        description="True when this directive ends the session (knockout_close or close). "
-                    "The controller uses this to trigger session cleanup.",
+    tone: DirectiveTone = DirectiveTone.warm
+    spoken_setup: str | None = Field(
+        default=None,
+        description="Optional benign orienting clause spoken before a grounded question. Leak-safe.",
     )
+    is_terminal: bool = Field(default=False, description="True only on close.")
 
 
 class MouthTurnInput(BaseModel):
-    """Everything the mouth needs to render one turn of spoken output.
-
-    The mouth sees the directive + what it just said (for coherence) + recent opener words
-    (to avoid repetitive sentence-starters). It NEVER sees the rubric or the brain's
-    reasoning.
-    """
+    """Dynamic suffix for the REAL-LINE mouth call (after the brain lands). Appended to the cached
+    persona + per-act block."""
     directive: Directive
     just_said: str | None = Field(
         default=None,
-        description="Verbatim text the agent spoke on the immediately preceding turn. "
-                    "Used to avoid repetitive openers and maintain conversational flow.",
+        description="The BRIDGE already spoken this turn — the mouth CONTINUES from it and does NOT "
+                    "re-acknowledge (one ack per turn). None if no bridge played (e.g. it failed → "
+                    "a canned fallback covered it, or this is the opener).",
     )
     recent_openers: list[str] = Field(
         default_factory=list,
-        description="Opening words from the last few agent turns (e.g. ['so', 'okay', 'great']). "
-                    "The mouth avoids reusing these to keep delivery varied.",
-    )
-    candidate_name: str | None = Field(
-        default=None,
-        description="Candidate's first name for naturalisation (e.g. 'So Priya, ...'). "
-                    "Used sparingly — not on every turn.",
+        description="Recent opening connectives — pick a DIFFERENT one so it never sounds stuck.",
     )
 
 
 class BridgeRequest(BaseModel):
-    """A lightweight request from the triage tier to emit an immediate spoken beat
-    while the brain is running asynchronously (the 'bridge' pattern).
-
-    The bridge is always a short, natural filler or continuation cue — never a question
-    and never rubric-bearing content.
-    """
-    model_config = ConfigDict(frozen=True)
-
-    cue: str = Field(
-        description="The triage tier's suggested filler cue (e.g. 'Mm, okay...', 'Go on...'). "
-                    "The mouth may lightly rephrase but must keep it short and neutral.",
-    )
-    triage_intent: str = Field(
-        description="The triage tier's classified intent — passed through for logging/audit."
-    )
+    """Input for the immediate BRIDGE mouth call — fired the instant the Ear commits the turn, in
+    PARALLEL with the brain. The bridge sees ONLY the candidate's words (the brain has not decided
+    yet) → it MUST be a neutral gist-mirror landing on a thinking pause, committing to NOTHING about
+    answer quality or the next move (else it risks contradicting the brain). No rubric, ever."""
+    candidate_utterance: str = Field(description="What the candidate just said — to mirror the gist.")
+    recent_openers: list[str] = Field(default_factory=list)
 
 
 # ============================================================================
-# Brain service result — produced by the Phase-D brain service, consumed by the loop
+# 4. BRAIN SERVICE RESULT — produced by the brain service (D3), consumed by the loop (C3)
 # ============================================================================
 
 class BrainDecision(BaseModel):
-    """The brain SERVICE's per-turn result — distinct from the lean `BrainTurnOutput` LLM
-    output. The brain service derives the `Directive` (via the deterministic resolver) and
-    carries the signal observations for the NoteLog.
-
-    The drive-loop (loop.py) consumes exactly one BrainDecision per committed candidate
-    turn. The brain service in Phase D produces it by:
-      1. Calling the LLM to get a `BrainTurnOutput`.
-      2. Running the deterministic resolver (policy gates, move→act mapping).
-      3. Packaging the resolved `Directive` + observations into this struct.
-
-    Placement: defined here — after `Directive` and `SignalObservation` — so all forward
-    references are already resolved in the same module.
-
-    Fields:
-        directive:      The resolved instruction to the mouth for this turn.
-        observations:   Zero or more signal observations emitted by the brain. The loop
-                        appends each one to the NoteLog via NoteLog.append().
-        reasoning:      Brain chain-of-thought — audit-only, NEVER forwarded to the mouth
-                        (no-leak invariant).
-        is_terminal:    Mirrors directive.is_terminal for the loop's caller's convenience,
-                        so the caller does not need to drill into the directive to decide
-                        whether to trigger session cleanup.
-    """
+    """The brain SERVICE's per-turn result — distinct from the lean `BrainTurnOutput` LLM output.
+    The service derives the `Directive` (move→act + resolver/bank/leak-scrub for `say`) and carries
+    the signal `observations` for the NoteLog. The drive-loop (loop.py) consumes exactly one
+    BrainDecision per committed candidate turn."""
     model_config = ConfigDict(frozen=True)
 
     directive: Directive
     observations: list[SignalObservation] = Field(default_factory=list)
-    reasoning: str = ""   # audit-only; never forwarded to the mouth
-    is_terminal: bool = False   # mirror of directive.is_terminal, for the loop's caller
+    reasoning: str = ""          # audit-only; NEVER forwarded to the mouth (no-leak invariant)
+    is_terminal: bool = False    # mirror of directive.is_terminal, for the loop's caller's convenience
