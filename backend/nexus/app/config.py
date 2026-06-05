@@ -676,6 +676,13 @@ class Settings(BaseSettings):
     # ``reel_director:{prompt_version}:{model}``. Bump on a prompt-family change.
     reel_director_prompt_cache_key_prefix: str = "reel_director"
 
+    # --- Smart Turn v3 (gen-3 Ear audio EOU model) ---
+    # HF repo + ONNX filename for the pipecat-ai Smart Turn prosody model.
+    # Downloaded at build time (baked in Dockerfile) and cached at HF_HOME.
+    # Swapping to a newer model revision is a .env change + image rebuild.
+    engine_smart_turn_model: str = "pipecat-ai/smart-turn-v3"
+    engine_smart_turn_filename: str = "smart-turn-v3.1-cpu.onnx"
+
     # Dev/test ergonomics — leave True in every real environment. Set False
     # locally to skip the post-session report LLM scorer during agent tuning
     # runs (saves tokens). Non-destructive: the session still completes and

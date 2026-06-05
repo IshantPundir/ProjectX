@@ -241,6 +241,15 @@ class AIConfig:
     def engine_v2_backchannel_min_words(self) -> int:
         return self._settings.engine_v2_backchannel_min_words
 
+    # --- Smart Turn v3 (gen-3 Ear audio EOU model) ---
+    @property
+    def engine_smart_turn_model(self) -> str:
+        return self._settings.engine_smart_turn_model
+
+    @property
+    def engine_smart_turn_filename(self) -> str:
+        return self._settings.engine_smart_turn_filename
+
     # --- Reporting — offline report scorer (Phase 3D+ post-session) ---
     @property
     def report_scorer_model(self) -> str:

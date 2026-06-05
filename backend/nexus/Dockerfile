@@ -50,6 +50,12 @@ ENV HF_HOME=/opt/hf-cache
 # real secrets arrive at runtime via compose env_file.
 RUN mkdir -p /opt/hf-cache \
     && ENVIRONMENT=test python -m app.modules.interview_engine download-files \
+    # Pre-fetch the Smart Turn v3 ONNX into the HF cache so production engine
+    # containers don't cold-download it on first session. Mirrors the silero +
+    # turn-detector bake above — same pattern, same /opt/hf-cache destination.
+    && ENVIRONMENT=test python -c "\
+from huggingface_hub import hf_hub_download; \
+hf_hub_download('pipecat-ai/smart-turn-v3', 'smart-turn-v3.1-cpu.onnx')" \
     && chown -R nexus:nexus /opt/hf-cache \
     && rm -rf /tmp/dramatiq-prometheus /tmp/dramatiq-prometheus.lock
 # ^ The download-files step above imports the broker chain, whose dramatiq
