@@ -267,9 +267,15 @@ class Ear:
         Parameters
         ----------
         session:
-            Duck-typed LiveKit ``AgentSession`` (or mock).  Only three
-            methods are called: ``commit_user_turn()``, ``say(text)`` (async),
-            and ``interrupt()`` (called by the glue, not here).
+            Duck-typed LiveKit ``AgentSession`` (or mock).  Only one method
+            is called here: ``say(text)`` (async) for the patience cue.
+            ``commit_user_turn()`` is NO LONGER called from ``act`` — commit
+            is owned by the poll loop in ``agent.py::setup_ear`` so that the
+            transcript returned by ``session.commit_user_turn()`` can be
+            captured and forwarded to the SessionDriver. Calling commit here
+            would discard the returned transcript.
+            ``interrupt()`` is called by the ``user_state_changed`` hook in
+            ``setup_ear``, not here.
         decision:
             The decision returned by ``evaluate()``.
         cue_text:
@@ -277,9 +283,11 @@ class Ear:
             ``DEFAULT_HOLD_CUE`` ("Mm, take your time, ya.").
         """
         if decision == EarDecision.commit:
-            self._log.info("engine.ear.act.commit")
-            session.commit_user_turn()
-            self._buffer.reset()
+            # No-op: commit is owned by the poll loop in agent.py::setup_ear.
+            # The poll loop calls session.commit_user_turn() and captures the
+            # returned transcript to forward to the SessionDriver. Acting here
+            # would call commit_user_turn() a second time and discard the result.
+            self._log.debug("engine.ear.act.commit.noop")
 
         elif decision == EarDecision.hold_cue:
             if self._cue_played:

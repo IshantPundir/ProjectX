@@ -7,7 +7,9 @@ Tests the `Ear` class in isolation using:
   - A fake clock (integer ms passed directly)
 
 Five tests:
-  1. DONE fixture → EarDecision.commit; act → commit_user_turn called once, say NOT called.
+  1. DONE fixture → EarDecision.commit; act → NO-OP (commit is owned by the
+     poll loop in agent.py::setup_ear, not by Ear.act). commit_user_turn must
+     NOT be called from act; say must NOT be called.
   2. THINKING fixture → EarDecision.hold_cue; act → say called once, commit_user_turn NOT called.
   3. Cue fires at most once per pause (idempotent across multiple act calls in same pause).
   4. min-silence floor → EarDecision.wait; act → neither commit nor say called.
@@ -103,10 +105,15 @@ def _dummy_audio(samples: int = 1600) -> np.ndarray:
 
 
 @pytest.mark.asyncio
-async def test_done_fixture_produces_commit_and_calls_commit_user_turn():
+async def test_done_fixture_produces_commit_and_act_is_noop():
     """speaking(t=0) → listening(t=2000) + high smart_turn_prob → commit.
 
-    After act: commit_user_turn called once; say NOT called.
+    Ear.act(commit) is a NO-OP: commit is owned by the poll loop in
+    agent.py::setup_ear, which calls session.commit_user_turn() and captures
+    the returned transcript. Ear.act must NOT call commit_user_turn() — that
+    would fire a second commit and discard the transcript.
+
+    After act: commit_user_turn NOT called (no-op); say NOT called.
     """
     ear, _ = _make_ear(detector_prob=0.9)   # well above 0.5 threshold
     session = _MockSession()
@@ -127,7 +134,11 @@ async def test_done_fixture_produces_commit_and_calls_commit_user_turn():
 
     await ear.act(session, decision)
 
-    assert session.commit_calls == 1, "commit_user_turn must be called exactly once"
+    # act(commit) is a no-op: the poll loop owns commit_user_turn
+    assert session.commit_calls == 0, (
+        "commit_user_turn must NOT be called from Ear.act — "
+        "commit is owned by agent.py::setup_ear's poll loop"
+    )
     assert session.say_calls == [], "say must NOT be called on commit"
 
 
