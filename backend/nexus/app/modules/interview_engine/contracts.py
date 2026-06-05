@@ -78,6 +78,12 @@ class SignalObservation(BaseModel):
         default=None,
         description="Optional verbatim excerpt — used if the brain wants to anchor the observation.",
     )
+    retracts: bool = Field(
+        default=False,
+        description="True when this observation walks back a prior claim for the same signal. "
+                    "NoteLog will link the new EvidenceNote to the most-recent prior note for this "
+                    "signal via retracts_seq; both notes are kept (append-only).",
+    )
 
 
 class BrainTurnOutput(BaseModel):
