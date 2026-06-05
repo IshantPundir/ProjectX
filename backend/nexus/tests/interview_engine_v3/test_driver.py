@@ -154,7 +154,11 @@ class _FakeBrain:
         self._decisions = list(decisions)
         self._call_count = 0
 
-    async def decide(self, turn_input: BrainTurnInput) -> BrainDecision:
+    async def decide(
+        self, turn_input: BrainTurnInput, *, asked_ids=None, time_remaining_s=0.0
+    ) -> BrainDecision:
+        # Matches ControlPlane.decide: the driver wraps the brain in _BrainAdapter,
+        # which supplies asked_ids + time_remaining_s on every call.
         idx = self._call_count
         self._call_count += 1
         if idx < len(self._decisions):
@@ -398,3 +402,27 @@ async def test_mouth_adapter_combines_bridge_and_real_line():
     adapter = _MouthAdapter(real_plane=_FakeReal(), bridge_composer=_FakeBridge())
     assert await adapter.bridge(object()) == "BRIDGE"
     assert await adapter.real_line(object()) == "REAL"
+
+
+async def test_brain_adapter_supplies_resolver_state():
+    """Regression: run_turn calls brain.decide(turn_input), but ControlPlane.decide
+    also needs asked_ids + time_remaining_s. _BrainAdapter must supply them.
+    (Live talk-test: TypeError: ControlPlane.decide() missing 'asked_ids' and
+    'time_remaining_s'.)
+    """
+    from app.modules.interview_engine.driver import _BrainAdapter
+
+    seen = {}
+
+    class _FakeCP:
+        async def decide(self, turn_input, *, asked_ids, time_remaining_s):
+            seen["asked_ids"] = asked_ids
+            seen["time_remaining_s"] = time_remaining_s
+            return "DECISION"
+
+    adapter = _BrainAdapter(_FakeCP())
+    adapter.asked_ids = {"q1"}
+    adapter.time_remaining_s = 123.0
+    out = await adapter.decide(object())
+    assert out == "DECISION"
+    assert seen == {"asked_ids": {"q1"}, "time_remaining_s": 123.0}

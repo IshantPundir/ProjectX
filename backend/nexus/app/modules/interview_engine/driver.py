@@ -131,6 +131,28 @@ class _MouthAdapter:
         return await self._real_plane.real_line(mouth_input)  # type: ignore[union-attr]
 
 
+class _BrainAdapter:
+    """Adapts `ControlPlane.decide` to the loop's `Brain.decide(turn_input)` shape.
+
+    `run_turn` calls `brain.decide(turn_input)` with no extra args, but
+    `ControlPlane.decide` also needs the per-turn `asked_ids` + `time_remaining_s`
+    (for the deterministic resolver). The driver refreshes those on this adapter
+    right before each `run_turn`, so the loop stays decoupled from resolver state.
+    """
+
+    def __init__(self, control_plane: object) -> None:
+        self._cp = control_plane
+        self.asked_ids: set[str] = set()
+        self.time_remaining_s: float = 0.0
+
+    async def decide(self, turn_input):  # type: ignore[no-untyped-def]
+        return await self._cp.decide(  # type: ignore[union-attr]
+            turn_input,
+            asked_ids=self.asked_ids,
+            time_remaining_s=self.time_remaining_s,
+        )
+
+
 # ============================================================================
 # SessionDriver
 # ============================================================================
@@ -187,6 +209,9 @@ class SessionDriver:
         self._bridge = bridge
         # run_turn expects ONE mouth object with both bridge() + real_line().
         self._mouth_combined = _MouthAdapter(real_plane=mouth, bridge_composer=bridge)
+        # run_turn calls brain.decide(turn_input); ControlPlane.decide also needs
+        # per-turn asked_ids + time_remaining_s — refreshed before each run_turn.
+        self._brain_adapter = _BrainAdapter(brain)
         self._notelog = notelog
         self._projection = projection
         self._voice = voice
@@ -484,9 +509,13 @@ class SessionDriver:
 
         capturing = _CapturingVoice(self._voice)
 
+        # Refresh the brain adapter's per-turn resolver state before run_turn.
+        self._brain_adapter.asked_ids = set(self._asked_ids)
+        self._brain_adapter.time_remaining_s = self._time_remaining_s()
+
         decision: BrainDecision = await run_turn(
             ctx,
-            brain=self._brain,  # type: ignore[arg-type]
+            brain=self._brain_adapter,  # decide(turn_input) → ControlPlane.decide(+resolver state)
             mouth=self._mouth_combined,  # bridge() + real_line() combined
             voice=capturing,
             notelog=self._notelog,
