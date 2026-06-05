@@ -244,3 +244,23 @@ async def test_repeat_verbatim_shortcut():
 
     assert result == replay_text
     assert len(calls) == 0, "LLM should NOT be called for repeat verbatim shortcut"
+
+
+async def test_real_line_falls_back_on_llm_failure():
+    """A mouth-LLM blip must NOT propagate (it would kill the interview).
+    real_line falls back to the directive's say, else a safe line."""
+    from app.modules.interview_engine.contracts import Directive, DirectiveAct, MouthTurnInput
+    from app.modules.interview_engine.mouth.service import ConversationPlane, _SAFE_FALLBACK_LINE
+
+    async def _boom(messages):
+        raise RuntimeError("openai down")
+
+    cp = ConversationPlane(persona_name="Arjun", job_title="Engineer", llm_call=_boom)
+
+    # clarify carries composed say → fall back to it
+    mi = MouthTurnInput(directive=Directive(act=DirectiveAct.clarify, say="Could you say that again?"))
+    assert await cp.real_line(mi) == "Could you say that again?"
+
+    # close has say=None → safe line, never raises
+    mi2 = MouthTurnInput(directive=Directive(act=DirectiveAct.close, say=None, is_terminal=True))
+    assert await cp.real_line(mi2) == _SAFE_FALLBACK_LINE

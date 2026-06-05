@@ -187,11 +187,11 @@ class BridgeComposer:
         from app.ai.client import get_raw_openai_client
         from app.ai.config import ai_config
 
+        # max_retries is set at client construction, not a valid create() kwarg.
         client = get_raw_openai_client()
         kwargs: dict = {
             "model": ai_config.engine_mouth_model,
             "messages": messages,
-            "max_retries": 1,
         }
         if ai_config.engine_mouth_effort:
             kwargs["reasoning_effort"] = ai_config.engine_mouth_effort

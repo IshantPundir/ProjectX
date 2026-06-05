@@ -38,6 +38,11 @@ _log = structlog.get_logger()
 # Acts for which directive.say is spoken verbatim — no LLM call.
 _VERBATIM_ACTS = {DirectiveAct.ask, DirectiveAct.probe, DirectiveAct.repeat}
 
+# Last-resort spoken line if the mouth LLM fails AND the directive carries no
+# `say` (e.g. a close with say=None). Keeps the interview alive (no dead air,
+# no crash) — F3-tunable.
+_SAFE_FALLBACK_LINE = "Okay — let's continue."
+
 
 # ---------------------------------------------------------------------------
 # Act-block loader (per-version, per-act cache)
@@ -156,8 +161,16 @@ class ConversationPlane:
         )
 
         _log.debug("mouth.llm_call", act=act.value, n_messages=len(messages))
-        raw = await self._llm_call(messages)
-        return raw.strip() if raw else ""
+        # Graceful degradation: a mouth-LLM blip must NEVER kill the interview.
+        # Fall back to the directive's own text (composed_say for clarify/redirect/
+        # reassure/answer_meta) or a safe neutral line for close.
+        try:
+            raw = await self._llm_call(messages)
+        except Exception:  # noqa: BLE001 — never propagate a mouth failure into the drive loop
+            _log.warning("mouth.llm_call.fallback", act=act.value, exc_info=True)
+            return directive.say or _SAFE_FALLBACK_LINE
+        line = raw.strip() if raw else ""
+        return line or directive.say or _SAFE_FALLBACK_LINE
 
     # -----------------------------------------------------------------------
     # Default real LLM call (injectable seam — only reached in production)
@@ -170,11 +183,12 @@ class ConversationPlane:
         from app.ai.client import get_raw_openai_client
         from app.ai.config import ai_config
 
+        # The raw AsyncOpenAI client already sets max_retries=1 at construction
+        # (_build_raw_openai_client); it is NOT a valid per-call create() kwarg.
         client = get_raw_openai_client()
         kwargs: dict = {
             "model": ai_config.engine_mouth_model,
             "messages": messages,
-            "max_retries": 1,
         }
         if ai_config.engine_mouth_effort:
             kwargs["reasoning_effort"] = ai_config.engine_mouth_effort
