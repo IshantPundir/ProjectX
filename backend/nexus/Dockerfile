@@ -35,12 +35,13 @@ COPY . .
 ENV HF_HOME=/opt/hf-cache
 
 # Pre-download AI plugin model files at build time so nexus-engine doesn't
-# need network access on first dispatch. Especially load-bearing for the
-# multilingual turn-detector plugin which instantiates with
+# need network access on first dispatch. Load-bearing for the multilingual
+# turn-detector plugin (the native EOU model), which instantiates with
 # local_files_only=True and would otherwise crash with "Could not find
-# file 'model_q8.onnx'". The download-files subcommand iterates registered
-# plugins (silero, turn-detector) and pulls each plugin's
-# HF / ONNX assets.
+# file 'languages.json' / 'model_q8.onnx'". The download-files subcommand
+# iterates the REGISTERED plugins and pulls each plugin's HF / ONNX assets;
+# `agent.py` carries top-level registration imports for both `silero` (VAD)
+# and `turn_detector` (the EOU model) so download-files sees and bakes them.
 #
 # Inherited by all three services from the same image (nexus, nexus-worker,
 # nexus-engine). The cost is ~300MB of image bloat on services that don't
@@ -50,12 +51,6 @@ ENV HF_HOME=/opt/hf-cache
 # real secrets arrive at runtime via compose env_file.
 RUN mkdir -p /opt/hf-cache \
     && ENVIRONMENT=test python -m app.modules.interview_engine download-files \
-    # Pre-fetch the Smart Turn v3 ONNX into the HF cache so production engine
-    # containers don't cold-download it on first session. Mirrors the silero +
-    # turn-detector bake above — same pattern, same /opt/hf-cache destination.
-    && ENVIRONMENT=test python -c "\
-from huggingface_hub import hf_hub_download; \
-hf_hub_download('pipecat-ai/smart-turn-v3', 'smart-turn-v3.1-cpu.onnx')" \
     && chown -R nexus:nexus /opt/hf-cache \
     && rm -rf /tmp/dramatiq-prometheus /tmp/dramatiq-prometheus.lock
 # ^ The download-files step above imports the broker chain, whose dramatiq

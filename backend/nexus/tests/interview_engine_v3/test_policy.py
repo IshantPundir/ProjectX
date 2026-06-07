@@ -117,6 +117,29 @@ class TestKnockoutTracker:
         tracker = KnockoutTracker()
         assert tracker.is_confirmed("unknown_signal") is False
 
+    def test_confirm_jumps_straight_to_confirmed(self):
+        """confirm() drives a signal directly to `confirmed` in one call.
+
+        Used by the brain-driven verified-knockout close: the brain has already
+        confirmed absence in-conversation, so the tracker jumps to confirmed
+        without walking the reactive probe→check_alternatives ladder.
+        """
+        tracker = KnockoutTracker()
+        tracker.confirm("python_experience")
+        assert tracker.current_step("python_experience") == KnockoutStep.confirmed
+        assert tracker.is_confirmed("python_experience") is True
+
+    def test_confirm_is_idempotent(self):
+        tracker = KnockoutTracker()
+        tracker.confirm("python_experience")
+        tracker.confirm("python_experience")
+        assert tracker.is_confirmed("python_experience") is True
+
+    def test_confirm_never_raises_on_empty_string(self):
+        tracker = KnockoutTracker()
+        tracker.confirm("")  # must not raise
+        assert tracker.is_confirmed("") is True
+
     def test_independent_signals_do_not_interfere(self):
         tracker = KnockoutTracker()
         tracker.advance("signal_a")

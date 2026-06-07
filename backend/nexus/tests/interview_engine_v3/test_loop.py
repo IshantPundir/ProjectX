@@ -161,7 +161,7 @@ class FakeVoice:
     def __init__(self) -> None:
         self.said: list[str] = []
 
-    async def say(self, text: str) -> None:  # noqa: D401
+    async def say(self, text: str, *, allow_interruptions: bool = True) -> None:  # noqa: D401
         self.said.append(text)
 
 

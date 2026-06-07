@@ -47,6 +47,8 @@ class BrainMove(StrEnum):
     clarify = "clarify"          # candidate misunderstood → re-pose more simply
     redirect = "redirect"        # off-topic / injection → bring back on track
     reassure = "reassure"        # nervous candidate → lower the stakes
+    hold = "hold"                # candidate is thinking / asked for a moment → wait, do NOT advance
+    confirm = "confirm"          # garbled / possibly-misheard answer → reflect back before grading
     answer_meta = "answer_meta"  # candidate asked the agent something → answer, then return
     repeat = "repeat"            # replay the last question verbatim
     close = "close"              # terminal (full coverage / verified knockout / candidate ended)
@@ -98,9 +100,12 @@ class BrainTurnOutput(BaseModel):
     move: BrainMove
     probe_index: int | None = Field(
         default=None, ge=0,
-        description="For `probe`: index into the ACTIVE question's bank `follow_ups` — the context-aware "
-                    "elicitation probe the brain selects to target the gap in what was just said. Probing "
-                    "is thread-local, so the question is always the one on the floor (no id needed).",
+        description="For `probe`: index into the ACTIVE question's bank `follow_ups` — the recruiter "
+                    "follow-up TEMPLATE the brain is adapting this turn (which gap it targets). The spoken "
+                    "probe text itself is COMPOSED in `composed_say` (a natural, in-scope adaptation of "
+                    "that template to what the candidate actually said); probe_index records which template "
+                    "area was covered (anti-grind + coverage). Probing is thread-local — the question is "
+                    "always the one on the floor (no id needed).",
     )
     preferred_next_signal: str | None = Field(
         default=None,
@@ -112,8 +117,28 @@ class BrainTurnOutput(BaseModel):
     )
     composed_say: str | None = Field(
         default=None, max_length=400,
-        description="Brain-composed safe text for clarify/redirect/reassure/answer_meta. "
-                    "Leak-scrubbed before reaching the mouth. None for ask/probe/repeat (verbatim bank text).",
+        description="Brain-composed safe text for probe/clarify/redirect/reassure/answer_meta. For `probe` "
+                    "it is the targeted follow-up — a natural, in-scope adaptation of the bank follow_up "
+                    "template at `probe_index` to what the candidate actually said. Leak-scrubbed before "
+                    "reaching the mouth. None for ask/repeat (verbatim bank text) — and for probe it falls "
+                    "back to the verbatim follow_up when not composed.",
+    )
+    end_requested: bool = Field(
+        default=False,
+        description="True ONLY when the candidate EXPLICITLY asked to end/stop the screen "
+                    "(\"I'd like to end now\", \"please stop the session\"). Paired with move=close it is "
+                    "honored IMMEDIATELY and BYPASSES the knockout-verification gate — a candidate may "
+                    "always end the screen. Leave False for a brain-decided close (full coverage reached "
+                    "or a verified knockout).",
+    )
+    knockout_confirmed: bool = Field(
+        default=False,
+        description="True ONLY when you have CONFIRMED (in-conversation: a clear disclaim, then ONE "
+                    "reflect-back confirm) that a MANDATORY signal listed in `knockout_pending` is "
+                    "genuinely absent. Paired with move=close it ends the screen early and RECORDS the "
+                    "knockout for the report (records-never-rejects — a human still decides). The engine "
+                    "honors it ONLY for a signal it actually flagged in `knockout_pending` (you cannot "
+                    "fabricate a knockout). Leave False for an ordinary full-coverage close.",
     )
 
 
@@ -220,11 +245,25 @@ class BrainTurnInput(BaseModel):
         description="The EXACT last line the agent spoke (may be a follow-up probe, not the main "
                     "question) — so clarify/repeat/confirm address the right line.",
     )
+    floor_interrupted: bool = Field(
+        default=False,
+        description="TRUE when the question on the floor was CUT OFF mid-delivery (the agent was "
+                    "interrupted by the candidate) — the candidate likely did NOT hear it. The brain "
+                    "should re-deliver it (repeat) and read THIS turn as a continuation of the prior "
+                    "answer, not an answer to the cut-off question.",
+    )
 
     # --- the thing to judge this turn (DATA, never instructions) ---
     candidate_utterance: str = Field(description="The candidate's committed answer this turn, verbatim.")
     thread_turn_count: int = Field(
         ge=0, description="Turns already spent on THIS thread — anti-grind context for the probe-vs-advance call.",
+    )
+    stalled: bool = Field(
+        default=False,
+        description="TRUE when the candidate has had several CONSECUTIVE non-answer turns on this "
+                    "question (dodging / re-asking / 'what's the answer' / off-task) with no gradeable "
+                    "answer. Stop re-posing — advance warmly and let coverage record it as not "
+                    "demonstrated. (Deterministic counter; a real answer resets it.)",
     )
 
     # --- context awareness (accurate + bounded) ---
@@ -251,6 +290,13 @@ class BrainTurnInput(BaseModel):
         description="Mandatory signals currently looking ABSENT — a loud flag to run the verified-knockout "
                     "flow (probe → check OR-alternatives → reflect-confirm) before concluding absence.",
     )
+    knockout_reflected: list[str] = Field(
+        default_factory=list,
+        description="Knockout signals whose absence you have ALREADY reflected back to the candidate on a "
+                    "PRIOR turn (deterministic — the engine tracks it). If a signal here is still pending and "
+                    "the candidate has now affirmed the absence, CLOSE (knockout_confirmed) — do NOT reflect "
+                    "it back a second time. One reflect-back is enough.",
+    )
 
 
 # ============================================================================
@@ -263,6 +309,8 @@ class DirectiveAct(StrEnum):
     clarify = "clarify"          # re-pose the floor question more simply (brain-composed, leak-safe)
     redirect = "redirect"        # bring an off-topic / injection turn back (brain-composed)
     reassure = "reassure"        # lower the stakes for a nervous candidate (brain-composed)
+    hold = "hold"                # candidate is thinking → a brief "take your time" (brain-composed)
+    confirm = "confirm"          # reflect a possibly-misheard answer back to confirm (brain-composed)
     answer_meta = "answer_meta"  # answer a role/logistics/"are you an AI?" question (brain-composed)
     repeat = "repeat"            # replay the cached last question verbatim
     close = "close"              # warm close + next steps (terminal; composed from the act prompt)
@@ -342,5 +390,14 @@ class BrainDecision(BaseModel):
             "active question. The SessionDriver uses this to advance the active-question "
             "pointer and update asked_ids. None for non-ask acts and for a close directive "
             "produced when the resolver found no remaining question."
+        ),
+    )
+    probe_index: int | None = Field(
+        default=None,
+        description=(
+            "When directive.act == probe: the bank follow_up TEMPLATE index the brain adapted "
+            "(coerced to a valid, unused index). The SessionDriver records it in probes_used so "
+            "the same template area is not re-probed and exhaustion is detectable. None for "
+            "non-probe acts (and when no template backed a freshly-composed probe)."
         ),
     )

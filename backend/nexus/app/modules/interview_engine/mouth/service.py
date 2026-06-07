@@ -119,6 +119,8 @@ class ConversationPlane:
             version = ai_config.engine_mouth_prompt_version
 
         self._version = version
+        self._persona_name = persona_name
+        self._job_title = job_title
         self._persona = build_persona(
             persona_name=persona_name,
             job_title=job_title,
@@ -131,6 +133,32 @@ class ConversationPlane:
     # -----------------------------------------------------------------------
     # Public API
     # -----------------------------------------------------------------------
+
+    async def intro(self, *, candidate_name: str, role_summary: str, company_about: str) -> str:
+        """Compose the warm opening (greeting + one-line job brief) spoken BEFORE the
+        first question. Ends on a confident statement that flows into the first
+        question — never a "shall we?" (see intro.txt). Leak-proof (no rubric). On
+        any LLM error/timeout returns a safe canned greeting (never dead air)."""
+        intro_block = _load_act_block("intro", self._version)
+        context = (
+            f"CANDIDATE FIRST NAME: {candidate_name}\n"
+            f"ROLE: {self._job_title}\n"
+            f"ROLE SUMMARY: {role_summary}\n"
+            f"COMPANY: {company_about}"
+        )
+        messages = [
+            {"role": "system", "content": self._persona},
+            {"role": "system", "content": intro_block},
+            {"role": "user", "content": context},
+        ]
+        try:
+            raw = await self._llm_call(messages)
+        except Exception:  # noqa: BLE001 — an intro blip must never break the session
+            _log.warning("mouth.intro.fallback", exc_info=True)
+            return f"Hi {candidate_name} — thanks for joining today. So, let's get into it."
+        return (raw.strip() if raw else "") or (
+            f"Hi {candidate_name} — thanks for joining today. So, let's get into it."
+        )
 
     async def real_line(self, mouth_input: MouthTurnInput) -> str:
         """Render the Directive as a spoken string.

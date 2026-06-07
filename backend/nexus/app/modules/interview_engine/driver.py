@@ -64,6 +64,7 @@ from app.modules.interview_engine.contracts import (
 )
 from app.modules.interview_engine.loop import run_turn, TurnContext
 from app.modules.interview_engine.notes import NoteLog, compute_provenance
+from app.modules.interview_engine.turn_taking import is_backchannel
 from app.modules.interview_runtime.evidence import (
     CompletionReason,
     KnockoutOutcome,
@@ -81,6 +82,16 @@ from app.modules.interview_runtime.evidence import (
 from app.modules.interview_runtime.schemas import QuestionConfig, SessionConfig
 
 _log = structlog.get_logger("interview_engine.driver")
+
+# Acts that mean the candidate did NOT give a gradeable answer this turn (used by the
+# anti-stall counter). A run of these on one question = the candidate is stalling/dodging.
+_NON_ANSWER_ACTS: frozenset[DirectiveAct] = frozenset({
+    DirectiveAct.clarify,
+    DirectiveAct.repeat,
+    DirectiveAct.redirect,
+    DirectiveAct.hold,
+    DirectiveAct.answer_meta,
+})
 
 # How many recent agent openers to feed back to the mouth (de-duplication window)
 _RECENT_OPENERS_WINDOW: int = 5
@@ -106,9 +117,9 @@ class _CapturingVoice:
         self._voice = voice
         self.captured: list[str] = []
 
-    async def say(self, text: str) -> None:
+    async def say(self, text: str, *, allow_interruptions: bool = True) -> None:
         self.captured.append(text)
-        await self._voice.say(text)  # type: ignore[union-attr]
+        await self._voice.say(text, allow_interruptions=allow_interruptions)  # type: ignore[union-attr]
 
 
 class _MouthAdapter:
@@ -254,6 +265,10 @@ class SessionDriver:
         # Budget config
         self._budget_cfg: BudgetConfig = budget_config_from_ai_config()
 
+        # Anti-stall threshold (env-driven; consecutive non-answer turns before advancing)
+        from app.ai.config import ai_config  # local import keeps the driver livekit-free
+        self._stall_threshold: int = ai_config.engine_stall_reposes_before_advance
+
         # Per-question map for id lookups
         self._q_by_id: dict[str, QuestionConfig] = {q.id: q for q in config.stage.questions}
 
@@ -266,8 +281,10 @@ class SessionDriver:
         self._active_q: QuestionConfig | None = None  # the question currently on the floor
         self._probes_used: dict[str, list[int]] = {}   # question_id → list of probe indices fired
         self._thread_turn_counts: dict[str, int] = {}  # question_id → turns spent on its thread
-        self._last_agent_line: str = ""                # for on_the_floor
+        self._last_agent_line: str = ""                # for on_the_floor (last QUESTION asked)
         self._is_on_probe: bool = False                # whether the floor is a probe (not main Q)
+        self._floor_interrupted: bool = False          # the floor question was cut off mid-delivery (P2)
+        self._stall_count: int = 0                     # consecutive non-answer turns on the active question (anti-stall)
 
     # -----------------------------------------------------------------------
     # Timing helpers
@@ -352,6 +369,29 @@ class SessionDriver:
         return ThreadClosure.tapped_out
 
     # -----------------------------------------------------------------------
+    # intro — warm greeting + job brief, BEFORE the first question
+    # -----------------------------------------------------------------------
+
+    async def intro(self) -> str:
+        """Speak the opening greeting + one-line job brief, then return (the caller
+        calls opener() right after to ask the first question).
+
+        Spoken NON-INTERRUPTIBLY so the candidate hears the whole greeting, and it
+        ends on a confident statement that flows into the first question — never a
+        "shall we?" (enforced by intro.txt). Records the agent transcript turn.
+        Never raises (the mouth returns a canned greeting on any failure)."""
+        intro_text = await self._mouth.intro(  # type: ignore[union-attr]
+            candidate_name=self._config.candidate.name,
+            role_summary=self._config.role_summary,
+            company_about=self._config.company.about,
+        )
+        await self._voice.say(intro_text, allow_interruptions=False)  # type: ignore[union-attr]
+        self._record_agent_turn(intro_text, turn_ref="intro", question_id=None)
+        self._add_to_recent_openers(intro_text)
+        _log.info("driver.intro", chars=len(intro_text))
+        return intro_text
+
+    # -----------------------------------------------------------------------
     # opener — first agent turn
     # -----------------------------------------------------------------------
 
@@ -413,6 +453,7 @@ class SessionDriver:
         )
         real_text = await self._mouth.real_line(mouth_input)  # type: ignore[union-attr]
         await self._voice.say(real_text)  # type: ignore[union-attr]
+        self._floor_interrupted = bool(getattr(self._voice, "last_interrupted", False))
         self._last_agent_line = real_text
         self._add_to_recent_openers(real_text)
 
@@ -456,6 +497,18 @@ class SessionDriver:
             _log.warning("driver.handle_turn.no_active_question", turn_ref=turn_ref)
             return True
 
+        # Backchannel gate (no LLM): a turn made entirely of engagement tokens
+        # ("mm", "yeah", "uh-huh") is not a real turn — stay silent, keep the floor,
+        # don't run the brain. An interrupted floor stays interrupted for the next
+        # substantive turn. (gen-2 parity.)
+        if is_backchannel(utterance):
+            _log.info(
+                "engine.driver.backchannel_dropped",
+                turn_ref=turn_ref,
+                utterance=(utterance or "")[:40],
+            )
+            return False
+
         # 1. Record candidate turn
         self._transcript.append(
             TranscriptTurn(
@@ -488,6 +541,8 @@ class SessionDriver:
             all_specs=self._all_specs,
             transcript_window=self._build_transcript_window(),
             budget_phase=compute_budget_phase(self._time_remaining_s(), self._budget_cfg),
+            floor_interrupted=self._floor_interrupted,  # P2: was the last question cut off?
+            stalled=self._stall_count >= self._stall_threshold,  # anti-stall: dodged this question too many times?
         )
 
         bridge_request = BridgeRequest(
@@ -545,11 +600,40 @@ class SessionDriver:
                 question_id=q_id,
             )
 
-        # Track the real line (last spoken) as on_the_floor and for recent openers
+        # recent_openers (sentence-start variety) tracks EVERY spoken line; the
+        # "question on the floor" (on_the_floor → used by repeat/clarify) tracks
+        # ONLY question acts (ask/probe). A non-question filler — hold, reassure,
+        # confirm, answer_meta, redirect, clarify — must NOT clobber the floor, or
+        # a later `repeat` replays the filler ("Take your time, no rush.") instead
+        # of the real question. (gen-2 parity: non-question acts leave the floor;
+        # P0 fix for the stuck-loop, session b3c16e7c.)
         if capturing.captured:
             real_line_text = capturing.captured[-1]
-            self._last_agent_line = real_line_text
             self._add_to_recent_openers(real_line_text)
+            if decision.directive.act in (DirectiveAct.ask, DirectiveAct.probe):
+                self._last_agent_line = real_line_text
+
+        # P2: track whether the floor question's DELIVERY was cut off. Only the
+        # question-delivering acts (ask/probe/repeat) update it — they speak THE floor
+        # question, so their interruption status is "did the candidate hear it?". A
+        # non-question act (hold/clarify/…) doesn't re-deliver, so an un-heard question
+        # stays flagged until it is successfully re-delivered. (last_interrupted is set
+        # by the interrupt-aware voice in agent.py; absent in tests → False.)
+        if decision.directive.act in (DirectiveAct.ask, DirectiveAct.probe, DirectiveAct.repeat):
+            self._floor_interrupted = bool(getattr(self._voice, "last_interrupted", False))
+
+        # Anti-stall counter: a non-answer turn (clarify / repeat / redirect / hold /
+        # answer_meta with NO gradeable answer) means the candidate dodged/didn't answer
+        # this question — increment. ANY real answer (observations) or a forward move
+        # (ask / probe) resets it, so a genuinely-confused candidate who clarifies then
+        # answers is never flagged. (confirm = an STT re-check, not a dodge → resets.)
+        if (
+            decision.directive.act in _NON_ANSWER_ACTS
+            and not decision.observations
+        ):
+            self._stall_count += 1
+        else:
+            self._stall_count = 0
 
         # 5. Update session state based on decision
         act = decision.directive.act
@@ -589,18 +673,16 @@ class SessionDriver:
             )
 
         elif act == DirectiveAct.probe:
-            # Probe on current question — track which probe index was fired
-            # (best-effort: the directive.say is the follow_up text; we match it to the index)
+            # Probe on current question — track which follow_up TEMPLATE area was
+            # adapted. The probe text is now COMPOSED (no longer a verbatim follow_up),
+            # so the brain reports the template index directly on the decision instead
+            # of us string-matching the spoken line.
             self._is_on_probe = True
-            probe_text = decision.directive.say or ""
-            follow_ups = self._active_q.follow_ups
-            try:
-                fired_idx = follow_ups.index(probe_text)
+            fired_idx = decision.probe_index
+            if fired_idx is not None and 0 <= fired_idx < len(self._active_q.follow_ups):
                 probes = self._probes_used.setdefault(q_id, [])
                 if fired_idx not in probes:
                     probes.append(fired_idx)
-            except ValueError:
-                pass  # can't match — best-effort only
         else:
             # clarify / redirect / reassure / answer_meta / repeat — stay on same Q, no probe
             self._is_on_probe = False

@@ -22,9 +22,11 @@ def test_run_is_lazily_importable():
     assert callable(run)
 
 
-def test_skeleton_packages_import():
-    import app.modules.interview_engine.ear  # noqa: F401
+def test_core_packages_import():
     import app.modules.interview_engine.brain  # noqa: F401
     import app.modules.interview_engine.mouth  # noqa: F401
     from app.modules.interview_engine.notes import NoteLog  # noqa: F401
+    from app.modules.interview_engine.turn_source import (  # noqa: F401
+        CommittedTurnSource,
+    )
     assert NoteLog is not None

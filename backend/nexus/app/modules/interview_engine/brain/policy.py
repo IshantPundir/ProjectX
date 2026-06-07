@@ -102,6 +102,17 @@ class KnockoutTracker:
         # Cap at the last index (confirmed) to stay idempotent.
         self._steps[signal] = min(idx + 1, len(_KNOCKOUT_PROGRESSION) - 1)
 
+    def confirm(self, signal: str) -> None:
+        """Drive *signal* straight to ``confirmed`` in one call (idempotent).
+
+        Used by the brain-driven verified-knockout close: the brain has already
+        established absence in-conversation (probe → reflect-back confirm), so the
+        tracker jumps directly to ``confirmed`` rather than walking the reactive
+        ``probe → check_alternatives → reflect_confirm`` ladder one close-attempt at
+        a time. Never raises.
+        """
+        self._steps[signal] = len(_KNOCKOUT_PROGRESSION) - 1
+
     def is_confirmed(self, signal: str) -> bool:
         """Return True iff *signal* has reached ``confirmed``."""
         return self.current_step(signal) == KnockoutStep.confirmed

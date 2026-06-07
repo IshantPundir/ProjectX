@@ -1,19 +1,19 @@
-"""Interview Engine — Gen-3 skeleton (LiveKit entrypoint + worker bootstrap).
+"""Interview Engine — Gen-3 LiveKit entrypoint + worker bootstrap.
 
-Gen-3 engine rewrite. The conversation/control loop (`_drive`) is a stub that
-raises NotImplementedError — behavior arrives in later phases (B–F):
-  - Phase B: Ear (manual turn control + VAD/SmartTurn/MultilingualModel fusion)
-  - Phase C: Drive loop (bridge ∥ brain → mouth + NoteLog accumulation)
-  - Phase D: Brain (BrainTurnInput → BrainTurnOutput + Directive resolver)
-  - Phase E: Mouth (persona rendering, DirectiveAct → natural spoken Indian English)
-  - Phase F: Wire end-to-end + persist SessionEvidence + manual talk-test
-
-Architecture:
-  - `run()` builds the LiveKit `AgentSession` with manual turn detection
-    (the Ear owns turn commits via `session.commit_user_turn()` — Phase B).
-  - `_drive(session, ...)` is the stub for the three-tier loop; Phase F fills it in.
-  - `ear/`, `brain/`, `mouth/` are empty skeleton packages (behavior in B/D/E).
-  - `notes.py` is the NoteLog skeleton (behavior in Phase C).
+Gen-3 three-tier engine on LiveKit NATIVE turn detection (Path A+):
+  - `run()` builds the `AgentSession` with the native turn detector
+    (`MultilingualModel`) + dynamic endpointing. The detector reads the live
+    STT stream to decide end-of-turn, then fires `on_user_turn_completed` with
+    the FULL final transcript — EOU and the transcript arrive together (no
+    commit/STT race, no partial / one-turn lag).
+  - `_EngineAgent.on_user_turn_completed` submits each committed transcript to a
+    per-session `CommittedTurnSource` and raises `StopResponse` (gen-3 owns all
+    output; the built-in LLM reply never fires).
+  - `_drive(session, turn_source, ...)` speaks the opener, then consumes
+    committed turns → `SessionDriver.handle_turn` (bridge ∥ brain → mouth +
+    NoteLog), and persists `SessionEvidence` on close.
+  - `brain/`, `mouth/`, `notes.py`, `driver.py`, `loop.py` hold the
+    LiveKit-free orchestration core.
 
 Invariant (load-bearing): this module imports livekit and is ONLY ever
 imported lazily via interview_engine.__getattr__('run' / 'server') inside the
@@ -40,6 +40,9 @@ from livekit.agents import (
     room_io,
 )
 from livekit.plugins import silero as _silero_vad  # noqa: F401  — register for download-files
+from livekit.plugins import (
+    turn_detector as _turn_detector,  # noqa: F401  — register turn-detector weights for download-files (the native EOU model)
+)
 from opentelemetry.trace import set_tracer_provider as _otel_set_global_provider
 
 # Bind the Dramatiq broker to settings.redis_url FIRST (before any @dramatiq.actor
@@ -61,10 +64,7 @@ from app.ai.realtime import (
 )
 from app.config import settings
 from app.database import get_bypass_session
-from app.modules.interview_engine.ear.ladder import ladder_config_from_ai_config
-from app.modules.interview_engine.ear.orchestrator import Ear
-from app.modules.interview_engine.ear.smart_turn import TurnAudioBuffer
-from app.modules.interview_engine.ear.vad_gate import SpeechActivity
+from app.modules.interview_engine.turn_source import CommittedTurnSource
 from app.modules.interview_runtime import (
     SessionConfig,
     build_session_config,
@@ -134,310 +134,69 @@ def assemble_v2_keyterms(*, candidate_first_name: str, bank_keyterms: list[str])
 
 
 # ---------------------------------------------------------------------------
-# LiveKit Ear glue — wired here; real-event behavior validated in Phase F talk-test
+# LiveKit native-turn-detection glue (Path A+) — validated in the Phase F talk-test
 # ---------------------------------------------------------------------------
 
-# Poll interval while the candidate is paused (state=listening) and the agent
-# is not speaking. We re-evaluate the fusion ladder at this cadence.
-# F3-VALIDATE: tune empirically alongside the ladder thresholds.
-_EAR_POLL_INTERVAL_S: float = 0.120  # 120ms
+class _EngineAgent(Agent):
+    """Gen-3 engine Agent under LiveKit NATIVE turn detection (Path A+).
 
+    The ``AgentSession`` runs the native turn detector (``MultilingualModel``),
+    which decides end-of-turn from the LIVE STT stream — so EOU and the final
+    transcript are produced together, on the same clock. There is no
+    ``commit_user_turn`` race, no partial transcript, and no one-turn lag (the
+    failure mode of the retired manual Ear).
 
-class _EarAgent(Agent):
-    """Gen-3 engine Agent — extends the base Agent with:
+    The only customisation is ``on_user_turn_completed``: the framework calls it
+    AFTER the turn detector confirms the turn ended and BEFORE the built-in
+    reply, with ``new_message`` carrying the FULL final transcript. We submit
+    that transcript to the per-session ``CommittedTurnSource`` (the drive loop
+    consumes it and runs bridge ∥ brain → mouth) and raise ``StopResponse`` so
+    the AgentSession's built-in LLM reply never fires — gen-3 owns ALL output
+    via the SessionDriver → Mouth → ``session.say()``.
 
-    1. ``stt_node`` override that tees every incoming ``rtc.AudioFrame`` into
-       the ``Ear``'s ``TurnAudioBuffer`` so the Smart Turn model can predict
-       end-of-utterance probability on live audio. The INPUT audio stream is
-       wrapped in an async generator that observes each frame before handing
-       the (unchanged) stream to the default STT node. This is the correct
-       pattern: ``stt_node`` CONSUMES the audio AsyncIterable[AudioFrame] and
-       YIELDS speech events — the tee must wrap the INPUT, not iterate the
-       OUTPUT events.
-
-    2. ``on_user_turn_completed`` override that raises ``StopResponse`` to
-       suppress the AgentSession's built-in auto-reply. Gen-3 drives all
-       output itself via the SessionDriver → Mouth → ``session.say()``; the
-       built-in LLM reply node must never fire or the agent double-speaks.
-
-    Design rules:
-    - The tee MUST NEVER block or drop the audio passthrough. Any buffer error
-      is caught and logged; the yield always continues regardless.
-    - Conversion from LiveKit's int16 PCM to float32 normalised [-1, 1] is
-      done here so ``TurnAudioBuffer.append()`` always receives float32 mono.
-    - Resampling to 16kHz is done when the frame's ``sample_rate != 16000``.
-      In practice LiveKit delivers 48kHz frames from the browser; the
-      conversion is a lightweight linear downsample via numpy.
+    An empty / whitespace-only transcript is dropped by the turn source, so a
+    silent or empty STT final never produces a spurious no-op turn.
     """
 
-    def __init__(self, ear: Ear, **kwargs) -> None:
+    def __init__(self, *, turn_source: CommittedTurnSource, **kwargs) -> None:
         super().__init__(**kwargs)
-        self._ear = ear
+        self._turn_source = turn_source
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:  # type: ignore[override]
-        """Suppress the built-in auto-reply.
-
-        Gen-3 drives all agent output via the SessionDriver → Mouth →
-        ``session.say()``. Raising ``StopResponse`` here prevents the
-        AgentSession's LLM node from generating a reply automatically,
-        which would cause double-speak (the built-in LLM reply AND the
-        driver's ``say()`` would both fire for the same turn).
-        """
+        """Feed the committed turn to the drive loop; suppress the built-in reply."""
+        text = (getattr(new_message, "text_content", "") or "").strip()
+        accepted = self._turn_source.submit(text)
+        log.info(
+            "engine.turn.committed",
+            accepted=accepted,
+            transcript_len=len(text),
+        )
         raise StopResponse()
 
-    async def stt_node(self, audio, model_settings):  # type: ignore[override]
-        """Tee each incoming AudioFrame into the Ear buffer, then pass onward.
 
-        The INPUT ``audio`` AsyncIterable[AudioFrame] is wrapped in a local
-        async generator that observes each frame (converting int16→float32 mono
-        and appending to the Ear buffer) before yielding it unchanged. The
-        wrapped stream is then passed to ``Agent.default.stt_node`` which
-        consumes the audio and yields speech events — those events are yielded
-        through to the caller.
-
-        This is the correct tee pattern: we wrap the INPUT stream, not iterate
-        the OUTPUT speech events (which are STT results, not AudioFrames).
-
-        F3-VALIDATE: verify the float32/resampling conversion on real 48kHz
-        LiveKit frames during the Phase F talk-test. Confirm the stt_node
-        async generator signature (audio: AsyncIterable[AudioFrame], yields
-        speech events) against the current livekit-agents version.
-        """
-        import numpy as _np
-
-        async def _tee_audio():
-            """Wrap audio stream: observe each frame for the Ear, then yield it."""
-            async for frame in audio:
-                # Tee into the Ear — wrapped in try/except so any buffer
-                # error can never break the STT audio passthrough.
-                try:
-                    # Extract raw samples — LiveKit AudioFrame stores int16 PCM.
-                    # F3-VALIDATE: confirm attribute names on real livekit AudioFrame.
-                    raw = getattr(frame, "data", None)
-                    sr: int = getattr(frame, "sample_rate", 16000)
-                    num_channels: int = getattr(frame, "num_channels", 1)
-
-                    if raw is not None:
-                        # Convert int16 bytes → float32 numpy [-1, 1]
-                        pcm = _np.frombuffer(raw, dtype=_np.int16).astype(_np.float32) / 32768.0
-
-                        # Mix down to mono if needed
-                        if num_channels > 1:
-                            pcm = pcm.reshape(-1, num_channels).mean(axis=1)
-
-                        # Resample to 16kHz if the frame rate differs
-                        if sr != 16000 and len(pcm) > 0:
-                            target_len = int(len(pcm) * 16000 / sr)
-                            if target_len > 0:
-                                indices = _np.linspace(0, len(pcm) - 1, target_len)
-                                pcm = _np.interp(
-                                    indices, _np.arange(len(pcm)), pcm
-                                ).astype(_np.float32)
-
-                        self._ear.append_audio(pcm)
-                except Exception:  # noqa: BLE001 — tee error must never break STT
-                    log.warning("engine.ear.audio_tee_error", exc_info=True)
-
-                yield frame
-
-        # Pass the tee-wrapped audio stream to the default STT node and yield
-        # its speech events through to the AgentSession.
-        async for ev in Agent.default.stt_node(self, _tee_audio(), model_settings):
-            yield ev
-
-
-def build_ear() -> Ear:
-    """Assemble a fresh ``Ear`` from env-driven config.
-
-    Called once per session inside ``run()``. Composes:
-    - ``EarLadderConfig`` from ``AIConfig`` (env-driven thresholds)
-    - ``TurnAudioBuffer`` at 16kHz with lazy Smart Turn detector
-    - ``SpeechActivity`` (pure pause clock)
-    - ``MultilingualModel`` (text-EOU) built via ``build_turn_detector``
-
-    Falls back to ``eou_model=None`` (Smart-Turn-only mode) if the
-    MultilingualModel raises — the ladder has an explicit ST-only path.
-
-    F3-VALIDATE: confirm the MultilingualModel loads correctly in the
-    engine container and that ``predict_end_of_turn`` is compatible with
-    the ``text_eou_probability`` wrapper in ``ear/vad_gate.py``.
+class _InterruptAwareVoice:
+    """Wraps the AgentSession so the driver can tell whether the line it just spoke
+    was CUT OFF by the candidate (barge-in). ``session.say()`` returns a
+    ``SpeechHandle``; we await it (playout) and record ``handle.interrupted``. The
+    SessionDriver reads ``.last_interrupted`` after speaking a question to drive the
+    P2 floor-interrupted recovery. Satisfies the driver's duck-typed Voice protocol
+    (``say``) and never raises into the drive loop.
     """
-    cfg = ladder_config_from_ai_config()
-    buffer = TurnAudioBuffer(sample_rate=16000, max_seconds=8.0)  # lazy ONNX
-    activity = SpeechActivity()
 
-    eou_model: object | None = None
-    try:
-        eou_model = build_turn_detector(unlikely_threshold=ai_config.engine_v2_turn_detector_unlikely_threshold)
-        log.info("engine.ear.eou_model.built", model="MultilingualModel")
-    except Exception:  # noqa: BLE001
-        # F3-VALIDATE: if MultilingualModel is unavailable in dev, ST-only is fine.
-        log.warning(
-            "engine.ear.eou_model.unavailable — falling back to Smart-Turn-only",
-            exc_info=True,
-        )
+    def __init__(self, session: "AgentSession") -> None:
+        self._session = session
+        self.last_interrupted: bool = False
 
-    return Ear(
-        cfg=cfg,
-        buffer=buffer,
-        activity=activity,
-        eou_model=eou_model,
-    )
-
-
-def setup_ear(
-    session: "AgentSession",
-    ear: Ear,
-    *,
-    clock,
-    on_commit,
-    terminal_event: "asyncio.Event",
-) -> "asyncio.Task":  # type: ignore[name-defined]
-    """Register LiveKit event hooks and start the background Ear poll task.
-
-    This wires the ``Ear`` into a running ``AgentSession``:
-
-    1. ``user_state_changed`` → ``ear.on_user_state(ev.new_state, clock())``
-       The Ear updates ``SpeechActivity`` and resets the buffer on speaking-start.
-
-    2. Barge-in: when the candidate starts speaking while the agent is talking,
-       call ``session.interrupt()`` so the Mouth stops mid-sentence.
-
-    3. A background async poll task runs while the user is paused
-       (state=listening) and the agent is not speaking. Every
-       ``_EAR_POLL_INTERVAL_S`` it calls ``ear.evaluate()``. On
-       ``EarDecision.commit``, it calls the OFFICIAL manual-turn commit:
-       ``transcript = await session.commit_user_turn(...)`` which returns the
-       full committed transcript directly (no event subscription needed). The
-       transcript is then forwarded to ``on_commit(transcript)`` which feeds it
-       to the SessionDriver. On ``EarDecision.hold_cue`` the patience cue is
-       played. On ``EarDecision.wait`` nothing happens.
-
-    Parameters
-    ----------
-    session:
-        The running LiveKit ``AgentSession`` (turn_detection="manual").
-    ear:
-        The per-session ``Ear`` instance (must already be constructed).
-    clock:
-        Callable that returns the current time in milliseconds (``_now_ms``).
-    on_commit:
-        Async callable ``(transcript: str) -> bool``. Called after each
-        committed turn with the full transcript text. Returns ``True`` if the
-        session has reached a terminal state (the poll loop should stop).
-    terminal_event:
-        ``asyncio.Event`` that is set when the session is terminal. The poll
-        loop watches this to exit cleanly alongside the drive loop.
-
-    Returns the background ``asyncio.Task`` so the caller (``_drive``) can
-    cancel it on session close.
-
-    F3-VALIDATE: the ``agent_state`` / ``is_speaking`` attribute on the session
-    for detecting whether the agent is talking. Confirm event name
-    ``"user_state_changed"`` and ``UserStateChangedEvent.new_state`` attribute
-    on real LiveKit sessions during the Phase F talk-test.
-    """
-    # Mutable state shared by the hook and the poll task.
-    _user_state: list[str] = ["away"]  # start as away until first speaking event
-
-    def _on_user_state_changed(ev) -> None:
-        new_state: str = ev.new_state  # F3-VALIDATE: attribute name on real event
-        now_ms: int = clock()
-        _user_state[0] = new_state
-
-        ear.on_user_state(new_state, now_ms)
-
-        # Barge-in: candidate spoke while agent was talking → interrupt the agent.
-        # F3-VALIDATE: confirm the agent-speaking predicate on AgentSession.
-        if new_state == "speaking":
-            try:
-                agent_is_speaking = getattr(session, "agent_state", None) == "speaking"
-            except Exception:  # noqa: BLE001
-                agent_is_speaking = False
-            if agent_is_speaking:
-                session.interrupt()
-                log.info("engine.ear.barge_in")
-
-    # F3-VALIDATE: confirm event name on real LiveKit AgentSession.
-    session.on("user_state_changed", _on_user_state_changed)
-
-    async def _poll_loop() -> None:
-        """While paused (state=listening), tick the Ear and act on decisions.
-
-        On ``commit``: calls ``session.commit_user_turn()`` (the OFFICIAL
-        manual-turn API — returns the transcript directly), then forwards the
-        transcript to ``on_commit``. If ``on_commit`` signals terminal, sets
-        the terminal_event so the drive loop can exit cleanly.
-
-        On ``hold_cue``: delegates to ``ear.act`` (plays patience cue once).
-        On ``wait``: no-op.
-        """
-        while not terminal_event.is_set():
-            await asyncio.sleep(_EAR_POLL_INTERVAL_S)
-
-            if terminal_event.is_set():
-                break
-
-            if _user_state[0] != "listening":
-                # Candidate is speaking or away — nothing to do.
-                continue
-
-            # F3-VALIDATE: confirm agent-speaking predicate on AgentSession.
-            try:
-                agent_is_speaking = getattr(session, "agent_state", None) == "speaking"
-            except Exception:  # noqa: BLE001
-                agent_is_speaking = False
-
-            if agent_is_speaking:
-                # Don't commit while the agent is mid-sentence.
-                continue
-
-            # F3-VALIDATE: build chat_ctx from session.history for text-EOU.
-            # Passing None is safe — the ladder falls back to Smart-Turn-only.
-            chat_ctx = getattr(session, "history", None)
-
-            try:
-                decision, _ = await ear.evaluate(
-                    now_ms=clock(),
-                    chat_ctx=chat_ctx,
-                )
-            except Exception:  # noqa: BLE001 — eval errors must never crash the session
-                log.warning("engine.ear.poll_error", exc_info=True)
-                continue
-
-            if decision.name == "commit":
-                # OFFICIAL manual-turn pattern: commit_user_turn() RETURNS the
-                # transcript directly. No event subscription needed.
-                # F3-VALIDATE: confirm transcript_timeout / stt_flush_duration
-                # keyword args and return type on the current livekit-agents version.
-                try:
-                    transcript = await session.commit_user_turn(
-                        transcript_timeout=5.0,
-                        stt_flush_duration=2.0,
-                    )
-                    ear._buffer.reset()  # clear after commit
-                    log.info("engine.ear.committed", transcript_len=len(transcript or ""))
-                    if transcript and transcript.strip():
-                        is_terminal = await on_commit(transcript)
-                        if is_terminal:
-                            terminal_event.set()
-                except asyncio.CancelledError:
-                    raise
-                except Exception:  # noqa: BLE001
-                    log.warning("engine.ear.commit_error", exc_info=True)
-
-            elif decision.name == "hold_cue":
-                # Delegate to ear.act for idempotent patience-cue playback.
-                # act() is a no-op for commit (commit is handled above).
-                try:
-                    await ear.act(session, decision)
-                except Exception:  # noqa: BLE001
-                    log.warning("engine.ear.hold_cue_error", exc_info=True)
-
-            # EarDecision.wait → no-op; poll again next tick.
-
-    poll_task = asyncio.create_task(_poll_loop())
-    return poll_task
+    async def say(self, text: str, *, allow_interruptions: bool = True) -> None:
+        maybe = self._session.say(text, allow_interruptions=allow_interruptions)
+        # say() returns a SpeechHandle (awaitable); be robust if a version returns
+        # a coroutine that resolves to the handle.
+        handle = await maybe if asyncio.iscoroutine(maybe) else maybe
+        try:
+            await handle  # wait for playout (or interruption)
+        except Exception:  # noqa: BLE001 — a speech error must not break the turn
+            pass
+        self.last_interrupted = bool(getattr(handle, "interrupted", False))
 
 
 # ---------------------------------------------------------------------------
@@ -446,33 +205,32 @@ def setup_ear(
 
 async def _drive(
     session: AgentSession,
-    ear: Ear,
+    turn_source: CommittedTurnSource,
     config: SessionConfig,
     ctx: JobContext,
     *,
     tenant_id: uuid.UUID,
     correlation_id: str,
 ) -> None:
-    """Gen-3 three-tier drive loop.
+    """Gen-3 three-tier drive loop (Path A+ — native turn detection).
 
-    Builds a SessionDriver from the config + session, wires the Ear event
-    hooks + poll task (via ``setup_ear``), speaks the opener, then waits for
-    the terminal event (set by the Ear poll loop when ``on_commit`` returns
-    True) or a 5-minute silence timeout.
+    Builds a SessionDriver from the config + session, speaks the opener, then
+    consumes committed candidate turns from the ``CommittedTurnSource`` until a
+    terminal directive, a candidate disconnect, or an inactivity timeout.
 
-    Commit flow (OFFICIAL manual-turn pattern):
-      Ear poll loop detects EarDecision.commit
-        → ``session.commit_user_turn(...)`` (returns transcript directly)
-        → ``on_commit(transcript)`` → ``driver.handle_turn(...)``
-        → returns True when terminal
-        → poll loop sets terminal_event
-        → _drive awaits terminal_event and calls finalize(completed)
+    Turn flow (native turn detection):
+      LiveKit turn detector confirms end-of-turn (off the live STT stream)
+        → ``_EngineAgent.on_user_turn_completed(new_message)`` submits the FULL
+          final transcript to ``turn_source`` and raises ``StopResponse``
+        → the consume task here pulls it: ``on_commit(transcript)``
+          → ``driver.handle_turn(...)`` → returns True when terminal
+        → terminal_event set → _drive finalizes.
 
-    No ``user_input_transcribed`` event subscription — the transcript is
-    captured synchronously from ``commit_user_turn()``'s return value.
+    Because the turn detector reads STT directly, the transcript handed to
+    ``handle_turn`` is always complete — no ``commit_user_turn`` race, no
+    partial/one-turn-lag (the failure mode of the retired manual Ear).
 
     Thin glue: all orchestration logic lives in driver.py (SessionDriver).
-    Live event attribute names are marked # F3-VALIDATE.
     """
     from datetime import UTC, datetime
 
@@ -496,36 +254,39 @@ async def _drive(
             # record_session_evidence commits internally; no extra commit needed.
 
     # ── Build the SessionDriver (assembles brain/mouth/bridge/notelog/projection) ──
+    # Wrap the session so the driver can read whether a spoken question was cut off
+    # (P2 floor-interrupted recovery) — still satisfies the Voice protocol.
     driver = build_session_driver(
         config,
-        voice=session,         # AgentSession satisfies the Voice protocol (has .say())
+        voice=_InterruptAwareVoice(session),
         persist=_persist,
         started_at=started_at,
     )
 
     # ── Turn counter + terminal signal ───────────────────────────────────────
-    # The terminal_event is set by the poll loop (via on_commit returning True)
+    # The terminal_event is set by the consume task (via on_commit returning True)
     # or by the silence-timeout path below.
     terminal_event: asyncio.Event = asyncio.Event()
     _turn_id: list[int] = [0]
     _finalize_reason: list[CompletionReason] = [CompletionReason.completed]
     _handle_turn_error: list[bool] = [False]
 
-    # ── on_commit: called by the poll loop after each successful commit ───────
+    # ── on_commit: called by the consume task for each committed turn ─────────
     _last_activity_s: list[float] = [time.monotonic()]
 
     async def on_commit(transcript: str) -> bool:
         """Forward a committed transcript to the SessionDriver.
 
-        Called by the Ear poll loop after ``session.commit_user_turn()``
-        returns a non-empty transcript. Returns True when the session is
-        terminal (the poll loop will set terminal_event and stop).
+        Called by the consume task with the FULL final transcript of a committed
+        candidate turn. Returns True when the session is terminal (the consume
+        task then sets terminal_event and stops).
         """
         _last_activity_s[0] = time.monotonic()  # a committed turn = activity
         _turn_id[0] += 1
         turn_ref = f"t-{_turn_id[0]}"
-        # F3-VALIDATE: timing — commit_user_turn does not return start/end ms;
-        # use a coarse wall-clock span anchored to "now" for the turn record.
+        # The native turn detector does not hand us word-level start/end ms; use
+        # a coarse wall-clock span anchored to "now" for the turn record. (Word
+        # timing for the evidence contract comes from aligned transcripts later.)
         now_ms = _now_ms()
         span = TimeSpan(start_ms=max(0, now_ms - 1000), end_ms=now_ms)
 
@@ -549,15 +310,6 @@ async def _drive(
             _finalize_reason[0] = CompletionReason.completed
         return is_terminal
 
-    # ── Wire the Ear (event hooks + poll task) ───────────────────────────────
-    poll_task = setup_ear(
-        session,
-        ear,
-        clock=_now_ms,
-        on_commit=on_commit,
-        terminal_event=terminal_event,
-    )
-
     # ── Clean shutdown on candidate disconnect ───────────────────────────────
     # The candidate leaving — voluntarily, on a network drop, OR because proctoring
     # deleted the room — must end the screen PROMPTLY and finalize cleanly (record
@@ -573,19 +325,44 @@ async def _drive(
         if _finalize_reason[0] == CompletionReason.completed:
             _finalize_reason[0] = CompletionReason.candidate_ended
         terminal_event.set()
+        turn_source.close()  # unblock the consume task's pending get()
 
     try:
         ctx.room.on("participant_disconnected", _on_participant_disconnected)
     except Exception:  # noqa: BLE001 — never let event wiring break the run
         log.warning("engine.drive.disconnect_hook_failed", exc_info=True)
 
-    # ── Speak the opener ─────────────────────────────────────────────────────
+    # ── Speak the warm intro (greeting + job brief), then the opener question ─
+    # The intro is non-interruptible and ends on a statement that flows straight
+    # into the first question (no "shall we?"). Opener sets the first active
+    # question. Both are best-effort — a failure must not abort the session.
+    try:
+        await driver.intro()
+    except Exception:  # noqa: BLE001
+        log.warning("engine.drive.intro_failed", exc_info=True)
     try:
         await driver.opener()
     except Exception:  # noqa: BLE001
         log.warning("engine.drive.opener_failed", exc_info=True)
 
-    # ── Wait for terminal (commit-driven) or candidate INACTIVITY ────────────
+    # ── Consume committed turns from the turn source ─────────────────────────
+    # _EngineAgent.on_user_turn_completed feeds the full final transcript here;
+    # we forward each to the SessionDriver. A None means the source was closed
+    # (session ending) → stop. Started AFTER the opener so handle_turn always
+    # has an active question on the floor.
+    async def _consume_turns() -> None:
+        while not terminal_event.is_set():
+            utterance = await turn_source.get()
+            if utterance is None:
+                break  # source closed — session ending
+            is_terminal = await on_commit(utterance)
+            if is_terminal:
+                terminal_event.set()
+                break
+
+    consume_task: asyncio.Task = asyncio.create_task(_consume_turns())
+
+    # ── Wait for terminal (turn-driven) or candidate INACTIVITY ──────────────
     # The timeout is an INACTIVITY window that RESETS on every committed turn —
     # NOT an absolute session cap. An actively-talking candidate runs as long as
     # they keep answering; the resolver closes the screen when it runs out of
@@ -602,6 +379,7 @@ async def _drive(
             )
             _finalize_reason[0] = CompletionReason.unresponsive
             terminal_event.set()
+            turn_source.close()  # unblock the consume task
             break
         try:
             await asyncio.wait_for(terminal_event.wait(), timeout=remaining)
@@ -616,9 +394,10 @@ async def _drive(
         log.warning("engine.drive.finalize_error", exc_info=True)
 
     # ── Cleanup ───────────────────────────────────────────────────────────────
-    poll_task.cancel()
+    turn_source.close()  # idempotent — ensures the consume task is unblocked
+    consume_task.cancel()
     try:
-        await poll_task
+        await consume_task
     except asyncio.CancelledError:
         pass
 
@@ -642,11 +421,14 @@ async def run(
     tenant_id: uuid.UUID,
     correlation_id: str,
 ) -> None:
-    """Per-session engine run: connect, build the AgentSession (manual turn detection),
-    start the heartbeat, then delegate to the gen-3 drive loop (_drive stub in Phase A).
+    """Per-session engine run: connect, build the AgentSession (native turn detection),
+    start the heartbeat, then delegate to the gen-3 drive loop (_drive).
 
-    The AgentSession is built with `turn_detection="manual"` — the Ear (Phase B) will
-    own all turn commits via `session.commit_user_turn()`. preemptive_generation is OFF
+    The AgentSession uses LiveKit's native turn detector (`MultilingualModel`),
+    which decides end-of-turn off the live STT stream + dynamic endpointing — so
+    EOU and the final transcript are produced together (no commit/STT race).
+    `_EngineAgent.on_user_turn_completed` feeds each committed turn to the drive
+    loop via a `CommittedTurnSource`. preemptive_generation is OFF
     (quality-before-latency lock, same as gen-2).
     """
     started_at = time.monotonic()
@@ -667,9 +449,13 @@ async def run(
         bank_keyterms=list(config.keyterms),
     )
 
-    # Gen-3 uses manual turn detection: the Ear owns when to commit the user's
-    # turn via session.commit_user_turn(). No endpointing= arg — manual mode
-    # owns timing entirely; the turn detector is not used here.
+    # Gen-3 (Path A+) uses LiveKit NATIVE turn detection: the MultilingualModel
+    # turn detector reads the live STT stream + VAD to decide end-of-turn, then
+    # fires on_user_turn_completed with the FULL final transcript — so EOU and
+    # the transcript are produced together (no commit_user_turn race / partial /
+    # one-turn lag). Dynamic endpointing adapts the post-speech wait to the
+    # candidate's own pause statistics (patient with disfluent / thinking
+    # speakers). All thresholds are env-driven (F3-tunable, config-only).
     session = AgentSession(
         stt=build_stt_plugin(keyterms=keyterms),
         llm=build_mouth_llm_plugin(),
@@ -677,7 +463,14 @@ async def run(
         vad=ctx.proc.userdata["vad"],
         user_away_timeout=None,
         turn_handling=TurnHandlingOptions(
-            turn_detection="manual",
+            turn_detection=build_turn_detector(
+                unlikely_threshold=ai_config.engine_v2_turn_detector_unlikely_threshold,
+            ),
+            endpointing={
+                "mode": ai_config.engine_endpointing_mode,
+                "min_delay": ai_config.engine_endpointing_min_delay_s,
+                "max_delay": ai_config.engine_endpointing_max_delay_s,
+            },
             preemptive_generation={"enabled": False},
             interruption=build_interruption_options(),
         ),
@@ -700,16 +493,16 @@ async def run(
                 log.warning("engine.heartbeat_failed", exc_info=True)
             await asyncio.sleep(settings.engine_heartbeat_interval_seconds)
 
-    # Build the Ear BEFORE starting the session so _EarAgent can wire it into
-    # the stt_node tee from the first frame. The same ear instance is passed
-    # to _drive → setup_ear for the event hooks + poll task.
-    ear = build_ear()
+    # Build the per-session turn source BEFORE starting the session so
+    # _EngineAgent.on_user_turn_completed can submit committed turns to it from
+    # the first turn. The same instance is passed to _drive, whose consume task
+    # pulls each committed transcript into the SessionDriver.
+    turn_source = CommittedTurnSource()
 
-    # _EarAgent extends Agent with:
-    #   1. stt_node: tees INPUT audio frames into ear._buffer for Smart Turn.
-    #   2. on_user_turn_completed: raises StopResponse to suppress the built-in
-    #      LLM auto-reply — gen-3 drives all output via the SessionDriver.
-    agent = _EarAgent(ear, instructions="")
+    # _EngineAgent extends Agent with on_user_turn_completed: it submits the full
+    # final transcript to turn_source and raises StopResponse to suppress the
+    # built-in LLM auto-reply — gen-3 drives all output via the SessionDriver.
+    agent = _EngineAgent(turn_source=turn_source, instructions="")
 
     await session.start(
         agent=agent,
@@ -723,7 +516,7 @@ async def run(
 
     try:
         await _drive(
-            session, ear, config, ctx,
+            session, turn_source, config, ctx,
             tenant_id=tenant_id,
             correlation_id=correlation_id,
         )

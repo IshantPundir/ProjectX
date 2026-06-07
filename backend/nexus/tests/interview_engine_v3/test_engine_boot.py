@@ -21,9 +21,17 @@ def test_engine_agent_module_boot_imports():
     for sym in ("server", "run", "entrypoint", "_run_entrypoint", "prewarm", "_drive"):
         assert hasattr(agent, sym), f"agent.py missing {sym}"
 
-    # Gen-3 Ear glue.
+    # Gen-3 native-turn-detection glue (Path A+): the engine Agent subclass.
+    assert hasattr(agent, "_EngineAgent"), "agent.py missing _EngineAgent glue"
+
+    # The manual Ear stack is RETIRED — these must be gone (no stale code).
     for sym in ("build_ear", "setup_ear", "_EarAgent"):
-        assert hasattr(agent, sym), f"agent.py missing Ear glue {sym}"
+        assert not hasattr(agent, sym), f"retired Ear glue {sym} still present"
+
+    # The committed-turn feed that replaces the Ear poll loop.
+    from app.modules.interview_engine.turn_source import (  # noqa: F401
+        CommittedTurnSource,
+    )
 
     # The AgentServer is constructed at import (the LiveKit worker entrypoint).
     assert agent.server.__class__.__name__ == "AgentServer"

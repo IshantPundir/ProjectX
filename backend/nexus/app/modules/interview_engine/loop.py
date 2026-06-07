@@ -123,11 +123,13 @@ class Voice(Protocol):
     needs `say`; nothing else from AgentSession is called here.
     """
 
-    async def say(self, text: str) -> None:
+    async def say(self, text: str, *, allow_interruptions: bool = True) -> None:
         """Speak `text` to the candidate (TTS + WebRTC delivery).
 
         Args:
             text: The verbatim text to synthesise and deliver.
+            allow_interruptions: When False, the candidate cannot talk over this
+                utterance (used for the non-interruptible opening intro).
         """
         ...
 

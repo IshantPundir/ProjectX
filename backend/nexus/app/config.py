@@ -677,46 +677,35 @@ class Settings(BaseSettings):
     # ``reel_director:{prompt_version}:{model}``. Bump on a prompt-family change.
     reel_director_prompt_cache_key_prefix: str = "reel_director"
 
-    # --- Smart Turn v3 (gen-3 Ear audio EOU model) ---
-    # HF repo + ONNX filename for the pipecat-ai Smart Turn prosody model.
-    # Downloaded at build time (baked in Dockerfile) and cached at HF_HOME.
-    # Swapping to a newer model revision is a .env change + image rebuild.
-    engine_smart_turn_model: str = "pipecat-ai/smart-turn-v3"
-    engine_smart_turn_filename: str = "smart-turn-v3.1-cpu.onnx"
+    # --- Gen-3 native turn detection — endpointing (Path A+) ---
+    # LiveKit's native turn detector (MultilingualModel) decides end-of-turn from
+    # the live STT stream; endpointing controls how long the agent waits AFTER
+    # the detected end of speech before closing the turn. "dynamic" adapts the
+    # delay within [min, max] to the candidate's own pause statistics — patient
+    # with disfluent / thinking speakers without a fixed long delay (which was
+    # the gen-2 mistake: a flat max_delay=10 held finished answers open ~10s).
+    # [VALIDATE] tune empirically in the F3 talk-test (config-only, no rebuild).
+    engine_endpointing_mode: str = "dynamic"        # "dynamic" | "fixed"
+    engine_endpointing_min_delay_s: float = 0.8     # lower bound after end-of-speech (clear endings stay snappy; F3-tunable)
+    engine_endpointing_max_delay_s: float = 6.0     # upper bound — only applies when the turn looks UNFINISHED, so it adds
+                                                    # patience for paused/continuing answers WITHOUT slowing clear endings
+                                                    # (4.0→6.0; F3-tunable). The documented endpointing lever — not the
+                                                    # undocumented turn-detector unlikely_threshold.
 
-    # --- Gen-3 Ear fusion ladder thresholds ---
-    # [VALIDATE] These are initial defaults — tune empirically in Phase F3
-    # talk-tests once the full Ear is wired end-to-end.
-    #
-    # ear_smart_turn_commit_thr: Smart Turn v3 EOU probability at/above which
-    # the voice signal counts as "complete". Raised 0.5 → 0.72 after the F3
-    # talk-test: borderline predictions (~0.55) on ~1s mid-thought pauses were
-    # committing the candidate EARLY (e.g. cutting off "for the…"). 0.72 commits
-    # only when the voice clearly sounds finished. (text-EOU vote is off →
-    # Smart-Turn-only, so this threshold carries the whole turn-end decision.)
-    ear_smart_turn_commit_thr: float = 0.72
-    #
-    # ear_text_commit_thr: MultilingualModel EOU probability at/above which
-    # the text signal counts as "complete". Probs run very small for disfluent
-    # Indian-English — forensic session median was ~0.008; 0.02 gives a small
-    # buffer above that noise floor without becoming overly permissive.
-    ear_text_commit_thr: float = 0.02
-    #
-    # ear_min_silence_ms: Hard floor before ANY commit is allowed. Prevents
-    # cutting off a candidate mid-word even if both models say "done". Raised
-    # 300 → 450 after the F3 talk-test: committing right at 300 ms could fire
-    # before the STT had finalised the tail of the utterance, so the bridge/brain
-    # got a partial/lagged transcript (bridge echoed the prior answer). 450 ms
-    # gives Deepgram a bit more time to flush the final transcript.
-    ear_min_silence_ms: int = 450
-    #
-    # ear_hold_cue_ms: Silence at/above which the Ear plays a gentle patience
-    # cue ("take your time") when both signals are still incomplete — i.e. the
-    # candidate is mid-thought on a long pause, not finished. 2500 ms is
-    # above the worst-case complete-answer commit latency observed in v2
-    # talk-tests (~1–2 s) so a complete answer always commits first; only a
-    # genuinely held-open incomplete pause reaches the cue.
-    ear_hold_cue_ms: int = 2500
+    # Per-call cap on the Mouth BRIDGE LLM (the immediate gist/lead-in beat). On
+    # timeout the bridge falls back to a canned "Mm, okay…" (never dead air), so a
+    # tight cap trades a missed beat for snappiness. 2.5s lets the real beat land
+    # more often while still capping worst-case silence before it. Brain + mouth
+    # real-line have NO tight per-call cap — they use openai_request_timeout_seconds.
+    engine_bridge_timeout_s: float = 2.5
+
+    # Anti-stall: after this many CONSECUTIVE non-answer turns on the SAME question
+    # (clarify / repeat / redirect / hold / answer_meta with no gradeable answer),
+    # the brain is hinted to stop re-posing and advance (recording the question as
+    # not demonstrated). A real answer resets the counter, so a genuinely-confused
+    # candidate who clarifies once or twice and then answers is never penalised.
+    # Soft hint (the brain still phrases the move-on); F3-tunable.
+    engine_stall_reposes_before_advance: int = 3
 
     # Dev/test ergonomics — leave True in every real environment. Set False
     # locally to skip the post-session report LLM scorer during agent tuning

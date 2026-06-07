@@ -241,32 +241,27 @@ class AIConfig:
     def engine_v2_backchannel_min_words(self) -> int:
         return self._settings.engine_v2_backchannel_min_words
 
-    # --- Smart Turn v3 (gen-3 Ear audio EOU model) ---
+    # --- Gen-3 native turn detection — endpointing (Path A+) ---
+    # [VALIDATE] Initial defaults; tune empirically in the F3 talk-test.
     @property
-    def engine_smart_turn_model(self) -> str:
-        return self._settings.engine_smart_turn_model
+    def engine_endpointing_mode(self) -> str:
+        return self._settings.engine_endpointing_mode
 
     @property
-    def engine_smart_turn_filename(self) -> str:
-        return self._settings.engine_smart_turn_filename
-
-    # --- Gen-3 Ear fusion ladder thresholds ---
-    # [VALIDATE] Initial defaults; tune empirically in Phase F3 talk-tests.
-    @property
-    def ear_smart_turn_commit_thr(self) -> float:
-        return self._settings.ear_smart_turn_commit_thr
+    def engine_endpointing_min_delay_s(self) -> float:
+        return self._settings.engine_endpointing_min_delay_s
 
     @property
-    def ear_text_commit_thr(self) -> float:
-        return self._settings.ear_text_commit_thr
+    def engine_endpointing_max_delay_s(self) -> float:
+        return self._settings.engine_endpointing_max_delay_s
 
     @property
-    def ear_min_silence_ms(self) -> int:
-        return self._settings.ear_min_silence_ms
+    def engine_bridge_timeout_s(self) -> float:
+        return self._settings.engine_bridge_timeout_s
 
     @property
-    def ear_hold_cue_ms(self) -> int:
-        return self._settings.ear_hold_cue_ms
+    def engine_stall_reposes_before_advance(self) -> int:
+        return self._settings.engine_stall_reposes_before_advance
 
     # --- Reporting — offline report scorer (Phase 3D+ post-session) ---
     @property

@@ -70,12 +70,24 @@ _log = structlog.get_logger()
 # Tone defaults per act (simple policy — tune if needed)
 # ---------------------------------------------------------------------------
 
+# Leak-safe reflect-back line used ONLY as a backstop when the brain jumps
+# straight to a knockout close without first reflecting it back. The natural
+# path uses the brain's own composed `confirm`. No signal name (the internal
+# signal string reads as nonsense aloud and could imply the rubric).
+_KNOCKOUT_REFLECT_LINE: str = (
+    "Before we wrap up — just to confirm, that's not something you've worked with "
+    "directly yet. Is that right?"
+)
+
+
 _ACT_TONE: dict[DirectiveAct, DirectiveTone] = {
     DirectiveAct.ask: DirectiveTone.warm,
     DirectiveAct.probe: DirectiveTone.warm,
     DirectiveAct.clarify: DirectiveTone.warm,
     DirectiveAct.redirect: DirectiveTone.calm,
     DirectiveAct.reassure: DirectiveTone.warm,
+    DirectiveAct.hold: DirectiveTone.warm,
+    DirectiveAct.confirm: DirectiveTone.warm,
     DirectiveAct.answer_meta: DirectiveTone.neutral,
     DirectiveAct.repeat: DirectiveTone.warm,
     DirectiveAct.close: DirectiveTone.warm,
@@ -128,6 +140,10 @@ class ControlPlane:
         self._all_specs = all_specs
         self._budget_cfg = budget_cfg
         self._knockout_tracker = knockout_tracker or KnockoutTracker()
+        # Knockout signals for which a reflect-back confirm has already been given
+        # to the candidate this session — a knockout close is only honored after
+        # the absence has been reflected back (guards STT mishearing / scope misread).
+        self._knockout_reflect_offered: set[str] = set()
         self._llm_call: Callable[[list[dict]], Awaitable[BrainTurnOutput]] = (
             llm_call if llm_call is not None else self._default_brain_llm
         )
@@ -150,6 +166,18 @@ class ControlPlane:
         time_remaining_s: float,
     ) -> BrainDecision:
         """One full brain turn: LLM call → projection update → Directive derivation."""
+
+        # Surface the deterministic "already reflected" hint so the brain CLOSES after
+        # one reflect-back instead of re-confirming a knockout it has already reflected
+        # (only signals both reflected AND still pending — a cleared one isn't shown).
+        reflected_pending = [
+            sig for sig in turn_input.knockout_pending
+            if sig in self._knockout_reflect_offered
+        ]
+        if reflected_pending:
+            turn_input = turn_input.model_copy(
+                update={"knockout_reflected": reflected_pending}
+            )
 
         # Step 1: build messages (stable prefix + dynamic suffix)
         messages = build_messages(self._system_prompt, self._session_context, turn_input)
@@ -175,6 +203,17 @@ class ControlPlane:
             time_remaining_s=time_remaining_s,
         )
 
+        # When this turn is a probe, record which bank follow_up TEMPLATE area was
+        # adapted (coerced to a valid, unused index) so the driver tracks probes_used
+        # — composed probe text no longer string-matches a verbatim follow_up.
+        probe_index_used: int | None = None
+        if directive.act == DirectiveAct.probe:
+            probe_index_used = coerce_probe_index(
+                output.probe_index,
+                follow_ups=turn_input.active_question.follow_ups,
+                probes_used=turn_input.active_question.probes_used,
+            )
+
         # Per-turn decision trace (F3 tuning observability). reasoning is the
         # brain's own scratchpad (not candidate PII); kept short.
         _log.info(
@@ -184,6 +223,9 @@ class ControlPlane:
             is_terminal=directive.is_terminal,
             probe_index=output.probe_index,
             next_question_id=next_question_id,
+            probe_composed=bool(directive.act == DirectiveAct.probe and output.composed_say),
+            knockout_confirmed=output.knockout_confirmed,
+            knockout_pending=turn_input.knockout_pending,
             n_observations=len(output.observations),
             reasoning=(output.reasoning or "")[:160],
         )
@@ -195,6 +237,7 @@ class ControlPlane:
             reasoning=output.reasoning,
             is_terminal=directive.is_terminal,
             next_question_id=next_question_id,
+            probe_index=probe_index_used,
         )
 
     # -----------------------------------------------------------------------
@@ -223,6 +266,74 @@ class ControlPlane:
             for sr in self._projection.signal_reads()
             if sr.coverage == CoverageState.sufficient
         }
+
+        # ── Candidate-initiated end — always honored ─────────────────────────
+        # A candidate may end the screen at ANY time. The knockout-verification
+        # gate below only blocks a BRAIN-initiated close (full coverage / verified
+        # knockout); it must NEVER trap a candidate who explicitly asked to stop.
+        if output.move == BrainMove.close and output.end_requested:
+            return Directive(
+                act=DirectiveAct.close,
+                say=None,
+                tone=DirectiveTone.warm,
+                spoken_setup=None,
+                is_terminal=True,
+            ), None
+
+        knockout_specs = {s.signal for s in self._all_specs if s.knockout}
+
+        # ── Register a reflect-back ───────────────────────────────────────────
+        # A `confirm` move while a knockout is pending IS the brain's reflect-back
+        # for that knockout — record it so the subsequent knockout-close is honored
+        # without a second (forced) reflect-back.
+        if output.move == BrainMove.confirm and turn_input.knockout_pending:
+            self._knockout_reflect_offered.update(
+                sig for sig in turn_input.knockout_pending if sig in knockout_specs
+            )
+
+        # ── Brain-driven verified knockout — confirmed-absent mandatory signal ─
+        # The brain set knockout_confirmed with move=close. We honor it ONLY for
+        # signals the engine itself flagged absent (membership in knockout_pending,
+        # which the projection populates exclusively from knockout specs) — a
+        # deterministic guard so the brain cannot fabricate a knockout. ROBUSTNESS
+        # GUARANTEE: a knockout never ends the screen until its absence has been
+        # REFLECTED BACK to the candidate at least once (guards an STT mishearing or
+        # a misread scope). If the brain jumps straight to close, we force ONE
+        # reflect-back confirm first and record nothing yet; the close lands on the
+        # next turn once the candidate responds. Records-never-rejects: the
+        # report/human still decides; this only ends the screen early.
+        if output.move == BrainMove.close and output.knockout_confirmed:
+            confirmed_now = [
+                sig for sig in turn_input.knockout_pending if sig in knockout_specs
+            ]
+            if confirmed_now:
+                not_reflected = [
+                    sig for sig in confirmed_now
+                    if sig not in self._knockout_reflect_offered
+                ]
+                if not_reflected:
+                    # Force ONE reflect-back; do NOT mark the tracker confirmed yet
+                    # (the candidate may still correct us → nothing recorded early).
+                    self._knockout_reflect_offered.update(not_reflected)
+                    return Directive(
+                        act=DirectiveAct.confirm,
+                        say=_KNOCKOUT_REFLECT_LINE,
+                        tone=DirectiveTone.warm,
+                        spoken_setup=None,
+                        is_terminal=False,
+                    ), None
+                # Absence already reflected back → honor the close + record it.
+                for sig in confirmed_now:
+                    self._knockout_tracker.confirm(sig)
+                return Directive(
+                    act=DirectiveAct.close,
+                    say=None,
+                    tone=DirectiveTone.warm,
+                    spoken_setup=None,
+                    is_terminal=True,
+                ), None
+            # No engine-flagged knockout backs this close → fall through to the
+            # normal gate (defensive: never knockout-close on a fabricated signal).
 
         # ── Gate: verified-knockout ──────────────────────────────────────────
         gate = gate_knockout(
@@ -282,7 +393,14 @@ class ControlPlane:
                     time_remaining_s=time_remaining_s,
                 )
 
-            case BrainMove.clarify | BrainMove.redirect | BrainMove.reassure | BrainMove.answer_meta:
+            case (
+                BrainMove.clarify
+                | BrainMove.redirect
+                | BrainMove.reassure
+                | BrainMove.hold
+                | BrainMove.confirm
+                | BrainMove.answer_meta
+            ):
                 say = scrub_composed_say(output.composed_say, turn_input.active_question)
                 return Directive(
                     act=act,
@@ -377,10 +495,25 @@ class ControlPlane:
         covered_signals: set[str],
         time_remaining_s: float,
     ) -> tuple[Directive, str | None]:
-        """Resolve a `probe` move: coerce index → (verbatim follow_up Directive, None).
+        """Resolve a `probe` move → (composed-or-verbatim follow_up Directive, None).
 
-        Falls back to _resolve_ask (returning its tuple) when all probes are exhausted.
+        The probe text is COMPOSED by the brain (`composed_say`): a natural, in-scope
+        adaptation of the bank follow_up template to what the candidate actually said.
+        It is leak-scrubbed on the way out (same gate as clarify). When the brain did
+        NOT compose a probe, we fall back to the recruiter's VERBATIM follow_up at the
+        coerced probe_index; when no probe template remains, we fall back to ask.
         """
+        composed = scrub_composed_say(output.composed_say, turn_input.active_question)
+        if composed:
+            return Directive(
+                act=DirectiveAct.probe,
+                say=composed,
+                tone=_ACT_TONE[DirectiveAct.probe],
+                spoken_setup=None,
+                is_terminal=False,
+            ), None
+
+        # No composed probe → verbatim follow_up fallback (graceful, never silent-fail).
         idx = coerce_probe_index(
             output.probe_index,
             follow_ups=turn_input.active_question.follow_ups,

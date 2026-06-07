@@ -36,10 +36,6 @@ _log = structlog.get_logger()
 _ANSWER_BEGIN = "<<<CANDIDATE_ANSWER_BEGIN>>>"
 _ANSWER_END = "<<<CANDIDATE_ANSWER_END>>>"
 
-# Default bridge timeout (seconds). Short: the bridge must resolve fast to mask the brain.
-# Phase F3 may tune this via ai_config; exposed as a constructor param.
-_DEFAULT_BRIDGE_TIMEOUT_S: float = 1.5
-
 
 class BridgeComposer:
     """Emits an immediate gist-mirror beat while the brain is running.
@@ -62,8 +58,7 @@ class BridgeComposer:
         tests to avoid any network call.
     timeout_s:
         Seconds to wait for the LLM before falling back to the canned beat.
-        None → ``_DEFAULT_BRIDGE_TIMEOUT_S``. Phase F3 may expose this via
-        ai_config; for now a small constant is fine.
+        None → ``ai_config.engine_bridge_timeout_s`` (env-driven, F3-tunable).
     """
 
     def __init__(
@@ -75,12 +70,14 @@ class BridgeComposer:
         llm_call: Callable[[list[dict]], Awaitable[str]] | None = None,
         timeout_s: float | None = None,
     ) -> None:
+        from app.ai.config import ai_config
         if version is None:
-            from app.ai.config import ai_config
             version = ai_config.engine_mouth_prompt_version
 
         self._version = version
-        self._timeout_s: float = timeout_s if timeout_s is not None else _DEFAULT_BRIDGE_TIMEOUT_S
+        self._timeout_s: float = (
+            timeout_s if timeout_s is not None else ai_config.engine_bridge_timeout_s
+        )
 
         # Build and cache the persona once — it's byte-identical across all bridge
         # calls in this session (same persona_name + job_title + version).
