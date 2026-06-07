@@ -30,9 +30,9 @@ def test_settings_report_scorer_effort_default():
 
 
 def test_settings_report_scorer_prompt_version_default():
-    """report_scorer_prompt_version defaults to 'v3' (current active engine prompt dir)."""
+    """report_scorer_prompt_version defaults to 'v4' (current active report-scorer prompt dir)."""
     fields = Settings.model_fields
-    assert fields["report_scorer_prompt_version"].default == "v3"
+    assert fields["report_scorer_prompt_version"].default == "v4"
 
 
 def test_settings_report_scorer_prompt_cache_key_prefix_default():

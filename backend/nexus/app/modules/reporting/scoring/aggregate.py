@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.modules.interview_runtime.evidence import EvidenceNote, EvidenceStance, EvidenceTexture
-from app.modules.reporting.scoring.types import DemonstrationLevel
 from app.modules.reporting.scoring.constants import (
     ADVANCE_THRESHOLD,
     BORDERLINE_CEILING,
@@ -15,10 +14,7 @@ from app.modules.reporting.scoring.constants import (
     REJECT_THRESHOLD,
     level_score,
 )
-from app.modules.reporting.scoring.types import (
-    Confidence, CovState, GradeTexture, Verdict,
-)
-
+from app.modules.reporting.scoring.types import Confidence, DemonstrationLevel, Verdict
 
 _TEXTURE_RANK = {EvidenceTexture.thin: 0, EvidenceTexture.concrete: 1, EvidenceTexture.strong: 2}
 _RANK_LEVEL = {2: "strong", 1: "solid", 0: "thin"}
