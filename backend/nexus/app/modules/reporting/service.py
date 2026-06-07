@@ -20,12 +20,13 @@ from app.modules.reporting.schemas import (
     SignalAssessmentOut,
 )
 from app.modules.reporting.scoring.aggregate import (
-    KnockoutResult,
+    # NOTE: knockout_status and KnockoutResult removed (gen-3 rewrite Task 6).
+    # The gen-2 build_report body below still references them and will fail at runtime
+    # — reconciled in Task 11.
     ScoredSignal,
     apply_holistic,
     clamp_to_ceiling,
     confidence_from_coverage,
-    knockout_status,
     resolve_verdict,
     score_dimension,
     score_overall,

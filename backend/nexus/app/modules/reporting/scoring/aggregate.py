@@ -15,9 +15,8 @@ from app.modules.reporting.scoring.constants import (
     REJECT_THRESHOLD,
     level_score,
 )
-from app.modules.reporting.scoring.engine_signals import KnockoutClose
 from app.modules.reporting.scoring.types import (
-    Confidence, CovState, GradeTexture, KnockoutStatus, Verdict,
+    Confidence, CovState, GradeTexture, Verdict,
 )
 
 
@@ -100,41 +99,30 @@ def score_overall(signals: list[ScoredSignal]) -> tuple[int | None, float]:
     return int(round(weighted)), compute_coverage(signals)
 
 
-def knockout_status(*, state: CovState) -> KnockoutStatus:
-    if state == "none":
-        return "insufficient"      # never assessed → couldn't confirm the must-have
-    if state == "failed":
-        return "failed"            # genuine absence/disclaim of a must-have → hard knockout reject
-    if state == "partial":
-        return "insufficient"      # engaged but didn't establish depth → couldn't confirm
-    return "passed"                # sufficient | exceeded
-
-
-@dataclass(frozen=True)
-class KnockoutResult:
-    signal: str
-    status: KnockoutStatus
-    reason: str
-
-
 @dataclass(frozen=True)
 class VerdictResult:
     verdict: Verdict
     reason: str
 
 
-def signal_ceiling(
-    signals: list[ScoredSignal], *, knockout_close: bool, coverage: float
+_REJECT_LEVELS = frozenset({"absent"})
+_UNCONFIRMED_LEVELS = frozenset({"not_reached", "thin"})
+
+
+def must_have_cap(
+    must_haves: list[ScoredSignal], *, is_knockout_close: bool, coverage: float
 ) -> int | None:
-    """The fit ceiling implied by must-have status + coverage. None = no cap."""
-    must_haves = [s for s in signals if s.knockout]
-    if knockout_close or any(s.state == "failed" for s in must_haves):
+    """Fit ceiling from must-have status (the gate from spec §6)."""
+    if is_knockout_close or any(s.level in _REJECT_LEVELS for s in must_haves):
         return REJECT_CEILING
-    if any(s.state in ("none", "partial") for s in must_haves) or (
-        coverage < MIN_COVERAGE_FOR_ADVANCE
-    ):
+    if any(s.level in _UNCONFIRMED_LEVELS for s in must_haves) or coverage < MIN_COVERAGE_FOR_ADVANCE:
         return BORDERLINE_CEILING
     return None
+
+
+def signal_ceiling(must_haves: list[ScoredSignal], *, is_knockout_close: bool, coverage: float) -> int | None:
+    """Back-compat alias used by the orchestrator."""
+    return must_have_cap(must_haves, is_knockout_close=is_knockout_close, coverage=coverage)
 
 
 def clamp_to_ceiling(value: int | None, ceiling: int | None) -> int | None:
@@ -158,20 +146,20 @@ def apply_holistic(
 
 
 def resolve_verdict(
-    *, overall: int | None, coverage: float,
-    knockouts: list[KnockoutResult], knockout_close: KnockoutClose | None,
+    *, overall: int | None, coverage: float, is_knockout_close: bool,
+    knockout_signal: str | None, must_haves: list[ScoredSignal],
 ) -> VerdictResult:
-    """Score-driven verdict. `overall` already encodes must-have/coverage caps
-    (see signal_ceiling), so the score band is the primary decision. knockout_close
-    and a failed must-have remain categorical reject backstops (defense-in-depth)."""
-    if knockout_close is not None:
-        sig = knockout_close.signal or "a must-have skill"
-        return VerdictResult("reject", f"Interview closed on a must-have gap: {sig}")
-    if any(k.status == "failed" for k in knockouts):
-        failed = next(k for k in knockouts if k.status == "failed")
-        return VerdictResult("reject", f"failed must-have: {failed.signal}")
+    """Score-driven verdict; categorical must-have backstops first.
+    The overall is assumed already ceiling-capped by the caller."""
+    if is_knockout_close:
+        return VerdictResult("reject", f"Interview closed on a must-have gap: {knockout_signal or 'a must-have'}")
+    absent_mh = next((s for s in must_haves if s.level in _REJECT_LEVELS), None)
+    if absent_mh is not None:
+        return VerdictResult("reject", f"failed must-have: {absent_mh.value}")
     if overall is None:
         return VerdictResult("borderline", "no assessable evidence collected")
+    if any(s.level in _UNCONFIRMED_LEVELS for s in must_haves):
+        return VerdictResult("borderline", "a must-have was not confirmed — human review")
     if overall >= ADVANCE_THRESHOLD:
         return VerdictResult("advance", "meets the bar across assessed signals")
     if overall < REJECT_THRESHOLD:
