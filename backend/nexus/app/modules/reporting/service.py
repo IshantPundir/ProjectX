@@ -91,6 +91,24 @@ async def build_report(*, evidence, questions, signal_metadata, correlation_id, 
     closure_by_primary = view.closure_by_primary
 
     def_by_value = {m["value"]: m for m in signal_metadata}
+    engine_identity = view.signal_by_name  # dict[str, SignalEvidence]
+
+    def _identity(sig: str) -> dict:
+        m = def_by_value.get(sig)
+        if m is not None:
+            return {"value": sig, "type": m["type"], "weight": m["weight"],
+                    "knockout": m["knockout"], "priority": m["priority"]}
+        se = engine_identity.get(sig)
+        if se is not None:
+            # SignalEvidence carries authoritative identity copied from the role config at
+            # session start — use it rather than silently defaulting a possible must-have.
+            return {"value": sig, "type": se.signal_type.value, "weight": se.weight,
+                    "knockout": se.knockout, "priority": se.priority.value}
+        logger.warning("reporting.build_report.signal_identity_missing", signal=sig,
+                       correlation_id=correlation_id)
+        return {"value": sig, "type": "competency", "weight": 1,
+                "knockout": False, "priority": "preferred"}
+
     q_by_signal: dict[str, dict] = {}
     for q in questions:
         for sv in q.get("signal_values", []):
@@ -117,8 +135,7 @@ async def build_report(*, evidence, questions, signal_metadata, correlation_id, 
     ]
 
     async def _one(sig: str):
-        m = def_by_value.get(sig, {"value": sig, "type": "competency", "weight": 1,
-                                   "knockout": False, "priority": "preferred"})
+        m = _identity(sig)
         d = SignalDef(value=m["value"], type=m["type"], weight=m["weight"],
                       knockout=m["knockout"], priority=m["priority"])
         q = q_by_signal.get(sig, {})
@@ -138,8 +155,7 @@ async def build_report(*, evidence, questions, signal_metadata, correlation_id, 
     # --- Build ScoredSignal list over the PRIMARY set ----------------------
     scored = []
     for sig in primary_set:
-        m = def_by_value.get(sig, {"type": "competency", "weight": 1,
-                                   "knockout": False, "priority": "preferred"})
+        m = _identity(sig)
         scored.append(make_scored_signal(
             value=sig, type=m["type"], weight=m["weight"], knockout=m["knockout"],
             priority=m["priority"], level=final_level[sig]))
@@ -274,7 +290,7 @@ async def persist_report(
         },
         scoring_manifest=(
             report.scoring_manifest.model_dump(mode="json") if report.scoring_manifest else None),
-        engine_version=report.engine_version or "v2",
+        engine_version=report.engine_version or "v3",
         status="ready",
         generated_at=datetime.now(UTC),
         rubric_snapshot=rubric_snapshot,
