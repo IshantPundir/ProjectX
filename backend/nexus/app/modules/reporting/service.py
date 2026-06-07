@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.config import ai_config
 from app.modules.reporting.models import SessionReport
 from app.modules.reporting.schemas import (
+    QuestionOut,
     ReportRead,
     ScoreOut,
     ScoringManifest,
@@ -40,6 +41,7 @@ from app.modules.reporting.scoring.holistic import score_holistic
 from app.modules.reporting.scoring.judge import grade_communication
 from app.modules.reporting.scoring.narrative import write_narrative
 from app.modules.reporting.scoring.recheck import recheck_signal
+from app.modules.reporting.scoring.status import badge_for_question
 from app.modules.reporting.scoring.types import SignalDef
 
 logger = structlog.get_logger()
@@ -206,6 +208,39 @@ async def build_report(*, evidence, questions, signal_metadata, correlation_id, 
     }, ensure_ascii=False)
     narrative = await write_narrative(ground_truth_json=gt, correlation_id=correlation_id)
 
+    # Per-question cards from the engine's question records.
+    q_text_by_id = {q["id"]: q for q in questions}
+    must_have_signals = {s.value for s in scored if s.knockout}
+
+    def _first_quote(sig: str) -> str:
+        for n in notes_by_signal.get(sig, []):
+            if n.stance.value == "supports" and n.quote:
+                return n.quote
+        return ""
+
+    q_out: list[QuestionOut] = []
+    for i, qr in enumerate(evidence.questions):
+        sig = qr.primary_signal
+        qdict = q_text_by_id.get(qr.question_id, {})
+        badge, tone = badge_for_question(
+            level=final_level.get(sig, "not_reached"),
+            provenance=_provenance_str(sig),
+            knockout=sig in must_have_signals)
+        text = qdict.get("text", "")
+        q_out.append(QuestionOut(
+            seq=i + 1, question_id=qr.question_id, title=text[:60],
+            status_badge=badge, status_tone=tone, question_text=text,
+            candidate_quote=_first_quote(sig), asked_at_ms=None))
+
+    # Fold in narrative per-question prose (our_read / refined candidate_quote).
+    read_by_qid = {qn.question_id: qn for qn in narrative.questions}
+    for qo in q_out:
+        nq = read_by_qid.get(qo.question_id)
+        if nq:
+            qo.our_read = nq.our_read
+            if nq.candidate_quote:
+                qo.candidate_quote = nq.candidate_quote
+
     def _score_out(score, cov, conf):
         return ScoreOut(score=score, tier_label=tier_label(score), tone=_tone_by_score(score),
                         confidence=conf, coverage=cov)
@@ -228,7 +263,7 @@ async def build_report(*, evidence, questions, signal_metadata, correlation_id, 
             "communication": _score_out(comm_score, 1.0, "medium"),
         },
         quick_summary=narrative.quick_summary, strengths=narrative.strengths,
-        concerns=narrative.concerns, questions=[], methodology=narrative.methodology,
+        concerns=narrative.concerns, questions=q_out, methodology=narrative.methodology,
         signal_assessments=signal_assessments, engine_version="v3", status="ready",
         scoring_manifest=ScoringManifest(
             scorer_model=ai_config.report_scorer_model,
