@@ -179,5 +179,16 @@ def resolve_verdict(
     return VerdictResult("borderline", "mixed evidence — human review")
 
 
+# Levels that represent REAL data (the screen actually assessed the signal).
+# not_reached scores at the floor but is NOT real data → it lowers confidence.
+_COVERED_LEVELS: frozenset[str] = frozenset({"strong", "solid", "thin", "absent"})
+
+
 def compute_coverage(signals: list["ScoredSignal"]) -> float:
-    return 0.0  # replaced in Task 5
+    """Real-data fraction = covered weight / total weight. `not_reached` is excluded
+    from 'covered' (it scores at the floor but we did not actually assess it)."""
+    total_w = sum(s.weight for s in signals)
+    if total_w == 0:
+        return 0.0
+    covered_w = sum(s.weight for s in signals if s.level in _COVERED_LEVELS)
+    return covered_w / total_w
