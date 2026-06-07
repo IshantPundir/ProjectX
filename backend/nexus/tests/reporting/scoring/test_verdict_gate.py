@@ -47,3 +47,21 @@ def test_verdict_advance_when_clear():
     v = resolve_verdict(overall=80, coverage=0.9, is_knockout_close=False,
                         knockout_signal=None, must_haves=[_mh("solid")])
     assert v.verdict == "advance"
+
+
+def test_resolve_verdict_absent_must_have_rejects():
+    v = resolve_verdict(overall=90, coverage=1.0, is_knockout_close=False,
+                        knockout_signal=None, must_haves=[_mh("absent")])
+    assert v.verdict == "reject"
+
+
+def test_resolve_verdict_thin_must_have_borderline():
+    v = resolve_verdict(overall=90, coverage=1.0, is_knockout_close=False,
+                        knockout_signal=None, must_haves=[_mh("thin")])
+    assert v.verdict == "borderline"
+
+
+def test_must_have_cap_low_coverage_forces_borderline():
+    # solid must-have (no must-have cap), but coverage below the advance minimum
+    # → BORDERLINE_CEILING.
+    assert must_have_cap([_mh("solid")], is_knockout_close=False, coverage=0.3) == BORDERLINE_CEILING
