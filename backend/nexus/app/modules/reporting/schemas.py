@@ -153,9 +153,8 @@ class SignalAssessmentOut(BaseModel):
     weight: int
     knockout: bool
     priority: str
-    engine_state: str
-    final_state: str
-    grade: str | None = None
+    provenance: Literal["not_reached", "asked_directly", "cross_credited", "probed_absent"]
+    level: Literal["strong", "solid", "thin", "absent", "not_reached"]
     score: int | None = None
     evidence: list[str] = Field(default_factory=list)
     overridden: bool = False
