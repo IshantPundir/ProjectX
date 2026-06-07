@@ -62,3 +62,9 @@ class SignalTurn:
     grade: str | None            # concrete | thin | null
     reasoning: str
     question_id: str | None
+
+
+# Per-primary-signal demonstration level (gen-3 evidence-driven scoring).
+# strong/solid/thin = demonstrated (texture); absent = asked-and-failed/disclaimed;
+# not_reached = never asked or time-truncated (shares the floor with absent).
+DemonstrationLevel = Literal["strong", "solid", "thin", "absent", "not_reached"]

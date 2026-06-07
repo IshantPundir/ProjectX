@@ -66,3 +66,22 @@ def tier_label(score: int | None) -> str:
         if score >= floor:
             return label
     return "Well Below Bar"
+
+
+# ---------------------------------------------------------------------------
+# Gen-3 demonstration-level scoring (replaces STATE_TEXTURE_POINTS)
+# ---------------------------------------------------------------------------
+# Level → 0..100 points. Ordering is load-bearing; absolute numbers are tunable.
+# `absent` and `not_reached` share the floor (uniform low band — see spec §5).
+LEVEL_POINTS: dict[str, int] = {
+    "strong": 100,
+    "solid": 80,
+    "thin": 40,
+    "absent": 10,
+    "not_reached": 10,
+}
+
+
+def level_score(level: str) -> int:
+    """Map a DemonstrationLevel to its 0..100 score."""
+    return LEVEL_POINTS[level]
