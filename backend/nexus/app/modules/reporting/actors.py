@@ -1,6 +1,6 @@
 """Dramatiq actor for post-session report scoring.
 
-Enqueued by ``record_session_result`` after a gen-3 session completes.
+Enqueued by ``record_session_evidence`` after a gen-3 session completes.
 Loads SessionEvidence from ``sessions.session_evidence_json`` + the question
 bank from the DB, calls ``build_report`` (the offline scoring pipeline), and
 persists the result via ``persist_report``.
@@ -335,7 +335,7 @@ def score_session_report(
     correlation_id: str,
     force: bool = False,
 ) -> None:
-    """Score and persist a post-session report for a completed v2 session.
+    """Score and persist a post-session report for a completed gen-3 session.
 
     Sync wrapper required by Dramatiq's process model — delegates immediately
     to the async inner function via ``asyncio.run()``.
