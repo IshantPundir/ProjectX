@@ -494,6 +494,33 @@ async def record_session_result(
             )
 
 
+def _enqueue_report_scoring(
+    *, session_id: uuid.UUID, tenant_id: uuid.UUID, correlation_id: str
+) -> None:
+    """Best-effort enqueue of the post-session report scorer. Never fails the caller."""
+    if not settings.auto_score_session_reports:
+        logger.info(
+            "interview_runtime.record_session_evidence.report_scoring_disabled",
+            session_id=str(session_id),
+        )
+        return
+    try:
+        from app.modules.reporting.actors import score_session_report  # noqa: PLC0415
+
+        score_session_report.send(str(session_id), str(tenant_id), correlation_id)
+        logger.info(
+            "interview_runtime.record_session_evidence.report_enqueued",
+            session_id=str(session_id),
+            correlation_id=correlation_id,
+        )
+    except Exception:  # noqa: BLE001 — broker hiccup must not fail the evidence commit
+        logger.warning(
+            "interview_runtime.record_session_evidence.report_enqueue_failed",
+            session_id=str(session_id),
+            correlation_id=correlation_id,
+        )
+
+
 async def record_session_evidence(
     db: AsyncSession,
     *,
@@ -523,8 +550,9 @@ async def record_session_evidence(
     ``active`` that the first UPDATE somehow missed raises ``SessionNotActiveError``.
 
     Writes ``session_evidence_json`` only (not the gen-2 ``raw_result_json`` /
-    ``transcript`` / … columns) and does NOT enqueue report scoring (the old
-    scorer cannot consume SessionEvidence — a separate later plan).
+    ``transcript`` / … columns) and best-effort-enqueues report scoring after
+    the durable commit (same pattern as ``record_session_result``). A broker
+    failure is logged and swallowed — it cannot roll the evidence commit back.
 
     Caller MUST be on a bypass-RLS session. ``tenant_id`` is filter-applied to
     every query — cross-tenant access returns "not found".
@@ -617,4 +645,14 @@ async def record_session_evidence(
         questions_asked=evidence.meta.questions_asked,
         result_status=derived_status,
         attached_to_terminal_state=attached_to_terminal,
+    )
+
+    # Best-effort: enqueue async report scoring now that the evidence is durable.
+    # Runs on BOTH fresh-write paths (Path 1: active→completed; Path 2: attach to terminal).
+    # Does NOT run on the idempotent early-return branches (evidence already present / raced)
+    # because those branches return before reaching this point.
+    _enqueue_report_scoring(
+        session_id=session_id,
+        tenant_id=tenant_id,
+        correlation_id=correlation_id,
     )

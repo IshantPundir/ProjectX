@@ -27,16 +27,15 @@ _tracer = trace.get_tracer("nexus.ai.openai")
 
 def _signal_digest(scored: list[ScoredSignal]) -> str:
     return json.dumps([
-        {"signal": s.value, "state": s.state, "texture": s.texture,
-         "must_have": s.knockout, "score": s.score}
+        {"signal": s.value, "level": s.level, "must_have": s.knockout, "score": s.score}
         for s in scored
-        if s.state != "none"
     ], ensure_ascii=False)
 
 
 async def score_holistic(
-    *, session_score: int | None, scored: list[ScoredSignal], knockout_close: bool,
-    coverage: float, transcript_text: str, correlation_id: str,
+    *, session_score: int | None, scored: list[ScoredSignal], is_knockout_close: bool,
+    coverage: float, transcript_text: str, demonstrated_secondaries: list[str],
+    correlation_id: str,
 ) -> HolisticAdjustmentOut:
     if session_score is None:
         return HolisticAdjustmentOut(delta=0, justification="No assessable evidence.")
@@ -47,8 +46,10 @@ async def score_holistic(
     prefix = (
         f"{system_prompt}\n\n"
         f"<session_score>\n{session_score}\n</session_score>\n\n"
-        f"<facts>\nknockout_close={knockout_close}, coverage={coverage:.2f}\n</facts>\n\n"
-        f"<per_signal>\n{_signal_digest(scored)}\n</per_signal>"
+        f"<facts>\nknockout_close={is_knockout_close}, coverage={coverage:.2f}\n</facts>\n\n"
+        f"<per_signal>\n{_signal_digest(scored)}\n</per_signal>\n\n"
+        f"<demonstrated_extra_signals>\n{', '.join(demonstrated_secondaries) or '(none)'}"
+        f"\n</demonstrated_extra_signals>"
     )
     messages = [
         {"role": "system", "content": prefix},

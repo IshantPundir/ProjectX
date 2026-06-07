@@ -10,6 +10,19 @@ _TONE: dict[str, str] = {
 }
 
 
+def badge_for_question(*, level: str, provenance: str, knockout: bool) -> tuple[str, str]:
+    """Per-question badge from the primary signal's level + provenance."""
+    if knockout and level == "absent":
+        return "failed_required", _TONE["failed_required"]
+    if level in ("strong", "solid"):
+        return "passed", _TONE["passed"]
+    if level == "thin":
+        return "partial", _TONE["partial"]
+    if provenance == "probed_absent":
+        return "not_demonstrated", _TONE["not_demonstrated"]
+    return "not_attempted", _TONE["not_attempted"]  # not_reached / truncated
+
+
 def derive_status(
     unit: ScoredUnit,
     *,

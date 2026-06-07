@@ -649,9 +649,9 @@ class Settings(BaseSettings):
     openai_report_scorer_effort: str = "medium"
 
     # ``report_scorer_prompt_version`` — controls which versioned prompt
-    # directory PromptLoader reads from (prompts/v{N}/). v3 is the current
-    # active prompt family (engine-v2 prompts live there).
-    report_scorer_prompt_version: str = "v3"
+    # directory PromptLoader reads from (prompts/v{N}/). v4 is the current
+    # active prompt family (provenance-aware narrative + rewrite-contract prompts).
+    report_scorer_prompt_version: str = "v4"
 
     # ``report_scorer_prompt_cache_key_prefix`` — PREFIX only (not a verbatim
     # key). The report scorer concatenates this with dynamic parts to form keys
