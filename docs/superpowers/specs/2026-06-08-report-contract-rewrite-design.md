@@ -79,6 +79,44 @@ append-only evidence, and use `provenance` to score fairly and defensibly.
 
 ---
 
+## 3.1 Cross-check against the engine (verified 2026-06-08)
+
+Read against the real producer code (`interview_engine/driver.py::finalize`,
+`interview_engine/notes.py::compute_provenance`, `brain/resolver.py::build_question_records`):
+
+**Confirmed — the spec's assumptions hold:**
+- Provenance is computed exactly per §7.1 (`notes.py::compute_provenance`):
+  `asked_directly` / `cross_credited` / `probed_absent` / `not_reached`. `own_questions(S)` =
+  questions where `primary_signal == S`; `asked_fairly` excludes `closure == truncated`.
+- `EvidenceNote` carries `stance`, `texture`, `quote` (full utterance), `span`, `from_question_id`,
+  `via_probe`, `retracts_seq`. A retraction links the prior same-signal note; both kept.
+- `QuestionRecord` carries `primary_signal`, `tier`, `outcome`, `closure`, `probes_used`,
+  `probes_available`. `closure` is best-effort (`satisfied`/`absent`/`tapped_out`; `truncated` for
+  the question still on the floor at finalize). `tier` is hardcoded `"core"` today (flat bank).
+- `KnockoutOutcome` is emitted only when the brain verified a must-have absent; when that ends the
+  screen, `meta.completion` flips to `knockout_close`.
+- `record_session_evidence` does **not** enqueue scoring (confirmed). The actor already loads the
+  bank `StageQuestion` rows (rubric + `signal_values`) and `signal_metadata` — both still needed.
+
+**Correction this forces into the design (important — guards the core bug):**
+- **`SessionEvidence.signals[]` is the FULL role signal set**, not the bank-covered set. `finalize`
+  builds one `SignalEvidence` per `config.signal_metadata` entry (uncovered role signals get
+  `provenance = not_reached`). So the **graded primary-signal denominator MUST be derived by
+  filtering to `{ qr.primary_signal for qr in evidence.questions }`** — *not* by scoring all of
+  `signals[]`. Scoring `signals[]` wholesale would re-introduce the exact "graded against the
+  role's full set" bug we're fixing. `primary_signal` is always populated (the engine falls back to
+  `signal_values[0]`), so the set is reliable.
+- **Demonstrated secondary signals** (the upside-only path) are then exactly:
+  `signal ∉ primary_set AND provenance == cross_credited` in `signals[]` (a secondary-only signal
+  has no own question, so it can only ever be `cross_credited` or `not_reached`).
+- **Knockout** is read from `evidence.meta.completion == knockout_close` + `evidence.knockout`
+  (a `KnockoutOutcome`), not an audit-envelope event — `detect_knockout_close` is gone.
+- **Transcript** is `list[TranscriptTurn]` with a `speaker` enum (`agent`/`candidate`), not dicts
+  keyed `"role"`. The communication / holistic / narrative inputs adapt to it
+  (`candidate_text = "\n".join(t.text for t in transcript if t.speaker == candidate)`).
+
+---
+
 ## 4. Architecture — data flow & module layout
 
 **Trigger (re-connect the pipeline).** At the end of `record_session_evidence`, after it durably
@@ -96,7 +134,7 @@ on the idempotent no-op return). This is the only change outside `reporting/`.
 
 | File | Role after rewrite |
 |---|---|
-| `scoring/evidence_adapter.py` **(new — replaces `engine_signals.py`)** | Parse `SessionEvidence`; expose `notes_by_signal`, `provenance_by_signal`, `question_records`, `knockout`, `transcript`, the derived **primary-signal set** + **secondary set**. |
+| `scoring/evidence_adapter.py` **(new — replaces `engine_signals.py`)** | Parse `SessionEvidence`; expose `notes_by_signal`, `provenance_by_signal`, `question_records`, `knockout` (from `meta.completion` + `evidence.knockout`), `transcript` (speaker-enum). Derive the **primary-signal set** = `{qr.primary_signal for qr in questions}` and filter the full-role `signals[]` to it (see §3.1 — guards the core bug); expose demonstrated secondary signals (`∉ primary_set ∧ cross_credited`). |
 | `scoring/aggregate.py` **(rewritten)** | Deterministic core: per-signal rollup → dimensions → coverage/confidence → ceilings → verdict (§5–§6). |
 | `recheck.py` / `holistic.py` / `judge.py` / `narrative.py` **(kept, re-pointed)** | The four AI layers, fed by notes + quotes + provenance (§7). |
 | `service.py::build_report` **(new signature)** | `SessionEvidence` + bank questions + signal metadata + correlation_id (no `coverage_summary`/`envelope`). |
