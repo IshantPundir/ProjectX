@@ -12,7 +12,6 @@ via ``unittest.mock.patch``.
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 from datetime import UTC, datetime
 from uuid import UUID
@@ -329,7 +328,7 @@ async def _score_session_report_async(
     max_backoff=120_000,
     queue_name="report_scoring",
 )
-def score_session_report(
+async def score_session_report(
     session_id: str,
     tenant_id: str,
     correlation_id: str,
@@ -337,14 +336,14 @@ def score_session_report(
 ) -> None:
     """Score and persist a post-session report for a completed gen-3 session.
 
-    Sync wrapper required by Dramatiq's process model — delegates immediately
-    to the async inner function via ``asyncio.run()``.
+    Async actor — Dramatiq's AsyncIO middleware runs it on its single persistent
+    event loop, the same loop the module-global async DB engine pool is bound to.
+    (It must NOT use ``asyncio.run()``: a throwaway loop reuses pooled asyncpg
+    connections across loops → ``Future attached to a different loop``.)
     """
-    asyncio.run(
-        _score_session_report_async(
-            UUID(session_id),
-            UUID(tenant_id),
-            correlation_id,
-            force,
-        )
+    await _score_session_report_async(
+        UUID(session_id),
+        UUID(tenant_id),
+        correlation_id,
+        force,
     )

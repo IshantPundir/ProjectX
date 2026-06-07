@@ -211,8 +211,13 @@ async def _generate_session_reel_async(session_id: UUID, tenant_id: UUID,
 
 @dramatiq.actor(max_retries=2, min_backoff=10_000, max_backoff=300_000,
                 queue_name="reel", time_limit=900_000)
-def generate_session_reel(session_id: str, tenant_id: str, correlation_id: str,
-                          force: bool = False) -> None:
-    """Render + persist a Candidate Reel for a session (sync Dramatiq wrapper)."""
-    asyncio.run(_generate_session_reel_async(
-        UUID(session_id), UUID(tenant_id), correlation_id, force))
+async def generate_session_reel(session_id: str, tenant_id: str, correlation_id: str,
+                                force: bool = False) -> None:
+    """Render + persist a Candidate Reel for a session.
+
+    Async actor — runs on Dramatiq's AsyncIO middleware loop (the same loop the
+    module-global async DB engine pool binds to). A sync ``asyncio.run()`` wrapper
+    creates a throwaway loop → cross-loop asyncpg reuse error.
+    """
+    await _generate_session_reel_async(
+        UUID(session_id), UUID(tenant_id), correlation_id, force)

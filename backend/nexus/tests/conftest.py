@@ -34,6 +34,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+import dramatiq
 import pytest
 import pytest_asyncio
 import sqlalchemy
@@ -109,6 +110,21 @@ async def db(_create_tables: None):
         finally:
             await session.close()
             await txn.rollback()
+
+
+@pytest.fixture(autouse=True)
+def _no_real_broker_enqueue(monkeypatch):
+    """Stop any actor ``.send()`` in tests from enqueuing to the real Redis broker.
+
+    The test suite has no StubBroker, so ``.send()`` would otherwise hit the
+    shared dev Redis. Tests that assert enqueue patch the actor's ``.send``
+    directly (that still works — it shadows this no-op); this is the backstop so
+    un-patched sends (e.g. ``record_session_evidence``'s report-scoring enqueue)
+    don't leave orphan messages that a worker later drains.
+    """
+    monkeypatch.setattr(
+        dramatiq.get_broker(), "enqueue", lambda message, *, delay=None: message
+    )
 
 
 @pytest.fixture
