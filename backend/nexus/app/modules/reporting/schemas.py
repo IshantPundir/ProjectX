@@ -10,9 +10,8 @@ from app.modules.reporting.scoring.types import Confidence, Verdict
 class SignalRecheckOut(BaseModel):
     """Structured output from the per-signal post-interview re-check."""
     evidence_quotes: list[str] = Field(default_factory=list)
-    justification: str = ""
-    grade: Literal["concrete", "thin", "null"] = "null"
-    state: Literal["exceeded", "sufficient", "partial", "failed"]
+    justification: str
+    level: Literal["strong", "solid", "thin", "absent", "not_reached"]
     overridden: bool = False
     override_reason: str | None = None
 
