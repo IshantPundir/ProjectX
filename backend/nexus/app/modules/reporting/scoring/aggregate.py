@@ -13,7 +13,7 @@ from app.modules.reporting.scoring.constants import (
     MIN_COVERAGE_FOR_ADVANCE,
     REJECT_CEILING,
     REJECT_THRESHOLD,
-    STATE_TEXTURE_POINTS,
+    level_score,
 )
 from app.modules.reporting.scoring.engine_signals import KnockoutClose
 from app.modules.reporting.scoring.types import (
@@ -47,20 +47,6 @@ def level_for_signal(
     return "not_reached"
 
 
-def score_signal(state: CovState, texture: GradeTexture | None) -> int | None:
-    """Per-signal points from coverage state AND evidence texture.
-    `none` → None (excluded from the denominator). Texture defaults to
-    `concrete` (no penalty) when a signal was not LLM-rechecked."""
-    if state == "none":
-        return None
-    return STATE_TEXTURE_POINTS[state][texture or "concrete"]
-
-
-def score_state(state: CovState) -> int | None:
-    """Back-compat: concrete-texture baseline (no bluff penalty)."""
-    return score_signal(state, "concrete")
-
-
 @dataclass(frozen=True)
 class ScoredSignal:
     value: str
@@ -68,16 +54,20 @@ class ScoredSignal:
     weight: int
     knockout: bool
     priority: str
-    state: CovState
-    score: int | None
-    texture: GradeTexture = "concrete"
+    level: DemonstrationLevel
+    score: int           # always 0..100 (every primary is scored, incl. floors)
+
+
+def make_scored_signal(*, value, type, weight, knockout, priority, level) -> ScoredSignal:
+    return ScoredSignal(value=value, type=type, weight=weight, knockout=knockout,
+                        priority=priority, level=level, score=level_score(level))
 
 
 @dataclass(frozen=True)
 class DimensionScore:
     name: str
     score: int | None
-    coverage: float       # assessed weight / total weight in this dimension
+    coverage: float
     confidence: Confidence
 
 
@@ -89,31 +79,25 @@ def confidence_from_coverage(coverage: float) -> Confidence:
     return "low"
 
 
-def score_dimension(
-    name: str, signals: list[ScoredSignal], types: frozenset[str]
-) -> DimensionScore:
+def score_dimension(name: str, signals: list[ScoredSignal], types: frozenset[str]) -> DimensionScore:
     members = [s for s in signals if s.type in types]
     total_w = sum(s.weight for s in members)
-    assessed = [s for s in members if s.score is not None]
-    assessed_w = sum(s.weight for s in assessed)
-    if assessed_w == 0:
+    if total_w == 0:
         return DimensionScore(name=name, score=None, coverage=0.0, confidence="low")
-    weighted = sum(s.weight * s.score for s in assessed) / assessed_w  # type: ignore[operator]
-    coverage = (assessed_w / total_w) if total_w else 0.0
+    weighted = sum(s.weight * s.score for s in members) / total_w
+    cov = compute_coverage(members)
     return DimensionScore(name=name, score=int(round(weighted)),
-                          coverage=coverage, confidence=confidence_from_coverage(coverage))
+                          coverage=cov, confidence=confidence_from_coverage(cov))
 
 
 def score_overall(signals: list[ScoredSignal]) -> tuple[int | None, float]:
-    """Overall = weighted mean over ALL assessed JD signals (tech + behavioral).
-    Communication is scored separately and is NOT included here."""
+    """Weighted mean over ALL primary signals (every one is scored, incl. floors).
+    Communication is scored separately. Returns (overall, real-data coverage)."""
     total_w = sum(s.weight for s in signals)
-    assessed = [s for s in signals if s.score is not None]
-    assessed_w = sum(s.weight for s in assessed)
-    if assessed_w == 0:
+    if total_w == 0:
         return None, 0.0
-    weighted = sum(s.weight * s.score for s in assessed) / assessed_w  # type: ignore[operator]
-    return int(round(weighted)), (assessed_w / total_w if total_w else 0.0)
+    weighted = sum(s.weight * s.score for s in signals) / total_w
+    return int(round(weighted)), compute_coverage(signals)
 
 
 def knockout_status(*, state: CovState) -> KnockoutStatus:
@@ -193,3 +177,7 @@ def resolve_verdict(
     if overall < REJECT_THRESHOLD:
         return VerdictResult("reject", "below the bar across assessed signals")
     return VerdictResult("borderline", "mixed evidence — human review")
+
+
+def compute_coverage(signals: list["ScoredSignal"]) -> float:
+    return 0.0  # replaced in Task 5

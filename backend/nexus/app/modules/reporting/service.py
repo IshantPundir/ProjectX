@@ -29,9 +29,10 @@ from app.modules.reporting.scoring.aggregate import (
     resolve_verdict,
     score_dimension,
     score_overall,
-    score_signal,
     signal_ceiling,
 )
+# NOTE: score_signal removed in gen-3 rewrite (Task 4). The gen-2 build_report
+# body below references it and will fail at runtime — reconciled in Task 11.
 from app.modules.reporting.scoring.constants import (
     BEHAVIORAL_TYPES,
     FACTUAL_QUESTION_KINDS,
