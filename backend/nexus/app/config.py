@@ -437,8 +437,9 @@ class Settings(BaseSettings):
     engine_mouth_effort: str = ""
 
     # New v3 engine prompt family (rewritten from scratch — brain + per-act mouth).
-    engine_brain_prompt_version: str = "v3"
-    engine_mouth_prompt_version: str = "v3"
+    # Brain bumped to v4 for the gen-3 rewrite (job-agnostic, fleet-wide cache).
+    engine_brain_prompt_version: str = "v4"
+    engine_mouth_prompt_version: str = "v4"
 
     # Brain total wall-clock budget (ms) before the deterministic fallback directive
     # kicks in. The brain runs async/parallel, MASKED by the mouth's acknowledgment
@@ -471,8 +472,8 @@ class Settings(BaseSettings):
     # Explicit OpenAI prompt_cache_key per surface for stable cache routing
     # (design §11: stable-prefix -> dynamic-suffix). Bump the suffix on a
     # prompt change to avoid cross-version cache pollution.
-    engine_brain_prompt_cache_key: str = "brain:v1"
-    engine_mouth_prompt_cache_key: str = "mouth:v1"
+    engine_brain_prompt_cache_key: str = "brain:v4"
+    engine_mouth_prompt_cache_key: str = "mouth:v4"
 
     # v2 mouth persona display name. The design persona is "Arjun"; kept a
     # dedicated v2 knob so v1's shared engine_agent_name ("Sam") is untouched.
@@ -676,6 +677,36 @@ class Settings(BaseSettings):
     # ``reel_director:{prompt_version}:{model}``. Bump on a prompt-family change.
     reel_director_prompt_cache_key_prefix: str = "reel_director"
 
+    # --- Gen-3 native turn detection — endpointing (Path A+) ---
+    # LiveKit's native turn detector (MultilingualModel) decides end-of-turn from
+    # the live STT stream; endpointing controls how long the agent waits AFTER
+    # the detected end of speech before closing the turn. "dynamic" adapts the
+    # delay within [min, max] to the candidate's own pause statistics — patient
+    # with disfluent / thinking speakers without a fixed long delay (which was
+    # the gen-2 mistake: a flat max_delay=10 held finished answers open ~10s).
+    # [VALIDATE] tune empirically in the F3 talk-test (config-only, no rebuild).
+    engine_endpointing_mode: str = "dynamic"        # "dynamic" | "fixed"
+    engine_endpointing_min_delay_s: float = 0.8     # lower bound after end-of-speech (clear endings stay snappy; F3-tunable)
+    engine_endpointing_max_delay_s: float = 6.0     # upper bound — only applies when the turn looks UNFINISHED, so it adds
+                                                    # patience for paused/continuing answers WITHOUT slowing clear endings
+                                                    # (4.0→6.0; F3-tunable). The documented endpointing lever — not the
+                                                    # undocumented turn-detector unlikely_threshold.
+
+    # Per-call cap on the Mouth BRIDGE LLM (the immediate gist/lead-in beat). On
+    # timeout the bridge falls back to a canned "Mm, okay…" (never dead air), so a
+    # tight cap trades a missed beat for snappiness. 2.5s lets the real beat land
+    # more often while still capping worst-case silence before it. Brain + mouth
+    # real-line have NO tight per-call cap — they use openai_request_timeout_seconds.
+    engine_bridge_timeout_s: float = 2.5
+
+    # Anti-stall: after this many CONSECUTIVE non-answer turns on the SAME question
+    # (clarify / repeat / redirect / hold / answer_meta with no gradeable answer),
+    # the brain is hinted to stop re-posing and advance (recording the question as
+    # not demonstrated). A real answer resets the counter, so a genuinely-confused
+    # candidate who clarifies once or twice and then answers is never penalised.
+    # Soft hint (the brain still phrases the move-on); F3-tunable.
+    engine_stall_reposes_before_advance: int = 3
+
     # Dev/test ergonomics — leave True in every real environment. Set False
     # locally to skip the post-session report LLM scorer during agent tuning
     # runs (saves tokens). Non-destructive: the session still completes and
@@ -687,6 +718,23 @@ class Settings(BaseSettings):
     # agent tuning runs. Non-destructive: the recording is still produced, so the
     # analysis can be re-run later from the report page.
     auto_analyze_proctoring: bool = True
+
+    # --- Gen-3 deterministic resolver time-budget knobs ---
+    # [VALIDATE] F3-tuned defaults — adjust empirically on talk-tests.
+    #
+    # engine_close_reserve_s: seconds of absolute minimum buffer kept back at
+    # session end for the closing sequence (warm close + next-steps). Any
+    # non-mandatory question or overflow slot that wouldn't fit within the
+    # remaining time MINUS this reserve is classified as `not_reached` and
+    # skipped. Mandatory core questions are NEVER subject to this check —
+    # they are returned unconditionally regardless of remaining time.
+    engine_close_reserve_s: float = 45.0
+    #
+    # engine_winding_down_s: once `time_remaining_s` drops to or below this
+    # value the resolver enters `winding_down` phase — preference hints are
+    # ignored, mandatory-first ordering is enforced, and non-mandatory core
+    # questions are budget-checked before being returned.
+    engine_winding_down_s: float = 90.0
 
 
 settings = Settings()

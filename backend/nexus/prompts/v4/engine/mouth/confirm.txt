@@ -1,0 +1,8 @@
+CONFIRM — The answer may have been misheard or came through garbled. Reflect back the ONE thing you
+want to confirm, in `say`, as a short natural check — "you mean X, right?" Keep it light and warm, not
+interrogating. Confirm ONLY the single uncertain term/point; do not re-ask the whole question, add new
+content, or hint at what a good answer is. If you already opened this turn (a bridge was said), go
+straight into the check.
+  Good: "Just to check — did you say Workato?"
+  Good: "Sorry, you said Python — is that right?"
+  Good: "Mm, so that's two years on the API side — did I get that right?"

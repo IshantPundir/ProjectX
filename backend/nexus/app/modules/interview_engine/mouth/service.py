@@ -1,157 +1,227 @@
-"""ConversationPlane (the mouth) — per-turn prompt orchestration (no livekit).
-
-Holds the versioned PromptLoader + the rendered (byte-stable) persona preamble, loads the
-per-act block for a directive, assembles the bounded message list (via input_builder), and
-tracks the last question delivered so REPEAT can replay it. Also pre-renders persona-voiced
-reflex cues ONCE at session start (the HOLD/REASSURE decision): an off-critical-path
-instructor call, with the canned Settings strings as the seed + fallback so the behavioral
-layer never breaks. The actual LLM voicing per turn happens in agent.py's llm_node, which
-sends `build_turn_messages(...)` through the mouth LLM plugin.
 """
+Mouth real-line service — E2 task.
 
+ConversationPlane.real_line(mouth_input: MouthTurnInput) -> str
+
+Responsibilities:
+  1. For act in {ask, probe, repeat} where directive.say is set, return
+     directive.say VERBATIM (zero LLM call, zero latency added, meaning exact).
+     repeat is verbatim for the same reason: the brain has already committed to
+     replaying on_the_floor bit-for-bit; reshaping it would shift the candidate's
+     attention or create confusion about which question is being repeated.
+  2. For all other acts (clarify, redirect, reassure, answer_meta, close):
+     a. Load the per-act instruction block from prompts/v{N}/engine/mouth/<act>.
+     b. Build the three-part message list (persona | act block | dynamic suffix).
+     c. Call the injected (or default real) LLM and return the stripped response.
+
+validate_no_leak(messages, *, rubric_secrets):
+     Test/assertion helper. Returns True iff none of the rubric_secrets appear
+     in any message content. Proves the mouth message list cannot carry rubric
+     material (the structural guarantee — the Directive has no rubric fields —
+     makes this True by construction; this function makes that claim testable).
+"""
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+from functools import lru_cache
+
 import structlog
-from pydantic import BaseModel, Field
 
-from app.ai.config import ai_config
-from app.ai.prompts import PromptLoader
-from app.modules.interview_engine.directive import Directive, DirectiveAct
-from app.modules.interview_engine.mouth.input_builder import (
-    build_mouth_messages,
-    effective_say,
-    is_question_bearing,
+from app.modules.interview_engine.contracts import (
+    DirectiveAct,
+    MouthTurnInput,
 )
-from app.modules.interview_engine.mouth.persona import render_persona_preamble
+from app.modules.interview_engine.mouth.persona import build_mouth_messages, build_persona
 
-log = structlog.get_logger("interview_engine.mouth")
+_log = structlog.get_logger()
 
-# DirectiveAct -> prompt name under prompts/v{version}/engine/mouth/.
-_ACT_PROMPT: dict[DirectiveAct, str] = {
-    DirectiveAct.INTRO: "engine/mouth/intro",
-    DirectiveAct.ASK: "engine/mouth/ask",
-    DirectiveAct.PROBE: "engine/mouth/probe",
-    DirectiveAct.CLARIFY: "engine/mouth/clarify",
-    DirectiveAct.ACK_ADVANCE: "engine/mouth/ack_advance",
-    DirectiveAct.REPEAT: "engine/mouth/repeat",
-    DirectiveAct.REDIRECT: "engine/mouth/redirect",
-    DirectiveAct.HOLD: "engine/mouth/hold",
-    DirectiveAct.REASSURE: "engine/mouth/reassure",
-    DirectiveAct.HINT: "engine/mouth/hint",
-    DirectiveAct.ANSWER_META: "engine/mouth/answer_meta",
-    DirectiveAct.CONFIRM: "engine/mouth/confirm",
-    DirectiveAct.CLOSE: "engine/mouth/close",
-}
+# Acts for which directive.say is spoken verbatim — no LLM call.
+_VERBATIM_ACTS = {DirectiveAct.ask, DirectiveAct.probe, DirectiveAct.repeat}
+
+# Last-resort spoken line if the mouth LLM fails AND the directive carries no
+# `say` (e.g. a close with say=None). Keeps the interview alive (no dead air,
+# no crash) — F3-tunable.
+_SAFE_FALLBACK_LINE = "Okay — let's continue."
 
 
-class ReflexCueVariants(BaseModel):
-    """Persona-voiced variants of the silence-timer reflex cues + the M5 ack-mask.
+# ---------------------------------------------------------------------------
+# Act-block loader (per-version, per-act cache)
+# ---------------------------------------------------------------------------
 
-    `acknowledgment` (M5/D3): content-free "mm, okay —" beats played the instant the candidate
-    finishes, to MASK the brain's parallel reasoning (never a silent wait). Like the other cues
-    they are pre-rendered once at session start; the canned `settings.engine_v2_ack_messages` list
-    is the seed + fallback.
+@lru_cache(maxsize=64)
+def _load_act_block(act: str, version: str) -> str:
+    """Load the per-act instruction block, one dict-entry per (act, version) pair.
+
+    Cached so the filesystem read happens once per process per (act, version).
     """
+    from app.ai.prompts import PromptLoader
+    return PromptLoader(version).get(f"engine/mouth/{act}")
 
-    hold_space: list[str] = Field(min_length=1)
-    gentle_nudge: list[str] = Field(min_length=1)
-    still_there: list[str] = Field(min_length=1)
-    # Defaulted so a pre-render that omits it (or an older caller) stays valid; the agent's _ack
-    # falls back to settings.engine_v2_ack_messages when the pool is empty/absent anyway.
-    acknowledgment: list[str] = Field(default_factory=lambda: ["Mm, okay."], min_length=1)
 
+# ---------------------------------------------------------------------------
+# validate_no_leak
+# ---------------------------------------------------------------------------
+
+def validate_no_leak(messages: list[dict], *, rubric_secrets: list[str]) -> bool:
+    """Return True iff none of the rubric_secrets appear in any message content.
+
+    Structural backstop: the mouth never receives a rubric (Directive has no
+    rubric fields), so this should always return True. Use in tests to prove
+    the invariant for a given message list.
+
+    Only secrets whose length >= 10 characters are checked (short strings risk
+    false positives from coincidental substring matches).
+    """
+    qualifying = [s for s in rubric_secrets if len(s) >= 10]
+    for msg in messages:
+        content = msg.get("content", "") or ""
+        for secret in qualifying:
+            if secret in content:
+                return False
+    return True
+
+
+# ---------------------------------------------------------------------------
+# ConversationPlane
+# ---------------------------------------------------------------------------
 
 class ConversationPlane:
-    """The mouth: turns a Directive into a bounded, cache-stable mouth-LLM prompt."""
+    """Renders the brain's Directive as a natural spoken Indian English line.
 
-    def __init__(self, *, loader: PromptLoader, persona_name: str, job_title: str,
-                 role_summary: str | None = None) -> None:
-        self._loader = loader
+    The mouth is the ONLY tier the candidate ever hears. It is structurally
+    isolated from rubric data: the Directive type carries no rubric fields,
+    so no rubric can reach the message builder even by accident.
+
+    Parameters
+    ----------
+    persona_name:
+        The interviewer's display name (e.g. "Arjun").
+    job_title:
+        The role being screened (e.g. "Integration Engineer").
+    version:
+        Prompt version to load (defaults to ai_config.engine_mouth_prompt_version).
+    llm_call:
+        INJECTABLE SEAM — async callable that takes a list[dict] of messages
+        and returns a str. None → _default_mouth_llm (real API call). Pass a
+        fake in tests to avoid any network call.
+    """
+
+    def __init__(
+        self,
+        *,
+        persona_name: str,
+        job_title: str,
+        version: str | None = None,
+        llm_call: Callable[[list[dict]], Awaitable[str]] | None = None,
+    ) -> None:
+        if version is None:
+            from app.ai.config import ai_config
+            version = ai_config.engine_mouth_prompt_version
+
+        self._version = version
         self._persona_name = persona_name
         self._job_title = job_title
-        self._role_summary = role_summary    # surfaced to the mouth on the INTRO turn only (brief)
-        self._persona_preamble = render_persona_preamble(
-            loader=loader, persona_name=persona_name, job_title=job_title,
+        self._persona = build_persona(
+            persona_name=persona_name,
+            job_title=job_title,
+            version=version,
         )
-        self._last_question: str | None = None
-
-    @property
-    def persona_preamble(self) -> str:
-        """The byte-stable cache prefix (rendered once)."""
-        return self._persona_preamble
-
-    @property
-    def last_question(self) -> str | None:
-        """The most recently delivered question-bearing line (REPEAT cache / triage context)."""
-        return self._last_question
-
-    def build_turn_messages(
-        self, directive: Directive, *, candidate_utterance: str | None,
-        just_said_filler: str | None = None,
-        recent_bridges: list[str] | None = None,
-    ) -> list[dict[str, str]]:
-        """Assemble the [persona | act | dynamic] messages and update the REPEAT cache.
-
-        `just_said_filler` (Pass-2 linking, design §5): the line triage just spoke; the mouth
-        continues from it without repeating it, while delivering the directive's substance
-        faithfully (verbatim bank text stays intact).
-        `recent_bridges`: the mouth's last few opening connectives, fed back so it picks a
-        DIFFERENT bridge this turn (mirrors the triage recent_fillers channel)."""
-        act_block = self._loader.get(_ACT_PROMPT[directive.act])
-        messages = build_mouth_messages(
-            directive=directive,
-            persona_preamble=self._persona_preamble,
-            act_block=act_block,
-            candidate_utterance=candidate_utterance,
-            last_question=self._last_question,
-            just_said_filler=just_said_filler,
-            spoken_setup=directive.spoken_setup,
-            recent_bridges=recent_bridges,
-            # role brief only on the INTRO turn (warm the candidate + say what the role is about)
-            role_brief=(self._role_summary if directive.act is DirectiveAct.INTRO else None),
+        self._llm_call: Callable[[list[dict]], Awaitable[str]] = (
+            llm_call if llm_call is not None else self._default_mouth_llm
         )
-        if is_question_bearing(directive.act):
-            say = effective_say(directive, last_question=self._last_question)
-            if say:
-                self._last_question = say
-        return messages
 
-    async def prerender_reflex_variants(
-        self, *, hold_seed: str, nudge_seed: str, still_seed: str,
-        ack_seed: list[str] | None = None,
-    ) -> ReflexCueVariants:
-        """Pre-render persona-voiced reflex cues once at session start; fall back to seeds.
+    # -----------------------------------------------------------------------
+    # Public API
+    # -----------------------------------------------------------------------
 
-        `ack_seed` is the canned content-free ack-mask list (settings.engine_v2_ack_messages) —
-        the seed/fallback for the M5 ack that masks the brain's parallel reasoning (D3).
-        """
+    async def intro(self, *, candidate_name: str, role_summary: str, company_about: str) -> str:
+        """Compose the warm opening (greeting + one-line job brief) spoken BEFORE the
+        first question. Ends on a confident statement that flows into the first
+        question — never a "shall we?" (see intro.txt). Leak-proof (no rubric). On
+        any LLM error/timeout returns a safe canned greeting (never dead air)."""
+        intro_block = _load_act_block("intro", self._version)
+        context = (
+            f"CANDIDATE FIRST NAME: {candidate_name}\n"
+            f"ROLE: {self._job_title}\n"
+            f"ROLE SUMMARY: {role_summary}\n"
+            f"COMPANY: {company_about}"
+        )
+        messages = [
+            {"role": "system", "content": self._persona},
+            {"role": "system", "content": intro_block},
+            {"role": "user", "content": context},
+        ]
         try:
-            return await self._call_reflex_llm()
-        except Exception:  # noqa: BLE001 — never let pre-render break the behavioral layer
-            log.warning("mouth.reflex_prerender_failed_using_seeds", exc_info=True)
-            return ReflexCueVariants(
-                hold_space=[hold_seed], gentle_nudge=[nudge_seed], still_there=[still_seed],
-                acknowledgment=list(ack_seed) if ack_seed else ["Mm, okay."],
-            )
-
-    async def _call_reflex_llm(self) -> ReflexCueVariants:
-        """One instructor structured call on engine_mouth_model (off the critical path).
-
-        The persona template is the sole guide; the seed strings passed to
-        prerender_reflex_variants are NOT forwarded here — they are used only as the
-        fallback when this call fails.
-        """
-        from app.ai.client import get_openai_client
-
-        client = get_openai_client()
-        prompt = self._loader.get("engine/mouth/reflex_cues").format(
-            persona_name=self._persona_name, job_title=self._job_title,
+            raw = await self._llm_call(messages)
+        except Exception:  # noqa: BLE001 — an intro blip must never break the session
+            _log.warning("mouth.intro.fallback", exc_info=True)
+            return f"Hi {candidate_name} — thanks for joining today. So, let's get into it."
+        return (raw.strip() if raw else "") or (
+            f"Hi {candidate_name} — thanks for joining today. So, let's get into it."
         )
-        create_kwargs: dict[str, object] = {
+
+    async def real_line(self, mouth_input: MouthTurnInput) -> str:
+        """Render the Directive as a spoken string.
+
+        Verbatim shortcut (ask / probe / repeat with say set):
+            Return directive.say directly. The brain/resolver has already
+            committed to this exact text — re-running it through the LLM would
+            risk meaning drift. Zero latency added.
+
+        LLM path (clarify / redirect / reassure / answer_meta / close):
+            Load the per-act instruction block, build the three-part message
+            list, call the LLM, and return the stripped response.
+        """
+        directive = mouth_input.directive
+        act = directive.act
+
+        # ── Verbatim shortcut ────────────────────────────────────────────────
+        if act in _VERBATIM_ACTS and directive.say:
+            _log.debug("mouth.verbatim_shortcut", act=act.value)
+            return directive.say
+
+        # ── LLM composition path ─────────────────────────────────────────────
+        act_block = _load_act_block(act.value, self._version)
+        messages = build_mouth_messages(
+            persona=self._persona,
+            act_block=act_block,
+            mouth_input=mouth_input,
+        )
+
+        _log.debug("mouth.llm_call", act=act.value, n_messages=len(messages))
+        # Graceful degradation: a mouth-LLM blip must NEVER kill the interview.
+        # Fall back to the directive's own text (composed_say for clarify/redirect/
+        # reassure/answer_meta) or a safe neutral line for close.
+        try:
+            raw = await self._llm_call(messages)
+        except Exception:  # noqa: BLE001 — never propagate a mouth failure into the drive loop
+            _log.warning("mouth.llm_call.fallback", act=act.value, exc_info=True)
+            return directive.say or _SAFE_FALLBACK_LINE
+        line = raw.strip() if raw else ""
+        return line or directive.say or _SAFE_FALLBACK_LINE
+
+    # -----------------------------------------------------------------------
+    # Default real LLM call (injectable seam — only reached in production)
+    # -----------------------------------------------------------------------
+
+    async def _default_mouth_llm(self, messages: list[dict]) -> str:
+        """Real raw-client call — mirrors realtime.build_mouth_llm_plugin effort-gating."""
+        # Lazy imports keep this module free of livekit and app startup cost at
+        # import time; the FastAPI process never loads realtime SDKs.
+        from app.ai.client import get_raw_openai_client
+        from app.ai.config import ai_config
+
+        # The raw AsyncOpenAI client already sets max_retries=1 at construction
+        # (_build_raw_openai_client); it is NOT a valid per-call create() kwarg.
+        client = get_raw_openai_client()
+        kwargs: dict = {
             "model": ai_config.engine_mouth_model,
-            "response_model": ReflexCueVariants,
-            "messages": [{"role": "system", "content": prompt}],
+            "messages": messages,
         }
         if ai_config.engine_mouth_effort:
-            create_kwargs["reasoning_effort"] = ai_config.engine_mouth_effort
-        return await client.chat.completions.create(**create_kwargs)
+            kwargs["reasoning_effort"] = ai_config.engine_mouth_effort
+        if ai_config.engine_mouth_prompt_cache_key:
+            kwargs["prompt_cache_key"] = ai_config.engine_mouth_prompt_cache_key
+
+        resp = await client.chat.completions.create(**kwargs)
+        return resp.choices[0].message.content or ""

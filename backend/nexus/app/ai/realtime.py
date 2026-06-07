@@ -281,4 +281,3 @@ def build_vad() -> object:
 
     logger.info("ai.realtime.vad.built", provider="silero")
     return silero.VAD.load()
-

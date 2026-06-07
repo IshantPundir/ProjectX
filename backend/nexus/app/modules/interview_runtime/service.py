@@ -32,6 +32,7 @@ from app.modules.interview_runtime.errors import (
     SessionNotActiveError,
     StageNotAiDrivenError,
 )
+from app.modules.interview_runtime.evidence import SessionEvidence
 from app.modules.interview_runtime.schemas import (
     CandidateContext,
     CompanyContext,
@@ -491,3 +492,129 @@ async def record_session_result(
                 correlation_id=correlation_id,
                 exc_info=True,
             )
+
+
+async def record_session_evidence(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    evidence: SessionEvidence,
+    correlation_id: str,
+) -> None:
+    """Persist the gen-3 engine's SessionEvidence at session close.
+
+    The engine's evidence (notes / transcript / provenance) must survive for the
+    report regardless of HOW the screen ended — including when an external
+    authority (e.g. proctoring) terminated it first. Two mutually-exclusive paths:
+
+    1. ENGINE-OWNED CLOSE — the session is still ``active``: a single atomic UPDATE
+       gated on ``state='active'`` transitions it to ``completed`` and writes the
+       evidence. This is the normal path (the engine decided to close).
+
+    2. EXTERNALLY-TERMINATED CLOSE — the session is already in a terminal state set
+       by someone else (``terminated`` by proctoring, ``error``, ``cancelled``) and
+       has no evidence yet: ATTACH the evidence to that row WITHOUT changing its
+       state or outcome (proctoring owns the terminal state; the engine only
+       contributes its evidence). Gated on ``session_evidence_json IS NULL`` so it
+       is idempotent and cannot clobber a prior write.
+
+    Idempotency across both paths keys on ``session_evidence_json`` already being
+    set → silent no-op. A genuinely missing row raises ``ValueError``; a row still
+    ``active`` that the first UPDATE somehow missed raises ``SessionNotActiveError``.
+
+    Writes ``session_evidence_json`` only (not the gen-2 ``raw_result_json`` /
+    ``transcript`` / … columns) and does NOT enqueue report scoring (the old
+    scorer cannot consume SessionEvidence — a separate later plan).
+
+    Caller MUST be on a bypass-RLS session. ``tenant_id`` is filter-applied to
+    every query — cross-tenant access returns "not found".
+    """
+    session_id = uuid.UUID(evidence.meta.session_id)
+    derived_status = "ok" if evidence.meta.questions_asked > 0 else "partial"
+    evidence_json = evidence.model_dump(mode="json")
+    now = datetime.now(UTC)
+
+    # Path 1 — engine-owned close: active → completed (atomic).
+    res = await db.execute(
+        update(SessionRow)
+        .where(
+            SessionRow.id == session_id,
+            SessionRow.tenant_id == tenant_id,
+            SessionRow.state == "active",
+        )
+        .values(
+            session_evidence_json=evidence_json,
+            agent_completed_at=now,
+            result_status=derived_status,
+            state="completed",
+            state_changed_at=now,
+        )
+    )
+    attached_to_terminal: str | None = None
+
+    if res.rowcount == 0:
+        existing = (
+            await db.execute(
+                select(SessionRow).where(
+                    SessionRow.id == session_id,
+                    SessionRow.tenant_id == tenant_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            raise ValueError(f"session {session_id} not found")
+        if existing.session_evidence_json is not None:
+            return  # idempotent — evidence already recorded (any state)
+        if existing.state in ("terminated", "error", "cancelled", "completed"):
+            # Path 2 — externally terminated (e.g. proctoring): attach evidence
+            # WITHOUT touching the terminal state / proctoring_outcome.
+            res2 = await db.execute(
+                update(SessionRow)
+                .where(
+                    SessionRow.id == session_id,
+                    SessionRow.tenant_id == tenant_id,
+                    SessionRow.session_evidence_json.is_(None),
+                )
+                .values(
+                    session_evidence_json=evidence_json,
+                    agent_completed_at=now,
+                    result_status=derived_status,
+                )
+            )
+            if res2.rowcount == 0:
+                return  # raced — another writer attached evidence; idempotent
+            attached_to_terminal = existing.state
+        else:
+            # Still 'active' but the gated UPDATE missed — a real anomaly.
+            raise SessionNotActiveError(f"session {session_id} state={existing.state}")
+
+    await log_event(
+        db,
+        tenant_id=tenant_id,
+        actor_id=None,
+        actor_email=None,
+        action="engine.session.evidence_recorded",
+        resource="session",
+        resource_id=session_id,
+        payload={
+            "correlation_id": correlation_id,
+            "questions_asked": evidence.meta.questions_asked,
+            "result_status": derived_status,
+            # When non-null, the engine attached evidence to a session already
+            # terminal-ized by another authority (e.g. proctoring).
+            "attached_to_terminal_state": attached_to_terminal,
+        },
+    )
+
+    # Commit the evidence + audit DURABLY before returning. Callers must NOT also commit.
+    await db.commit()
+
+    logger.info(
+        "interview_runtime.record_session_evidence.completed",
+        session_id=str(session_id),
+        tenant_id=str(tenant_id),
+        correlation_id=correlation_id,
+        questions_asked=evidence.meta.questions_asked,
+        result_status=derived_status,
+        attached_to_terminal_state=attached_to_terminal,
+    )

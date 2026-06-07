@@ -1,99 +1,312 @@
-"""Deterministic policy gates over a BrainDecision (pure — no livekit, no LLM).
-
-Defense-in-depth (doc 05 / DESIGN-SPEC §12): the LLM proposes, the policy disposes. Every gate
-either passes (recorded in `checks`) or fires (recorded in `violations`) and DOWNGRADES the move
-to a safe non-terminal alternative — it NEVER crashes the session and NEVER auto-rejects
-(borderline → human). The headline gate is the b99d8cc6 fix: knockout_close requires ALL
-OR-alternatives checked AND reflect-to-confirm. The no-leak pre-check scans composed_say BEFORE
-the Directive is constructed (the Directive ctor also validates — belt + suspenders) so a leak
-downgrades cleanly instead of raising RubricLeakError mid-turn.
 """
+Brain deterministic policy gates — D5 task.
+
+All three gates run on the live critical path.  They are PURE Python functions
+(no livekit, no I/O, no LLM) and must NEVER raise under any input.  Each gate
+is built with defensive guards so unexpected inputs produce a safe fallback
+rather than propagating an exception to the engine loop.
+
+Gates
+------
+1. gate_knockout      — verified-knockout state machine.
+   Blocks a premature `close` when a mandatory-absent signal has not yet been
+   walked through the full probe → check_alternatives → reflect_confirm chain.
+   Exposes the current step so the engine can steer toward verification even
+   when it is not blocking a close.
+
+2. scrub_composed_say — no-leak scrub.
+   Checks whether `composed_say` echoes any known rubric secret string
+   (literal substring match, case-insensitive, length-gated to avoid short
+   coincidental words).  A matched secret → safe fallback.  This is NOT intent
+   classification; it is literal known-string detection.
+
+3. coerce_probe_index — probe coherence.
+   Ensures the brain's chosen probe_index is a valid, unused index into the
+   active question's follow_ups list.  Coerces an invalid or repeat index to
+   the first unused one; returns None when no probes remain.
+"""
+
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import Sequence
 
-from app.modules.interview_engine.brain.decision import BrainDecision, BrainMove
-from app.modules.interview_engine.directive import FORBIDDEN_RUBRIC_TOKENS
+from app.modules.interview_engine.contracts import ActiveQuestionRubric, BrainMove
+
+# ---------------------------------------------------------------------------
+# Shared constant
+# ---------------------------------------------------------------------------
+
+SAFE_FALLBACK: str = (
+    "Sorry, let me put that differently — could you tell me a bit more about that?"
+)
+
+# ---------------------------------------------------------------------------
+# Optional belt-and-suspenders meta-phrase list.
+# These are obvious rubric/evaluation meta-phrases that should NEVER appear in
+# candidate-facing text regardless of whether they echo a known secret.  The
+# primary leak check is the known-rubric-string match above; this list is a
+# secondary catch for common slip-through patterns.  Keep it TINY and literal.
+# ---------------------------------------------------------------------------
+_META_PHRASES: tuple[str, ...] = (
+    "what i'm looking for",
+    "the rubric",
+    "evaluation criteria",
+    "evaluation hint",
+    "the rubric says",
+    "rubric says",
+)
 
 
-@dataclass
-class PolicyResult:
-    ok: bool
-    effective_move: BrainMove          # the move to actually execute (possibly downgraded)
-    sanitized_say: str | None   # composed_say after no-leak scrub (None if leaked or was None)
-    sanitized_setup: str | None = None   # spoken_setup after no-leak scrub (None if leaked/absent)
-    checks: list[str] = field(default_factory=list)       # gates that passed
-    violations: list[str] = field(default_factory=list)   # gates that fired (→ downgrade)
+# ===========================================================================
+# Gate 1 — Verified-knockout state machine
+# ===========================================================================
+
+class KnockoutStep(StrEnum):
+    """Ordered steps the engine must walk through before confirming a knockout."""
+    probe             = "probe"
+    check_alternatives = "check_alternatives"
+    reflect_confirm   = "reflect_confirm"
+    confirmed         = "confirmed"
 
 
-def _leaks(text: str | None) -> bool:
-    if not text:
-        return False
-    hay = text.lower()
-    return any(tok in hay for tok in FORBIDDEN_RUBRIC_TOKENS)
+_KNOCKOUT_PROGRESSION: tuple[KnockoutStep, ...] = (
+    KnockoutStep.probe,
+    KnockoutStep.check_alternatives,
+    KnockoutStep.reflect_confirm,
+    KnockoutStep.confirmed,
+)
 
 
-def evaluate_policy(decision: BrainDecision) -> PolicyResult:
-    """Run every gate; return the effective (possibly downgraded) move + scrubbed say."""
-    checks: list[str] = []
-    violations: list[str] = []
-    move = decision.move
-    say = decision.composed_say
+class KnockoutTracker:
+    """Per-session mutable tracker for verified-knockout progress.
 
-    # --- Gate 1: verified knockout (the b99d8cc6 guard) -------------------
-    if move is BrainMove.knockout_close:
-        if len(decision.or_alternatives) > 1 and not decision.or_alternatives_checked:
-            violations.append("knockout_or_unverified")
-            move = BrainMove.probe                       # keep probing the untested alternatives
-        elif not decision.reflect_confirmed:
-            violations.append("knockout_unconfirmed")
-            move = BrainMove.confirm                     # reflect-to-confirm before any close
-        else:
-            checks.append("knockout_or_verified")
+    Plain Python, no pydantic.  Tracks each pending mandatory signal as an
+    index into :data:`_KNOCKOUT_PROGRESSION`.  Designed to be safe against
+    arbitrary signal names; unknown signals always default to ``probe``.
+    """
 
-    # --- Gate 2: grade↔move coherence (doc 09 §2) -------------------------
-    # Never probe-for-more when the targeted signal is already graded sufficient/strong.
-    if move is BrainMove.probe:
-        target = decision.target_signal
-        sufficient = target is not None and decision.coverage_map().get(target) == "sufficient"
-        if decision.move is BrainMove.probe and decision.grade is None:
-            # Nothing to probe: grade=null means this turn had no gradeable answer (a clarification
-            # request / meta turn). Probing a non-answer fires a HARDER question at a candidate who
-            # asked for help (fe3a5434 t-6 -> candidate quit). Clarify/answer instead of probing.
-            # Gated on the BRAIN's original move so a Gate-1 knockout->probe (keep testing the
-            # OR-alternatives) is exempt — that probe legitimately has no answer to grade.
-            violations.append("probe_without_answer")
-            move = BrainMove.clarify
-        elif decision.grade == "strong" or sufficient:
-            violations.append("incoherent_probe_on_sufficient")
-            move = BrainMove.advance
-        else:
-            checks.append("coherent_probe")
+    def __init__(self) -> None:
+        # Maps signal string → int index in _KNOCKOUT_PROGRESSION.
+        self._steps: dict[str, int] = {}
 
-    # --- Gate 3: no-leak pre-check on composed text -----------------------
-    if _leaks(say):
-        violations.append("no_leak")
-        say = None                           # drop leaking text; mouth composes from the act prompt
-    elif say is not None:
-        checks.append("no_leak_ok")
+    def current_step(self, signal: str) -> KnockoutStep:
+        """Return the current step for *signal* (defaults to ``probe`` for unseen)."""
+        idx = self._steps.get(signal, 0)
+        return _KNOCKOUT_PROGRESSION[idx]
 
-    sanitized = say
+    def advance(self, signal: str) -> None:
+        """Advance *signal* to the next step; idempotent at ``confirmed``."""
+        idx = self._steps.get(signal, 0)
+        # Cap at the last index (confirmed) to stay idempotent.
+        self._steps[signal] = min(idx + 1, len(_KNOCKOUT_PROGRESSION) - 1)
 
-    # --- Gate 3b: no-leak on the optional orienting setup ---
-    setup = decision.spoken_setup
-    if _leaks(setup):
-        violations.append("setup_leak")
-        setup = None
+    def confirm(self, signal: str) -> None:
+        """Drive *signal* straight to ``confirmed`` in one call (idempotent).
 
-    # Always record at least one gate so callers can assert res.checks is non-empty.
-    if not checks and not violations:
-        checks.append("clean_pass")
+        Used by the brain-driven verified-knockout close: the brain has already
+        established absence in-conversation (probe → reflect-back confirm), so the
+        tracker jumps directly to ``confirmed`` rather than walking the reactive
+        ``probe → check_alternatives → reflect_confirm`` ladder one close-attempt at
+        a time. Never raises.
+        """
+        self._steps[signal] = len(_KNOCKOUT_PROGRESSION) - 1
 
-    return PolicyResult(
-        ok=not violations,
-        effective_move=move,
-        sanitized_say=sanitized,
-        sanitized_setup=setup,
-        checks=checks,
-        violations=violations,
-    )
+    def is_confirmed(self, signal: str) -> bool:
+        """Return True iff *signal* has reached ``confirmed``."""
+        return self.current_step(signal) == KnockoutStep.confirmed
+
+
+@dataclass(frozen=True)
+class KnockoutGate:
+    """Result returned by :func:`gate_knockout`."""
+    allow_move: bool
+    """True → the brain's proposed move proceeds; False → the engine must run the knockout flow instead."""
+    forced_step: KnockoutStep | None
+    """The knockout step the engine should execute next, or None when there is nothing pending."""
+    signal: str | None
+    """Which mandatory signal is being driven, or None when there is nothing pending."""
+
+
+def gate_knockout(
+    *,
+    proposed_move: BrainMove,
+    knockout_pending: Sequence[str],
+    tracker: KnockoutTracker,
+) -> KnockoutGate:
+    """Deterministic verified-knockout gate.
+
+    Behaviour
+    ---------
+    - Empty *knockout_pending* → pass-through (allow_move=True, forced_step=None, signal=None).
+    - If the first *unconfirmed* pending signal exists:
+      - Proposed move is ``close`` → BLOCK (allow_move=False) and surface the current step.
+      - Any other move → ALLOW but still surface the pending step so the engine can steer.
+    - If all pending signals are already confirmed → pass-through.
+
+    This function NEVER raises.
+    """
+    try:
+        if not knockout_pending:
+            return KnockoutGate(allow_move=True, forced_step=None, signal=None)
+
+        # Find the first signal that is not yet confirmed.
+        first_unconfirmed: str | None = None
+        for signal in knockout_pending:
+            if not tracker.is_confirmed(signal):
+                first_unconfirmed = signal
+                break
+
+        if first_unconfirmed is None:
+            # All pending signals have been verified — nothing to block.
+            return KnockoutGate(allow_move=True, forced_step=None, signal=None)
+
+        current_step = tracker.current_step(first_unconfirmed)
+
+        if proposed_move == BrainMove.close:
+            # Block: do NOT close until the knockout is verified.
+            return KnockoutGate(
+                allow_move=False,
+                forced_step=current_step,
+                signal=first_unconfirmed,
+            )
+
+        # Non-close move: allow it but expose the pending step.
+        # The engine decides whether to act on forced_step; the gate never raises.
+        return KnockoutGate(
+            allow_move=True,
+            forced_step=current_step,
+            signal=first_unconfirmed,
+        )
+
+    except Exception:  # pragma: no cover — defensive catch-all
+        # Should never be reached, but if something goes wrong we must not
+        # crash the engine turn.  Pass-through is the safest fallback.
+        return KnockoutGate(allow_move=True, forced_step=None, signal=None)
+
+
+# ===========================================================================
+# Gate 2 — No-leak scrub
+# ===========================================================================
+
+def scrub_composed_say(
+    text: str | None,
+    rubric: ActiveQuestionRubric,
+    *,
+    fallback: str = SAFE_FALLBACK,
+    min_phrase_len: int = 12,
+) -> str | None:
+    """Check *text* for leaked rubric secrets and return a safe fallback if found.
+
+    Detection strategy
+    ------------------
+    1. Collect the rubric's KNOWN secret strings:
+       ``excellent``, ``meets_bar``, ``below_bar``, every ``positive_evidence``
+       entry, every ``red_flags`` entry, ``evaluation_hint``.
+    2. For each non-empty secret of length ≥ *min_phrase_len*, perform a
+       case-insensitive substring search inside *text*.  A hit → LEAK → return
+       *fallback*.
+    3. Additionally check a small fixed list of obvious meta-phrases
+       (``_META_PHRASES``) regardless of rubric content (belt-and-suspenders).
+    4. If no leak found → return *text* unchanged.
+
+    This is LITERAL known-string detection, NOT intent classification or regex.
+
+    This function NEVER raises.
+    """
+    if text is None:
+        return None
+
+    try:
+        text_lower = text.lower()
+
+        # --- Primary check: known rubric secret strings ---
+        secrets: list[str] = []
+        try:
+            candidates_raw: list[str | None] = [
+                rubric.excellent,
+                rubric.meets_bar,
+                rubric.below_bar,
+                rubric.evaluation_hint,
+                *(rubric.positive_evidence or []),
+                *(rubric.red_flags or []),
+            ]
+            for s in candidates_raw:
+                if s and len(s) >= min_phrase_len:
+                    secrets.append(s)
+        except Exception:  # pragma: no cover
+            pass  # rubric access error → no secrets to check, skip to meta-phrases
+
+        for secret in secrets:
+            try:
+                if secret.lower() in text_lower:
+                    return fallback
+            except Exception:  # pragma: no cover
+                pass
+
+        # --- Secondary check: obvious meta-phrases (belt-and-suspenders) ---
+        for phrase in _META_PHRASES:
+            if phrase in text_lower:
+                return fallback
+
+        return text
+
+    except Exception:  # pragma: no cover
+        # Defensive catch-all — if anything goes wrong, return the text
+        # unchanged rather than surfacing an exception to the engine turn.
+        return text
+
+
+# ===========================================================================
+# Gate 3 — Probe coherence
+# ===========================================================================
+
+def coerce_probe_index(
+    probe_index: int | None,
+    *,
+    follow_ups: list[str],
+    probes_used: list[int],
+) -> int | None:
+    """Coerce the brain's *probe_index* to a valid, unused index.
+
+    Returns
+    -------
+    int
+        A valid index ``i`` such that ``0 <= i < len(follow_ups)`` and
+        ``i not in probes_used``.
+    None
+        When no unused probe remains (all used, or *follow_ups* is empty).
+
+    This function NEVER raises.
+    """
+    try:
+        if not follow_ups:
+            return None
+
+        # Build the ordered list of available (unused) indices.
+        # Use a set for O(1) membership test to guard against a large probes_used.
+        used_set: set[int] = set()
+        try:
+            used_set = set(probes_used)
+        except Exception:  # pragma: no cover
+            pass
+
+        available = [i for i in range(len(follow_ups)) if i not in used_set]
+
+        if not available:
+            return None
+
+        # Check whether the proposed index is already valid and unused.
+        if (
+            probe_index is not None
+            and 0 <= probe_index < len(follow_ups)
+            and probe_index not in used_set
+        ):
+            return probe_index
+
+        # Coerce to the first available unused probe.
+        return available[0]
+
+    except Exception:  # pragma: no cover
+        return None

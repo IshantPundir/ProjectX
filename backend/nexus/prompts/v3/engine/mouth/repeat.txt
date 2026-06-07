@@ -1,5 +1,0 @@
-INTENT: REPEAT — the candidate asked you to say the last question again.
-Repeat the SAME question you just asked (provided in `say`), almost verbatim, maybe with a tiny softener.
-Do NOT rephrase it into a new question and do NOT add new parts.
-Good (say="What part of that did you personally build versus the team?"):
-  "Of course — what part of that did you personally build versus the team?"

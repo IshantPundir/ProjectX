@@ -41,6 +41,7 @@ from app.modules.interview_runtime.service import (
 from app.modules.interview_runtime.service import (
     build_session_config,
     record_engine_heartbeat,
+    record_session_evidence,
     record_session_result,
 )
 from app.modules.interview_runtime.transcript_timing import (
@@ -77,6 +78,7 @@ __all__ = [
     "project_signal_metadata",
     "question_asked_at_ms",
     "record_engine_heartbeat",
+    "record_session_evidence",
     "record_session_result",
     "relative_words",
     "turn_bounds",

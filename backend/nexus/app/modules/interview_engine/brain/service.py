@@ -1,421 +1,695 @@
-"""ControlPlane (the brain) — one coherent decision per turn boundary (no livekit).
+"""
+Brain service — D3 task.
 
-Renders the cache-stable prefix once, then per turn: build messages → instructor structured-output
-call on engine_brain_model (the brain LLM site; like question_bank/refine.py) → apply coverage_delta
-to the CoverageTracker → run deterministic policy gates → map the (possibly-downgraded) move to a
-no-leak Directive (ASK/PROBE resolve VERBATIM bank text by reference; composed acts use the
-policy-sanitized say) → emit the Directive + a full TurnDecisionRecord. Bounded-awaited by the
-caller; a timeout/error yields a deterministic safe fallback so the turn never stalls. The LLM call
-is isolated in the module-level `_call_brain` helper so tests mock it at the app/ai boundary.
+ControlPlane.decide(turn_input, *, asked_ids, time_remaining_s) → BrainDecision
+
+Responsibilities:
+  1. Build the full LLM messages list (prefix + suffix) via build_messages.
+  2. Call the brain LLM (instructor, structured output → BrainTurnOutput).
+     The LLM call is an INJECTABLE SEAM (llm_call arg) so tests can pass a
+     fake; the default (_default_brain_llm) is the real instructor call.
+  3. Update the CoverageProjection with the LLM's observations.
+  4. Derive a Directive from the BrainTurnOutput:
+       - Apply gate_knockout (block premature close, steer knockout flow).
+       - Map BrainMove → DirectiveAct (1:1 by name).
+       - Resolve `say`:
+           ask       → resolver picks next question; fallback to close if None.
+           probe     → coerce probe_index, verbatim follow_up; fallback to ask.
+           clarify / redirect / reassure / answer_meta → scrub_composed_say.
+           repeat    → on_the_floor verbatim.
+           close     → None (mouth composes from act prompt), is_terminal=True.
+  5. Return BrainDecision(directive, observations, reasoning, is_terminal).
+
+Module-level constructor:
+  build_control_plane(config, *, projection=None) → ControlPlane
+    Assembles everything from a SessionConfig (used by loop F1).
 """
 from __future__ import annotations
 
-import asyncio
-import uuid
-from dataclasses import dataclass
-from typing import Literal
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING
 
 import structlog
 
-from app.ai.config import ai_config
-from app.modules.interview_engine.audit import TurnDecisionRecord
-from app.modules.interview_engine.brain.decision import BrainDecision, BrainMove
 from app.modules.interview_engine.brain.input_builder import (
-    build_brain_messages,
-    render_stable_prefix,
+    CoverageProjection,
+    build_messages,
+    build_session_context,
 )
-from app.modules.interview_engine.brain.policy import evaluate_policy
-from app.modules.interview_engine.coverage import CoverageTracker
-from app.modules.interview_engine.directive import Directive, DirectiveAct, DirectiveTone
-from app.modules.interview_runtime import SessionConfig
+from app.modules.interview_engine.brain.policy import (
+    KnockoutTracker,
+    coerce_probe_index,
+    gate_knockout,
+    scrub_composed_say,
+)
+from app.modules.interview_engine.brain.resolver import (
+    BudgetConfig,
+    ResolverQuestion,
+    budget_config_from_ai_config,
+    resolve_next,
+)
+from app.modules.interview_engine.contracts import (
+    BrainDecision,
+    BrainMove,
+    BrainSessionContext,
+    BrainTurnInput,
+    BrainTurnOutput,
+    Directive,
+    DirectiveAct,
+    DirectiveTone,
+    SignalSpec,
+)
+from app.modules.interview_runtime.evidence import CoverageState
 
-log = structlog.get_logger("interview_engine.brain")
+if TYPE_CHECKING:
+    from app.modules.interview_runtime.schemas import SessionConfig
+
+_log = structlog.get_logger()
+
+# ---------------------------------------------------------------------------
+# Tone defaults per act (simple policy — tune if needed)
+# ---------------------------------------------------------------------------
+
+# Leak-safe reflect-back line used ONLY as a backstop when the brain jumps
+# straight to a knockout close without first reflecting it back. The natural
+# path uses the brain's own composed `confirm`. No signal name (the internal
+# signal string reads as nonsense aloud and could imply the rubric).
+_KNOCKOUT_REFLECT_LINE: str = (
+    "Before we wrap up — just to confirm, that's not something you've worked with "
+    "directly yet. Is that right?"
+)
 
 
-@dataclass(frozen=True)
-class FloorRef:
-    """The exact question-bearing line currently awaiting an answer (single source of truth for
-    'what is being asked'). `canonical_text` is the brain's intent (the mouth re-renders it);
-    `kind` in {main, probe, clarify}; `thread_question_id` is the bank question being graded."""
-    canonical_text: str
-    kind: Literal["main", "probe", "clarify"]
-    thread_question_id: str | None
-
-
-_MOVE_TO_ACT: dict[BrainMove, DirectiveAct] = {
-    BrainMove.probe: DirectiveAct.PROBE,
-    BrainMove.advance: DirectiveAct.ACK_ADVANCE,
-    BrainMove.clarify: DirectiveAct.CLARIFY,
-    BrainMove.redirect: DirectiveAct.REDIRECT,
-    BrainMove.hold: DirectiveAct.HOLD,
-    BrainMove.reassure: DirectiveAct.REASSURE,
-    BrainMove.hint: DirectiveAct.HINT,
-    BrainMove.answer_meta: DirectiveAct.ANSWER_META,
-    BrainMove.confirm: DirectiveAct.CONFIRM,
-    BrainMove.repeat: DirectiveAct.REPEAT,
-    BrainMove.knockout_close: DirectiveAct.CLOSE,
-    BrainMove.close: DirectiveAct.CLOSE,
+_ACT_TONE: dict[DirectiveAct, DirectiveTone] = {
+    DirectiveAct.ask: DirectiveTone.warm,
+    DirectiveAct.probe: DirectiveTone.warm,
+    DirectiveAct.clarify: DirectiveTone.warm,
+    DirectiveAct.redirect: DirectiveTone.calm,
+    DirectiveAct.reassure: DirectiveTone.warm,
+    DirectiveAct.hold: DirectiveTone.warm,
+    DirectiveAct.confirm: DirectiveTone.warm,
+    DirectiveAct.answer_meta: DirectiveTone.neutral,
+    DirectiveAct.repeat: DirectiveTone.warm,
+    DirectiveAct.close: DirectiveTone.warm,
 }
-_TERMINAL_MOVES = frozenset({BrainMove.knockout_close, BrainMove.close})
 
 
-def build_speculative_directive(plane: ControlPlane, *, anticipated_turn_ref: str) -> Directive:
-    """A deterministic, NON-voiced Option-C pre-stage (D3): staged while the candidate is still
-    answering so the controller's stage->supersede->discard machinery runs live (CMI-4). It is
-    ALWAYS superseded by the confirm decision at the boundary; its content is a benign best-effort
-    guess (advance to the next uncovered question, else a hold). It calls no LLM and mutates no
-    state (coverage stays the single source of truth — the speculative move is never voiced).
-    """
-    uncovered = plane._coverage.uncovered_mandatory()
-    nxt = next(
-        (q for q in sorted(plane._config.stage.questions, key=lambda q: q.position)
-         if q.id != plane._active_question_id
-         and ((q.primary_signal in uncovered) or (not q.primary_signal and uncovered))),
-        None,
-    )
-    if nxt is not None:
-        return Directive(id=plane._new_id(), turn_ref=anticipated_turn_ref,
-                         act=DirectiveAct.ACK_ADVANCE, say=nxt.text, speculative=True)
-    return Directive(id=plane._new_id(), turn_ref=anticipated_turn_ref, act=DirectiveAct.HOLD,
-                     say=None, compose_hint="warm, brief — let them keep going", speculative=True,
-                     tone=DirectiveTone.WARM)
-
-
-async def _call_brain(*, messages: list[dict[str, str]], correlation_id: str) -> BrainDecision:
-    """The blessed brain LLM site (instructor structured output). Mocked in unit tests."""
-    from app.ai.client import get_openai_client
-
-    client = get_openai_client()
-    create_kwargs: dict[str, object] = {
-        "model": ai_config.engine_brain_model,
-        "response_model": BrainDecision,
-        "messages": messages,
-        "max_retries": 1,
-    }
-    if ai_config.engine_brain_effort:          # 'low' for the brain; gated per the effort contract
-        create_kwargs["reasoning_effort"] = ai_config.engine_brain_effort
-    # prompt_cache_key: Step 0 spike confirmed True (SDK forwards it) — include it.
-    create_kwargs["prompt_cache_key"] = ai_config.engine_brain_prompt_cache_key
-    decision, completion = await client.chat.completions.create_with_completion(**create_kwargs)
-    usage = getattr(completion, "usage", None)
-    if usage is not None:
-        details = getattr(usage, "prompt_tokens_details", None)
-        log.info(
-            "engine.v2.brain.usage",
-            prompt_tokens=getattr(usage, "prompt_tokens", None),
-            cached_tokens=getattr(details, "cached_tokens", None),
-            completion_tokens=getattr(usage, "completion_tokens", None),
-            correlation_id=correlation_id,
-        )
-    return decision
-
+# ---------------------------------------------------------------------------
+# ControlPlane
+# ---------------------------------------------------------------------------
 
 class ControlPlane:
-    """Brain control plane — one coherent LLM-based decision per turn boundary.
+    """Async control plane — one structured LLM call per committed candidate turn.
 
-    Ties together CoverageTracker, BrainDecision, evaluate_policy, render_stable_prefix,
-    build_brain_messages, and the instructor client. The mouth receives only a no-leak
-    Directive + an auditable TurnDecisionRecord; rubric reasoning stays in the record.
+    Parameters
+    ----------
+    session_context:
+        Stable, byte-identical session prefix (built once at session start).
+    system_prompt:
+        The brain system prompt (read from prompts/v4/engine/brain.system.txt).
+    projection:
+        Mutable CoverageProjection that accumulates signal observations.
+    resolver_questions:
+        Compact bank view (ResolverQuestion list) — used to resolve next question.
+    all_specs:
+        Full SignalSpec list — used by the knockout gate + projection helpers.
+    budget_cfg:
+        Time-budget config for resolve_next.
+    knockout_tracker:
+        Per-session KnockoutTracker; defaults to a fresh one if None.
+    llm_call:
+        INJECTABLE SEAM for tests.  None → use _default_brain_llm (real API call).
     """
 
-    def __init__(self, *, config: SessionConfig, coverage: CoverageTracker) -> None:
-        self._config = config
-        self._coverage = coverage
-        self._questions = {q.id: q for q in config.stage.questions}
-        self._active_question_id: str | None = None  # set by opener(), advanced on advance-move
-        self._asked_ids: set[str] = set()            # questions physically ASKED (repeat-guard)
-        self._pending_advance_id: str | None = None  # resolved next-q for THIS decide() (set in
-        #                                              _build_directive, consumed by decide)
-        self._floor: FloorRef | None = None          # last question-bearing line voiced (floor ref)
-        from app.ai.prompts import PromptLoader  # local import keeps module import light
-        loader = PromptLoader(version=ai_config.engine_brain_prompt_version)
-        self._stable_prefix = render_stable_prefix(
-            system_prompt=loader.get("engine/brain.system"), config=config
+    def __init__(
+        self,
+        *,
+        session_context: BrainSessionContext,
+        system_prompt: str,
+        projection: CoverageProjection,
+        resolver_questions: list[ResolverQuestion],
+        all_specs: list[SignalSpec],
+        budget_cfg: BudgetConfig,
+        knockout_tracker: KnockoutTracker | None = None,
+        llm_call: Callable[[list[dict]], Awaitable[BrainTurnOutput]] | None = None,
+    ) -> None:
+        self._session_context = session_context
+        self._system_prompt = system_prompt
+        self._projection = projection
+        self._resolver_questions = resolver_questions
+        self._all_specs = all_specs
+        self._budget_cfg = budget_cfg
+        self._knockout_tracker = knockout_tracker or KnockoutTracker()
+        # Knockout signals for which a reflect-back confirm has already been given
+        # to the candidate this session — a knockout close is only honored after
+        # the absence has been reflected back (guards STT mishearing / scope misread).
+        self._knockout_reflect_offered: set[str] = set()
+        self._llm_call: Callable[[list[dict]], Awaitable[BrainTurnOutput]] = (
+            llm_call if llm_call is not None else self._default_brain_llm
         )
 
-    @property
-    def active_question_id(self) -> str | None:
-        """The question currently on the floor (the agent passes nothing; the brain owns this)."""
-        return self._active_question_id
+        # Build a lookup: question_id → bank question text (for `ask` resolution)
+        self._bank_text_by_id: dict[str, str] = {
+            q.question_id: q.text
+            for q in session_context.bank_index
+        }
 
-    def _new_id(self) -> str:
-        return f"d-{uuid.uuid4().hex[:8]}"
-
-    def opener(self) -> tuple[Directive, Directive]:
-        """Deterministic INTRO + ASK(first bank question) — D4. No brain call before any answer."""
-        first = min(self._config.stage.questions, key=lambda q: q.position)
-        self._active_question_id = first.id
-        self._asked_ids = {first.id}                 # the opener physically asks the first question
-        self._floor = FloorRef(canonical_text=first.text, kind="main",
-                               thread_question_id=first.id)
-        intro = Directive(
-            id=self._new_id(), turn_ref="t-0", act=DirectiveAct.INTRO, say=None,
-            compose_hint="warm, brief, disclose it's an AI + recorded, set them at ease",
-            tone=DirectiveTone.WARM,
-        )
-        ask = Directive(id=self._new_id(), turn_ref="t-0", act=DirectiveAct.ASK, say=first.text)
-        return intro, ask
+    # -----------------------------------------------------------------------
+    # Public API
+    # -----------------------------------------------------------------------
 
     async def decide(
         self,
+        turn_input: BrainTurnInput,
         *,
-        turn_ref: str,
-        candidate_utterance: str,
-        transcript_window: list[tuple[str, str]],
-        active_question_id: str | None = None,
-        correlation_id: str = "",
-        budget_ms: int | None = None,
-    ) -> tuple[Directive, TurnDecisionRecord]:
-        """One bounded brain decision. Returns (Directive, TurnDecisionRecord).
+        asked_ids: set[str],
+        time_remaining_s: float,
+    ) -> BrainDecision:
+        """One full brain turn: LLM call → projection update → Directive derivation."""
 
-        `active_question_id` defaults to the brain's own tracked pointer; pass it explicitly only
-        in tests. On a successful `advance` the pointer moves to the newly-asked question.
-        """
-        aqid = active_question_id or self._active_question_id
-        messages = build_brain_messages(
-            stable_prefix=self._stable_prefix,
-            transcript_window=transcript_window,
-            coverage_summary=self._coverage.summary_for_prompt(),
-            active_question=self._questions.get(aqid),
-            candidate_utterance=candidate_utterance,
-            asked_question_ids=sorted(self._asked_ids),   # repeat-guard (brain side)
-            active_probe_count=(self._coverage.probe_count(aqid) if aqid else 0),
-            floor=self._floor,  # PRE-update floor: what's on the floor when the candidate spoke
-            # A mandatory signal already failed/disclaimed is a pending knockout the brain must
-            # complete (confirm→knockout_close), never advance past (b33f4ed5).
-            failed_mandatory=self._coverage.failed_mandatory(),
-        )
-        timeout = (
-            budget_ms if budget_ms is not None else ai_config.engine_brain_total_budget_ms
-        ) / 1000.0
-        try:
-            decision = await asyncio.wait_for(
-                _call_brain(messages=messages, correlation_id=correlation_id), timeout=timeout
+        # Surface the deterministic "already reflected" hint so the brain CLOSES after
+        # one reflect-back instead of re-confirming a knockout it has already reflected
+        # (only signals both reflected AND still pending — a cleared one isn't shown).
+        reflected_pending = [
+            sig for sig in turn_input.knockout_pending
+            if sig in self._knockout_reflect_offered
+        ]
+        if reflected_pending:
+            turn_input = turn_input.model_copy(
+                update={"knockout_reflected": reflected_pending}
             )
-        except TimeoutError:
-            log.warning("engine.v2.brain.timeout", turn_ref=turn_ref, timeout_s=timeout,
-                        correlation_id=correlation_id)
-            return self._fallback(turn_ref, candidate_utterance, reason="brain timeout")
-        except Exception:  # noqa: BLE001 — the brain must never crash the session
-            log.warning("engine.v2.brain.error", turn_ref=turn_ref, exc_info=True,
-                        correlation_id=correlation_id)
-            return self._fallback(turn_ref, candidate_utterance, reason="brain error")
 
-        applied = self._coverage.apply_delta(decision.coverage_map())
-        policy = evaluate_policy(decision)
-        move = policy.effective_move
-        cap_note: str | None = None
-        if move is BrainMove.probe and aqid is not None and self._coverage.at_probe_cap(aqid):
-            move = BrainMove.advance                 # diminishing returns — stop grinding (9f581c21)  # noqa: E501
-            cap_note = "probe_cap_reached"
-        if move is BrainMove.probe and aqid is not None:
-            self._coverage.record_probe(aqid)
+        # Step 1: build messages (stable prefix + dynamic suffix)
+        messages = build_messages(self._system_prompt, self._session_context, turn_input)
 
-        self._pending_advance_id = None              # set by _build_directive's advance path
-        directive = self._build_directive(
-            turn_ref=turn_ref, move=move, decision=decision,
-            sanitized_say=policy.sanitized_say, active_question_id=aqid,
-            sanitized_setup=policy.sanitized_setup,
+        # Step 2: LLM call (real or injected fake)
+        output: BrainTurnOutput = await self._llm_call(messages)
+
+        # Step 3: update the coverage projection
+        quote_by_signal = {
+            obs.signal: turn_input.candidate_utterance
+            for obs in output.observations
+        }
+        self._projection.update(
+            output.observations,
+            established_quote_by_signal=quote_by_signal,
         )
-        # ACK_ADVANCE is only ever produced by the advance path of _build_directive, which resolves
-        # the repeat-guarded next question into _pending_advance_id (also covers the probe->advance
-        # degrade). Move the pointer to — and record as ASKED — exactly the question we voiced.
-        if directive.act is DirectiveAct.ACK_ADVANCE and self._pending_advance_id is not None:
-            self._active_question_id = self._pending_advance_id
-            self._asked_ids.add(self._pending_advance_id)
-        self._update_floor(directive)  # update floor AFTER pointer is advanced (thread_question_id
-        #                                reflects the new active question for ACK_ADVANCE)
-        record = TurnDecisionRecord(
-            turn_ref=turn_ref,
-            candidate_quote=candidate_utterance,
-            attributed_signals=decision.attributed_signals,
-            grade=decision.grade,
-            coverage_delta={s: st.value for s, st in applied.items()},
-            move=decision.move.value,
-            reasoning=decision.reasoning,
-            policy_checks=[*policy.checks, *policy.violations, *([cap_note] if cap_note else [])],
-            directive_id=directive.id,
-            active_question_id=aqid,  # question on the floor BEFORE this turn's advance (if any)
+
+        # Step 4: derive the Directive + the resolver-selected next question id (if ask)
+        directive, next_question_id = self._derive_directive(
+            output=output,
+            turn_input=turn_input,
+            asked_ids=asked_ids,
+            time_remaining_s=time_remaining_s,
         )
-        return directive, record
 
-    # Keep in sync with the mouth's _QUESTION_BEARING set (mouth/input_builder.py) — same concept.
-    _FLOOR_KIND: dict[DirectiveAct, str] = {
-        DirectiveAct.ASK: "main", DirectiveAct.ACK_ADVANCE: "main",
-        DirectiveAct.PROBE: "probe", DirectiveAct.CLARIFY: "clarify",
-        DirectiveAct.REDIRECT: "clarify",
-    }
+        # When this turn is a probe, record which bank follow_up TEMPLATE area was
+        # adapted (coerced to a valid, unused index) so the driver tracks probes_used
+        # — composed probe text no longer string-matches a verbatim follow_up.
+        probe_index_used: int | None = None
+        if directive.act == DirectiveAct.probe:
+            probe_index_used = coerce_probe_index(
+                output.probe_index,
+                follow_ups=turn_input.active_question.follow_ups,
+                probes_used=turn_input.active_question.probes_used,
+            )
 
-    def _update_floor(self, directive: Directive) -> None:
-        """Record the question-bearing line just produced. Non-question acts leave the floor."""
-        kind = self._FLOOR_KIND.get(directive.act)
-        if kind is None or not directive.say:
-            return
-        self._floor = FloorRef(canonical_text=directive.say, kind=kind,
-                               thread_question_id=self._active_question_id)
+        # Per-turn decision trace (F3 tuning observability). reasoning is the
+        # brain's own scratchpad (not candidate PII); kept short.
+        _log.info(
+            "engine.brain.decision",
+            llm_move=output.move.value,
+            act=directive.act.value,
+            is_terminal=directive.is_terminal,
+            probe_index=output.probe_index,
+            next_question_id=next_question_id,
+            probe_composed=bool(directive.act == DirectiveAct.probe and output.composed_say),
+            knockout_confirmed=output.knockout_confirmed,
+            knockout_pending=turn_input.knockout_pending,
+            n_observations=len(output.observations),
+            reasoning=(output.reasoning or "")[:160],
+        )
 
-    def _build_directive(
+        # Step 5: return BrainDecision
+        return BrainDecision(
+            directive=directive,
+            observations=output.observations,
+            reasoning=output.reasoning,
+            is_terminal=directive.is_terminal,
+            next_question_id=next_question_id,
+            probe_index=probe_index_used,
+        )
+
+    # -----------------------------------------------------------------------
+    # Directive derivation (private)
+    # -----------------------------------------------------------------------
+
+    def _derive_directive(
         self,
         *,
-        turn_ref: str,
-        move: BrainMove,
-        decision: BrainDecision,
-        sanitized_say: str | None,
-        active_question_id: str | None,
-        sanitized_setup: str | None = None,
-    ) -> Directive:
-        act = _MOVE_TO_ACT[move]
-        is_terminal = move in _TERMINAL_MOVES
-        tone = DirectiveTone(decision.tone)
-        say: str | None
-        spoken_setup: str | None = None
-        if move is BrainMove.advance:
-            target_id = self._resolve_advance_target(decision.bank_question_id,
-                                                     active_question_id=active_question_id)
-            if target_id is None:              # invalid pick, or nothing unasked left -> close out
+        output: BrainTurnOutput,
+        turn_input: BrainTurnInput,
+        asked_ids: set[str],
+        time_remaining_s: float,
+    ) -> tuple[Directive, str | None]:
+        """Map BrainTurnOutput → (Directive, next_question_id) applying all policy gates.
+
+        Returns:
+            A tuple of (Directive, next_question_id). `next_question_id` is the
+            resolver-selected question id when act==ask; None for all other acts and
+            for a close produced when the resolver found no remaining question.
+        """
+
+        # Covered signals (for resolver)
+        covered_signals: set[str] = {
+            sr.signal
+            for sr in self._projection.signal_reads()
+            if sr.coverage == CoverageState.sufficient
+        }
+
+        # ── Candidate-initiated end — always honored ─────────────────────────
+        # A candidate may end the screen at ANY time. The knockout-verification
+        # gate below only blocks a BRAIN-initiated close (full coverage / verified
+        # knockout); it must NEVER trap a candidate who explicitly asked to stop.
+        if output.move == BrainMove.close and output.end_requested:
+            return Directive(
+                act=DirectiveAct.close,
+                say=None,
+                tone=DirectiveTone.warm,
+                spoken_setup=None,
+                is_terminal=True,
+            ), None
+
+        knockout_specs = {s.signal for s in self._all_specs if s.knockout}
+
+        # ── Register a reflect-back ───────────────────────────────────────────
+        # A `confirm` move while a knockout is pending IS the brain's reflect-back
+        # for that knockout — record it so the subsequent knockout-close is honored
+        # without a second (forced) reflect-back.
+        if output.move == BrainMove.confirm and turn_input.knockout_pending:
+            self._knockout_reflect_offered.update(
+                sig for sig in turn_input.knockout_pending if sig in knockout_specs
+            )
+
+        # ── Brain-driven verified knockout — confirmed-absent mandatory signal ─
+        # The brain set knockout_confirmed with move=close. We honor it ONLY for
+        # signals the engine itself flagged absent (membership in knockout_pending,
+        # which the projection populates exclusively from knockout specs) — a
+        # deterministic guard so the brain cannot fabricate a knockout. ROBUSTNESS
+        # GUARANTEE: a knockout never ends the screen until its absence has been
+        # REFLECTED BACK to the candidate at least once (guards an STT mishearing or
+        # a misread scope). If the brain jumps straight to close, we force ONE
+        # reflect-back confirm first and record nothing yet; the close lands on the
+        # next turn once the candidate responds. Records-never-rejects: the
+        # report/human still decides; this only ends the screen early.
+        if output.move == BrainMove.close and output.knockout_confirmed:
+            confirmed_now = [
+                sig for sig in turn_input.knockout_pending if sig in knockout_specs
+            ]
+            if confirmed_now:
+                not_reflected = [
+                    sig for sig in confirmed_now
+                    if sig not in self._knockout_reflect_offered
+                ]
+                if not_reflected:
+                    # Force ONE reflect-back; do NOT mark the tracker confirmed yet
+                    # (the candidate may still correct us → nothing recorded early).
+                    self._knockout_reflect_offered.update(not_reflected)
+                    return Directive(
+                        act=DirectiveAct.confirm,
+                        say=_KNOCKOUT_REFLECT_LINE,
+                        tone=DirectiveTone.warm,
+                        spoken_setup=None,
+                        is_terminal=False,
+                    ), None
+                # Absence already reflected back → honor the close + record it.
+                for sig in confirmed_now:
+                    self._knockout_tracker.confirm(sig)
                 return Directive(
-                    id=self._new_id(), turn_ref=turn_ref, act=DirectiveAct.CLOSE,
-                    say=None, compose_hint="thank warmly; recruiter will follow up",
-                    tone=DirectiveTone.WARM, is_terminal=True,
+                    act=DirectiveAct.close,
+                    say=None,
+                    tone=DirectiveTone.warm,
+                    spoken_setup=None,
+                    is_terminal=True,
+                ), None
+            # No engine-flagged knockout backs this close → fall through to the
+            # normal gate (defensive: never knockout-close on a fabricated signal).
+
+        # ── Gate: verified-knockout ──────────────────────────────────────────
+        gate = gate_knockout(
+            proposed_move=output.move,
+            knockout_pending=turn_input.knockout_pending,
+            tracker=self._knockout_tracker,
+        )
+
+        if not gate.allow_move:
+            # Premature close blocked — steer toward the knockout verification flow.
+            # Produce a warm probe/clarify directive to drive gate.forced_step.
+            return self._steer_knockout(gate, turn_input), None
+
+        # ── Move → Act + Say ─────────────────────────────────────────────────
+        move = output.move
+        return self._resolve_move(
+            move=move,
+            output=output,
+            turn_input=turn_input,
+            asked_ids=asked_ids,
+            covered_signals=covered_signals,
+            time_remaining_s=time_remaining_s,
+        )
+
+    def _resolve_move(
+        self,
+        *,
+        move: BrainMove,
+        output: BrainTurnOutput,
+        turn_input: BrainTurnInput,
+        asked_ids: set[str],
+        covered_signals: set[str],
+        time_remaining_s: float,
+    ) -> tuple[Directive, str | None]:
+        """Resolve a BrainMove (gate-allowed) → (Directive, next_question_id).
+
+        `next_question_id` is the resolver-selected question id for ask moves; None otherwise.
+        """
+
+        act = DirectiveAct(move.value)  # 1:1 by name
+
+        match move:
+            case BrainMove.ask:
+                return self._resolve_ask(
+                    output=output,
+                    asked_ids=asked_ids,
+                    covered_signals=covered_signals,
+                    time_remaining_s=time_remaining_s,
                 )
-            self._pending_advance_id = target_id
-            say = self._questions[target_id].text  # VERBATIM (D2 — brain selects, never rewrites)
-            # Carry the setup only when the resolver honored the brain's own pick; if it was
-            # overridden (mandatory-first), the setup describes the wrong question -> drop it.
-            spoken_setup = sanitized_setup if target_id == decision.bank_question_id else None
-        elif move is BrainMove.probe:
-            active = self._questions.get(active_question_id or "")
-            idx = decision.bank_follow_up_index
-            if active is not None and idx is not None and 0 <= idx < len(active.follow_ups):
-                used = self._coverage.used_follow_ups(active.id)
-                if idx in used:              # already asked this follow-up -> pick an unused one
-                    idx = next((i for i in range(len(active.follow_ups)) if i not in used), None)
-                if idx is not None:
-                    self._coverage.record_follow_up(active.id, idx)
-                    say = active.follow_ups[idx]   # VERBATIM, unused follow-up
-                else:                              # all follow-ups used -> advance
-                    return self._build_directive(
-                        turn_ref=turn_ref, move=BrainMove.advance, decision=decision,
-                        sanitized_say=sanitized_say, active_question_id=active_question_id,
-                        sanitized_setup=sanitized_setup)
-            else:                                  # no valid follow-up index -> advance (unchanged)
-                return self._build_directive(
-                    turn_ref=turn_ref, move=BrainMove.advance, decision=decision,
-                    sanitized_say=sanitized_say, active_question_id=active_question_id,
-                    sanitized_setup=sanitized_setup,
+
+            case BrainMove.probe:
+                return self._resolve_probe(
+                    output=output,
+                    turn_input=turn_input,
+                    asked_ids=asked_ids,
+                    covered_signals=covered_signals,
+                    time_remaining_s=time_remaining_s,
                 )
-        elif move is BrainMove.repeat:
-            say = None                         # mouth replays its cached last question
-        elif is_terminal:                      # close / knockout_close
-            # The mouth owns the warm close wording (close.txt): one line, identical whether the
-            # screen ended early or ran full, so it never reveals a knockout/verdict (88d62df0: the
-            # brain wrote "I don't have enough signal to continue", which leaks a judgment).
-            # Drop the brain's composed_say; the close.txt act prompt composes the warm close.
-            say = None
-        else:                                  # composed acts (clarify/redirect/hold/...)
-            say = sanitized_say
+
+            case (
+                BrainMove.clarify
+                | BrainMove.redirect
+                | BrainMove.reassure
+                | BrainMove.hold
+                | BrainMove.confirm
+                | BrainMove.answer_meta
+            ):
+                say = scrub_composed_say(output.composed_say, turn_input.active_question)
+                return Directive(
+                    act=act,
+                    say=say,
+                    tone=_ACT_TONE[act],
+                    spoken_setup=None,
+                    is_terminal=False,
+                ), None
+
+            case BrainMove.repeat:
+                return Directive(
+                    act=DirectiveAct.repeat,
+                    say=turn_input.on_the_floor,
+                    tone=_ACT_TONE[DirectiveAct.repeat],
+                    spoken_setup=None,
+                    is_terminal=False,
+                ), None
+
+            case BrainMove.close:
+                return Directive(
+                    act=DirectiveAct.close,
+                    say=None,
+                    tone=DirectiveTone.warm,
+                    spoken_setup=None,
+                    is_terminal=True,
+                ), None
+
+            case _:
+                # Defensive fallback — unknown move → treat as repeat
+                _log.warning("brain.service.unknown_move", move=move)
+                return Directive(
+                    act=DirectiveAct.repeat,
+                    say=turn_input.on_the_floor,
+                    tone=DirectiveTone.warm,
+                    spoken_setup=None,
+                    is_terminal=False,
+                ), None
+
+    def _resolve_ask(
+        self,
+        *,
+        output: BrainTurnOutput,
+        asked_ids: set[str],
+        covered_signals: set[str],
+        time_remaining_s: float,
+    ) -> tuple[Directive, str | None]:
+        """Resolve an `ask` move: deterministic resolver → (bank-text Directive, next_question_id).
+
+        Returns (close Directive, None) when the resolver finds no remaining question.
+        Returns (ask Directive, nxt.question_id) otherwise.
+        """
+        nxt = resolve_next(
+            questions=self._resolver_questions,
+            asked_ids=asked_ids,
+            covered_signals=covered_signals,
+            time_remaining_s=time_remaining_s,
+            cfg=self._budget_cfg,
+            preferred_next_signal=output.preferred_next_signal,
+        )
+        if nxt is None:
+            # No question left → this is actually a close; next_question_id is None.
+            return Directive(
+                act=DirectiveAct.close,
+                say=None,
+                tone=DirectiveTone.warm,
+                spoken_setup=None,
+                is_terminal=True,
+            ), None
+
+        say = self._bank_text_by_id.get(nxt.question_id)
+        if say is None:
+            _log.warning(
+                "brain.service.ask.bank_text_missing",
+                question_id=nxt.question_id,
+            )
+            say = ""
+
         return Directive(
-            id=self._new_id(), turn_ref=turn_ref, act=act, say=say,
-            compose_hint=None, tone=tone, is_terminal=is_terminal,
-            spoken_setup=spoken_setup,
-        )
+            act=DirectiveAct.ask,
+            say=say,
+            tone=_ACT_TONE[DirectiveAct.ask],
+            spoken_setup=None,
+            is_terminal=False,
+        ), nxt.question_id
 
-    def _resolve_advance_target(
-        self, brain_pick: str | None, *, active_question_id: str | None = None
-    ) -> str | None:
-        """The next question to ASK on an advance.
+    def _resolve_probe(
+        self,
+        *,
+        output: BrainTurnOutput,
+        turn_input: BrainTurnInput,
+        asked_ids: set[str],
+        covered_signals: set[str],
+        time_remaining_s: float,
+    ) -> tuple[Directive, str | None]:
+        """Resolve a `probe` move → (composed-or-verbatim follow_up Directive, None).
 
-        While any unasked MANDATORY question with a still-uncovered signal remains, advance to the
-        next such question by position (`_next_unasked`), IGNORING the brain's free pick — the brain
-        must never skip an unasked mandatory question (046f21e3: it leapfrogged the mandatory
-        Workato-experience question by free-picking a later Workato id). Only once no unasked
-        uncovered-mandatory remains do we honor the brain's adaptive pick (optional territory); a
-        garbled / already-asked / None pick still falls through to `_next_unasked`. An exhausted
-        bank returns None -> the caller closes.
-
-        `active_question_id` (the question currently on the floor) is excluded from the candidate
-        pool so an advance never re-targets it — defence-in-depth that holds even on the
-        probe->advance degrade path, independent of `_asked_ids` bookkeeping.
+        The probe text is COMPOSED by the brain (`composed_say`): a natural, in-scope
+        adaptation of the bank follow_up template to what the candidate actually said.
+        It is leak-scrubbed on the way out (same gate as clarify). When the brain did
+        NOT compose a probe, we fall back to the recruiter's VERBATIM follow_up at the
+        coerced probe_index; when no probe template remains, we fall back to ask.
         """
-        if self._has_unasked_uncovered_mandatory(active_question_id=active_question_id):
-            return self._next_unasked(active_question_id=active_question_id)
-        q = self._questions.get(brain_pick or "")
-        if q is not None and q.id not in self._asked_ids:
-            return q.id                              # optional territory -> honor the brain
-        return self._next_unasked(active_question_id=active_question_id)
+        composed = scrub_composed_say(output.composed_say, turn_input.active_question)
+        if composed:
+            return Directive(
+                act=DirectiveAct.probe,
+                say=composed,
+                tone=_ACT_TONE[DirectiveAct.probe],
+                spoken_setup=None,
+                is_terminal=False,
+            ), None
 
-    def _has_unasked_uncovered_mandatory(self, *, active_question_id: str | None = None) -> bool:
-        """True if some bank question is BOTH not-yet-asked AND carries a still-uncovered mandatory
-        signal — i.e. a mandatory question we have not asked yet. The active question (on the floor,
-        being answered now) is treated as asked so it is never counted as a skippable question."""
-        uncovered = set(self._coverage.uncovered_mandatory())
-        asked_or_active = self._asked_ids | ({active_question_id} if active_question_id else set())
-        return any(q.id not in asked_or_active and q.primary_signal in uncovered
-                   for q in self._config.stage.questions)
+        # No composed probe → verbatim follow_up fallback (graceful, never silent-fail).
+        idx = coerce_probe_index(
+            output.probe_index,
+            follow_ups=turn_input.active_question.follow_ups,
+            probes_used=turn_input.active_question.probes_used,
+        )
+        if idx is None:
+            # No probe left → fall back to ask (which returns a tuple)
+            return self._resolve_ask(
+                output=output,
+                asked_ids=asked_ids,
+                covered_signals=covered_signals,
+                time_remaining_s=time_remaining_s,
+            )
 
-    def _next_unasked(self, *, active_question_id: str | None = None) -> str | None:
-        """The next not-yet-asked question by position, preferring one whose primary signal is still
-        an uncovered mandatory; None when every question has been asked. The active question is
-        excluded — advancing to it would be a re-ask."""
-        uncovered = set(self._coverage.uncovered_mandatory())
-        asked_or_active = self._asked_ids | ({active_question_id} if active_question_id else set())
-        unasked = [q for q in sorted(self._config.stage.questions, key=lambda q: q.position)
-                   if q.id not in asked_or_active]
-        if not unasked:
-            return None
-        return next((q.id for q in unasked
-                     if (q.primary_signal in uncovered) or (not q.primary_signal and uncovered)),
-                    unasked[0].id)
+        say = turn_input.active_question.follow_ups[idx]
+        return Directive(
+            act=DirectiveAct.probe,
+            say=say,
+            tone=_ACT_TONE[DirectiveAct.probe],
+            spoken_setup=None,
+            is_terminal=False,
+        ), None
 
-    def _fallback(
-        self, turn_ref: str, candidate_utterance: str, *, reason: str,
-    ) -> tuple[Directive, TurnDecisionRecord]:
-        """Deterministic safe directive when the brain times out/errors — never stall the turn.
+    def _steer_knockout(
+        self,
+        gate,  # KnockoutGate
+        turn_input: BrainTurnInput,
+    ) -> Directive:
+        """Produce a non-terminal directive to steer toward the knockout flow.
 
-        Walks STRICTLY FORWARD past the current active question by `position` (preferring still-
-        uncovered mandatory ones) and moves the pointer to the chosen question, so repeated
-        fallbacks march through the bank instead of re-asking the same question forever — the
-        infinite-Q1 loop guard (defense-in-depth for total brain failure).
+        When gate_knockout blocks a premature close, we produce a warm probe/
+        clarify-style directive that drives the current forced_step for the
+        pending signal. The mouth renders the composed line; the caller only
+        needs is_terminal=False and act != close.
         """
-        # Capture the question on the floor BEFORE any pointer advance (for audit).
-        fallback_aqid: str | None = self._active_question_id
-        uncovered = self._coverage.uncovered_mandatory()
-        ordered = sorted(self._config.stage.questions, key=lambda q: q.position)
-        cur_pos = (
-            self._questions[self._active_question_id].position
-            if self._active_question_id in self._questions
-            else None
-        )
-        # questions strictly after the current one (by position); if no pointer yet, all of them
-        ahead = [q for q in ordered if cur_pos is None or q.position > cur_pos]
+        from app.modules.interview_engine.brain.policy import KnockoutStep
 
-        def _eligible(q: object) -> bool:
-            # a question with no primary_signal is eligible if any mandatory remains uncovered
-            return (q.primary_signal in uncovered) or (not q.primary_signal and bool(uncovered))
+        step = gate.forced_step
+        signal = gate.signal
 
-        # prefer the next still-uncovered question; else just the next question in order
-        nxt = next((q for q in ahead if _eligible(q)), None) or next(iter(ahead), None)
-        if nxt is not None:
-            # advance the pointer so the next fallback moves on (no infinite-Q1 loop)
-            self._active_question_id = nxt.id
-            self._asked_ids.add(nxt.id)        # keep the repeat-guard truthful on brain recovery
-            directive = Directive(
-                id=self._new_id(), turn_ref=turn_ref, act=DirectiveAct.ACK_ADVANCE,
-                say=nxt.text, tone=DirectiveTone.NEUTRAL,
+        # Build a safe steering line (not a rubric leak — purely meta/process).
+        # IMPORTANT: never interpolate the raw signal NAME (it's an internal
+        # description like "4+ years total professional experience", which reads
+        # as nonsense aloud). Keep the line generic + warm.
+        if step == KnockoutStep.probe:
+            say = (
+                "Before we wrap up — have you worked directly in that area at "
+                "all, even a little? Even a rough example is fine."
             )
-            move = "fallback_advance"
-        else:
-            directive = Directive(
-                id=self._new_id(), turn_ref=turn_ref, act=DirectiveAct.CLOSE,
-                say=None, compose_hint="thank warmly; recruiter will follow up",
-                tone=DirectiveTone.WARM, is_terminal=True,
+        elif step == KnockoutStep.check_alternatives:
+            say = (
+                "Got it. And have you used any other tools or approaches to "
+                "achieve something similar?"
             )
-            move = "fallback_close"
-        self._update_floor(directive)  # ACK_ADVANCE moves the floor; CLOSE has say=None so no-ops
-        record = TurnDecisionRecord(
-            turn_ref=turn_ref, candidate_quote=candidate_utterance, move=move,
-            reasoning=f"deterministic fallback ({reason})", policy_checks=["fallback"],
-            directive_id=directive.id,
-            active_question_id=fallback_aqid,  # question on the floor when the candidate spoke
+        else:  # reflect_confirm (or confirmed/unknown — terminal verification)
+            say = (
+                "Okay — just to confirm, that's not something you've worked on "
+                "directly yet. Is that right?"
+            )
+
+        # CRITICAL: advance the tracker so the verified-knockout flow PROGRESSES
+        # (probe → check_alternatives → reflect_confirm → confirmed) and the gate
+        # eventually ALLOWS the close. Without this the candidate is trapped in an
+        # infinite knockout-probe loop (F3 talk-test regression).
+        if signal:
+            self._knockout_tracker.advance(signal)
+
+        return Directive(
+            act=DirectiveAct.probe,
+            say=say,
+            tone=DirectiveTone.warm,
+            spoken_setup=None,
+            is_terminal=False,
         )
-        return directive, record
+
+    def confirmed_knockout_signals(self) -> list[str]:
+        """Knockout signals whose verified-absence flow reached `confirmed`.
+
+        Read by the driver at session close to record the KnockoutOutcome(s) into
+        SessionEvidence (the engine RECORDS; the report/human decides — never an
+        auto-reject)."""
+        return [
+            spec.signal
+            for spec in self._session_context.signals
+            if spec.knockout and self._knockout_tracker.is_confirmed(spec.signal)
+        ]
+
+    # -----------------------------------------------------------------------
+    # Default real LLM call (injectable seam — only called in production)
+    # -----------------------------------------------------------------------
+
+    async def _default_brain_llm(self, messages: list[dict]) -> BrainTurnOutput:
+        """Real instructor call — mirrors question_bank/refine.py::_call_llm_refine."""
+        # Lazy imports keep this module free of livekit at module-level,
+        # and keep the FastAPI process free of engine-only SDKs.
+        from app.ai.client import get_openai_client
+        from app.ai.config import ai_config
+
+        client = get_openai_client()
+        kwargs: dict = {
+            "model": ai_config.engine_brain_model,
+            "response_model": BrainTurnOutput,
+            "messages": messages,
+            "max_retries": 1,
+        }
+        if ai_config.engine_brain_effort:
+            kwargs["reasoning_effort"] = ai_config.engine_brain_effort
+        if ai_config.engine_brain_prompt_cache_key:
+            kwargs["prompt_cache_key"] = ai_config.engine_brain_prompt_cache_key
+
+        result: BrainTurnOutput = await client.chat.completions.create(**kwargs)
+        return result
+
+
+# ---------------------------------------------------------------------------
+# Module-level constructor helper — used by the loop (F1)
+# ---------------------------------------------------------------------------
+
+def build_control_plane(
+    config: "SessionConfig",
+    *,
+    projection: CoverageProjection | None = None,
+) -> ControlPlane:
+    """Assemble a ControlPlane from a SessionConfig.
+
+    Reads the brain system prompt from prompts/v4/engine/brain.system.txt
+    (version from ai_config.engine_brain_prompt_version). Builds session context,
+    resolver questions, all_specs, budget_cfg, and a fresh KnockoutTracker.
+
+    Used by the engine loop (F1) at session start. Tests should construct
+    ControlPlane directly with small fixtures.
+    """
+    from app.ai.config import ai_config
+    from app.ai.prompts import PromptLoader
+
+    # Load the brain system prompt
+    version = ai_config.engine_brain_prompt_version
+    system_prompt = PromptLoader(version).get("engine/brain.system")
+
+    # Build the stable session context
+    session_context = build_session_context(config)
+
+    # Build resolver questions from the bank
+    # Weight defaults from signal_metadata; fallback to 1 when not found.
+    signal_weight: dict[str, int] = {}
+    for m in config.signal_metadata:
+        signal_weight[m.value] = m.weight
+
+    resolver_questions: list[ResolverQuestion] = []
+    for q in config.stage.questions:
+        primary = q.primary_signal or (q.signal_values[0] if q.signal_values else "")
+        resolver_questions.append(
+            ResolverQuestion(
+                question_id=q.id,
+                primary_signal=primary,
+                tier="core",
+                is_mandatory=q.is_mandatory,
+                position=q.position,
+                weight=signal_weight.get(primary, 1),
+                estimated_minutes=q.estimated_minutes,
+            )
+        )
+
+    # All signal specs (from session_context.signals — already built)
+    all_specs: list[SignalSpec] = session_context.signals
+
+    # Budget config from AIConfig
+    budget_cfg = budget_config_from_ai_config()
+
+    return ControlPlane(
+        session_context=session_context,
+        system_prompt=system_prompt,
+        projection=projection or CoverageProjection(),
+        resolver_questions=resolver_questions,
+        all_specs=all_specs,
+        budget_cfg=budget_cfg,
+        knockout_tracker=KnockoutTracker(),
+        llm_call=None,  # use _default_brain_llm in production
+    )

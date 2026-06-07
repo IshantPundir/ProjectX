@@ -241,6 +241,28 @@ class AIConfig:
     def engine_v2_backchannel_min_words(self) -> int:
         return self._settings.engine_v2_backchannel_min_words
 
+    # --- Gen-3 native turn detection — endpointing (Path A+) ---
+    # [VALIDATE] Initial defaults; tune empirically in the F3 talk-test.
+    @property
+    def engine_endpointing_mode(self) -> str:
+        return self._settings.engine_endpointing_mode
+
+    @property
+    def engine_endpointing_min_delay_s(self) -> float:
+        return self._settings.engine_endpointing_min_delay_s
+
+    @property
+    def engine_endpointing_max_delay_s(self) -> float:
+        return self._settings.engine_endpointing_max_delay_s
+
+    @property
+    def engine_bridge_timeout_s(self) -> float:
+        return self._settings.engine_bridge_timeout_s
+
+    @property
+    def engine_stall_reposes_before_advance(self) -> int:
+        return self._settings.engine_stall_reposes_before_advance
+
     # --- Reporting — offline report scorer (Phase 3D+ post-session) ---
     @property
     def report_scorer_model(self) -> str:
@@ -282,6 +304,16 @@ class AIConfig:
     @property
     def report_narrative_effort(self) -> str:
         return self._settings.openai_report_narrative_effort
+
+    # --- Gen-3 deterministic resolver time-budget knobs ---
+    # [VALIDATE] F3-tuned defaults; tune empirically on talk-tests.
+    @property
+    def engine_close_reserve_s(self) -> float:
+        return self._settings.engine_close_reserve_s
+
+    @property
+    def engine_winding_down_s(self) -> float:
+        return self._settings.engine_winding_down_s
 
 
 ai_config = AIConfig(settings)

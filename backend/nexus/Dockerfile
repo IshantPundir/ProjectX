@@ -35,12 +35,13 @@ COPY . .
 ENV HF_HOME=/opt/hf-cache
 
 # Pre-download AI plugin model files at build time so nexus-engine doesn't
-# need network access on first dispatch. Especially load-bearing for the
-# multilingual turn-detector plugin which instantiates with
+# need network access on first dispatch. Load-bearing for the multilingual
+# turn-detector plugin (the native EOU model), which instantiates with
 # local_files_only=True and would otherwise crash with "Could not find
-# file 'model_q8.onnx'". The download-files subcommand iterates registered
-# plugins (silero, turn-detector) and pulls each plugin's
-# HF / ONNX assets.
+# file 'languages.json' / 'model_q8.onnx'". The download-files subcommand
+# iterates the REGISTERED plugins and pulls each plugin's HF / ONNX assets;
+# `agent.py` carries top-level registration imports for both `silero` (VAD)
+# and `turn_detector` (the EOU model) so download-files sees and bakes them.
 #
 # Inherited by all three services from the same image (nexus, nexus-worker,
 # nexus-engine). The cost is ~300MB of image bloat on services that don't
