@@ -1,8 +1,9 @@
 """Dramatiq actor for post-session report scoring.
 
-Enqueued by ``record_session_result`` after a v2 session completes.
-Loads the audit envelope + question bank from storage, calls ``build_report``
-(the offline scoring pipeline), and persists the result via ``persist_report``.
+Enqueued by ``record_session_result`` after a gen-3 session completes.
+Loads SessionEvidence from ``sessions.session_evidence_json`` + the question
+bank from the DB, calls ``build_report`` (the offline scoring pipeline), and
+persists the result via ``persist_report``.
 
 Import note: ``build_report`` and ``persist_report`` are imported at MODULE
 level so tests can patch ``actors.build_report`` and ``actors.persist_report``
@@ -13,17 +14,15 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 from datetime import UTC, datetime
-from pathlib import Path
 from uuid import UUID
 
 import dramatiq
 import structlog
 from sqlalchemy import desc, select, text
 
-from app.config import settings
 from app.database import get_bypass_session
+from app.modules.interview_runtime.evidence import SessionEvidence
 from app.modules.reporting.models import SessionReport
 from app.modules.reporting.service import build_report, persist_report
 
@@ -31,31 +30,16 @@ logger = structlog.get_logger("reporting.actor")
 
 
 # ---------------------------------------------------------------------------
-# Envelope resolver (portable across services)
+# Session evidence loader
 # ---------------------------------------------------------------------------
 
 
-def _resolve_envelope(*, session_id: str, stored_ref: str | None) -> dict:
-    """Load the audit envelope by session_id from the worker's own configured
-    event-log dir; fall back to the stored ref; degrade to empty events.
-
-    The engine stores an absolute container path (e.g. /tmp/engine-events/<id>.json)
-    that is NOT mounted in the worker. Resolving by session_id against this
-    process's engine_event_log_dir makes the path portable across services.
-    """
-    candidates: list[Path] = []
-    if settings.engine_event_log_dir:
-        candidates.append(Path(settings.engine_event_log_dir) / f"{session_id}.json")
-    if stored_ref:
-        candidates.append(Path(stored_ref))
-        if settings.engine_event_log_dir:
-            candidates.append(Path(settings.engine_event_log_dir) / Path(stored_ref).name)
-    for path in candidates:
-        try:
-            return json.loads(path.read_text())
-        except Exception:  # noqa: BLE001 — try the next candidate
-            continue
-    return {"events": []}
+def _build_report_inputs_from_session(sess) -> SessionEvidence | None:
+    """Parse the gen-3 SessionEvidence off the session row; None if not present."""
+    raw = getattr(sess, "session_evidence_json", None)
+    if not raw:
+        return None
+    return SessionEvidence.model_validate(raw)
 
 
 # ---------------------------------------------------------------------------
@@ -250,20 +234,12 @@ async def _score_session_report_async(
         ]
 
         # ------------------------------------------------------------------
-        # Load audit envelope from filesystem (best-effort; degrade gracefully)
+        # Load gen-3 SessionEvidence
         # ------------------------------------------------------------------
-        raw_result: dict = sess.raw_result_json or {}
-        envelope: dict = await asyncio.to_thread(
-            _resolve_envelope,
-            session_id=str(session_id),
-            stored_ref=raw_result.get("audit_envelope_ref"),
-        )
-        if not envelope.get("events"):
-            log.warning("reporting.actor.envelope_empty",
-                        audit_envelope_ref=raw_result.get("audit_envelope_ref"))
-        coverage_summary: dict = raw_result.get("coverage_summary") or {}
-
-        transcript: list[dict] = list(sess.transcript or [])
+        evidence = _build_report_inputs_from_session(sess)
+        if evidence is None:
+            log.warning("reporting.actor.no_session_evidence")
+            return
 
         # ------------------------------------------------------------------
         # Mark generating (best-effort) then build
@@ -276,11 +252,9 @@ async def _score_session_report_async(
 
         try:
             report = await build_report(
-                transcript=transcript,
-                envelope=envelope,
+                evidence=evidence,
                 questions=questions,
                 signal_metadata=signal_metadata,
-                coverage_summary=coverage_summary,
                 correlation_id=correlation_id,
             )
 
@@ -317,7 +291,7 @@ async def _score_session_report_async(
                         version=1,
                         status="failed",
                         generation_error=str(exc)[:500],
-                        engine_version="v2",
+                        engine_version="v3",
                         generated_at=datetime.now(UTC),
                     )
                     db.add(failed_row)
