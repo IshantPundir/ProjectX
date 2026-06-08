@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.config import ai_config
+from app.modules.interview_runtime.evidence import EvidenceStance
 from app.modules.reporting.models import SessionReport
 from app.modules.reporting.schemas import (
     QuestionOut,
@@ -32,7 +33,9 @@ from app.modules.reporting.scoring.aggregate import (
 )
 from app.modules.reporting.scoring.constants import (
     BEHAVIORAL_TYPES,
-    FACTUAL_QUESTION_KINDS,
+    NARRATIVE_NOTES_PER_SIGNAL,
+    NARRATIVE_TRANSCRIPT_CHAR_BUDGET,
+    SCORECARD_EVIDENCE_MAX,
     TECHNICAL_TYPES,
     tier_label,
 )
@@ -60,18 +63,50 @@ def _tone_by_score(s: int | None) -> str:
     return "ok" if s >= 65 else "caution" if s >= 40 else "danger"
 
 
-def _is_factual_gate_signal(signal_value: str, questions: list[dict]) -> bool:
-    """True if every bank question covering this signal is a factual gate
-    (experience_check / compliance_binary). Such gates are answered correctly
-    by a brief, clear response; the live engine already judged them, and the
-    rubric's depth anchors (employer/role/date detail) are not what the engine
-    probed for — so the post-session re-check would unfairly downgrade them.
-    We trust the engine's state for these and only re-check substantive signals.
+def _eliciting_question(
+    sig: str,
+    notes_by_signal: dict,
+    q_by_id: dict[str, dict],
+    q_by_signal: dict[str, dict],
+) -> dict | None:
+    """The bank question that actually ELICITED this signal's evidence — the question
+    on the floor when its first SUPPORTING note was recorded (via from_question_id).
+    Falls back to the primary-signal match when no supporting note exists.
+
+    D5: a signal can be shared by several bank questions (e.g. an experience_check that
+    was answered AND a technical_scenario that was never reached). Re-check must grade
+    against the rubric of the question that elicited the answer — not the first question
+    that merely lists the signal in signal_values.
     """
-    covering = [q for q in questions if signal_value in q.get("signal_values", [])]
-    return bool(covering) and all(
-        q.get("question_kind") in FACTUAL_QUESTION_KINDS for q in covering
-    )
+    for n in notes_by_signal.get(sig, []):
+        if n.stance == EvidenceStance.supports and n.from_question_id in q_by_id:
+            return q_by_id[n.from_question_id]
+    return q_by_signal.get(sig)
+
+
+def _scorecard_evidence(
+    sig: str, recheck_results: dict, notes_by_signal: dict
+) -> list[str]:
+    """Per-signal evidence quotes: prefer grounded re-check quotes; fall back to the
+    engine's own SUPPORTING notes (verbatim candidate words by contract) when re-check
+    didn't run or returned none — so every assessed signal shows real evidence."""
+    rc = recheck_results.get(sig)
+    if rc and rc.evidence_quotes:
+        return rc.evidence_quotes
+    return [
+        n.quote for n in notes_by_signal.get(sig, [])
+        if n.stance == EvidenceStance.supports and n.quote
+    ][:SCORECARD_EVIDENCE_MAX]
+
+
+def _narrative_notes(sig: str, notes_by_signal: dict) -> list[dict]:
+    """Bounded engine notes for one signal, threaded into the narrative ground truth
+    so the narrative LLM can GROUND its claims in the candidate's own words."""
+    return [
+        {"quote": n.quote, "texture": n.texture.value,
+         "stance": n.stance.value, "via_probe": n.via_probe}
+        for n in notes_by_signal.get(sig, []) if n.quote
+    ][:NARRATIVE_NOTES_PER_SIGNAL]
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +150,7 @@ async def build_report(*, evidence, questions, signal_metadata, correlation_id, 
     for q in questions:
         for sv in q.get("signal_values", []):
             q_by_signal.setdefault(sv, q)
+    q_by_id: dict[str, dict] = {q["id"]: q for q in questions if q.get("id")}
 
     def _provenance_str(sig: str) -> str:
         p = provenance_by_signal.get(sig, "not_reached")
@@ -128,23 +164,26 @@ async def build_report(*, evidence, questions, signal_metadata, correlation_id, 
             closure=closure_by_primary.get(sig),
         )
 
-    # --- Layer 2 re-check: only evidenced primaries (+probed_absent), skip
-    #     not_reached and factual gates (engine already judged those) --------
+    # --- Layer 2 re-check: every evidenced primary (skip only not_reached). The
+    #     bank rubric is the contract; factual gates are NOT skipped — instead the
+    #     re-check is told the question_kind and grades them against the rubric's own
+    #     bar (D5). Each signal is graded against the question that ELICITED its
+    #     evidence (from_question_id), not a never-reached question sharing the signal.
     recheck_targets = [
         sig for sig in primary_set
         if _provenance_str(sig) in ("asked_directly", "cross_credited", "probed_absent")
-        and not _is_factual_gate_signal(sig, questions)
     ]
 
     async def _one(sig: str):
         m = _identity(sig)
         d = SignalDef(value=m["value"], type=m["type"], weight=m["weight"],
                       knockout=m["knockout"], priority=m["priority"])
-        q = q_by_signal.get(sig, {})
+        q = _eliciting_question(sig, notes_by_signal, q_by_id, q_by_signal) or {}
         ctx = f"Q: {q.get('text','')}\nrubric: {json.dumps(q.get('rubric', {}))}"
         return sig, await recheck_signal(signal_def=d, notes=notes_by_signal.get(sig, []),
                                          question_context=ctx, engine_level=base_level[sig],
-                                         correlation_id=correlation_id)
+                                         correlation_id=correlation_id,
+                                         question_kind=q.get("question_kind"))
     recheck_results = (
         dict(await asyncio.gather(*[_one(s) for s in recheck_targets]))
         if recheck_targets else {}
@@ -186,16 +225,29 @@ async def build_report(*, evidence, questions, signal_metadata, correlation_id, 
                               is_knockout_close=view.is_knockout_close,
                               knockout_signal=view.knockout_signal, must_haves=must_haves)
 
+    # Per-signal evidence quotes (re-check grounded, else engine supporting notes) — computed
+    # once and reused by both the scorecards and the narrative ground truth.
+    evidence_by_sig = {
+        s.value: _scorecard_evidence(s.value, recheck_results, notes_by_signal) for s in scored
+    }
+
     signal_assessments = [SignalAssessmentOut(
         signal=s.value, type=s.type, weight=s.weight, knockout=s.knockout, priority=s.priority,
         provenance=_provenance_str(s.value), level=s.level, score=s.score,
-        evidence=(
-            recheck_results[s.value].evidence_quotes if s.value in recheck_results else []),
+        evidence=evidence_by_sig[s.value],
         overridden=(
             recheck_results[s.value].overridden if s.value in recheck_results else False),
         override_reason=(
             recheck_results[s.value].override_reason if s.value in recheck_results else None),
     ) for s in scored]
+
+    # Human-verify charity flags: a factual gate graded against the bank rubric whose
+    # required facts were not fully elicited. Explanatory only — never a silent penalty.
+    human_verify = [
+        {"signal": sig, "note": rc.verification_note}
+        for sig, rc in recheck_results.items()
+        if rc.needs_verification and rc.verification_note
+    ]
 
     gt = json.dumps({
         "verdict": verdict.verdict, "verdict_reason": verdict.reason,
@@ -204,33 +256,52 @@ async def build_report(*, evidence, questions, signal_metadata, correlation_id, 
         "knockout_close": ({"signal": view.knockout_signal} if view.is_knockout_close else None),
         "signals": [{"signal": s.value, "type": s.type, "level": s.level,
                      "provenance": _provenance_str(s.value), "must_have": s.knockout,
-                     "priority": s.priority} for s in scored],
+                     "priority": s.priority,
+                     "evidence_quotes": evidence_by_sig[s.value],
+                     "notes": _narrative_notes(s.value, notes_by_signal)} for s in scored],
+        "transcript": view.candidate_transcript_text[:NARRATIVE_TRANSCRIPT_CHAR_BUDGET],
+        "human_verify": human_verify,
     }, ensure_ascii=False)
     narrative = await write_narrative(ground_truth_json=gt, correlation_id=correlation_id)
 
-    # Per-question cards from the engine's question records.
+    # Per-question cards from the engine's question records. QUESTION-anchored: the
+    # badge comes from THIS question's outcome/closure and the quote from the notes
+    # THIS question elicited (from_question_id) — never the primary signal, which may be
+    # shared with another (e.g. not-reached) question.
     q_text_by_id = {q["id"]: q for q in questions}
     must_have_signals = {s.value for s in scored if s.knockout}
 
-    def _first_quote(sig: str) -> str:
-        for n in notes_by_signal.get(sig, []):
-            if n.stance.value == "supports" and n.quote:
-                return n.quote
+    def _question_quote(qid: str) -> str:
+        """First supporting candidate quote elicited BY this question (not its signal)."""
+        for notes in notes_by_signal.values():
+            for n in notes:
+                if n.from_question_id == qid and n.stance == EvidenceStance.supports and n.quote:
+                    return n.quote
         return ""
 
     q_out: list[QuestionOut] = []
     for i, qr in enumerate(evidence.questions):
         sig = qr.primary_signal
         qdict = q_text_by_id.get(qr.question_id, {})
-        badge, tone = badge_for_question(
-            level=final_level.get(sig, "not_reached"),
-            provenance=_provenance_str(sig),
-            knockout=sig in must_have_signals)
+        outcome = qr.outcome.value if hasattr(qr.outcome, "value") else qr.outcome
+        closure = (qr.closure.value if hasattr(qr.closure, "value") else qr.closure)
+        if outcome == "not_reached":
+            # Never asked (ran out of time/budget) — no judgment, no quote.
+            badge, tone, quote = "not_attempted", "neutral", ""
+        elif closure == "truncated":
+            # Asked but the time budget cut the thread before fair resolution.
+            badge, tone, quote = "not_fully_assessed", "neutral", _question_quote(qr.question_id)
+        else:
+            badge, tone = badge_for_question(
+                level=final_level.get(sig, "not_reached"),
+                provenance=_provenance_str(sig),
+                knockout=sig in must_have_signals)
+            quote = _question_quote(qr.question_id)
         text = qdict.get("text", "")
         q_out.append(QuestionOut(
             seq=i + 1, question_id=qr.question_id, title=text[:60],
             status_badge=badge, status_tone=tone, question_text=text,
-            candidate_quote=_first_quote(sig), asked_at_ms=None))
+            candidate_quote=quote, asked_at_ms=None))
 
     # Fold in narrative per-question prose (our_read / refined candidate_quote).
     read_by_qid = {qn.question_id: qn for qn in narrative.questions}

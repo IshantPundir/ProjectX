@@ -58,7 +58,8 @@ async def test_golden_report_spine():
         if s.signal in primary
     ]
 
-    async def _rc(*, signal_def, notes, question_context, engine_level, correlation_id):
+    async def _rc(*, signal_def, notes, question_context, engine_level, correlation_id,
+                  question_kind=None):
         return SignalRecheckOut(
             evidence_quotes=[],
             justification="keep",

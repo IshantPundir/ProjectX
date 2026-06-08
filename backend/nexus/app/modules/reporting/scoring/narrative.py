@@ -29,7 +29,9 @@ async def write_narrative(*, ground_truth_json: str, correlation_id: str) -> Nar
         "input": messages,
         "text_format": NarrativeOut,
         "prompt_cache_key": (
-            f"narrative:{ai_config.report_scorer_prompt_version}:{ai_config.report_narrative_model}"
+            # ".v2" — bumped when the narrative prompt began receiving per-signal quotes,
+            # transcript, and human_verify (Cluster 3); avoids serving the stale-prefix cache.
+            f"narrative.v2:{ai_config.report_scorer_prompt_version}:{ai_config.report_narrative_model}"
         ),
     }
     if ai_config.report_narrative_effort:

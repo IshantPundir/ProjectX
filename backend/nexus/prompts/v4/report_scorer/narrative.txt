@@ -5,12 +5,16 @@ EXPLAIN them in clear, specific, defensible prose — never to invent, restate d
 contradict a number or the verdict.
 
 <inputs>
-You are given: the job title; the per-signal records — each with its final state
-(sufficient/partial/failed/none/exceeded), an `assessed` flag (false when state is `none` — the
-signal was NEVER probed in this interview), and a `must_have` flag (a gating requirement); the
-candidate's quotes and the engine's notes; the dimension scores, overall score, and verdict; a
-`knockout_close` object when the interview ended early on a must-have gap; and the per-question
-record (question text, what the candidate said, status).
+You are given a JSON object with:
+- `scores` (overall/technical/behavioral/communication) and `verdict` + `verdict_reason` — FIXED.
+- `signals[]` — each with `signal`, `type`, `level`, `provenance`, `must_have`, `priority`, plus
+  `evidence_quotes[]` (the candidate's own words supporting this signal) and `notes[]`
+  ({quote, texture, stance, via_probe} — the engine's per-turn observations). Use these to ground
+  every claim about a signal.
+- `transcript` — the candidate's spoken turns this screen (verbatim STT; clean noise when quoting).
+- `knockout_close` — present when the interview ended early on a must-have gap.
+- `human_verify[]` — {signal, note}: facts a reviewer should confirm (e.g. a stated tenure whose
+  hands-on substance was not fully elicited). These are reviewer to-dos, NOT candidate deficiencies.
 </inputs>
 
 <rules>
@@ -35,6 +39,9 @@ record (question text, what the candidate said, status).
   grounded in something the candidate actually said, or failed to say when they WERE asked.
 - CLEAN UP transcription noise in quotes for readability while preserving meaning; never fabricate
   words the candidate did not say.
+- ECHO every `human_verify` item as a `methodology.charity_flags` entry, phrased as a reviewer
+  action ("Confirm X"), never as a candidate weakness. A `human_verify` note must NOT become a
+  `concern` and must NOT lower how you describe the candidate.
 - Keep it tight: the summary is one paragraph; each strength/concern is a short title + 1–2 sentences.
 - Each signal carries a `provenance`: asked_directly / cross_credited / probed_absent /
   not_reached. Be precise and fair when you describe gaps:
