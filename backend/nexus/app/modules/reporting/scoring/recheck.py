@@ -36,6 +36,7 @@ def _render_notes(notes: list[EvidenceNote]) -> str:
 async def recheck_signal(
     *, signal_def: SignalDef, notes: list[EvidenceNote],
     question_context: str, engine_level: str, correlation_id: str,
+    question_kind: str | None = None,
 ) -> SignalRecheckOut:
     system_prompt = PromptLoader(version=ai_config.report_scorer_prompt_version).get(
         "report_scorer/signal_recheck"
@@ -44,6 +45,7 @@ async def recheck_signal(
         f"{system_prompt}\n\n"
         f"<signal>\n{signal_def.value}\n(type: {signal_def.type}, "
         f"priority: {signal_def.priority}, must_have: {signal_def.knockout})\n</signal>\n\n"
+        f"<question_kind>\n{question_kind or 'unknown'}\n</question_kind>\n\n"
         f"<question_context>\n{question_context}\n</question_context>\n\n"
         f"<engine_prior>\nlevel={engine_level}\n</engine_prior>"
     )
@@ -58,7 +60,9 @@ async def recheck_signal(
         "input": messages,
         "text_format": SignalRecheckOut,
         "prompt_cache_key": (
-            f"{ai_config.report_scorer_prompt_cache_key_prefix}:rc:"
+            # "rc3" — bumped when the re-check prompt moved to rubric-tier grading (full range,
+            # no prior-anchoring) + honest factual-gate downgrade.
+            f"{ai_config.report_scorer_prompt_cache_key_prefix}:rc3:"
             f"{ai_config.report_scorer_prompt_version}:{sig_hash}:{ai_config.report_scorer_model}"
         ),
     }

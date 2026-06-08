@@ -14,6 +14,12 @@ BEHAVIORAL_TYPES = frozenset({"behavioral"})
 # answer to "how many years experience?".
 FACTUAL_QUESTION_KINDS: frozenset[str] = frozenset({"experience_check", "compliance_binary"})
 
+# Evidence-threading bounds (Cluster 3) — keep the narrative payload sane while
+# still grounding it in real candidate words. Tune against a real session.
+NARRATIVE_TRANSCRIPT_CHAR_BUDGET = 8000  # candidate transcript chars sent to the narrative LLM
+NARRATIVE_NOTES_PER_SIGNAL = 6           # max engine notes echoed per signal into the narrative
+SCORECARD_EVIDENCE_MAX = 5               # max fallback quotes per signal scorecard
+
 # Fit-aware aggregation ceilings (the score MEANS role-fit, so a must-have
 # gap caps it — this is the metric's definition, not a post-hoc clamp).
 REJECT_CEILING = 35      # failed must-have / knockout_close → score forced into reject band (<40)
