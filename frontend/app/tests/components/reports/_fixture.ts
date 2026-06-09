@@ -24,7 +24,7 @@ export function makeQuestion(overrides: Partial<QuestionOut> = {}): QuestionOut 
   }
 }
 
-/** Build a single SignalAssessmentOut with new cross-credit fields defaulted. Override per test. */
+/** Build a single SignalAssessmentOut with real backend fields defaulted. Override per test. */
 export function makeSignalAssessment(overrides: Partial<SignalAssessmentOut> = {}): SignalAssessmentOut {
   return {
     signal: '4+ years total professional experience',
@@ -32,14 +32,13 @@ export function makeSignalAssessment(overrides: Partial<SignalAssessmentOut> = {
     weight: 3,
     knockout: true,
     priority: 'required',
-    engine_state: 'sufficient',
-    final_state: 'sufficient',
-    grade: null,
-    score: 70,
+    provenance: 'asked_directly',
+    level: 'solid',
+    score: 80,
     evidence: ['Around six years.'],
     overridden: false,
     override_reason: null,
-    // new cross-credit fields
+    // cross-credit fields
     cross_credit_applied: false,
     level_basis: '',
     ...overrides,
@@ -97,7 +96,7 @@ export function makeReport(overrides: Partial<ReportRead> = {}): ReportRead {
     signal_assessments: [
       {
         signal: '4+ years total professional experience', type: 'experience', weight: 3, knockout: true,
-        priority: 'required', engine_state: 'sufficient', final_state: 'sufficient', grade: null, score: 70,
+        priority: 'required', provenance: 'asked_directly' as const, level: 'solid' as const, score: 80,
         evidence: ['Around six years.'], overridden: false, override_reason: null,
         cross_credit_applied: false, level_basis: '',
       },

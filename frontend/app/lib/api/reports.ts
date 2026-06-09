@@ -59,9 +59,10 @@ export interface SignalAssessmentOut {
   weight: number
   knockout: boolean
   priority: string
-  engine_state: string
-  final_state: string
-  grade: string | null
+  /** How the signal was covered during the session. */
+  provenance: 'not_reached' | 'asked_directly' | 'cross_credited' | 'probed_absent'
+  /** Rubric-anchored quality level for this signal. */
+  level: QuestionLevel
   score: number | null
   evidence: string[]
   overridden: boolean

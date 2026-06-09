@@ -13,7 +13,8 @@ describe('SignalAuditTable', () => {
     expect(details).not.toBeNull()
     expect(details?.hasAttribute('open')).toBe(false)
     expect(screen.getByText('4+ years total professional experience')).toBeInTheDocument()
-    expect(screen.getByText(/sufficient/)).toBeInTheDocument()
+    // provenance column should show the real provenance value
+    expect(screen.getByText(/asked_directly/)).toBeInTheDocument()
   })
   it('renders nothing when there are no assessments', () => {
     const { container } = render(<SignalAuditTable assessments={[]} />)
@@ -22,12 +23,25 @@ describe('SignalAuditTable', () => {
   it('shows the thin-evidence bluff chip and the per-signal score', () => {
     const thin: SignalAssessmentOut = {
       signal: 'API expertise: RESTful APIs', type: 'competency', weight: 2, knockout: false,
-      priority: 'required', engine_state: 'partial', final_state: 'partial',
-      grade: 'thin', score: 25, evidence: [], overridden: false, override_reason: null,
+      priority: 'required', provenance: 'asked_directly',
+      level: 'thin', score: 25, evidence: [], overridden: false, override_reason: null,
     }
     render(<SignalAuditTable assessments={[thin]} />)
     expect(screen.getByTitle(/possible bluff/i)).toBeInTheDocument()  // the "thin" chip
     expect(screen.getByText('2.5')).toBeInTheDocument()               // score 25 → /10
+  })
+
+  it('renders the level in the grade cell', () => {
+    const a = makeSignalAssessment({ level: 'solid', provenance: 'asked_directly', score: 80 })
+    render(<SignalAuditTable assessments={[a]} />)
+    expect(screen.getByText('solid')).toBeInTheDocument()
+    expect(screen.getByText(/asked_directly/)).toBeInTheDocument()
+  })
+
+  it('renders overridden asterisk when overridden is true', () => {
+    const a = makeSignalAssessment({ provenance: 'cross_credited', overridden: true, override_reason: 'Re-checked' })
+    render(<SignalAuditTable assessments={[a]} />)
+    expect(screen.getByText(/cross_credited \*/)).toBeInTheDocument()
   })
 
   it('renders level_basis sub-label and cross-credit tag when present', () => {
