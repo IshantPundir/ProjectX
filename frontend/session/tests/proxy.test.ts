@@ -97,4 +97,30 @@ describe('proxy() — CSP connect-src', () => {
 
     expect(csp).not.toContain('ws://localhost:*')
   })
+
+  // Regression: `upgrade-insecure-requests` would rewrite the candidate's
+  // plaintext `ws://localhost:7880` LiveKit connection to `wss://`, which the
+  // non-TLS self-hosted dev SFU can't answer — breaking the room. It must be
+  // omitted in dev and present in prod (where everything is already TLS).
+  it('omits upgrade-insecure-requests in dev mode', async () => {
+    vi.stubEnv('NODE_ENV', 'development')
+    vi.stubEnv('NEXT_PUBLIC_API_URL', 'http://localhost:8000')
+
+    const proxy = await importProxy()
+    const response = proxy(makeRequest('http://localhost:3002/interview/abc'))
+    const csp = response.headers.get('Content-Security-Policy')
+
+    expect(csp).not.toContain('upgrade-insecure-requests')
+  })
+
+  it('includes upgrade-insecure-requests in production mode', async () => {
+    vi.stubEnv('NODE_ENV', 'production')
+    vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://api.example.com')
+
+    const proxy = await importProxy()
+    const response = proxy(makeRequest())
+    const csp = response.headers.get('Content-Security-Policy')
+
+    expect(csp).toContain('upgrade-insecure-requests')
+  })
 })

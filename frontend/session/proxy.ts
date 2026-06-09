@@ -55,7 +55,14 @@ export function proxy(request: NextRequest) {
     "base-uri 'self'",
     "form-action 'self'",
     "object-src 'none'",
-    "upgrade-insecure-requests",
+    // `upgrade-insecure-requests` rewrites ws://→wss:// (and http://→https://).
+    // In production every origin is already TLS, so it's a safe hardening
+    // directive. In dev it is HARMFUL: the page is served over plain http and
+    // the self-hosted LiveKit SFU speaks plaintext ws:// on :7880 — the upgrade
+    // would turn the candidate's `ws://localhost:7880` into `wss://localhost:7880`,
+    // which the non-TLS SFU can't answer, breaking the room connection. Emit it
+    // only outside dev.
+    ...(isDev ? [] : ["upgrade-insecure-requests"]),
   ]
     .join("; ")
     .trim();
