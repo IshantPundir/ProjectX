@@ -7,21 +7,6 @@ from pydantic import BaseModel, Field
 from app.modules.reporting.scoring.types import Confidence, Verdict
 
 
-class SignalRecheckOut(BaseModel):
-    """Structured output from the per-signal post-interview re-check."""
-    evidence_quotes: list[str] = Field(default_factory=list)
-    justification: str
-    level: Literal["strong", "solid", "thin", "absent", "not_reached"]
-    overridden: bool = False
-    override_reason: str | None = None
-    # Explanatory human-verify flag (never overrides the level). Set when a factual
-    # gate (experience/compliance) was graded against the bank rubric but some
-    # required facts (e.g. platform/employer/scale) were not elicited — surfaced as
-    # a charity_flag for the reviewer, never a silent penalty. See reporting D5.
-    needs_verification: bool = False
-    verification_note: str | None = None
-
-
 class QuestionGradeOut(BaseModel):
     """Structured output from the per-QUESTION post-interview grade (Layer 2).
     The question is graded against its OWN full bank card (rubric + listen-for

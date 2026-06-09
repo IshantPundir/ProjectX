@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 from app.modules.interview_runtime.evidence import SessionEvidence
 from app.modules.reporting.service import build_report
 from app.modules.reporting.schemas import (
-    CommunicationVerdict, HolisticAdjustmentOut, NarrativeOut, SignalRecheckOut,
+    CommunicationVerdict, HolisticAdjustmentOut, NarrativeOut, QuestionGradeOut,
     DecisionOut, MethodologyOut, WhyColumn,
 )
 
@@ -37,9 +37,9 @@ async def test_build_report_advances_a_strong_must_have():
     signal_metadata = [{"value": "python", "type": "competency", "weight": 3,
                         "knockout": True, "priority": "required"}]
 
-    with patch("app.modules.reporting.service.recheck_signal", new=AsyncMock(
-            return_value=SignalRecheckOut(evidence_quotes=["built an ETL in Python"],
-                justification="real", level="solid", overridden=False, override_reason=None))), \
+    with patch("app.modules.reporting.service.grade_question", new=AsyncMock(
+            return_value=QuestionGradeOut(evidence_quotes=["built an ETL in Python"],
+                level="solid", overridden=False, override_reason=None))), \
          patch("app.modules.reporting.service.score_holistic", new=AsyncMock(
             return_value=HolisticAdjustmentOut(delta=0, justification="ok"))), \
          patch("app.modules.reporting.service.grade_communication", new=AsyncMock(
@@ -83,8 +83,8 @@ async def test_must_have_identity_recovered_from_engine_when_metadata_missing():
                   "rubric": {}, "question_kind": "technical_depth", "primary_signal": "python"}]
     signal_metadata = []  # deliberately empty — identity must come from evidence.signals[]
 
-    with patch("app.modules.reporting.service.recheck_signal", new=AsyncMock(
-            return_value=SignalRecheckOut(evidence_quotes=[], justification="none",
+    with patch("app.modules.reporting.service.grade_question", new=AsyncMock(
+            return_value=QuestionGradeOut(evidence_quotes=[],
                 level="absent", overridden=False, override_reason=None))), \
          patch("app.modules.reporting.service.score_holistic", new=AsyncMock(
             return_value=HolisticAdjustmentOut(delta=0, justification=""))), \
@@ -112,9 +112,9 @@ async def test_manifest_carries_template_provenance():
     signal_metadata = [{"value": "python", "type": "competency", "weight": 3,
                         "knockout": True, "priority": "required"}]
 
-    with patch("app.modules.reporting.service.recheck_signal", new=AsyncMock(
-            return_value=SignalRecheckOut(evidence_quotes=["built an ETL in Python"],
-                justification="real", level="solid", overridden=False, override_reason=None))), \
+    with patch("app.modules.reporting.service.grade_question", new=AsyncMock(
+            return_value=QuestionGradeOut(evidence_quotes=["built an ETL in Python"],
+                level="solid", overridden=False, override_reason=None))), \
          patch("app.modules.reporting.service.score_holistic", new=AsyncMock(
             return_value=HolisticAdjustmentOut(delta=0, justification="ok"))), \
          patch("app.modules.reporting.service.grade_communication", new=AsyncMock(
@@ -144,9 +144,9 @@ async def test_build_report_populates_question_cards():
     signal_metadata = [{"value": "python", "type": "competency", "weight": 3,
                         "knockout": True, "priority": "required"}]
 
-    with patch("app.modules.reporting.service.recheck_signal", new=AsyncMock(
-            return_value=SignalRecheckOut(evidence_quotes=["built an ETL in Python"],
-                justification="real", level="solid", overridden=False, override_reason=None))), \
+    with patch("app.modules.reporting.service.grade_question", new=AsyncMock(
+            return_value=QuestionGradeOut(evidence_quotes=["built an ETL in Python"],
+                level="solid", overridden=False, override_reason=None))), \
          patch("app.modules.reporting.service.score_holistic", new=AsyncMock(
             return_value=HolisticAdjustmentOut(delta=0, justification="ok"))), \
          patch("app.modules.reporting.service.grade_communication", new=AsyncMock(

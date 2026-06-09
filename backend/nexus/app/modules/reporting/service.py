@@ -24,7 +24,6 @@ from app.modules.reporting.scoring.aggregate import (
     apply_holistic,
     clamp_to_ceiling,
     confidence_from_coverage,
-    level_for_signal,
     make_scored_signal,
     resolve_verdict,
     score_dimension,
@@ -43,9 +42,9 @@ from app.modules.reporting.scoring.evidence_adapter import EvidenceView
 from app.modules.reporting.scoring.holistic import score_holistic
 from app.modules.reporting.scoring.judge import grade_communication
 from app.modules.reporting.scoring.narrative import write_narrative
-from app.modules.reporting.scoring.recheck import recheck_signal
+from app.modules.reporting.scoring.question_grade import grade_question, question_base_level
+from app.modules.reporting.scoring.rollup import pick_dedicated_question, roll_up_signal
 from app.modules.reporting.scoring.status import badge_for_question
-from app.modules.reporting.scoring.types import SignalDef
 
 logger = structlog.get_logger()
 
@@ -67,36 +66,16 @@ def _tone_by_score(s: int | None) -> str:
     return "ok" if s >= 65 else "caution" if s >= 40 else "danger"
 
 
-def _eliciting_question(
-    sig: str,
-    notes_by_signal: dict,
-    q_by_id: dict[str, dict],
-    q_by_signal: dict[str, dict],
-) -> dict | None:
-    """The bank question that actually ELICITED this signal's evidence — the question
-    on the floor when its first SUPPORTING note was recorded (via from_question_id).
-    Falls back to the primary-signal match when no supporting note exists.
-
-    D5: a signal can be shared by several bank questions (e.g. an experience_check that
-    was answered AND a technical_scenario that was never reached). Re-check must grade
-    against the rubric of the question that elicited the answer — not the first question
-    that merely lists the signal in signal_values.
-    """
-    for n in notes_by_signal.get(sig, []):
-        if n.stance == EvidenceStance.supports and n.from_question_id in q_by_id:
-            return q_by_id[n.from_question_id]
-    return q_by_signal.get(sig)
-
-
 def _scorecard_evidence(
-    sig: str, recheck_results: dict, notes_by_signal: dict
+    sig: str, grade_by_sig: dict, notes_by_signal: dict
 ) -> list[str]:
-    """Per-signal evidence quotes: prefer grounded re-check quotes; fall back to the
-    engine's own SUPPORTING notes (verbatim candidate words by contract) when re-check
-    didn't run or returned none — so every assessed signal shows real evidence."""
-    rc = recheck_results.get(sig)
-    if rc and rc.evidence_quotes:
-        return rc.evidence_quotes
+    """Per-signal evidence quotes: prefer the dedicated question grade's grounded
+    quotes; fall back to the engine's own SUPPORTING notes (verbatim candidate words
+    by contract) when the dedicated grade didn't run or returned none — so every
+    assessed signal shows real evidence."""
+    g = grade_by_sig.get(sig)
+    if g and g.evidence_quotes:
+        return g.evidence_quotes
     return [
         n.quote for n in notes_by_signal.get(sig, [])
         if n.stance == EvidenceStance.supports and n.quote
@@ -122,15 +101,17 @@ async def build_report(*, evidence, questions, signal_metadata, correlation_id,
                        bank_id=None, signal_snapshot_id=None, n_samples=None):
     """Three-layer report over the gen-3 SessionEvidence.
 
-    Deterministic: roll each PRIMARY signal's notes → level → score; dimensions;
-    coverage/confidence; provenance-aware must-have gate; verdict.
-    AI: re-check (refine evidenced levels) → holistic ±5 → communication → narrative.
+    Layer 2 is QUESTION-anchored: every ASKED question is graded against its own
+    full bank card (rubric + listen-for + red-flags + evaluation_hint), then those
+    grades roll up to each PRIMARY signal's level (dedicated question anchors;
+    cross-credit can lift by one tier). Downstream is unchanged:
+    dimensions → overall → fit-ceiling → holistic ±5 → communication → verdict;
+    then the LLM narrative (sees final numbers, never changes them).
     """
     view = EvidenceView(evidence)
     primary_set = view.primary_set
     notes_by_signal = view.notes_by_signal
     provenance_by_signal = view.provenance_by_signal
-    closure_by_primary = view.closure_by_primary
 
     def_by_value = {m["value"]: m for m in signal_metadata}
     engine_identity = view.signal_by_name  # dict[str, SignalEvidence]
@@ -151,52 +132,53 @@ async def build_report(*, evidence, questions, signal_metadata, correlation_id,
         return {"value": sig, "type": "competency", "weight": 1,
                 "knockout": False, "priority": "preferred"}
 
-    q_by_signal: dict[str, dict] = {}
-    for q in questions:
-        for sv in q.get("signal_values", []):
-            q_by_signal.setdefault(sv, q)
-    q_by_id: dict[str, dict] = {q["id"]: q for q in questions if q.get("id")}
-
     def _provenance_str(sig: str) -> str:
         p = provenance_by_signal.get(sig, "not_reached")
         return p.value if hasattr(p, "value") else str(p)
 
-    # --- Deterministic per-PRIMARY level (the graded denominator) ----------
-    base_level: dict[str, str] = {}
+    notes_by_question = view.notes_by_question
+    outcome_by_question = view.outcome_by_question
+    probes_by_q = {
+        q.question_id: (len(q.probes_used), q.probes_available) for q in evidence.questions}
+
+    # --- Layer 2: grade every ASKED question against its OWN full card ---------
+    async def _grade(q: dict):
+        qid = q["id"]
+        qnotes = notes_by_question.get(qid, [])
+        used, avail = probes_by_q.get(qid, (0, 0))
+        base = question_base_level(qnotes)
+        return qid, await grade_question(
+            question=q, notes=qnotes, probes_used=used, probes_available=avail,
+            base_level=base, correlation_id=correlation_id)
+    asked_qids = [q["id"] for q in questions if outcome_by_question.get(q["id"]) == "asked"]
+    grades = dict(await asyncio.gather(*[_grade(q) for q in questions if q["id"] in asked_qids])) \
+        if asked_qids else {}
+
+    # --- Roll question grades up to each PRIMARY signal -----------------------
+    def _cross_credit_level(sig: str) -> str | None:
+        ded = pick_dedicated_question(sig, questions, outcome_by_question)
+        ded_id = ded["id"] if ded else None
+        other = [n for n in notes_by_signal.get(sig, [])
+                 if n.from_question_id != ded_id and n.stance == EvidenceStance.supports]
+        if not other:
+            return None
+        return question_base_level(other)
+
+    rollups: dict[str, object] = {}
+    final_level: dict[str, str] = {}
     for sig in primary_set:
-        base_level[sig] = level_for_signal(
-            notes_by_signal.get(sig, []), provenance=_provenance_str(sig),
-            closure=closure_by_primary.get(sig),
-        )
+        ded = pick_dedicated_question(sig, questions, outcome_by_question)
+        ded_id = ded["id"] if ded else None
+        ded_outcome = outcome_by_question.get(ded_id) if ded_id else None
+        ded_level = grades[ded_id].level if (ded_id in grades) else None
+        r = roll_up_signal(signal=sig, dedicated_level=ded_level, dedicated_outcome=ded_outcome,
+                           cross_credit_level=_cross_credit_level(sig))
+        rollups[sig] = r
+        final_level[sig] = r.level
 
-    # --- Layer 2 re-check: every evidenced primary (skip only not_reached). The
-    #     bank rubric is the contract; factual gates are NOT skipped — instead the
-    #     re-check is told the question_kind and grades them against the rubric's own
-    #     bar (D5). Each signal is graded against the question that ELICITED its
-    #     evidence (from_question_id), not a never-reached question sharing the signal.
-    recheck_targets = [
-        sig for sig in primary_set
-        if _provenance_str(sig) in ("asked_directly", "cross_credited", "probed_absent")
-    ]
-
-    async def _one(sig: str):
-        m = _identity(sig)
-        d = SignalDef(value=m["value"], type=m["type"], weight=m["weight"],
-                      knockout=m["knockout"], priority=m["priority"])
-        q = _eliciting_question(sig, notes_by_signal, q_by_id, q_by_signal) or {}
-        ctx = f"Q: {q.get('text','')}\nrubric: {json.dumps(q.get('rubric', {}))}"
-        return sig, await recheck_signal(signal_def=d, notes=notes_by_signal.get(sig, []),
-                                         question_context=ctx, engine_level=base_level[sig],
-                                         correlation_id=correlation_id,
-                                         question_kind=q.get("question_kind"))
-    recheck_results = (
-        dict(await asyncio.gather(*[_one(s) for s in recheck_targets]))
-        if recheck_targets else {}
-    )
-
-    final_level = dict(base_level)
-    for sig, rc in recheck_results.items():
-        final_level[sig] = rc.level
+    def _ded_grade(sig):
+        ded = pick_dedicated_question(sig, questions, outcome_by_question)
+        return grades.get(ded["id"]) if ded else None
 
     # --- Build ScoredSignal list over the PRIMARY set ----------------------
     scored = []
@@ -230,28 +212,29 @@ async def build_report(*, evidence, questions, signal_metadata, correlation_id,
                               is_knockout_close=view.is_knockout_close,
                               knockout_signal=view.knockout_signal, must_haves=must_haves)
 
-    # Per-signal evidence quotes (re-check grounded, else engine supporting notes) — computed
-    # once and reused by both the scorecards and the narrative ground truth.
+    # Per-signal evidence quotes (dedicated-grade grounded, else engine supporting notes) —
+    # computed once and reused by both the scorecards and the narrative ground truth.
+    grade_by_sig = {s.value: _ded_grade(s.value) for s in scored}
     evidence_by_sig = {
-        s.value: _scorecard_evidence(s.value, recheck_results, notes_by_signal) for s in scored
+        s.value: _scorecard_evidence(s.value, grade_by_sig, notes_by_signal) for s in scored
     }
 
     signal_assessments = [SignalAssessmentOut(
         signal=s.value, type=s.type, weight=s.weight, knockout=s.knockout, priority=s.priority,
         provenance=_provenance_str(s.value), level=s.level, score=s.score,
         evidence=evidence_by_sig[s.value],
-        overridden=(
-            recheck_results[s.value].overridden if s.value in recheck_results else False),
-        override_reason=(
-            recheck_results[s.value].override_reason if s.value in recheck_results else None),
+        overridden=bool(_ded_grade(s.value) and _ded_grade(s.value).overridden),
+        override_reason=(_ded_grade(s.value).override_reason if _ded_grade(s.value) else None),
+        cross_credit_applied=rollups[s.value].cross_credit_applied,
+        level_basis=rollups[s.value].level_basis,
     ) for s in scored]
 
-    # Human-verify charity flags: a factual gate graded against the bank rubric whose
+    # Human-verify charity flags: a question graded against its bank card whose
     # required facts were not fully elicited. Explanatory only — never a silent penalty.
     human_verify = [
-        {"signal": sig, "note": rc.verification_note}
-        for sig, rc in recheck_results.items()
-        if rc.needs_verification and rc.verification_note
+        {"signal": sig, "note": g.verification_note}
+        for sig in primary_set
+        if (g := _ded_grade(sig)) and g.needs_verification and g.verification_note
     ]
 
     gt = json.dumps({
@@ -303,10 +286,17 @@ async def build_report(*, evidence, questions, signal_metadata, correlation_id,
                 knockout=sig in must_have_signals)
             quote = _question_quote(qr.question_id)
         text = qdict.get("text", "")
+        g = grades.get(qr.question_id)
         q_out.append(QuestionOut(
             seq=i + 1, question_id=qr.question_id, title=text[:60],
             status_badge=badge, status_tone=tone, question_text=text,
-            candidate_quote=quote, asked_at_ms=None))
+            candidate_quote=quote, asked_at_ms=None,
+            level=(g.level if g else "not_reached"),
+            difficulty=qdict.get("difficulty"),
+            listen_for_hits=(g.listen_for_hits if g else []),
+            red_flags_tripped=(g.red_flags_tripped if g else []),
+            probes_used=len(qr.probes_used), probes_available=qr.probes_available,
+        ))
 
     # Fold in narrative per-question prose (our_read / refined candidate_quote).
     read_by_qid = {qn.question_id: qn for qn in narrative.questions}
@@ -346,9 +336,11 @@ async def build_report(*, evidence, questions, signal_metadata, correlation_id,
             prompt_version=ai_config.report_scorer_prompt_version,
             generated_at=datetime.now(UTC).isoformat(), correlation_id=correlation_id,
             evidence_grounding_summary={
-                "n_signals_rechecked": len(recheck_results),
-                "n_overrides": sum(1 for r in recheck_results.values() if r.overridden),
+                "n_questions_graded": len(grades),
+                "n_overrides": sum(1 for g in grades.values() if g.overridden),
                 "level_map": {s.value: s.level for s in scored},
+                "cross_credit_signals": [
+                    s.value for s in scored if rollups[s.value].cross_credit_applied],
                 "session_score": session_score, "holistic_delta": adjustment.delta,
                 "holistic_justification": adjustment.justification, "ceiling_applied": ceiling,
             },

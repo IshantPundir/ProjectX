@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.modules.interview_runtime.evidence import EvidenceNote, EvidenceStance, EvidenceTexture
 from app.modules.reporting.scoring.constants import (
     ADVANCE_THRESHOLD,
     BORDERLINE_CEILING,
@@ -15,31 +14,6 @@ from app.modules.reporting.scoring.constants import (
     level_score,
 )
 from app.modules.reporting.scoring.types import Confidence, DemonstrationLevel, Verdict
-
-_TEXTURE_RANK = {EvidenceTexture.thin: 0, EvidenceTexture.concrete: 1, EvidenceTexture.strong: 2}
-_RANK_LEVEL = {2: "strong", 1: "solid", 0: "thin"}
-
-
-def level_for_signal(
-    notes: list[EvidenceNote], *, provenance: str, closure: str | None
-) -> DemonstrationLevel:
-    """Roll a signal's notes + provenance/closure into one demonstration level.
-
-    Supporting notes → level by best texture (strong>concrete>thin). No supports:
-    `probed_absent` → absent; an un-retracted contradiction → absent; else
-    (`not_reached`, including closure=truncated) → not_reached.
-    """
-    supports = [n for n in notes if n.stance == EvidenceStance.supports]
-    if supports:
-        best = max(_TEXTURE_RANK[n.texture] for n in supports)
-        return _RANK_LEVEL[best]  # type: ignore[return-value]
-
-    unretracted_contradiction = any(
-        n.stance == EvidenceStance.contradicts and n.retracts_seq is None for n in notes
-    )
-    if provenance == "probed_absent" or unretracted_contradiction:
-        return "absent"
-    return "not_reached"
 
 
 @dataclass(frozen=True)

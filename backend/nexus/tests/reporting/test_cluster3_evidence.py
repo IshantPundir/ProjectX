@@ -1,13 +1,14 @@
-"""Cluster 3 — report evidence plumbing + D5 (eliciting-question rubric).
+"""Cluster 3 — report evidence plumbing + question-anchored grading.
 
 Covers:
-  - SignalRecheckOut.needs_verification / verification_note (explanatory human-verify flag).
-  - recheck_signal passes question_kind into the prompt.
-  - _eliciting_question keys on the question that produced the evidence (from_question_id),
-    not the first signal_values match (the D5 shared-signal defeat).
-  - _scorecard_evidence falls back to engine supporting notes when recheck has no quotes.
-  - build_report threads per-signal quotes + transcript + human_verify into the narrative payload,
-    and a shared-signal experience must-have is still re-checked (old factual-gate skip is gone).
+  - QuestionGradeOut.needs_verification / verification_note (explanatory human-verify flag).
+  - grade_question is called per-ASKED-question with the question's full card (so a shared
+    signal is graded against the question that actually elicited the answer, never a
+    never-reached sibling — the D5 shared-signal defeat is structural now).
+  - _scorecard_evidence prefers the dedicated grade's quotes, falls back to engine
+    supporting notes when the grade has none.
+  - build_report threads per-signal quotes + transcript + human_verify into the narrative
+    payload, and per-question cards stay QUESTION-anchored.
 """
 from __future__ import annotations
 
@@ -19,7 +20,7 @@ from unittest.mock import AsyncMock, patch
 from app.modules.interview_runtime.evidence import SessionEvidence
 from app.modules.reporting.schemas import (
     CommunicationVerdict, DecisionOut, HolisticAdjustmentOut, MethodologyOut,
-    NarrativeOut, SignalRecheckOut, WhyColumn,
+    NarrativeOut, QuestionGradeOut, WhyColumn,
 )
 
 
@@ -27,27 +28,27 @@ from app.modules.reporting.schemas import (
 # A4 — schema: explanatory human-verify flag
 # ---------------------------------------------------------------------------
 
-def test_signal_recheck_out_defaults_needs_verification_false():
-    rc = SignalRecheckOut(justification="x", level="solid")
-    assert rc.needs_verification is False
-    assert rc.verification_note is None
+def test_question_grade_out_defaults_needs_verification_false():
+    g = QuestionGradeOut(level="solid")
+    assert g.needs_verification is False
+    assert g.verification_note is None
 
 
-def test_signal_recheck_out_accepts_verification_note():
-    rc = SignalRecheckOut(
-        justification="bare value only", level="thin",
-        needs_verification=True, verification_note="missing platform/employer/scale")
-    assert rc.needs_verification is True
-    assert rc.verification_note == "missing platform/employer/scale"
+def test_question_grade_out_accepts_verification_note():
+    g = QuestionGradeOut(
+        level="thin", needs_verification=True,
+        verification_note="missing platform/employer/scale")
+    assert g.needs_verification is True
+    assert g.verification_note == "missing platform/employer/scale"
 
 
 # ---------------------------------------------------------------------------
-# A3/A2 — pure helpers (D5 eliciting-question + scorecard evidence fallback)
+# A2 — pure helper (scorecard evidence prefer-grade / fallback-notes)
 # ---------------------------------------------------------------------------
 
 from app.modules.interview_runtime.evidence import EvidenceNote, TimeSpan  # noqa: E402
 from app.modules.reporting.service import (  # noqa: E402
-    _eliciting_question, _narrative_notes, _scorecard_evidence,
+    _narrative_notes, _scorecard_evidence,
 )
 
 
@@ -57,42 +58,22 @@ def _note(signal, qid, stance="supports", texture="concrete", quote="q", seq=1, 
                         from_question_id=qid, via_probe=via_probe)
 
 
-def test_eliciting_question_uses_from_question_id_not_first_signal_match():
-    # The signal is shared by a technical_scenario (first in signal_values order, NEVER reached)
-    # and an experience_check (which actually elicited the supporting note). The D5 bug was that
-    # q_by_signal handed the technical_scenario rubric to recheck. The eliciting note must win.
-    q_exp = {"id": "q_exp", "question_kind": "experience_check", "text": "how many years?"}
-    q_tech = {"id": "q_tech", "question_kind": "technical_scenario", "text": "design X"}
-    q_by_id = {"q_exp": q_exp, "q_tech": q_tech}
-    notes_by_signal = {"years": [_note("years", "q_exp", quote="Eight, nine years")]}
-    q_by_signal = {"years": q_tech}  # the WRONG (first signal_values) match
-
-    elic = _eliciting_question("years", notes_by_signal, q_by_id, q_by_signal)
-    assert elic is q_exp
-
-
-def test_eliciting_question_falls_back_to_signal_match_when_no_note():
-    q_tech = {"id": "q_tech", "question_kind": "technical_scenario"}
-    elic = _eliciting_question("sig", {}, {"q_tech": q_tech}, {"sig": q_tech})
-    assert elic is q_tech
-
-
-def test_scorecard_evidence_prefers_recheck_quotes():
-    rc = {"sig": SignalRecheckOut(evidence_quotes=["graded quote"], justification="x", level="solid")}
+def test_scorecard_evidence_prefers_grade_quotes():
+    grade_by_sig = {"sig": QuestionGradeOut(evidence_quotes=["graded quote"], level="solid")}
     notes = {"sig": [_note("sig", "q", quote="note quote")]}
-    assert _scorecard_evidence("sig", rc, notes) == ["graded quote"]
+    assert _scorecard_evidence("sig", grade_by_sig, notes) == ["graded quote"]
 
 
 def test_scorecard_evidence_falls_back_to_supporting_notes():
-    rc = {}  # recheck did not run for this signal
+    grade_by_sig = {}  # no dedicated grade for this signal
     notes = {"sig": [_note("sig", "q", stance="supports", quote="real supporting quote")]}
-    assert _scorecard_evidence("sig", rc, notes) == ["real supporting quote"]
+    assert _scorecard_evidence("sig", grade_by_sig, notes) == ["real supporting quote"]
 
 
 def test_scorecard_evidence_excludes_contradicting_notes():
-    rc = {"sig": SignalRecheckOut(evidence_quotes=[], justification="x", level="thin")}
+    grade_by_sig = {"sig": QuestionGradeOut(evidence_quotes=[], level="thin")}
     notes = {"sig": [_note("sig", "q", stance="contradicts", quote="disclaim")]}
-    assert _scorecard_evidence("sig", rc, notes) == []
+    assert _scorecard_evidence("sig", grade_by_sig, notes) == []
 
 
 def test_narrative_notes_shape_and_bounded():
@@ -103,7 +84,7 @@ def test_narrative_notes_shape_and_bounded():
 
 
 # ---------------------------------------------------------------------------
-# A1/A3 — build_report integration: D5 shared-signal + narrative grounding
+# A1/A3 — build_report integration: shared-signal + narrative grounding
 # ---------------------------------------------------------------------------
 
 def _shared_signal_evidence_dict():
@@ -133,7 +114,7 @@ def _shared_signal_evidence_dict():
 
 
 def _bank_questions_q_tech_first():
-    # q_tech listed FIRST → q_by_signal["years"] = q_tech (the wrong, never-reached rubric).
+    # q_tech listed FIRST (never reached); q_exp is the answered experience_check.
     return [
         {"id": "q_tech", "text": "design X", "signal_values": ["years"], "rubric": {},
          "question_kind": "technical_scenario", "primary_signal": "years"},
@@ -144,7 +125,7 @@ def _bank_questions_q_tech_first():
 
 
 @pytest.mark.asyncio
-async def test_build_report_threads_evidence_and_rechecks_shared_signal():
+async def test_build_report_grades_only_asked_question_with_its_card():
     from app.modules.reporting.service import build_report
 
     evidence = SessionEvidence.model_validate(_shared_signal_evidence_dict())
@@ -162,11 +143,11 @@ async def test_build_report_threads_evidence_and_rechecks_shared_signal():
             quick_summary="", strengths=[], concerns=[], questions=[],
             methodology=MethodologyOut(note="", charity_flags=[]))
 
-    recheck_mock = AsyncMock(return_value=SignalRecheckOut(
-        evidence_quotes=[], justification="bare value", level="thin",
+    grade_mock = AsyncMock(return_value=QuestionGradeOut(
+        evidence_quotes=[], level="thin",
         needs_verification=True, verification_note="missing platform/employer/scale"))
 
-    with patch("app.modules.reporting.service.recheck_signal", new=recheck_mock), \
+    with patch("app.modules.reporting.service.grade_question", new=grade_mock), \
          patch("app.modules.reporting.service.score_holistic", new=AsyncMock(
             return_value=HolisticAdjustmentOut(delta=0, justification=""))), \
          patch("app.modules.reporting.service.grade_communication", new=AsyncMock(
@@ -175,10 +156,11 @@ async def test_build_report_threads_evidence_and_rechecks_shared_signal():
         report = await build_report(evidence=evidence, questions=questions,
                                     signal_metadata=signal_metadata, correlation_id="cid")
 
-    # (1) the shared signal is STILL re-checked (old all-factual skip is gone) ...
-    assert recheck_mock.await_count == 1
-    # ... and graded against the ELICITING question's kind (experience_check, not technical_scenario)
-    assert recheck_mock.await_args.kwargs["question_kind"] == "experience_check"
+    # (1) Only the ASKED question (q_exp) is graded — q_tech (not_reached) is skipped ...
+    assert grade_mock.await_count == 1
+    # ... against ITS OWN full bank card (experience_check, not the technical_scenario sibling)
+    assert grade_mock.await_args.kwargs["question"]["question_kind"] == "experience_check"
+    assert grade_mock.await_args.kwargs["question"]["id"] == "q_exp"
 
     gt = captured["gt"]
     # (2) narrative now receives candidate transcript + per-signal quotes + notes
@@ -189,7 +171,7 @@ async def test_build_report_threads_evidence_and_rechecks_shared_signal():
     # (3) the human-verify charity flag is threaded through (explanatory, not a silent penalty)
     assert {"signal": "years", "note": "missing platform/employer/scale"} in gt["human_verify"]
 
-    # (4) scorecard evidence falls back to the engine's supporting notes (recheck returned none)
+    # (4) scorecard evidence falls back to the engine's supporting notes (grade returned none)
     yrs = next(s for s in report.signal_assessments if s.signal == "years")
     assert yrs.evidence == ["Eight, nine years"]
 
@@ -206,8 +188,8 @@ async def test_not_reached_question_card_is_not_passed_and_has_no_sibling_quote(
     signal_metadata = [{"value": "years", "type": "experience", "weight": 3,
                         "knockout": True, "priority": "required"}]
 
-    with patch("app.modules.reporting.service.recheck_signal", new=AsyncMock(
-            return_value=SignalRecheckOut(evidence_quotes=[], justification="ok", level="solid"))), \
+    with patch("app.modules.reporting.service.grade_question", new=AsyncMock(
+            return_value=QuestionGradeOut(evidence_quotes=[], level="solid"))), \
          patch("app.modules.reporting.service.score_holistic", new=AsyncMock(
             return_value=HolisticAdjustmentOut(delta=0, justification=""))), \
          patch("app.modules.reporting.service.grade_communication", new=AsyncMock(
@@ -233,9 +215,9 @@ async def test_not_reached_question_card_is_not_passed_and_has_no_sibling_quote(
 
 @pytest.mark.asyncio
 async def test_thin_must_have_is_borderline_not_advance():
-    """#3 contract: an unconfirmed must-have (re-check grades it `thin` against the bank rubric)
-    is held at BORDERLINE for human review — never silently advanced — with the verify flag
-    explaining what to confirm. This is what the rubric-tier re-check produces on real data."""
+    """#3 contract: an unconfirmed must-have (graded `thin` against its bank card) is held
+    at BORDERLINE for human review — never silently advanced — with the verify flag
+    explaining what to confirm."""
     from app.modules.reporting.service import build_report
 
     evidence = SessionEvidence.model_validate(_shared_signal_evidence_dict())
@@ -253,9 +235,9 @@ async def test_thin_must_have_is_borderline_not_advance():
             quick_summary="", strengths=[], concerns=[], questions=[],
             methodology=MethodologyOut(note="", charity_flags=[]))
 
-    with patch("app.modules.reporting.service.recheck_signal", new=AsyncMock(
-            return_value=SignalRecheckOut(
-                evidence_quotes=[], justification="bare value, below meets_bar", level="thin",
+    with patch("app.modules.reporting.service.grade_question", new=AsyncMock(
+            return_value=QuestionGradeOut(
+                evidence_quotes=[], level="thin",
                 needs_verification=True, verification_note="confirm platform/employer/scale"))), \
          patch("app.modules.reporting.service.score_holistic", new=AsyncMock(
             return_value=HolisticAdjustmentOut(delta=0, justification=""))), \

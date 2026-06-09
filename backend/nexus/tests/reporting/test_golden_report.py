@@ -19,7 +19,7 @@ from app.modules.reporting.schemas import (
     CommunicationVerdict,
     HolisticAdjustmentOut,
     NarrativeOut,
-    SignalRecheckOut,
+    QuestionGradeOut,
     DecisionOut,
     MethodologyOut,
     WhyColumn,
@@ -58,17 +58,19 @@ async def test_golden_report_spine():
         if s.signal in primary
     ]
 
-    async def _rc(*, signal_def, notes, question_context, engine_level, correlation_id,
-                  question_kind=None):
-        return SignalRecheckOut(
+    # Echo the deterministic engine base level (mirrors the real grader's graceful
+    # fallback, which coerces a not_reached base to "thin" — the grade enum has no
+    # not_reached member). This keeps the golden spine deterministic without an LLM.
+    async def _grade(*, question, notes, probes_used, probes_available, base_level,
+                     correlation_id):
+        return QuestionGradeOut(
             evidence_quotes=[],
-            justification="keep",
-            level=engine_level,
+            level=base_level if base_level != "not_reached" else "thin",
             overridden=False,
             override_reason=None,
         )
 
-    with patch("app.modules.reporting.service.recheck_signal", new=AsyncMock(side_effect=_rc)), \
+    with patch("app.modules.reporting.service.grade_question", new=AsyncMock(side_effect=_grade)), \
          patch("app.modules.reporting.service.score_holistic", new=AsyncMock(
              return_value=HolisticAdjustmentOut(delta=0, justification=""))), \
          patch("app.modules.reporting.service.grade_communication", new=AsyncMock(
