@@ -38,6 +38,13 @@ describe('SignalAuditTable', () => {
     expect(screen.getByText(/asked_directly/)).toBeInTheDocument()
   })
 
+  it('renders a not_reached level as plain text, not the thin chip', () => {
+    const a = makeSignalAssessment({ signal: 'Some skill', level: 'not_reached' })
+    render(<SignalAuditTable assessments={[a]} />)
+    expect(screen.getByText('not_reached')).toBeInTheDocument()
+    expect(screen.queryByTitle(/possible bluff/i)).not.toBeInTheDocument()
+  })
+
   it('renders overridden asterisk when overridden is true', () => {
     const a = makeSignalAssessment({ provenance: 'cross_credited', overridden: true, override_reason: 'Re-checked' })
     render(<SignalAuditTable assessments={[a]} />)
