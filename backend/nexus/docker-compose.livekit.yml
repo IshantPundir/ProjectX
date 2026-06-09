@@ -1,0 +1,45 @@
+# LiveKit plane — self-hosted SFU + Egress + their coordination Redis.
+# LOCAL DEV only. Linux host networking. Bring up with:
+#   docker compose -f docker-compose.yml -f docker-compose.livekit.yml up -d
+#
+# Pin image tags deliberately (never :latest in committed config).
+services:
+  livekit-redis:
+    image: redis:7-alpine
+    network_mode: host
+    restart: unless-stopped
+    # Dedicated LiveKit bus on 6380 so it never collides with the Dramatiq
+    # broker Redis (6379). protected-mode off for local host-network access.
+    command: redis-server --port 6380 --protected-mode no
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6380", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  livekit-server:
+    image: livekit/livekit-server:v1.9.1
+    network_mode: host
+    restart: unless-stopped
+    command: --config /etc/livekit/livekit.yaml
+    volumes:
+      - ./config/livekit/livekit.yaml:/etc/livekit/livekit.yaml:ro
+    depends_on:
+      livekit-redis:
+        condition: service_healthy
+
+  livekit-egress:
+    image: livekit/egress:v1.9.0
+    network_mode: host
+    restart: unless-stopped
+    # Required since egress v1.7.6 — Chrome sandbox setup. Without it,
+    # RoomComposite/web egress fail with "chrome failed to start".
+    cap_add:
+      - SYS_ADMIN
+    environment:
+      - EGRESS_CONFIG_FILE=/etc/livekit/egress.yaml
+    volumes:
+      - ./config/livekit/egress.yaml:/etc/livekit/egress.yaml:ro
+    depends_on:
+      livekit-redis:
+        condition: service_healthy
