@@ -47,7 +47,7 @@ export function proxy(request: NextRequest) {
     "img-src 'self' data: blob:",
     "media-src 'self' blob: mediastream:",
     "font-src 'self' data:",
-    `connect-src 'self' ${apiUrl}${isDev ? " ws://localhost:*" : ""} wss://*.livekit.cloud https://*.livekit.cloud`,
+    `connect-src 'self' ${apiUrl}${isDev ? " ws://localhost:*" : ""} ${process.env.NEXT_PUBLIC_LIVEKIT_WS_URL ?? "wss://*.livekit.cloud https://*.livekit.cloud"}`,
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",

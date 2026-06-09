@@ -26,6 +26,21 @@ describe('NEXT_PUBLIC_PROCTORING_DEBUG', () => {
   })
 })
 
+describe('NEXT_PUBLIC_LIVEKIT_WS_URL', () => {
+  it('defaults LIVEKIT_WS_URL to the cloud wildcards when unset', () => {
+    const parsed = envSchema.parse({ NEXT_PUBLIC_API_URL: 'https://api.example.com' })
+    expect(parsed.NEXT_PUBLIC_LIVEKIT_WS_URL).toBe('wss://*.livekit.cloud https://*.livekit.cloud')
+  })
+
+  it('uses a provided self-hosted LIVEKIT_WS_URL', () => {
+    const parsed = envSchema.parse({
+      NEXT_PUBLIC_API_URL: 'https://api.example.com',
+      NEXT_PUBLIC_LIVEKIT_WS_URL: 'wss://livekit.example.com',
+    })
+    expect(parsed.NEXT_PUBLIC_LIVEKIT_WS_URL).toBe('wss://livekit.example.com')
+  })
+})
+
 describe('envSchema', () => {
   it('accepts a valid http URL', () => {
     const parsed = envSchema.parse({
