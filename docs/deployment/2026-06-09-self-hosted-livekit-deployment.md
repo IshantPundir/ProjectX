@@ -114,12 +114,16 @@ LIVEKIT_API_SECRET=<secret>
 
 **Candidate session frontend** (`frontend/session/.env`):
 ```
-NEXT_PUBLIC_LIVEKIT_WS_URL=wss://livekit.<domain>
+# BOTH schemes, space-separated — the livekit-client opens a WebSocket AND an
+# https validate/prepareConnection fetch to the same host; CSP must allow both.
+NEXT_PUBLIC_LIVEKIT_WS_URL=wss://livekit.<domain> https://livekit.<domain>
 ```
 
 `NEXT_PUBLIC_LIVEKIT_WS_URL` was added to `frontend/session` specifically to support
-this self-hosted configuration. The CSP `connect-src` origin in `proxy.ts` is already
-parameterized via env for exactly this path.
+this self-hosted configuration; it feeds the CSP `connect-src` in `proxy.ts`. It must
+list both the `wss://` and `https://` origins (the LiveKit Cloud default does the
+same) — otherwise the client's https validate fetch is blocked by CSP and the room
+never connects.
 
 No application code changes are required. `build_room_egress` and `create_room` are
 portable by design.

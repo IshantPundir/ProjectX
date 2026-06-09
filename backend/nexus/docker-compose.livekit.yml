@@ -18,7 +18,7 @@ services:
       retries: 5
 
   livekit-server:
-    image: livekit/livekit-server:v1.9.1
+    image: livekit/livekit-server:v1.13.1
     network_mode: host
     restart: unless-stopped
     command: --config /etc/livekit/livekit.yaml
@@ -29,7 +29,7 @@ services:
         condition: service_healthy
 
   livekit-egress:
-    image: livekit/egress:v1.9.0
+    image: livekit/egress:v1.13.0
     network_mode: host
     restart: unless-stopped
     # Required since egress v1.7.6 — Chrome sandbox setup. Without it,
