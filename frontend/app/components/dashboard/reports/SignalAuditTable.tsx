@@ -36,6 +36,17 @@ export function SignalAuditTable({ assessments }: { assessments: SignalAssessmen
                       thin
                     </span>
                   ) : (a.grade ?? '—')}
+                  {a.cross_credit_applied && (
+                    <span className="ml-1 rounded px-1 text-[9px] font-semibold"
+                          style={{ background: 'var(--px-ok-bg)', color: 'var(--px-ok)' }}>
+                      cross-credited
+                    </span>
+                  )}
+                  {a.level_basis && (
+                    <span className="mt-0.5 block text-[10px] leading-snug" style={{ color: 'var(--px-fg-4)' }}>
+                      {a.level_basis}
+                    </span>
+                  )}
                 </td>
                 <td className="py-1 pr-2 tabular-nums" style={{ color: 'var(--px-fg-3)' }}>
                   {scoreToTen(a.score) ?? '—'}

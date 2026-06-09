@@ -23,6 +23,9 @@ export interface ScoreOut {
 }
 export interface StrengthOut { title: string; detail: string }
 export interface ConcernOut { title: string; detail: string; severity: Severity }
+export type QuestionLevel = 'strong' | 'solid' | 'thin' | 'absent' | 'not_reached'
+export type QuestionDifficulty = 'easy' | 'medium' | 'hard'
+
 export interface QuestionOut {
   seq: number
   question_id: string
@@ -36,6 +39,18 @@ export interface QuestionOut {
   asked_at_ms: number | null
   /** Presigned R2 GET for the question's video frame; null until generated. */
   thumbnail_url: string | null
+  /** Rubric-anchored level for the question (bank card grading). */
+  level?: QuestionLevel
+  /** Difficulty label from the bank card; null if not set. */
+  difficulty?: QuestionDifficulty | null
+  /** Bank card listen-for criteria that the candidate hit. */
+  listen_for_hits?: string[]
+  /** Bank card red-flag criteria that were tripped. */
+  red_flags_tripped?: string[]
+  /** Number of follow-up probes the engine used for this question. */
+  probes_used?: number
+  /** Total probes available for this question in the bank card. */
+  probes_available?: number
 }
 export interface MethodologyOut { note: string; charity_flags: string[] }
 export interface SignalAssessmentOut {
@@ -51,6 +66,10 @@ export interface SignalAssessmentOut {
   evidence: string[]
   overridden: boolean
   override_reason: string | null
+  /** True when a cross-signal credit bump was applied during scoring. */
+  cross_credit_applied?: boolean
+  /** Human-readable explanation of how the level was determined (e.g. "dedicated: thin; +1 cross-credit → solid"). */
+  level_basis?: string
 }
 
 export interface ScoringManifest {
