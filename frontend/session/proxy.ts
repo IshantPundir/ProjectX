@@ -47,6 +47,9 @@ export function proxy(request: NextRequest) {
     "img-src 'self' data: blob:",
     "media-src 'self' blob: mediastream:",
     "font-src 'self' data:",
+    // connect-src LiveKit origin: keep this fallback in sync with the
+    // NEXT_PUBLIC_LIVEKIT_WS_URL transform default in lib/env.ts (proxy runs
+    // in edge runtime and can't import the parsed env object).
     `connect-src 'self' ${apiUrl}${isDev ? " ws://localhost:*" : ""} ${process.env.NEXT_PUBLIC_LIVEKIT_WS_URL ?? "wss://*.livekit.cloud https://*.livekit.cloud"}`,
     "frame-ancestors 'none'",
     "base-uri 'self'",

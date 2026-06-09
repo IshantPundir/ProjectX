@@ -39,6 +39,14 @@ describe('NEXT_PUBLIC_LIVEKIT_WS_URL', () => {
     })
     expect(parsed.NEXT_PUBLIC_LIVEKIT_WS_URL).toBe('wss://livekit.example.com')
   })
+
+  it('falls back to the cloud wildcards when LIVEKIT_WS_URL is an empty string', () => {
+    const parsed = envSchema.parse({
+      NEXT_PUBLIC_API_URL: 'https://api.example.com',
+      NEXT_PUBLIC_LIVEKIT_WS_URL: '',
+    })
+    expect(parsed.NEXT_PUBLIC_LIVEKIT_WS_URL).toBe('wss://*.livekit.cloud https://*.livekit.cloud')
+  })
 })
 
 describe('envSchema', () => {
