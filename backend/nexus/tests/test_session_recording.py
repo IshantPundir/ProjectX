@@ -45,6 +45,7 @@ async def _seed_session(db, *, recording_status, egress_id=None, key=None, trans
 def fake_storage(monkeypatch):
     storage = MagicMock()
     storage.presign_get_url = AsyncMock(return_value="https://signed.example/v.mp4?sig=x")
+    storage.head = AsyncMock(return_value=None)
     monkeypatch.setattr(recording_mod, "get_object_storage", lambda: storage)
     return storage
 
@@ -163,3 +164,29 @@ async def test_reconcile_swallows_livekit_errors(db, monkeypatch):
         db, session_id=session_id, tenant_id=tenant_id
     )
     assert out.status == "recording"
+
+
+async def test_no_egress_but_object_in_storage_marks_ready(db, fake_storage, monkeypatch):
+    """Egress record gone (purged or never created) but the MP4 exists in R2 →
+    resolve to ready from storage, not an eternal spinner."""
+    from app.storage.base import ObjectMeta
+
+    tenant_id, session_id = await _seed_session(db, recording_status="recording")
+    monkeypatch.setattr(
+        recording_mod, "get_recording_status", AsyncMock(return_value=None)
+    )
+    fake_storage.head = AsyncMock(
+        return_value=ObjectMeta(key="k", size_bytes=98765, content_type="video/mp4")
+    )
+
+    out = await recording_mod.get_session_recording_playback(
+        db, session_id=session_id, tenant_id=tenant_id
+    )
+
+    assert out.status == "ready"
+    assert out.signed_url == "https://signed.example/v.mp4?sig=x"
+    row = await db.get(SessionRow, session_id)
+    assert row.recording_status == "ready"
+    assert row.recording_bytes == 98765
+    assert row.recording_ready_at is not None
+    assert row.recording_s3_key is not None
