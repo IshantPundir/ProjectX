@@ -55,3 +55,35 @@ def test_pick_dedicated_two_asked_lowest_position_wins():
     ]
     outcomes = {"qA": "asked", "qB": "asked"}
     assert pick_dedicated_question("s", questions, outcomes)["id"] == "qB"
+
+
+def test_strong_dedicated_plus_strong_cross_credit_stays_strong():
+    # top of ladder: no lift possible, and must not IndexError
+    r = roll_up_signal(signal="s", dedicated_level="strong", dedicated_outcome="asked",
+                       cross_credit_level="strong")
+    assert r.level == "strong" and r.cross_credit_applied is False
+
+
+def test_equal_cross_credit_does_not_lift():
+    # cross-credit equal to base (not strictly higher) → no lift
+    r = roll_up_signal(signal="s", dedicated_level="solid", dedicated_outcome="asked",
+                       cross_credit_level="solid")
+    assert r.level == "solid" and r.cross_credit_applied is False
+
+
+def test_lower_cross_credit_does_not_lift():
+    r = roll_up_signal(signal="s", dedicated_level="thin", dedicated_outcome="asked",
+                       cross_credit_level="absent")
+    assert r.level == "thin" and r.cross_credit_applied is False
+
+
+def test_cross_credit_not_reached_treated_as_none():
+    # "not_reached" is off-ladder → must be treated as no cross-credit, no crash
+    r = roll_up_signal(signal="s", dedicated_level="thin", dedicated_outcome="asked",
+                       cross_credit_level="not_reached")
+    assert r.level == "thin" and r.cross_credit_applied is False
+
+
+def test_pick_dedicated_returns_none_when_no_owned_question():
+    questions = [{"id": "qA", "primary_signal": "other", "position": 0}]
+    assert pick_dedicated_question("s", questions, {"qA": "asked"}) is None
