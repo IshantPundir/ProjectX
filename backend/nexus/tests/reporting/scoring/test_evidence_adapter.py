@@ -75,3 +75,30 @@ def test_knockout_close_detection():
     view = EvidenceView(ev)
     assert view.knockout_signal == "python"
     assert view.is_knockout_close is True
+
+
+def test_notes_by_question_groups_by_from_question_id():
+    ev = _evidence(
+        notes=[
+            {"seq": 1, "turn_ref": "t-1", "signal": "python", "stance": "supports",
+             "texture": "concrete", "quote": "I built X in Python", "span": {"start_ms": 0, "end_ms": 100},
+             "from_question_id": "q1", "via_probe": False},
+            {"seq": 2, "turn_ref": "t-2", "signal": "leadership", "stance": "supports",
+             "texture": "strong", "quote": "I led a team of 5", "span": {"start_ms": 0, "end_ms": 100},
+             "from_question_id": "q1", "via_probe": True},
+            {"seq": 3, "turn_ref": "t-3", "signal": "communication", "stance": "supports",
+             "texture": "concrete", "quote": "I wrote detailed docs", "span": {"start_ms": 0, "end_ms": 100},
+             "from_question_id": "q2", "via_probe": False},
+        ],
+    )
+    view = EvidenceView(ev)
+    by_q = view.notes_by_question
+    assert set(by_q.keys()) == {"q1", "q2"}
+    assert len(by_q["q1"]) == 2 and len(by_q["q2"]) == 1
+
+
+def test_outcome_by_question_maps_question_id_to_outcome_string():
+    view = EvidenceView(_evidence())
+    outcome_map = view.outcome_by_question
+    # The base _evidence() fixture has q1=asked, q2=not_reached
+    assert outcome_map == {"q1": "asked", "q2": "not_reached"}

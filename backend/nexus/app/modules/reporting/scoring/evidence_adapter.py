@@ -48,6 +48,22 @@ class EvidenceView:
         return out
 
     @property
+    def notes_by_question(self) -> dict[str, list[EvidenceNote]]:
+        """Notes grouped by the question that elicited them (from_question_id)."""
+        out: dict[str, list[EvidenceNote]] = {}
+        for n in self._ev.notes:
+            out.setdefault(n.from_question_id, []).append(n)
+        return out
+
+    @property
+    def outcome_by_question(self) -> dict[str, str]:
+        """question_id → outcome ('asked' | 'not_reached')."""
+        return {
+            q.question_id: (q.outcome.value if hasattr(q.outcome, "value") else q.outcome)
+            for q in self._ev.questions
+        }
+
+    @property
     def closure_by_primary(self) -> dict[str, str | None]:
         """primary_signal → the closure of its (first) own question, if any."""
         out: dict[str, str | None] = {}

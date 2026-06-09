@@ -255,6 +255,8 @@ async def _score_session_report_async(
                 questions=questions,
                 signal_metadata=signal_metadata,
                 correlation_id=correlation_id,
+                bank_id=str(bank.id),
+                signal_snapshot_id=str(snapshot.id),
             )
 
             await persist_report(

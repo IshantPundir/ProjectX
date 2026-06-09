@@ -7,19 +7,18 @@ from pydantic import BaseModel, Field
 from app.modules.reporting.scoring.types import Confidence, Verdict
 
 
-class SignalRecheckOut(BaseModel):
-    """Structured output from the per-signal post-interview re-check."""
+class QuestionGradeOut(BaseModel):
+    """Structured output from the per-QUESTION post-interview grade (Layer 2).
+    The question is graded against its OWN full bank card (rubric + listen-for
+    + red-flags + evaluation_hint), difficulty-calibrated and probe-aware."""
+    level: Literal["strong", "solid", "thin", "absent"]
+    listen_for_hits: list[str] = Field(default_factory=list)
+    red_flags_tripped: list[str] = Field(default_factory=list)
     evidence_quotes: list[str] = Field(default_factory=list)
-    justification: str
-    level: Literal["strong", "solid", "thin", "absent", "not_reached"]
-    overridden: bool = False
-    override_reason: str | None = None
-    # Explanatory human-verify flag (never overrides the level). Set when a factual
-    # gate (experience/compliance) was graded against the bank rubric but some
-    # required facts (e.g. platform/employer/scale) were not elicited — surfaced as
-    # a charity_flag for the reviewer, never a silent penalty. See reporting D5.
     needs_verification: bool = False
     verification_note: str | None = None
+    overridden: bool = False
+    override_reason: str | None = None
 
 
 class CommunicationVerdict(BaseModel):
@@ -151,6 +150,12 @@ class QuestionOut(BaseModel):
     our_read: str = ""
     asked_at_ms: int | None = None       # ms since session start (None for legacy sessions)
     thumbnail_url: str | None = None     # presigned R2 GET, attached at read time only
+    level: str = "not_reached"            # per-question grade: strong|solid|thin|absent|not_reached
+    difficulty: str | None = None         # easy|medium|hard (bank)
+    listen_for_hits: list[str] = Field(default_factory=list)
+    red_flags_tripped: list[str] = Field(default_factory=list)
+    probes_used: int = 0
+    probes_available: int = 0
 
 
 class SignalAssessmentOut(BaseModel):
@@ -165,6 +170,8 @@ class SignalAssessmentOut(BaseModel):
     evidence: list[str] = Field(default_factory=list)
     overridden: bool = False
     override_reason: str | None = None
+    cross_credit_applied: bool = False
+    level_basis: str = ""                 # e.g. "dedicated: thin; +1 cross-credit → solid"
 
 
 class ReportRead(BaseModel):

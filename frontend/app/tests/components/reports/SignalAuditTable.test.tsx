@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { SignalAuditTable } from '@/components/dashboard/reports/SignalAuditTable'
 import type { SignalAssessmentOut } from '@/lib/api/reports'
-import { makeReport } from './_fixture'
+import { makeReport, makeSignalAssessment } from './_fixture'
 
 describe('SignalAuditTable', () => {
   it('renders a collapsed details with the signal rows', () => {
@@ -13,7 +13,8 @@ describe('SignalAuditTable', () => {
     expect(details).not.toBeNull()
     expect(details?.hasAttribute('open')).toBe(false)
     expect(screen.getByText('4+ years total professional experience')).toBeInTheDocument()
-    expect(screen.getByText(/sufficient/)).toBeInTheDocument()
+    // provenance column should show the real provenance value
+    expect(screen.getByText(/asked_directly/)).toBeInTheDocument()
   })
   it('renders nothing when there are no assessments', () => {
     const { container } = render(<SignalAuditTable assessments={[]} />)
@@ -22,11 +23,47 @@ describe('SignalAuditTable', () => {
   it('shows the thin-evidence bluff chip and the per-signal score', () => {
     const thin: SignalAssessmentOut = {
       signal: 'API expertise: RESTful APIs', type: 'competency', weight: 2, knockout: false,
-      priority: 'required', engine_state: 'partial', final_state: 'partial',
-      grade: 'thin', score: 25, evidence: [], overridden: false, override_reason: null,
+      priority: 'required', provenance: 'asked_directly',
+      level: 'thin', score: 25, evidence: [], overridden: false, override_reason: null,
     }
     render(<SignalAuditTable assessments={[thin]} />)
     expect(screen.getByTitle(/possible bluff/i)).toBeInTheDocument()  // the "thin" chip
     expect(screen.getByText('2.5')).toBeInTheDocument()               // score 25 → /10
+  })
+
+  it('renders the level in the grade cell', () => {
+    const a = makeSignalAssessment({ level: 'solid', provenance: 'asked_directly', score: 80 })
+    render(<SignalAuditTable assessments={[a]} />)
+    expect(screen.getByText('solid')).toBeInTheDocument()
+    expect(screen.getByText(/asked_directly/)).toBeInTheDocument()
+  })
+
+  it('renders a not_reached level as plain text, not the thin chip', () => {
+    const a = makeSignalAssessment({ signal: 'Some skill', level: 'not_reached' })
+    render(<SignalAuditTable assessments={[a]} />)
+    expect(screen.getByText('not_reached')).toBeInTheDocument()
+    expect(screen.queryByTitle(/possible bluff/i)).not.toBeInTheDocument()
+  })
+
+  it('renders overridden asterisk when overridden is true', () => {
+    const a = makeSignalAssessment({ provenance: 'cross_credited', overridden: true, override_reason: 'Re-checked' })
+    render(<SignalAuditTable assessments={[a]} />)
+    expect(screen.getByText(/cross_credited \*/)).toBeInTheDocument()
+  })
+
+  it('renders level_basis sub-label and cross-credit tag when present', () => {
+    const a = makeSignalAssessment({
+      cross_credit_applied: true,
+      level_basis: 'dedicated: thin; +1 cross-credit → solid',
+    })
+    render(<SignalAuditTable assessments={[a]} />)
+    expect(screen.getByText('dedicated: thin; +1 cross-credit → solid')).toBeInTheDocument()
+    expect(screen.getByText('cross-credited')).toBeInTheDocument()
+  })
+
+  it('does not render level_basis or cross-credit tag when absent/false', () => {
+    const a = makeSignalAssessment({ cross_credit_applied: false, level_basis: '' })
+    render(<SignalAuditTable assessments={[a]} />)
+    expect(screen.queryByText('cross-credited')).not.toBeInTheDocument()
   })
 })

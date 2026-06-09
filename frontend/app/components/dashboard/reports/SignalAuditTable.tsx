@@ -14,7 +14,7 @@ export function SignalAuditTable({ assessments }: { assessments: SignalAssessmen
             <tr style={{ color: 'var(--px-fg-4)' }} className="text-left">
               <th className="py-1 pr-2 font-semibold">Signal</th>
               <th className="py-1 pr-2 font-semibold">Must-have</th>
-              <th className="py-1 pr-2 font-semibold">Engine → Final</th>
+              <th className="py-1 pr-2 font-semibold">Provenance</th>
               <th className="py-1 pr-2 font-semibold">Grade</th>
               <th className="py-1 pr-2 font-semibold">Score</th>
               <th className="py-1 font-semibold">Note</th>
@@ -26,16 +26,27 @@ export function SignalAuditTable({ assessments }: { assessments: SignalAssessmen
                 <td className="py-1 pr-2" style={{ color: 'var(--px-fg-2)' }}>{a.signal}</td>
                 <td className="py-1 pr-2" style={{ color: 'var(--px-fg-3)' }}>{a.knockout ? 'yes' : '—'}</td>
                 <td className="py-1 pr-2" style={{ color: 'var(--px-fg-3)' }}>
-                  {a.engine_state} → {a.final_state}{a.overridden ? ' *' : ''}
+                  {a.provenance}{a.overridden ? ' *' : ''}
                 </td>
                 <td className="py-1 pr-2" style={{ color: 'var(--px-fg-3)' }}>
-                  {a.grade === 'thin' ? (
+                  {a.level === 'thin' ? (
                     <span className="rounded px-1 text-[9px] font-semibold"
                           style={{ background: 'var(--px-caution-bg)', color: 'var(--px-caution)' }}
                           title="Correct vocabulary but no demonstrated depth — possible bluff.">
                       thin
                     </span>
-                  ) : (a.grade ?? '—')}
+                  ) : (a.level ?? '—')}
+                  {a.cross_credit_applied && (
+                    <span className="ml-1 rounded px-1 text-[9px] font-semibold"
+                          style={{ background: 'var(--px-ok-bg)', color: 'var(--px-ok)' }}>
+                      cross-credited
+                    </span>
+                  )}
+                  {a.level_basis && (
+                    <span className="mt-0.5 block text-[10px] leading-snug" style={{ color: 'var(--px-fg-4)' }}>
+                      {a.level_basis}
+                    </span>
+                  )}
                 </td>
                 <td className="py-1 pr-2 tabular-nums" style={{ color: 'var(--px-fg-3)' }}>
                   {scoreToTen(a.score) ?? '—'}
