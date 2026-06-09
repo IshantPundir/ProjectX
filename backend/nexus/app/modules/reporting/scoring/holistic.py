@@ -1,6 +1,6 @@
 """Layer 2.5 — bounded cross-signal holistic adjustment (LLM, Responses API).
 
-Mirrors scoring/recheck.py: get_raw_openai_client(), responses.parse(text_format=...),
+Standard Responses-API pattern: get_raw_openai_client(), responses.parse(text_format=...),
 effort-gating, grounded evidence, graceful refusal (delta 0). Produces a SMALL,
 justified delta to the deterministic session score for gestalt the per-signal sum
 misses (e.g. a pervasive surface-level / bluffing pattern). Hard-bounded to ±5 and
