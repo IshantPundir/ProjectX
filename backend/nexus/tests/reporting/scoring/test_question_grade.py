@@ -51,3 +51,18 @@ async def test_grade_question_refusal_keeps_base_level():
                                    base_level="thin", correlation_id="cid")
     assert out.level == "thin"          # falls back to the engine base on refusal
     assert out.overridden is False
+
+
+@pytest.mark.asyncio
+async def test_grade_question_refusal_not_reached_coerced_to_thin():
+    from app.modules.reporting.scoring.question_grade import grade_question
+    q = {"id": "q1", "text": "Q", "rubric": {"excellent": "…", "meets_bar": "…", "below_bar": "…"},
+         "positive_evidence": [], "red_flags": [], "evaluation_hint": "h",
+         "question_kind": "technical_scenario", "difficulty": "medium"}
+    fake = AsyncMock()
+    fake.responses.parse = AsyncMock(return_value=type("R", (), {"output_parsed": None})())
+    with patch("app.modules.reporting.scoring.question_grade.get_raw_openai_client",
+               return_value=fake):
+        out = await grade_question(question=q, notes=[], probes_used=0, probes_available=0,
+                                   base_level="not_reached", correlation_id="cid")
+    assert out.level == "thin"   # not_reached is not a valid QuestionGradeOut.level → coerced
