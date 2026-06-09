@@ -133,7 +133,7 @@ async def test_manifest_carries_template_provenance():
     m = report.scoring_manifest
     assert m.bank_id == "bank-123"
     assert m.signal_snapshot_id == "snap-456"
-    assert m.scorer_code_version is not None and m.scorer_code_version != ""
+    assert m.scorer_code_version == "qa-1"
 
 
 @pytest.mark.asyncio
