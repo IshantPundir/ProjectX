@@ -278,6 +278,13 @@ class Settings(BaseSettings):
     recording_signed_url_ttl_seconds: int = 3600
     # Object key prefix; final key is {prefix}/{tenant_id}/{session_id}.mp4.
     recording_key_prefix: str = "recordings"
+    # When LiveKit reports no egress for a completed session (egress never
+    # started — e.g. a quota rejection — or LiveKit purged the record) AND the
+    # recording is absent from object storage, a still-"recording" row is
+    # advanced to "failed" once this many seconds have elapsed since
+    # agent_completed_at. Prevents an eternal "processing" spinner on the
+    # report page. See docs/.../2026-06-09-self-hosted-livekit-egress-design.md §4.2.
+    recording_stuck_timeout_seconds: int = 900
     # Object key prefix for derived timeline thumbnails; final key is
     # {prefix}/{tenant_id}/{session_id}/{kind}_{ref}.webp. Same private
     # recording bucket + signed-URL TTL as the recording itself.
