@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.modules.session.errors import SessionNotFoundError
-from app.modules.session.livekit import get_recording_status
+from app.modules.session.livekit import get_recording_status, recording_object_key
 from app.modules.session.models import Session
 from app.storage import get_object_storage
 
@@ -81,6 +81,49 @@ def _build_transcript(raw: list | None) -> list[TranscriptSegment]:
     return segments
 
 
+async def _reconcile_without_egress(db: AsyncSession, sess: Session) -> None:
+    """Resolve a still-"recording" row when LiveKit has no egress record.
+
+    Either the egress never started (e.g. a quota rejection) or LiveKit purged
+    a finished egress. The recording in object storage is the authoritative
+    ground truth, so check it directly; only when it's genuinely absent do we
+    apply the stuck-timeout. Best-effort — never raises into the playback path.
+    """
+    key = recording_object_key(tenant_id=sess.tenant_id, session_id=sess.id)
+    try:
+        meta = await get_object_storage().head(key)
+    except Exception:  # noqa: BLE001 — storage hiccup leaves the row for next read
+        log.warning("recording.storage_head_failed", session_id=str(sess.id), exc_info=True)
+        return
+    if meta is not None:
+        # The egress record (which carries duration) is gone, and ObjectMeta has
+        # no duration — so recording_duration_seconds stays None on this path.
+        # RecordingPlayback.duration_seconds is nullable; the UI handles None.
+        sess.recording_status = "ready"
+        sess.recording_ready_at = datetime.now(UTC)
+        sess.recording_s3_key = key
+        sess.recording_bytes = meta.size_bytes
+        await db.flush()
+        return
+    # Object truly absent — handled by the stuck-timeout in Task 3.
+    if _recording_stuck_expired(sess):
+        sess.recording_status = "failed"
+        await db.flush()
+
+
+def _recording_stuck_expired(sess: Session) -> bool:
+    """True once the grace window past agent_completed_at has elapsed.
+
+    Returns False when the session never recorded a completion timestamp — we
+    don't fail a recording we can't time.
+    """
+    completed = sess.agent_completed_at
+    if completed is None:
+        return False
+    grace = timedelta(seconds=settings.recording_stuck_timeout_seconds)
+    return (datetime.now(UTC) - completed) > grace
+
+
 async def _reconcile(db: AsyncSession, sess: Session) -> None:
     """Advance a still-recording session to ready/failed by polling LiveKit.
 
@@ -100,6 +143,7 @@ async def _reconcile(db: AsyncSession, sess: Session) -> None:
         return
 
     if snap is None:
+        await _reconcile_without_egress(db, sess)
         return
 
     # Capture the egress id once LiveKit has assigned it (auto-egress assigns

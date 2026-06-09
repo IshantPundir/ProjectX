@@ -1,0 +1,20 @@
+# Self-hosted LiveKit SFU — LOCAL DEV config.
+# Runs with host networking (see docker-compose.livekit.yml). Not for production;
+# the production path uses the livekit/generate tool + Caddy (see
+# docs/deployment/2026-06-09-self-hosted-livekit-deployment.md).
+port: 7880
+log_level: info
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 60000
+  # Local dev on one machine: no STUN/external-IP discovery needed.
+  use_external_ip: false
+redis:
+  # Shared with the Egress service. Dedicated LiveKit Redis on host port 6380,
+  # kept separate from the Dramatiq broker Redis (6379).
+  address: 127.0.0.1:6380
+keys:
+  # Must match LIVEKIT_API_KEY / LIVEKIT_API_SECRET in the backend .env.
+  # Dev-only credentials — never reuse in any shared/prod environment.
+  devkey: devsecret_change_me_32chars_minimum_ok

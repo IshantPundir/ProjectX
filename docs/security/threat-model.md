@@ -375,6 +375,66 @@ candidate is the `session_id` FK only.
 
 ---
 
+## Self-hosted LiveKit SFU + Egress — transport + recording relocation (2026-06-09)
+
+> **Spec reference:** `docs/superpowers/specs/2026-06-09-self-hosted-livekit-egress-design.md`
+
+This branch moves the LiveKit SFU and Egress from LiveKit Cloud to an
+operator-run deployment. It also parameterises the candidate app's CSP
+`connect-src` LiveKit origin via `NEXT_PUBLIC_LIVEKIT_WS_URL`.
+
+### Sub-processor change — net reduction in third-party exposure
+
+**LiveKit Cloud is removed as a media/transport sub-processor** for candidate
+A/V and recordings. All SFU forwarding and Egress transcoding now run inside
+the operator's own infrastructure (same trust boundary as Nexus). This is a
+net reduction in third-party data exposure: candidate audio, video, and the
+recording upload path no longer transit LiveKit's cloud.
+
+The recording upload path is unchanged in kind: LiveKit Egress (now
+operator-hosted) writes one MP4 per session directly to the private R2 bucket
+via per-request S3Upload — private bucket, tenant-prefixed keys, presigned-GET
+access only (see §Session recording above). No new storage sub-processor is
+introduced.
+
+### New operator trust surface — SFU + Egress + coordination Redis
+
+The operator now runs the SFU process, the Egress worker, and the Redis
+instance they coordinate over. These components handle candidate A/V in transit.
+The operator is already a trusted party (they run Nexus + the DB); this
+extends that boundary to the media plane rather than adding a new external
+actor. The mitigations below apply:
+
+| Boundary | Element | STRIDE | Mitigation |
+|---|---|---|---|
+| Candidate browser → self-hosted SFU | Audio/video transits via WebRTC through the operator SFU (encrypted in transit, DTLS-SRTP). | I (in-transit disclosure) | DTLS-SRTP in WebRTC is mandatory. SFU forwards encrypted media — it does not persist frames. The operator is an already-trusted infrastructure actor. |
+| Egress worker → R2 recording bucket | Egress writes the composite MP4 via S3Upload credentials (`RECORDING_STORAGE_*`). | I (credential leakage → exfil) | Same credential-sensitivity policy as DB creds. Bucket is private; object keys are tenant-prefixed; presigned-GET TTL is short. Unchanged from the Cloud Egress path. |
+| Coordination Redis (SFU ↔ Egress) | Room metadata and egress start/stop signals pass through Redis. | T (forged egress command) | Redis is internal-only (not externally reachable). Egress commands require the LiveKit API key/secret (same as before). No new external access surface. |
+
+### CSP `connect-src` — LiveKit origin is now env-driven
+
+`proxy.ts` now reads `NEXT_PUBLIC_LIVEKIT_WS_URL` to populate the `connect-src`
+LiveKit origin. When unset it falls back to the prior LiveKit Cloud wildcards
+(`wss://*.livekit.cloud https://*.livekit.cloud`) for back-compat.
+In dev mode `ws://localhost:*` is also included (unchanged from before).
+**No new third-party origin is introduced** — the change narrows an existing
+allowance to a specific operator-controlled host, or retains the prior Cloud
+wildcards if self-hosting is not yet configured.
+
+Adding a genuinely new third-party origin to `connect-src` would still require
+a threat-model update per the candidate-session `CLAUDE.md` security rule.
+
+### When this section needs updating
+
+- Self-hosted SFU is scaled horizontally or moved to a new network boundary
+  (e.g. tenant-VPC enterprise deployment adds a new ingress surface).
+- Coordination Redis becomes accessible from outside the infra boundary.
+- The recording storage destination changes (new bucket or sub-processor).
+- The `connect-src` fallback default is updated (keep in sync with
+  `lib/env.ts` `NEXT_PUBLIC_LIVEKIT_WS_URL` default and `proxy.ts` comment).
+
+---
+
 ## Candidate Reel — AI highlight video (2026-06-03)
 
 The Candidate Reel (`app/modules/reel/`) produces a ~45–60s recruiter-facing

@@ -21,7 +21,16 @@ if (!process.env.NEXT_PUBLIC_API_URL) {
 // Referrer-Policy: no-referrer is LOAD-BEARING — prevents the candidate
 // JWT (in URL path) from leaking via Referer headers to external links.
 const SECURITY_HEADERS = [
-  { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
+  // HSTS is PRODUCTION-ONLY. In dev the app is served over plain http on
+  // localhost; sending HSTS there is pointless (browsers ignore HSTS received
+  // over http) AND dangerous if it ever sticks — HSTS is host-scoped, so a
+  // pinned `localhost` force-upgrades every `ws://localhost:*` to `wss://`,
+  // which the plaintext self-hosted LiveKit SFU (ws on :7880) can't answer,
+  // breaking the candidate's room connection. Emit it only in production
+  // (where every origin is already TLS).
+  ...(process.env.NODE_ENV === "production"
+    ? [{ key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" }]
+    : []),
   { key: "X-Frame-Options", value: "DENY" },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "no-referrer" },

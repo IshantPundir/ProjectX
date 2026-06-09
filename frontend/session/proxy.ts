@@ -47,12 +47,26 @@ export function proxy(request: NextRequest) {
     "img-src 'self' data: blob:",
     "media-src 'self' blob: mediastream:",
     "font-src 'self' data:",
-    `connect-src 'self' ${apiUrl}${isDev ? " ws://localhost:*" : ""} wss://*.livekit.cloud https://*.livekit.cloud`,
+    // connect-src must allow BOTH schemes the LiveKit client uses against the
+    // SFU host: the WebSocket (ws/wss) AND an HTTP(S) `fetch()` it issues to the
+    // same host:port for connection validation (`/rtc/v1/validate`) and
+    // `prepareConnection`. Dev → self-hosted SFU on plain http/ws localhost, so
+    // allow `ws://localhost:* http://localhost:*`. Prod → NEXT_PUBLIC_LIVEKIT_WS_URL
+    // MUST list both the wss:// and https:// origins (the default cloud fallback
+    // does). Keep that fallback default in sync with the transform in lib/env.ts.
+    `connect-src 'self' ${apiUrl}${isDev ? " ws://localhost:* http://localhost:*" : ""} ${process.env.NEXT_PUBLIC_LIVEKIT_WS_URL ?? "wss://*.livekit.cloud https://*.livekit.cloud"}`,
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",
     "object-src 'none'",
-    "upgrade-insecure-requests",
+    // `upgrade-insecure-requests` rewrites ws://→wss:// (and http://→https://).
+    // In production every origin is already TLS, so it's a safe hardening
+    // directive. In dev it is HARMFUL: the page is served over plain http and
+    // the self-hosted LiveKit SFU speaks plaintext ws:// on :7880 — the upgrade
+    // would turn the candidate's `ws://localhost:7880` into `wss://localhost:7880`,
+    // which the non-TLS SFU can't answer, breaking the room connection. Emit it
+    // only outside dev.
+    ...(isDev ? [] : ["upgrade-insecure-requests"]),
   ]
     .join("; ")
     .trim();

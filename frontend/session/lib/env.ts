@@ -15,6 +15,15 @@ export const envSchema = z.object({
     .string()
     .optional()
     .transform((v) => v === '1'),
+  // CSP connect-src origin(s) for the LiveKit SFU. The livekit-client opens a
+  // WebSocket AND issues an https validate/prepareConnection fetch to the SAME
+  // host, so BOTH schemes must be allowed. Defaults to the LiveKit Cloud
+  // wildcards (wss + https) for back-compat. Self-hosted prod: set the
+  // space-separated pair, e.g. "wss://livekit.example.com https://livekit.example.com".
+  NEXT_PUBLIC_LIVEKIT_WS_URL: z
+    .string()
+    .optional()
+    .transform((v) => v && v.length > 0 ? v : 'wss://*.livekit.cloud https://*.livekit.cloud'),
 })
 
 export type Env = z.infer<typeof envSchema>
@@ -27,4 +36,5 @@ export type Env = z.infer<typeof envSchema>
 export const env: Env = envSchema.parse({
   NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
   NEXT_PUBLIC_PROCTORING_DEBUG: process.env.NEXT_PUBLIC_PROCTORING_DEBUG,
+  NEXT_PUBLIC_LIVEKIT_WS_URL: process.env.NEXT_PUBLIC_LIVEKIT_WS_URL,
 })

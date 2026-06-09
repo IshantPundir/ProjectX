@@ -20,7 +20,9 @@ from tests.conftest import (
 pytestmark = pytest.mark.asyncio
 
 
-async def _seed_session(db, *, recording_status, egress_id=None, key=None, transcript=None):
+async def _seed_session(
+    db, *, recording_status, egress_id=None, key=None, transcript=None, agent_completed_at=None
+):
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
     assignment, stage = await make_assignment_with_stage(db, tenant, user)
@@ -35,6 +37,7 @@ async def _seed_session(db, *, recording_status, egress_id=None, key=None, trans
         recording_egress_id=egress_id,
         recording_s3_key=key,
         transcript=transcript,
+        agent_completed_at=agent_completed_at,
     )
     db.add(sess)
     await db.flush()
@@ -45,6 +48,7 @@ async def _seed_session(db, *, recording_status, egress_id=None, key=None, trans
 def fake_storage(monkeypatch):
     storage = MagicMock()
     storage.presign_get_url = AsyncMock(return_value="https://signed.example/v.mp4?sig=x")
+    storage.head = AsyncMock(return_value=None)
     monkeypatch.setattr(recording_mod, "get_object_storage", lambda: storage)
     return storage
 
@@ -163,3 +167,85 @@ async def test_reconcile_swallows_livekit_errors(db, monkeypatch):
         db, session_id=session_id, tenant_id=tenant_id
     )
     assert out.status == "recording"
+
+
+async def test_no_egress_but_object_in_storage_marks_ready(db, fake_storage, monkeypatch):
+    """Egress record gone (purged or never created) but the MP4 exists in R2 →
+    resolve to ready from storage, not an eternal spinner."""
+    from app.storage.base import ObjectMeta
+
+    tenant_id, session_id = await _seed_session(db, recording_status="recording")
+    monkeypatch.setattr(
+        recording_mod, "get_recording_status", AsyncMock(return_value=None)
+    )
+    fake_storage.head = AsyncMock(
+        return_value=ObjectMeta(key="k", size_bytes=98765, content_type="video/mp4")
+    )
+
+    out = await recording_mod.get_session_recording_playback(
+        db, session_id=session_id, tenant_id=tenant_id
+    )
+
+    assert out.status == "ready"
+    assert out.signed_url == "https://signed.example/v.mp4?sig=x"
+    row = await db.get(SessionRow, session_id)
+    assert row.recording_status == "ready"
+    assert row.recording_bytes == 98765
+    assert row.recording_ready_at is not None
+    assert row.recording_s3_key is not None
+
+
+async def test_no_egress_no_object_past_grace_marks_failed(db, fake_storage, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    completed = datetime.now(UTC) - timedelta(seconds=3600)
+    tenant_id, session_id = await _seed_session(
+        db, recording_status="recording", agent_completed_at=completed
+    )
+    monkeypatch.setattr(recording_mod, "get_recording_status", AsyncMock(return_value=None))
+    fake_storage.head = AsyncMock(return_value=None)
+
+    out = await recording_mod.get_session_recording_playback(
+        db, session_id=session_id, tenant_id=tenant_id
+    )
+
+    assert out.status == "failed"
+    assert out.signed_url is None
+    row = await db.get(SessionRow, session_id)
+    assert row.recording_status == "failed"
+
+
+async def test_no_egress_no_object_within_grace_stays_recording(db, fake_storage, monkeypatch):
+    from datetime import UTC, datetime
+
+    tenant_id, session_id = await _seed_session(
+        db, recording_status="recording", agent_completed_at=datetime.now(UTC)
+    )
+    monkeypatch.setattr(recording_mod, "get_recording_status", AsyncMock(return_value=None))
+    fake_storage.head = AsyncMock(return_value=None)
+
+    out = await recording_mod.get_session_recording_playback(
+        db, session_id=session_id, tenant_id=tenant_id
+    )
+
+    assert out.status == "recording"
+    row = await db.get(SessionRow, session_id)
+    assert row.recording_status == "recording"
+
+
+async def test_no_egress_no_object_no_completion_ts_stays_recording(db, fake_storage, monkeypatch):
+    """A recording with no agent_completed_at must never be auto-failed — we
+    can't time a recording we never timestamped."""
+    tenant_id, session_id = await _seed_session(
+        db, recording_status="recording", agent_completed_at=None
+    )
+    monkeypatch.setattr(recording_mod, "get_recording_status", AsyncMock(return_value=None))
+    fake_storage.head = AsyncMock(return_value=None)
+
+    out = await recording_mod.get_session_recording_playback(
+        db, session_id=session_id, tenant_id=tenant_id
+    )
+
+    assert out.status == "recording"
+    row = await db.get(SessionRow, session_id)
+    assert row.recording_status == "recording"
