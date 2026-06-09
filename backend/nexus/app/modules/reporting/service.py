@@ -51,6 +51,10 @@ logger = structlog.get_logger()
 
 _COMM_POINTS = {"weak": 30, "adequate": 70, "strong": 100}
 
+# Bump when the scoring algorithm changes in a way that affects scores, so a
+# report's manifest records which scorer produced it (cross-candidate audit).
+SCORER_CODE_VERSION = "qa-1"  # question-anchored, gen-1
+
 
 # ---------------------------------------------------------------------------
 # Private helpers
@@ -114,7 +118,8 @@ def _narrative_notes(sig: str, notes_by_signal: dict) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-async def build_report(*, evidence, questions, signal_metadata, correlation_id, n_samples=None):
+async def build_report(*, evidence, questions, signal_metadata, correlation_id,
+                       bank_id=None, signal_snapshot_id=None, n_samples=None):
     """Three-layer report over the gen-3 SessionEvidence.
 
     Deterministic: roll each PRIMARY signal's notes → level → score; dimensions;
@@ -346,7 +351,11 @@ async def build_report(*, evidence, questions, signal_metadata, correlation_id, 
                 "level_map": {s.value: s.level for s in scored},
                 "session_score": session_score, "holistic_delta": adjustment.delta,
                 "holistic_justification": adjustment.justification, "ceiling_applied": ceiling,
-            }),
+            },
+            scorer_code_version=SCORER_CODE_VERSION,
+            bank_id=bank_id,
+            signal_snapshot_id=signal_snapshot_id,
+        ),
     )
 
 
