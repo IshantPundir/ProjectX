@@ -1,0 +1,18 @@
+# Self-hosted LiveKit Egress service — LOCAL DEV config.
+# Records RoomComposite (Chrome + GStreamer). Runs with host networking +
+# --cap-add=SYS_ADMIN (see docker-compose.livekit.yml).
+#
+# NO s3/azure/gcp block here: the backend's build_room_egress passes the
+# Cloudflare R2 S3Upload config per-request, which overrides the service
+# default. R2 credentials live in the backend .env only.
+log_level: debug
+api_key: devkey
+api_secret: devsecret_change_me_32chars_minimum_ok
+ws_url: ws://127.0.0.1:7880
+# Local non-TLS server.
+insecure: true
+redis:
+  # Same Redis as the SFU (required — egress coordinates with the server over it).
+  address: 127.0.0.1:6380
+# Prometheus metrics endpoint (livekit_egress_available) for prod autoscaling.
+prometheus_port: 9090
