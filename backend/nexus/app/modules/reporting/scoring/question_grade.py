@@ -56,7 +56,7 @@ async def grade_question(
 ) -> QuestionGradeOut:
     """Grade ONE question against its full bank card via the OpenAI Responses API.
 
-    Mirrors the proven pattern from recheck.py (PromptLoader, responses.parse,
+    Uses the standard Responses-API pattern (PromptLoader, responses.parse,
     text_format, tracing span, ground_quotes, prompt_cache_key construction).
     On refusal (output_parsed is None) gracefully falls back to the engine base_level.
     """

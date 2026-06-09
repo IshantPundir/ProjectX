@@ -64,14 +64,6 @@ class EvidenceView:
         }
 
     @property
-    def closure_by_primary(self) -> dict[str, str | None]:
-        """primary_signal → the closure of its (first) own question, if any."""
-        out: dict[str, str | None] = {}
-        for q in self._ev.questions:
-            out.setdefault(q.primary_signal, q.closure.value if q.closure else None)
-        return out
-
-    @property
     def demonstrated_secondaries(self) -> set[str]:
         """Non-primary signals that were cross-credited (upside-only path)."""
         primary = self.primary_set
