@@ -140,8 +140,9 @@ helm repo add livekit https://helm.livekit.io
 helm repo update
 ```
 
-The Helm chart deploys the SFU as a DaemonSet (one pod per node, host networking),
-and supports distributed multi-region SFU topologies.
+The Helm chart deploys the SFU with host networking, which constrains it to one
+LiveKit pod per node (the RTC ports bind directly on the host), and supports
+distributed multi-region SFU topologies.
 
 ### Egress Autoscaling
 
