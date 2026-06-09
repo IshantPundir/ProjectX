@@ -38,7 +38,7 @@ afterEach(() => {
 })
 
 describe('proxy() — CSP connect-src', () => {
-  it('includes ws://localhost:* in dev mode', async () => {
+  it('includes ws://localhost:* AND http://localhost:* in dev mode', async () => {
     vi.stubEnv('NODE_ENV', 'development')
     vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://api.example.com')
     vi.stubEnv('NEXT_PUBLIC_LIVEKIT_WS_URL', 'wss://livekit.example.com')
@@ -47,7 +47,10 @@ describe('proxy() — CSP connect-src', () => {
     const response = proxy(makeRequest())
     const csp = response.headers.get('Content-Security-Policy')
 
+    // The LiveKit client opens the ws socket AND issues an http(s) validate
+    // fetch to the same host — connect-src must allow both for the self-hosted SFU.
     expect(csp).toContain('ws://localhost:*')
+    expect(csp).toContain('http://localhost:*')
   })
 
   it('uses the Cloud wildcard fallback when NEXT_PUBLIC_LIVEKIT_WS_URL is unset', async () => {

@@ -47,10 +47,14 @@ export function proxy(request: NextRequest) {
     "img-src 'self' data: blob:",
     "media-src 'self' blob: mediastream:",
     "font-src 'self' data:",
-    // connect-src LiveKit origin: keep this fallback in sync with the
-    // NEXT_PUBLIC_LIVEKIT_WS_URL transform default in lib/env.ts (proxy runs
-    // in edge runtime and can't import the parsed env object).
-    `connect-src 'self' ${apiUrl}${isDev ? " ws://localhost:*" : ""} ${process.env.NEXT_PUBLIC_LIVEKIT_WS_URL ?? "wss://*.livekit.cloud https://*.livekit.cloud"}`,
+    // connect-src must allow BOTH schemes the LiveKit client uses against the
+    // SFU host: the WebSocket (ws/wss) AND an HTTP(S) `fetch()` it issues to the
+    // same host:port for connection validation (`/rtc/v1/validate`) and
+    // `prepareConnection`. Dev → self-hosted SFU on plain http/ws localhost, so
+    // allow `ws://localhost:* http://localhost:*`. Prod → NEXT_PUBLIC_LIVEKIT_WS_URL
+    // MUST list both the wss:// and https:// origins (the default cloud fallback
+    // does). Keep that fallback default in sync with the transform in lib/env.ts.
+    `connect-src 'self' ${apiUrl}${isDev ? " ws://localhost:* http://localhost:*" : ""} ${process.env.NEXT_PUBLIC_LIVEKIT_WS_URL ?? "wss://*.livekit.cloud https://*.livekit.cloud"}`,
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",
