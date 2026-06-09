@@ -176,10 +176,6 @@ async def build_report(*, evidence, questions, signal_metadata, correlation_id,
         rollups[sig] = r
         final_level[sig] = r.level
 
-    def _ded_grade(sig):
-        ded = pick_dedicated_question(sig, questions, outcome_by_question)
-        return grades.get(ded["id"]) if ded else None
-
     # --- Build ScoredSignal list over the PRIMARY set ----------------------
     scored = []
     for sig in primary_set:
@@ -214,27 +210,33 @@ async def build_report(*, evidence, questions, signal_metadata, correlation_id,
 
     # Per-signal evidence quotes (dedicated-grade grounded, else engine supporting notes) —
     # computed once and reused by both the scorecards and the narrative ground truth.
-    grade_by_sig = {s.value: _ded_grade(s.value) for s in scored}
+    grade_by_sig = {
+        s.value: (grades.get(ded["id"]) if (ded := pick_dedicated_question(s.value, questions, outcome_by_question)) else None)
+        for s in scored
+    }
     evidence_by_sig = {
         s.value: _scorecard_evidence(s.value, grade_by_sig, notes_by_signal) for s in scored
     }
 
-    signal_assessments = [SignalAssessmentOut(
-        signal=s.value, type=s.type, weight=s.weight, knockout=s.knockout, priority=s.priority,
-        provenance=_provenance_str(s.value), level=s.level, score=s.score,
-        evidence=evidence_by_sig[s.value],
-        overridden=bool(_ded_grade(s.value) and _ded_grade(s.value).overridden),
-        override_reason=(_ded_grade(s.value).override_reason if _ded_grade(s.value) else None),
-        cross_credit_applied=rollups[s.value].cross_credit_applied,
-        level_basis=rollups[s.value].level_basis,
-    ) for s in scored]
+    signal_assessments = []
+    for s in scored:
+        g = grade_by_sig.get(s.value)
+        signal_assessments.append(SignalAssessmentOut(
+            signal=s.value, type=s.type, weight=s.weight, knockout=s.knockout, priority=s.priority,
+            provenance=_provenance_str(s.value), level=s.level, score=s.score,
+            evidence=evidence_by_sig[s.value],
+            overridden=bool(g and g.overridden),
+            override_reason=(g.override_reason if g else None),
+            cross_credit_applied=rollups[s.value].cross_credit_applied,
+            level_basis=rollups[s.value].level_basis,
+        ))
 
     # Human-verify charity flags: a question graded against its bank card whose
     # required facts were not fully elicited. Explanatory only — never a silent penalty.
     human_verify = [
         {"signal": sig, "note": g.verification_note}
         for sig in primary_set
-        if (g := _ded_grade(sig)) and g.needs_verification and g.verification_note
+        if (g := grade_by_sig.get(sig)) and g.needs_verification and g.verification_note
     ]
 
     gt = json.dumps({
