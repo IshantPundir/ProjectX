@@ -1,3 +1,7 @@
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
 from app.modules.interview_runtime.evidence import (
     EvidenceNote, EvidenceStance, EvidenceTexture, TimeSpan,
 )
@@ -30,3 +34,20 @@ def test_base_level_unretracted_contradiction_is_absent():
 
 def test_base_level_no_notes_is_not_reached():
     assert question_base_level([]) == "not_reached"
+
+
+@pytest.mark.asyncio
+async def test_grade_question_refusal_keeps_base_level():
+    from app.modules.reporting.scoring.question_grade import grade_question
+    q = {"id": "q1", "text": "Tell me about an Intune change.",
+         "rubric": {"excellent": "…", "meets_bar": "…", "below_bar": "…"},
+         "positive_evidence": ["names the artifact"], "red_flags": ["only 'we'"],
+         "evaluation_hint": "h", "question_kind": "behavioral", "difficulty": "medium"}
+    fake = AsyncMock()
+    fake.responses.parse = AsyncMock(return_value=type("R", (), {"output_parsed": None})())
+    with patch("app.modules.reporting.scoring.question_grade.get_raw_openai_client",
+               return_value=fake):
+        out = await grade_question(question=q, notes=[], probes_used=0, probes_available=3,
+                                   base_level="thin", correlation_id="cid")
+    assert out.level == "thin"          # falls back to the engine base on refusal
+    assert out.overridden is False
