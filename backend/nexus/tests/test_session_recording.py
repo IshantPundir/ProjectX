@@ -231,3 +231,21 @@ async def test_no_egress_no_object_within_grace_stays_recording(db, fake_storage
     assert out.status == "recording"
     row = await db.get(SessionRow, session_id)
     assert row.recording_status == "recording"
+
+
+async def test_no_egress_no_object_no_completion_ts_stays_recording(db, fake_storage, monkeypatch):
+    """A recording with no agent_completed_at must never be auto-failed — we
+    can't time a recording we never timestamped."""
+    tenant_id, session_id = await _seed_session(
+        db, recording_status="recording", agent_completed_at=None
+    )
+    monkeypatch.setattr(recording_mod, "get_recording_status", AsyncMock(return_value=None))
+    fake_storage.head = AsyncMock(return_value=None)
+
+    out = await recording_mod.get_session_recording_playback(
+        db, session_id=session_id, tenant_id=tenant_id
+    )
+
+    assert out.status == "recording"
+    row = await db.get(SessionRow, session_id)
+    assert row.recording_status == "recording"

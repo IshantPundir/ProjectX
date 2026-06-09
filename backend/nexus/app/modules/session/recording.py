@@ -96,6 +96,9 @@ async def _reconcile_without_egress(db: AsyncSession, sess: Session) -> None:
         log.warning("recording.storage_head_failed", session_id=str(sess.id), exc_info=True)
         return
     if meta is not None:
+        # The egress record (which carries duration) is gone, and ObjectMeta has
+        # no duration — so recording_duration_seconds stays None on this path.
+        # RecordingPlayback.duration_seconds is nullable; the UI handles None.
         sess.recording_status = "ready"
         sess.recording_ready_at = datetime.now(UTC)
         sess.recording_s3_key = key
