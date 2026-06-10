@@ -11,7 +11,7 @@ FastAPI backend for the ProjectX AI video interview platform. Modular monolith a
 - **Alembic** (database migrations)
 - **Pydantic v2** (request/response schemas, settings)
 - **OpenAI** for all LLM work (via the `app/ai/` provider-agnostic layer)
-- **LiveKit** (real-time interview) + **Deepgram** STT + **Sarvam** TTS + **Silero** VAD (no server-side NC; browser does light NS)
+- **LiveKit** (real-time interview) — **self-hosted** SFU + Egress (pinned `1.13.x`, replaced LiveKit Cloud 2026-06-09; Cloud kept as a fallback) + **Deepgram** STT + **Sarvam** TTS + **Silero** VAD (no server-side NC; browser does light NS)
 - **structlog** + **OpenTelemetry** (LLM/distributed traces) + **Sentry** (errors). No Langfuse (removed 2026-05-01).
 
 ## Prerequisites
@@ -34,6 +34,21 @@ curl http://localhost:8000/health
 
 The API server runs at **http://localhost:8000** with hot-reload enabled via volume mount.
 
+### Self-hosted LiveKit (real-time A/V + recording)
+
+LiveKit is **self-hosted** (SFU + Egress), not LiveKit Cloud. To run the full
+real-time + recording stack locally, layer the LiveKit override file:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.livekit.yml up -d
+```
+
+This adds `livekit-server` + `livekit-egress` + a dedicated `livekit-redis`
+(host networking; LiveKit's Redis on **6380** to avoid the Dramatiq broker on
+6379). Configs live under `config/livekit/`. Set `LIVEKIT_URL` /
+`LIVEKIT_PUBLIC_URL` per `.env.example`. LiveKit Cloud remains a one-env-var
+fallback. See `docs/deployment/2026-06-09-self-hosted-livekit-deployment.md`.
+
 ## Services
 
 | Service               | Port | Description                                              |
@@ -43,9 +58,15 @@ The API server runs at **http://localhost:8000** with hot-reload enabled via vol
 | nexus-engine          | —    | Live interview engine worker (`python -m app.modules.interview_engine`) |
 | nexus-vision-worker   | —    | Dedicated worker for `reel` + `vision` queues (ffmpeg/ONNX, GPU-first) |
 | redis                 | 6379 | Dramatiq broker                                         |
+| livekit-server        | 7880 | Self-hosted SFU (`docker-compose.livekit.yml`, host networking) |
+| livekit-egress        | —    | Self-hosted Egress — records rooms to R2 (`docker-compose.livekit.yml`) |
+| livekit-redis         | 6380 | Shared SFU↔Egress coordination bus (`docker-compose.livekit.yml`) |
 
 > Postgres is **not** a compose service — Nexus connects to a Supabase-hosted
 > database via `DATABASE_URL` (local dev: `supabase start`, Postgres on 54322).
+>
+> The three `livekit-*` services live in the `docker-compose.livekit.yml`
+> override and only start when you layer it in (see Quick Start).
 
 ## Project Structure
 
@@ -124,7 +145,7 @@ Copy `.env.example` to `.env` for local development. Key variables:
 | `OPENAI_API_KEY`          | OpenAI — all LLM work (async + real-time)               |
 | `DEEPGRAM_API_KEY`        | Speech-to-text (nova-3, en-IN)                          |
 | `SARVAM_API_KEY`          | TTS (bulbul:v3) — and optional STT alternate            |
-| `LIVEKIT_*`               | LiveKit server URL, API key & secret                    |
+| `LIVEKIT_URL` / `LIVEKIT_PUBLIC_URL` | Self-hosted SFU URL (engine-facing / browser-facing) + API key & secret |
 | `RECORDING_STORAGE_*`     | Cloudflare R2 endpoint/bucket/keys (recordings, reels, thumbnails) |
 | `AWS_*` / S3 bucket vars  | AWS S3 (candidate resumes)                              |
 | `RESEND_API_KEY`          | Email dispatch (MVP provider)                           |
@@ -153,3 +174,9 @@ The same Docker image is used across all environments:
 |------------|-------------------------|
 | MVP        | Railway (auto-deploy)   |
 | Enterprise | AWS ECS Fargate         |
+
+> **Self-hosted LiveKit** (SFU + Egress) does **not** run on Railway/Fargate — the
+> SFU needs host networking + UDP 50000–60000 and Egress needs `--cap-add=SYS_ADMIN`.
+> Deploy them on EC2/EKS; the nexus app planes stay on Railway/Fargate and the engine
+> agent connects outbound to the SFU. See
+> `docs/deployment/2026-06-09-self-hosted-livekit-deployment.md`.
