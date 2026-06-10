@@ -761,8 +761,11 @@ In `turn_assembler.py`:
 
 ```python
     def is_superseded(self) -> bool:
-        """Loop checkpoint: has a continuation arrived for the in-flight turn?"""
-        return self._state == _IN_FLIGHT and self._superseded
+        """Loop checkpoint: has a continuation arrived for the turn the loop is
+        processing? Set True by `_begin_merge_back` (which also moves the state to
+        BUFFERING), reset to False on the next flush — so it is NOT gated on the
+        _IN_FLIGHT state (the merge-back has already left it)."""
+        return self._superseded
 
     def confirm_committed(self) -> None:
         """Loop passed the point-of-no-return for the in-flight turn (not
@@ -770,6 +773,7 @@ In `turn_assembler.py`:
         if self._state == _IN_FLIGHT:
             self._retained = []
             self._is_reflush = False
+            self._superseded = False
             self._state = _IDLE
 ```
 
