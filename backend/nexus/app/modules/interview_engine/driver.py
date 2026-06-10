@@ -62,7 +62,8 @@ from app.modules.interview_engine.contracts import (
     SignalSpec,
     WindowTurn,
 )
-from app.modules.interview_engine.loop import run_turn, TurnContext
+from app.modules.interview_engine.loop import run_turn, TurnContext, ABORTED
+from app.modules.interview_engine.turn_source import AssembledTurn
 from app.modules.interview_engine.notes import NoteLog, compute_provenance
 from app.modules.interview_engine.turn_taking import is_backchannel
 from app.modules.interview_runtime.evidence import (
@@ -213,6 +214,8 @@ class SessionDriver:
         time_budget_s: float,
         started_at: datetime,
         now_fn: Callable[[], datetime] | None = None,
+        is_superseded: Callable[[], bool] | None = None,
+        on_committed: Callable[[], None] | None = None,
     ) -> None:
         self._config = config
         self._brain = brain
@@ -230,6 +233,9 @@ class SessionDriver:
         self._time_budget_s = time_budget_s
         self._started_at = started_at
         self._now_fn: Callable[[], datetime] = now_fn or (lambda: datetime.now(UTC))
+        self._is_superseded_cb = is_superseded
+        self._on_committed_cb = on_committed
+        self._forced_superseded = False  # test hook only
 
         # Build resolver questions from the bank (mirrors build_control_plane logic)
         signal_weight: dict[str, int] = {
@@ -285,6 +291,14 @@ class SessionDriver:
         self._is_on_probe: bool = False                # whether the floor is a probe (not main Q)
         self._floor_interrupted: bool = False          # the floor question was cut off mid-delivery (P2)
         self._stall_count: int = 0                     # consecutive non-answer turns on the active question (anti-stall)
+
+    def _set_superseded(self, value: bool) -> None:  # test hook only
+        self._forced_superseded = value
+
+    def _superseded(self) -> bool:
+        if self._forced_superseded:
+            return True
+        return bool(self._is_superseded_cb and self._is_superseded_cb())
 
     # -----------------------------------------------------------------------
     # Timing helpers
@@ -475,9 +489,8 @@ class SessionDriver:
     async def handle_turn(
         self,
         *,
-        utterance: str,
+        turn: AssembledTurn,
         turn_ref: str,
-        span: TimeSpan,
         pre_turn_gap_ms: int = 0,
         words: list | None = None,
     ) -> bool:
@@ -492,6 +505,9 @@ class SessionDriver:
         Returns:
             True when the session is terminal (close directive or bank exhausted).
         """
+        utterance = turn.text
+        span = turn.span
+
         # Guard: if no active question, treat as terminal
         if self._active_q is None:
             _log.warning("driver.handle_turn.no_active_question", turn_ref=turn_ref)
@@ -560,6 +576,8 @@ class SessionDriver:
             brain_input=brain_input,
             bridge_request=bridge_request,
             recent_openers=self._recent_openers[-3:],
+            supersession_check=self._superseded,
+            suppress_bridge=turn.suppress_bridge,
         )
 
         capturing = _CapturingVoice(self._voice)
@@ -568,13 +586,23 @@ class SessionDriver:
         self._brain_adapter.asked_ids = set(self._asked_ids)
         self._brain_adapter.time_remaining_s = self._time_remaining_s()
 
-        decision: BrainDecision = await run_turn(
+        decision = await run_turn(
             ctx,
             brain=self._brain_adapter,  # decide(turn_input) → ControlPlane.decide(+resolver state)
             mouth=self._mouth_combined,  # bridge() + real_line() combined
             voice=capturing,
             notelog=self._notelog,
         )
+
+        if decision is ABORTED:
+            # Merge-back: a continuation superseded this turn. Pop the candidate
+            # TranscriptTurn appended at the top (no notes were committed; the
+            # assembler will re-flush the merged turn), do not advance state.
+            self._transcript.pop()
+            _log.info("engine.driver.turn_aborted_merge_back", turn_ref=turn_ref)
+            return False
+        if self._on_committed_cb is not None:
+            self._on_committed_cb()
 
         # F3 DIAGNOSTIC (temporary): pair the committed utterance with what the
         # bridge mirrored, to detect a one-turn STT lag (bridge echoing the prior
@@ -828,6 +856,8 @@ def build_session_driver(
     started_at: datetime,
     projection: CoverageProjection | None = None,
     now_fn: Callable[[], datetime] | None = None,
+    is_superseded: Callable[[], bool] | None = None,
+    on_committed: Callable[[], None] | None = None,
 ) -> SessionDriver:
     """Assemble a SessionDriver from a SessionConfig for production use.
 
@@ -883,4 +913,6 @@ def build_session_driver(
         time_budget_s=float(config.stage.duration_minutes * 60),
         started_at=started_at,
         now_fn=now_fn,
+        is_superseded=is_superseded,
+        on_committed=on_committed,
     )

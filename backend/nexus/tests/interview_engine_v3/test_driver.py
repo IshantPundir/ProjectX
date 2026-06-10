@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.modules.interview_engine.brain.input_builder import CoverageProjection
+from app.modules.interview_engine.turn_source import AssembledTurn
 from app.modules.interview_engine.contracts import (
     BrainDecision,
     BrainTurnInput,
@@ -52,6 +53,22 @@ from app.modules.interview_runtime.schemas import (
     SignalMetadata,
     StageConfig,
 )
+
+# ============================================================================
+# AssembledTurn helper
+# ============================================================================
+
+_NOW = datetime(2026, 6, 10, tzinfo=UTC)
+
+
+async def _noop_persist(ev) -> None:  # type: ignore[no-untyped-def]
+    pass
+
+
+def _aturn(text: str, *, suppress_bridge: bool = False) -> AssembledTurn:
+    return AssembledTurn(text=text, span=TimeSpan(start_ms=0, end_ms=10),
+                         suppress_bridge=suppress_bridge, is_reflush=False)
+
 
 # ============================================================================
 # Fixtures
@@ -309,29 +326,23 @@ async def test_session_driver_end_to_end() -> None:
     assert len(voice.said) >= 1
 
     # Turn 1 — probe
-    span1 = TimeSpan(start_ms=5000, end_ms=15000)
     terminal1 = await driver.handle_turn(
-        utterance="I worked on Kafka-based distributed pipelines.",
+        turn=_aturn("I worked on Kafka-based distributed pipelines."),
         turn_ref="t-01",
-        span=span1,
     )
     assert not terminal1
 
     # Turn 2 — advance to q2
-    span2 = TimeSpan(start_ms=20000, end_ms=30000)
     terminal2 = await driver.handle_turn(
-        utterance="I've designed systems handling 50k req/s with 99.9% uptime.",
+        turn=_aturn("I've designed systems handling 50k req/s with 99.9% uptime."),
         turn_ref="t-02",
-        span=span2,
     )
     assert not terminal2
 
     # Turn 3 — close (terminal)
-    span3 = TimeSpan(start_ms=40000, end_ms=50000)
     terminal3 = await driver.handle_turn(
-        utterance="I led an incident that restored service in 45 minutes.",
+        turn=_aturn("I led an incident that restored service in 45 minutes."),
         turn_ref="t-03",
-        span=span3,
     )
     assert terminal3
 
@@ -443,12 +454,10 @@ async def test_floor_question_survives_a_non_question_turn() -> None:
 
     await driver.opener()  # asks Q1 → floor = _Q1_TEXT
     await driver.handle_turn(
-        utterance="hmm, let me think", turn_ref="t-01",
-        span=TimeSpan(start_ms=0, end_ms=1000),
+        turn=_aturn("hmm, let me think"), turn_ref="t-01",
     )  # HOLD
     await driver.handle_turn(
-        utterance="please continue", turn_ref="t-02",
-        span=TimeSpan(start_ms=2000, end_ms=3000),
+        turn=_aturn("please continue"), turn_ref="t-02",
     )  # captures on_the_floor at decide()
 
     assert seen_on_the_floor[0] == _Q1_TEXT  # hold turn saw the opener's question
@@ -487,7 +496,7 @@ async def test_pure_backchannel_turn_is_dropped_without_running_brain() -> None:
     )
     await driver.opener()
     terminal = await driver.handle_turn(
-        utterance="Uh-huh.", turn_ref="t-bc", span=TimeSpan(start_ms=0, end_ms=500),
+        turn=_aturn("Uh-huh."), turn_ref="t-bc",
     )
     assert terminal is False
     assert brain_calls["n"] == 0  # backchannel never reached the brain
@@ -531,7 +540,7 @@ async def test_floor_interrupted_flag_reaches_the_brain() -> None:
     )
     await driver.opener()  # opener question is "interrupted" → floor_interrupted set
     await driver.handle_turn(
-        utterance="So, like,", turn_ref="t-01", span=TimeSpan(start_ms=0, end_ms=1000),
+        turn=_aturn("So, like,"), turn_ref="t-01",
     )
     assert seen == [True]  # the brain saw the cut-off question flagged
 
@@ -572,8 +581,7 @@ async def test_stall_counter_flags_brain_after_repeated_non_answers() -> None:
     await driver.opener()
     for i in range(5):
         await driver.handle_turn(
-            utterance=f"what do you mean {i}?", turn_ref=f"t-{i}",
-            span=TimeSpan(start_ms=i * 1000, end_ms=i * 1000 + 500),
+            turn=_aturn(f"what do you mean {i}?"), turn_ref=f"t-{i}",
         )
     # Default threshold is 3 → counts 0,1,2 are below; 3,4 are at/above.
     assert seen == [False, False, False, True, True]
@@ -616,8 +624,7 @@ async def test_stall_counter_resets_on_a_real_answer() -> None:
     )
     await driver.opener()
     for i in range(4):
-        await driver.handle_turn(utterance=f"turn {i}", turn_ref=f"t-{i}",
-                                 span=TimeSpan(start_ms=i * 1000, end_ms=i * 1000 + 500))
+        await driver.handle_turn(turn=_aturn(f"turn {i}"), turn_ref=f"t-{i}")
     # counts: 1, 2, reset→0, 1 → never reaches threshold 3
     assert seen == [False, False, False, False]
 
@@ -761,3 +768,37 @@ async def test_brain_adapter_supplies_resolver_state():
     out = await adapter.decide(object())
     assert out == "DECISION"
     assert seen == {"asked_ids": {"q1"}, "time_remaining_s": 123.0}
+
+
+@pytest.mark.asyncio
+async def test_handle_turn_aborted_unwinds_transcript_and_no_advance() -> None:
+    """ABORTED: when superseded, the candidate TranscriptTurn is popped and no state advances."""
+    from app.modules.interview_engine.driver import build_session_driver
+
+    config = _make_session_config()
+    driver = build_session_driver(
+        config, voice=_FakeVoice(), persist=_noop_persist, started_at=_NOW,
+    )
+    await driver.opener()
+    transcript_len_before = len(driver._transcript)
+    driver._set_superseded(True)
+    is_terminal = await driver.handle_turn(turn=_aturn("partial answer"), turn_ref="t-1")
+    assert is_terminal is False
+    assert len(driver._transcript) == transcript_len_before   # candidate turn popped
+    assert len(driver._notelog) == 0
+
+
+@pytest.mark.asyncio
+async def test_handle_turn_confirms_committed_on_success() -> None:
+    """on_committed callback is called exactly once after a successful (non-aborted) turn."""
+    from app.modules.interview_engine.driver import build_session_driver
+
+    config = _make_session_config()
+    confirmed: list[bool] = []
+    driver = build_session_driver(
+        config, voice=_FakeVoice(), persist=_noop_persist, started_at=_NOW,
+        on_committed=lambda: confirmed.append(True),
+    )
+    await driver.opener()
+    await driver.handle_turn(turn=_aturn("a complete answer"), turn_ref="t-1")
+    assert confirmed == [True]
