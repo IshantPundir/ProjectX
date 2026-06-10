@@ -657,6 +657,15 @@ class Settings(BaseSettings):
     # so the ceiling only buys patience for genuine mid-answer pauses).
     engine_endpointing_max_delay_s: float = 4.0     # upper bound (unfinished turns only)
 
+    # ── Turn assembly — merge fragmented answers before the brain ──
+    # See docs/superpowers/specs/2026-06-10-turn-assembly-design.md. The
+    # assembler buffers consecutive committed fragments of one spoken answer and
+    # flushes one merged turn, using VAD user_state_changed as the "resumed"
+    # signal so it adds near-zero latency on clean turns.
+    engine_assembly_enabled: bool = True          # kill switch (pass-through when False)
+    engine_assembly_grace_s: float = 0.5          # wait after a fragment (no VAD resume) before flushing
+    engine_assembly_max_duration_s: float = 45.0  # safety force-flush ceiling for one assembled turn
+
     # Per-call cap on the Mouth BRIDGE LLM (the immediate gist/lead-in beat). On
     # timeout the bridge falls back to a canned "Mm, okay…" (never dead air), so a
     # tight cap trades a missed beat for snappiness. 2.5s lets the real beat land

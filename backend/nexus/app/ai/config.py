@@ -209,6 +209,18 @@ class AIConfig:
         return self._settings.engine_endpointing_max_delay_s
 
     @property
+    def engine_assembly_enabled(self) -> bool:
+        return self._settings.engine_assembly_enabled
+
+    @property
+    def engine_assembly_grace_s(self) -> float:
+        return self._settings.engine_assembly_grace_s
+
+    @property
+    def engine_assembly_max_duration_s(self) -> float:
+        return self._settings.engine_assembly_max_duration_s
+
+    @property
     def engine_bridge_timeout_s(self) -> float:
         return self._settings.engine_bridge_timeout_s
 

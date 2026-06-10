@@ -92,3 +92,20 @@ def test_settings_default_to_deepgram_stt_sarvam_tts():
     assert fields["interview_tts_language"].default == "en-IN"
 
 
+def test_turn_assembly_settings_defaults():
+    """Turn-assembly knobs exist with the design-spec defaults."""
+    from app.config import Settings
+
+    fields = Settings.model_fields
+    assert fields["engine_assembly_enabled"].default is True
+    assert fields["engine_assembly_grace_s"].default == 0.5
+    assert fields["engine_assembly_max_duration_s"].default == 45.0
+
+
+def test_aiconfig_exposes_turn_assembly(monkeypatch):
+    from app.ai.config import ai_config
+
+    assert ai_config.engine_assembly_enabled is True
+    assert ai_config.engine_assembly_grace_s == 0.5
+    assert ai_config.engine_assembly_max_duration_s == 45.0
+
