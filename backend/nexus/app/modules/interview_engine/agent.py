@@ -64,6 +64,7 @@ from app.ai.realtime import (
 )
 from app.config import settings
 from app.database import get_bypass_session
+from app.modules.interview_engine.turn_assembler import AsyncioTimerScheduler, TurnAssembler
 from app.modules.interview_engine.turn_source import CommittedTurnSource
 from app.modules.interview_runtime import (
     SessionConfig,
@@ -158,19 +159,16 @@ class _EngineAgent(Agent):
     silent or empty STT final never produces a spurious no-op turn.
     """
 
-    def __init__(self, *, turn_source: CommittedTurnSource, **kwargs) -> None:
+    def __init__(self, *, assembler: TurnAssembler, **kwargs) -> None:
         super().__init__(**kwargs)
-        self._turn_source = turn_source
+        self._assembler = assembler
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:  # type: ignore[override]
-        """Feed the committed turn to the drive loop; suppress the built-in reply."""
+        """Feed the committed fragment to the assembler; suppress the built-in reply."""
         text = (getattr(new_message, "text_content", "") or "").strip()
-        accepted = self._turn_source.submit(text)
-        log.info(
-            "engine.turn.committed",
-            accepted=accepted,
-            transcript_len=len(text),
-        )
+        if text:
+            self._assembler.submit_fragment(text)
+        log.info("engine.turn.fragment", transcript_len=len(text))
         raise StopResponse()
 
 
@@ -206,6 +204,7 @@ class _InterruptAwareVoice:
 async def _drive(
     session: AgentSession,
     turn_source: CommittedTurnSource,
+    assembler: TurnAssembler,
     config: SessionConfig,
     ctx: JobContext,
     *,
@@ -237,7 +236,7 @@ async def _drive(
     from app.database import get_bypass_session
     from app.modules.interview_engine.driver import build_session_driver
     from app.modules.interview_runtime import record_session_evidence
-    from app.modules.interview_runtime.evidence import CompletionReason, TimeSpan
+    from app.modules.interview_runtime.evidence import CompletionReason
 
     started_at = datetime.now(UTC)
 
@@ -261,6 +260,8 @@ async def _drive(
         voice=_InterruptAwareVoice(session),
         persist=_persist,
         started_at=started_at,
+        is_superseded=assembler.is_superseded,
+        on_committed=assembler.confirm_committed,
     )
 
     # ── Turn counter + terminal signal ───────────────────────────────────────
@@ -274,28 +275,19 @@ async def _drive(
     # ── on_commit: called by the consume task for each committed turn ─────────
     _last_activity_s: list[float] = [time.monotonic()]
 
-    async def on_commit(transcript: str) -> bool:
-        """Forward a committed transcript to the SessionDriver.
+    async def on_commit(turn) -> bool:  # turn: AssembledTurn
+        """Forward an AssembledTurn to the SessionDriver.
 
-        Called by the consume task with the FULL final transcript of a committed
-        candidate turn. Returns True when the session is terminal (the consume
-        task then sets terminal_event and stops).
+        Called by the consume task with each assembled candidate turn (which
+        carries its own merged span from the assembler). Returns True when the
+        session is terminal (the consume task then sets terminal_event and stops).
         """
         _last_activity_s[0] = time.monotonic()  # a committed turn = activity
         _turn_id[0] += 1
         turn_ref = f"t-{_turn_id[0]}"
-        # The native turn detector does not hand us word-level start/end ms; use
-        # a coarse wall-clock span anchored to "now" for the turn record. (Word
-        # timing for the evidence contract comes from aligned transcripts later.)
-        now_ms = _now_ms()
-        span = TimeSpan(start_ms=max(0, now_ms - 1000), end_ms=now_ms)
 
         try:
-            is_terminal = await driver.handle_turn(
-                utterance=transcript,
-                turn_ref=turn_ref,
-                span=span,
-            )
+            is_terminal = await driver.handle_turn(turn=turn, turn_ref=turn_ref)
         except Exception:  # noqa: BLE001
             log.error(
                 "engine.drive.handle_turn_error",
@@ -325,7 +317,7 @@ async def _drive(
         if _finalize_reason[0] == CompletionReason.completed:
             _finalize_reason[0] = CompletionReason.candidate_ended
         terminal_event.set()
-        turn_source.close()  # unblock the consume task's pending get()
+        assembler.close()  # flush any buffered fragment, then unblock the consume task
 
     try:
         ctx.room.on("participant_disconnected", _on_participant_disconnected)
@@ -352,10 +344,10 @@ async def _drive(
     # has an active question on the floor.
     async def _consume_turns() -> None:
         while not terminal_event.is_set():
-            utterance = await turn_source.get()
-            if utterance is None:
+            turn = await turn_source.get()
+            if turn is None:
                 break  # source closed — session ending
-            is_terminal = await on_commit(utterance)
+            is_terminal = await on_commit(turn)
             if is_terminal:
                 terminal_event.set()
                 break
@@ -379,7 +371,7 @@ async def _drive(
             )
             _finalize_reason[0] = CompletionReason.unresponsive
             terminal_event.set()
-            turn_source.close()  # unblock the consume task
+            assembler.close()  # flush any buffered fragment, then unblock the consume task
             break
         try:
             await asyncio.wait_for(terminal_event.wait(), timeout=remaining)
@@ -394,7 +386,7 @@ async def _drive(
         log.warning("engine.drive.finalize_error", exc_info=True)
 
     # ── Cleanup ───────────────────────────────────────────────────────────────
-    turn_source.close()  # idempotent — ensures the consume task is unblocked
+    assembler.close()  # idempotent — flushes any buffered fragment, then unblocks the consume task
     consume_task.cancel()
     try:
         await consume_task
@@ -493,16 +485,29 @@ async def run(
                 log.warning("engine.heartbeat_failed", exc_info=True)
             await asyncio.sleep(settings.engine_heartbeat_interval_seconds)
 
-    # Build the per-session turn source BEFORE starting the session so
-    # _EngineAgent.on_user_turn_completed can submit committed turns to it from
-    # the first turn. The same instance is passed to _drive, whose consume task
-    # pulls each committed transcript into the SessionDriver.
+    # Build the per-session turn source BEFORE starting the session so the
+    # assembler (and via it, _drive's consume task) can receive committed turns
+    # from the first fragment.
     turn_source = CommittedTurnSource()
 
-    # _EngineAgent extends Agent with on_user_turn_completed: it submits the full
-    # final transcript to turn_source and raises StopResponse to suppress the
-    # built-in LLM auto-reply — gen-3 drives all output via the SessionDriver.
-    agent = _EngineAgent(turn_source=turn_source, instructions="")
+    # The TurnAssembler sits between the LiveKit hook and the turn source.
+    # It buffers short consecutive fragments, merges them into one AssembledTurn,
+    # and flushes once the candidate clearly settled (VAD + grace timer). A
+    # continuation that arrives after a flush triggers a merge-back so the drive
+    # loop re-runs on the merged answer rather than a partial one.
+    assembler = TurnAssembler(
+        sink=turn_source,
+        clock=time.monotonic,
+        timer=AsyncioTimerScheduler(),
+        grace_s=ai_config.engine_assembly_grace_s,
+        max_duration_s=ai_config.engine_assembly_max_duration_s,
+        enabled=ai_config.engine_assembly_enabled,
+    )
+
+    # _EngineAgent extends Agent with on_user_turn_completed: it submits each
+    # fragment to the assembler and raises StopResponse to suppress the built-in
+    # LLM auto-reply — gen-3 drives all output via the SessionDriver.
+    agent = _EngineAgent(assembler=assembler, instructions="")
 
     await session.start(
         agent=agent,
@@ -512,11 +517,29 @@ async def run(
         ),
     )
 
+    # Wire VAD state events so the assembler can hold the grace timer while the
+    # candidate is mid-answer (prevents premature flush on a natural mid-sentence
+    # pause) and can start a merge-back when the candidate resumes speaking after
+    # an in-flight turn has already been dispatched to the drive loop.
+    # getattr(ev.new_state, "value", ev.new_state) is robust to both StrEnum
+    # (livekit-agents ≥1.5) and plain string values across SDK versions.
+    def _on_user_state(ev) -> None:  # noqa: ANN001 — livekit UserStateChangedEvent
+        state = getattr(ev.new_state, "value", ev.new_state)
+        if state == "speaking":
+            assembler.note_user_speaking()
+        elif state == "listening":
+            assembler.note_user_stopped()
+
+    try:
+        session.on("user_state_changed", _on_user_state)
+    except Exception:  # noqa: BLE001 — never let event wiring break the run
+        log.warning("engine.assembly.user_state_wiring_failed", exc_info=True)
+
     heartbeat_task = asyncio.create_task(_heartbeat_loop())
 
     try:
         await _drive(
-            session, turn_source, config, ctx,
+            session, turn_source, assembler, config, ctx,
             tenant_id=tenant_id,
             correlation_id=correlation_id,
         )
