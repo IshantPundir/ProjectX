@@ -112,7 +112,7 @@ def _bridge_request() -> BridgeRequest:
     )
 
 
-def _make_ctx(turn_ref: str = "t-1") -> TurnContext:
+def _make_ctx(turn_ref: str = "t-1", *, supersession_check=None, suppress_bridge: bool = False) -> TurnContext:
     return TurnContext(
         turn_ref=turn_ref,
         utterance="I've used Python for three years, mainly Django REST APIs.",
@@ -122,6 +122,8 @@ def _make_ctx(turn_ref: str = "t-1") -> TurnContext:
         brain_input=_brain_turn_input(),
         bridge_request=_bridge_request(),
         recent_openers=["so", "okay", "right"],
+        supersession_check=supersession_check,
+        suppress_bridge=suppress_bridge,
     )
 
 
@@ -520,3 +522,47 @@ async def test_barge_in_cancels_both():
     assert mouth.bridge_cancelled, (
         "mouth.bridge should have received CancelledError after barge-in"
     )
+
+
+# ---------------------------------------------------------------------------
+# Test 6 — Merge-back checkpoint: aborts before NoteLog when superseded
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_checkpoint_aborts_before_notes_when_superseded():
+    from app.modules.interview_engine.loop import ABORTED
+    brain = SimpleBrain(_brain_decision())
+    mouth = SimpleMouth(bridge_text="mm", real_line_text="next q")
+    voice = FakeVoice()
+    notelog = NoteLog()
+    ctx = _make_ctx(supersession_check=lambda: True)
+    result = await run_turn(ctx, brain=brain, mouth=mouth, voice=voice, notelog=notelog)
+    assert result is ABORTED
+    assert len(notelog) == 0                  # no durable evidence committed
+    assert len(mouth.real_line_inputs) == 0   # no real line rendered
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_proceeds_when_not_superseded():
+    from app.modules.interview_engine.loop import ABORTED
+    brain = SimpleBrain(_brain_decision())
+    mouth = SimpleMouth()
+    voice = FakeVoice()
+    notelog = NoteLog()
+    ctx = _make_ctx(supersession_check=lambda: False)
+    result = await run_turn(ctx, brain=brain, mouth=mouth, voice=voice, notelog=notelog)
+    assert result is not ABORTED
+    assert len(notelog) == 1
+    assert len(mouth.real_line_inputs) == 1
+
+
+@pytest.mark.asyncio
+async def test_suppress_bridge_skips_bridge_call():
+    real = "the next question"
+    brain = SimpleBrain(_brain_decision())
+    mouth = SimpleMouth(bridge_text="MM-BRIDGE", real_line_text=real)
+    voice = FakeVoice()
+    notelog = NoteLog()
+    ctx = _make_ctx(supersession_check=lambda: False, suppress_bridge=True)
+    await run_turn(ctx, brain=brain, mouth=mouth, voice=voice, notelog=notelog)
+    assert voice.said == [real]               # only the real line; bridge skipped

@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Callable, Protocol
 
 # Lazy / TYPE_CHECKING imports — keep this module livekit-free at runtime.
 if TYPE_CHECKING:
@@ -51,6 +51,10 @@ from app.modules.interview_runtime.evidence import TimeSpan
 #: Spoken when mouth.bridge errors or times out (never dead air).
 #: Indian-English, neutral, trailing-open. Phase F3 may tune this per-persona.
 CANNED_BRIDGE_FALLBACK: str = "Mm, okay…"
+
+#: Returned by run_turn when a continuation superseded this turn at the
+#: pre-commit checkpoint — the driver discards the turn (no notes, no real line).
+ABORTED: object = object()
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +160,12 @@ class TurnContext:
         bridge_request:     Pre-assembled BridgeRequest (triage tier emits this).
         recent_openers:     Opening words from recent agent turns — forwarded to the mouth
                             to avoid repetitive sentence-starters.
+        supersession_check: Optional zero-argument callable that returns True when a
+                            continuation has arrived and this turn should be aborted at the
+                            pre-commit checkpoint (before notes and real line). When None,
+                            the checkpoint is skipped and the turn always proceeds.
+        suppress_bridge:    When True, skip the bridge call entirely (used on merge-back
+                            re-flushes where the ack was already played on the first flush).
     """
     turn_ref: str
     utterance: str
@@ -165,6 +175,8 @@ class TurnContext:
     brain_input: BrainTurnInput
     bridge_request: BridgeRequest
     recent_openers: list[str] = field(default_factory=list)
+    supersession_check: Callable[[], bool] | None = None
+    suppress_bridge: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +190,7 @@ async def run_turn(
     mouth: Mouth,
     voice: Voice,
     notelog: object,  # NoteLog — typed as object to avoid a hard import cycle in tests
-) -> BrainDecision:
+) -> "BrainDecision | object":
     """Run one candidate turn: bridge ∥ brain → real line; append notes.
 
     Spec §6 implementation. Cancellation-safe — see module docstring.
@@ -195,35 +207,45 @@ async def run_turn(
         The BrainDecision returned by the brain, after notes have been appended
         and the real line has been spoken. The caller (engine controller) uses
         `decision.is_terminal` to trigger session cleanup when appropriate.
+        Returns the ABORTED sentinel instead when ctx.supersession_check() is
+        True at the pre-commit checkpoint — no notes appended, no real line spoken.
 
     Raises:
         asyncio.CancelledError: when the task is cancelled (barge-in). Both child
             tasks (bridge, brain) are cancelled in the finally block before the
             error propagates.
     """
-    # §6.1 — Launch bridge and brain IN PARALLEL (neither blocks the other).
-    bridge_task: asyncio.Task[str] = asyncio.create_task(
-        mouth.bridge(ctx.bridge_request),
-        name=f"bridge:{ctx.turn_ref}",
+    # §6.1 — Launch bridge and brain. The bridge is skipped on a merge-back
+    # re-flush (suppress_bridge): an acknowledgment already played on the first
+    # flush, so we go straight to the real line.
+    bridge_task: asyncio.Task[str] | None = (
+        None if ctx.suppress_bridge
+        else asyncio.create_task(mouth.bridge(ctx.bridge_request), name=f"bridge:{ctx.turn_ref}")
     )
     brain_task: asyncio.Task[BrainDecision] = asyncio.create_task(
-        brain.decide(ctx.brain_input),
-        name=f"brain:{ctx.turn_ref}",
+        brain.decide(ctx.brain_input), name=f"brain:{ctx.turn_ref}",
     )
 
     try:
         # §6.2 — Play the bridge the instant it resolves (masks brain latency).
-        # On any error (TTS upstream, network, timeout) → canned fallback.
-        # Never dead air: even if bridge_task raises, we continue.
-        try:
-            bridge_text: str = await bridge_task
-        except Exception:
-            bridge_text = CANNED_BRIDGE_FALLBACK
-
-        await voice.say(bridge_text)
+        if bridge_task is not None:
+            try:
+                bridge_text: str | None = await bridge_task
+            except Exception:
+                bridge_text = CANNED_BRIDGE_FALLBACK
+            await voice.say(bridge_text)
+        else:
+            bridge_text = None
 
         # §6.3 — Await the brain's decision (already running in parallel).
         decision: BrainDecision = await brain_task
+
+        # §7 — Merge-back checkpoint. The point-of-no-return is the note commit
+        # below; if a continuation superseded this turn, abort with ZERO durable
+        # trace (no notes appended, no real line spoken). The driver re-flushes
+        # the merged turn.
+        if ctx.supersession_check is not None and ctx.supersession_check():
+            return ABORTED
 
         # §6.4 — Append signal observations to the append-only NoteLog.
         # Each observation becomes one immutable EvidenceNote with monotonic seq.
@@ -237,7 +259,7 @@ async def run_turn(
                 via_probe=ctx.via_probe,
             )
 
-        # §6.5 — Render the real line, CONTINUING from the bridge.
+        # §6.5 — Render the real line, CONTINUING from the bridge (if any).
         # just_said=bridge_text ensures the mouth does not repeat the bridge ack.
         # One ack per turn — the real line picks up the thread.
         mouth_input = MouthTurnInput(
@@ -256,5 +278,5 @@ async def run_turn(
         # and on CancelledError / exception (tasks may still be running → must cancel).
         # This guarantees no task is left dangling after run_turn exits.
         for task in (bridge_task, brain_task):
-            if not task.done():
+            if task is not None and not task.done():
                 task.cancel()
