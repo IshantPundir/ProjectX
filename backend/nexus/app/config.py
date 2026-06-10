@@ -328,69 +328,13 @@ class Settings(BaseSettings):
     # via tenant_settings.engine_agent_name.
     engine_agent_name: str = "Sam"
 
-    # --- Interview engine — EOU / turn-taking knobs ---
-    #
-    # unlikely_threshold = None => use the MultilingualModel's DOCUMENTED DEFAULT
-    # (the docs say the detector "has no configuration"; English true-positive
-    # rate 99.3% — it commits a complete answer fast and waits on an unfinished
-    # one). Talk-test 2026-05-22 (R1): v1's Phase-5 override of 0.5 ("more patient
-    # EOU") made the detector treat COMPLETE answers as unfinished — it waited the
-    # full max_delay on every turn, which both lagged complete answers AND fired a
-    # spurious hold-space cue on them. Reverting v2 to the model default restores
-    # discrimination so the hold-space cue lands only on genuinely-unfinished turns.
-    engine_v2_turn_detector_unlikely_threshold: float | None = None
-    engine_v2_endpointing_mode: Literal["fixed", "dynamic"] = "dynamic"
-    engine_v2_endpointing_min_delay: float = 0.8
-    # max_delay 10.0 (was v1's 4.5): with the model-default detector restoring
-    # discrimination, complete answers commit fast (~1-2s, well under the ceiling),
-    # so a high ceiling only buys patience for genuine mid-answer think-pauses.
-    # Talk-test 2026-05-22 honored real 7-8.5s think-pauses under this ceiling that
-    # 4.5s was cutting off. (quality-before-latency; EOU is off the perceived-latency
-    # critical path per CMI-3.)
-    engine_v2_endpointing_max_delay: float = 10.0
-
-    # Mid-pause patience cue: a warm "take your time" on a genuine mid-thought
-    # pause (R1, the #1 UX risk for Indian candidates). RE-ENABLED in M5
-    # (decision E) after M4 disabled the blind timer. Now GATED on
-    # incompleteness (agent.py): fires only while the turn is still open and
-    # the turn-detector is holding it as incomplete — never on a complete
-    # answer's trailing pause.
-    #
-    # Gating mechanism (R3): the LiveKit turn-detector (MultilingualModel
-    # 1.5.9) does NOT expose a mid-pause "incomplete/extending" signal or EOU
-    # probability. We use the delay-above-commit-latency proxy: this delay is
-    # set ABOVE the worst-case complete-answer commit latency observed on
-    # talk-tests (~1-2s), so a complete answer always commits first
-    # (on_user_turn_completed fires → state["responding"]=True mutes the
-    # timer); only a detector-held-open incomplete pause survives to fire.
-    # Honest v1 caveat: text-only detection makes "never on a complete answer"
-    # best-effort; perfect needs the v2 audio-prosody model. Tune on Task 10
-    # talk-test.
-    engine_v2_hold_space_enabled: bool = True
-    # Delay before the cue. Keep ABOVE the worst-case complete-answer commit
-    # latency (talk-test) so a complete answer always commits first; only a
-    # held-open incomplete pause reaches the cue.
-    engine_v2_hold_space_delay_s: float = 3.0
-    engine_v2_hold_space_message: str = "Take your time."
-
-    # Unresponsive ladder: candidate not responding to a posed question.
-    # ~7s -> gentle nudge; ~15s -> "still there?"; after N no-responses ->
-    # close as candidate_unresponsive (doc 08 "resolved": ~6-8s / ~15s / 2).
-    engine_v2_unresponsive_prompt_1_s: float = 7.0
-    engine_v2_unresponsive_prompt_2_s: float = 15.0
-    engine_v2_unresponsive_max_no_responses: int = 2
-    engine_v2_unresponsive_message_1: str = "Whenever you're ready."
-    engine_v2_unresponsive_message_2: str = "Are you still there?"
-
-    # Backchannel gate: an utterance with fewer than this many words, OR made
-    # entirely of backchannel tokens, is treated as engagement (AI keeps the
-    # floor), not a turn grab. Mirrors the LiveKit interruption min_words=2.
-    engine_v2_backchannel_min_words: int = 2
-
-    # M4 directive-injection talk-test scenario. "" = the default canned flow
-    # (INTRO -> ASK -> ACK_ADVANCE per turn -> CLOSE). "supersession" stages a
-    # speculative PROBE then a superseding ACK_ADVANCE for the CMI-4 live test.
-    engine_v2_mouth_scenario: str = ""
+    # --- Interview engine — turn-handling config ---
+    # The gen-3 engine's turn-detector + endpointing knobs live in ONE place: the
+    # "Interview engine — turn handling" block further down (engine_turn_detector_
+    # unlikely_threshold + engine_endpointing_*). The dead gen-2 EOU/hold-space/
+    # unresponsive-ladder/backchannel knobs (and their ENGINE_V2_* env vars) were
+    # removed 2026-06-10 — gen-3 has no hold-space/unresponsive-ladder (the mouth
+    # bridge masks latency) and its backchannel gate is turn_taking.BACKCHANNEL_TOKENS.
 
     # M5 ack-mask (D3): a short, content-free, persona-voiced acknowledgment played the instant
     # the candidate finishes so the brain's ~3-7s reasoning runs MASKED (never a silent wait). The
@@ -685,19 +629,33 @@ class Settings(BaseSettings):
     reel_director_prompt_cache_key_prefix: str = "reel_director"
 
     # --- Gen-3 native turn detection — endpointing (Path A+) ---
-    # LiveKit's native turn detector (MultilingualModel) decides end-of-turn from
-    # the live STT stream; endpointing controls how long the agent waits AFTER
-    # the detected end of speech before closing the turn. "dynamic" adapts the
-    # delay within [min, max] to the candidate's own pause statistics — patient
-    # with disfluent / thinking speakers without a fixed long delay (which was
-    # the gen-2 mistake: a flat max_delay=10 held finished answers open ~10s).
-    # [VALIDATE] tune empirically in the F3 talk-test (config-only, no rebuild).
-    engine_endpointing_mode: str = "dynamic"        # "dynamic" | "fixed"
-    engine_endpointing_min_delay_s: float = 0.8     # lower bound after end-of-speech (clear endings stay snappy; F3-tunable)
-    engine_endpointing_max_delay_s: float = 6.0     # upper bound — only applies when the turn looks UNFINISHED, so it adds
-                                                    # patience for paused/continuing answers WITHOUT slowing clear endings
-                                                    # (4.0→6.0; F3-tunable). The documented endpointing lever — not the
-                                                    # undocumented turn-detector unlikely_threshold.
+    # ── Interview engine — turn handling (gen-3 native turn detection) ──
+    # SINGLE SOURCE OF TRUTH for turn-detector + endpointing. LiveKit's
+    # MultilingualModel turn detector decides end-of-turn off the live STT stream;
+    # endpointing controls how long the agent waits AFTER detected end-of-speech
+    # before closing the turn.
+    #
+    # Semantics — verified against livekit-agents 1.5.7 source
+    # (livekit/agents/voice/audio_recognition.py):
+    #     endpointing_delay = endpointing.min_delay          # commit fast (default)
+    #     prob = turn_detector.predict_end_of_turn(ctx)      # high = "user is done"
+    #     thr  = turn_detector.unlikely_threshold(language)
+    #     if thr is not None and prob < thr:
+    #         endpointing_delay = endpointing.max_delay       # be patient
+    # So a LOW unlikely_threshold DISABLES patience: the prior 0.011 override made
+    # ~60% of genuine think-pauses (mean EOU prob ~0.08) commit at min_delay,
+    # shattering answers into fragments (session RM_8oXPvEhZpvxo, 2026-06-08).
+    # None => the model's per-language tuned default (recommended; EN/HI
+    # true-negative i.e. "will continue" accuracy 87–96%). Override only with data.
+    engine_turn_detector_unlikely_threshold: float | None = None
+    engine_endpointing_mode: Literal["fixed", "dynamic"] = "dynamic"   # "dynamic" | "fixed"
+    # min_delay raised 0.8 → 1.5: a ~1s think-pause no longer commits as a turn.
+    # In VAD mode this behaves as max(VAD silence, min_delay).
+    engine_endpointing_min_delay_s: float = 1.5     # lower bound after end-of-speech
+    # max_delay 6.0 → 4.0: caps worst-case wait on a turn the detector reads as
+    # unfinished (with the detector restored, complete answers commit near min_delay,
+    # so the ceiling only buys patience for genuine mid-answer pauses).
+    engine_endpointing_max_delay_s: float = 4.0     # upper bound (unfinished turns only)
 
     # Per-call cap on the Mouth BRIDGE LLM (the immediate gist/lead-in beat). On
     # timeout the bridge falls back to a canned "Mm, okay…" (never dead air), so a

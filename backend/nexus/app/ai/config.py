@@ -188,61 +188,14 @@ class AIConfig:
     def engine_mouth_persona_name(self) -> str:
         return self._settings.engine_mouth_persona_name
 
-    # --- Interview engine v2 — EOU / turn-taking ---
+    # --- Interview engine — turn handling (gen-3 native turn detection) ---
+    # Single source of truth: turn-detector patience + endpointing delays.
+    # `unlikely_threshold=None` delegates to the MultilingualModel's per-language
+    # tuned default (see config.py for the verified LiveKit endpointing semantics).
     @property
-    def engine_v2_turn_detector_unlikely_threshold(self) -> float | None:
-        return self._settings.engine_v2_turn_detector_unlikely_threshold
+    def engine_turn_detector_unlikely_threshold(self) -> float | None:
+        return self._settings.engine_turn_detector_unlikely_threshold
 
-    @property
-    def engine_v2_endpointing_mode(self) -> str:
-        return self._settings.engine_v2_endpointing_mode
-
-    @property
-    def engine_v2_endpointing_min_delay(self) -> float:
-        return self._settings.engine_v2_endpointing_min_delay
-
-    @property
-    def engine_v2_endpointing_max_delay(self) -> float:
-        return self._settings.engine_v2_endpointing_max_delay
-
-    @property
-    def engine_v2_hold_space_enabled(self) -> bool:
-        return self._settings.engine_v2_hold_space_enabled
-
-    @property
-    def engine_v2_hold_space_delay_s(self) -> float:
-        return self._settings.engine_v2_hold_space_delay_s
-
-    @property
-    def engine_v2_hold_space_message(self) -> str:
-        return self._settings.engine_v2_hold_space_message
-
-    @property
-    def engine_v2_unresponsive_prompt_1_s(self) -> float:
-        return self._settings.engine_v2_unresponsive_prompt_1_s
-
-    @property
-    def engine_v2_unresponsive_prompt_2_s(self) -> float:
-        return self._settings.engine_v2_unresponsive_prompt_2_s
-
-    @property
-    def engine_v2_unresponsive_max_no_responses(self) -> int:
-        return self._settings.engine_v2_unresponsive_max_no_responses
-
-    @property
-    def engine_v2_unresponsive_message_1(self) -> str:
-        return self._settings.engine_v2_unresponsive_message_1
-
-    @property
-    def engine_v2_unresponsive_message_2(self) -> str:
-        return self._settings.engine_v2_unresponsive_message_2
-
-    @property
-    def engine_v2_backchannel_min_words(self) -> int:
-        return self._settings.engine_v2_backchannel_min_words
-
-    # --- Gen-3 native turn detection — endpointing (Path A+) ---
-    # [VALIDATE] Initial defaults; tune empirically in the F3 talk-test.
     @property
     def engine_endpointing_mode(self) -> str:
         return self._settings.engine_endpointing_mode

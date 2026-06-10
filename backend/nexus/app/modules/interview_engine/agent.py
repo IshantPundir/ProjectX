@@ -464,7 +464,7 @@ async def run(
         user_away_timeout=None,
         turn_handling=TurnHandlingOptions(
             turn_detection=build_turn_detector(
-                unlikely_threshold=ai_config.engine_v2_turn_detector_unlikely_threshold,
+                unlikely_threshold=ai_config.engine_turn_detector_unlikely_threshold,
             ),
             endpointing={
                 "mode": ai_config.engine_endpointing_mode,

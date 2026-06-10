@@ -249,7 +249,13 @@ def build_turn_detector(
 
     `unlikely_threshold` is required: pass an explicit float to raise the
     EOU floor, or `None` for the model's per-language tuned default. The
-    engine passes `AIConfig.engine_v2_turn_detector_unlikely_threshold`.
+    engine passes `AIConfig.engine_turn_detector_unlikely_threshold`.
+
+    Semantics (verified vs livekit-agents 1.5.7 audio_recognition.py): the
+    endpointing delay is `min_delay` UNLESS the detector's end-of-turn
+    probability is BELOW `unlikely_threshold`, in which case it jumps to
+    `max_delay` (patience for an unfinished turn). A LOW threshold therefore
+    DISABLES patience — `None` (per-language tuned default) is the robust choice.
     """
     from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
@@ -264,6 +270,14 @@ def build_interruption_options() -> dict[str, object]:
     VAD-based barge-in — self-hostable, no LiveKit-Cloud dependency. The word-count
     and duration gates filter backchannel/noise; false-interruption recovery resumes
     the agent's line if no transcript follows.
+
+    Mode is intentionally `"vad"`, NOT `"adaptive"`: per the LiveKit docs
+    (adaptive-interruption-handling), the adaptive barge-in model "runs on LiveKit
+    Cloud's global inference infrastructure" — it is NOT a downloadable local model
+    and silently falls back to VAD outside LiveKit Cloud. ProjectX self-hosts the
+    SFU (no Cloud), so adaptive would degrade to VAD in production anyway. The
+    `min_words=2` gate + the engine's `turn_taking.is_backchannel` drop are the
+    self-host-compatible substitute for filtering "mm/okay" acknowledgments.
     """
     logger.info("ai.realtime.interruption.built", mode="vad")
     return {
