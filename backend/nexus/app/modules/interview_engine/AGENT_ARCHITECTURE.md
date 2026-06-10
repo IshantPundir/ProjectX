@@ -362,18 +362,28 @@ candidate finishes speaking
         │
         ▼  LiveKit native turn detector (live STT) decides EOU
 on_user_turn_completed(turn_ctx, new_message)
-  • _EngineAgent submits new_message.text_content to CommittedTurnSource
+  • _EngineAgent submits new_message.text_content to the TurnAssembler (submit_fragment)
   • raise StopResponse()   ← suppress LiveKit's auto-reply; the engine drives all speech
         │
-        ▼  the drive loop: turn_source.get() → SessionDriver.handle_turn()
+        ▼  TurnAssembler (turn_assembler.py) — merge fragments into ONE logical turn
+  • a committed fragment is buffered, NOT immediately run. VAD user_state_changed
+    (speaking/listening) + a short grace timer decide when the candidate has settled.
+  • a pause-then-continue answer accumulates (its opening fragment is never processed
+    alone); on settle it flushes ONE AssembledTurn (text + covering span) to CommittedTurnSource.
+        │
+        ▼  the drive loop: turn_source.get() → SessionDriver.handle_turn(turn=AssembledTurn)
   1. is_backchannel? → drop, do not run the brain, floor unchanged
   2. build BridgeRequest + BrainTurnInput (with the deterministic hints)
   3. run_turn(ctx):
         bridge_task = mouth.bridge(req)     ─┐  launched at the SAME instant,
-        brain_task  = brain.decide(input)   ─┘  neither awaited first
+        brain_task  = brain.decide(input)   ─┘  neither awaited first  (bridge skipped on a merge-back re-flush)
         • await bridge → voice.say(bridge)          (~100-300ms; canned fallback on error)
         • await brain  → BrainDecision               (~2-3s, masked by the bridge)
-        • for obs in decision.observations: notelog.append(...)
+        • ── merge-back CHECKPOINT (point-of-no-return) ──
+          if a continuation arrived (assembler.is_superseded()) → return ABORTED:
+          NO notes committed, NO real line spoken; the driver pops the candidate
+          transcript turn and the assembler re-flushes the merged answer.
+        • for obs in decision.observations: notelog.append(...)   ← durable here
         • real = mouth.real_line(directive, just_said=bridge); voice.say(real)
   4. advance state from the decision:
         ask   → active question ← resolver.next_question_id; asked_ids += it
@@ -382,9 +392,13 @@ on_user_turn_completed(turn_ctx, new_message)
   5. is_terminal? → exit the loop → finalize()
 ```
 
-If the candidate barges in, VAD-mode interruption cancels the in-flight `run_turn` (both
-child tasks cancelled in its `finally`). Because the AI only ever *delivers* at a turn
-boundary, there is never a half-spoken directive to abort.
+Turns are processed **strictly sequentially** — the consume loop awaits one
+`handle_turn` before pulling the next, so only one turn is ever in flight. There is
+**no mid-turn cancellation**: a barge-in during the agent's speech only sets
+`_InterruptAwareVoice.last_interrupted` (read as `floor_interrupted` next turn); the
+in-flight `run_turn` is NOT cancelled. The only way a turn produces zero durable trace
+is the merge-back checkpoint above (before `notelog.append`). A continuation that
+arrives *after* the real line is delivered is a genuine new turn.
 
 ---
 
