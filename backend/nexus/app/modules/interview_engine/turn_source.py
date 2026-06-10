@@ -3,14 +3,14 @@
 Path A+ replaces the gen-3 manual Ear poll loop with LiveKit native turn
 detection (``turn_detection=MultilingualModel()``). The framework decides
 end-of-turn from the live STT stream and fires ``on_user_turn_completed`` with
-the FULL final transcript — so EOU and the transcript are produced together
-(no commit/STT race, no one-turn lag). That hook submits the transcript here;
-the ``SessionDriver`` drive loop consumes it.
+the assembled ``AssembledTurn`` — so EOU and the turn are produced together
+(no commit/STT race, no one-turn lag). That hook submits the assembled turn
+here; the ``SessionDriver`` drive loop consumes it.
 
 This module is LiveKit-free: a thin ``asyncio.Queue`` wrapper with two
 load-bearing behaviors.
 
-1. **Empty / whitespace-only transcripts are dropped.** Empty STT finals
+1. **Empty / whitespace-only turns are dropped.** Empty STT finals
    (``eot_delay=0`` / ``conf=0`` in the F3 logs) must not produce spurious
    no-op turns. ``submit`` returns ``False`` when it drops.
 
@@ -21,6 +21,21 @@ load-bearing behaviors.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
+
+from app.modules.interview_runtime.evidence import TimeSpan
+
+
+@dataclass(frozen=True)
+class AssembledTurn:
+    """One logical candidate turn after fragment assembly — the unit the drive
+    loop consumes. `text` is the merged answer; `span` covers all merged
+    fragments; `suppress_bridge` is set on a merge-back re-flush (an ack already
+    played); `is_reflush` is audit-only."""
+    text: str
+    span: TimeSpan
+    suppress_bridge: bool = False
+    is_reflush: bool = False
 
 
 class CommittedTurnSource:
@@ -32,28 +47,24 @@ class CommittedTurnSource:
     """
 
     def __init__(self) -> None:
-        # The None sentinel (pushed by close()) is the only non-str item.
-        self._queue: asyncio.Queue[str | None] = asyncio.Queue()
+        # The None sentinel (pushed by close()) is the only non-AssembledTurn item.
+        self._queue: asyncio.Queue[AssembledTurn | None] = asyncio.Queue()
         self._closed: bool = False
 
-    def submit(self, transcript: str | None) -> bool:
-        """Offer a committed-turn transcript to the drive loop.
-
-        Returns ``True`` if the transcript was enqueued, ``False`` if it was
-        dropped (the source is closed, or the transcript is None / empty /
-        whitespace-only).
-        """
+    def submit(self, turn: AssembledTurn | None) -> bool:
+        """Offer an assembled turn to the drive loop. Returns False if the source
+        is closed, or the turn is None / has empty-or-whitespace text."""
         if self._closed:
             return False
-        if not transcript or not transcript.strip():
+        if turn is None or not turn.text.strip():
             return False
-        self._queue.put_nowait(transcript)
+        self._queue.put_nowait(turn)
         return True
 
-    async def get(self) -> str | None:
+    async def get(self) -> AssembledTurn | None:
         """Await the next committed turn.
 
-        Returns the transcript string, or ``None`` once the source has been
+        Returns the ``AssembledTurn``, or ``None`` once the source has been
         closed (and any still-queued real turns have been drained first).
         """
         return await self._queue.get()
