@@ -177,6 +177,7 @@ class TurnContext:
     recent_openers: list[str] = field(default_factory=list)
     supersession_check: Callable[[], bool] | None = None
     suppress_bridge: bool = False
+    on_committed: Callable[[], None] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -246,6 +247,12 @@ async def run_turn(
         # the merged turn.
         if ctx.supersession_check is not None and ctx.supersession_check():
             return ABORTED
+
+        # Point-of-no-return passed: confirm the commit ATOMICALLY (synchronously,
+        # before the next await) so a continuation arriving during the real-line
+        # playout is a genuine NEW turn, not a spurious merge-back.
+        if ctx.on_committed is not None:
+            ctx.on_committed()
 
         # §6.4 — Append signal observations to the append-only NoteLog.
         # Each observation becomes one immutable EvidenceNote with monotonic seq.

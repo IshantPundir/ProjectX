@@ -43,7 +43,7 @@ class AsyncioTimerScheduler:
     so callbacks run on the same loop as the assembler's mutations: no locks)."""
 
     def schedule(self, delay_s: float, callback: Callable[[], None]) -> TimerHandle:
-        return asyncio.get_event_loop().call_later(delay_s, callback)
+        return asyncio.get_running_loop().call_later(delay_s, callback)
 
 
 class _FakeHandle:

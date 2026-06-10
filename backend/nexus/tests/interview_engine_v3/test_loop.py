@@ -112,7 +112,7 @@ def _bridge_request() -> BridgeRequest:
     )
 
 
-def _make_ctx(turn_ref: str = "t-1", *, supersession_check=None, suppress_bridge: bool = False) -> TurnContext:
+def _make_ctx(turn_ref: str = "t-1", *, supersession_check=None, suppress_bridge: bool = False, on_committed=None) -> TurnContext:
     return TurnContext(
         turn_ref=turn_ref,
         utterance="I've used Python for three years, mainly Django REST APIs.",
@@ -124,6 +124,7 @@ def _make_ctx(turn_ref: str = "t-1", *, supersession_check=None, suppress_bridge
         recent_openers=["so", "okay", "right"],
         supersession_check=supersession_check,
         suppress_bridge=suppress_bridge,
+        on_committed=on_committed,
     )
 
 
@@ -566,3 +567,32 @@ async def test_suppress_bridge_skips_bridge_call():
     ctx = _make_ctx(supersession_check=lambda: False, suppress_bridge=True)
     await run_turn(ctx, brain=brain, mouth=mouth, voice=voice, notelog=notelog)
     assert voice.said == [real]               # only the real line; bridge skipped
+
+
+@pytest.mark.asyncio
+async def test_on_committed_called_before_real_line_when_not_superseded():
+    brain = SimpleBrain(_brain_decision())
+    mouth = SimpleMouth()
+    voice = FakeVoice()
+    notelog = NoteLog()
+    seen = {}
+    def _committed():
+        seen["real_lines_at_commit"] = len(mouth.real_line_inputs)
+    ctx = _make_ctx(supersession_check=lambda: False, on_committed=_committed)
+    await run_turn(ctx, brain=brain, mouth=mouth, voice=voice, notelog=notelog)
+    assert seen["real_lines_at_commit"] == 0   # committed BEFORE the real line ran
+    assert len(mouth.real_line_inputs) == 1     # real line ran after
+
+
+@pytest.mark.asyncio
+async def test_on_committed_not_called_when_superseded():
+    from app.modules.interview_engine.loop import ABORTED
+    brain = SimpleBrain(_brain_decision())
+    mouth = SimpleMouth()
+    voice = FakeVoice()
+    notelog = NoteLog()
+    calls = []
+    ctx = _make_ctx(supersession_check=lambda: True, on_committed=lambda: calls.append("c"))
+    result = await run_turn(ctx, brain=brain, mouth=mouth, voice=voice, notelog=notelog)
+    assert result is ABORTED
+    assert calls == []                          # aborted turns never confirm

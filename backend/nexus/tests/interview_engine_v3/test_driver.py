@@ -802,3 +802,18 @@ async def test_handle_turn_confirms_committed_on_success() -> None:
     await driver.opener()
     await driver.handle_turn(turn=_aturn("a complete answer"), turn_ref="t-1")
     assert confirmed == [True]
+
+
+@pytest.mark.asyncio
+async def test_handle_turn_backchannel_releases_assembler() -> None:
+    """I1 — a dropped backchannel still releases the assembler (calls on_committed)."""
+    from app.modules.interview_engine.driver import build_session_driver
+
+    config = _make_session_config()
+    confirmed = []
+    driver = build_session_driver(config, voice=_FakeVoice(), persist=_noop_persist,
+                                  started_at=_NOW, on_committed=lambda: confirmed.append(True))
+    await driver.opener()
+    is_terminal = await driver.handle_turn(turn=_aturn("mm"), turn_ref="t-1")
+    assert is_terminal is False
+    assert confirmed == [True]          # released even though the backchannel was dropped

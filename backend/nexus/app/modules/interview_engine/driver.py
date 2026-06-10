@@ -523,6 +523,10 @@ class SessionDriver:
                 turn_ref=turn_ref,
                 utterance=(utterance or "")[:40],
             )
+            # Release the assembler: this flushed turn is done (dropped), so the
+            # next candidate speech is a fresh turn, not a continuation of it.
+            if self._on_committed_cb is not None:
+                self._on_committed_cb()
             return False
 
         # 1. Record candidate turn
@@ -578,6 +582,7 @@ class SessionDriver:
             recent_openers=self._recent_openers[-3:],
             supersession_check=self._superseded,
             suppress_bridge=turn.suppress_bridge,
+            on_committed=self._on_committed_cb,
         )
 
         capturing = _CapturingVoice(self._voice)
@@ -601,8 +606,6 @@ class SessionDriver:
             self._transcript.pop()
             _log.info("engine.driver.turn_aborted_merge_back", turn_ref=turn_ref)
             return False
-        if self._on_committed_cb is not None:
-            self._on_committed_cb()
 
         # F3 DIAGNOSTIC (temporary): pair the committed utterance with what the
         # bridge mirrored, to detect a one-turn STT lag (bridge echoing the prior

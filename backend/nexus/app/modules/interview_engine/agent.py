@@ -104,10 +104,6 @@ server.setup_fnc = prewarm
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _now_ms() -> int:
-    return int(time.time() * 1000)
-
-
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -527,7 +523,7 @@ async def run(
         state = getattr(ev.new_state, "value", ev.new_state)
         if state == "speaking":
             assembler.note_user_speaking()
-        elif state == "listening":
+        elif state in ("listening", "away"):
             assembler.note_user_stopped()
 
     try:

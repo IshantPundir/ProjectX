@@ -165,3 +165,20 @@ async def test_false_resume_reflushes_same_text() -> None:
     timer.fire_all()
     reflush = await sink.get()
     assert reflush.text == "only answer"
+
+
+async def test_resume_after_confirm_is_new_turn() -> None:
+    asm, sink, clock, timer = _make()
+    asm.note_user_stopped()
+    asm.submit_fragment("answer one")
+    timer.fire_all()
+    await sink.get()
+    asm.confirm_committed()             # loop committed it (atomic, at the checkpoint)
+    asm.note_user_speaking()            # candidate resumes AFTER commit
+    assert asm.is_superseded() is False  # NOT a merge-back — it's a new turn
+    asm.note_user_stopped()
+    asm.submit_fragment("answer two")
+    timer.fire_all()
+    turn = await sink.get()
+    assert turn.text == "answer two"
+    assert turn.is_reflush is False
