@@ -20,10 +20,11 @@ Gates
    coincidental words).  A matched secret → safe fallback.  This is NOT intent
    classification; it is literal known-string detection.
 
-3. coerce_probe_index — probe coherence.
-   Ensures the brain's chosen probe_index is a valid, unused index into the
-   active question's follow_ups list.  Coerces an invalid or repeat index to
-   the first unused one; returns None when no probes remain.
+3. coerce_probe_dimension — probe coherence.
+   Ensures the brain's chosen probe_dimension is a valid, UNFIRED dimension
+   slug from the active question's follow_ups list.  Enforces fire-once (each
+   dimension at most once) plus a hard per-thread probe cap; returns None when
+   every dimension is fired OR the cap is reached.
 """
 
 from __future__ import annotations
@@ -262,51 +263,32 @@ def scrub_composed_say(
 # Gate 3 — Probe coherence
 # ===========================================================================
 
-def coerce_probe_index(
-    probe_index: int | None,
+def coerce_probe_dimension(
+    probe_dimension: str | None,
     *,
-    follow_ups: list[str],
-    probes_used: list[int],
-) -> int | None:
-    """Coerce the brain's *probe_index* to a valid, unused index.
+    follow_ups: list,            # list[FollowUpDimension]
+    fired: list[str],
+    cap: int,
+) -> str | None:
+    """Coerce the brain's probe_dimension to a valid, UNFIRED dimension slug.
 
-    Returns
-    -------
-    int
-        A valid index ``i`` such that ``0 <= i < len(follow_ups)`` and
-        ``i not in probes_used``.
-    None
-        When no unused probe remains (all used, or *follow_ups* is empty).
-
-    This function NEVER raises.
+    Returns a slug that exists in follow_ups and is not in `fired`. Returns None when
+    every dimension is fired OR the per-thread probe cap is reached (→ caller advances).
+    Never raises.
     """
     try:
         if not follow_ups:
             return None
-
-        # Build the ordered list of available (unused) indices.
-        # Use a set for O(1) membership test to guard against a large probes_used.
-        used_set: set[int] = set()
-        try:
-            used_set = set(probes_used)
-        except Exception:  # pragma: no cover
-            pass
-
-        available = [i for i in range(len(follow_ups)) if i not in used_set]
-
+        fired_set: set[str] = set(fired or [])
+        # Hard cap: total probes on this thread is bounded regardless of remaining dims.
+        if len(fired_set) >= cap:
+            return None
+        slugs = [d.dimension for d in follow_ups]
+        available = [s for s in slugs if s not in fired_set]
         if not available:
             return None
-
-        # Check whether the proposed index is already valid and unused.
-        if (
-            probe_index is not None
-            and 0 <= probe_index < len(follow_ups)
-            and probe_index not in used_set
-        ):
-            return probe_index
-
-        # Coerce to the first available unused probe.
+        if probe_dimension in available:
+            return probe_dimension
         return available[0]
-
-    except Exception:  # pragma: no cover
+    except Exception:  # pragma: no cover — defensive
         return None
