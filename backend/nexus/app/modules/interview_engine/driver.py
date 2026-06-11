@@ -94,6 +94,18 @@ _NON_ANSWER_ACTS: frozenset[DirectiveAct] = frozenset({
     DirectiveAct.answer_meta,
 })
 
+# Acts that DELIVER the floor question — only these may update the floor pointer.
+# (clarify/hold/reassure/confirm/answer_meta/redirect/close must NOT clobber the floor,
+#  or a later `repeat`/`clarify` would replay a non-question line. E2 invariant.)
+_QUESTION_ACTS: frozenset[DirectiveAct] = frozenset({
+    DirectiveAct.ask, DirectiveAct.probe, DirectiveAct.repeat,
+})
+
+
+def _is_question_act(act: DirectiveAct) -> bool:
+    return act in _QUESTION_ACTS
+
+
 # How many recent agent openers to feed back to the mouth (de-duplication window)
 _RECENT_OPENERS_WINDOW: int = 5
 
@@ -641,8 +653,8 @@ class SessionDriver:
         if capturing.captured:
             real_line_text = capturing.captured[-1]
             self._add_to_recent_openers(real_line_text)
-            if decision.directive.act in (DirectiveAct.ask, DirectiveAct.probe):
-                self._last_agent_line = real_line_text
+            if _is_question_act(decision.directive.act):
+                self._last_agent_line = real_line_text  # floor = latest question-bearing line
 
         # P2: track whether the floor question's DELIVERY was cut off. Only the
         # question-delivering acts (ask/probe/repeat) update it — they speak THE floor
