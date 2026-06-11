@@ -43,6 +43,7 @@ from app.modules.question_bank.errors import (
 )
 from app.modules.question_bank.schemas import (
     CreateQuestionBody,
+    FollowUpDimension,
     GeneratedQuestion,
     QuestionRubric,
     UpdateQuestionBody,
@@ -217,6 +218,17 @@ def _valid_rubric() -> QuestionRubric:
     )
 
 
+def _follow_up(seed_probe: str, dimension: str | None = None) -> FollowUpDimension:
+    """Build a minimal valid FollowUpDimension for use in test fixtures."""
+    slug = (dimension or seed_probe.lower().replace(" ", "_").replace("?", "")[:40])
+    return FollowUpDimension(
+        dimension=slug,
+        intent=seed_probe,
+        seed_probe=seed_probe,
+        listen_for=["specifics"],
+    )
+
+
 def _make_generated_question(
     *,
     position: int = 0,
@@ -235,7 +247,7 @@ def _make_generated_question(
         signal_values=_signal_values,
         estimated_minutes=estimated_minutes,
         is_mandatory=is_mandatory,
-        follow_ups=["What tools did you use?"],
+        follow_ups=[_follow_up("What tools did you use?", "tools_used")],
         positive_evidence=[
             "Names specific tools",
             "Describes hypothesis-verify",
@@ -1314,7 +1326,8 @@ async def test_persist_one_question_appends_at_next_position(bypass_db, seeded_b
     q = GeneratedQuestion(
         position=0, text="Tell me about a deploy that went wrong.",
         primary_signal="incident_response", signal_values=["incident_response"],
-        estimated_minutes=2.0, is_mandatory=True, follow_ups=["What did you change after?"],
+        estimated_minutes=2.0, is_mandatory=True,
+        follow_ups=[_follow_up("What did you change after?", "change_after")],
         positive_evidence=["names the failure", "describes the fix", "owns the mistake"],
         red_flags=["blames others", "no concrete detail"],
         rubric=QuestionRubric(excellent="a" * 20, meets_bar="b" * 20, below_bar="c" * 20),
@@ -1365,7 +1378,7 @@ def _stream_question(
         signal_values=signal_values,
         estimated_minutes=4.0,
         is_mandatory=True,
-        follow_ups=["What specifically did you own?"],
+        follow_ups=[_follow_up("What specifically did you own?", "ownership_scope")],
         positive_evidence=[
             "Names specific tooling clearly",
             "Describes production usage in detail",

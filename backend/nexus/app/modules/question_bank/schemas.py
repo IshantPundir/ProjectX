@@ -49,6 +49,21 @@ class QuestionRubric(BaseModel):
     )
 
 
+class FollowUpDimension(BaseModel):
+    """A governed probe dimension the live engine composes within (generation copy)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    dimension: str = Field(..., min_length=1,
+                           description="Stable slug; distinct across the whole bank.")
+    intent: str = Field(..., min_length=1,
+                        description="What this probe verifies — distinct from the lead and other dimensions.")
+    seed_probe: str = Field(..., min_length=1, max_length=240,
+                            description="A short single-ask spoken seed probe.")
+    listen_for: list[str] = Field(..., min_length=1, max_length=4,
+                                  description="Observable specifics a strong answer to THIS dimension names.")
+
+
 class GeneratedQuestion(BaseModel):
     """One question as returned by the LLM inside a StageQuestionBankOutput."""
 
@@ -79,7 +94,7 @@ class GeneratedQuestion(BaseModel):
     )
     estimated_minutes: float = Field(..., gt=0, le=15)
     is_mandatory: bool
-    follow_ups: list[str] = Field(..., min_length=0, max_length=3)
+    follow_ups: list[FollowUpDimension] = Field(..., min_length=0, max_length=3)
     positive_evidence: list[str] = Field(..., min_length=3, max_length=5)
     red_flags: list[str] = Field(..., min_length=2, max_length=3)
     rubric: QuestionRubric
@@ -157,7 +172,7 @@ class CreateQuestionBody(BaseModel):
     signal_values: list[str] = Field(..., min_length=1, max_length=3)
     estimated_minutes: float = Field(..., gt=0, le=15)
     is_mandatory: bool = False
-    follow_ups: list[str] = Field(default_factory=list, max_length=3)
+    follow_ups: list[FollowUpDimension] = Field(default_factory=list, max_length=3)
     positive_evidence: list[str] = Field(default_factory=list, max_length=5)
     red_flags: list[str] = Field(default_factory=list, max_length=3)
     rubric: QuestionRubric
@@ -174,7 +189,7 @@ class UpdateQuestionBody(BaseModel):
     signal_values: list[str] | None = Field(default=None, min_length=1, max_length=3)
     estimated_minutes: float | None = Field(default=None, gt=0, le=15)
     is_mandatory: bool | None = None
-    follow_ups: list[str] | None = Field(default=None, max_length=3)
+    follow_ups: list[FollowUpDimension] | None = Field(default=None, max_length=3)
     positive_evidence: list[str] | None = Field(default=None, max_length=5)
     red_flags: list[str] | None = Field(default=None, max_length=3)
     rubric: QuestionRubric | None = None
@@ -241,7 +256,7 @@ class QuestionResponse(BaseModel):
     signal_values: list[str]
     estimated_minutes: float
     is_mandatory: bool
-    follow_ups: list[str]
+    follow_ups: list[FollowUpDimension]
     positive_evidence: list[str]
     red_flags: list[str]
     rubric: QuestionRubric
