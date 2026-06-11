@@ -1,4 +1,6 @@
-"""Pure transform helpers for the 0055 follow-ups backfill (importable + unit-tested)."""
+"""Pure transform helpers for the follow-ups governed-dimensions backfill (migration 0055).
+Dependency-free + unit-tested; lives outside app.modules to stay importable from Alembic
+without triggering the question_bank package import cycle."""
 from __future__ import annotations
 
 import re
@@ -36,7 +38,11 @@ def upgrade_value(follow_ups: object) -> list[dict]:
 
 
 def downgrade_value(follow_ups: object) -> list[str]:
-    """object shape -> list[str] (seed_probe). Idempotent on plain strings."""
+    """object shape -> list[str] (seed_probe only). Idempotent on plain strings.
+
+    Note: downgrade is LOSSY — only ``seed_probe`` survives. A subsequent
+    re-upgrade will not restore the original ``intent`` or ``listen_for`` values.
+    """
     if not isinstance(follow_ups, list):
         return []
     if not _is_object_shape(follow_ups):

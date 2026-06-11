@@ -1,4 +1,4 @@
-from app.modules.question_bank import followups_migration as bf
+from app.migrations_support import followups_backfill as bf
 
 
 def test_slug_basic():

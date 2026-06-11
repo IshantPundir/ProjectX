@@ -6,27 +6,19 @@ Create Date: 2026-06-11
 """
 from __future__ import annotations
 
-import importlib.util
 import json
-import os
 
 import sqlalchemy as sa
 from alembic import op
 
-# Load followups_migration directly by file path to avoid triggering
-# the question_bank package __init__.py (which has a circular import
-# chain at migration-load time when the full app is not yet initialised).
-_HERE = os.path.dirname(__file__)
-_HELPER_PATH = os.path.normpath(
-    os.path.join(_HERE, "../../app/modules/question_bank/followups_migration.py")
-)
-_spec = importlib.util.spec_from_file_location(
-    "followups_migration", _HELPER_PATH
-)
-_mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
-_spec.loader.exec_module(_mod)  # type: ignore[union-attr]
-upgrade_value = _mod.upgrade_value
-downgrade_value = _mod.downgrade_value
+# Lazy import: env.py inserts the project root onto sys.path before running
+# upgrade/downgrade, but `alembic heads` (revision scan) never runs env.py so
+# a top-level `from app...` would raise ModuleNotFoundError during the scan.
+# Moving the import here keeps it normal (no importlib) while staying scan-safe.
+def _get_helpers():
+    from app.migrations_support.followups_backfill import downgrade_value, upgrade_value  # noqa: PLC0415
+    return upgrade_value, downgrade_value
+
 
 revision = "0055"
 down_revision = "0054_session_evidence"
@@ -47,8 +39,10 @@ def _rewrite(transform) -> None:
 
 
 def upgrade() -> None:
+    upgrade_value, _ = _get_helpers()
     _rewrite(upgrade_value)
 
 
 def downgrade() -> None:
+    _, downgrade_value = _get_helpers()
     _rewrite(downgrade_value)
