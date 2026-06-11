@@ -65,8 +65,10 @@ from app.modules.interview_runtime.schemas import (
 
 _EXCELLENT_TEXT = "Excellent_rubric_string_that_is_long_enough_for_scrub"
 _MEETS_BAR_TEXT = "Meets_bar_rubric_text_for_test"
-_FOLLOW_UP_0 = "Can you give a concrete example of that system?"
-_FOLLOW_UP_1 = "How did you measure the impact?"
+_FOLLOW_UP_DIM_0 = {"dimension": "concrete_example", "intent": "elicit specifics", "seed_probe": "Can you give a concrete example of that system?", "listen_for": []}
+_FOLLOW_UP_DIM_1 = {"dimension": "measure_impact", "intent": "verify measurable outcome", "seed_probe": "How did you measure the impact?", "listen_for": []}
+_FOLLOW_UP_SEED_0 = "Can you give a concrete example of that system?"
+_FOLLOW_UP_SEED_1 = "How did you measure the impact?"
 
 _Q1_TEXT = "Tell me about your distributed systems experience."
 _Q2_TEXT = "Describe an incident you led and resolved."
@@ -89,7 +91,7 @@ def _make_question(
         signal_values=[signal],
         estimated_minutes=5.0,
         is_mandatory=is_mandatory,
-        follow_ups=[_FOLLOW_UP_0, _FOLLOW_UP_1],
+        follow_ups=[_FOLLOW_UP_DIM_0, _FOLLOW_UP_DIM_1],
         positive_evidence=["positive A", "positive B", "positive C"],
         red_flags=["red flag 1", "red flag 2"],
         rubric=QuestionRubric(
@@ -153,8 +155,9 @@ def _make_session_config() -> SessionConfig:
     )
 
 
-def _make_active_rubric(qid: str = "q-001") -> ActiveQuestionRubric:
+def _make_active_rubric(qid: str = "q-001", fired_dimensions: list[str] | None = None) -> ActiveQuestionRubric:
     """Build an ActiveQuestionRubric matching q-001 in the fixture config."""
+    from app.modules.interview_engine.contracts import FollowUpDimension
     return ActiveQuestionRubric(
         question_id=qid,
         text=_Q1_TEXT,
@@ -164,8 +167,11 @@ def _make_active_rubric(qid: str = "q-001") -> ActiveQuestionRubric:
         positive_evidence=["positive A", "positive B", "positive C"],
         red_flags=["red flag 1", "red flag 2"],
         evaluation_hint="Evaluate based on concrete examples.",
-        follow_ups=[_FOLLOW_UP_0, _FOLLOW_UP_1],
-        probes_used=[],
+        follow_ups=[
+            FollowUpDimension(dimension="concrete_example", intent="elicit specifics", seed_probe=_FOLLOW_UP_SEED_0, listen_for=[]),
+            FollowUpDimension(dimension="measure_impact", intent="verify measurable outcome", seed_probe=_FOLLOW_UP_SEED_1, listen_for=[]),
+        ],
+        fired_dimensions=fired_dimensions or [],
     )
 
 
@@ -274,16 +280,16 @@ def _fake_llm_seq(outputs: list[BrainTurnOutput]):
 
 @pytest.mark.asyncio
 async def test_probe_falls_back_to_verbatim_followup_when_not_composed():
-    """move=probe, probe_index=0, composed_say=None → graceful fallback to follow_ups[0].
+    """move=probe, probe_dimension="concrete_example", composed_say=None → seed_probe fallback.
 
-    Composition is primary; the recruiter's verbatim follow_up is the safety net when
+    Composition is primary; the dimension's seed_probe is the safety net when
     the brain does not compose a targeted probe.
     """
     canned = BrainTurnOutput(
         reasoning="Good answer, but needs specifics.",
         observations=[],
         move=BrainMove.probe,
-        probe_index=0,
+        probe_dimension="concrete_example",
         preferred_next_signal=None,
         composed_say=None,
     )
@@ -294,22 +300,22 @@ async def test_probe_falls_back_to_verbatim_followup_when_not_composed():
     decision = await cp.decide(turn, asked_ids={"q-001"}, time_remaining_s=600.0)
 
     assert decision.directive.act == DirectiveAct.probe
-    assert decision.directive.say == _FOLLOW_UP_0
+    assert decision.directive.say == _FOLLOW_UP_SEED_0
     assert decision.directive.is_terminal is False
-    # The adapted template area is tracked for anti-grind / coverage.
-    assert decision.probe_index == 0
+    # The served dimension slug is tracked for fire-once / coverage.
+    assert decision.probe_dimension == "concrete_example"
 
 
 @pytest.mark.asyncio
 async def test_probe_uses_composed_targeted_text_when_provided():
-    """move=probe with composed_say → directive.say is the COMPOSED probe (not verbatim),
-    and the adapted template area (probe_index) is carried on the decision."""
+    """move=probe with composed_say → directive.say is the COMPOSED probe (not seed_probe),
+    and the served dimension slug is carried on the decision."""
     composed = "You said it was one startup — was that the whole five years, or split across a few?"
     canned = BrainTurnOutput(
         reasoning="Adapt the tenure follow-up to what they actually said; stay in experience scope.",
         observations=[],
         move=BrainMove.probe,
-        probe_index=1,
+        probe_dimension="measure_impact",
         preferred_next_signal=None,
         composed_say=composed,
     )
@@ -320,9 +326,9 @@ async def test_probe_uses_composed_targeted_text_when_provided():
     decision = await cp.decide(turn, asked_ids={"q-001"}, time_remaining_s=600.0)
 
     assert decision.directive.act == DirectiveAct.probe
-    assert decision.directive.say == composed  # composed text, NOT _FOLLOW_UP_1
-    assert decision.directive.say != _FOLLOW_UP_1
-    assert decision.probe_index == 1
+    assert decision.directive.say == composed  # composed text, NOT seed_probe
+    assert decision.directive.say != _FOLLOW_UP_SEED_1
+    assert decision.probe_dimension == "measure_impact"
     assert decision.directive.is_terminal is False
 
 
@@ -338,7 +344,7 @@ async def test_composed_probe_is_leak_scrubbed():
         reasoning="Composing a probe but accidentally echoing the rubric.",
         observations=[],
         move=BrainMove.probe,
-        probe_index=0,
+        probe_dimension="concrete_example",
         preferred_next_signal=None,
         composed_say=f"Well, {_EXCELLENT_TEXT} — can you speak to that?",
     )
@@ -364,7 +370,7 @@ async def test_ask_returns_resolver_next_question_text():
         reasoning="Good answer, advance.",
         observations=[],
         move=BrainMove.ask,
-        probe_index=None,
+        probe_dimension=None,
         preferred_next_signal=None,
         composed_say=None,
     )
@@ -398,7 +404,7 @@ async def test_coverage_projection_updated():
         reasoning="Some coverage.",
         observations=[obs],
         move=BrainMove.probe,
-        probe_index=0,
+        probe_dimension="concrete_example",
         preferred_next_signal=None,
         composed_say=None,
     )
@@ -431,7 +437,7 @@ async def test_clarify_with_leaked_rubric_gets_scrubbed():
         reasoning="Candidate misunderstood.",
         observations=[],
         move=BrainMove.clarify,
-        probe_index=None,
+        probe_dimension=None,
         preferred_next_signal=None,
         composed_say=leaky_say,
     )
@@ -459,7 +465,7 @@ async def test_knockout_blocks_premature_close():
         reasoning="Looks done to me.",
         observations=[],
         move=BrainMove.close,
-        probe_index=None,
+        probe_dimension=None,
         preferred_next_signal=None,
         composed_say=None,
     )
@@ -496,7 +502,7 @@ async def test_candidate_end_request_bypasses_knockout_gate():
         reasoning="Candidate asked to end the interview now.",
         observations=[],
         move=BrainMove.close,
-        probe_index=None,
+        probe_dimension=None,
         preferred_next_signal=None,
         composed_say=None,
         end_requested=True,
@@ -560,7 +566,7 @@ async def test_knockout_close_forces_reflect_back_before_recording():
         reasoning="Candidate disclaimed the mandatory skill — but no reflect-back yet.",
         observations=[],
         move=BrainMove.close,
-        probe_index=None,
+        probe_dimension=None,
         preferred_next_signal=None,
         composed_say=None,
         knockout_confirmed=True,
@@ -585,7 +591,7 @@ async def test_brain_confirmed_knockout_closes_after_reflect_back():
         reasoning="Reflecting the mandatory-skill absence back to the candidate.",
         observations=[],
         move=BrainMove.confirm,
-        probe_index=None,
+        probe_dimension=None,
         preferred_next_signal=None,
         composed_say="So you haven't worked with that directly yet — is that right?",
         knockout_confirmed=False,
@@ -594,7 +600,7 @@ async def test_brain_confirmed_knockout_closes_after_reflect_back():
         reasoning="Candidate confirmed the absence — close and record the knockout.",
         observations=[],
         move=BrainMove.close,
-        probe_index=None,
+        probe_dimension=None,
         preferred_next_signal=None,
         composed_say=None,
         knockout_confirmed=True,
@@ -623,7 +629,7 @@ async def test_knockout_reflected_hint_injected_on_turn_after_reflect():
         reasoning="Reflecting the Workato absence back.",
         observations=[],
         move=BrainMove.confirm,
-        probe_index=None,
+        probe_dimension=None,
         preferred_next_signal=None,
         composed_say="So you haven't worked with that directly yet — is that right?",
         knockout_confirmed=False,
@@ -632,7 +638,7 @@ async def test_knockout_reflected_hint_injected_on_turn_after_reflect():
         reasoning="Second turn.",
         observations=[],
         move=BrainMove.confirm,
-        probe_index=None,
+        probe_dimension=None,
         preferred_next_signal=None,
         composed_say="anything",
         knockout_confirmed=False,
@@ -668,7 +674,7 @@ async def test_brain_knockout_confirmed_without_pending_signal_does_not_fabricat
         reasoning="Brain claims a knockout but the engine flagged none.",
         observations=[],
         move=BrainMove.close,
-        probe_index=None,
+        probe_dimension=None,
         preferred_next_signal=None,
         composed_say=None,
         knockout_confirmed=True,
@@ -713,7 +719,7 @@ async def test_hold_returns_nonterminal_directive():
         reasoning="Candidate said 'let me think about it' — they need a moment.",
         observations=[],
         move=BrainMove.hold,
-        probe_index=None,
+        probe_dimension=None,
         preferred_next_signal=None,
         composed_say="Take your time, no rush.",
     )
@@ -735,7 +741,7 @@ async def test_confirm_returns_nonterminal_directive():
         reasoning="Heard 'Vocatto' — likely 'Workato' misheard; reflect back before grading.",
         observations=[],
         move=BrainMove.confirm,
-        probe_index=None,
+        probe_dimension=None,
         preferred_next_signal=None,
         composed_say="Just to check — did you say Workato?",
     )
@@ -756,29 +762,18 @@ async def test_confirm_returns_nonterminal_directive():
 
 @pytest.mark.asyncio
 async def test_probe_exhausted_falls_back_to_ask():
-    """All follow_ups used → probe with probe_index falls back to ask."""
+    """All dimensions fired → probe falls back to ask."""
     canned = BrainTurnOutput(
         reasoning="Want to probe but no probes left.",
         observations=[],
         move=BrainMove.probe,
-        probe_index=0,  # brain wants probe_index=0 but both probes are used
+        probe_dimension="concrete_example",  # brain wants this but both dims are fired
         preferred_next_signal=None,
         composed_say=None,
     )
     llm = _fake_llm(canned)
-    # Make an active rubric with probes_used = [0, 1] (all 2 probes exhausted)
-    exhausted_rubric = ActiveQuestionRubric(
-        question_id="q-001",
-        text=_Q1_TEXT,
-        excellent=_EXCELLENT_TEXT,
-        meets_bar=_MEETS_BAR_TEXT,
-        below_bar="below_bar_default",
-        positive_evidence=["positive A", "positive B", "positive C"],
-        red_flags=["red flag 1", "red flag 2"],
-        evaluation_hint="Evaluate based on concrete examples.",
-        follow_ups=[_FOLLOW_UP_0, _FOLLOW_UP_1],
-        probes_used=[0, 1],  # both probes used
-    )
+    # Make an active rubric with all dimensions fired
+    exhausted_rubric = _make_active_rubric(fired_dimensions=["concrete_example", "measure_impact"])
     cp = _make_control_plane(llm_call=llm)
     turn = _make_turn_input(active_rubric=exhausted_rubric)
 
@@ -801,7 +796,7 @@ async def test_close_say_none_and_terminal():
         reasoning="All done.",
         observations=[],
         move=BrainMove.close,
-        probe_index=None,
+        probe_dimension=None,
         preferred_next_signal=None,
         composed_say=None,
     )
@@ -833,7 +828,7 @@ async def test_llm_mocked_and_called_with_messages():
         reasoning="Simple probe.",
         observations=[],
         move=BrainMove.probe,
-        probe_index=0,
+        probe_dimension="concrete_example",
         preferred_next_signal=None,
         composed_say=None,
     )

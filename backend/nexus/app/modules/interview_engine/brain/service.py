@@ -38,7 +38,7 @@ from app.modules.interview_engine.brain.input_builder import (
 )
 from app.modules.interview_engine.brain.policy import (
     KnockoutTracker,
-    coerce_probe_index,
+    coerce_probe_dimension,
     gate_knockout,
     scrub_composed_say,
 )
@@ -203,15 +203,17 @@ class ControlPlane:
             time_remaining_s=time_remaining_s,
         )
 
-        # When this turn is a probe, record which bank follow_up TEMPLATE area was
-        # adapted (coerced to a valid, unused index) so the driver tracks probes_used
-        # — composed probe text no longer string-matches a verbatim follow_up.
-        probe_index_used: int | None = None
+        # When this turn is a probe, record which dimension was served (coerced to a
+        # valid, UNFIRED slug under the cap) so the driver's fired-dimension ledger
+        # advances and the same dimension is never re-fired.
+        probe_dimension_used: str | None = None
         if directive.act == DirectiveAct.probe:
-            probe_index_used = coerce_probe_index(
-                output.probe_index,
+            from app.ai.config import ai_config
+            probe_dimension_used = coerce_probe_dimension(
+                output.probe_dimension,
                 follow_ups=turn_input.active_question.follow_ups,
-                probes_used=turn_input.active_question.probes_used,
+                fired=turn_input.active_question.fired_dimensions,
+                cap=ai_config.engine_probe_cap_per_thread,
             )
 
         # Per-turn decision trace (F3 tuning observability). reasoning is the
@@ -221,7 +223,7 @@ class ControlPlane:
             llm_move=output.move.value,
             act=directive.act.value,
             is_terminal=directive.is_terminal,
-            probe_index=output.probe_index,
+            probe_dimension=output.probe_dimension,
             next_question_id=next_question_id,
             probe_composed=bool(directive.act == DirectiveAct.probe and output.composed_say),
             knockout_confirmed=output.knockout_confirmed,
@@ -237,7 +239,7 @@ class ControlPlane:
             reasoning=output.reasoning,
             is_terminal=directive.is_terminal,
             next_question_id=next_question_id,
-            probe_index=probe_index_used,
+            probe_dimension=probe_dimension_used,
         )
 
     # -----------------------------------------------------------------------
@@ -495,40 +497,35 @@ class ControlPlane:
         covered_signals: set[str],
         time_remaining_s: float,
     ) -> tuple[Directive, str | None]:
-        """Resolve a `probe` move → (composed-or-verbatim follow_up Directive, None).
+        """Resolve a `probe` move. The dimension gate decides probe-vs-advance.
 
-        The probe text is COMPOSED by the brain (`composed_say`): a natural, in-scope
-        adaptation of the bank follow_up template to what the candidate actually said.
-        It is leak-scrubbed on the way out (same gate as clarify). When the brain did
-        NOT compose a probe, we fall back to the recruiter's VERBATIM follow_up at the
-        coerced probe_index; when no probe template remains, we fall back to ask.
+        coerce_probe_dimension returns the served (valid, unfired) slug under the cap,
+        or None → fall back to `ask` (advance). The spoken text is the brain's composed
+        probe (leak-scrubbed); when not composed, the served dimension's seed_probe.
         """
-        composed = scrub_composed_say(output.composed_say, turn_input.active_question)
-        if composed:
-            return Directive(
-                act=DirectiveAct.probe,
-                say=composed,
-                tone=_ACT_TONE[DirectiveAct.probe],
-                spoken_setup=None,
-                is_terminal=False,
-            ), None
+        from app.ai.config import ai_config
 
-        # No composed probe → verbatim follow_up fallback (graceful, never silent-fail).
-        idx = coerce_probe_index(
-            output.probe_index,
+        served = coerce_probe_dimension(
+            output.probe_dimension,
             follow_ups=turn_input.active_question.follow_ups,
-            probes_used=turn_input.active_question.probes_used,
+            fired=turn_input.active_question.fired_dimensions,
+            cap=ai_config.engine_probe_cap_per_thread,
         )
-        if idx is None:
-            # No probe left → fall back to ask (which returns a tuple)
+        if served is None:
+            # Cap reached or all dimensions fired → advance.
             return self._resolve_ask(
-                output=output,
-                asked_ids=asked_ids,
-                covered_signals=covered_signals,
-                time_remaining_s=time_remaining_s,
+                output=output, asked_ids=asked_ids,
+                covered_signals=covered_signals, time_remaining_s=time_remaining_s,
             )
 
-        say = turn_input.active_question.follow_ups[idx]
+        composed = scrub_composed_say(output.composed_say, turn_input.active_question)
+        if composed:
+            say = composed
+        else:
+            # Seed fallback: the served dimension's pre-authored probe.
+            by_slug = {d.dimension: d.seed_probe for d in turn_input.active_question.follow_ups}
+            say = by_slug.get(served, "")
+
         return Directive(
             act=DirectiveAct.probe,
             say=say,
