@@ -662,7 +662,7 @@ class SessionDriver:
         # non-question act (hold/clarify/…) doesn't re-deliver, so an un-heard question
         # stays flagged until it is successfully re-delivered. (last_interrupted is set
         # by the interrupt-aware voice in agent.py; absent in tests → False.)
-        if decision.directive.act in (DirectiveAct.ask, DirectiveAct.probe, DirectiveAct.repeat):
+        if _is_question_act(decision.directive.act):
             self._floor_interrupted = bool(getattr(self._voice, "last_interrupted", False))
 
         # Anti-stall counter: a non-answer turn (clarify / repeat / redirect / hold /
