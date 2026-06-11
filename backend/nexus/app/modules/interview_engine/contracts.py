@@ -125,10 +125,10 @@ class BrainTurnOutput(BaseModel):
     composed_say: str | None = Field(
         default=None, max_length=400,
         description="Brain-composed safe text for probe/clarify/redirect/reassure/answer_meta. For `probe` "
-                    "it is the targeted follow-up — a natural, in-scope adaptation of the bank follow_up "
-                    "template at `probe_index` to what the candidate actually said. Leak-scrubbed before "
-                    "reaching the mouth. None for ask/repeat (verbatim bank text) — and for probe it falls "
-                    "back to the verbatim follow_up when not composed.",
+                    "it is the targeted follow-up — a natural, in-scope adaptation of the follow-up "
+                    "dimension named by `probe_dimension` (its intent/seed_probe) to what the candidate "
+                    "actually said. Leak-scrubbed before reaching the mouth. None for ask/repeat (verbatim "
+                    "bank text) — and for probe it falls back to the dimension's seed_probe when not composed.",
     )
     end_requested: bool = Field(
         default=False,
@@ -333,8 +333,9 @@ class DirectiveTone(StrEnum):
 class Directive(BaseModel):
     """The ONLY object that crosses brain → mouth for the REAL line. Speakable text + delivery
     metadata — NEVER a rubric. Derived by the engine from the BrainTurnOutput (move → act; the engine
-    resolves `say`: the resolver's next bank question for ask, the bank follow_up[probe_index] for
-    probe, or the leak-scrubbed composed_say for clarify/redirect/reassure/answer_meta)."""
+    resolves `say`: the resolver's next bank question for ask, the leak-scrubbed composed_say (or the
+    served dimension's seed_probe) for probe, or the leak-scrubbed composed_say for
+    clarify/redirect/reassure/answer_meta)."""
     act: DirectiveAct
     say: str | None = Field(
         default=None,
