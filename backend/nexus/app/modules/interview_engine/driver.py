@@ -285,7 +285,7 @@ class SessionDriver:
         self._recent_openers: list[str] = []
         self._turn_counter: int = 0
         self._active_q: QuestionConfig | None = None  # the question currently on the floor
-        self._probes_used: dict[str, list[int]] = {}   # question_id → list of probe indices fired
+        self._fired_dimensions: dict[str, list[str]] = {}   # question_id → fired dimension slugs
         self._thread_turn_counts: dict[str, int] = {}  # question_id → turns spent on its thread
         self._last_agent_line: str = ""                # for on_the_floor (last QUESTION asked)
         self._is_on_probe: bool = False                # whether the floor is a probe (not main Q)
@@ -450,7 +450,7 @@ class SessionDriver:
         # Advance to the first question
         self._active_q = self._q_by_id[nxt.question_id]
         self._asked_ids.add(nxt.question_id)
-        self._probes_used.setdefault(nxt.question_id, [])
+        self._fired_dimensions.setdefault(nxt.question_id, [])
         self._thread_turn_counts[nxt.question_id] = 0
         self._is_on_probe = False
 
@@ -549,7 +549,7 @@ class SessionDriver:
         # 2. Build brain_input
         aq_rubric = active_question_rubric(
             self._active_q,
-            probes_used=self._probes_used.get(q_id, []),
+            fired_dimensions=self._fired_dimensions.get(q_id, []),
         )
         brain_input = build_turn_input(
             turn_ref=turn_ref,
@@ -693,7 +693,7 @@ class SessionDriver:
 
             self._active_q = self._q_by_id[next_q_id]
             self._asked_ids.add(next_q_id)
-            self._probes_used.setdefault(next_q_id, [])
+            self._fired_dimensions.setdefault(next_q_id, [])
             self._thread_turn_counts[next_q_id] = 0
             self._is_on_probe = False
             _log.info(
@@ -704,16 +704,14 @@ class SessionDriver:
             )
 
         elif act == DirectiveAct.probe:
-            # Probe on current question — track which follow_up TEMPLATE area was
-            # adapted. The probe text is now COMPOSED (no longer a verbatim follow_up),
-            # so the brain reports the template index directly on the decision instead
-            # of us string-matching the spoken line.
+            # Probe on current question — record the served dimension slug so it is
+            # never fired again on this thread (fire-once ledger).
             self._is_on_probe = True
-            fired_idx = decision.probe_index
-            if fired_idx is not None and 0 <= fired_idx < len(self._active_q.follow_ups):
-                probes = self._probes_used.setdefault(q_id, [])
-                if fired_idx not in probes:
-                    probes.append(fired_idx)
+            served = decision.probe_dimension
+            if served:
+                fired = self._fired_dimensions.setdefault(q_id, [])
+                if served not in fired:
+                    fired.append(served)
         else:
             # clarify / redirect / reassure / answer_meta / repeat — stay on same Q, no probe
             self._is_on_probe = False
@@ -758,12 +756,24 @@ class SessionDriver:
             for m in self._config.signal_metadata
         ]
 
-        # 2. Compute provenance from the append-only notes
+        # 2. Compute provenance from the append-only notes.
+        # QuestionRecord.probes_used is index-based; map fired dimension slugs → indices.
+        probes_used_idx: dict[str, list[int]] = {}
+        for rq in self._resolver_questions:
+            cfg = self._q_by_id.get(rq.question_id)
+            if cfg is None:
+                continue
+            slug_to_idx = {d.dimension: i for i, d in enumerate(cfg.follow_ups)}
+            probes_used_idx[rq.question_id] = [
+                slug_to_idx[s]
+                for s in self._fired_dimensions.get(rq.question_id, [])
+                if s in slug_to_idx
+            ]
         question_records_for_prov = build_question_records(
             questions=self._resolver_questions,
             asked_ids=self._asked_ids,
             closures=self._closures,
-            probes_used=self._probes_used,
+            probes_used=probes_used_idx,
             probes_available={
                 q.question_id: len(self._q_by_id[q.question_id].follow_ups)
                 for q in self._resolver_questions

@@ -47,6 +47,7 @@ from app.modules.interview_runtime.evidence import (
 from app.modules.interview_runtime.schemas import (
     CandidateContext,
     CompanyContext,
+    FollowUpDimension,
     QuestionConfig,
     QuestionRubric,
     SessionConfig,
@@ -77,8 +78,23 @@ def _aturn(text: str, *, suppress_bridge: bool = False) -> AssembledTurn:
 _Q1_TEXT = "Tell me about your distributed systems experience."
 _Q2_TEXT = "Describe an incident you led and resolved."
 
+# Follow-up text strings (used in BrainDecision.directive.say)
 _FOLLOW_UP_0 = "Can you give a concrete example?"
 _FOLLOW_UP_1 = "How did you measure the impact?"
+
+# FollowUpDimension objects (used in QuestionConfig.follow_ups)
+_FOLLOW_UP_DIM_0 = FollowUpDimension(
+    dimension="concrete_example",
+    intent="Probe for a concrete example from the candidate",
+    seed_probe=_FOLLOW_UP_0,
+    listen_for=["specific", "example", "instance"],
+)
+_FOLLOW_UP_DIM_1 = FollowUpDimension(
+    dimension="measure_impact",
+    intent="Probe how the candidate measured impact",
+    seed_probe=_FOLLOW_UP_1,
+    listen_for=["metrics", "measured", "impact"],
+)
 
 
 def _make_question(
@@ -96,7 +112,7 @@ def _make_question(
         signal_values=[signal],
         estimated_minutes=5.0,
         is_mandatory=is_mandatory,
-        follow_ups=[_FOLLOW_UP_0, _FOLLOW_UP_1],
+        follow_ups=[_FOLLOW_UP_DIM_0, _FOLLOW_UP_DIM_1],
         positive_evidence=["positive A", "positive B", "positive C"],
         red_flags=["red flag 1", "red flag 2"],
         rubric=QuestionRubric(
@@ -683,7 +699,7 @@ def test_render_suffix_floor_interrupted_note() -> None:
                 excellent="Excellent answer rubric text here",
                 meets_bar="Meets the bar rubric text here",
                 below_bar="below", positive_evidence=[], red_flags=[],
-                evaluation_hint="hint", follow_ups=[], probes_used=[],
+                evaluation_hint="hint", follow_ups=[], fired_dimensions=[],
             ),
             on_the_floor="What is X?", floor_interrupted=flag,
             candidate_utterance="hi", thread_turn_count=1,
@@ -711,7 +727,7 @@ def test_render_suffix_knockout_reflected_note() -> None:
                 excellent="Excellent answer rubric text here",
                 meets_bar="Meets the bar rubric text here",
                 below_bar="below", positive_evidence=[], red_flags=[],
-                evaluation_hint="hint", follow_ups=[], probes_used=[],
+                evaluation_hint="hint", follow_ups=[], fired_dimensions=[],
             ),
             on_the_floor="What is X?",
             candidate_utterance="hi", thread_turn_count=1,
