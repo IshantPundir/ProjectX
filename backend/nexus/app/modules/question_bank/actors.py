@@ -320,28 +320,25 @@ def _create_question_iterable(**kwargs):
     return client.chat.completions.create_iterable(**call_kwargs)
 
 
-async def _generate_questions_for_kind(
+async def _stream_bank_questions(
     *,
     bank_id: UUID,
     tenant_id: UUID,
     job_id: UUID,
     stage_id: UUID,
     snapshot_id: UUID,
-    phase: str,                       # "behavioral" | "technical" (decision D3)
     eligible_signals: list[dict],
-    budget_minutes: int,
     prompt_name: str,
     start_position: int,
-    prior_phase_questions: list[dict],
     correlation_id: str = "",
 ) -> list[GeneratedQuestion]:
-    """Stream ONE phase: build the prompt in a SHORT read session (capture primitives,
+    """Stream the bank: build the prompt in a SHORT read session (capture primitives,
     then CLOSE it), then stream + persist + publish BANK_QUESTION_ADDED per question.
 
     Returns the persisted ``GeneratedQuestion`` objects (used by the orchestrator for
-    behavioral→technical chaining and counting).
+    counting).
 
-    Decision D6 — NO session is held across the LLM stream:
+    NO session is held across the LLM stream:
       1. A short read session loads bank/stage/instance/job/snapshot, builds the
          system + user messages to STRINGS, and captures the snapshot signals (FULL,
          for validation), allowed_types, and stage_difficulty as PRIMITIVES. It then
@@ -402,8 +399,6 @@ async def _generate_questions_for_kind(
                 stage=stage,
                 pipeline_stages=ctx.pipeline_stages,
                 prior_stages_questions=ctx.prior_stages_questions,
-                prior_phase_questions=prior_phase_questions,
-                budget_minutes=budget_minutes,
             )
         finally:
             snapshot.signals = original_signals
@@ -420,7 +415,6 @@ async def _generate_questions_for_kind(
         "tenant_id": str(tenant_id),
         "job_posting_id": str(job_id),
         "prompt_version": ai_config.question_bank_prompt_version,
-        "question_phase": phase,
     }
 
     logger.info(
@@ -428,17 +422,15 @@ async def _generate_questions_for_kind(
         bank_id=str(bank_id),
         stage_id=str(stage_id),
         stage_type=stage_type,
-        phase=phase,
         model=ai_config.question_bank_model,
         reasoning_effort=ai_config.question_bank_effort,
         system_prompt_chars=len(system_prompt),
         user_message_chars=len(user_message),
-        budget_minutes=budget_minutes,
     )
 
     persisted: list[GeneratedQuestion] = []
     position = start_position
-    effective_corr = correlation_id or f"actor-stream-{bank_id}-{phase}"
+    effective_corr = correlation_id or f"actor-stream-{bank_id}"
     call_started_at = time.monotonic()
 
     with _tracer.start_as_current_span("openai.chat.completions.create_iterable"):
@@ -452,7 +444,6 @@ async def _generate_questions_for_kind(
             job_posting_id=str(job_id),
             model=ai_config.question_bank_model,
             reasoning_effort=ai_config.question_bank_effort,
-            question_kind=phase,
         )
         try:
             async for q in _create_question_iterable(
@@ -462,7 +453,6 @@ async def _generate_questions_for_kind(
                     logger.warning(
                         "question_bank.stream.ceiling_hit",
                         bank_id=str(bank_id),
-                        phase=phase,
                         ceiling=ai_config.question_bank_max_questions,
                     )
                     break
@@ -481,7 +471,6 @@ async def _generate_questions_for_kind(
                     logger.warning(
                         "question_bank.stream.question_skipped",
                         bank_id=str(bank_id),
-                        phase=phase,
                         reason=type(skip_exc).__name__,
                     )
                     continue
@@ -514,7 +503,6 @@ async def _generate_questions_for_kind(
                         "job_id": str(job_id),
                         "bank_id": str(bank_id),
                         "stage_id": str(stage_id),
-                        "phase": phase,
                         "source": "actor",
                     },
                     correlation_id=effective_corr,
@@ -529,7 +517,6 @@ async def _generate_questions_for_kind(
                 "question_bank.stream.failed",
                 bank_id=str(bank_id),
                 stage_id=str(stage_id),
-                phase=phase,
                 duration_sec=round(time.monotonic() - call_started_at, 2),
                 error_type=type(llm_exc).__name__,
                 error_message=str(llm_exc)[:500],
@@ -542,7 +529,6 @@ async def _generate_questions_for_kind(
         "question_bank.stream.complete",
         bank_id=str(bank_id),
         stage_id=str(stage_id),
-        phase=phase,
         duration_sec=round(time.monotonic() - call_started_at, 2),
         question_count=len(persisted),
     )
