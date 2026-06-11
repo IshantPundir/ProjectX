@@ -218,6 +218,9 @@ class Settings(BaseSettings):
     # call per bank generation; result cached on stage_question_banks.extracted_keyterms).
     # See docs/superpowers/specs/2026-05-19-deepgram-keyterm-migration-design.md.
     openai_question_bank_keyterm_model: str = "gpt-5.4-nano-2026-03-17"
+    # Hard runaway-stop on streamed bank generation (NOT a time budget — a safety
+    # cap on questions emitted per generation call). Config-driven, never hardcoded.
+    openai_question_bank_max_questions: int = 12
     # Bank-gen prompts: spoken-question rewrite lives in prompts/v2 (engine-v2 M2).
     question_bank_prompt_version: str = "v2"
 

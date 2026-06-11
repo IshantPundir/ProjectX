@@ -79,6 +79,10 @@ class AIConfig:
         return self._settings.openai_question_bank_keyterm_model
 
     @property
+    def question_bank_max_questions(self) -> int:
+        return self._settings.openai_question_bank_max_questions
+
+    @property
     def question_bank_prompt_version(self) -> str:
         return self._settings.question_bank_prompt_version
 

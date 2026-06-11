@@ -83,17 +83,13 @@ _bank_prompt_loader = PromptLoader(version=ai_config.question_bank_prompt_versio
 # ---------------------------------------------------------------------------
 
 # Behavioral-call budget guidance (minutes). SOFT guidance only — decision D2 made
-# the budget soft (prompt guidance + a STREAM_QUESTION_CEILING runaway stop, NO hard
+# the budget soft (prompt guidance + an ai_config.question_bank_max_questions runaway stop, NO hard
 # cap). Sized to fit the knockout claim-checks PLUS at least one true STAR behavioral
 # question. The technical phase budget = stage duration − behavioral total, so this
 # value slightly favors behavioral breadth — intended; the recruiter raises stage
 # duration when they want more technical room. Could become per-stage configurable
 # later.
 BEHAVIORAL_BUDGET_MIN = 6
-
-# Inline runaway ceiling per streamed generation call (decision D2) — a safety stop,
-# NOT a time-budget cap. Only fires on a pathological runaway.
-STREAM_QUESTION_CEILING = 12
 
 # Generation phase ↔ allowed question_kind partition (decision D3). Each phase's
 # rewritten prompt may emit only its phase's kinds; wipe/count/section-grouping use
@@ -303,7 +299,7 @@ def _build_user_message(
     # Pre-computed eligibility context. The LLM does NOT do budget arithmetic;
     # eligibility-after-include_types is computed here so it doesn't have to
     # filter the snapshot itself. Budget is SOFT GUIDANCE (decision D2): the DB
-    # no longer hard-enforces a cap — a runaway STREAM_QUESTION_CEILING per call
+    # no longer hard-enforces a cap — a runaway ai_config.question_bank_max_questions per call
     # is the only hard stop, and an over-budget result logs a soft warning.
     include_types = stage.signal_filter.get("include_types", [])
     eligible_signals = [
@@ -512,12 +508,12 @@ async def _generate_questions_for_kind(
             async for q in _create_question_iterable(
                 messages=messages, metadata=metadata,
             ):
-                if len(persisted) >= STREAM_QUESTION_CEILING:
+                if len(persisted) >= ai_config.question_bank_max_questions:
                     logger.warning(
                         "question_bank.stream.ceiling_hit",
                         bank_id=str(bank_id),
                         phase=phase,
-                        ceiling=STREAM_QUESTION_CEILING,
+                        ceiling=ai_config.question_bank_max_questions,
                     )
                     break
 

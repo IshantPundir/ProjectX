@@ -1427,7 +1427,7 @@ async def test_validator_skips_budget_check_when_stage_omitted(db):
 # test_generate_one_bank_fails_after_repeated_budget_violations) were deleted in the
 # engine-v2 M2 streaming rewrite. Decision D2 made budget SOFT GUIDANCE — there is no
 # retry loop and no BudgetExceededError on the generation path; a runaway is bounded
-# only by STREAM_QUESTION_CEILING and over-budget logs a soft warning. The two direct
+# only by ai_config.question_bank_max_questions and over-budget logs a soft warning. The two direct
 # `_validate_budget_against_stage` raise tests above are KEPT (the function still
 # exists, just unused by the gen path).
 
@@ -1488,9 +1488,9 @@ async def test_generate_questions_for_kind_persists_and_publishes_each(
 
 @pytest.mark.asyncio
 async def test_generate_questions_for_kind_respects_ceiling(db, monkeypatch):
-    """The runaway ceiling (STREAM_QUESTION_CEILING) stops persistence even if the
+    """The runaway ceiling (ai_config.question_bank_max_questions) stops persistence even if the
     stream keeps yielding."""
-    from app.modules.question_bank.actors import STREAM_QUESTION_CEILING
+    from app.ai.config import ai_config
 
     tenant, user, unit = await _setup_tenant_user_unit(db)
     job, snapshot = await _make_job_with_signals(
@@ -1504,8 +1504,8 @@ async def test_generate_questions_for_kind_respects_ceiling(db, monkeypatch):
     await db.flush()
 
     _patch_session(monkeypatch, db)
-    # Yield twice the ceiling — only STREAM_QUESTION_CEILING should persist.
-    runaway = _stream_questions(["Python"]) * (STREAM_QUESTION_CEILING * 2)
+    # Yield twice the ceiling — only ai_config.question_bank_max_questions should persist.
+    runaway = _stream_questions(["Python"]) * (ai_config.question_bank_max_questions * 2)
     _patch_stream(monkeypatch, runaway)
 
     persisted = await _generate_questions_for_kind(
@@ -1521,7 +1521,7 @@ async def test_generate_questions_for_kind_respects_ceiling(db, monkeypatch):
         start_position=0,
         prior_phase_questions=[],
     )
-    assert len(persisted) == STREAM_QUESTION_CEILING
+    assert len(persisted) == ai_config.question_bank_max_questions
 
 
 @pytest.mark.asyncio
