@@ -43,21 +43,35 @@ Few-shot — study these carefully:
    strategy, and how you'd unit/integration test it. Be concrete about
    modules/classes."
 
-  GOOD (spoken):
+  GOOD (spoken — each follow-up is a dimension object with DISTINCT dimensions):
   text: "If you built a custom REST connector, how would you handle authentication?"
-  follow_ups: ["How would you deal with pagination?",
-               "What's your retry strategy on a 5xx?",
-               "How would you test it?"]
+  follow_ups: [
+    {dimension: "auth_handling", intent: "how they secure the connector's auth",
+     seed_probe: "How would you handle authentication?",
+     listen_for: ["token refresh", "secret storage", "least-privilege scope"]},
+    {dimension: "pagination_strategy", intent: "how they page large result sets",
+     seed_probe: "How would you deal with pagination?",
+     listen_for: ["cursor vs offset", "page-size limits"]},
+    {dimension: "retry_on_5xx", intent: "their backoff/idempotency approach",
+     seed_probe: "What's your retry strategy on a 5xx?",
+     listen_for: ["exponential backoff with jitter", "idempotency key"]}
+  ]
 
-  BAD (multi-part claim-stuffing — lets a bluffer answer only the easy part):
+  BAD (duplicate dimensions — "pagination" asked twice, same intent, breaks dedup):
   "How many years of experience do you have, and what Workato work have you
    personally done in production, including the connectors you owned and the
    teams you worked with?"
 
-  GOOD (experience_check):
+  GOOD (experience_check — clean lead + dimension-object follow-ups):
   text: "How many years have you worked hands-on with Workato in production?"
-  follow_ups: ["Which connectors or recipes did you own?",
-               "What team were you on?"]
+  follow_ups: [
+    {dimension: "connector_ownership", intent: "which connectors they personally owned",
+     seed_probe: "Which connectors or recipes did you own?",
+     listen_for: ["named a specific connector", "owned vs contributed", "production use"]},
+    {dimension: "team_context", intent: "the team size and org context",
+     seed_probe: "What team were you on?",
+     listen_for: ["team size", "direct vs managed work", "cross-functional scope"]}
+  ]
 
 The pattern is always the same: a clean, narrow lead, with the depth that USED
 to be crammed into the lead now laddered into follow_ups, one ask each.

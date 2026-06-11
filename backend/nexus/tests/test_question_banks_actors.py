@@ -1721,6 +1721,10 @@ async def test_regenerate_kind_actor_replaces_technical_preserves_behavioral(
     technical_user_msg = calls[0]["messages"][1]["content"]
     assert "ALREADY-GENERATED BEHAVIORAL QUESTIONS — DO NOT OVERLAP" in technical_user_msg
     assert original_behavioral_text in technical_user_msg
+    # The cross-phase "covered dimensions" block must surface the follow-up dimension
+    # from the behavioral question so the technical phase avoids re-authoring it.
+    assert "covered dimensions:" in technical_user_msg
+    assert "depth_probe" in technical_user_msg
 
     # A terminal BANK_STATUS_CHANGED 'reviewing' was published.
     status_events = [
