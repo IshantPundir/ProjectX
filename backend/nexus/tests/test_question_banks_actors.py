@@ -5,11 +5,11 @@ decorated actor wrapper). This avoids needing a real Dramatiq broker while
 still exercising the full prompt assembly + per-question streaming + per-question
 persist/publish + reconcile path.
 
-Streaming model (engine-v2 M2): the LLM seam is `_create_question_iterable`, which
-returns an async iterator of `GeneratedQuestion`. Tests monkeypatch it to return a
-scripted async iterator. `_generate_one_bank` and `_generate_questions_for_kind` open
-their OWN short sessions via `get_bypass_session()`; tests monkeypatch that to yield
-the shared test `db` (which is the pattern already used by the pipeline tests).
+Streaming model: the LLM seam is `_create_question_iterable`, which returns an async
+iterator of `GeneratedQuestion`. Tests monkeypatch it to return a scripted async
+iterator. `_generate_one_bank` and `_stream_bank_questions` open their OWN short
+sessions via `get_bypass_session()`; tests monkeypatch that to yield the shared test
+`db` (which is the pattern already used by the pipeline tests).
 """
 
 from __future__ import annotations
@@ -32,11 +32,13 @@ from app.modules.pipelines.models import (
 from app.modules.question_bank.actors import (
     _build_user_message,
     _generate_one_bank,
-    _generate_questions_for_kind,
-    _load_pipeline_context,
-    _load_prior_stages_questions,
+    _stream_bank_questions,
     _run_pipeline_generation,
     _run_stage_generation,
+)
+from app.modules.question_bank.context import (
+    _load_pipeline_stages as _load_pipeline_context,
+    _load_prior_stage_questions as _load_prior_stages_questions,
 )
 from app import pubsub
 from app.modules.question_bank.schemas import (
@@ -562,8 +564,8 @@ async def test_generate_pipeline_sequentially_sees_prior_stages(
     )
     assert bank2.status == "reviewing"
 
-    # Inspect the captured user message (technical phase — Python is non-knockout
-    # so the behavioral phase is skipped; there is exactly one stream call).
+    # Inspect the captured user message (one streamed generation call per bank).
+    assert len(calls) == 1
     user_msg = calls[-1]["messages"][1]["content"]
     # Stage 1 question should appear under the pipeline-context section
     assert "Walk me through your most recent Python production deploy" in user_msg
@@ -1146,9 +1148,8 @@ async def test_run_pipeline_generation_publishes_failed_status_on_stage_error(
 
     _patch_session(monkeypatch, db)
 
-    # Stage 1 (phone_screen, technical-only) streams cleanly; stage 2
-    # (ai_screening; "Python" is non-knockout so behavioral is skipped → technical
-    # only) raises mid-stream — a genuine generation failure.
+    # Stage 1 (phone_screen) streams cleanly; stage 2 (ai_screening) raises
+    # mid-stream — a genuine generation failure.
     call_count = {"n": 0}
     good = _stream_questions(["Python"])
 
@@ -1438,10 +1439,10 @@ async def test_validator_skips_budget_check_when_stage_omitted(db):
 
 
 @pytest.mark.asyncio
-async def test_generate_questions_for_kind_persists_and_publishes_each(
+async def test_stream_bank_questions_persists_and_publishes_each(
     db, monkeypatch, capture_publishes,
 ):
-    """`_generate_questions_for_kind` persists each streamed question AND emits one
+    """`_stream_bank_questions` persists each streamed question AND emits one
     `bank.question_added` per persisted question."""
     tenant, user, unit = await _setup_tenant_user_unit(db)
     job, snapshot = await _make_job_with_signals(
@@ -1458,18 +1459,15 @@ async def test_generate_questions_for_kind_persists_and_publishes_each(
     _patch_session(monkeypatch, db)
     _patch_stream(monkeypatch, _stream_questions(["Python", "Kafka"]))
 
-    persisted = await _generate_questions_for_kind(
+    persisted = await _stream_bank_questions(
         bank_id=bank.id,
         tenant_id=tenant.id,
         job_id=job.id,
         stage_id=stage.id,
         snapshot_id=snapshot.id,
-        phase="technical",
         eligible_signals=list(snapshot.signals),
-        budget_minutes=20,
         prompt_name="question_bank_ai_screening",
         start_position=0,
-        prior_phase_questions=[],
     )
 
     assert len(persisted) == 2
@@ -1481,13 +1479,13 @@ async def test_generate_questions_for_kind_persists_and_publishes_each(
     ]
     assert len(added) == 2
     for p in added:
-        assert p.payload["phase"] == "technical"
+        assert "phase" not in p.payload
         assert p.payload["bank_id"] == str(bank.id)
         assert p.payload["source"] == "actor"
 
 
 @pytest.mark.asyncio
-async def test_generate_questions_for_kind_respects_ceiling(db, monkeypatch):
+async def test_stream_bank_questions_respects_ceiling(db, monkeypatch):
     """The runaway ceiling (ai_config.question_bank_max_questions) stops persistence even if the
     stream keeps yielding."""
     from app.ai.config import ai_config
@@ -1508,29 +1506,25 @@ async def test_generate_questions_for_kind_respects_ceiling(db, monkeypatch):
     runaway = _stream_questions(["Python"]) * (ai_config.question_bank_max_questions * 2)
     _patch_stream(monkeypatch, runaway)
 
-    persisted = await _generate_questions_for_kind(
+    persisted = await _stream_bank_questions(
         bank_id=bank.id,
         tenant_id=tenant.id,
         job_id=job.id,
         stage_id=stage.id,
         snapshot_id=snapshot.id,
-        phase="technical",
         eligible_signals=list(snapshot.signals),
-        budget_minutes=20,
         prompt_name="question_bank_ai_screening",
         start_position=0,
-        prior_phase_questions=[],
     )
     assert len(persisted) == ai_config.question_bank_max_questions
 
 
 @pytest.mark.asyncio
-async def test_generate_one_bank_chains_behavioral_into_technical(db, monkeypatch):
-    """`_generate_one_bank` runs behavioral then technical; the behavioral questions
-    are chained into the technical phase's prompt; generation_status_by_kind uses the
-    new {behavioral,technical} labels; the bank transitions to reviewing."""
+async def test_generate_one_bank_single_streamed_call_all_kinds(db, monkeypatch):
+    """`_generate_one_bank` makes exactly ONE streamed generation call that emits all
+    question kinds in a single pass (no behavioral→technical chaining); persisted in
+    position order; the bank transitions to reviewing."""
     tenant, user, unit = await _setup_tenant_user_unit(db)
-    # A knockout experience signal is behavioral-eligible; a competency signal is not.
     job, snapshot = await _make_job_with_signals(
         db, tenant.id, unit.id, user.id,
         signals=[
@@ -1546,12 +1540,14 @@ async def test_generate_one_bank_chains_behavioral_into_technical(db, monkeypatc
     await db.flush()
 
     _patch_session(monkeypatch, db)
-    # Call 1 = behavioral phase (experience_check), call 2 = technical phase.
-    behavioral_q = _stream_questions(
-        ["5y Kubernetes"], estimated_minutes=2.0, question_kind="experience_check",
-    )
-    technical_q = _stream_questions(["System Design"], estimated_minutes=5.0)
-    calls = _patch_stream(monkeypatch, behavioral_q, technical_q)
+    # A single streamed pass emits both an experience_check and a technical_scenario.
+    streamed = [
+        *_stream_questions(
+            ["5y Kubernetes"], estimated_minutes=2.0, question_kind="experience_check",
+        ),
+        *_stream_questions(["System Design"], estimated_minutes=5.0),
+    ]
+    calls = _patch_stream(monkeypatch, streamed)
 
     await _generate_one_bank(
         bank_id=bank.id,
@@ -1560,26 +1556,16 @@ async def test_generate_one_bank_chains_behavioral_into_technical(db, monkeypatc
     )
 
     assert bank.status == "reviewing"
-    assert bank.generation_status_by_kind == {
-        "behavioral": "reviewing",
-        "technical": "reviewing",
-    }
 
-    # Two stream calls: behavioral first, technical second.
-    assert len(calls) == 2
-    technical_user_msg = calls[1]["messages"][1]["content"]
-    # The behavioral question must be chained under the exact heading the v2
-    # technical prompt references.
-    assert (
-        "ALREADY-GENERATED BEHAVIORAL QUESTIONS — DO NOT OVERLAP"
-        in technical_user_msg
-    )
-    assert behavioral_q[0].text in technical_user_msg
+    # Exactly ONE stream call — no behavioral/technical chaining, no DO-NOT-OVERLAP block.
+    assert len(calls) == 1
+    user_msg = calls[0]["messages"][1]["content"]
+    assert "ALREADY-GENERATED BEHAVIORAL QUESTIONS" not in user_msg
 
     rows = await get_bank_questions(db, bank.id)
     kinds = {r.question_kind for r in rows}
     assert kinds == {"experience_check", "technical_scenario"}
-    # Behavioral question persisted first (position 0), technical after it.
+    # Persisted in the order the single stream yielded them (positions 0, 1).
     by_pos = sorted(rows, key=lambda r: r.position)
     assert by_pos[0].question_kind == "experience_check"
     assert by_pos[1].question_kind == "technical_scenario"
