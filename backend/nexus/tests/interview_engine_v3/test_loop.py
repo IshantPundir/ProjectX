@@ -39,6 +39,7 @@ from app.modules.interview_engine.contracts import (
     Directive,
     DirectiveAct,
     DirectiveTone,
+    FollowUpDimension,
     MouthTurnInput,
     SignalObservation,
     ActiveQuestionRubric,
@@ -86,7 +87,20 @@ def _active_rubric() -> ActiveQuestionRubric:
         positive_evidence=["concrete project", "async usage", "production deploy"],
         red_flags=["only tutorials", "never deployed"],
         evaluation_hint="Look for specific projects and production context.",
-        follow_ups=["How did you use async?", "Any ML work?"],
+        follow_ups=[
+            FollowUpDimension(
+                dimension="async_usage",
+                intent="How did you use async?",
+                seed_probe="How did you use async?",
+                listen_for=[],
+            ),
+            FollowUpDimension(
+                dimension="ml_work",
+                intent="Any ML work?",
+                seed_probe="Any ML work?",
+                listen_for=[],
+            ),
+        ],
     )
 
 

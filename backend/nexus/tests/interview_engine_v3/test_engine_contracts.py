@@ -10,16 +10,16 @@ def test_brain_output_probe_then_advance_with_preference():
         observations=[SignalObservation(signal="Workato", stance=EvidenceStance.supports,
                                         texture=EvidenceTexture.thin, coverage_after=CoverageState.partial)],
         move=BrainMove.probe,
-        probe_index=1,
+        probe_dimension="workato_depth",
     )
     assert out.move == BrainMove.probe
-    assert out.probe_index == 1
+    assert out.probe_dimension == "workato_depth"
     # BrainTurnOutput must NOT carry a target_question_id (the deterministic resolver owns next-question).
     assert not hasattr(out, "target_question_id")
 
     out2 = BrainTurnOutput(reasoning="done", move=BrainMove.ask, preferred_next_signal="REST APIs")
     assert out2.preferred_next_signal == "REST APIs"
-    assert out2.probe_index is None
+    assert out2.probe_dimension is None
 
 
 def test_mouth_turn_input_continues_from_bridge():
