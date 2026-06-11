@@ -59,8 +59,6 @@ from app.modules.question_bank.service import (
 from app.modules.question_bank.context import (
     QuestionContext,
     build_question_context,
-    _load_pipeline_stages,
-    _load_prior_stage_questions,
 )
 from app.modules.question_bank.state_machine import auto_revert_on_edit
 
@@ -81,15 +79,6 @@ _bank_prompt_loader = PromptLoader(version=ai_config.question_bank_prompt_versio
 # Prompt assembly helpers
 # ---------------------------------------------------------------------------
 
-# Behavioral-call budget guidance (minutes). SOFT guidance only — decision D2 made
-# the budget soft (prompt guidance + an ai_config.question_bank_max_questions runaway stop, NO hard
-# cap). Sized to fit the knockout claim-checks PLUS at least one true STAR behavioral
-# question. The technical phase budget = stage duration − behavioral total, so this
-# value slightly favors behavioral breadth — intended; the recruiter raises stage
-# duration when they want more technical room. Could become per-stage configurable
-# later.
-BEHAVIORAL_BUDGET_MIN = 6
-
 # Stage types that support AI question-bank generation. The values are
 # the technical_depth prompt names (existing behavior). Keys are kept as
 # bare stage_type strings so existing filter code (`s.stage_type in
@@ -108,48 +97,6 @@ STAGE_TYPE_TO_PROMPT = {
     "phone_screen":    "question_bank_phone_screen",
     "ai_screening":    "question_bank_ai_screening",
 }
-
-# Per-stage-type behavioral_star prompt names. Stages NOT in this map
-# generate technical_depth only — the behavioral call is skipped for
-# those stage types (today: phone_screen has no behavioral prompt yet).
-# See docs/superpowers/specs/2026-05-19-behavioral-layer-and-intro-design.md.
-STAGE_TYPE_TO_BEHAVIORAL_PROMPT = {
-    "ai_screening":    "question_bank_ai_screening_behavioral",
-}
-
-# Backward-compatible aliases so existing tests (which import these names
-# directly from actors) continue to work without modification.
-_load_pipeline_context = _load_pipeline_stages
-_load_prior_stages_questions = _load_prior_stage_questions
-
-
-def _filter_behavioral_eligible(signals: list[dict]) -> list[dict]:
-    """Signals the behavioral phase covers:
-      - knockout experience/behavioral CLAIMS to verify (years, platform, scope), AND
-      - behavioral-TYPE required signals that warrant a true STAR question
-        (collaboration, documentation, mentoring, communication, etc.).
-    Competency/credential signals stay in the technical phase / ATS pre-filter.
-    Deduped by value, order-preserving.
-
-    See docs/superpowers/specs/2026-05-19-behavioral-layer-and-intro-design.md §1
-    (broadened for engine-v2 M2 so behavioral-type signals get true STAR coverage,
-    not just knockout claim-checks).
-    """
-    out: list[dict] = []
-    seen: set = set()
-    for s in signals:
-        v = s.get("value")
-        is_knockout_claim = (
-            s.get("knockout") is True and s.get("type") in ("experience", "behavioral")
-        )
-        is_behavioral_star = (
-            s.get("type") == "behavioral" and s.get("priority") == "required"
-        )
-        if (is_knockout_claim or is_behavioral_star) and v not in seen:
-            out.append(s)
-            seen.add(v)
-    return out
-
 
 def _build_user_message(
     *,
@@ -542,23 +489,23 @@ async def _generate_one_bank(
     started_by: UUID,
     correlation_id: str = "",
 ) -> None:
-    """Run streaming generation for one bank (engine-v2 M2 — 3-phase model, D6).
+    """Run streaming generation for one bank via a SINGLE streamed call.
 
     Must be called with the bank already at status='generating'. Takes PRIMITIVES
     (bank_id / tenant_id / started_by) and owns ALL its own sessions — NO session is
-    held across the multi-second LLM stream (decision D6). On success the bank ends in
-    'reviewing'; on any streaming failure the failure path wipes ALL AI questions (D7),
-    transitions the bank to 'failed', and re-raises the original exception (preserving
-    the caller contract: `_run_stage_generation` inspects the terminal state and
-    tests assert specific exception types propagate).
+    held across the multi-second LLM stream. On success the bank ends in 'reviewing';
+    on any streaming failure the failure path wipes ALL AI questions, transitions the
+    bank to 'failed', and re-raises the original exception (preserving the caller
+    contract: `_run_stage_generation` inspects the terminal state and tests assert
+    specific exception types propagate).
 
     Three phases:
-      A (short session) — load rows, compute eligible signals + prompt names, capture
+      A (short session) — load rows, resolve the single prompt name, capture
         primitives, wipe ALL AI questions for a clean regenerate, ensure 'generating',
         commit, close.
-      B (no held session) — behavioral phase (skippable), then the technical phase
-        with the behavioral questions chained in. Each question persists+publishes in
-        its own short session inside `_generate_questions_for_kind`.
+      B (no held session) — ONE streamed generation call emits all question kinds in a
+        single pass. Each question persists+publishes in its own short session inside
+        `_stream_bank_questions`.
       C (short session) — reconcile: mandatory auto-correction in position order,
         re-pack positions, soft over-budget warning, keyterm extraction, stamp
         generation-time metadata, transition to 'reviewing', commit.
@@ -596,17 +543,15 @@ async def _generate_one_bank(
             )
         ).scalar_one()
 
-        eligible_behavioral_signals = _filter_behavioral_eligible(snapshot.signals)
-        behavioral_prompt = STAGE_TYPE_TO_BEHAVIORAL_PROMPT.get(stage.stage_type)
-        technical_prompt = STAGE_TYPE_TO_PROMPT.get(stage.stage_type)
-        if technical_prompt is None:
+        prompt_name = STAGE_TYPE_TO_PROMPT.get(stage.stage_type)
+        if prompt_name is None:
             transition_to_failed(
                 bank,
-                error=f"No technical prompt mapped for stage_type={stage.stage_type}",
+                error=f"No prompt mapped for stage_type={stage.stage_type}",
             )
             await db.commit()
             raise RuntimeError(
-                f"No technical prompt mapped for stage_type={stage.stage_type}"
+                f"No prompt mapped for stage_type={stage.stage_type}"
             )
 
         # Capture all primitives needed for the stream + reconcile phases.
@@ -631,77 +576,18 @@ async def _generate_one_bank(
     # ---- Phase A session CLOSED ----
 
     try:
-        # ---- Phase B: behavioral then technical (NO held session) ----
-        behavioral_questions: list[GeneratedQuestion] = []
-        behavioral_status: str
-        if not eligible_behavioral_signals or behavioral_prompt is None:
-            behavioral_status = "skipped_no_eligible_signals"
-            logger.info(
-                "question_bank.behavioral_skipped",
-                bank_id=str(bank_id),
-                reason=(
-                    "no_eligible_signals"
-                    if not eligible_behavioral_signals
-                    else "no_behavioral_prompt_for_stage_type"
-                ),
-            )
-        else:
-            try:
-                behavioral_questions = await _generate_questions_for_kind(
-                    bank_id=bank_id,
-                    tenant_id=tenant_id,
-                    job_id=job_id,
-                    stage_id=stage_id,
-                    snapshot_id=snapshot_id,
-                    phase="behavioral",
-                    eligible_signals=eligible_behavioral_signals,
-                    budget_minutes=BEHAVIORAL_BUDGET_MIN,
-                    prompt_name=behavioral_prompt,
-                    start_position=0,
-                    prior_phase_questions=[],
-                    correlation_id=correlation_id,
-                )
-                behavioral_status = "reviewing"
-            except Exception as bh_exc:
-                logger.error(
-                    "question_bank.behavioral_phase_failed",
-                    bank_id=str(bank_id),
-                    error=str(bh_exc)[:500],
-                    exc_info=True,
-                )
-                behavioral_status = "failed"
-                behavioral_questions = []
-
-        prior = [
-            {
-                "text": q.text,
-                "signal_values": q.signal_values,
-            }
-            for q in behavioral_questions
-        ]
-        behavioral_total = sum(
-            float(q.estimated_minutes) for q in behavioral_questions
+        # ---- Phase B: single streamed generation call (NO held session) ----
+        await _stream_bank_questions(
+            bank_id=bank_id,
+            tenant_id=tenant_id,
+            job_id=job_id,
+            stage_id=stage_id,
+            snapshot_id=snapshot_id,
+            eligible_signals=snapshot_signals,   # full set
+            prompt_name=prompt_name,
+            start_position=0,
+            correlation_id=correlation_id,
         )
-
-        technical_status = "reviewing"
-        try:
-            await _generate_questions_for_kind(
-                bank_id=bank_id,
-                tenant_id=tenant_id,
-                job_id=job_id,
-                stage_id=stage_id,
-                snapshot_id=snapshot_id,
-                phase="technical",
-                eligible_signals=snapshot_signals,           # full set
-                budget_minutes=max(1, int(stage_duration - behavioral_total)),
-                prompt_name=technical_prompt,
-                start_position=len(behavioral_questions),
-                prior_phase_questions=prior,
-                correlation_id=correlation_id,
-            )
-        except Exception:
-            technical_status = "failed"
-            raise
 
         # ---- Phase C: reconcile + transition (short session) ----
         async with get_bypass_session() as db:
@@ -717,11 +603,6 @@ async def _generate_one_bank(
                 )
             ).scalar_one()
             rows = await get_bank_questions(db, bank_id)
-
-            bank.generation_status_by_kind = {
-                "behavioral": behavioral_status,
-                "technical": technical_status,
-            }
 
             # Project persisted rows → GeneratedQuestion, run mandatory correction
             # (flips is_mandatory only) in position order, write flips back, re-pack.
@@ -845,10 +726,6 @@ async def _generate_one_bank(
                 )
             ).scalar_one()
             await wipe_ai_questions(fdb, bank=fbank)
-            fbank.generation_status_by_kind = {
-                "behavioral": locals().get("behavioral_status", "failed"),
-                "technical": locals().get("technical_status", "failed"),
-            }
             transition_to_failed(fbank, error=str(exc)[:500])
             await fdb.commit()
         raise
