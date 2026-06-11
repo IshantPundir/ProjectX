@@ -44,7 +44,6 @@ from app.modules.question_bank.schemas import (
     PlaceholderBankResponse,
     QuestionResponse,
     QuestionRubric,
-    RegenerateKindBody,
     RegenerateQuestionBody,
     ReorderBody,
     UpdateQuestionBody,
@@ -59,7 +58,6 @@ from app.modules.question_bank.service import (
     reorder_questions,
     transition_to_generating,
     update_question,
-    wipe_ai_questions_of_phase,
 )
 from app.modules.question_bank.sse import stream_question_bank_status
 from app.modules.question_bank.state_machine import transition_to_failed
@@ -566,64 +564,6 @@ async def regenerate_one_question(
         replace_signal_values=body.replace_signal_values,
         correlation_id=correlation_id,
     )
-    return GenerateResponse(bank_id=bank_id, status="generating")
-
-
-@router.post(
-    "/jobs/{job_id}/pipeline/stages/{stage_id}/banks/regenerate-kind",
-    status_code=202,
-    response_model=GenerateResponse,
-)
-async def regenerate_kind(
-    job_id: UUID,
-    stage_id: UUID,
-    body: RegenerateKindBody,
-    request: Request,
-    background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_tenant_db),
-    user: UserContext = Depends(get_current_user_roles),
-) -> GenerateResponse:
-    """Wipe + regenerate one question_kind for this stage's bank.
-
-    The bank state machine moves confirmed/reviewing → generating, the
-    targeted kind's AI questions are deleted (recruiter rows preserved),
-    the kind's LLM call re-runs via a Dramatiq actor dispatch, and the
-    bank lands back in reviewing (or failed) once the actor completes.
-    """
-    correlation_id = _get_correlation_id(request)
-    bank, _stage, _job = await require_bank_access_by_stage(
-        db, job_id, stage_id, user, "manage"
-    )
-    if bank is None:
-        raise HTTPException(404, detail="No bank exists for this stage")
-
-    try:
-        transition_to_generating(bank)
-    except BankAlreadyGeneratingError as exc:
-        raise HTTPException(409, detail=str(exc))
-    bank.generated_by = user.user.id
-    await wipe_ai_questions_of_phase(db, bank=bank, phase=body.kind)
-
-    # Capture IDs BEFORE commit — post-commit attribute access is unsafe
-    # under RLS on the request session (mirrors the pattern used in
-    # generate_stage_questions / regenerate_one_question).
-    bank_id = bank.id
-    bank_tenant_id = bank.tenant_id
-
-    await db.flush()
-    await db.commit()
-
-    # Dispatch via BackgroundTasks so the response returns immediately;
-    # the actor handles per-kind regeneration end-to-end.
-    background_tasks.add_task(
-        bank_actors.regenerate_kind_actor.send,
-        str(bank_id),
-        str(bank_tenant_id),
-        str(user.user.id),
-        body.kind,
-        correlation_id,
-    )
-
     return GenerateResponse(bank_id=bank_id, status="generating")
 
 
