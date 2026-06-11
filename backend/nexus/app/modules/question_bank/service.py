@@ -614,33 +614,6 @@ async def write_generated_questions(
     await db.flush()
 
 
-async def wipe_ai_questions_of_kind(
-    db: AsyncSession, *, bank: StageQuestionBank, kind: str,
-) -> int:
-    """Delete AI-sourced questions of one kind from a bank. Recruiter rows preserved.
-
-    Returns count of rows deleted. Re-packs remaining positions to 0..N-1.
-    Used by the per-kind retry path. Does NOT call auto_revert_on_edit;
-    the caller's transition_to_generating handles state.
-    """
-    deleted_result = await db.execute(
-        delete(StageQuestion).where(
-            StageQuestion.bank_id == bank.id,
-            StageQuestion.source.in_(["ai_generated", "ai_regenerated"]),
-            StageQuestion.question_kind == kind,
-        )
-    )
-    deleted_count = deleted_result.rowcount or 0
-    await db.flush()
-
-    # Re-pack remaining questions
-    remaining = await get_bank_questions(db, bank.id)
-    for i, q in enumerate(remaining):
-        q.position = i
-    await db.flush()
-    return deleted_count
-
-
 async def persist_one_question(
     db: AsyncSession,
     *,
@@ -700,32 +673,6 @@ async def wipe_ai_questions(db: AsyncSession, *, bank: StageQuestionBank) -> int
         q.position = i
     await db.flush()
     return deleted.rowcount or 0
-
-
-async def wipe_ai_questions_of_phase(
-    db: AsyncSession, *, bank: StageQuestionBank, phase: str,
-) -> int:
-    """Delete AI-sourced questions whose question_kind belongs to `phase`. Recruiter rows
-    preserved. Re-packs remaining positions. Phase→kinds partition lives in
-    actors.PHASE_QUESTION_KINDS (imported inside the function to avoid the actors↔service
-    import cycle)."""
-    from app.modules.question_bank.actors import PHASE_QUESTION_KINDS
-
-    kinds = PHASE_QUESTION_KINDS[phase]
-    deleted_result = await db.execute(
-        delete(StageQuestion).where(
-            StageQuestion.bank_id == bank.id,
-            StageQuestion.source.in_(["ai_generated", "ai_regenerated"]),
-            StageQuestion.question_kind.in_(kinds),
-        )
-    )
-    deleted_count = deleted_result.rowcount or 0
-    await db.flush()
-    remaining = await get_bank_questions(db, bank.id)
-    for i, q in enumerate(remaining):
-        q.position = i
-    await db.flush()
-    return deleted_count
 
 
 async def replace_question_in_place(
@@ -1020,10 +967,8 @@ __all__ = [
     "validate_llm_output_against_snapshot",
     "validate_streamed_question",
     "write_generated_questions",
-    "wipe_ai_questions_of_kind",
     "persist_one_question",
     "wipe_ai_questions",
-    "wipe_ai_questions_of_phase",
     "replace_question_in_place",
     "create_recruiter_question",
     "update_question",

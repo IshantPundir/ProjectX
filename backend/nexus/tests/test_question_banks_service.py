@@ -1247,71 +1247,6 @@ async def seeded_bank(bypass_db):
     return bank
 
 
-@pytest_asyncio.fixture(loop_scope="session")
-async def seeded_bank_with_mixed_kinds(bypass_db):
-    """A StageQuestionBank with a few pre-seeded AI questions of mixed kinds.
-
-    Contains at least one behavioral-phase question ('behavioral') and at
-    least one technical-phase question ('technical_scenario') so the
-    wipe_ai_questions_of_phase test can verify selective deletion.
-    """
-    tenant, user, unit = await _setup_tenant_user_unit(bypass_db)
-    job, _snapshot = await _make_job_with_signals(
-        bypass_db, tenant.id, unit.id, user.id,
-        signals=[
-            _signal(value="incident_response", signal_type="competency"),
-            _signal(value="system_design", signal_type="competency"),
-        ],
-    )
-    _instance, stage = await _make_pipeline_and_stage(bypass_db, job=job)
-    bank = await ensure_bank_exists(bypass_db, stage=stage, job=job)
-
-    rubric = _valid_rubric().model_dump()
-
-    # One behavioral-phase question
-    bypass_db.add(StageQuestion(
-        tenant_id=bank.tenant_id,
-        bank_id=bank.id,
-        position=0,
-        source="ai_generated",
-        text="Tell me about a time you resolved a critical incident under pressure.",
-        signal_values=["incident_response"],
-        primary_signal="incident_response",
-        estimated_minutes=3.0,
-        is_mandatory=True,
-        follow_ups=["What did you change after?"],
-        positive_evidence=["names the failure", "describes the fix"],
-        red_flags=["blames others"],
-        rubric=rubric,
-        evaluation_hint="ownership of a real incident",
-        question_kind="behavioral",
-        difficulty="medium",
-    ))
-
-    # One technical-phase question
-    bypass_db.add(StageQuestion(
-        tenant_id=bank.tenant_id,
-        bank_id=bank.id,
-        position=1,
-        source="ai_generated",
-        text="Walk me through designing a distributed cache for this system.",
-        signal_values=["system_design"],
-        primary_signal="system_design",
-        estimated_minutes=5.0,
-        is_mandatory=False,
-        follow_ups=["What consistency model would you choose?"],
-        positive_evidence=["mentions trade-offs", "discusses replication"],
-        red_flags=["no concrete detail"],
-        rubric=rubric,
-        evaluation_hint="depth of system design thinking",
-        question_kind="technical_scenario",
-        difficulty="hard",
-    ))
-
-    await bypass_db.flush()
-    return bank
-
-
 # ---------------------------------------------------------------------------
 # Task 7 — streaming write primitives
 # ---------------------------------------------------------------------------
@@ -1343,17 +1278,6 @@ async def test_persist_one_question_appends_at_next_position(bypass_db, seeded_b
     assert rows[0].primary_signal == "incident_response"
     assert rows[0].question_kind == "behavioral"
     assert rows[0].difficulty == "medium"
-
-
-@pytest.mark.asyncio
-async def test_wipe_ai_questions_of_phase(bypass_db, seeded_bank_with_mixed_kinds):
-    from app.modules.question_bank.service import wipe_ai_questions_of_phase, get_bank_questions
-
-    bank = seeded_bank_with_mixed_kinds
-    deleted = await wipe_ai_questions_of_phase(bypass_db, bank=bank, phase="behavioral")
-    assert deleted >= 1
-    remaining = {r.question_kind for r in await get_bank_questions(bypass_db, bank.id)}
-    assert remaining == {"technical_scenario"}
 
 
 # ---------------------------------------------------------------------------
