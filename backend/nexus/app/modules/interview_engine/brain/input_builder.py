@@ -58,6 +58,7 @@ from app.modules.interview_runtime.evidence import (
     SignalType,
 )
 from app.modules.interview_runtime.schemas import (
+    FollowUpDimension as WireFollowUpDimension,
     QuestionConfig,
     SessionConfig,
 )
@@ -70,7 +71,7 @@ from app.modules.interview_engine.contracts import SignalObservation  # noqa: F4
 # Private helper — bounded-context conversion
 # ---------------------------------------------------------------------------
 
-def _to_contract_dims(dims) -> list[FollowUpDimension]:
+def _to_contract_dims(dims: list[WireFollowUpDimension]) -> list[FollowUpDimension]:
     """Convert wire FollowUpDimension objects (interview_runtime) into the engine
     contracts copy at the bounded-context boundary (mirrors QuestionRubric.model_validate)."""
     return [FollowUpDimension.model_validate(d.model_dump()) for d in dims]
