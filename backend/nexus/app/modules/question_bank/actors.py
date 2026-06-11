@@ -159,8 +159,6 @@ def _build_user_message(
     stage: JobPipelineStage,
     pipeline_stages: list[dict],
     prior_stages_questions: list[dict],
-    prior_phase_questions: list[dict] | None = None,
-    budget_minutes: int | None = None,
 ) -> str:
     """Build the user message — all context for the LLM.
 
@@ -168,13 +166,10 @@ def _build_user_message(
     specific instructions. This matches the 'prompt_context_ordering' rule
     established in Phase 2A.
 
-    `prior_phase_questions` (engine-v2 M2 chaining): when non-empty (the technical
-    phase receives the behavioral phase's already-persisted questions), renders an
-    ``# ALREADY-GENERATED BEHAVIORAL QUESTIONS — DO NOT OVERLAP`` block. The heading
-    string MUST match the v2 technical prompt's reference verbatim.
-
-    `budget_minutes` (decision D2): when set, renders a SOFT-GUIDANCE budget block
-    (the DB no longer hard-enforces budget — guidance optimizes for signal density).
+    Renders a SOFT-GUIDANCE budget block (the DB does not hard-enforce budget —
+    guidance optimizes for signal density). The budget target is the stage's
+    duration; a runaway ``ai_config.question_bank_max_questions`` per call is the
+    only hard stop, and an over-budget result logs a soft warning downstream.
     """
     parts = []
 
@@ -253,44 +248,10 @@ def _build_user_message(
         f"Advance behavior: {stage.advance_behavior}\n"
     )
 
-    # ---- Chaining block (engine-v2 M2) ----
-    # When the technical phase runs, it receives the behavioral phase's
-    # already-persisted questions so it can cover DIFFERENT angles. The heading
-    # below MUST match prompts/v2/question_bank_ai_screening.txt verbatim.
-    if prior_phase_questions:
-        parts.append(
-            "\n# ALREADY-GENERATED BEHAVIORAL QUESTIONS — DO NOT OVERLAP\n"
-        )
-        parts.append(
-            "These questions were authored by the behavioral phase for THIS stage. "
-            "Do NOT restate them. Re-probe their signals only at greater DEPTH and "
-            "from a genuinely different cognitive path.\n\n"
-        )
-        for i, q in enumerate(prior_phase_questions):
-            parts.append(
-                f"  B{i + 1} (probes: {q.get('signal_values', [])}):\n"
-                f"      {q.get('text', '')}\n"
-            )
-            # Surface the behavioral phase's follow-up dimensions so the
-            # technical phase knows which probe angles are already covered.
-            # The engine fires each dimension at most once per thread and tracks
-            # coverage across the whole screen, so the technical phase must not
-            # author a follow-up with the same dimension slug or underlying intent.
-            dims = q.get("follow_ups") or []
-            dim_labels = [
-                f"{d.get('dimension')} ({d.get('intent')})"
-                for d in dims
-                if isinstance(d, dict) and d.get("dimension")
-            ]
-            if dim_labels:
-                parts.append(
-                    "      covered dimensions: " + "; ".join(dim_labels) + "\n"
-                )
-
     # Pre-computed eligibility context. The LLM does NOT do budget arithmetic;
     # eligibility-after-include_types is computed here so it doesn't have to
-    # filter the snapshot itself. Budget is SOFT GUIDANCE (decision D2): the DB
-    # no longer hard-enforces a cap — a runaway ai_config.question_bank_max_questions per call
+    # filter the snapshot itself. Budget is SOFT GUIDANCE: the DB does not
+    # hard-enforce a cap — a runaway ai_config.question_bank_max_questions per call
     # is the only hard stop, and an over-budget result logs a soft warning.
     include_types = stage.signal_filter.get("include_types", [])
     eligible_signals = [
@@ -304,14 +265,12 @@ def _build_user_message(
     eligible_w2 = [s for s in eligible_signals if int(s.get("weight", 1)) == 2]
     eligible_w1 = [s for s in eligible_signals if int(s.get("weight", 1)) == 1]
 
-    budget_target = budget_minutes if budget_minutes is not None else stage.duration_minutes
-
     parts.append(
         "\n# BUDGET FOR THIS STAGE "
         "(soft guidance — optimize for signal density, not count)\n"
     )
     parts.append(
-        f"Target time for this phase: ~{budget_target} min "
+        f"Target time: ~{stage.duration_minutes} min "
         f"(sum of estimated_minutes across the questions you generate)\n"
         f"Stage duration overall: {stage.duration_minutes} min\n"
         f"\n"
