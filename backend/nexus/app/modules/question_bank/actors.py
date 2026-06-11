@@ -284,6 +284,21 @@ def _build_user_message(
                 f"  B{i + 1} (probes: {q.get('signal_values', [])}):\n"
                 f"      {q.get('text', '')}\n"
             )
+            # Surface the behavioral phase's follow-up dimensions so the
+            # technical phase knows which probe angles are already covered.
+            # The engine fires each dimension at most once per session, so
+            # the technical phase must not author a follow-up with the same
+            # dimension slug or the same underlying intent as these.
+            dims = q.get("follow_ups") or []
+            dim_labels = [
+                f"{d.get('dimension')} ({d.get('intent')})"
+                for d in dims
+                if isinstance(d, dict) and d.get("dimension")
+            ]
+            if dim_labels:
+                parts.append(
+                    "      covered dimensions: " + "; ".join(dim_labels) + "\n"
+                )
 
     # Pre-computed eligibility context. The LLM does NOT do budget arithmetic;
     # eligibility-after-include_types is computed here so it doesn't have to
@@ -1762,10 +1777,17 @@ async def regenerate_kind_actor(
 
         if phase == "technical":
             # Chain the surviving behavioral questions in for non-overlap. The
-            # builder's chaining block only reads `text` + `signal_values`.
+            # builder's chaining block reads `text`, `signal_values`, and the
+            # follow-up `dimension`/`intent` pairs so the technical phase can
+            # avoid repeating probe dimensions already authored in the behavioral
+            # phase (the engine fires each dimension at most once per session).
             behavioral_kinds = PHASE_QUESTION_KINDS["behavioral"]
             prior_phase_questions = [
-                {"text": r.text, "signal_values": list(r.signal_values)}
+                {
+                    "text": r.text,
+                    "signal_values": list(r.signal_values),
+                    "follow_ups": list(r.follow_ups) if r.follow_ups else [],
+                }
                 for r in surviving
                 if r.question_kind in behavioral_kinds
             ]

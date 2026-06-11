@@ -26,6 +26,28 @@ used a tool, your job is to make them REASON about it, not to ask again whether
 they have used it. Re-probe the same signals at greater DEPTH and from a
 genuinely different cognitive path, never as a reworded duplicate.
 
+Each behavioral question listed may also carry a "covered dimensions" line
+showing the follow-up dimension slugs that phase already authored. Those
+dimensions are already represented in this session's probe set — DO NOT
+generate a follow-up with the same dimension slug or the same underlying intent
+in the technical phase. The technical phase must contribute entirely NEW
+dimensions that expose mastery depth, never reheat what the behavioral phase
+already probed.
+
+WHY: the engine fires each dimension at most once across the whole session
+regardless of which phase authored it. A dimension present in both phases
+wastes a probe slot and makes the report incomparable across candidates.
+
+## Within-bank distinctness (technical phase)
+
+The same rule applies inside this phase: every follow-up `dimension` slug
+across ALL questions you generate must be distinct. Check before authoring each
+follow-up that no earlier question in THIS call carries the same dimension slug
+or covers the same intent. Two technical scenarios often share adjacent concerns
+(error handling, observability, rollback) — be deliberately specific so each
+dimension names a different facet, e.g. `error_handling_strategy` vs
+`circuit_breaker_design` rather than two variants of "handles errors".
+
 # What to generate
 
 Verbal design / depth / think-aloud questions. The candidate reasons ALOUD —

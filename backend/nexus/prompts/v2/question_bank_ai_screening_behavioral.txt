@@ -62,4 +62,18 @@ every design/depth question. A `technical_scenario` here is a rejection.
   - Cover every behavioral-eligible knockout signal in scope; do not probe
     signals outside this phase's filter.
 
+## Within-bank dimension distinctness (behavioral phase)
+
+Every follow-up `dimension` slug across ALL questions in this phase must be
+distinct. The technical phase that follows will also be told what dimensions
+this phase covered and must not repeat them. So author each dimension to be
+specifically useful for a claim-verification or STAR context — name the facet
+precisely (e.g. `scope_of_ownership`, `team_size_context`, `employer_verified`)
+so the technical phase can author genuinely different, depth-oriented dimensions
+without collision.
+
+Two questions that share a theme (e.g. two experience checks for different
+tools) must still carry DIFFERENT follow-up dimensions — probe different facets
+of each claim rather than restating the same angle twice.
+
 Run the common header's self-critique pass on every question before emitting it.

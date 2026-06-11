@@ -150,14 +150,55 @@ question by answer-difficulty.
     `hard` by depth.
 Do not leave it unset.
 
-# follow_ups (one to three, ordered, ONE ask each)
+# follow_ups — governed dimensions (one to three, ordered)
 
 Follow-ups carry the depth that must NOT be crammed into `text`. Each follow-up
-is itself a short, single-ask spoken question. Order them so the interviewer can
-fire them in sequence as the candidate's answer unfolds — earliest follow-up
-first, deepest last. They are pre-written probes the live interviewer chooses
-from based on what the candidate actually says. Zero is allowed for a pure
-compliance gate; one to three otherwise.
+is a **governed DIMENSION** — a named, reusable probe the live screening engine
+fires at most once per session and tracks for cross-candidate comparability.
+Zero is allowed for a pure compliance gate; one to three otherwise.
+
+## Shape of each follow-up (all four fields required)
+
+  - `dimension` — a short, stable lower_snake_case slug that names the angle
+    this probe covers (e.g. `rollback_strategy`, `ownership_scope`,
+    `scale_numbers`). The engine keys on this slug for deduplication and
+    comparability. Keep it concise and descriptive — it is a machine identifier.
+  - `intent` — one short phrase describing what this probe verifies about the
+    candidate (e.g. "confirms the candidate can articulate a safe rollout plan").
+    WHY it matters, not what to ask.
+  - `seed_probe` — a short, single-ask spoken question the interviewer says
+    aloud. Same constraints as `text`: conversational register, one ask, ≤240
+    characters, no sub-parts.
+  - `listen_for` — one to four concrete, observable specifics a STRONG answer
+    to THIS dimension names: real tool names, steps, tradeoffs, numbers, or
+    decision criteria. Not vague qualities like "clear explanation" or "depth".
+    Example: `["named specific percentage threshold", "mentioned canary deploy",
+    "described automated rollback trigger"]`.
+
+## The within-bank distinctness rule — CRITICAL
+
+EVERY `dimension` slug across ALL follow-ups in the ENTIRE BANK must be
+distinct. No two questions may carry the same probe intent.
+
+WHY this matters: the live engine fires each dimension at most once and tracks
+coverage across the whole session. Duplicate dimensions cause the interview to
+ask the candidate the same thing twice and make the report incomparable across
+candidates because the same slot is scored by different questions in different
+sessions.
+
+HOW to honor it: before authoring a follow-up, check whether any dimension
+already authored in THIS bank (on earlier questions) covers the same angle. If
+two scenarios share a direction, deepen each DIFFERENTLY so no dimension
+repeats. For example, if one question already has `rollout_safety`, a later
+question must probe a genuinely distinct angle — `incident_response`,
+`monitoring_setup`, or `stakeholder_communication` — not another variant of
+rollout safety.
+
+Each follow-up must also explore a DIFFERENT dimension of its own lead question
+— never a restatement of `text` or a sibling follow-up.
+
+Order follow-ups earliest-to-deepest so the interviewer can fire them in
+sequence as the candidate's answer unfolds.
 
 # Evaluator-only fields (NEVER spoken to the candidate)
 
@@ -190,7 +231,12 @@ and score the question against it. Revise any question that fails on any line:
   (b) Exactly ONE ask in `text`? No "and… and…", no enumerated list.
   (c) Opens exactly one `primary_signal`, and is that signal present in
       `signal_values`?
-  (d) Is the depth laddered into `follow_ups`, one ask each, in sensible order?
+  (d) Is the depth laddered into `follow_ups`, one dimension each, in sensible
+      order? Does every follow-up have all four fields (`dimension`, `intent`,
+      `seed_probe`, `listen_for`)? Is each `listen_for` a concrete observable
+      (tool name, step, number, tradeoff) rather than a vague quality?
+      Are all `dimension` slugs in THIS bank distinct — no repeated intent
+      across any two questions in the whole bank?
   (e) Are `difficulty` and `question_kind` both set, allowed for this phase, and
       consistent with the question's shape and the signal's weight?
   (f) Do the rubric anchors describe a SPOKEN answer (what it sounds like), not a
@@ -228,6 +274,10 @@ is the written-exam regression we exist to kill — rewrite it, do not ship it.
   - Do NOT repeat or reword any question already generated. Questions produced by
     earlier stages or by the earlier phase of THIS stage are listed in the user
     message — cover DIFFERENT angles, never restate them.
+  - Do NOT repeat any follow-up dimension across the bank. Every `dimension`
+    slug must be distinct across all questions generated in this call. If the
+    user message lists prior phase follow-up dimensions under "covered
+    dimensions", those are also off-limits — treat them as already fired.
 
 Return only the structured object the schema requires — no preamble, no
 commentary, no markdown fences.

@@ -45,4 +45,14 @@ is verification, not mastery probing.
     screen is a handful of sharp questions, not a long bank. Signal density over
     count; padding to fill the budget is rejected.
 
+## Within-bank dimension distinctness
+
+Every follow-up `dimension` slug across ALL questions in this bank must be
+distinct. The phone screen is short, which makes this easier than it sounds:
+with four or five questions and one or two follow-ups each, there are at most
+eight to ten dimensions in total — scope them precisely so each covers a
+different claim facet. Typical phone-screen dimensions: `production_years`,
+`platform_version`, `team_context`, `scale_estimate`, `work_authorization`.
+No two questions should carry a dimension that covers the same observable.
+
 Run the common header's self-critique pass on every question before emitting it.
