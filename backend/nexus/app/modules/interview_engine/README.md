@@ -113,7 +113,7 @@ subprocess) per interview. The FastAPI/nexus web process never loads LiveKit at 
 ### The session driver (`driver.py`)
 | Symbol | What it does |
 |---|---|
-| `SessionDriver` | The conductor. `intro()` (greeting + 1-line role brief, non-interruptible) → `opener()` (first bank question) → `handle_turn()` per committed turn → `finalize()` at end. Owns the active-question pointer, `asked_ids`, `probes_used`, the transcript window, `recent_openers`, the floor-question (for `repeat`), and the deterministic per-turn signals (backchannel drop, `floor_interrupted`, `stall_count`). Builds the `BridgeRequest` + `BrainTurnInput`, calls `run_turn`, then advances state from the returned `BrainDecision`. |
+| `SessionDriver` | The conductor. `intro()` (greeting + 1-line role brief, non-interruptible) → `opener()` (first bank question) → `handle_turn()` per committed turn → `finalize()` at end. Owns the active-question pointer, `asked_ids`, `fired_dimensions`, the transcript window, `recent_openers`, the floor-question (for `repeat`), and the deterministic per-turn signals (backchannel drop, `floor_interrupted`, `stall_count`). Builds the `BridgeRequest` + `BrainTurnInput`, calls `run_turn`, then advances state from the returned `BrainDecision`. |
 | `_BrainAdapter` / `_MouthAdapter` / `_CapturingVoice` | Thin adapters that satisfy the `loop.py` `Brain`/`Mouth`/`Voice` protocols over the real `ControlPlane`, `ConversationPlane` + `BridgeComposer`, and the interrupt-aware voice. |
 
 ### The drive loop (`loop.py` — pure, no LiveKit)
@@ -128,7 +128,7 @@ subprocess) per interview. The FastAPI/nexus web process never loads LiveKit at 
 | `service.py` | `ControlPlane.decide()` — one structured LLM call per turn → update the coverage projection → derive a no-leak `Directive` (apply the candidate-end bypass, the brain-driven verified-knockout close + reflect backstop, the knockout gate, then map the move). Also `confirmed_knockout_signals()` (read at finalize). `build_control_plane()` assembles it from a `SessionConfig`. |
 | `input_builder.py` | Pure prompt assembly + the `CoverageProjection` (ephemeral per-signal read state: `update`, `signal_reads`, `uncovered_signals`, `knockout_pending`). Builds the cache-stable prefix (system + role context + compact bank index) and the dynamic suffix (active rubric + coverage + uncovered/knockout-pending/already-reflected hints + transcript window + the candidate utterance, fenced as DATA). |
 | `resolver.py` | `resolve_next()` — the deterministic next-**main**-question picker (bank position / mandatory-first when winding down / time budget / no-repeat; honors the brain's `preferred_next_signal` only when budget allows). Plus `compute_budget_phase`, `build_question_records`, `budget_config_from_ai_config`. The LLM never authors main questions. |
-| `policy.py` | Deterministic, never-raising gates: `KnockoutTracker` (per-signal verified-knockout state), `gate_knockout` (blocks a premature blind close), `scrub_composed_say` (literal known-rubric-string no-leak scrub), `coerce_probe_index` (valid/unused follow-up index). |
+| `policy.py` | Deterministic, never-raising gates: `KnockoutTracker` (per-signal verified-knockout state), `gate_knockout` (blocks a premature blind close), `scrub_composed_say` (literal known-rubric-string no-leak scrub), `coerce_probe_dimension` (fire-once per dimension slug + hard per-thread probe cap). |
 
 ### The mouth (conversation plane — `mouth/`)
 | File | What it does |
@@ -203,8 +203,8 @@ After editing an engine prompt, restart with
 4. `run_turn`: **bridge ∥ brain → real line**, appending each signal observation to the
    `NoteLog` (see [§3 · loop.py](#the-drive-loop-looppy--pure-no-livekit)).
 5. Advance state from the `BrainDecision`: on `ask`, move the active-question pointer to the
-   resolver's `next_question_id`; on `probe`, record the adapted follow-up index in
-   `probes_used`; update `recent_openers`, the floor question (only `ask`/`probe` update it,
+   resolver's `next_question_id`; on `probe`, add the dimension slug to `fired_dimensions`;
+   update `recent_openers`, the floor question (only `ask`/`probe` update it,
    so `repeat` re-poses the real question), `floor_interrupted`, and the stall counter.
 6. **Barge-in:** if the candidate speaks again, VAD-mode interruption cancels the in-flight
    `run_turn` (clean — the AI only ever delivers at a turn boundary).

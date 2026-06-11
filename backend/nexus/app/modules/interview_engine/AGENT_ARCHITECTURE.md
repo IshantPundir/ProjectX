@@ -116,7 +116,7 @@ The mouth has **no behavior outside this enum**:
 | Act | What the mouth does | `say` source |
 |---|---|---|
 | `ask` | Deliver the next main question | **verbatim bank text** |
-| `probe` | Deliver one follow-up | **brain-composed**, leak-scrubbed (an in-scope adaptation of a bank follow-up template; verbatim follow-up as fallback) |
+| `probe` | Deliver one follow-up | **brain-composed**, leak-scrubbed (composed within the unfired dimension's `intent` toward its `listen_for`; verbatim `seed_probe` as fallback) |
 | `clarify` | Re-pose / explain the floor question more simply | brain-composed (scrubbed) |
 | `redirect` | Bring an off-topic / injection turn back | brain-composed (scrubbed) |
 | `reassure` | Calm a nervous candidate | brain-composed (scrubbed) |
@@ -184,15 +184,20 @@ The brain may only choose one of these (each maps 1:1 to a `DirectiveAct`):
 | `close` | The screen is complete, the candidate asked to end (`end_requested`), or a mandatory knockout is confirmed absent (`knockout_confirmed`). Terminal. |
 
 ### Composing a probe (the one place the spoken question is adapted)
-The bank `follow_ups` are recruiter-authored **templates** — written before anyone hears the
-answer. On a `probe`, the brain: (0) checks what it already knows (window + coverage) and
-does **not** re-ask anything answered, nor press for a retrievable fact — a name, an exact
-number — that doesn't change the read; (1) picks the template that targets the biggest real
-gap (`probe_index`); (2) **composes** that template into one natural question (`composed_say`)
-referencing the candidate's actual words; (3) stays in the main question's **scope and kind**
-(an experience question stays about experience, a technical one stays technical). The
-composed text is leak-scrubbed; if the brain doesn't compose, the verbatim follow-up is the
-fallback.
+The bank `follow_ups` are governed **dimension objects** — each carries a `dimension` slug,
+an `intent` (what gap to probe), a `seed_probe` (the verbatim fallback question), and a
+`listen_for` (what a good answer surfaces). Each dimension fires **at most once** per thread;
+the engine hard-caps probes per thread (`engine_probe_cap_per_thread`, default 2) and
+force-advances when the cap is hit. On a `probe`, the brain: (0) checks what it already
+knows (window + coverage) and does **not** re-ask anything answered, nor press for a
+retrievable fact — a name, an exact number — that doesn't change the read; (1) picks the
+**unfired** dimension (by slug, tracked in `fired_dimensions`) that targets the biggest real
+gap; (2) **composes** one natural question within that dimension's `intent` toward its
+`listen_for`, referencing the candidate's actual words; (3) stays in the main question's
+**scope and kind** (an experience question stays about experience, a technical one stays
+technical). The composed text is leak-scrubbed; if the brain doesn't compose, the
+`seed_probe` is the fallback. The brain also advances early when `primary_signal` coverage
+reaches `sufficient` before the cap is hit.
 
 ### The "this is a SCREEN, not a panel" principle
 The prompt enforces anti-grind discipline: **one good probe verifies a thin claim; a third+
@@ -212,7 +217,7 @@ accrue across the whole conversation.
    `probe` → composed/leak-scrubbed follow-up (or verbatim fallback); composed acts →
    scrubbed `composed_say`; `repeat` → the floor question; `close` → terminal (no `say`).
 6. **Emit** the `BrainDecision` (directive + observations + reasoning + the resolved
-   `next_question_id` / `probe_index`), and log an `engine.brain.decision` trace.
+   `next_question_id` / `probe_dimension`), and log an `engine.brain.decision` trace.
 
 ### Choosing the next question (`resolver.resolve_next`)
 A deterministic guard the LLM **cannot override** for mandatory coverage: while unasked
@@ -283,7 +288,7 @@ over the brain's decision:
 |---|---|
 | `gate_knockout` | Blocks a blind `close` while a mandatory signal is still pending-and-unconfirmed (the verified-knockout state machine; see §6). |
 | `scrub_composed_say` | Literal known-rubric-string no-leak scrub on any composed `say` → safe fallback on a hit. |
-| `coerce_probe_index` | Coerces the brain's `probe_index` to a valid, **unused** follow-up index (or `None` when exhausted → fall through to `ask`). |
+| `coerce_probe_dimension` | Coerces the brain's `probe_dimension` (a slug) to an unfired dimension for this thread (fire-once) and enforces a hard per-thread probe cap (`engine_probe_cap_per_thread`) — returns `None` when all dimensions are fired or the cap is reached, falling through to `ask`. |
 
 None of these auto-reject — borderline always goes to a human. They bound the LLM's judgment
 with rules it can't override.
@@ -387,7 +392,7 @@ on_user_turn_completed(turn_ctx, new_message)
         • real = mouth.real_line(directive, just_said=bridge); voice.say(real)
   4. advance state from the decision:
         ask   → active question ← resolver.next_question_id; asked_ids += it
-        probe → probes_used += probe_index
+        probe → fired_dimensions += dimension slug
         update recent_openers; floor question (ask/probe only); floor_interrupted; stall count
   5. is_terminal? → exit the loop → finalize()
 ```
@@ -439,8 +444,9 @@ invariants):
    fed as hints; the engine adds no extra LLM call to detect them. No EOU gate (the gen-2
    pain point). No regex for intent — every "is the candidate X?" is a semantic judgment.
 5. **Standardized bank.** Main questions are verbatim bank text in resolver order; rubrics
-   and follow-ups come from the recruiter-authored bank; the LLM never free-authors a
-   question. Probes adapt a follow-up template, in scope, leak-scrubbed.
+   and follow-ups (as governed dimension objects) come from the bank; the LLM never
+   free-authors a question. Probes compose within an unfired dimension's intent, in scope,
+   leak-scrubbed; each dimension fires at most once per thread.
 6. **This is a screen, not an interrogation.** One probe verifies a claim; a third grinds.
    The agent reads Indian-English under-selling and indirect "no" correctly, and never
    re-asks what it already heard.
