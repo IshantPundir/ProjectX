@@ -100,17 +100,22 @@ class FollowUpDimension(BaseModel):
 
 One shape, two consumers:
 - **Engine** uses `dimension` (ledger key) + `intent` (composition guardrail) + `listen_for`
-  (satisfaction test).
+  (the specifics the brain targets in a probe and judges satisfaction against).
 - **Generator** produces it and dedups on `dimension`/`intent` across questions.
 
-**Backward compatibility (normalizer).** A normalization layer upgrades any legacy `list[str]` on read
-into `[{dimension: <auto-slug of text>, intent: <text>, seed_probe: <text>, listen_for: []}]`. Legacy
-banks keep running, degraded (no `listen_for`). Regeneration produces full objects. **No DDL** — the
-column is already JSONB; only the JSON shape changes.
+**Where it is defined (mirrors `QuestionRubric`).** `FollowUpDimension` is defined **independently in
+both** `question_bank/schemas.py` (generation/persistence) and `interview_runtime/schemas.py` (the engine
+wire contract) — exactly as `QuestionRubric` is today. These are two separate bounded contexts; the DB
+`stage_questions.follow_ups` JSONB column is the contract between them. No cross-module import.
 
-The normalizer is the single definition, lives where the wire contract is built
-(`interview_runtime/schemas.py`, used by `build_session_config`), and is also applied wherever the bank
-JSON is read for the engine.
+**One shape at runtime — a one-time data backfill, not a runtime shim.** Existing banks store
+`follow_ups` as `list[str]`. A single **Alembic data migration** (no DDL — the column is already JSONB)
+rewrites every row once: each string `s` becomes
+`{dimension: <slug(s)>, intent: s, seed_probe: s, listen_for: []}`. This is a pure, lossless shape wrap
+(recruiter-edited follow-ups are preserved verbatim as `seed_probe`); only `listen_for` is empty for
+pre-existing banks, repopulated when a bank is regenerated. The migration ships a **rollback** that maps
+the new shape back to `list[str]` (taking `seed_probe`). After the backfill, **all runtime and generator
+code deals with exactly one shape** — no dual-shape branching anywhere, no compat path living forever.
 
 ---
 
@@ -122,8 +127,10 @@ JSON is read for the engine.
   probe serves. The brain composes `composed_say` *within that dimension's `intent`*, anchored to the
   candidate's actual words.
 - `BankQuestionIndex.follow_ups: list[str]` → `list[FollowUpDimension]`.
-- `ActiveQuestionRubric.follow_ups: list[str]` → `list[FollowUpDimension]`; rename
-  `probes_used: list[int]` → **`fired_dimensions: list[str]`** (the slugs already fired this thread).
+- `ActiveQuestionRubric.follow_ups: list[str]` → `list[FollowUpDimension]` (carries `intent` + `listen_for`
+  so the brain targets the probe at the right specifics and judges thread satisfaction — consistent with
+  `positive_evidence`/`red_flags`/`evaluation_hint`, which the active-question rubric already gives the
+  brain); rename `probes_used: list[int]` → **`fired_dimensions: list[str]`** (slugs already fired this thread).
 - `BrainDecision.probe_index` → **`probe_dimension: str | None`** (carried for the driver's ledger).
 
 The composed probe passes the existing no-leak scrub **plus** an in-scope check against the dimension
@@ -138,7 +145,8 @@ never raises:
 - **Hard cap**: `probes_fired_this_thread >= CAP` (default **2**, env-driven
   `engine_probe_cap_per_thread`) → force `ask`, regardless of the brain's proposal.
 - "Highest-value unfired" ordering: by the dimension's position in the bank list (authoring order =
-  earliest/foundational first), unless the runtime hint (§4.4) marks one already satisfied.
+  earliest/foundational first); the brain may instead advance when a dimension's signal already reads
+  `sufficient` (§4.4).
 
 This is the structural fix for Q6's four-times re-fire: the 2nd re-target of a fired dimension is
 impossible.
@@ -153,13 +161,22 @@ typical, never a march through all three. The deterministic advance triggers (an
 
 Thread-closure inference (`driver._infer_closure`) continues to read the projection; unchanged in shape.
 
-### 4.4 Cross-question runtime hint (safety net)
-`BrainTurnInput` gains a compact **`dimensions_satisfied_session_wide: list[str]`** block in the dynamic
-suffix — dimensions whose `listen_for` specifics are already strongly evidenced across the *whole*
-session. Built in `brain/input_builder.py` from the coverage projection + per-dimension listen-for
-matches. If the active question's follow-up dimension is already satisfied session-wide, the brain skips
-it and advances — catching any redundancy the generator missed. Prompt teaches: *"Do not probe a
-dimension already listed as satisfied; advance instead."*
+### 4.4 Cross-question runtime net (no new field)
+The runtime cross-question net reuses what the brain **already** receives — it adds no fuzzy computed
+field (no string-matching `listen_for` against the transcript, which would be both redundant and a soft
+pattern-match on meaning). Three layers, in order of strength:
+
+1. **Generation-dedup is the source fix** (§5.2) — distinct dimensions across questions mean the engine
+   rarely faces a cross-question collision at all.
+2. **The hard cap (§4.2) is the deterministic backstop** — total probing per thread is bounded regardless
+   of any cross-question reasoning.
+3. **The brain's existing per-signal coverage** (`evidence_so_far`, already in the suffix) is the semantic
+   net: the prompt teaches that if the active question's follow-up dimension targets a signal already
+   reading `sufficient`, the brain advances rather than re-probing it. This is the brain's judgment on data
+   it already holds — bounded by the cap — not a new deterministic computation.
+
+So the cross-question guarantee is *generation-side deterministic + a hard runtime cap*; the live "skip
+the redundant probe" is semantic, on existing data. No new contract field.
 
 ### 4.5 Floor / repeat / clarify fixes (E1–E3)
 - **E1 — clarify ≠ verbatim repeat.** A "simplify / I didn't understand" request must route to `clarify`
@@ -176,16 +193,19 @@ dimension already listed as satisfied; advance instead."*
 
 ### 4.6 Files touched (engine)
 - `app/modules/interview_engine/contracts.py` — `FollowUpDimension`; `probe_dimension`;
-  `fired_dimensions`; `dimensions_satisfied_session_wide`.
-- `app/modules/interview_engine/brain/input_builder.py` — suffix: dimension ledger render +
-  satisfied-hint; session-wide satisfaction computation.
+  `fired_dimensions` (no new session-wide field — see §4.4).
+- `app/modules/interview_engine/brain/input_builder.py` — suffix: render `follow_ups` as dimension objects
+  + `fired_dimensions`; the cross-question net is prompt-driven over the existing `evidence_so_far`.
 - `app/modules/interview_engine/brain/policy.py` — `coerce_probe_dimension` (replaces
   `coerce_probe_index`); cap enforcement.
 - `app/modules/interview_engine/brain/service.py` — `_resolve_probe` (dimension-based);
   `_derive_directive` wiring.
 - `app/modules/interview_engine/driver.py` — `fired_dimensions` ledger; floor-pointer integrity (E2);
   read-back handling support.
-- `app/modules/interview_runtime/schemas.py` — `QuestionConfig.follow_ups` shape + the legacy normalizer.
+- `app/modules/interview_runtime/schemas.py` — define `FollowUpDimension` (mirrors `QuestionRubric`);
+  `QuestionConfig.follow_ups` carries it. No runtime shape-branching (the §3 backfill guarantees one shape).
+- `migrations/versions/` — one Alembic data migration: backfill `follow_ups` `list[str]` → object shape
+  (with rollback). Per §3.
 - `prompts/v4/engine/brain.system.txt` — dimension-aware probing, advance discipline, E1/E3 boundaries.
 - `prompts/v4/engine/mouth/{probe,clarify,repeat}.txt` — compose-within-intent; clarify simplifies;
   repeat is verbatim-only.
@@ -220,7 +240,8 @@ technical call** — that call already had full visibility; it was never told to
   streamed call attends to its earlier list items autoregressively, so this is enforceable in one call.
 - **Cross-phase:** the technical prompt already gets `prior_phase_questions`; extend it to surface their
   dimensions as *"already covered — do not repeat."*
-- **Safety net:** the runtime hint (§4.4) still catches anything that slips through live.
+- **Safety net:** the runtime net (§4.4 — hard cap + the brain advancing over an already-`sufficient`
+  signal) still catches anything that slips through live.
 
 **Tradeoff (accepted):** one call doing "generate great questions" *and* "globally dedup" is marginally
 less bulletproof than a dedicated pass — but full within-phase visibility + threaded cross-phase context
@@ -237,11 +258,11 @@ talk-tests still show collisions, promoting it to a focused pass is a clean foll
   refine/draft.
 
 ### 5.4 Migration / regeneration
-- **No DDL** (column is JSONB). `follow_ups` shape changes inside the JSON.
-- The §3 normalizer keeps **legacy banks running** (degraded). New/regenerated banks get full objects.
-- Dev clear-and-regenerate of the test banks (consistent with how `0045`/`0046` handled the prior shape
-  change), so the test EMM/Workato banks get the new structure. Production banks regenerate on next
-  recruiter action; the normalizer covers the gap.
+- **No DDL** (column is JSONB). The §3 **Alembic data backfill** rewrites every existing `follow_ups`
+  row to the object shape once (with a rollback). After it runs, every bank — legacy or new — is the
+  single shape; there is no compat branch.
+- Pre-existing banks carry `listen_for: []` until regenerated; regeneration (or a recruiter refine/draft)
+  repopulates it. Optionally regenerate the test EMM/Workato banks to exercise the full new structure.
 
 ### 5.5 Files touched (generator)
 - `app/modules/question_bank/schemas.py` — `FollowUpDimension`; `GeneratedQuestion.follow_ups`;
@@ -264,7 +285,8 @@ talk-tests still show collisions, promoting it to a focused pass is a clean foll
 - E1: simplify request → `clarify` (genuinely simpler), never verbatim repeat.
 - E2: floor pointer never resolves to a stale main question.
 - E3: read-back/confirmation ≠ re-ask.
-- Normalizer: legacy `list[str]` → `FollowUpDimension` upgrade (degraded `listen_for=[]`).
+- Data backfill migration: `list[str]` → object shape (slug/intent/seed_probe/`listen_for=[]`) and its
+  rollback (object → `list[str]` via `seed_probe`) round-trip on a fixture bank.
 
 **Prompt-quality (opt-in `pytest -m prompt_quality`, real API):**
 - Generated bank has **zero** cross-question dimension collisions.
@@ -285,19 +307,22 @@ talk-tests still show collisions, promoting it to a focused pass is a clean foll
 - **Frontend** (`frontend/app` questions page) must render the richer follow-up objects — dependent
   change, scheduled separately; the API returns the new shape regardless.
 - **Report module** unaffected (does not consume `follow_ups`).
-- **Risk:** legacy banks run degraded (no `listen_for`) until regenerated — accepted; the normalizer
-  keeps them functional.
+- **Risk:** pre-existing banks carry `listen_for: []` until regenerated — accepted; the engine only needs
+  `dimension`/`intent`/`seed_probe` to run, and regeneration repopulates `listen_for`.
 - **Risk:** inline generation dedup is slightly less bulletproof than a dedicated pass — mitigated by the
-  runtime hint; promotable to a focused pass if talk-tests show residual collisions.
-- **No DDL** — JSONB shape change only.
+  runtime cap + the brain's coverage awareness; promotable to a focused pass if talk-tests show residual
+  collisions.
+- **No DDL** — one Alembic data-migration (JSONB shape rewrite) with a rollback; no column change.
 
 ---
 
 ## 8. Rollout Order
 
-1. **Part 2 (engine)** — ledger + cap + dimension binding + E1–E3 + normalizer (so legacy + new banks
-   both run). Verified by unit tests + a manual talk-test.
-2. **Part 3 (generator)** — new shape + inline dedup + prompts. Verified by prompt-quality + a regen of
-   the test banks + a manual talk-test.
+1. **Part 2 (engine) + the §3 data backfill** — define `FollowUpDimension` in both modules, ship the
+   Alembic backfill (every bank → object shape, single shape at runtime), then the ledger + cap +
+   dimension binding + early-advance + E1–E3. Verified by unit tests + a manual talk-test.
+2. **Part 3 (generator)** — emit the new shape natively + inline cross-question dedup + prompts. Verified
+   by prompt-quality + a regen of the test banks + a manual talk-test.
 
-Each part is independently shippable; the normalizer decouples them.
+The data backfill lands in Part 1, so both parts operate on a single shape — no dual-shape branching, and
+Part 3 can land independently after Part 2.
