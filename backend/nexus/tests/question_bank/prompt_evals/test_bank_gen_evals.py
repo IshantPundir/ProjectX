@@ -1,4 +1,4 @@
-"""Bank-gen prompt-quality eval suite for v2 prompts.
+"""Bank-gen prompt-quality eval suite for the v2 one-call prompts.
 
 Opt-in tier: run via
     docker compose exec nexus pytest tests/question_bank/prompt_evals -m prompt_quality
@@ -7,16 +7,23 @@ These tests hit the REAL OpenAI API (and are therefore SLOW and CONSUME TOKENS).
 Do NOT include in the default test gate. The default addopts in pyproject.toml
 already excludes them via ``-m 'not prompt_quality'``.
 
+The generator authors the WHOLE bank in ONE streamed call (the behavioral/technical
+phase split is gone), so each case generates against the single unified
+``question_bank_ai_screening`` prompt.
+
 Assertions:
-  1. Every generated question is SPOKEN (≤240 chars), single-focus, and
-     has a valid primary_signal, difficulty, and question_kind.
-  2. Technical-phase questions don't duplicate behavioral-phase question LEADS.
-  3. No evaluator-only phrasing leaks into spoken question text or follow_ups.
+  1. Every generated question is SPOKEN (≤240 chars), single-focus, and has a valid
+     primary_signal, difficulty, and question_kind.
+  2. Within one bank, every follow-up `dimension` slug is distinct (the live engine
+     fires each dimension at most once — duplicates re-ask the candidate).
+  3. No evaluator-only phrasing leaks into the spoken fields (text / seed_probe).
   4. Compliance-knockout cases produce ≥1 compliance_binary question.
-  5. Adversarial multi-part-tempting case: lead questions are single-focus.
+  5. Adversarial multi-part-tempting case: lead questions stay single-focus.
   6. Underspecified-role case: signal_values never contain hallucinated strings.
-  7. One-of / OR-requirement case: no question collapses a multi-option
-     requirement (e.g. "Java, Python, or Ruby") to a single option.
+  7. One-of / OR-requirement case: no question collapses a multi-option requirement
+     (e.g. "Java, Python, or Ruby") to a single option.
+  8. One-call balance: a bank with behavioral-TYPE signals still emits ≥1 true STAR
+     `behavioral` question (depth probes must not crowd out behavioral coverage).
 """
 
 from __future__ import annotations
@@ -42,24 +49,20 @@ pytestmark = [pytest.mark.prompt_quality, pytest.mark.asyncio]
 
 @dataclasses.dataclass
 class BankGenCase:
-    """One eval scenario — all fields for a self-contained bank-gen call."""
+    """One eval scenario — all fields for a self-contained one-call bank-gen run."""
 
     id: str
     role_title: str
     seniority: str
     company_profile: dict[str, str]
     signals: list[dict[str, Any]]
-    stage_type: str   # "ai_screening" or "ai_screening_behavioral"
     stage_duration: int   # minutes
     stage_difficulty: str
-    # Optional: ids included here flag specific assertion classes
+    # Optional flags that select specific assertion classes for a case.
     adversarial_multi_part: bool = False
     adversarial_compliance_knockout: bool = False
     adversarial_no_hallucination: bool = False
     adversarial_or_requirement: bool = False
-    # For chaining test: if set, this case is the "technical" call and
-    # `chained_behavioral_ids` lists the leads from a prior behavioral pass.
-    prior_behavioral_questions: list[str] | None = None
 
 
 def _mk_signal(
@@ -82,7 +85,7 @@ def _mk_signal(
 
 
 # ---------------------------------------------------------------------------
-# ≥20 DIVERSE CASES
+# DIVERSE CASES
 # ---------------------------------------------------------------------------
 
 CASES: list[BankGenCase] = [
@@ -101,7 +104,6 @@ CASES: list[BankGenCase] = [
             _mk_signal("AWS production experience", weight=3),
             _mk_signal("Postgres at scale", weight=2),
         ],
-        stage_type="ai_screening_behavioral",
         stage_duration=20,
         stage_difficulty="hard",
     ),
@@ -121,7 +123,6 @@ CASES: list[BankGenCase] = [
             _mk_signal("Airflow pipeline management", weight=2),
             _mk_signal("SQL proficiency", weight=1),
         ],
-        stage_type="ai_screening_behavioral",
         stage_duration=20,
         stage_difficulty="medium",
     ),
@@ -141,7 +142,6 @@ CASES: list[BankGenCase] = [
             _mk_signal("MLflow or similar experiment tracking", weight=2),
             _mk_signal("RAG pipeline design", weight=2),
         ],
-        stage_type="ai_screening_behavioral",
         stage_duration=20,
         stage_difficulty="hard",
     ),
@@ -161,7 +161,6 @@ CASES: list[BankGenCase] = [
             _mk_signal("Performance optimization experience", weight=2),
             _mk_signal("Accessibility (WCAG)", weight=1),
         ],
-        stage_type="ai_screening_behavioral",
         stage_duration=15,
         stage_difficulty="medium",
     ),
@@ -180,7 +179,6 @@ CASES: list[BankGenCase] = [
             _mk_signal("Customer support experience", sig_type="experience", weight=3),
             _mk_signal("Python scripting", weight=2),
         ],
-        stage_type="ai_screening_behavioral",
         stage_duration=20,
         stage_difficulty="medium",
     ),
@@ -200,7 +198,6 @@ CASES: list[BankGenCase] = [
             _mk_signal("Terraform or Pulumi", weight=2),
             _mk_signal("Observability (Datadog / Prometheus)", weight=2),
         ],
-        stage_type="ai_screening_behavioral",
         stage_duration=20,
         stage_difficulty="hard",
     ),
@@ -219,7 +216,6 @@ CASES: list[BankGenCase] = [
             _mk_signal("Cross-functional leadership", sig_type="behavioral", weight=3),
             _mk_signal("Data-driven product decisions", weight=2),
         ],
-        stage_type="ai_screening_behavioral",
         stage_duration=20,
         stage_difficulty="hard",
     ),
@@ -238,7 +234,6 @@ CASES: list[BankGenCase] = [
             _mk_signal("Threat modeling", weight=3),
             _mk_signal("Secure SDLC program ownership", sig_type="experience", weight=2),
         ],
-        stage_type="ai_screening_behavioral",
         stage_duration=20,
         stage_difficulty="hard",
     ),
@@ -257,7 +252,6 @@ CASES: list[BankGenCase] = [
             _mk_signal("UIKit and SwiftUI", weight=3),
             _mk_signal("App Store submission experience", sig_type="experience", weight=2),
         ],
-        stage_type="ai_screening_behavioral",
         stage_duration=15,
         stage_difficulty="medium",
     ),
@@ -276,7 +270,6 @@ CASES: list[BankGenCase] = [
             _mk_signal("Mentoring junior engineers", sig_type="behavioral", weight=3),
             _mk_signal("Architecture decision ownership", weight=2),
         ],
-        stage_type="ai_screening_behavioral",
         stage_duration=20,
         stage_difficulty="hard",
     ),
@@ -295,7 +288,6 @@ CASES: list[BankGenCase] = [
             _mk_signal("Windows and Active Directory", weight=2),
             _mk_signal("Customer-facing communication", sig_type="behavioral", weight=2),
         ],
-        stage_type="ai_screening_behavioral",
         stage_duration=15,
         stage_difficulty="easy",
     ),
@@ -314,7 +306,6 @@ CASES: list[BankGenCase] = [
             _mk_signal("Budget ownership and hiring plan", sig_type="experience", weight=3),
             _mk_signal("Cross-department executive collaboration", sig_type="behavioral", weight=2),
         ],
-        stage_type="ai_screening_behavioral",
         stage_duration=20,
         stage_difficulty="hard",
     ),
@@ -333,58 +324,10 @@ CASES: list[BankGenCase] = [
             _mk_signal("Engineering candidate sourcing", sig_type="experience", weight=3),
             _mk_signal("ATS administration (Greenhouse or Lever)", weight=2),
         ],
-        stage_type="ai_screening_behavioral",
         stage_duration=15,
         stage_difficulty="medium",
     ),
-    # ---- CASE 14: Technical PHASE (ai_screening) — no behavioral kinds allowed ----
-    BankGenCase(
-        id="backend_senior_technical",
-        role_title="Senior Backend Engineer",
-        seniority="senior",
-        company_profile={
-            "about": "Fintech platform processing real-time payments at scale.",
-            "industry": "Financial services",
-            "hiring_bar": "high",
-        },
-        signals=[
-            _mk_signal("Distributed systems design", knockout=True),
-            _mk_signal("AWS production experience", weight=3),
-            _mk_signal("Postgres at scale", weight=2),
-        ],
-        stage_type="ai_screening",
-        stage_duration=25,
-        stage_difficulty="hard",
-        # Fake prior behavioral leads to trigger the chaining block in the user message
-        prior_behavioral_questions=[
-            "How many years have you worked on distributed systems in production?",
-            "Tell me about a time you owned an outage end-to-end.",
-        ],
-    ),
-    # ---- CASE 15: SRE — technical phase ----
-    BankGenCase(
-        id="sre_senior_technical",
-        role_title="Senior Site Reliability Engineer",
-        seniority="senior",
-        company_profile={
-            "about": "Cloud-native infrastructure team for a Series D startup.",
-            "industry": "Technology",
-            "hiring_bar": "high",
-        },
-        signals=[
-            _mk_signal("Kubernetes in production", weight=3, knockout=True),
-            _mk_signal("On-call incident response experience", sig_type="experience", weight=3),
-            _mk_signal("Terraform or Pulumi", weight=2),
-        ],
-        stage_type="ai_screening",
-        stage_duration=25,
-        stage_difficulty="hard",
-        prior_behavioral_questions=[
-            "How many years have you run Kubernetes in production?",
-            "Tell me about an outage you led from alert to resolution.",
-        ],
-    ),
-    # ---- CASE 16: ADVERSARIAL — multi-part-tempting signal mix ----
+    # ---- CASE 14: ADVERSARIAL — multi-part-tempting signal mix ----
     # High-complexity role with many interdependent signals. Purpose: verify
     # that the prompt resists the temptation to bundle them into one question.
     BankGenCase(
@@ -403,12 +346,11 @@ CASES: list[BankGenCase] = [
             _mk_signal("Multi-region failover design", weight=3),
             _mk_signal("Secrets management (Vault or AWS Secrets Manager)", weight=2),
         ],
-        stage_type="ai_screening_behavioral",
         stage_duration=20,
         stage_difficulty="hard",
         adversarial_multi_part=True,
     ),
-    # ---- CASE 17: ADVERSARIAL — UK-shift compliance knockout ----
+    # ---- CASE 15: ADVERSARIAL — UK-shift compliance knockout ----
     BankGenCase(
         id="adversarial_uk_shift_compliance",
         role_title="Customer Success Manager (UK hours)",
@@ -428,12 +370,11 @@ CASES: list[BankGenCase] = [
             _mk_signal("Enterprise customer success experience", sig_type="experience", weight=3),
             _mk_signal("CRM proficiency (Salesforce or HubSpot)", weight=2),
         ],
-        stage_type="ai_screening_behavioral",
         stage_duration=15,
         stage_difficulty="medium",
         adversarial_compliance_knockout=True,
     ),
-    # ---- CASE 18: ADVERSARIAL — underspecified role / no-hallucination ----
+    # ---- CASE 16: ADVERSARIAL — underspecified role / no-hallucination ----
     # Only two vague signals. The generator must NOT invent extra signal_values
     # not present in the snapshot.
     BankGenCase(
@@ -449,12 +390,11 @@ CASES: list[BankGenCase] = [
             _mk_signal("Growth hacking experience", sig_type="experience", weight=3, knockout=True),
             _mk_signal("Data analysis skills", weight=2),
         ],
-        stage_type="ai_screening_behavioral",
         stage_duration=15,
         stage_difficulty="medium",
         adversarial_no_hallucination=True,
     ),
-    # ---- CASE 19: Work-authorization compliance knockout (US) ----
+    # ---- CASE 17: Work-authorization compliance knockout (US) ----
     BankGenCase(
         id="work_auth_us_compliance",
         role_title="Software Engineer",
@@ -474,12 +414,11 @@ CASES: list[BankGenCase] = [
             _mk_signal("Python backend experience", weight=3),
             _mk_signal("REST API design", weight=2),
         ],
-        stage_type="ai_screening_behavioral",
         stage_duration=15,
         stage_difficulty="medium",
         adversarial_compliance_knockout=True,
     ),
-    # ---- CASE 20: Behavioral-only signals (no compliance, no technical) ----
+    # ---- CASE 18: Behavioral-only signals (no compliance, no technical) ----
     BankGenCase(
         id="behavioral_leadership_signals",
         role_title="Engineering Manager",
@@ -494,11 +433,10 @@ CASES: list[BankGenCase] = [
             _mk_signal("Stakeholder alignment across product and engineering", sig_type="behavioral", weight=3),
             _mk_signal("Hiring and leveling decisions", sig_type="behavioral", weight=2),
         ],
-        stage_type="ai_screening_behavioral",
         stage_duration=20,
         stage_difficulty="hard",
     ),
-    # ---- CASE 21: Mixed credential + experience knockout ----
+    # ---- CASE 19: Mixed credential + experience knockout ----
     BankGenCase(
         id="credentialed_role",
         role_title="Clinical Data Analyst",
@@ -518,12 +456,11 @@ CASES: list[BankGenCase] = [
             _mk_signal("Clinical trial data analysis", sig_type="experience", weight=3),
             _mk_signal("21 CFR Part 11 compliance experience", sig_type="experience", weight=2),
         ],
-        stage_type="ai_screening_behavioral",
         stage_duration=15,
         stage_difficulty="medium",
         adversarial_compliance_knockout=True,
     ),
-    # ---- CASE 22: ADVERSARIAL — one-of / OR language knockout ----
+    # ---- CASE 20: ADVERSARIAL — one-of / OR language knockout ----
     # Mirrors the real Workato defect: a "Java, Python, or Ruby" knockout that
     # the generator collapsed to a single language (Ruby), falsely failing a
     # candidate proficient in Java or Python. The generator must NOT name a
@@ -546,7 +483,6 @@ CASES: list[BankGenCase] = [
             _mk_signal("Workato recipe development", sig_type="experience", weight=3),
             _mk_signal("REST API integration", weight=2),
         ],
-        stage_type="ai_screening_behavioral",
         stage_duration=20,
         stage_difficulty="hard",
         adversarial_or_requirement=True,
@@ -605,32 +541,19 @@ def _build_user_message(case: BankGenCase) -> str:
     parts.append("This pipeline has 1 stage. You are generating questions for STAGE 1.\n\n")
     parts.append(
         f"## Stage 1 — AI Interview (CURRENT — you are generating this)\n"
-        f"  Type: {case.stage_type}, Duration: {case.stage_duration} min, "
+        f"  Type: ai_screening, Duration: {case.stage_duration} min, "
         f"Difficulty: {case.stage_difficulty}\n"
     )
 
     parts.append("\n# THIS STAGE'S METADATA\n\n")
     parts.append(
         f"Name: AI Interview\n"
-        f"Type: {case.stage_type}\n"
+        f"Type: ai_screening\n"
         f"Duration: {case.stage_duration} min\n"
         f"Difficulty: {case.stage_difficulty}\n"
         f"Signal type filter (include_types): ['competency', 'experience', 'credential', 'behavioral']\n"
         f"Advance behavior: manual_review\n"
     )
-
-    # Chaining block — mirrors the heading in actors.py verbatim
-    if case.prior_behavioral_questions:
-        parts.append(
-            "\n# ALREADY-GENERATED BEHAVIORAL QUESTIONS — DO NOT OVERLAP\n\n"
-        )
-        parts.append(
-            "These questions were authored by the behavioral phase for THIS stage. "
-            "Do NOT restate them. Re-probe their signals only at greater DEPTH and "
-            "from a genuinely different cognitive path.\n\n"
-        )
-        for i, q_text in enumerate(case.prior_behavioral_questions):
-            parts.append(f"  B{i + 1}: {q_text}\n")
 
     # Budget block (soft guidance)
     eligible_knockouts = [s for s in case.signals if s.get("knockout", False)]
@@ -644,8 +567,7 @@ def _build_user_message(case: BankGenCase) -> str:
     parts.append(
         "\n# BUDGET FOR THIS STAGE "
         "(soft guidance — optimize for signal density, not count)\n\n"
-        f"Target time for this phase: ~{case.stage_duration} min\n"
-        f"Stage duration overall: {case.stage_duration} min\n\n"
+        f"Stage duration: {case.stage_duration} min\n\n"
         f"Eligible signals (after include_types filter):\n"
         f"  - knockouts: {len(eligible_knockouts)} (each warrants ONE mandatory question)\n"
         f"  - weight=3 non-knockout: {len(eligible_w3)} (high-priority depth probes)\n"
@@ -663,17 +585,17 @@ def _build_user_message(case: BankGenCase) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Core generation helper
+# Core generation helper — ONE streamed call against the unified ai_screening prompt
 # ---------------------------------------------------------------------------
 
 async def _generate(case: BankGenCase) -> list[GeneratedQuestion]:
     """Generate a bank for one case via the real LLM and return the questions.
 
-    Loads the v2 prompt pair via PromptLoader, builds the user message, and
+    Loads the unified one-call v2 prompt pair, builds the user message, and
     collects all streaming GeneratedQuestion objects.
     """
     loader = PromptLoader(version=ai_config.question_bank_prompt_version)
-    system_prompt = loader.load_pair("question_bank_common", f"question_bank_{case.stage_type}")
+    system_prompt = loader.load_pair("question_bank_common", "question_bank_ai_screening")
 
     client = get_openai_client()
     call_kwargs: dict[str, Any] = dict(
@@ -692,53 +614,6 @@ async def _generate(case: BankGenCase) -> list[GeneratedQuestion]:
         q async for q in client.chat.completions.create_iterable(**call_kwargs)
     ]
     return questions
-
-
-async def _generate_behavioral(case: BankGenCase) -> list[GeneratedQuestion]:
-    """Generate the BEHAVIORAL phase for one case via the real LLM.
-
-    Mirrors `_generate`, but loads the behavioral-phase prompt pair
-    (`question_bank_common` + `question_bank_ai_screening_behavioral`) so the
-    eligible signals are evaluated against the behavioral-phase instructions
-    (experience_check / behavioral / compliance_binary kinds only).
-    """
-    loader = PromptLoader(version=ai_config.question_bank_prompt_version)
-    system_prompt = loader.load_pair(
-        "question_bank_common", "question_bank_ai_screening_behavioral"
-    )
-
-    client = get_openai_client()
-    call_kwargs: dict[str, Any] = dict(
-        model=ai_config.question_bank_model,
-        response_model=GeneratedQuestion,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": _build_user_message(case)},
-        ],
-        max_retries=1,
-    )
-    if ai_config.question_bank_effort:
-        call_kwargs["reasoning_effort"] = ai_config.question_bank_effort
-
-    questions: list[GeneratedQuestion] = [
-        q async for q in client.chat.completions.create_iterable(**call_kwargs)
-    ]
-    return questions
-
-
-# ---------------------------------------------------------------------------
-# Helper: simple token-overlap heuristic for the no-duplicate test
-# ---------------------------------------------------------------------------
-
-def _token_overlap(a: str, b: str) -> float:
-    """Jaccard overlap of lowercased word-tokens between two strings."""
-    def _tokens(s: str) -> set[str]:
-        return set(re.findall(r"[a-z]+", s.lower()))
-
-    ta, tb = _tokens(a), _tokens(b)
-    if not ta or not tb:
-        return 0.0
-    return len(ta & tb) / len(ta | tb)
 
 
 # ---------------------------------------------------------------------------
@@ -754,8 +629,7 @@ async def test_questions_are_spoken_single_focus(case: BankGenCase) -> None:
       - single-ask heuristic: if " and " appears, question mark count must be ≤ 1
         NOTE: the " and "/" ?-count check below is a CRUDE placeholder for an
         eventual LLM-grader. Ship the heuristic now; it catches obvious failures
-        in an opt-in suite where prompt iteration is the cost of a miss. Do NOT
-        build an LLM-grader here — the goal is a fast, cheap gate.
+        in an opt-in suite where prompt iteration is the cost of a miss.
       - primary_signal is non-empty and is present in signal_values
       - follow_ups is a list (may be empty)
       - difficulty is one of {easy, medium, hard}
@@ -770,7 +644,6 @@ async def test_questions_are_spoken_single_focus(case: BankGenCase) -> None:
         )
 
         # Single-ask heuristic: tolerate "and" only when there's at most one "?"
-        # NOTE: crude placeholder — an LLM-grader would be more accurate here
         if " and " in q.text.lower():
             q_count = q.text.count("?")
             assert q_count <= 1, (
@@ -802,45 +675,27 @@ async def test_questions_are_spoken_single_focus(case: BankGenCase) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 2 — behavioral → technical chaining: no near-duplicate leads
+# Test 2 — within-bank follow-up dimension distinctness
 # ---------------------------------------------------------------------------
 
-async def test_no_behavioral_technical_overlap_via_chaining() -> None:
-    """Technical-phase questions must not near-duplicate behavioral leads.
+@pytest.mark.parametrize("case", CASES, ids=[c.id for c in CASES])
+async def test_follow_up_dimensions_are_distinct_within_bank(case: BankGenCase) -> None:
+    """Every follow-up `dimension` slug across the whole bank must be unique.
 
-    Strategy: use the backend_senior_technical case (stage_type=ai_screening),
-    which already has prior_behavioral_questions injected into its user message.
-    Then generate the behavioral bank first, append those leads, and regenerate
-    the technical bank. Assert no lead in the technical bank has high token
-    overlap with a behavioral lead.
+    The live engine fires each dimension at most once per session and tracks
+    coverage across the whole screen — a repeated slug re-asks the candidate the
+    same thing and breaks cross-candidate report comparability. (Slug-level check;
+    semantic near-duplicates need an LLM-grader, out of scope for this fast gate.)
     """
-    # Step A: generate behavioral bank for backend_senior_happy
-    behavioral_case = _CASE_BY_ID["backend_senior_happy"]
-    behavioral_qs = await _generate(behavioral_case)
-    behavioral_leads = [q.text for q in behavioral_qs]
-
-    # Step B: build a technical case that chains in those behavioral leads
-    technical_case = dataclasses.replace(
-        _CASE_BY_ID["backend_senior_technical"],
-        prior_behavioral_questions=behavioral_leads,
+    questions = await _generate(case)
+    dims: list[str] = [
+        fu.dimension for q in questions for fu in q.follow_ups
+    ]
+    duplicates = {d for d in dims if dims.count(d) > 1}
+    assert not duplicates, (
+        f"[{case.id}] repeated follow-up dimension slug(s) across the bank: "
+        f"{sorted(duplicates)} (all dims: {dims})"
     )
-    technical_qs = await _generate(technical_case)
-
-    # Verify no near-duplicate across the two banks (Jaccard > 0.5 threshold)
-    for tq in technical_qs:
-        for bl in behavioral_leads:
-            overlap = _token_overlap(tq.text, bl)
-            assert overlap < 0.5, (
-                f"Technical question {tq.text!r} has high token overlap "
-                f"({overlap:.2f}) with behavioral lead {bl!r}"
-            )
-
-    # Sanity: the technical phase should emit only technical_scenario
-    for tq in technical_qs:
-        assert tq.question_kind == "technical_scenario", (
-            f"Technical phase emitted non-technical_scenario kind "
-            f"{tq.question_kind!r} for: {tq.text!r}"
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -858,15 +713,15 @@ _RUBRIC_LEAK_PHRASES = [
 
 @pytest.mark.parametrize("case", CASES, ids=[c.id for c in CASES])
 async def test_rubric_never_leaks_into_text(case: BankGenCase) -> None:
-    """No question text or follow_up should contain evaluator-only phrasing.
+    """No spoken field should contain evaluator-only phrasing.
 
-    The spoken fields (text, follow_ups) are read aloud to the candidate.
-    Rubric framing must NEVER appear in those fields — it belongs exclusively
-    in rubric / positive_evidence / red_flags / evaluation_hint.
+    The spoken fields (the lead `text` and each follow-up `seed_probe`) are read
+    aloud to the candidate. Rubric framing must NEVER appear there — it belongs
+    exclusively in rubric / positive_evidence / red_flags / evaluation_hint.
     """
     questions = await _generate(case)
     for q in questions:
-        spoken_parts = [q.text] + list(q.follow_ups)
+        spoken_parts = [q.text] + [fu.seed_probe for fu in q.follow_ups]
         for part in spoken_parts:
             part_lower = part.lower()
             for banned in _RUBRIC_LEAK_PHRASES:
@@ -924,8 +779,7 @@ async def test_adversarial_multipart_temptation_stays_single_focus(case: BankGen
         # Multiple question marks in the lead is a strong multi-part signal
         if q.text.count("?") > 1:
             violations.append(f"MULTI-QUESTION-MARK: {q.text!r}")
-        # " and " + multi-? was already checked in test_questions_are_spoken_single_focus
-        # Here additionally check for bulleted/enumerated structure in lead text
+        # Bulleted/enumerated structure in lead text
         if re.search(r"[\n\r]|\d+\.\s|\-\s{2}", q.text):
             violations.append(f"STRUCTURED-LEAD: {q.text!r}")
 
@@ -998,11 +852,11 @@ async def test_or_requirement_not_collapsed_to_single_option(case: BankGenCase) 
     candidate satisfies the requirement with ANY ONE option, so a question that
     hard-codes one language grades against the wrong one.
 
-    CRUDE HEURISTIC (pending an LLM-grader, consistent with the file's other
-    placeholder notes): for each generated question, if its text names exactly
-    ONE of {java, python, ruby} and does NOT frame it as the candidate's choice
-    (via a CHOICE_WORDS marker), that's an OR-collapse → fail. Naming zero or
-    all three is fine; naming one is only fine when the candidate gets to pick.
+    CRUDE HEURISTIC (pending an LLM-grader): for each generated question, if its
+    text names exactly ONE of {java, python, ruby} and does NOT frame it as the
+    candidate's choice (via a CHOICE_WORDS marker), that's an OR-collapse → fail.
+    Naming zero or all three is fine; naming one is only fine when the candidate
+    gets to pick.
     """
     questions = await _generate(case)
     assert questions, f"[{case.id}] generator returned zero questions"
@@ -1016,17 +870,15 @@ async def test_or_requirement_not_collapsed_to_single_option(case: BankGenCase) 
 
 
 # ---------------------------------------------------------------------------
-# Test 8 — behavioral phase produces a true STAR question for behavioral signals
+# Test 8 — one-call balance: behavioral STAR is not crowded out by depth probes
 # ---------------------------------------------------------------------------
 
-# A behavioral-phase case whose eligible signals include behavioral-TYPE required
-# signals (collaboration / documentation / mentoring) alongside one experience
-# knockout. The broadened `_filter_behavioral_eligible` now feeds these into the
-# behavioral phase, and the behavioral prompt MUST emit ≥1 true STAR `behavioral`
-# question for them (not just experience_check claim-checks). Mirrors the real
-# defect where a JD's behavioral-type signals were never probed.
+# A case whose signals include behavioral-TYPE required signals (collaboration /
+# documentation / mentoring) alongside an experience knockout. In one call the
+# model must self-balance — depth probes must NOT crowd out behavioral coverage.
+# This is the key one-call risk the unified prompt's authoring recipe targets.
 _BEHAVIORAL_STAR_CASE = BankGenCase(
-    id="behavioral_phase_star_coverage",
+    id="one_call_star_coverage",
     role_title="Senior Integration Engineer",
     seniority="senior",
     company_profile={
@@ -1060,29 +912,20 @@ _BEHAVIORAL_STAR_CASE = BankGenCase(
             weight=2,
         ),
     ],
-    # The behavioral phase reads the behavioral prompt; the stage_type value here is
-    # used only for the user-message budget block rendering.
-    stage_type="ai_screening_behavioral",
     stage_duration=20,
     stage_difficulty="hard",
 )
 
 
-async def test_behavioral_phase_produces_a_star_question() -> None:
-    """When behavioral-TYPE signals are present, the behavioral phase must emit at
-    least one true STAR `behavioral` question (the regression this fix targets:
-    behavioral-type signals were never probed, producing zero behavioral kinds)."""
-    questions = await _generate_behavioral(_BEHAVIORAL_STAR_CASE)
-    assert questions, "behavioral phase returned zero questions"
+async def test_one_call_emits_a_star_question_for_behavioral_signals() -> None:
+    """When behavioral-TYPE signals are present, the single call must still emit at
+    least one true STAR `behavioral` question — depth probes must not crowd out
+    behavioral coverage (the key one-call balance risk)."""
+    questions = await _generate(_BEHAVIORAL_STAR_CASE)
+    assert questions, "generator returned zero questions"
 
     kinds = [q.question_kind for q in questions]
     assert "behavioral" in kinds, (
-        "behavioral phase produced no true STAR `behavioral` question despite "
+        "one-call generation produced no true STAR `behavioral` question despite "
         f"behavioral-type signals being present; kinds={kinds}"
-    )
-
-    # Phase-kind constraint: the behavioral phase emits ONLY its allowed kinds —
-    # never a technical_scenario (that is the technical phase's territory).
-    assert "technical_scenario" not in kinds, (
-        f"behavioral phase leaked a technical_scenario kind; kinds={kinds}"
     )
